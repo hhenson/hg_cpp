@@ -5,6 +5,7 @@
 #include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>   // eq_ / ne_ / lt_ / ...
 #include <hgraph/lib/std/operators/higher_order.h>
+#include <hgraph/lib/std/operators/json.h>
 #include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
 #include <hgraph/lib/std/operators/logical.h>
@@ -115,6 +116,11 @@ namespace hgraph::stdlib
             static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
                              Out<TS<Bool>> out)
             {
+                if (json_tree::is_json_ts(lhs.base().schema()))
+                {
+                    out.set(json_tree::equals(lhs.base().value(), rhs.base().value()));
+                    return;
+                }
                 out.set(lhs.base().value().equals(rhs.base().value()));
             }
         };
@@ -126,6 +132,11 @@ namespace hgraph::stdlib
             static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
                              Out<TS<Bool>> out)
             {
+                if (json_tree::is_json_ts(lhs.base().schema()))
+                {
+                    out.set(!json_tree::equals(lhs.base().value(), rhs.base().value()));
+                    return;
+                }
                 out.set(!lhs.base().value().equals(rhs.base().value()));
             }
         };
@@ -137,6 +148,17 @@ namespace hgraph::stdlib
             static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
                              Out<TS<CmpResult>> out)
             {
+                if (json_tree::is_json_ts(lhs.base().schema()))
+                {
+                    if (json_tree::equals(lhs.base().value(), rhs.base().value()))
+                    {
+                        out.set(CmpResult::EQ);
+                        return;
+                    }
+                    const auto order = json_tree::compare(lhs.base().value(), rhs.base().value());
+                    out.set(order == std::partial_ordering::less ? CmpResult::LT : CmpResult::GT);
+                    return;
+                }
                 // equals() first: container compare may report equivalence
                 // for unequal values (e.g. same-size maps).
                 if (lhs.base().value().equals(rhs.base().value()))

@@ -6,6 +6,23 @@
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
 
+#include <compare>
+
+namespace hgraph
+{
+    class ValueView;
+    struct TSValueTypeMetaData;
+    struct ValueTypeMetaData;
+}  // namespace hgraph
+
+namespace hgraph::stdlib::json_tree
+{
+    [[nodiscard]] inline const ValueTypeMetaData *json_meta();
+    [[nodiscard]] inline bool is_json_ts(const TSValueTypeMetaData *ts) noexcept;
+    [[nodiscard]] inline bool equals(const ValueView &lhs, const ValueView &rhs);
+    [[nodiscard]] inline std::partial_ordering compare(const ValueView &lhs, const ValueView &rhs);
+}  // namespace hgraph::stdlib::json_tree
+
 namespace hgraph::stdlib
 {
     /**

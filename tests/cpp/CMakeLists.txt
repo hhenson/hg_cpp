@@ -111,5 +111,14 @@ target_link_libraries(hgraph_unit_tests
         Catch2::Catch2WithMain
 )
 
+add_executable(hgraph_json_perf
+    json_perf.cpp
+)
+
+target_link_libraries(hgraph_json_perf
+    PRIVATE
+        hgraph::core
+)
+
 include(Catch)
 catch_discover_tests(hgraph_unit_tests)

@@ -141,6 +141,112 @@ namespace
             return wire<stdlib::from_json, TS<Float>>(w, text).as<TS<Float>>();
         }
     };
+
+    struct JsonDynamicLeafGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "json_dynamic_leaf_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Str>> ts)
+        {
+            auto decoded = wire<stdlib::json_decode>(w, ts);
+            auto nested  = wire<stdlib::getitem_>(w, decoded, Str{"nested"});
+            auto values  = wire<stdlib::getitem_>(w, nested, Str{"values"});
+            auto last    = wire<stdlib::getitem_>(w, values, Int{-1});
+            return wire<stdlib::json_as_int>(w, last).as<TS<Int>>();
+        }
+    };
+
+    struct JsonDynamicEncodeGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "json_dynamic_encode_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> ts)
+        {
+            auto decoded = wire<stdlib::json_decode>(w, ts);
+            return wire<stdlib::json_encode, TS<Str>>(w, decoded).as<TS<Str>>();
+        }
+    };
+
+    struct JsonDynamicEqualityGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "json_dynamic_equality_graph";
+
+        static Port<TS<Bool>> compose(Wiring &w, Port<TS<Str>> lhs, Port<TS<Str>> rhs)
+        {
+            auto decoded_lhs = wire<stdlib::json_decode>(w, lhs);
+            auto decoded_rhs = wire<stdlib::json_decode>(w, rhs);
+            return wire<stdlib::eq_>(w, decoded_lhs, decoded_rhs).as<TS<Bool>>();
+        }
+    };
+
+    [[nodiscard]] Value eager_reference_json()
+    {
+        const auto &str_binding = *ValuePlanFactory::instance().binding_for(scalar_descriptor<Str>::value_meta());
+
+        MapBuilder target_entries{str_binding, stdlib::json_tree::json_value_binding()};
+        Value      answer_key{Str{"answer"}};
+        Value      answer_node = stdlib::json_tree::box(Value{Int{41}});
+        target_entries.set_item_copy(answer_key.view().data(), answer_node.view().data());
+
+        MapBuilder root_entries{str_binding, stdlib::json_tree::json_value_binding()};
+        Value      target_key{Str{"target"}};
+        Value      target_node = stdlib::json_tree::box(target_entries.build());
+        root_entries.set_item_copy(target_key.view().data(), target_node.view().data());
+        return stdlib::json_tree::box(root_entries.build());
+    }
+
+    struct EagerJsonReferenceNode
+    {
+        static constexpr auto name = "eager_json_reference_node";
+
+        static void resolve_default_types(ResolutionMap &resolution)
+        {
+            if (resolution.find_ts("O") != nullptr) { return; }
+            resolution.bind_ts("O", TypeRegistry::instance().ts(stdlib::json_tree::json_meta()));
+        }
+
+        static void eval(In<"trigger", TS<Str>> trigger, Out<TsVar<"O">> out)
+        {
+            static_cast<void>(trigger);
+            stdlib::json_tree::publish(static_cast<const TSOutputView &>(out), eager_reference_json());
+        }
+    };
+
+    struct JsonDynamicLazyEagerEqualityGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "json_dynamic_lazy_eager_equality_graph";
+
+        static Port<TS<Bool>> compose(Wiring &w, Port<TS<Str>> raw)
+        {
+            auto decoded = wire<stdlib::json_decode>(w, raw);
+            auto eager   = wire<EagerJsonReferenceNode>(w, raw);
+            return wire<stdlib::eq_>(w, decoded, eager).as<TS<Bool>>();
+        }
+    };
+
+    struct JsonDynamicLazyEagerInequalityGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "json_dynamic_lazy_eager_inequality_graph";
+
+        static Port<TS<Bool>> compose(Wiring &w, Port<TS<Str>> raw)
+        {
+            auto decoded = wire<stdlib::json_decode>(w, raw);
+            auto eager   = wire<EagerJsonReferenceNode>(w, raw);
+            return wire<stdlib::ne_>(w, decoded, eager).as<TS<Bool>>();
+        }
+    };
+
+    struct JsonDynamicLazyEagerCompareGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "json_dynamic_lazy_eager_compare_graph";
+
+        static Port<TS<stdlib::CmpResult>> compose(Wiring &w, Port<TS<Str>> raw)
+        {
+            auto decoded = wire<stdlib::json_decode>(w, raw);
+            auto eager   = wire<EagerJsonReferenceNode>(w, raw);
+            return wire<stdlib::cmp_>(w, decoded, eager).as<TS<stdlib::CmpResult>>();
+        }
+    };
 }  // namespace
 
 TEST_CASE("json operators: to_json serializes per tick")
@@ -165,4 +271,46 @@ TEST_CASE("json operators: to_json -> from_json round-trips through a graph")
     stdlib::register_standard_operators();
     CHECK_OUTPUT(eval_node<JsonRoundTripGraph>(values<Float>(1.5, none, -0.25)),
                  values<Float>(1.5, none, -0.25));
+}
+
+TEST_CASE("dynamic json operators: decoded values support lazy path extraction")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<JsonDynamicLeafGraph>(
+                     values<Str>(Str{"{\"nested\":{\"values\":[1,2,3,4]}}"},
+                                 Str{"{\"nested\":{\"values\":[5,6]}}"})),
+                 values<Int>(4, 6));
+}
+
+TEST_CASE("dynamic json operators: decoded values encode canonically")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<JsonDynamicEncodeGraph>(
+                     values<Str>(Str{"{\"a\":1,\"b\":[true,null,\"x\"]}"})),
+                 values<Str>(Str{"{\"a\": 1, \"b\": [true, null, \"x\"]}"}));
+}
+
+TEST_CASE("dynamic json operators: equality is semantic not raw string equality")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<JsonDynamicEqualityGraph>(
+                     values<Str>(Str{"{\"a\":1,\"b\":[2,3]}"}),
+                     values<Str>(Str{"{ \"b\" : [2, 3], \"a\" : 1 }"})),
+                 values<Bool>(true));
+}
+
+TEST_CASE("dynamic json operators: equality is independent of lazy or eager storage")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<JsonDynamicLazyEagerEqualityGraph>(
+                     values<Str>(Str{"{\"target\":{\"answer\":41}}"},
+                                 Str{"{\"target\":{\"answer\":42}}"})),
+                 values<Bool>(true, false));
+    CHECK_OUTPUT(eval_node<JsonDynamicLazyEagerInequalityGraph>(
+                     values<Str>(Str{"{\"target\":{\"answer\":41}}"},
+                                 Str{"{\"target\":{\"answer\":42}}"})),
+                 values<Bool>(false, true));
+    CHECK_OUTPUT(eval_node<JsonDynamicLazyEagerCompareGraph>(
+                     values<Str>(Str{"{\"target\":{\"answer\":41}}"})),
+                 values<stdlib::CmpResult>(stdlib::CmpResult::EQ));
 }

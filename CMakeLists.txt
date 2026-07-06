@@ -111,6 +111,9 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(hgraph_options INTERFACE Threads::Threads)
 
+find_package(simdjson CONFIG REQUIRED)
+target_link_libraries(hgraph_options INTERFACE simdjson::simdjson)
+
 find_package(fmt CONFIG QUIET)
 if(NOT fmt_FOUND)
     FetchContent_Declare(
