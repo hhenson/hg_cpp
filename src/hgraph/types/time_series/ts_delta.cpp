@@ -227,7 +227,11 @@ namespace hgraph
 
             for (std::size_t index = 0; index < source_values.size(); ++index)
             {
-                apply_current_value(list_out.at(index), source_values.at(index));
+                auto source_child = source_values.at(index);
+                // UNSET source children are skipped (the TSL carries the
+                // same field-validity contract as TSB).
+                if (!source_child.valid()) { continue; }
+                apply_current_value(list_out.at(index), source_child);
             }
         }
 
@@ -235,12 +239,6 @@ namespace hgraph
         {
             const auto *schema = out.schema();
             if (schema == nullptr) { throw std::logic_error("apply_current_value: TSB output schema is missing"); }
-            if (value.schema() == schema->value_schema && !schema_contains_tsd(schema))
-            {
-                apply_current_value_direct(out, value);
-                return;
-            }
-
             const auto source_values = value.as_indexed_view();
             if (source_values.size() != schema->field_count())
             {
@@ -250,7 +248,12 @@ namespace hgraph
             auto bundle_out = out.as_bundle();
             for (std::size_t index = 0; index < source_values.size(); ++index)
             {
-                apply_current_value(bundle_out.at(index), source_values.at(index));
+                auto source_child = source_values.at(index);
+                // UNSET source fields are skipped (Bundle field validity):
+                // applying a partially-valid value writes only its live
+                // fields - never defaults.
+                if (!source_child.valid()) { continue; }
+                apply_current_value(bundle_out.at(index), source_child);
             }
         }
 

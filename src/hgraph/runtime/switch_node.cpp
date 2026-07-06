@@ -20,6 +20,10 @@ namespace hgraph
             // The switch output may be re-homed by an enclosing map_/mesh_.
             // This backing output is used only when the switch owns its target.
             std::optional<TSOutput>          backing_output{};
+            // REF-shaped switch with VALUE branches (mixed-branch mode):
+            // value terminals forward into this value-schema'd backing and
+            // the switch output publishes a peered reference to it.
+            std::optional<TSOutput>          value_backing{};
             GraphValue                       active{};
             std::vector<GraphValue>          retired{};
             Value                            active_key{};
@@ -168,18 +172,24 @@ namespace hgraph
             if (out_schema != nullptr && out_schema->kind == TSTypeKind::REF && terminal_schema != nullptr &&
                 terminal_schema->kind != TSTypeKind::REF)
             {
-                // The terminal stays a NORMAL output (no re-homing): clear
-                // any forwarding left from an earlier bind so the child
-                // writes its own storage.
-                if (branch_terminal.forwarding_bound()) { branch_terminal.clear_forwarding_target(); }
-                Value reference{TimeSeriesReference::peered(branch_terminal)};
-                auto  mutation = switch_output.begin_mutation(evaluation_time);
+                // A VALUE branch under a REFERENCE-shaped switch output: the
+                // terminal is a forwarding output BY CONSTRUCTION, so it
+                // forwards into the switch's BACKING output (value-schema'd),
+                // and the switch output publishes a peered reference TO the
+                // backing. Branch swaps re-point the forwarding; the
+                // reference (and consumers' bindings) stay stable.
+                if (!storage.value_backing.has_value()) { storage.value_backing.emplace(*terminal_schema); }
+                auto backing = storage.value_backing->view(evaluation_time);
+                bind_forwarding_output_to_source(branch_terminal, backing);
+
+                Value reference{TimeSeriesReference::peered(backing)};
                 if (switch_output.data_view().has_current_value() &&
                     switch_output.data_view().value().checked_as<TimeSeriesReference>() ==
                         reference.view().checked_as<TimeSeriesReference>())
                 {
                     return;   // same-reference dedup
                 }
+                auto mutation = switch_output.begin_mutation(evaluation_time);
                 static_cast<void>(mutation.move_value_from(std::move(reference)));
                 return;
             }
@@ -227,6 +237,24 @@ namespace hgraph
         void switch_teardown(const NodeView &view, SwitchNodeStorage &storage, DateTime evaluation_time)
         {
             if (!storage.active.has_value()) { return; }
+            // Mixed-branch REF mode: the branch is GONE, so consumers must
+            // observe the reset - publish the EMPTY reference (the
+            // synchronous notify unbinds from-REF consumers from the value
+            // backing) and destroy the stale backing; the next branch bind
+            // recreates it invalid.
+            if (storage.value_backing.has_value() && storage.active_spec != nullptr &&
+                storage.active_spec->output_binding.has_value())
+            {
+                auto switch_output = walk_ts_path(view.output(evaluation_time),
+                                                  storage.active_spec->output_binding->target_path);
+                if (switch_output.schema() != nullptr && switch_output.schema()->kind == TSTypeKind::REF)
+                {
+                    Value empty{TimeSeriesReference{}};
+                    auto  mutation = switch_output.begin_mutation(evaluation_time);
+                    static_cast<void>(mutation.move_value_from(std::move(empty)));
+                }
+                storage.value_backing.reset();
+            }
             if (storage.active_spec != nullptr) { clear_branch_output(view, *storage.active_spec, evaluation_time); }
             storage.active.view().stop();
             storage.retired.push_back(std::move(storage.active));

@@ -809,10 +809,22 @@ namespace hgraph
             {
                 const auto *binding = child.input_binding;
                 const auto &ops = binding->ops_ref();
+                // Same validity rule for DIRECT children: an invalid child
+                // is UNSET in the assembled value, never a default.
+                const void *child_memory =
+                    child.direct_child_memory && memory != nullptr ? advance(memory, child.data_offset) : memory;
+                if (!ops.has_current_value_impl(ops.context, child_memory)) { return nullptr; }
                 return ops.value_memory_impl(ops.context, memory);
             }
             const auto *link = child_target_storage(child, memory);
-            return link != nullptr && link->bound() ? link->target_view().value().data() : nullptr;
+            if (link == nullptr || !link->bound()) { return nullptr; }
+            // A bound-but-INVALID child is UNSET in the assembled value
+            // (Bundle field validity, core_concepts.rst): never a default.
+            auto target = link->target_view();
+            if (!target.valid()) { return nullptr; }
+            const auto &target_ops = target.ops();
+            if (!target_ops.has_current_value_impl(target_ops.context, target.data())) { return nullptr; }
+            return target.value().data();
         }
 
         [[nodiscard]] ValueView input_value_project_value(const void *context, const void *memory, std::size_t index)

@@ -181,3 +181,20 @@ field lookup:
 CONTRACT: its delta (a sparse ``Map<index, delta>``) already expresses
 partial ticks; List VALUES with never-valid children take the same
 validity treatment when the need arises (recorded deferral).
+
+Audited value surfaces (2026-07-06 sweep — every place a composite value
+is ASSEMBLED or APPLIED honours the filter):
+
+- Non-peered INPUT endpoints (``input_value_element_at``): both
+  target-link children (``has_current_value`` on the resolved target —
+  note ``TSDataView::valid()`` means *has storage*, not TS-validity) and
+  direct children read UNSET when invalid.
+- ``apply_current_value`` over TSB and TSL: UNSET source children are
+  skipped (the dense whole-plan fast path is gone for TSB).
+- Fixed-structured TSData whole-value copy/move: UNSET source fields
+  skip (with region-bitset marking on child writes).
+- ``switch_`` mixed value/REF branches: value terminals forward into a
+  dedicated value backing; the switch output publishes a peered
+  reference to it; branch teardown publishes EMPTY and destroys the
+  backing (consumers observe the reset — stale values must not survive
+  a reload).
