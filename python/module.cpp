@@ -994,9 +994,17 @@ namespace
             // construction the C++ runtime uses) so its binding matches the
             // output plan regardless of which side produced the reference.
             Value raw = py_to_value(result);
-            Value reference{raw.view().checked_as<TimeSeriesReference>()};
-            auto  mutation = erased.begin_mutation(erased.evaluation_time());
-            if (!mutation.move_value_from(std::move(reference)))
+            TimeSeriesReference reference = raw.view().checked_as<TimeSeriesReference>();
+            // SAME-REFERENCE dedup (the recurring rule): a re-evaluation
+            // returning the unchanged reference must not re-tick consumers -
+            // every re-publish samples the whole target on rebind.
+            if (erased.data_view().has_current_value() &&
+                erased.data_view().value().checked_as<TimeSeriesReference>() == reference)
+            {
+                return;
+            }
+            auto mutation = erased.begin_mutation(erased.evaluation_time());
+            if (!mutation.move_value_from(Value{std::move(reference)}))
             {
                 throw std::logic_error("REF output failed to move the reference value");
             }

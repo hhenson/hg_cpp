@@ -255,6 +255,15 @@ namespace hgraph::detail
 
         void bind_target_link_at(const TSDataView &target, const TSOutputView &output, DateTime modified_time)
         {
+            // SAME-TARGET dedup: re-applying a reference whose item is
+            // unchanged (a re-published assembly re-binds every field) must
+            // not record modified - consumers would sample the unchanged
+            // target as a fresh tick.
+            if (auto *existing = mutable_target_link_storage(target);
+                existing != nullptr && existing->bound() && existing->target_output().same_as(output.handle()))
+            {
+                return;
+            }
             bind_target_link(target, output);
             auto *link = mutable_target_link_storage(target);
             if (link == nullptr)
