@@ -106,11 +106,11 @@ namespace hgraph
 
         void (*attach_graph_impl)(const void *context, void *memory, GraphValue *graph,
                                   std::size_t node_index) = nullptr;
-        [[nodiscard]] GraphValue *(*graph_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] std::size_t (*node_index_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] std::string_view (*label_impl)(const void *context, const void *memory) noexcept = nullptr;
+        GraphValue *(*graph_impl)(const void *context, const void *memory) noexcept = nullptr;
+        std::size_t (*node_index_impl)(const void *context, const void *memory) noexcept = nullptr;
+        std::string_view (*label_impl)(const void *context, const void *memory) noexcept = nullptr;
 
-        [[nodiscard]] bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
+        bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
         void (*start_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
         void (*stop_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
         // Returns true when the node completed its evaluation, false when the node
@@ -118,28 +118,28 @@ namespace hgraph
         // protocol in the execution-layer docs). Ordinary nodes always return true.
         bool (*evaluate_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
 
-        [[nodiscard]] bool (*has_input_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] bool (*has_output_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] bool (*has_state_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] bool (*has_scalars_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] bool (*has_scheduler_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] bool (*has_error_output_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] bool (*has_recordable_state_impl)(const void *context, const void *memory) noexcept = nullptr;
+        bool (*has_input_impl)(const void *context, const void *memory) noexcept = nullptr;
+        bool (*has_output_impl)(const void *context, const void *memory) noexcept = nullptr;
+        bool (*has_state_impl)(const void *context, const void *memory) noexcept = nullptr;
+        bool (*has_scalars_impl)(const void *context, const void *memory) noexcept = nullptr;
+        bool (*has_scheduler_impl)(const void *context, const void *memory) noexcept = nullptr;
+        bool (*has_error_output_impl)(const void *context, const void *memory) noexcept = nullptr;
+        bool (*has_recordable_state_impl)(const void *context, const void *memory) noexcept = nullptr;
 
-        [[nodiscard]] TSInputView (*input_view_impl)(const void *context, void *memory,
+        TSInputView (*input_view_impl)(const void *context, void *memory,
                                                      DateTime evaluation_time) = nullptr;
-        [[nodiscard]] TSOutputView (*output_view_impl)(const void *context, void *memory,
+        TSOutputView (*output_view_impl)(const void *context, void *memory,
                                                        DateTime evaluation_time) = nullptr;
-        [[nodiscard]] ValueView (*state_view_impl)(const void *context, void *memory) = nullptr;
+        ValueView (*state_view_impl)(const void *context, void *memory) = nullptr;
         void (*replace_state_impl)(const void *context, void *memory, Value value) = nullptr;
-        [[nodiscard]] ValueView (*scalars_view_impl)(const void *context, void *memory) = nullptr;
-        [[nodiscard]] NodeSchedulerState *(*scheduler_state_impl)(const void *context, void *memory) = nullptr;
-        [[nodiscard]] GlobalStateView (*global_state_view_impl)(const void *context, void *memory) = nullptr;
-        [[nodiscard]] EvaluationClockStorageRef (*evaluation_clock_ref_impl)(const void *context,
+        ValueView (*scalars_view_impl)(const void *context, void *memory) = nullptr;
+        NodeSchedulerState *(*scheduler_state_impl)(const void *context, void *memory) = nullptr;
+        GlobalStateView (*global_state_view_impl)(const void *context, void *memory) = nullptr;
+        EvaluationClockStorageRef (*evaluation_clock_ref_impl)(const void *context,
                                                                              void *memory) = nullptr;
-        [[nodiscard]] TSOutputView (*error_output_view_impl)(const void *context, void *memory,
+        TSOutputView (*error_output_view_impl)(const void *context, void *memory,
                                                              DateTime evaluation_time) = nullptr;
-        [[nodiscard]] TSOutputView (*recordable_state_view_impl)(const void *context, void *memory,
+        TSOutputView (*recordable_state_view_impl)(const void *context, void *memory,
                                                                  DateTime evaluation_time) = nullptr;
 
         const void *extended_view_type_id{nullptr};

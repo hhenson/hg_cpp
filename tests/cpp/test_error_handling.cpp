@@ -263,7 +263,7 @@ TEST_CASE("error handling: exception_time_series captures a node throw")
     set_replay_values<Int>(gb.global_state(), "x", values<Int>(5, -3, 7));
 
     GraphExecutorValue ex = run_graph(std::move(gb), MIN_ST, MAX_ET);
-    const auto        &gs = ex.view().graph().global_state();
+    auto               gs = ex.view().graph().global_state();
 
     // The throw cycle (x=-3) ticks the error. This node throws before writing
     // output; write-then-throw output is deliberately unspecified.
@@ -280,7 +280,7 @@ TEST_CASE("error handling: exception_time_series catches non-standard exceptions
     set_replay_values<Int>(gb.global_state(), "x", values<Int>(5, -3, 7));
 
     GraphExecutorValue ex = run_graph(std::move(gb), MIN_ST, MAX_ET);
-    const auto        &gs = ex.view().graph().global_state();
+    auto gs = ex.view().graph().global_state();
 
     CHECK_OUTPUT(get_recorded_values<Int>(gs, "out"), values<Int>(15, none, 21));
     CHECK_OUTPUT(get_recorded_values<Str>(gs, "err"), values<Str>(none, "unknown error"s));
@@ -295,7 +295,7 @@ TEST_CASE("error handling: a clean run never ticks the error output")
     set_replay_values<Int>(gb.global_state(), "x", values<Int>(1, 2, 3));
 
     GraphExecutorValue ex = run_graph(std::move(gb), MIN_ST, MAX_ET);
-    const auto        &gs = ex.view().graph().global_state();
+    auto gs = ex.view().graph().global_state();
 
     CHECK_OUTPUT(get_recorded_values<Int>(gs, "out"), values<Int>(2, 4, 6));
     CHECK_OUTPUT(get_recorded_values<Str>(gs, "err"), values<Str>());
@@ -310,7 +310,7 @@ TEST_CASE("error handling: try_except over a sub-graph routes value and exceptio
     set_replay_values<Int>(gb.global_state(), "x", values<Int>(5, -3, 7));
 
     GraphExecutorValue ex = run_graph(std::move(gb), MIN_ST, MAX_ET);
-    const auto        &gs = ex.view().graph().global_state();
+    auto gs = ex.view().graph().global_state();
 
     CHECK_OUTPUT(get_recorded_values<Int>(gs, "out"), values<Int>(10, none, 14));
     CHECK_OUTPUT(get_recorded_values<Str>(gs, "err"), values<Str>(none, "negative input"s));
@@ -325,7 +325,7 @@ TEST_CASE("error handling: try_except catches non-standard exceptions as unknown
     set_replay_values<Int>(gb.global_state(), "x", values<Int>(5, -3, 7));
 
     GraphExecutorValue ex = run_graph(std::move(gb), MIN_ST, MAX_ET);
-    const auto        &gs = ex.view().graph().global_state();
+    auto gs = ex.view().graph().global_state();
 
     CHECK_OUTPUT(get_recorded_values<Int>(gs, "out"), values<Int>(15, none, 21));
     CHECK_OUTPUT(get_recorded_values<Str>(gs, "err"), values<Str>(none, "unknown error"s));
@@ -340,7 +340,7 @@ TEST_CASE("error handling: try_except over a sink sub-graph yields just the erro
     set_replay_values<Int>(gb.global_state(), "x", values<Int>(5, -3, 7));
 
     GraphExecutorValue ex = run_graph(std::move(gb), MIN_ST, MAX_ET);
-    const auto        &gs = ex.view().graph().global_state();
+    auto gs = ex.view().graph().global_state();
 
     CHECK_OUTPUT(get_recorded_values<Str>(gs, "err"), values<Str>(none, "sink negative"s));
 }

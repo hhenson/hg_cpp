@@ -370,13 +370,13 @@ namespace hgraph
         }
 
         template <typename ParamsTuple, typename DefaultsTuple, std::size_t... I>
-        void validate_default_args(std::string_view call_name,
+        void validate_default_args([[maybe_unused]] std::string_view call_name,
                                    const DefaultsTuple &defaults,
-                                   std::string_view parameter_kind,
+                                   [[maybe_unused]] std::string_view parameter_kind,
                                    std::index_sequence<I...>)
         {
             constexpr std::size_t param_count = std::tuple_size_v<ParamsTuple>;
-            std::array<bool, param_count> filled{};
+            [[maybe_unused]] std::array<bool, param_count> filled{};
 
             (
                 [&] {
@@ -424,8 +424,8 @@ namespace hgraph
             constexpr std::size_t caller_params = caller_visible_param_count<ParamsTuple>();
             constexpr auto        slot_to_param = positional_slot_to_param_index<ParamsTuple>();
             std::array<bool, param_count> filled{};
-            bool                          seen_named = false;
-            std::size_t                   positional = 0;
+            [[maybe_unused]] bool seen_named = false;
+            [[maybe_unused]] std::size_t positional = 0;
 
             (
                 [&] {
@@ -511,8 +511,8 @@ namespace hgraph
         [[nodiscard]] consteval std::size_t bound_arg_index(std::index_sequence<I...>)
         {
             std::size_t found      = npos;
-            bool        seen_named = false;
-            std::size_t positional = 0;
+            [[maybe_unused]] bool        seen_named = false;
+            [[maybe_unused]] std::size_t positional = 0;
 
             (
                 [&] {

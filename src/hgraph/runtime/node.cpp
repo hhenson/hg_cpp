@@ -321,10 +321,9 @@ namespace hgraph
             {
                 const auto *component = plan.find_component("input");
                 if (component == nullptr) { throw std::logic_error("Node storage plan is missing input"); }
-                const auto &input_builder = input_builder_for(*schema.input_schema, std::move(input_endpoint));
                 std::construct_at(MemoryUtils::cast<TSInput>(
                                       MemoryUtils::advance(memory, component->offset)),
-                                  input_builder);
+                                  input_builder_for(*schema.input_schema, std::move(input_endpoint)));
                 constructed.push_back(component);
             }
 

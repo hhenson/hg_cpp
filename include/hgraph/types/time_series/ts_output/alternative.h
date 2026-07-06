@@ -28,6 +28,9 @@ namespace hgraph::detail
     class TSOutputAlternativeStore
     {
       public:
+        struct ToRefAlternativeState;
+        struct RefLinkAlternativeState;
+
         TSOutputAlternativeStore() noexcept;
         TSOutputAlternativeStore(const TSOutputAlternativeStore &) = delete;
         TSOutputAlternativeStore &operator=(const TSOutputAlternativeStore &) = delete;
@@ -56,9 +59,6 @@ namespace hgraph::detail
                                                                std::size_t child_id);
 
       private:
-        struct ToRefAlternativeState;
-        struct RefLinkAlternativeState;
-
         struct AlternativeKey
         {
             const TSOutput              *source_output{nullptr};
@@ -90,5 +90,20 @@ namespace hgraph::detail
             ref_link_alternatives_{};
     };
 }  // namespace hgraph::detail
+
+namespace std
+{
+    template<>
+    struct default_delete<hgraph::detail::TSOutputAlternativeStore::ToRefAlternativeState>
+    {
+        void operator()(hgraph::detail::TSOutputAlternativeStore::ToRefAlternativeState *) noexcept;
+    };
+
+    template<>
+    struct default_delete<hgraph::detail::TSOutputAlternativeStore::RefLinkAlternativeState>
+    {
+        void operator()(hgraph::detail::TSOutputAlternativeStore::RefLinkAlternativeState *) noexcept;
+    };
+}  // namespace std
 
 #endif  // HGRAPH_CPP_TS_OUTPUT_ALTERNATIVE_H

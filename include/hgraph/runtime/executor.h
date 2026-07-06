@@ -40,15 +40,15 @@ namespace hgraph
 
         void (*run_impl)(const void *context, const GraphExecutorView &executor) = nullptr;
         void (*request_stop_impl)(const void *context, void *memory) noexcept = nullptr;
-        [[nodiscard]] bool (*stop_requested_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] DateTime (*start_time_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] DateTime (*end_time_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] GraphView (*graph_impl)(const void *context, void *memory) = nullptr;
-        [[nodiscard]] EvaluationClockStorageRef (*evaluation_clock_ref_impl)(const void *context,
+        bool (*stop_requested_impl)(const void *context, const void *memory) noexcept = nullptr;
+        DateTime (*start_time_impl)(const void *context, const void *memory) noexcept = nullptr;
+        DateTime (*end_time_impl)(const void *context, const void *memory) noexcept = nullptr;
+        GraphView (*graph_impl)(const void *context, void *memory) = nullptr;
+        EvaluationClockStorageRef (*evaluation_clock_ref_impl)(const void *context,
                                                                              void *memory) noexcept = nullptr;
         void (*mark_push_update_pending_impl)(const void *context, void *memory) = nullptr;
-        [[nodiscard]] bool (*is_push_update_pending_impl)(const void *context, void *memory) noexcept = nullptr;
-        [[nodiscard]] bool (*reset_push_update_pending_impl)(const void *context, void *memory) noexcept = nullptr;
+        bool (*is_push_update_pending_impl)(const void *context, void *memory) noexcept = nullptr;
+        bool (*reset_push_update_pending_impl)(const void *context, void *memory) noexcept = nullptr;
     };
 
     /** Real-time push queue projection over the root graph executor. */

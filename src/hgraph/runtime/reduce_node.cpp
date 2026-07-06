@@ -591,13 +591,11 @@ namespace hgraph
         // destroy before the field (the nested_/switch_ direction).
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
-        const auto &context = register_reduce_node_context(
-            std::move(spec), descriptor.storage_plan->component(reduce_storage_field_name).offset);
-
         descriptor.callbacks.stop            = &reduce_node_stop;
         descriptor.ops.evaluate_impl         = &reduce_evaluate_impl;
         descriptor.ops.extended_view_type_id = ReduceNodeView::node_view_type_id();
-        descriptor.ops.extended_view_context = &context;
+        descriptor.ops.extended_view_context = &register_reduce_node_context(
+            std::move(spec), descriptor.storage_plan->component(reduce_storage_field_name).offset);
 
         return NodeBuilder::from_descriptor(std::move(descriptor));
     }

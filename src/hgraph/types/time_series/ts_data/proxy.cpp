@@ -1225,7 +1225,8 @@ namespace hgraph
             throw std::invalid_argument("bind_tsd_proxy requires a source TSD with the same key schema");
         }
 
-        const auto &layout = proxy.as_dict().layout();
+        const auto &dict   = proxy.as_dict();
+        const auto &layout = dict.layout();
         if (layout.element_binding == nullptr)
         {
             throw std::logic_error("bind_tsd_proxy requires an element binding");

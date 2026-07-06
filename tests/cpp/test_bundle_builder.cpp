@@ -138,7 +138,8 @@ TEST_CASE("BundleBuilder: moves owned field values")
     builder.set("field", std::move(field));
     Value bundle = builder.build();
 
-    const auto &stored = bundle.view().as_bundle().field("field").checked_as<BundleMoveCountingScalar>();
+    auto        field_view = bundle.view().as_bundle().field("field");
+    const auto &stored     = field_view.checked_as<BundleMoveCountingScalar>();
     REQUIRE(stored.value == 13);
     REQUIRE(BundleMoveCountingScalar::copy_constructs == 0);
     REQUIRE(BundleMoveCountingScalar::copy_assigns == 0);

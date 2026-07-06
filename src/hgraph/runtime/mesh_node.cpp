@@ -949,13 +949,11 @@ namespace hgraph
         // forward into it (and read it as their self-context).
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, {}, fields);
 
-        const auto &context = register_mesh_node_context(
-            std::move(spec), descriptor.storage_plan->component(mesh_storage_field_name).offset);
-
         descriptor.callbacks.stop            = &mesh_node_stop;
         descriptor.ops.evaluate_impl         = &mesh_evaluate_impl;
         descriptor.ops.extended_view_type_id = MeshNodeView::node_view_type_id();
-        descriptor.ops.extended_view_context = &context;
+        descriptor.ops.extended_view_context = &register_mesh_node_context(
+            std::move(spec), descriptor.storage_plan->component(mesh_storage_field_name).offset);
 
         return NodeBuilder::from_descriptor(std::move(descriptor));
     }

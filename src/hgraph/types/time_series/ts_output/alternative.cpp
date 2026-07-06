@@ -809,6 +809,25 @@ namespace hgraph::detail
         }
     };
 
+}  // namespace hgraph::detail
+
+namespace std
+{
+    void default_delete<hgraph::detail::TSOutputAlternativeStore::ToRefAlternativeState>::operator()(
+        hgraph::detail::TSOutputAlternativeStore::ToRefAlternativeState *p) noexcept
+    {
+        delete p;
+    }
+
+    void default_delete<hgraph::detail::TSOutputAlternativeStore::RefLinkAlternativeState>::operator()(
+        hgraph::detail::TSOutputAlternativeStore::RefLinkAlternativeState *p) noexcept
+    {
+        delete p;
+    }
+}  // namespace std
+
+namespace hgraph::detail
+{
     TSOutputAlternativeStore::TSOutputAlternativeStore() noexcept = default;
     TSOutputAlternativeStore::TSOutputAlternativeStore(TSOutputAlternativeStore &&) noexcept = default;
     TSOutputAlternativeStore &TSOutputAlternativeStore::operator=(TSOutputAlternativeStore &&) noexcept = default;
