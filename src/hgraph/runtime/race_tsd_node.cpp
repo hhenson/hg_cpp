@@ -192,7 +192,12 @@ namespace hgraph
                 DateTime     best_time = MAX_DT;
                 for (const auto &[key, entry] : storage.entries)
                 {
-                    if (entry.first_valid < best_time)
+                    // Deterministic tie-break on equal first-valid times: the
+                    // SMALLEST key (hgraph resolves ties by dict insertion
+                    // order, which the erased key map does not preserve).
+                    if (entry.first_valid < best_time ||
+                        (entry.first_valid == best_time && best != nullptr &&
+                         key.view().compare(best->view()) == std::partial_ordering::less))
                     {
                         best_time = entry.first_valid;
                         best      = &key;
@@ -225,9 +230,14 @@ namespace hgraph
             }
             else
             {
-                auto child = tsd.at(storage.winner.view());
-                if (child.modified())
+                // Re-publish only when the winner's REFERENCE ticked this
+                // cycle - the dict's SLOT delta state (per-element tracking
+                // on an owned TSD is root-coupled and reads modified on any
+                // sibling tick).
+                const std::size_t slot = tsd.find_slot(storage.winner.view());
+                if (slot != TS_DATA_NO_CHILD_ID && tsd.slot_modified(slot))
                 {
+                    auto child = tsd.at_slot(slot);
                     publish_reference(view, evaluation_time, child.value().checked_as<TimeSeriesReference>());
                 }
             }

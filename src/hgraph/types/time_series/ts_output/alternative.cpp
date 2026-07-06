@@ -554,13 +554,20 @@ namespace hgraph::detail
                                  DateTime               modified_time,
                                  const ToRefBuildContext    &)
         {
-            auto reference = Value{TSOutputAlternativeStore::peered_reference_as(target_schema.referenced_ts(),
-                                                                                 source_view.handle())};
+            auto reference = TSOutputAlternativeStore::peered_reference_as(target_schema.referenced_ts(),
+                                                                            source_view.handle());
+            // SAME-REFERENCE dedup (the getitem_ lesson): boundary rebinds
+            // re-populate every refresh; an unchanged reference must not
+            // record modified, or every rebind wakes downstream consumers.
+            if (target.has_current_value() &&
+                target.value().checked_as<TimeSeriesReference>() == reference)
+            {
+                return;
+            }
             auto mutation = target.begin_mutation(modified_time);
             // move_value_from returns FIRST-FOR-TIME, not success: a same-cycle
-            // re-populate (map_ re-binds child boundaries every cycle) writes
-            // the value and returns false - benign.
-            static_cast<void>(mutation.move_value_from(std::move(reference)));
+            // re-populate writes the value and returns false - benign.
+            static_cast<void>(mutation.move_value_from(Value{std::move(reference)}));
         }
 
         void populate_to_ref_bundle(const TSDataView           &target,

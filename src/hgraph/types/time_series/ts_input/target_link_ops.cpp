@@ -1,4 +1,5 @@
 #include "target_link_ops.h"
+#include <hgraph/types/time_series/ts_delta.h>
 
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/value/value.h>
@@ -772,6 +773,40 @@ namespace hgraph::detail
             return mutation.move_value_from(std::move(value));
         }
 
+        /**
+         * Delta write-through (the copy/move pattern extended): a delta
+         * applied to a forwarding endpoint lands on the TARGET output through
+         * its own ops - python map_ children apply canonical deltas to their
+         * re-homed terminals.
+         */
+        [[nodiscard]] TSOutputView target_link_delta_target(const void *context, const TSOutputView &out)
+        {
+            const auto *link =
+                target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), out.data_view().data());
+            if (link == nullptr || !link->target_output().bound())
+            {
+                throw std::logic_error("TSInput target-link delta write-through requires a bound target output");
+            }
+            return link->target_output().view(out.evaluation_time());
+        }
+
+        [[nodiscard]] bool target_link_delta_has_effect_op(const TSOutputView &out, const ValueView &delta)
+        {
+            const auto *binding = out.binding();
+            if (binding == nullptr) { throw std::logic_error("target-link delta ops require a bound output"); }
+            auto        target        = target_link_delta_target(binding->ops_ref().context, out);
+            const auto *target_binding = target.binding();
+            if (target_binding == nullptr) { throw std::logic_error("target-link delta target has no binding"); }
+            return target_binding->ops_ref().delta_has_effect_impl(target, delta);
+        }
+
+        void target_link_apply_delta_op(const TSOutputView &out, const ValueView &delta)
+        {
+            const auto *binding = out.binding();
+            if (binding == nullptr) { throw std::logic_error("target-link delta ops require a bound output"); }
+            ::hgraph::apply_delta(target_link_delta_target(binding->ops_ref().context, out), delta);
+        }
+
         [[nodiscard]] TSDataOps target_link_base_ops(TSInputTargetLinkContext &context)
         {
             return TSDataOps{
@@ -787,6 +822,8 @@ namespace hgraph::detail
                 .delta_memory_impl         = &target_link_delta_memory,
                 .copy_value_from_impl      = &target_link_copy_value_from,
                 .move_value_from_impl      = &target_link_move_value_from,
+                .delta_has_effect_impl     = &target_link_delta_has_effect_op,
+                .apply_delta_impl          = &target_link_apply_delta_op,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                 .to_python_impl            = &target_link_to_python,
                 .delta_to_python_impl      = &target_link_delta_to_python,

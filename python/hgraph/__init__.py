@@ -30,6 +30,9 @@ _hgraph._set_removed_sentinel(REMOVED)
 _hgraph._set_cmp_result_enum(CmpResult)
 _hgraph._set_divide_by_zero_enum(DivideByZero)
 
+from ._runtime import _Combine as _CombineClass
+combine = _CombineClass()
+
 REMOVE = REMOVED           # hgraph's TSD key-removal sentinel
 Removed = type(REMOVED)
 

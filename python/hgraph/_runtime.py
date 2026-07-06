@@ -186,7 +186,21 @@ def _wrap_graph_fn(gfn):
         _wiring_stack.append(borrowed_wiring)
         try:
             out = user_fn(*(WiringPort(p) for p in ports))
-            return None if out is None else _unwrap(out)
+            if out is None:
+                return None
+            raw = _unwrap(out)
+            if raw.is_structural:
+                # Child sub-graph outputs must be real NODE outputs. A
+                # structural port with REFERENCE-valued fields materializes
+                # as a REFERENCE output (hgraph's combine-of-refs shape -
+                # zero copy); plain fields copy through the canonical-delta
+                # identity node.
+                child_kinds = _hgraph.structural_child_kinds(raw)
+                if any(k == 6 for k in child_kinds):   # 6 = REF
+                    raw = _hgraph.ref_port(borrowed_wiring, raw)
+                else:
+                    raw = _unwrap(wire("__materialize", out))
+            return raw
         finally:
             _wiring_stack.pop()
 
@@ -270,6 +284,28 @@ def passive(port):
 def feedback(tp, initial=None):
     w = _current_wiring()
     return Feedback(w, w.feedback(_unwrap(tp), initial))
+
+
+def combine(*args, __output_type__=None, **kwargs):
+    """hgraph's combine: build a composite port. ``combine[TSB[S]](a=..., b=...)``
+    (the subscript names the target type) builds a structural bundle;
+    plain values const-lift at the field types."""
+    if __output_type__ is None:
+        raise TypeError("combine requires a subscripted type: combine[TSB[Schema]](...)")
+    return __output_type__.from_ts(*args, **kwargs)
+
+
+class _Combine:
+    """The combine callable: instance-level subscript (combine[TSB[S]])."""
+
+    def __getitem__(self, item):
+        def _build(*args, **kwargs):
+            return combine(*args, __output_type__=item, **kwargs)
+
+        return _build
+
+    def __call__(self, *args, **kwargs):
+        return combine(*args, **kwargs)
 
 
 def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
@@ -1000,6 +1036,20 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             w.set_replay(key, list(series), ts_type=annotation.handle)
             ports.append(WiringPort(src))
         scalars = dict(__scalars__ or {})
+        # hgraph parity: keyword arguments naming the function's parameters
+        # are INPUT SERIES (eval_node(g, a=[...], b=[...])); the rest flow to
+        # the node as scalars.
+        param_names = {p.name for p in params}
+        named_series = {k: v for k, v in kwargs.items() if k in param_names and isinstance(v, (list, tuple))}
+        for k in named_series: kwargs.pop(k)
+        if named_series:
+            by_name = {p.name: i for i, p in enumerate(params)}
+            extended = list(inputs) + [None] * (max(by_name[k] for k in named_series) + 1 - len(inputs))
+            for k, series in named_series.items():
+                extended[by_name[k]] = series
+            return eval_node(fn, *extended, output_type=output_type, resolution_dict=resolution_dict,
+                             __start_time__=__start_time__, __end_time__=__end_time__,
+                             __scalars__=__scalars__, **kwargs)
         scalars.update(kwargs)   # hgraph parity: extra kwargs flow to the node
         out = fn(*ports, **scalars)
         length = max((len(series) for series in inputs if isinstance(series, (list, tuple))), default=0)

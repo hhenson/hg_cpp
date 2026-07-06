@@ -38,7 +38,7 @@ OperatorWiringNodeClass = type(_operator_function("add_"))
 _KNOWN_GAPS = (
     "json_encode", "json_decode",
     "to_window", "window", "batch", "filter_by",
-    "convert", "combine", "collect", "emit",
+    "convert", "collect", "emit",
     "cast_", "downcast_", "downcast_ref",
     "collapse_keys", "flip_keys", "uncollapse_keys", "values_",
     "assert_", "print_", "setattr_", "type_",

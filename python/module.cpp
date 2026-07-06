@@ -139,6 +139,12 @@ namespace
         return *slot;
     }
 
+    [[nodiscard]] nb::object &removed_sentinel_slot()
+    {
+        static auto *slot = new nb::object{};
+        return *slot;
+    }
+
 
     [[nodiscard]] Value py_to_value(nb::handle object);
     [[nodiscard]] nb::object value_to_py(const ValueView &view);
@@ -499,7 +505,10 @@ namespace
                 for (auto [key, item] : nb::cast<nb::dict>(object))
                 {
                     Value key_value = py_to_value_as(key, key_meta);
-                    if (item.is_none()) { (void)removed.insert_copy(key_value.view().data()); }
+                    const bool remove =
+                        item.is_none() ||
+                        (removed_sentinel_slot().is_valid() && item.is(removed_sentinel_slot()));
+                    if (remove) { (void)removed.insert_copy(key_value.view().data()); }
                     else
                     {
                         Value child_delta = py_to_delta(item, child);
@@ -1217,11 +1226,7 @@ namespace
         }
 
         /** The python REMOVED sentinel, registered by the hgraph package at import. */
-        [[nodiscard]] static nb::object &removed_slot()
-        {
-            static auto *slot = new nb::object{};
-            return *slot;
-        }
+        [[nodiscard]] static nb::object &removed_slot() { return removed_sentinel_slot(); }
 
         [[nodiscard]] static nb::object removed_sentinel()
         {
@@ -1458,6 +1463,23 @@ namespace
         : Operator<"__harness_replay", Scalar<"key", Str>, Out<TsVar<"S">>> {};
     struct op_harness_record : Operator<"__harness_record", In<"ts", TsVar<"S">>, Scalar<"key", Str>> {};
 
+    /** Materialize a STRUCTURAL port through a real node output (child
+        sub-graph outputs must be node outputs - a python function returning
+        combine[TSB[...]](...) produces a structural source). Canonical
+        delta capture/apply keeps every kind's granularity. */
+    struct materialize_node
+    {
+        static constexpr auto name = "__materialize";
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"S">> out)
+        {
+            const Value delta = capture_delta(ts.base());
+            apply_delta(static_cast<const TSOutputView &>(out), delta.view());
+        }
+    };
+
+    struct op_materialize : Operator<"__materialize", In<"ts", TsVar<"S">>, Out<TsVar<"S">>> {};
+
     struct op_recover_pt
         : Operator<"__recovering_pass_through", In<"ts", TsVar<"S">>, Scalar<"fq_key", Str>, Out<TsVar<"S">>> {};
 
@@ -1541,6 +1563,7 @@ NB_MODULE(_hgraph, m)
 
     stdlib::register_standard_operators();
     (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar
+    register_overload<op_materialize, materialize_node>();
     register_overload<op_py_compute, py_compute_node>();
     register_overload<op_py_sink, py_sink_node>();
     register_overload<op_py_generator, py_generator_node>();
@@ -1563,6 +1586,7 @@ NB_MODULE(_hgraph, m)
         });
     nb::class_<PyPort>(m, "Port")
         .def_prop_ro("ts_type", [](const PyPort &self) { return PyTsType{self.ref.schema}; })
+        .def_prop_ro("is_structural", [](const PyPort &self) { return self.ref.is_structural_source(); })
         .def_prop_ro("dereferenced", [](const PyPort &self) {
             // The descriptive-schema patch (the Port::as / reference-service
             // pattern): present a REF output as its value schema - input
@@ -1897,6 +1921,26 @@ NB_MODULE(_hgraph, m)
             children.push_back(nb::cast<PyPort &>(port).ref);
         }
         return PyPort{WiringPortRef::structural_source(ts_type.meta, std::move(children))};
+    });
+
+    m.def("structural_child_kinds", [](const PyPort &port) {
+        nb::list result;
+        if (!port.ref.is_structural_source()) { return result; }
+        for (const WiringPortRef &child : port.ref.structural_children())
+        {
+            result.append(child.schema != nullptr ? static_cast<int>(child.schema->kind) : -1);
+        }
+        return result;
+    });
+
+    m.def("ref_port", [](PyWiring &wiring, const PyPort &port) {
+        // Materialize a STRUCTURAL port as a REFERENCE output (the
+        // structural-REF node): the child output becomes REF<S> without
+        // copying - hgraph's combine-of-references shape.
+        auto       &registry = TypeRegistry::instance();
+        const auto *target   = registry.dereference(port.ref.schema);
+        const auto *ref_schema = registry.ref(target);
+        return PyPort{graph_wiring_detail::adapt_source_for_input(*wiring.raw, ref_schema, port.ref)};
     });
 
     m.def("tsl_port", [](nb::list ports) {

@@ -352,15 +352,16 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
+            auto &registry = TypeRegistry::instance();
             for (const WiringArg &arg : context.args)
             {
                 if (arg.kind != WiringArg::Kind::TimeSeries || arg.port.schema == nullptr) { continue; }
-                if (arg.port.schema->kind == TSTypeKind::TSD && arg.port.schema->element_ts() != nullptr &&
-                    arg.port.schema->element_ts()->kind == TSTypeKind::REF)
-                {
-                    higher_order_impl_detail::bind_graph_output(resolution, arg.port.schema->element_ts(), "O");
-                    return;
-                }
+                if (arg.port.schema->kind != TSTypeKind::TSD || arg.port.schema->element_ts() == nullptr) { continue; }
+                const auto *element = arg.port.schema->element_ts();
+                const auto *out     = element->kind == TSTypeKind::REF ? element
+                                                                       : registry.ref(registry.dereference(element));
+                higher_order_impl_detail::bind_graph_output(resolution, out, "O");
+                return;
             }
         }
 
