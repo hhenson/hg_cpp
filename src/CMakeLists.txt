@@ -68,6 +68,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/record_replay.cpp
     hgraph/types/service_runtime.cpp
     hgraph/types/primitive_types.cpp
+    hgraph/lib/std/operators/json_impl.cpp
     hgraph/types/value/json_codec.cpp
     hgraph/types/value/table_codec.cpp
     hgraph/types/frame.cpp

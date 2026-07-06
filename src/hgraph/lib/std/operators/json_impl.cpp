@@ -1,0 +1,630 @@
+#include <hgraph/lib/std/operators/impl/json_impl.h>
+
+#include <fmt/format.h>
+#include <simdjson.h>
+
+#include <cstdint>
+#include <limits>
+#include <ostream>
+#include <stdexcept>
+
+namespace hgraph::stdlib::json_tree
+{
+    namespace
+    {
+        [[nodiscard]] std::string append_key(std::string_view pointer, const Str &key)
+        {
+            std::string out{pointer};
+            out += '/';
+            for (const char c : key)
+            {
+                if (c == '~') { out += "~0"; }
+                else if (c == '/') { out += "~1"; }
+                else { out += c; }
+            }
+            return out;
+        }
+
+        [[nodiscard]] std::string append_index(std::string_view pointer, Int index)
+        {
+            std::string out{pointer};
+            out += '/';
+            out += std::to_string(index);
+            return out;
+        }
+
+        inline void escape_into(const Str &text, std::string &out)
+        {
+            out += '"';
+            for (const char c : text)
+            {
+                switch (c)
+                {
+                    case '"': out += "\\\""; break;
+                    case '\\': out += "\\\\"; break;
+                    case '\n': out += "\\n"; break;
+                    case '\t': out += "\\t"; break;
+                    case '\r': out += "\\r"; break;
+                    default: out += c;
+                }
+            }
+            out += '"';
+        }
+    }  // namespace
+
+    const ValueTypeMetaData *json_meta() { return TypeRegistry::instance().json(); }
+
+    const ValueTypeBinding &json_value_binding()
+    {
+        return *ValuePlanFactory::instance().binding_for(json_meta());
+    }
+
+    bool is_json_ts(const TSValueTypeMetaData *ts) noexcept
+    {
+        return ts != nullptr && ts->kind == TSTypeKind::TS && ts->value_schema == json_meta();
+    }
+
+    struct JsonValue::Document
+    {
+        explicit Document(Str text)
+            : padded(text)
+            , parser(std::make_unique<simdjson::dom::parser>())
+        {
+            auto parsed = parser->parse(padded);
+            if (auto error = parsed.get(root))
+            {
+                throw std::invalid_argument(fmt::format("json_decode: {}", simdjson::error_message(error)));
+            }
+        }
+
+        simdjson::padded_string                padded;
+        std::unique_ptr<simdjson::dom::parser> parser;
+        simdjson::dom::element                 root;
+    };
+
+    struct JsonValue::Access
+    {
+        [[nodiscard]] static std::optional<simdjson::dom::element> try_element(const JsonValue &value)
+        {
+            if (!value.document_) { return std::nullopt; }
+            if (value.pointer_.empty()) { return value.document_->root; }
+            simdjson::dom::element result;
+            auto                   lookup = value.document_->root.at_pointer(value.pointer_);
+            if (lookup.get(result)) { return std::nullopt; }
+            return result;
+        }
+
+        [[nodiscard]] static simdjson::dom::element element(const JsonValue &value)
+        {
+            auto result = try_element(value);
+            if (!result.has_value()) { throw std::invalid_argument("JSON tree: path does not exist"); }
+            return *result;
+        }
+
+        [[nodiscard]] static JsonValue make(std::shared_ptr<Document> document, std::string pointer)
+        {
+            return JsonValue{std::move(document), std::move(pointer)};
+        }
+    };
+
+    JsonValue::JsonValue(std::shared_ptr<Document> document, std::string pointer)
+        : document_(std::move(document))
+        , pointer_(std::move(pointer))
+    {
+    }
+
+    const ValueTypeMetaData *json_lazy_meta()
+    {
+        return TypeRegistry::instance().register_scalar<JsonValue>("__hgraph_json_lazy");
+    }
+
+    const JsonValue *try_lazy(const ValueView &value)
+    {
+        return value.valid() && value.schema() == json_lazy_meta() ? &value.checked_as<JsonValue>() : nullptr;
+    }
+
+    Value lazy_value(JsonValue value)
+    {
+        static_cast<void>(json_lazy_meta());
+        return Value{std::move(value)};
+    }
+
+    Value box(Value inner)
+    {
+        Value node{json_value_binding()};
+        if (inner.has_value()) { MutableAnyView{node.begin_mutation()}.set(std::move(inner)); }
+        return node;
+    }
+
+    Value to_node(const ValueView &value)
+    {
+        const auto *meta = value.schema();
+        if (meta == json_meta()) { return Value{value}; }
+        switch (meta->kind)
+        {
+            case ValueTypeKind::Atomic:
+                return box(Value{value});
+            case ValueTypeKind::List:
+            case ValueTypeKind::Tuple: {
+                ListBuilder items{json_value_binding()};
+                for (const auto element : value.as_indexed_view())
+                {
+                    Value node = to_node(element);
+                    items.push_back_copy(node.view().data());
+                }
+                return box(items.build());
+            }
+            case ValueTypeKind::Map: {
+                MapBuilder entries{*ValuePlanFactory::instance().binding_for(
+                                       scalar_descriptor<Str>::value_meta()),
+                                   json_value_binding()};
+                for (const auto [key, item] : value.as_map())
+                {
+                    Value       key_text;
+                    const auto *key_meta = key.schema();
+                    if (key_meta == scalar_descriptor<Str>::value_meta()) { key_text = Value{key}; }
+                    else if (key_meta == scalar_descriptor<Int>::value_meta())
+                    {
+                        key_text = Value{Str{fmt::format("{}", key.checked_as<Int>())}};
+                    }
+                    else if (key_meta == scalar_descriptor<Float>::value_meta())
+                    {
+                        key_text = Value{Str{fmt::format("{}", key.checked_as<Float>())}};
+                    }
+                    else if (key_meta == scalar_descriptor<Bool>::value_meta())
+                    {
+                        key_text = Value{Str{key.checked_as<Bool>() ? "true" : "false"}};
+                    }
+                    else { throw std::invalid_argument("JSON tree: object keys must be strings"); }
+                    Value node = to_node(item);
+                    entries.set_item_copy(key_text.view().data(), node.view().data());
+                }
+                return box(entries.build());
+            }
+            case ValueTypeKind::Any: {
+                auto boxed = value.as_any();
+                return boxed.has_value() ? to_node(boxed.get()) : box(Value{});
+            }
+            default:
+                throw std::invalid_argument("JSON tree: unsupported value kind");
+        }
+    }
+
+    ValueView unbox(const ValueView &node)
+    {
+        auto any = node.as_any();
+        return any.has_value() ? any.get() : ValueView{};
+    }
+
+    bool equals(const ValueView &lhs, const ValueView &rhs)
+    {
+        auto lhs_inner = unbox(lhs);
+        auto rhs_inner = unbox(rhs);
+        if (!lhs_inner.valid() || !rhs_inner.valid()) { return !lhs_inner.valid() && !rhs_inner.valid(); }
+
+        const auto *lhs_lazy = try_lazy(lhs_inner);
+        const auto *rhs_lazy = try_lazy(rhs_inner);
+        if (lhs_lazy != nullptr && rhs_lazy != nullptr) { return *lhs_lazy == *rhs_lazy; }
+        if (lhs_lazy != nullptr)
+        {
+            Value materialized = lhs_lazy->materialize();
+            return equals(materialized.view(), rhs);
+        }
+        if (rhs_lazy != nullptr)
+        {
+            Value materialized = rhs_lazy->materialize();
+            return equals(lhs, materialized.view());
+        }
+        return lhs.equals(rhs);
+    }
+
+    std::partial_ordering compare(const ValueView &lhs, const ValueView &rhs)
+    {
+        if (equals(lhs, rhs)) { return std::partial_ordering::equivalent; }
+
+        auto lhs_inner = unbox(lhs);
+        auto rhs_inner = unbox(rhs);
+        if (!lhs_inner.valid() || !rhs_inner.valid())
+        {
+            return lhs_inner.valid() ? std::partial_ordering::greater : std::partial_ordering::less;
+        }
+
+        if (const auto *lhs_lazy = try_lazy(lhs_inner))
+        {
+            Value materialized = lhs_lazy->materialize();
+            return compare(materialized.view(), rhs);
+        }
+        if (const auto *rhs_lazy = try_lazy(rhs_inner))
+        {
+            Value materialized = rhs_lazy->materialize();
+            return compare(lhs, materialized.view());
+        }
+        return lhs.compare(rhs);
+    }
+
+    void encode(const ValueView &node, std::string &out)
+    {
+        auto inner = unbox(node);
+        if (!inner.valid()) { out += "null"; return; }
+        if (const auto *lazy = try_lazy(inner))
+        {
+            out += lazy->encode();
+            return;
+        }
+        const auto *meta = inner.schema();
+        if (meta == scalar_descriptor<Bool>::value_meta())
+        {
+            out += inner.checked_as<Bool>() ? "true" : "false";
+            return;
+        }
+        if (meta == scalar_descriptor<Int>::value_meta())
+        {
+            out += fmt::format("{}", inner.checked_as<Int>());
+            return;
+        }
+        if (meta == scalar_descriptor<Float>::value_meta())
+        {
+            out += fmt::format("{}", inner.checked_as<Float>());
+            return;
+        }
+        if (meta == scalar_descriptor<Str>::value_meta())
+        {
+            escape_into(inner.checked_as<Str>(), out);
+            return;
+        }
+        if (meta->kind == ValueTypeKind::List)
+        {
+            out += '[';
+            bool first = true;
+            for (const auto element : inner.as_list())
+            {
+                if (!first) { out += ", "; }
+                first = false;
+                encode(element, out);
+            }
+            out += ']';
+            return;
+        }
+        if (meta->kind == ValueTypeKind::Map)
+        {
+            out += '{';
+            bool first = true;
+            for (const auto [key, item] : inner.as_map())
+            {
+                if (!first) { out += ", "; }
+                first = false;
+                escape_into(key.checked_as<Str>(), out);
+                out += ": ";
+                encode(item, out);
+            }
+            out += '}';
+            return;
+        }
+        throw std::invalid_argument("JSON tree: unsupported node content");
+    }
+
+    [[nodiscard]] Value value_from_simdjson(simdjson::dom::element element)
+    {
+        switch (element.type())
+        {
+            case simdjson::dom::element_type::NULL_VALUE:
+                return box(Value{});
+            case simdjson::dom::element_type::BOOL:
+                return box(Value{Bool{static_cast<bool>(element)}});
+            case simdjson::dom::element_type::INT64:
+                return box(Value{static_cast<Int>(static_cast<std::int64_t>(element))});
+            case simdjson::dom::element_type::UINT64: {
+                const auto value = static_cast<std::uint64_t>(element);
+                if (value > static_cast<std::uint64_t>(std::numeric_limits<Int>::max()))
+                {
+                    throw std::invalid_argument("JSON tree: unsigned integer is too large for Int");
+                }
+                return box(Value{static_cast<Int>(value)});
+            }
+            case simdjson::dom::element_type::DOUBLE:
+                return box(Value{static_cast<Float>(static_cast<double>(element))});
+            case simdjson::dom::element_type::STRING:
+                return box(Value{Str{std::string_view(element)}});
+            case simdjson::dom::element_type::ARRAY: {
+                ListBuilder items{json_value_binding()};
+                for (simdjson::dom::element child : simdjson::dom::array(element))
+                {
+                    Value node = value_from_simdjson(child);
+                    items.push_back_copy(node.view().data());
+                }
+                return box(items.build());
+            }
+            case simdjson::dom::element_type::OBJECT: {
+                MapBuilder entries{*ValuePlanFactory::instance().binding_for(
+                                       scalar_descriptor<Str>::value_meta()),
+                                   json_value_binding()};
+                for (simdjson::dom::key_value_pair field : simdjson::dom::object(element))
+                {
+                    Value key{Str{std::string_view(field.key)}};
+                    Value node = value_from_simdjson(field.value);
+                    entries.set_item_copy(key.view().data(), node.view().data());
+                }
+                return box(entries.build());
+            }
+            case simdjson::dom::element_type::BIGINT:
+                throw std::invalid_argument("JSON tree: bigint is not supported");
+        }
+        throw std::invalid_argument("JSON tree: unsupported simdjson element");
+    }
+
+    void encode_simdjson(simdjson::dom::element element, std::string &out)
+    {
+        switch (element.type())
+        {
+            case simdjson::dom::element_type::NULL_VALUE:
+                out += "null";
+                return;
+            case simdjson::dom::element_type::BOOL:
+                out += static_cast<bool>(element) ? "true" : "false";
+                return;
+            case simdjson::dom::element_type::INT64:
+                out += fmt::format("{}", static_cast<std::int64_t>(element));
+                return;
+            case simdjson::dom::element_type::UINT64:
+                out += fmt::format("{}", static_cast<std::uint64_t>(element));
+                return;
+            case simdjson::dom::element_type::DOUBLE:
+                out += fmt::format("{}", static_cast<double>(element));
+                return;
+            case simdjson::dom::element_type::STRING:
+                escape_into(Str{std::string_view(element)}, out);
+                return;
+            case simdjson::dom::element_type::ARRAY: {
+                out += '[';
+                bool first = true;
+                for (simdjson::dom::element child : simdjson::dom::array(element))
+                {
+                    if (!first) { out += ", "; }
+                    first = false;
+                    encode_simdjson(child, out);
+                }
+                out += ']';
+                return;
+            }
+            case simdjson::dom::element_type::OBJECT: {
+                out += '{';
+                bool first = true;
+                for (simdjson::dom::key_value_pair field : simdjson::dom::object(element))
+                {
+                    if (!first) { out += ", "; }
+                    first = false;
+                    escape_into(Str{std::string_view(field.key)}, out);
+                    out += ": ";
+                    encode_simdjson(field.value, out);
+                }
+                out += '}';
+                return;
+            }
+            case simdjson::dom::element_type::BIGINT:
+                throw std::invalid_argument("JSON tree: bigint is not supported");
+        }
+        throw std::invalid_argument("JSON tree: unsupported simdjson element");
+    }
+
+    [[nodiscard]] bool simdjson_equal(simdjson::dom::element lhs, simdjson::dom::element rhs)
+    {
+        const auto lhs_type = lhs.type();
+        if (lhs_type != rhs.type()) { return false; }
+        switch (lhs_type)
+        {
+            case simdjson::dom::element_type::NULL_VALUE:
+                return true;
+            case simdjson::dom::element_type::BOOL:
+                return static_cast<bool>(lhs) == static_cast<bool>(rhs);
+            case simdjson::dom::element_type::INT64:
+                return static_cast<std::int64_t>(lhs) == static_cast<std::int64_t>(rhs);
+            case simdjson::dom::element_type::UINT64:
+                return static_cast<std::uint64_t>(lhs) == static_cast<std::uint64_t>(rhs);
+            case simdjson::dom::element_type::DOUBLE:
+                return static_cast<double>(lhs) == static_cast<double>(rhs);
+            case simdjson::dom::element_type::STRING:
+                return std::string_view(lhs) == std::string_view(rhs);
+            case simdjson::dom::element_type::ARRAY: {
+                auto lhs_array = simdjson::dom::array(lhs);
+                auto rhs_array = simdjson::dom::array(rhs);
+                if (lhs_array.size() != rhs_array.size()) { return false; }
+                auto rhs_it = rhs_array.begin();
+                for (simdjson::dom::element lhs_child : lhs_array)
+                {
+                    if (rhs_it == rhs_array.end()) { return false; }
+                    if (!simdjson_equal(lhs_child, *rhs_it)) { return false; }
+                    ++rhs_it;
+                }
+                return true;
+            }
+            case simdjson::dom::element_type::OBJECT: {
+                auto lhs_object = simdjson::dom::object(lhs);
+                auto rhs_object = simdjson::dom::object(rhs);
+                if (lhs_object.size() != rhs_object.size()) { return false; }
+                for (simdjson::dom::key_value_pair lhs_field : lhs_object)
+                {
+                    bool found = false;
+                    for (simdjson::dom::key_value_pair rhs_field : rhs_object)
+                    {
+                        if (std::string_view(lhs_field.key) == std::string_view(rhs_field.key))
+                        {
+                            if (!simdjson_equal(lhs_field.value, rhs_field.value)) { return false; }
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) { return false; }
+                }
+                return true;
+            }
+            case simdjson::dom::element_type::BIGINT:
+                return false;
+        }
+        return false;
+    }
+
+    JsonValue JsonValue::parse(Str text)
+    {
+        return Access::make(std::make_shared<Document>(std::move(text)), std::string{});
+    }
+
+    Value JsonValue::materialize() const
+    {
+        if (materialized_) { return *materialized_; }
+        Value result = value_from_simdjson(Access::element(*this));
+        materialized_ = std::make_shared<Value>(result);
+        return result;
+    }
+
+    std::string JsonValue::encode() const
+    {
+        std::string out;
+        encode_simdjson(Access::element(*this), out);
+        return out;
+    }
+
+    std::optional<JsonValue> JsonValue::child(Str key) const
+    {
+        if (!document_) { return std::nullopt; }
+        JsonValue candidate = Access::make(document_, append_key(pointer_, key));
+        return Access::try_element(candidate).has_value() ? std::optional<JsonValue>{std::move(candidate)}
+                                                          : std::nullopt;
+    }
+
+    std::optional<JsonValue> JsonValue::child(Int index) const
+    {
+        if (!document_) { return std::nullopt; }
+        Int resolved = index;
+        if (resolved < 0)
+        {
+            auto current = Access::try_element(*this);
+            if (!current.has_value()) { return std::nullopt; }
+            if (current->type() != simdjson::dom::element_type::ARRAY) { return std::nullopt; }
+            const auto size = simdjson::dom::array(*current).size();
+            resolved += static_cast<Int>(size);
+        }
+        if (resolved < 0) { return std::nullopt; }
+        JsonValue candidate = Access::make(document_, append_index(pointer_, resolved));
+        return Access::try_element(candidate).has_value() ? std::optional<JsonValue>{std::move(candidate)}
+                                                          : std::nullopt;
+    }
+
+    std::optional<Int> JsonValue::as_int() const
+    {
+        auto current = Access::try_element(*this);
+        if (!current.has_value()) { return std::nullopt; }
+        try
+        {
+            if (current->type() == simdjson::dom::element_type::INT64)
+            {
+                return static_cast<Int>(static_cast<std::int64_t>(*current));
+            }
+            if (current->type() == simdjson::dom::element_type::UINT64)
+            {
+                const auto value = static_cast<std::uint64_t>(*current);
+                if (value <= static_cast<std::uint64_t>(std::numeric_limits<Int>::max()))
+                {
+                    return static_cast<Int>(value);
+                }
+            }
+        }
+        catch (...) { return std::nullopt; }
+        return std::nullopt;
+    }
+
+    std::optional<Float> JsonValue::as_float() const
+    {
+        auto current = Access::try_element(*this);
+        if (!current.has_value()) { return std::nullopt; }
+        try
+        {
+            if (current->type() == simdjson::dom::element_type::DOUBLE)
+            {
+                return static_cast<Float>(static_cast<double>(*current));
+            }
+            if (current->type() == simdjson::dom::element_type::INT64)
+            {
+                return static_cast<Float>(static_cast<std::int64_t>(*current));
+            }
+            if (current->type() == simdjson::dom::element_type::UINT64)
+            {
+                return static_cast<Float>(static_cast<std::uint64_t>(*current));
+            }
+        }
+        catch (...) { return std::nullopt; }
+        return std::nullopt;
+    }
+
+    std::optional<Str> JsonValue::as_str() const
+    {
+        auto current = Access::try_element(*this);
+        if (!current.has_value()) { return std::nullopt; }
+        try
+        {
+            if (current->type() == simdjson::dom::element_type::STRING)
+            {
+                return Str{std::string_view(*current)};
+            }
+        }
+        catch (...) { return std::nullopt; }
+        return std::nullopt;
+    }
+
+    std::optional<Bool> JsonValue::as_bool() const
+    {
+        auto current = Access::try_element(*this);
+        if (!current.has_value()) { return std::nullopt; }
+        try
+        {
+            if (current->type() == simdjson::dom::element_type::BOOL)
+            {
+                return Bool{static_cast<bool>(*current)};
+            }
+        }
+        catch (...) { return std::nullopt; }
+        return std::nullopt;
+    }
+
+    std::size_t JsonValue::hash() const noexcept
+    {
+        try { return materialize().hash(); }
+        catch (...) { return 0; }
+    }
+
+    bool JsonValue::operator==(const JsonValue &other) const noexcept
+    {
+        try
+        {
+            auto lhs = Access::try_element(*this);
+            auto rhs = Access::try_element(other);
+            if (lhs.has_value() && rhs.has_value()) { return simdjson_equal(*lhs, *rhs); }
+            return materialize().equals(other.materialize());
+        }
+        catch (...) { return false; }
+    }
+
+    std::partial_ordering JsonValue::operator<=>(const JsonValue &other) const noexcept
+    {
+        try { return materialize().compare(other.materialize()); }
+        catch (...) { return std::partial_ordering::unordered; }
+    }
+
+    std::ostream &operator<<(std::ostream &out, const JsonValue &value)
+    {
+        try { out << value.encode(); }
+        catch (...) { out << "<invalid JSON>"; }
+        return out;
+    }
+
+    void publish(const TSOutputView &out, Value &&node)
+    {
+        auto mutation = out.begin_mutation(out.evaluation_time());
+        static_cast<void>(mutation.move_value_from(std::move(node)));
+    }
+}  // namespace hgraph::stdlib::json_tree
+
+std::size_t std::hash<hgraph::stdlib::json_tree::JsonValue>::operator()(
+    const hgraph::stdlib::json_tree::JsonValue &value) const noexcept
+{
+    return value.hash();
+}

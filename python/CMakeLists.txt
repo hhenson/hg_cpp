@@ -1,6 +1,9 @@
 # The Python bridge module (roadmap P4). Opt-in only: the default build never
 # needs Python (HGRAPH_BUILD_PYTHON_BINDINGS=ON enables this subtree).
-nanobind_add_module(_hgraph NB_STATIC NOSTRIP module.cpp)
+nanobind_add_module(_hgraph NB_STATIC NOSTRIP
+    module.cpp
+    value_conversion.cpp
+)
 target_link_libraries(_hgraph PRIVATE hgraph_core hgraph::options)
 
 foreach(_hgraph_py_test IN ITEMS test_bridge test_hgraph_api)
