@@ -10,6 +10,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/runtime/node.cpp
     hgraph/runtime/node_error.cpp
     hgraph/runtime/push_source_node.cpp
+    hgraph/runtime/race_tsd_node.cpp
     hgraph/runtime/switch_node.cpp
     hgraph/runtime/map_node.cpp
     hgraph/runtime/mesh_node.cpp

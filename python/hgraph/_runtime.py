@@ -275,8 +275,12 @@ def feedback(tp, initial=None):
 def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
     """hgraph's switch_ - cases is {key_value: operator-name-or-WiredFn};
     a None key is the default branch."""
+    from ._types import DEFAULT
+
     prepared = {}
     for case_key, branch in cases.items():
+        if case_key is DEFAULT:
+            case_key = None   # hgraph's DEFAULT marker = the default branch
         prepared[case_key] = branch if isinstance(branch, str) else _as_wired(branch)
     erased = _hgraph.switch_cases(prepared, reload=reload_on_ticked)
     return wire("switch_", key, erased, *args, **kwargs)

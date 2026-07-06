@@ -1061,11 +1061,8 @@ namespace hgraph::stdlib
                 throw std::invalid_argument("map_: the function output must be a whole node output");
             }
             const auto *out = compiled.output_schema;
-            if (registry.dereference(out) != out)
-            {
-                throw std::invalid_argument(
-                    "map_: a reference-valued function output cannot back a TSD element");
-            }
+            // Reference-valued outputs back TSD elements as whole reference
+            // values (REF data is whole-value; the opaque-reference ruling).
             if (out->kind == TSTypeKind::TSD || (out->kind == TSTypeKind::TSL && out->fixed_size() == 0))
             {
                 throw std::invalid_argument(
@@ -1539,6 +1536,10 @@ namespace hgraph::stdlib
                 (void)compile_map_child(*func, {ordered->schemas.data(), ordered->schemas.size()},
                                         {ordered->arg_tags.data(), ordered->arg_tags.size()}, output_schema);
                 bind_graph_output(resolution, output_schema, "O");
+            }
+            catch (const std::exception &error)
+            {
+                std::fprintf(stderr, "[map resolve] child compile failed: %s\n", error.what());
             }
             catch (...)
             {

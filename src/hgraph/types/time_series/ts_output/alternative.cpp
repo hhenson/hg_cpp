@@ -557,10 +557,10 @@ namespace hgraph::detail
             auto reference = Value{TSOutputAlternativeStore::peered_reference_as(target_schema.referenced_ts(),
                                                                                  source_view.handle())};
             auto mutation = target.begin_mutation(modified_time);
-            if (!mutation.move_value_from(std::move(reference)))
-            {
-                throw std::logic_error("TSOutput to-REF alternative could not move reference value");
-            }
+            // move_value_from returns FIRST-FOR-TIME, not success: a same-cycle
+            // re-populate (map_ re-binds child boundaries every cycle) writes
+            // the value and returns false - benign.
+            static_cast<void>(mutation.move_value_from(std::move(reference)));
         }
 
         void populate_to_ref_bundle(const TSDataView           &target,

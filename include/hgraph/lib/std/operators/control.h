@@ -31,6 +31,20 @@ namespace hgraph::stdlib
     };
 
     /** ``race`` — forward the first *valid* of the inputs, falling through as they invalidate. */
+    /** ``reduce_tsd_with_race(tsd=TSD<K, REF<OUT>>) -> REF<OUT>`` — keyed race
+        (hgraph parity; ``reduce_tsd_of_bundles_with_race`` is the same erased
+        implementation registered under the bundle-flavoured name). */
+    struct reduce_tsd_with_race
+        : Operator<"reduce_tsd_with_race", In<"tsd", TSD<ScalarVar<"K">, REF<TsVar<"S">>>>, Out<REF<TsVar<"S">>>>
+    {
+    };
+
+    struct reduce_tsd_of_bundles_with_race
+        : Operator<"reduce_tsd_of_bundles_with_race", In<"tsd", TSD<ScalarVar<"K">, REF<TsVar<"S">>>>,
+                   Out<REF<TsVar<"S">>>>
+    {
+    };
+
     struct race : Operator<"race", VarIn<"ts", TsVar<"S">>, Out<TsVar<"S">>>
     {
     };

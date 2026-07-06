@@ -2,6 +2,8 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_CONTROL_IMPL_H
 
 #include <hgraph/lib/std/operators/control.h>
+#include <hgraph/lib/std/operators/impl/higher_order_impl.h>
+#include <hgraph/runtime/race_tsd_node.h>
 #include <hgraph/lib/std/operators/conversion.h>
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -344,6 +346,38 @@ namespace hgraph::stdlib
         }
     };
 
+    struct race_tsd_graph_impl
+    {
+        static constexpr auto name = "reduce_tsd_with_race";
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            for (const WiringArg &arg : context.args)
+            {
+                if (arg.kind != WiringArg::Kind::TimeSeries || arg.port.schema == nullptr) { continue; }
+                if (arg.port.schema->kind == TSTypeKind::TSD && arg.port.schema->element_ts() != nullptr &&
+                    arg.port.schema->element_ts()->kind == TSTypeKind::REF)
+                {
+                    higher_order_impl_detail::bind_graph_output(resolution, arg.port.schema->element_ts(), "O");
+                    return;
+                }
+            }
+        }
+
+        static WiringPortRef compose(Wiring &w, NamedPort<"tsd", TSD<ScalarVar<"K">, REF<TsVar<"S">>>> tsd)
+        {
+            const WiringPortRef source = tsd.erased();
+            if (source.schema == nullptr || source.schema->kind != TSTypeKind::TSD)
+            {
+                throw std::invalid_argument("reduce_tsd_with_race requires a TSD<K, REF<OUT>> input");
+            }
+            NodeBuilder builder = make_race_tsd_node(*source.schema);
+            std::array<WiringPortRef, 1> inputs{source};
+            return w.add_node(std::type_index(typeid(race_tsd_graph_impl)), std::move(builder),
+                              std::span<const WiringPortRef>{inputs.data(), inputs.size()}, Value{});
+        }
+    };
+
     struct if_ref_impl
     {
         using output_schema = UnNamedTSB<Field<"true", REF<TsVar<"S">>>, Field<"false", REF<TsVar<"S">>>>;
@@ -437,6 +471,8 @@ namespace hgraph::stdlib
     {
         register_graph_overload<merge, merge_graph_impl>();
         register_graph_overload<race, race_graph_impl>();
+        register_graph_overload<reduce_tsd_with_race, race_tsd_graph_impl>();
+        register_graph_overload<reduce_tsd_of_bundles_with_race, race_tsd_graph_impl>();
         register_graph_overload<all_, all_graph_impl>();
         register_graph_overload<any_, any_graph_impl>();
         register_overload<all_, all_tsd_impl>();

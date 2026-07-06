@@ -36,7 +36,6 @@ OperatorWiringNodeClass = type(_operator_function("add_"))
 # (the ported suite imports them at module load); raise at USE with a
 # "gap:" message so tests skip precisely.
 _KNOWN_GAPS = (
-    "reduce_tsd_with_race", "reduce_tsd_of_bundles_with_race",
     "json_encode", "json_decode",
     "to_window", "window", "batch", "filter_by",
     "convert", "combine", "collect", "emit",

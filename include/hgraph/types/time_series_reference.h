@@ -146,6 +146,14 @@ namespace hgraph
         /** Singleton empty reference with no target schema. */
         [[nodiscard]] static const TimeSeriesReference &empty_reference() noexcept;
 
+        /**
+         * The referenced output handle of a PEERED reference (throws
+         * otherwise). RUNTIME PLUMBING ONLY — subscription and alternative
+         * binding (race/reduce-with-race pending wake-ups); reference values
+         * stay opaque at the API surfaces (no dereferencing from user code).
+         */
+        [[nodiscard]] const TSOutputHandle &target_output() const;
+
       private:
         friend class detail::TSOutputAlternativeStore;
 
@@ -163,7 +171,6 @@ namespace hgraph
         void move_from(TimeSeriesReference &&other) noexcept;
         [[nodiscard]] static TimeSeriesReference peered_as(const TSValueTypeMetaData *target_schema,
                                                            TSOutputHandle target);
-        [[nodiscard]] const TSOutputHandle &target_output() const;
 
         Kind                             kind_{Kind::EMPTY};
         const TSValueTypeMetaData       *target_schema_{nullptr};
