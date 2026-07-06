@@ -377,18 +377,22 @@ namespace hgraph
         void write_composite(const JsonConverter &self, const ValueView &view, std::string &out)
         {
             // Bundle -> object; (un-named) tuple without field names -> array.
-            const auto bundle   = view.as_bundle();
+            const auto indexed  = view.as_indexed_view();
             const bool as_array = self.names.empty();
             out.push_back(as_array ? '[' : '{');
+            bool first = true;
             for (std::size_t i = 0; i < self.children.size(); ++i)
             {
-                if (i != 0) { out += ", "; }
+                const auto child = indexed.at(i);
+                if (!as_array && !child.has_value()) { continue; }
+                if (!std::exchange(first, false)) { out += ", "; }
                 if (!as_array)
                 {
                     json_detail::append_escaped(self.names[i], out);
                     out += ": ";
                 }
-                self.children[i]->write(bundle.at(i), out);
+                if (child.has_value()) { self.children[i]->write(child, out); }
+                else { out += "null"; }
             }
             out.push_back(as_array ? ']' : '}');
         }
@@ -496,6 +500,14 @@ namespace hgraph
                 for (std::size_t i = 0; i < self.children.size(); ++i)
                 {
                     if (i != 0) { reader.expect(','); }
+                    if (reader.consume_keyword("null"))
+                    {
+                        if (self.meta->kind != ValueTypeKind::Bundle)
+                        {
+                            reader.fail("null composite field is only supported for Bundle values");
+                        }
+                        continue;
+                    }
                     builder.set(i, self.children[i]->read(reader));
                 }
                 reader.expect(']');
@@ -519,6 +531,7 @@ namespace hgraph
                             }
                         }
                         if (index == self.names.size()) { reader.skip_value(); }
+                        else if (reader.consume_keyword("null")) {}
                         else { builder.set(index, self.children[index]->read(reader)); }
                         if (!reader.consume_if(',')) { break; }
                     }

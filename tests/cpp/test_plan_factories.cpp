@@ -211,7 +211,15 @@ TEST_CASE("ValuePlanFactory: bundle synthesis preserves field names and shape")
 
     REQUIRE(plan != nullptr);
     REQUIRE(plan->is_named_tuple());
-    REQUIRE(plan->component_count() == 2);
+    // Public fields + hidden trailing validity words (field validity,
+    // core_concepts.rst). The validity component is unnamed so it cannot
+    // collide with user bundle fields.
+    REQUIRE(plan->component_count() == 3);
+    REQUIRE(plan->component(2).name == nullptr);
+    REQUIRE(plan->component(2).plan->is_array());
+    REQUIRE(plan->component(2).plan->array_count() == 1);
+    REQUIRE(&plan->component(2).plan->array_element_plan() == &MemoryUtils::plan_for<std::uint64_t>());
+    REQUIRE(plan->find_component("___validity") == nullptr);
 
     const auto *x_comp = plan->find_component("x");
     REQUIRE(x_comp != nullptr);
@@ -697,8 +705,8 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     REQUIRE(tsb_view.valid_items().begin() == tsb_view.valid_items().end());
 
     auto current = view.value().as_bundle();
-    REQUIRE(current.at("a").checked_as<std::int32_t>() == 0);
-    REQUIRE(current.at("b").checked_as<std::int32_t>() == 0);
+    REQUIRE_FALSE(current.at("a").has_value());
+    REQUIRE_FALSE(current.at("b").has_value());
 
     auto immutable_ops = static_cast<const IndexedTSDataOps &>(binding->ops_ref());
     immutable_ops.allows_mutation = false;
@@ -752,6 +760,16 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     auto delta = view.delta_value(t1).as_bundle();
     REQUIRE(delta.at("a").checked_as<std::int32_t>() == 7);
     REQUIRE_FALSE(delta.at("b").has_value());
+
+    Value materialized_value{view.value()};
+    auto  materialized_current = materialized_value.as_bundle();
+    REQUIRE(materialized_current.at("a").checked_as<std::int32_t>() == 7);
+    REQUIRE_FALSE(materialized_current.at("b").has_value());
+
+    Value materialized_delta{view.delta_value(t1)};
+    auto  materialized_delta_bundle = materialized_delta.as_bundle();
+    REQUIRE(materialized_delta_bundle.at("a").checked_as<std::int32_t>() == 7);
+    REQUIRE_FALSE(materialized_delta_bundle.at("b").has_value());
 }
 
 TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-layer list")

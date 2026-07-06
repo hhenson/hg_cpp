@@ -150,3 +150,34 @@ callers can act on the instance's data where that layer exposes views.
 
 Subsequent sections name the concrete Schema, Plan, Ops, and Builder used
 for each layer rather than re-introduce the pattern.
+
+Bundle field validity (ruling 2026-07-06)
+-----------------------------------------
+
+A ``TSB`` is a collection of time-series; its value and delta value are
+collections of the FIELDS' values / delta values. Both conversions must
+represent **not-set fields**: a field that fails its filter (not valid /
+not modified this cycle) is UNSET — it must never surface as a default
+value (the derived schema has no basis for one).
+
+Mechanism: Bundle **plans** carry a hidden trailing unnamed validity
+component: a fixed array of ``uint64_t`` words with one bit per field. The
+SCHEMA is unchanged — validity is a storage concern, exactly like Arrow
+validity buffers — and the auxiliary component is not visible through
+field lookup:
+
+- ``BundleBuilder::set`` marks the field valid; unset fields stay
+  invalid after ``build()`` (default construction is all-unset).
+- Field access on an unset field yields an EMPTY ``ValueView``
+  (``has_value() == false``).
+- ``equals``/``compare``/``hash``/``to_string`` respect the bits
+  (unset == unset; unset < set).
+- Conversions (Python dicts, JSON, tables) omit / null unset fields;
+  building from a dict marks exactly the provided keys.
+- ``capture_delta`` over TSB sets only modified+valid children;
+  ``apply_delta`` / ``delta_has_effect`` skip unset fields.
+
+``Tuple`` composites stay dense (all-set). ``TSL`` carries the same
+CONTRACT: its delta (a sparse ``Map<index, delta>``) already expresses
+partial ticks; List VALUES with never-valid children take the same
+validity treatment when the need arises (recorded deferral).

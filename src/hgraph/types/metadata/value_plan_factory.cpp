@@ -8,6 +8,7 @@
 
 #include <compare>
 #include <cstddef>
+#include <cstdint>
 #include <fmt/format.h>
 #include <iterator>
 #include <stdexcept>
@@ -24,7 +25,74 @@ namespace hgraph
             const ValueTypeMetaData              *schema{nullptr};
             std::vector<const ValueTypeBinding *> child_bindings{};
             std::vector<std::size_t>              offsets{};
+            std::size_t                           validity_offset{0};
+            std::size_t                           validity_word_count{0};
         };
+
+        using BundleValidityWord = std::uint64_t;
+        static constexpr std::size_t bundle_validity_bits_per_word = sizeof(BundleValidityWord) * 8U;
+
+        [[nodiscard]] constexpr std::size_t bundle_validity_word_count(std::size_t field_count) noexcept
+        {
+            return (field_count + bundle_validity_bits_per_word - 1U) / bundle_validity_bits_per_word;
+        }
+
+        [[nodiscard]] const MemoryUtils::StoragePlan &bundle_validity_plan(std::size_t field_count)
+        {
+            return MemoryUtils::array_plan<BundleValidityWord>(bundle_validity_word_count(field_count));
+        }
+
+        // ---- Bundle field validity (core_concepts.rst) ----
+        [[nodiscard]] inline const BundleValidityWord *composite_validity(const CompositeIndexedContext *state,
+                                                                          const void *memory) noexcept
+        {
+            if (state->validity_word_count == 0) { return nullptr; }   // dense Tuple, or empty Bundle
+            return static_cast<const BundleValidityWord *>(MemoryUtils::advance(memory, state->validity_offset));
+        }
+
+        [[nodiscard]] inline BundleValidityWord *mutable_composite_validity(const CompositeIndexedContext *state,
+                                                                            void *memory) noexcept
+        {
+            if (state->validity_word_count == 0) { return nullptr; }
+            return static_cast<BundleValidityWord *>(MemoryUtils::advance(memory, state->validity_offset));
+        }
+
+        [[nodiscard]] inline bool composite_field_set(const CompositeIndexedContext *state, const void *memory,
+                                                      std::size_t index) noexcept
+        {
+            const auto *words = composite_validity(state, memory);
+            if (words == nullptr) { return true; }
+            if (index >= state->schema->field_count) { return false; }
+            const auto word = index / bundle_validity_bits_per_word;
+            const auto bit  = index % bundle_validity_bits_per_word;
+            return (words[word] & (BundleValidityWord{1} << bit)) != 0;
+        }
+
+        inline void composite_mark_field(const CompositeIndexedContext *state, void *memory, std::size_t index,
+                                         bool set)
+        {
+            auto *words = mutable_composite_validity(state, memory);
+            if (words == nullptr) { return; }
+            if (index >= state->schema->field_count) { throw std::out_of_range("Bundle field index out of range"); }
+            const auto word = index / bundle_validity_bits_per_word;
+            const auto bit  = index % bundle_validity_bits_per_word;
+            const auto mask = BundleValidityWord{1} << bit;
+            if (set) { words[word] |= mask; }
+            else { words[word] &= ~mask; }
+        }
+
+        [[maybe_unused]] inline void composite_mark_all(const CompositeIndexedContext *state, void *memory, bool set)
+        {
+            auto *words = mutable_composite_validity(state, memory);
+            if (words == nullptr) { return; }
+            const BundleValidityWord fill = set ? ~BundleValidityWord{0} : BundleValidityWord{0};
+            for (std::size_t index = 0; index < state->validity_word_count; ++index) { words[index] = fill; }
+            if (set && state->schema->field_count % bundle_validity_bits_per_word != 0)
+            {
+                const auto used_bits = state->schema->field_count % bundle_validity_bits_per_word;
+                words[state->validity_word_count - 1U] = (BundleValidityWord{1} << used_bits) - 1U;
+            }
+        }
 
         struct ArrayIndexedContext
         {
@@ -49,6 +117,7 @@ namespace hgraph
                                                                std::size_t index)
         {
             const auto *state = static_cast<const CompositeIndexedContext *>(context);
+            if (!composite_field_set(state, memory, index)) { return nullptr; }   // UNSET field
             return static_cast<const std::byte *>(memory) + state->offsets[index];
         }
 
@@ -65,12 +134,22 @@ namespace hgraph
                              composite_indexed_element_at(context, memory, index)};
         }
 
+        [[nodiscard]] void *composite_indexed_mutable_element_at(const void *context, void *memory,
+                                                                  std::size_t index)
+        {
+            const auto *state = static_cast<const CompositeIndexedContext *>(context);
+            // Mutable access marks the field LIVE (a writer is committing a
+            // value) and always returns the real storage.
+            composite_mark_field(state, memory, index, true);
+            return static_cast<std::byte *>(memory) + state->offsets[index];
+        }
+
         [[nodiscard]] ValueView composite_indexed_mutable_range_projector(const void *context,
                                                                           const void *memory,
                                                                           std::size_t index)
         {
             return ValueView{composite_indexed_element_binding(context, memory, index),
-                             const_cast<void *>(composite_indexed_element_at(context, memory, index))}
+                             composite_indexed_mutable_element_at(context, const_cast<void *>(memory), index)}
                 .begin_mutation();
         }
 
@@ -102,6 +181,11 @@ namespace hgraph
             std::size_t seed  = 0;
             for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
             {
+                if (!composite_field_set(state, memory, index))
+                {
+                    seed = combine_hash(seed, 0x9e3779b97f4a7c15ULL);   // UNSET marker
+                    continue;
+                }
                 const auto &ops = state->child_bindings[index]->ops_ref();
                 const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                 seed = combine_hash(seed, ops.hash(child));
@@ -116,6 +200,10 @@ namespace hgraph
                 const auto *state = static_cast<const CompositeIndexedContext *>(context);
                 for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
                 {
+                    const bool lhs_set = composite_field_set(state, lhs, index);
+                    const bool rhs_set = composite_field_set(state, rhs, index);
+                    if (lhs_set != rhs_set) { return false; }
+                    if (!lhs_set) { continue; }   // UNSET == UNSET
                     const auto &ops = state->child_bindings[index]->ops_ref();
                     const auto *a = static_cast<const std::byte *>(lhs) + state->offsets[index];
                     const auto *b = static_cast<const std::byte *>(rhs) + state->offsets[index];
@@ -134,6 +222,13 @@ namespace hgraph
                 const auto *state = static_cast<const CompositeIndexedContext *>(context);
                 for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
                 {
+                    const bool lhs_set = composite_field_set(state, lhs, index);
+                    const bool rhs_set = composite_field_set(state, rhs, index);
+                    if (lhs_set != rhs_set)
+                    {
+                        return lhs_set ? std::partial_ordering::greater : std::partial_ordering::less;
+                    }
+                    if (!lhs_set) { continue; }
                     const auto &ops = state->child_bindings[index]->ops_ref();
                     const auto *a = static_cast<const std::byte *>(lhs) + state->offsets[index];
                     const auto *b = static_cast<const std::byte *>(rhs) + state->offsets[index];
@@ -158,6 +253,11 @@ namespace hgraph
                 {
                     const char *name = state->schema->fields[index].name;
                     fmt::format_to(std::back_inserter(out), "{}: ", name != nullptr ? name : "");
+                }
+                if (!composite_field_set(state, memory, index))
+                {
+                    fmt::format_to(std::back_inserter(out), "<unset>");
+                    continue;
                 }
                 const auto &ops = state->child_bindings[index]->ops_ref();
                 const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
@@ -202,6 +302,7 @@ namespace hgraph
                 {
                     const char *name = state->schema->fields[index].name;
                     if (name == nullptr || *name == '\0') { continue; }
+                    if (!composite_field_set(state, memory, index)) { continue; }   // UNSET: omitted
                     const auto &ops = state->child_bindings[index]->ops_ref();
                     const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                     result[nb::str{name}] = ops.to_python(child);
@@ -238,6 +339,7 @@ namespace hgraph
                     fmt::format("{} expects {} elements, got {}", what, state->child_bindings.size(), count));
             }
 
+            composite_mark_all(state, memory, true);   // sequences supply every field
             for (std::size_t index = 0; index < count; ++index)
             {
                 nb::object element = sequence[index];
@@ -264,6 +366,7 @@ namespace hgraph
             if (nb::isinstance<nb::dict>(object))
             {
                 nb::dict map = nb::cast<nb::dict>(object);
+                composite_mark_all(state, memory, false);
                 for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
                 {
                     const char *name = state->schema->fields[index].name;
@@ -272,13 +375,13 @@ namespace hgraph
                         throw std::invalid_argument("Bundle value has an unnamed field and cannot be loaded from dict");
                     }
                     nb::str key{name};
-                    if (!map.contains(key))
-                    {
-                        throw std::invalid_argument(fmt::format("Bundle value missing field '{}'", name));
-                    }
+                    // PARTIAL dicts mark exactly the provided keys (field
+                    // validity, core_concepts.rst) - absent = UNSET.
+                    if (!map.contains(key)) { continue; }
                     nb::object value = map[key];
                     auto      *child = static_cast<std::byte *>(memory) + state->offsets[index];
                     assign_child_from_python(*state->child_bindings[index], child, value, "Bundle value");
+                    composite_mark_field(state, memory, index, true);
                 }
                 return;
             }
@@ -303,6 +406,7 @@ namespace hgraph
                 nb::object value = nb::getattr(object, name);
                 auto      *child = static_cast<std::byte *>(memory) + state->offsets[index];
                 assign_child_from_python(*state->child_bindings[index], child, value, "Bundle value");
+                composite_mark_field(state, memory, index, true);
             }
         }
 #endif
@@ -514,7 +618,10 @@ namespace hgraph
 
             CompositeIndexedOpsEntry(const ValueTypeMetaData &schema, const MemoryUtils::StoragePlan &plan)
             {
-                if (!plan.is_composite() || plan.component_count() != schema.field_count)
+                const std::size_t validity_words =
+                    schema.kind == ValueTypeKind::Bundle ? bundle_validity_word_count(schema.field_count) : 0;
+                const std::size_t validity_components = validity_words == 0 ? 0 : 1;
+                if (!plan.is_composite() || plan.component_count() != schema.field_count + validity_components)
                 {
                     throw std::logic_error("ValuePlanFactory: composite indexed ops require matching composite plan");
                 }
@@ -535,6 +642,13 @@ namespace hgraph
                 }
 
                 context.schema = &schema;
+                if (validity_components != 0)
+                {
+                    // The hidden fixed-word validity component sits right
+                    // after the public fields (appended last at plan build).
+                    context.validity_offset = components[schema.field_count].offset;
+                    context.validity_word_count = validity_words;
+                }
 
                 ops = IndexedValueOps{
                     {&context,
@@ -555,6 +669,7 @@ namespace hgraph
                     &composite_indexed_make_range,
                     &composite_indexed_make_mutable_range,
                 };
+                ops.mutable_element_at = &composite_indexed_mutable_element_at;
             }
         };
 
@@ -783,7 +898,8 @@ namespace hgraph
             case ValueTypeKind::Bundle:
             {
                 auto builder = MemoryUtils::named_tuple();
-                builder.reserve(schema->field_count);
+                const std::size_t validity_words = bundle_validity_word_count(schema->field_count);
+                builder.reserve(schema->field_count + (validity_words == 0 ? 0 : 1));
                 for (size_t index = 0; index < schema->field_count; ++index)
                 {
                     const ValueFieldMetaData &field = schema->fields[index];
@@ -793,6 +909,14 @@ namespace hgraph
                         throw std::logic_error("ValuePlanFactory: bundle field has no resolvable plan");
                     }
                     builder.add_field(field.name != nullptr ? field.name : "", *field_plan);
+                }
+                if (validity_words != 0)
+                {
+                    // Hidden trailing validity words (design record: Bundle
+                    // field validity, core_concepts.rst): one bit per field,
+                    // default-zero. Appended LAST so field i remains
+                    // component i; the component is intentionally unnamed.
+                    builder.add_hidden_plan(bundle_validity_plan(schema->field_count));
                 }
                 plan = &builder.build();
                 break;

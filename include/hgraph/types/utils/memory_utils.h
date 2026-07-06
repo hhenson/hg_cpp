@@ -648,6 +648,19 @@ namespace hgraph
             }
 
             /**
+             * Append an unnamed implementation component to a named-tuple plan.
+             *
+             * This is for schema-owned auxiliary storage, such as bundle field
+             * validity. The component participates in lifecycle/copy layout, but
+             * is intentionally not discoverable through ``find_component``.
+             */
+            CompositePlanBuilder &add_hidden_plan(const StoragePlan &plan) {
+                ensure_kind(CompositeKind::NamedTuple, "add_hidden_plan");
+                add_pending_component({}, plan);
+                return *this;
+            }
+
+            /**
              * Synthesise and intern the composite plan described by the
              * accumulated components. Equivalent calls always return the
              * same canonical plan address.

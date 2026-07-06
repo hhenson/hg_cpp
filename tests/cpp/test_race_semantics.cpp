@@ -135,7 +135,6 @@ namespace
         static Port<PairBundle> compose(Wiring &w, Port<TS<Bool>> invalidate)
         {
             using IfBundle = UnNamedTSB<Field<"true", REF<TS<Int>>>, Field<"false", REF<TS<Int>>>>;
-            auto &registry = TypeRegistry::instance();
             const auto *tsb_schema = schema_descriptor<PairBundle>::ts_meta();
 
             auto v11 = wire<getitem_>(w, wire<if_, IfBundle>(w, invalidate, wire<const_, TS<Int>>(w, Int{11})),

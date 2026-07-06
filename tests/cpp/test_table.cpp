@@ -75,6 +75,30 @@ TEST_CASE("table codec: a depth-1 bundle flattens to named columns and round-tri
     CHECK(back.view().as_bundle().at(1).checked_as<Str>() == Str{"VOD"});
 }
 
+TEST_CASE("table codec: unset bundle fields round-trip as Arrow nulls")
+{
+    auto &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<Int>("int");
+    const auto *str_meta = registry.register_scalar<Str>("str");
+    const auto *bundle_meta = registry.un_named_bundle({{"qty", int_meta}, {"symbol", str_meta}});
+
+    const auto *binding = ValuePlanFactory::instance().binding_for(bundle_meta);
+    BundleBuilder builder{*binding};
+    builder.set("qty", Value{Int{7}});
+    const Value value = builder.build();
+
+    const auto &converter = table_converter(bundle_meta);
+    const Frame frame = single_row_frame(converter, MIN_ST, MIN_ST, value.view());
+    const auto symbol_column = frame.table->GetColumnByName("symbol");
+    REQUIRE(symbol_column != nullptr);
+    REQUIRE(symbol_column->chunk(0)->IsNull(0));
+
+    const Value back = read_row(converter, frame, 0);
+    auto        bundle = back.view().as_bundle();
+    CHECK(bundle.at("qty").checked_as<Int>() == Int{7});
+    CHECK_FALSE(bundle.at("symbol").has_value());
+}
+
 TEST_CASE("table codec: input schemas are a minimum - extra columns pass, missing columns throw")
 {
     auto &registry = TypeRegistry::instance();

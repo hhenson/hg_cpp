@@ -323,7 +323,7 @@ namespace hgraph
                 }
 
                 const auto &plan = binding.checked_plan();
-                if (!plan.is_composite() || plan.component_count() != 2)
+                if (!plan.is_composite() || plan.component_count() < 2)
                 {
                     throw std::logic_error("TSDProxy delta copy requires a two-field structured plan");
                 }
@@ -333,11 +333,11 @@ namespace hgraph
                 auto modified = Value{ValueView{delta_element_binding(context, memory, 1),
                                                 delta_element_at(context, memory, 1)}};
 
-                auto       *bytes              = static_cast<std::byte *>(dst);
-                const auto &removed_component  = plan.component(0);
-                const auto &modified_component = plan.component(1);
-                removed_component.plan->copy_assign(bytes + removed_component.offset, removed.view().data());
-                modified_component.plan->copy_assign(bytes + modified_component.offset, modified.view().data());
+                BundleBuilder builder{binding};
+                builder.set(0, removed.view());
+                builder.set(1, modified.view());
+                Value bundle = builder.build();
+                plan.copy_assign(dst, bundle.view().data());
             }
 
             template <TSDProxySetSurface Surface>

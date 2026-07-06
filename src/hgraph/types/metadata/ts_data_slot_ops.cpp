@@ -936,7 +936,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
 
                 const auto &plan = binding.checked_plan();
-                if (!plan.is_composite() || plan.component_count() != 2)
+                if (!plan.is_composite() || plan.component_count() < 2)
                 {
                     throw std::logic_error("TSS delta copy requires a two-field structured plan");
                 }
@@ -946,11 +946,11 @@ namespace hgraph::ts_data_plan_factory_detail
                 auto removed = Value{ValueView{delta_bundle_element_binding(context, memory, 1),
                                                delta_bundle_element_at(context, memory, 1)}};
 
-                auto       *bytes             = static_cast<std::byte *>(dst);
-                const auto &added_component   = plan.component(0);
-                const auto &removed_component = plan.component(1);
-                added_component.plan->copy_assign(bytes + added_component.offset, added.view().data());
-                removed_component.plan->copy_assign(bytes + removed_component.offset, removed.view().data());
+                BundleBuilder builder{binding};
+                builder.set(0, added.view());
+                builder.set(1, removed.view());
+                Value bundle = builder.build();
+                plan.copy_assign(dst, bundle.view().data());
             }
 
             [[nodiscard]] static const TSDataLayout *tss_layout(const void *context) noexcept
@@ -1866,7 +1866,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
 
                 const auto &plan = binding.checked_plan();
-                if (!plan.is_composite() || plan.component_count() != 2)
+                if (!plan.is_composite() || plan.component_count() < 2)
                 {
                     throw std::logic_error("TSD delta copy requires a two-field structured plan");
                 }
@@ -1876,11 +1876,11 @@ namespace hgraph::ts_data_plan_factory_detail
                 auto modified = Value{ValueView{dict_delta_element_binding(context, memory, 1),
                                                 dict_delta_element_at(context, memory, 1)}};
 
-                auto       *bytes              = static_cast<std::byte *>(dst);
-                const auto &removed_component  = plan.component(0);
-                const auto &modified_component = plan.component(1);
-                removed_component.plan->copy_assign(bytes + removed_component.offset, removed.view().data());
-                modified_component.plan->copy_assign(bytes + modified_component.offset, modified.view().data());
+                BundleBuilder builder{binding};
+                builder.set(0, removed.view());
+                builder.set(1, modified.view());
+                Value bundle = builder.build();
+                plan.copy_assign(dst, bundle.view().data());
             }
 
             [[nodiscard]] static const TSDataLayout *tsd_layout(const void *context) noexcept

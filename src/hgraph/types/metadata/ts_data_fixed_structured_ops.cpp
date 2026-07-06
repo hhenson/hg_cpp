@@ -253,6 +253,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 .mutable_value_memory_impl = &fixed_mutable_value_memory,
                 .delta_memory_impl         = &fixed_delta_memory,
                 .mutable_delta_memory_impl = &fixed_mutable_delta_memory,
+                .record_child_modified_impl = &fixed_record_child_modified,
                 .copy_value_from_impl      = &fixed_copy_value_from,
                 .move_value_from_impl      = &fixed_move_value_from,
                 .empty_delta_impl          = schema->kind == TSTypeKind::TSB ? &ts_data_detail::empty_delta_tsb
@@ -426,6 +427,33 @@ namespace hgraph::ts_data_plan_factory_detail
             return state->projected_value_surface ? memory : advance(memory, state->layout_ptr()->value_offset);
         }
 
+        static void mark_tsb_value_field_valid(const FixedTSDataContext *state, void *memory, std::size_t index)
+        {
+            if (state->schema->kind != TSTypeKind::TSB) { return; }
+            if (state->projected_value_surface) { return; }
+            if (index >= state->element_count())
+            {
+                throw std::out_of_range("fixed TSB child modification index is out of range");
+            }
+
+            const auto *binding = state->layout_ptr()->value_binding;
+            if (binding == nullptr || binding->ops == nullptr)
+            {
+                throw std::logic_error("fixed TSB value binding is not resolved");
+            }
+            const auto *indexed_ops = static_cast<const IndexedValueOps *>(binding->ops);
+            if (indexed_ops->mutable_element_at == nullptr)
+            {
+                throw std::logic_error("fixed TSB value binding cannot mark field validity");
+            }
+            (void)indexed_ops->mutable_element_at(indexed_ops->context, fixed_mutable_value_memory(state, memory), index);
+        }
+
+        static void fixed_record_child_modified(const void *context, void *memory, std::size_t child_id, DateTime)
+        {
+            mark_tsb_value_field_valid(ctx(context), memory, child_id);
+        }
+
         [[nodiscard]] static const void *fixed_delta_memory(const void *, const void *memory) noexcept
         {
             return memory;
@@ -468,7 +496,13 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto *child = state->element_binding(index);
             const auto &ops   = child_ops(*child);
             const auto *data  = child_data(state, memory, index);
-            return ValueView{state->element_value_binding(index), ops.value_memory_impl(ops.context, data)};
+            const auto *binding = state->element_value_binding(index);
+            if (state->schema->kind == TSTypeKind::TSB &&
+                !ops.has_current_value_impl(ops.context, data))
+            {
+                return ValueView{binding, nullptr};
+            }
+            return ValueView{binding, ops.value_memory_impl(ops.context, data)};
         }
 
         [[nodiscard]] static ValueView child_delta_view(const FixedTSDataContext *state, const void *memory,
@@ -621,7 +655,7 @@ namespace hgraph::ts_data_plan_factory_detail
             std::size_t seed  = 0;
             for (std::size_t index = 0; index < state->element_count(); ++index)
             {
-                seed = combine_hash(seed, child_value_view(state, memory, index).hash());
+                seed = combine_hash(seed, view_hash(child_value_view(state, memory, index)));
             }
             return seed;
         }
@@ -700,16 +734,20 @@ namespace hgraph::ts_data_plan_factory_detail
             auto       *bytes = static_cast<std::byte *>(dst);
             if (state->schema->kind == TSTypeKind::TSB)
             {
-                if (!plan.is_composite() || plan.component_count() != state->element_count())
+                if (!plan.is_composite() || plan.component_count() < state->element_count())
                 {
                     throw std::logic_error("fixed TSB value copy requires a matching structured plan");
                 }
+                BundleBuilder builder{binding};
                 for (std::size_t index = 0; index < state->element_count(); ++index)
                 {
-                    Value child{child_value_view(state, memory, index)};
-                    const auto &component = plan.component(index);
-                    component.plan->copy_assign(bytes + component.offset, child.view().data());
+                    auto child_view = child_value_view(state, memory, index);
+                    if (!child_view.has_value()) { continue; }
+                    Value child{child_view};
+                    builder.set(index, child.view());
                 }
+                Value bundle = builder.build();
+                plan.copy_assign(dst, bundle.view().data());
                 return;
             }
 
@@ -736,7 +774,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     const char *name = state->schema->fields()[index].name;
                     if (name == nullptr || *name == '\0') { continue; }
-                    result[nb::str{name}] = child_value_view(state, memory, index).to_python();
+                    auto child_view = child_value_view(state, memory, index);
+                    if (!child_view.has_value()) { continue; }
+                    result[nb::str{name}] = child_view.to_python();
                 }
                 return result;
             }
@@ -853,12 +893,14 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             const auto &plan = binding.checked_plan();
-            if (!plan.is_composite() || plan.component_count() != state->element_count())
+            // Bundle plans may carry a hidden trailing validity component;
+            // public fields are still the first element_count components.
+            if (!plan.is_composite() || plan.component_count() < state->element_count())
             {
                 throw std::logic_error("fixed TSB delta copy requires a matching structured plan");
             }
 
-            auto *bytes = static_cast<std::byte *>(dst);
+            BundleBuilder builder{binding};
             for (std::size_t index = 0; index < state->element_count(); ++index)
             {
                 if (!child_modified_for_parent_time(state, memory, index))
@@ -866,9 +908,10 @@ namespace hgraph::ts_data_plan_factory_detail
                     continue;
                 }
                 Value child{child_delta_view(state, memory, index)};
-                const auto &component = plan.component(index);
-                component.plan->copy_assign(bytes + component.offset, child.view().data());
+                builder.set(index, child.view());
             }
+            Value bundle = builder.build();
+            plan.copy_assign(dst, bundle.view().data());
         }
 
         [[nodiscard]] static bool child_modified_for_parent_time(const FixedTSDataContext *state, const void *memory,
@@ -1353,10 +1396,12 @@ namespace hgraph::ts_data_plan_factory_detail
             bool newly_modified = false;
             for (std::size_t index = 0; index < state->element_count(); ++index)
             {
+                auto source_value = source_values.at(index);
+                if (!source_value.has_value()) { continue; }
                 const auto *child = state->element_binding(index);
                 const auto &ops   = child_ops(*child);
                 void       *data  = child_data(state, memory, index);
-                if (ops.copy_value_from_impl(ops.context, data, source_values.at(index), modified_time))
+                if (ops.copy_value_from_impl(ops.context, data, source_value, modified_time))
                 {
                     auto *tracking = ops.mutable_tracking_impl(ops.context, data);
                     if (tracking == nullptr) { throw std::logic_error("fixed TSData child has no tracking record"); }
@@ -1364,6 +1409,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     {
                         throw std::logic_error("fixed TSData child reported a duplicate modification");
                     }
+                    mark_tsb_value_field_valid(state, memory, index);
                     newly_modified = true;
                 }
             }
@@ -1399,26 +1445,24 @@ namespace hgraph::ts_data_plan_factory_detail
 
             for (std::size_t index = 0; index < state->element_count(); ++index)
             {
+                auto source_value = source_values.at(index);
+                if (!source_value.has_value()) { continue; }
                 const auto &ops = child_ops(*state->element_binding(index));
                 if (ops.move_value_from_impl == &ts_data_detail::missing_move_value_from)
                 {
                     throw std::logic_error(
                         "fixed TSData move requires every child to support move_value_from");
                 }
-                auto source_value = source_values.at(index);
-                if (!source_value.valid())
-                {
-                    throw std::invalid_argument("fixed TSData move requires live child source values");
-                }
             }
 
             bool newly_modified = false;
             for (std::size_t index = 0; index < state->element_count(); ++index)
             {
+                auto source_value = source_values.at(index);
+                if (!source_value.has_value()) { continue; }
                 const auto *child = state->element_binding(index);
                 const auto &ops   = child_ops(*child);
                 void       *data  = child_data(state, memory, index);
-                auto        source_value = source_values.at(index);
                 auto        source_child = Value::reference(*source_value.binding(),
                                                             const_cast<void *>(source_value.data()));
                 if (ops.move_value_from_impl(ops.context, data, std::move(source_child), modified_time))
@@ -1429,6 +1473,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     {
                         throw std::logic_error("fixed TSData child reported a duplicate modification");
                     }
+                    mark_tsb_value_field_valid(state, memory, index);
                     newly_modified = true;
                 }
             }

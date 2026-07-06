@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -686,8 +687,13 @@ namespace hgraph
         BundleBuilder &set(std::size_t index, const ValueView &field)
         {
             ensure_not_built();
+            if (!field.has_value())
+            {
+                throw std::invalid_argument("BundleBuilder::set(ValueView) requires a live field value");
+            }
             const auto &comp = component(index);
             comp.plan->copy_assign(field_memory(comp.offset), field.data());
+            mark_field(index);
             return *this;
         }
 
@@ -704,13 +710,29 @@ namespace hgraph
             }
             const auto &comp = component(index);
             comp.plan->move_assign(field_memory(comp.offset), const_cast<void *>(field.view().data()));
+            mark_field(index);
             return *this;
         }
 
         /** Set the named field ``name`` by moving an owned ``field`` value into the bundle. */
         BundleBuilder &set(std::string_view name, Value &&field) { return set(index_of(name), std::move(field)); }
 
-        [[nodiscard]] std::size_t size() const noexcept { return state().component_count; }
+        [[nodiscard]] std::size_t size() const noexcept { return field_count(); }
+
+        /** Bundle field validity (core_concepts.rst): set() marks the field
+            live; Tuple composites are dense (no validity component). */
+        void mark_field(std::size_t index)
+        {
+            const auto *meta = binding_->type_meta;
+            if (meta == nullptr || meta->kind != ValueTypeKind::Bundle || meta->field_count == 0) { return; }
+            if (index >= meta->field_count) { throw std::out_of_range("BundleBuilder: field index out of range"); }
+            const auto &plan = binding_->checked_plan();
+            if (plan.component_count() <= meta->field_count) { return; }
+            const auto components = plan.components();
+            auto *words = static_cast<std::uint64_t *>(field_memory(components[meta->field_count].offset));
+            constexpr std::size_t bits_per_word = sizeof(std::uint64_t) * 8U;
+            words[index / bits_per_word] |= std::uint64_t{1} << (index % bits_per_word);
+        }
 
         [[nodiscard]] Value build()
         {
@@ -731,14 +753,14 @@ namespace hgraph
         [[nodiscard]] const MemoryUtils::CompositeComponent &component(std::size_t index) const
         {
             const auto &st = state();
-            if (index >= st.component_count) { throw std::out_of_range("BundleBuilder: field index out of range"); }
+            if (index >= field_count()) { throw std::out_of_range("BundleBuilder: field index out of range"); }
             return st.components()[index];
         }
 
         [[nodiscard]] std::size_t index_of(std::string_view name) const
         {
             const auto &st = state();
-            for (std::size_t i = 0; i < st.component_count; ++i)
+            for (std::size_t i = 0; i < field_count(); ++i)
             {
                 const auto &c = st.components()[i];
                 if (c.name != nullptr && name == c.name) { return i; }
@@ -751,6 +773,13 @@ namespace hgraph
         [[nodiscard]] void *field_memory(std::size_t offset)
         {
             return static_cast<std::byte *>(const_cast<void *>(value_.view().data())) + offset;
+        }
+
+        [[nodiscard]] std::size_t field_count() const noexcept
+        {
+            const auto *meta = binding_->type_meta;
+            if (meta != nullptr && meta->kind == ValueTypeKind::Bundle) { return meta->field_count; }
+            return state().component_count;
         }
 
         void ensure_not_built() const

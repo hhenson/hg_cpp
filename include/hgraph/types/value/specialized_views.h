@@ -220,8 +220,10 @@ namespace hgraph
         {
             const auto n = ops_->size(ops_->context, data());
             if (index >= n) { throw std::out_of_range("MutableIndexedValueView::at: index out of range"); }
-            return ValueView{ops_->element_binding(ops_->context, data(), index),
-                             const_cast<void *>(ops_->element_at(ops_->context, data(), index))}
+            void *element = ops_->mutable_element_at != nullptr
+                                ? ops_->mutable_element_at(ops_->context, mutable_data(), index)
+                                : const_cast<void *>(ops_->element_at(ops_->context, data(), index));
+            return ValueView{ops_->element_binding(ops_->context, data(), index), element}
                 .begin_mutation();
         }
 

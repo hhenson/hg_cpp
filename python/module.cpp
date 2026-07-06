@@ -371,7 +371,9 @@ namespace
                 nb::dict result;
                 for (std::size_t index = 0; index < meta->field_count; ++index)
                 {
-                    result[meta->fields[index].name] = value_to_py(bundle.at(index));
+                    auto field = bundle.at(index);
+                    if (!field.has_value()) { continue; }   // UNSET field: omitted (field validity)
+                    result[meta->fields[index].name] = value_to_py(field);
                 }
                 return result;
             }

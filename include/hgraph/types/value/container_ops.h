@@ -91,6 +91,11 @@ namespace hgraph
          */
         Range<ValueView> (*make_range)(const void *context, const void *memory) = nullptr;
         Range<ValueView> (*make_mutable_range)(const void *context, void *memory) = nullptr;
+        /** Mutable element access (LAST member: positional initializers stay
+            valid). Null = fall back to ``element_at``. A Bundle installs one
+            that MARKS the field live (field validity, core_concepts.rst) and
+            returns real memory even when unset. */
+        void *(*mutable_element_at)(const void *context, void *memory, std::size_t index) = nullptr;
     };
 
     struct ListValueOps : IndexedValueOps

@@ -32,6 +32,11 @@ namespace hgraph
             if (!status.ok()) { fail_status(status, what); }
         }
 
+        void append_null(arrow::ArrayBuilder &builder)
+        {
+            check(builder.AppendNull(), "append null");
+        }
+
         // ---------------------------------------------------------------
         // Per-leaf append / read thunks (fn-ptrs; first param the column)
         // ---------------------------------------------------------------
@@ -247,6 +252,16 @@ namespace hgraph
             check(builder.Finish(&array), "finish array");
             return array;
         }
+
+        void append_column(const Column &column, const ValueView &value, arrow::ArrayBuilder &builder)
+        {
+            if (!value.has_value())
+            {
+                append_null(builder);
+                return;
+            }
+            column.append(column, value, builder);
+        }
     }  // namespace
 
     struct FrameRecorder::Impl
@@ -282,8 +297,8 @@ namespace hgraph
         for (std::size_t i = 0; i < columns.size(); ++i)
         {
             const auto &column = columns[i];
-            if (column.path.empty()) { column.append(column, value, *impl_->column_builders[i]); }
-            else { column.append(column, value.as_bundle().at(column.path.front()), *impl_->column_builders[i]); }
+            if (column.path.empty()) { append_column(column, value, *impl_->column_builders[i]); }
+            else { append_column(column, value.as_bundle().at(column.path.front()), *impl_->column_builders[i]); }
         }
         ++impl_->rows;
     }
@@ -339,8 +354,8 @@ namespace hgraph
         {
             auto builder = make_builder(column.type);
             // v1 paths are depth <= 1 (atomic or depth-1 bundle field).
-            if (column.path.empty()) { column.append(column, value, *builder); }
-            else { column.append(column, value.as_bundle().at(column.path.front()), *builder); }
+            if (column.path.empty()) { append_column(column, value, *builder); }
+            else { append_column(column, value.as_bundle().at(column.path.front()), *builder); }
             arrays.push_back(finish(*builder));
         }
 
@@ -376,14 +391,18 @@ namespace hgraph
         if (converter.meta->kind == ValueTypeKind::Atomic)
         {
             const auto &column = converter.columns.front();
-            return column.read(column, *column_array(column.name), row);
+            auto array = column_array(column.name);
+            if (array->IsNull(row)) { return Value{*converter.meta}; }
+            return column.read(column, *array, row);
         }
 
         const auto *binding = ValuePlanFactory::instance().binding_for(converter.meta);
         BundleBuilder builder{*binding};
         for (const auto &column : converter.columns)
         {
-            builder.set(column.path.front(), column.read(column, *column_array(column.name), row));
+            auto array = column_array(column.name);
+            if (array->IsNull(row)) { continue; }
+            builder.set(column.path.front(), column.read(column, *array, row));
         }
         return builder.build();
     }

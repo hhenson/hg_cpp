@@ -99,6 +99,26 @@ TEST_CASE("json: bundles serialize as objects; unknown fields are skipped on rea
     CHECK(back.view().as_bundle().at(1).checked_as<Str>() == Str{"here"});
 }
 
+TEST_CASE("json: unset bundle fields are omitted on write and null on read")
+{
+    auto &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<Int>("int");
+    const auto *str_meta = registry.register_scalar<Str>("str");
+    const auto *bundle_meta = registry.un_named_bundle({{"count", int_meta}, {"label", str_meta}});
+
+    const auto *binding = ValuePlanFactory::instance().binding_for(bundle_meta);
+    BundleBuilder builder{*binding};
+    builder.set("count", Value{Int{4}});
+    const Value partial = builder.build();
+
+    CHECK(to_json_string(partial.view()) == "{\"count\": 4}");
+
+    const Value back = from_json_string(bundle_meta, "{\"count\": 5, \"label\": null}");
+    auto        bundle = back.view().as_bundle();
+    CHECK(bundle.at("count").checked_as<Int>() == Int{5});
+    CHECK_FALSE(bundle.at("label").has_value());
+}
+
 namespace
 {
     struct FromJsonGraph
