@@ -1135,6 +1135,19 @@ namespace hgraph::stdlib
             return spec;
         }
 
+        [[nodiscard]] inline std::optional<const TSValueTypeMetaData *> try_resolve_map_output_schema(
+            const WiredFn &func,
+            std::span<const TSValueTypeMetaData *const> ts_schemas,
+            std::span<const std::uint8_t> arg_tags)
+        {
+            return fallback_on_exception<std::optional<const TSValueTypeMetaData *>>(std::nullopt, [&] {
+                const TSValueTypeMetaData *output_schema = nullptr;
+                (void)compile_map_child(func, ts_schemas, arg_tags, output_schema);
+                if (output_schema == nullptr) { return std::optional<const TSValueTypeMetaData *>{}; }
+                return std::optional<const TSValueTypeMetaData *>{output_schema};
+            });
+        }
+
         /**
          * The shared map wiring over the **func-parameter-ordered** time-series
          * list (positional + keyword arguments already resolved onto the
@@ -1543,21 +1556,11 @@ namespace hgraph::stdlib
             auto ordered = ordered_map_schemas(context, "key");
             if (!ordered.has_value()) { return; }
 
-            try
-            {
-                const TSValueTypeMetaData *output_schema = nullptr;
-                (void)compile_map_child(*func, {ordered->schemas.data(), ordered->schemas.size()},
-                                        {ordered->arg_tags.data(), ordered->arg_tags.size()}, output_schema);
-                bind_graph_output(resolution, output_schema, "O");
-            }
-            catch (const std::exception &error)
-            {
-                std::fprintf(stderr, "[map resolve] child compile failed: %s\n", error.what());
-            }
-            catch (...)
-            {
-                // Leave unresolved; the real wiring path reports the error.
-            }
+            auto output_schema = try_resolve_map_output_schema(
+                *func, {ordered->schemas.data(), ordered->schemas.size()},
+                {ordered->arg_tags.data(), ordered->arg_tags.size()});
+            if (!output_schema.has_value()) { return; }
+            bind_graph_output(resolution, *output_schema, "O");
         }
 
         /** The first collection in ``func`` parameter order decides which map kernel applies. */
