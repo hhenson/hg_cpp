@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <hgraph/lib/std/standard_types.h>
+#include <hgraph/types/registry_reset.h>
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/util/date_time.h>
@@ -197,7 +198,10 @@ TEST_CASE("TypeRegistry::reset leaves the standard types registered by default")
 
     // reset() restores the default-seeded vocabulary, so the standard scalar types are
     // always available without any explicit registration (the same as on construction).
-    TypeRegistry::instance().reset();
+    // The documented reset path (registry_reset.h): TypeRegistry::reset()
+    // alone leaves borrower caches (plan factory et al) holding pointers
+    // into the dropped generation - address reuse then collides.
+    hgraph::reset_all_registries();
 
     const TypeRegistry &registry = TypeRegistry::instance();
     for (const char *name : {"bool", "int", "int64", "float", "float64", "str", "string", "date", "datetime",

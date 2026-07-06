@@ -39,6 +39,10 @@ def wire(name, *args, __output_type__=None, **kwargs):
     """Wire operator ``name`` by registry resolution (the erased contract)."""
     out_type = kwargs.pop("tp", None) or kwargs.pop("output_type", None) or __output_type__
     if out_type is not None:
+        if isinstance(out_type, type):
+            from ._types import TS as _TS
+
+            out_type = _TS[out_type]   # json_encode[str] names the SCALAR
         out_type = out_type.handle if isinstance(out_type, _TsExpr) else out_type
     w = _current_wiring()
     sizes = kwargs.pop("__sizes__", None)
@@ -176,6 +180,10 @@ WiringPort.__iter__ = _port_iter
 def _port_getattr(self, name):
     if name.startswith("_"):
         raise AttributeError(name)
+    # JSON leaf coercions: j["a"].int / .float / .str / .bool
+    # (value kind 8 = Any; the JSON meta rides Any storage).
+    if name in ("int", "float", "str", "bool") and _unwrap(self).ts_type.value_kind == 8:
+        return wire("json_as_" + name, self)
     try:
         return wire("getattr_", self, name)
     except WiringError:
@@ -318,6 +326,11 @@ def combine(*args, __output_type__=None, **kwargs):
     if __output_type__ is None:
         if len(args) == 2 and not kwargs and all(isinstance(a, WiringPort) for a in args):
             return _combine_compound_scalars(*args)
+        if kwargs and not args and all(isinstance(v, WiringPort) for v in kwargs.values()):
+            # hgraph's un-subscripted kwargs form: a structural un-named TSB.
+            fields = [(k, _unwrap(v).ts_type) for k, v in kwargs.items()]
+            tsb_type = _hgraph.un_named_tsb_type(fields)
+            return WiringPort(_hgraph.tsb_port(tsb_type, {k: _unwrap(v) for k, v in kwargs.items()}))
         raise TypeError("combine requires a subscripted type: combine[TSB[Schema]](...)")
     return __output_type__.from_ts(*args, **kwargs)
 

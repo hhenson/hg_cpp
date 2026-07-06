@@ -2,7 +2,6 @@ import pytest
 from hgraph import JSON, SCHEMA, TS, TS_SCHEMA, TSB, combine, graph, json_decode, json_encode
 from hgraph.test import eval_node
 
-pytestmark = pytest.mark.wip   # burn-down in progress; excluded from the gate
 
 
 def test_json_combine_encode():

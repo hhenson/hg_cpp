@@ -82,7 +82,14 @@ namespace hgraph
         [[nodiscard]] bool current_value_schema_compatible_ts(const TSValueTypeMetaData &schema,
                                                               const ValueTypeMetaData   &value_schema) noexcept
         {
-            return schema.value_schema == &value_schema;
+            if (schema.value_schema == &value_schema) { return true; }
+            // Variadic tuple vs list: distinct schema identity, ONE layout
+            // (same element type; flags differ only by VariadicTuple).
+            const auto *target = schema.value_schema;
+            return target != nullptr && target->kind == ValueTypeKind::List &&
+                   value_schema.kind == ValueTypeKind::List && target->fixed_size == 0 &&
+                   value_schema.fixed_size == 0 && !target->is_mutable() && !value_schema.is_mutable() &&
+                   target->element_type == value_schema.element_type;
         }
 
         [[nodiscard]] bool current_value_schema_compatible_tss(const TSValueTypeMetaData &schema,

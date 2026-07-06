@@ -1058,7 +1058,7 @@ namespace hgraph
             }
 
             case ValueTypeKind::Any:
-                binding = &any_binding();
+                binding = &any_binding(*schema);   // JSON keeps its identity
                 break;
         }
 

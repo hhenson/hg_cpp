@@ -39,6 +39,10 @@ def _value_type(scalar):
         if origin is dict or getattr(origin, "__name__", "") == "frozendict":
             return _hgraph.map_vt(_value_type(args[0]), _value_type(args[1]))
         raise TypeError(f"unsupported generic scalar type for hgraph: {scalar!r}")
+    from ._compat import JSON as _JSON
+
+    if scalar is _JSON:
+        return _hgraph.value_type("JSON")
     name = _SCALAR_NAMES.get(scalar)
     if name is None and scalar in (tuple, frozenset, set, dict):
         raise TypeError(f"bare '{scalar.__name__}' needs element types (e.g. tuple[int, ...])")
@@ -78,6 +82,24 @@ class _TsExpr:
 
         from ._runtime import WiringPort, _unwrap, wire
 
+        if getattr(self, "_json", False):
+            # combine[TS[JSON]](**kwargs): the erased combine_json operator
+            # (scalar kwargs const-lift at their inferred types).
+            lifted = {}
+            for name, value in kwargs.items():
+                unwrapped = _unwrap(value)
+                if not isinstance(unwrapped, _m.Port):
+                    from ._runtime import _infer_ts_type
+
+                    tp = _infer_ts_type([value])
+                    if isinstance(value, list):
+                        tp = _infer_ts_type([tuple(value)])
+                        value = tuple(value)
+                    if tp is None:
+                        raise TypeError(f"combine_json: cannot infer a type for '{name}'")
+                    value = wire("const", value, output_type=tp)
+                lifted[name] = value
+            return wire("combine_json", **lifted)
         if ports and not kwargs:
             # combine[TS[frozendict...]](keys, values) -> the combine_map
             # operator; TS value-kind 5 == Map. The BARE frozendict form
@@ -101,7 +123,7 @@ class _TsExpr:
 
     """A resolved time-series type: wraps the C++ TsType handle."""
 
-    __slots__ = ("handle", "_label", "is_ref", "_bare_map")
+    __slots__ = ("handle", "_label", "is_ref", "_bare_map", "_json")
 
     def __init__(self, handle, label):
         self.handle = handle
@@ -131,9 +153,12 @@ class _TSMeta(type):
         # BARE frozendict (combine[TS[frozendict]](...)): the key/value
         # types resolve from the wired inputs.
         from frozendict import frozendict as _frozendict
+        from ._compat import JSON as _JSON2
 
         if scalar is _frozendict:
             expr._bare_map = True
+        if scalar is _JSON2:
+            expr._json = True
         return expr
 
 
@@ -205,6 +230,8 @@ class TimeSeriesSchema:
 
 class _TSBMeta(type):
     def __getitem__(cls, schema):
+        if isinstance(schema, _TypeVarSentinel):
+            return _GenericTsExpr(f"TSB[{schema!r}]")
         # hgraph parity: schema INHERITANCE - base-class fields first (MRO
         # reversed), subclass fields after; later duplicates override.
         annotations = {}

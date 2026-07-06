@@ -137,6 +137,7 @@ namespace hgraph::stdlib
         RegisteredStandardTypes types{};
 
         types.bool_type      = standard_types_detail::register_scalar_aliases<Bool>(registry, {"bool"});
+        (void)registry.json();   // seeds the JSON meta + its "JSON" alias
         types.int_type       = standard_types_detail::register_scalar_aliases<Int>(registry, {"int", "int64"});
         types.float_type     = standard_types_detail::register_scalar_aliases<Float>(registry, {"float", "float64", "double"});
         types.date_type      = standard_types_detail::register_scalar_aliases<Date>(registry, {"date"});

@@ -25,6 +25,10 @@ namespace hgraph
      * a ``Value`` whose kind is ``Any``.
      */
     [[nodiscard]] const ValueTypeBinding &any_binding();
+
+    /** Meta-preserving form: a JSON-named Any schema keeps its identity
+        while sharing the Any plan + ops. */
+    [[nodiscard]] const ValueTypeBinding &any_binding(const ValueTypeMetaData &meta);
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_VALUE_ANY_OPS_H

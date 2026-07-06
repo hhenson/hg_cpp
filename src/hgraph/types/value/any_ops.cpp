@@ -75,4 +75,9 @@ namespace hgraph
         const ValueTypeMetaData *meta = TypeRegistry::instance().any();
         return ValueTypeBinding::intern(*meta, MemoryUtils::plan_for<Value>(), any_ops());
     }
+
+    const ValueTypeBinding &any_binding(const ValueTypeMetaData &meta)
+    {
+        return ValueTypeBinding::intern(meta, MemoryUtils::plan_for<Value>(), any_ops());
+    }
 }  // namespace hgraph

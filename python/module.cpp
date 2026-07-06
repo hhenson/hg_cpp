@@ -850,7 +850,26 @@ namespace
                                       std::optional<std::vector<std::size_t>> sizes = std::nullopt)
         {
             ensure_open();
-            const auto wiring_args = build_args(args, kwargs);
+            auto wiring_args = build_args(args, kwargs);
+            // Target-directed scalar conversion: with an explicit output
+            // type, a leading plain-python scalar converts AT the target's
+            // value schema (const((1,2,3), tp=TS[tuple[int,...]]) builds
+            // the variadic tuple, not a generic mutable list).
+            if (name == "const" && output_type.has_value() && output_type->meta != nullptr &&
+                output_type->meta->value_schema != nullptr && nb::len(args) >= 1 &&
+                !wiring_args.empty() && wiring_args[0].kind == WiringArg::Kind::Scalar)
+            {
+                try
+                {
+                    Value converted = py_to_value_as(args[0], output_type->meta->value_schema);
+                    wiring_args[0].scalar_value = std::move(converted);
+                    wiring_args[0].scalar_meta  = wiring_args[0].scalar_value.schema();
+                }
+                catch (const std::exception &)
+                {
+                    // keep the generic conversion; resolution reports mismatches
+                }
+            }
             const std::vector<std::size_t> size_hints = sizes.value_or(std::vector<std::size_t>{});
             ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
                 name, std::span<const WiringArg>{wiring_args.data(), wiring_args.size()}, std::nullopt,
@@ -2058,6 +2077,17 @@ NB_MODULE(_hgraph, m)
         const auto *target   = registry.dereference(port.ref.schema);
         const auto *ref_schema = registry.ref(target);
         return PyPort{graph_wiring_detail::adapt_source_for_input(*wiring.raw, ref_schema, port.ref)};
+    });
+
+    m.def("un_named_tsb_type", [](nb::list fields) {
+        std::vector<std::pair<std::string, const TSValueTypeMetaData *>> field_metas;
+        field_metas.reserve(nb::len(fields));
+        for (nb::handle item : fields)
+        {
+            auto pair = nb::cast<nb::tuple>(item);
+            field_metas.emplace_back(nb::cast<std::string>(pair[0]), nb::cast<PyTsType &>(pair[1]).meta);
+        }
+        return PyTsType{TypeRegistry::instance().un_named_tsb(field_metas)};
     });
 
     m.def("bundle_vt", [](const std::string &name, nb::list fields) {

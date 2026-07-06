@@ -44,7 +44,10 @@ namespace hgraph::ts_data_plan_factory_detail
                 switch (meta.kind)
                 {
                     case ValueTypeKind::Atomic:
-                    case ValueTypeKind::Bundle: return true;
+                    case ValueTypeKind::Bundle:
+                    // Any-storage scalars (Any itself and the JSON tree):
+                    // the box copies whole through the Any value plan.
+                    case ValueTypeKind::Any: return true;
                     case ValueTypeKind::Tuple:
                     case ValueTypeKind::List:
                     case ValueTypeKind::Set:

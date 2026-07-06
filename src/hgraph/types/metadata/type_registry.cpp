@@ -533,6 +533,24 @@ namespace hgraph
         return &meta;
     }
 
+    const ValueTypeMetaData *TypeRegistry::json()
+    {
+        // JSON = a distinct schema identity over Any STORAGE: the boxed value
+        // is one of Bool | Int | Float | Str | List<JSON> | Map<Str, JSON>;
+        // an EMPTY box is JSON null.
+        const ValueTypeMetaData &meta = any_cache_.intern(1, [&]() {
+            return ValueTypeMetaData(ValueTypeKind::Any,
+                                     ValueTypeFlags::Hashable | ValueTypeFlags::Equatable |
+                                         ValueTypeFlags::Comparable,
+                                     "JSON");
+        });
+        if (value_name_cache_.find("JSON") == value_name_cache_.end())
+        {
+            const_cast<TypeRegistry *>(this)->register_value_type_alias("JSON", &meta);
+        }
+        return &meta;
+    }
+
     const ValueTypeMetaData *TypeRegistry::any()
     {
         // Unconstrained, singleton: no element/key/fields. Hashable / equatable /

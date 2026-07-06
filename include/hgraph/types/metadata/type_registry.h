@@ -152,6 +152,9 @@ namespace hgraph
          * containers and the analogue of a generic / Python ``object``.
          */
         const ValueTypeMetaData *any();
+        /** The dynamic-JSON value tree: a distinct JSON-named meta over Any
+            storage (design record: parity_matrix.rst, ruling 2026-07-06). */
+        const ValueTypeMetaData *json();
 
         /** Singleton ``SIGNAL`` time-series schema. */
         const TSValueTypeMetaData *signal();

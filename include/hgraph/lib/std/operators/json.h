@@ -26,6 +26,41 @@ namespace hgraph::stdlib
     {
     };
 
+    /** Dynamic-JSON tree operators (design record: parity_matrix.rst,
+        ruling 2026-07-06 — the tree is a C++ value; python is sugar). */
+    struct combine_json : Operator<"combine_json", In<"values", TsVar<"V">>, Out<TsVar<"O">>>
+    {
+    };
+
+    /** Runtime node behind ``combine_json`` (internal). */
+    struct json_object_ : Operator<"__json_object", In<"values", TsVar<"V">>, Out<TsVar<"O">>>
+    {
+    };
+
+    struct json_encode : Operator<"json_encode", In<"ts", TsVar<"S">>, Out<TS<Str>>>
+    {
+    };
+
+    struct json_decode : Operator<"json_decode", In<"ts", TS<Str>>, Out<TsVar<"O">>>
+    {
+    };
+
+    struct json_as_int : Operator<"json_as_int", In<"ts", TsVar<"S">>, Out<TS<Int>>>
+    {
+    };
+
+    struct json_as_float : Operator<"json_as_float", In<"ts", TsVar<"S">>, Out<TS<Float>>>
+    {
+    };
+
+    struct json_as_str : Operator<"json_as_str", In<"ts", TsVar<"S">>, Out<TS<Str>>>
+    {
+    };
+
+    struct json_as_bool : Operator<"json_as_bool", In<"ts", TsVar<"S">>, Out<TS<Bool>>>
+    {
+    };
+
     struct from_json : Operator<"from_json", In<"ts", TS<Str>>, Out<TsVar<"O">>>
     {
     };
