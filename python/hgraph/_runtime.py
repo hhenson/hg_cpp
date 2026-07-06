@@ -38,12 +38,6 @@ def _unwrap(value):
 def wire(name, *args, __output_type__=None, **kwargs):
     """Wire operator ``name`` by registry resolution (the erased contract)."""
     out_type = kwargs.pop("tp", None) or kwargs.pop("output_type", None) or __output_type__
-    # hgraph idiom: a positional TYPE argument names the requested output
-    # type (e.g. nothing(TS[int])).
-    positional_types = [a for a in args if isinstance(a, _TsExpr)]
-    if positional_types and out_type is None:
-        out_type = positional_types[0]
-        args = tuple(a for a in args if not isinstance(a, _TsExpr))
     if out_type is not None:
         out_type = out_type.handle if isinstance(out_type, _TsExpr) else out_type
     w = _current_wiring()
@@ -52,35 +46,8 @@ def wire(name, *args, __output_type__=None, **kwargs):
     try:
         result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type)
     except RuntimeError as error:
-        # hgraph parity: plain python values lift to const where a TS input
-        # is expected. Retry with every liftable positional lifted.
-        lifted = _lift_scalars_to_const(args)
-        if lifted is None:
-            raise WiringError(str(error)) from error
-        try:
-            result = w.wire(name, tuple(lifted), unwrapped_kw, output_type=out_type)
-        except RuntimeError:
-            raise WiringError(str(error)) from error
+        raise WiringError(str(error)) from error
     return WiringPort(result) if result is not None else None
-
-
-def _lift_scalars_to_const(args):
-    """const-lift plain values among ``args`` (None = nothing liftable)."""
-    from ._types import TS
-
-    lifted = []
-    any_lifted = False
-    for arg in args:
-        value = _unwrap(arg)
-        if isinstance(arg, WiringPort) or isinstance(value, (_hgraph.WiredFn,)) or not isinstance(
-            value, (bool, int, float, str)
-        ):
-            lifted.append(value)
-            continue
-        port = wire("const", value, tp=TS[type(value)])
-        lifted.append(_unwrap(port))
-        any_lifted = True
-    return lifted if any_lifted else None
 
 
 class _OperatorFunction:
@@ -98,10 +65,24 @@ class _OperatorFunction:
     def __call__(self, *args, **kwargs):
         if self._output_type is not None and "tp" not in kwargs and "output_type" not in kwargs:
             kwargs["output_type"] = self._output_type
+        args, kwargs = self._normalise_type_arguments(args, kwargs)
         return wire(self.__name__, *args, **kwargs)
 
     def __getitem__(self, item):
         return _OperatorFunction(self.__name__, output_type=item)
+
+    def _normalise_type_arguments(self, args, kwargs):
+        if "tp" in kwargs or "output_type" in kwargs:
+            return args, kwargs
+        if self.__name__ == "nothing" and len(args) == 1 and isinstance(args[0], _TsExpr):
+            kwargs = dict(kwargs)
+            kwargs["output_type"] = args[0]
+            return (), kwargs
+        if self.__name__ == "const" and len(args) >= 2 and isinstance(args[1], _TsExpr):
+            kwargs = dict(kwargs)
+            kwargs["output_type"] = args[1]
+            return (args[0], *args[2:]), kwargs
+        return args, kwargs
 
     def __repr__(self):
         return f"<operator {self.__name__}>"
@@ -1018,14 +999,18 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     try:
         ports = []
         for i, series in enumerate(inputs):
-            if not isinstance(series, (list, tuple)):
-                # hgraph parity: a non-list argument is a plain value (lifted
-                # to const where a TS input is expected, or a scalar param).
-                ports.append(series)
-                continue
             annotation = params[i].annotation if i < len(params) else None
             if resolution_dict and i < len(params) and params[i].name in resolution_dict:
                 annotation = resolution_dict[params[i].name]
+            if not isinstance(series, (list, tuple)):
+                # hgraph parity: a non-list argument is a plain value (lifted
+                # to const where a TS input is expected, or a scalar param).
+                if isinstance(annotation, _TsExpr):
+                    src = w.wire("const", (series,), {}, output_type=annotation.handle)
+                    ports.append(WiringPort(src))
+                    continue
+                ports.append(series)
+                continue
             if not isinstance(annotation, _TsExpr):
                 annotation = _infer_ts_type(series)
                 if annotation is None:

@@ -94,6 +94,70 @@ def test_scalars_in_operators():
     check(out == [None, 1, 2], f"lag: {out}")
 
 
+def test_wire_does_not_retry_with_blanket_auto_const():
+    import hgraph._runtime as runtime
+
+    class FakeWiring:
+        def __init__(self):
+            self.calls = 0
+
+        def wire(self, name, args, kwargs, output_type=None):
+            self.calls += 1
+            raise RuntimeError("first failure")
+
+    fake = FakeWiring()
+    runtime._wiring_stack.append(fake)
+    try:
+        try:
+            runtime.wire("needs_mixed_args", 1, False)
+            check(False, "expected WiringError")
+        except hg.WiringError:
+            pass
+    finally:
+        runtime._wiring_stack.pop()
+
+    check(fake.calls == 1, f"wire retried {fake.calls} times")
+
+
+def test_wire_does_not_promote_positional_types_generically():
+    import hgraph._runtime as runtime
+
+    seen = {}
+
+    class FakeWiring:
+        def wire(self, name, args, kwargs, output_type=None):
+            seen["name"] = name
+            seen["args"] = args
+            seen["output_type"] = output_type
+            return None
+
+    runtime._wiring_stack.append(FakeWiring())
+    try:
+        runtime.wire("custom", TS[int])
+    finally:
+        runtime._wiring_stack.pop()
+
+    check(seen["name"] == "custom", f"unexpected operator: {seen}")
+    check(len(seen["args"]) == 1, f"positional type was stripped: {seen}")
+    check(seen["output_type"] is None, f"positional type became output_type: {seen}")
+
+
+def test_const_positional_output_type_compatibility():
+    @graph
+    def source() -> TS[int]:
+        return hg.const(5, TS[int])
+
+    check(eval_node(source) == [5], "const(value, TS[int])")
+
+
+def test_eval_node_scalar_inputs_follow_ts_annotations():
+    @graph
+    def total(a: TS[float], b: TS[float], c: TS[float]) -> TS[float]:
+        return hg.sum_(a, b, c)
+
+    check(eval_node(total, 4.0, 5.0, 6.0) == [15.0], "scalar eval_node inputs")
+
+
 
 
 

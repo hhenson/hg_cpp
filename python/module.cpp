@@ -992,13 +992,6 @@ namespace
         return *registry;
     }
 
-    [[nodiscard]] nb::object call_py_node(const PyNodeRef &ref, std::span<const nb::object> args)
-    {
-        nb::list call_args;
-        for (const nb::object &arg : args) { call_args.append(arg); }
-        return ref.record->fn(*nb::tuple(call_args));
-    }
-
     void apply_py_result(nb::handle result, Out<TsVar<"O">> &out)
     {
         if (result.is_none()) { return; }
@@ -1760,6 +1753,8 @@ NB_MODULE(_hgraph, m)
                                                              ts.value().ref)};
             case ServiceFlavour::RequestReply:
                 return PyPort{request_reply_service_call(w.wiring_ref(), *desc.descriptor, path, ts.value().ref)};
+            case ServiceFlavour::Adaptor:
+                throw std::logic_error("service_client does not accept adaptor descriptors");
         }
         throw std::logic_error("unreachable");
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("ts") = nb::none());
@@ -1776,6 +1771,8 @@ NB_MODULE(_hgraph, m)
             case ServiceFlavour::RequestReply:
                 register_request_reply_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
                 return;
+            case ServiceFlavour::Adaptor:
+                throw std::logic_error("register_service_impl does not accept adaptor descriptors");
         }
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
 
