@@ -23,6 +23,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace hgraph::stdlib
@@ -749,46 +750,48 @@ namespace hgraph::stdlib
     namespace arithmetic_impl_detail
     {
         /** Per-tick aggregates over CONTAINER-SCALAR values (frozendict ->
-            its values; frozenset/tuple -> its elements). NOT the running
+            its values; frozenset/list -> its elements). NOT the running
             scalar aggregates: each tick aggregates the container's content. */
         enum class ContainerAgg : std::uint8_t { Min, Max, Sum, Mean, Std, Var };
 
-        [[nodiscard]] inline const ValueTypeMetaData *container_element_meta(const ValueTypeMetaData *meta) noexcept
+        template <ValueTypeKind Kind>
+        [[nodiscard]] inline const ValueTypeMetaData *container_agg_element_meta(
+            const ValueTypeMetaData *meta) noexcept
         {
-            if (meta == nullptr) { return nullptr; }
-            switch (meta->kind)
+            if (meta == nullptr || meta->is_mutable() || meta->kind != Kind) { return nullptr; }
+            if constexpr (Kind == ValueTypeKind::Map || Kind == ValueTypeKind::Set ||
+                          Kind == ValueTypeKind::List)
             {
-                case ValueTypeKind::Map: return meta->element_type;      // aggregate the VALUES
-                case ValueTypeKind::Set:
-                case ValueTypeKind::List:
-                case ValueTypeKind::Tuple: return meta->element_type;
-                default: return nullptr;
+                return meta->element_type;
             }
+            return nullptr;
         }
 
+        template <ValueTypeKind Kind>
         [[nodiscard]] inline bool container_agg_requires(const ResolutionMap &resolution)
         {
             const auto *meta = resolution.find_scalar("T");
-            return meta != nullptr && !meta->is_mutable() && container_element_meta(meta) != nullptr;
+            return container_agg_element_meta<Kind>(meta) != nullptr;
         }
 
-        template <typename Fn>
+        template <ValueTypeKind Kind, typename Fn>
         void for_each_container_element(const ValueView &container, Fn &&fn)
         {
-            switch (container.schema()->kind)
+            if constexpr (Kind == ValueTypeKind::Map)
             {
-                case ValueTypeKind::Map:
-                    for (const auto [key, item] : container.as_map()) { fn(item); }
-                    return;
-                case ValueTypeKind::Set:
-                    for (const ValueView &item : container.as_set().values()) { fn(item); }
-                    return;
-                case ValueTypeKind::List:
-                case ValueTypeKind::Tuple:
-                    for (const ValueView &item : container.as_list()) { fn(item); }
-                    return;
-                default: throw std::logic_error("container aggregate: unsupported container kind");
+                for (const ValueView &item : container.as_map().values()) { fn(item); }
             }
+            else if constexpr (Kind == ValueTypeKind::Set)
+            {
+                for (const ValueView &item : container.as_set().values()) { fn(item); }
+            }
+            else if constexpr (Kind == ValueTypeKind::List)
+            {
+                for (const ValueView &item : container.as_list()) { fn(item); }
+            }
+            else { static_assert(Kind == ValueTypeKind::Map || Kind == ValueTypeKind::Set ||
+                                 Kind == ValueTypeKind::List,
+                                 "unsupported container aggregate kind"); }
         }
 
         /** Correctly-rounded double sqrt of the exact rational num/den
@@ -824,181 +827,269 @@ namespace hgraph::stdlib
             return std::ldexp(static_cast<Float>(r), e - 54);
         }
 
-        [[nodiscard]] inline Float numeric_of(const ValueView &item)
+        inline void publish_value(const TSOutputView &out_view, Value value)
         {
-            const auto *meta = item.schema();
-            if (meta == scalar_descriptor<Int>::value_meta()) { return static_cast<Float>(item.checked_as<Int>()); }
-            if (meta == scalar_descriptor<Float>::value_meta()) { return item.checked_as<Float>(); }
-            throw std::invalid_argument("container aggregate requires numeric elements");
+            auto mutation = out_view.begin_mutation(out_view.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(value)));
         }
 
-        template <ContainerAgg Agg, bool HasDefault>
-        struct container_agg_impl
+        template <typename T>
+        inline void publish_scalar(const TSOutputView &out_view, T value)
+        {
+            publish_value(out_view, Value{value});
+        }
+
+        inline void publish_default_if_valid(const TSInputView *default_value, const TSOutputView &out_view)
+        {
+            if (default_value == nullptr || !default_value->valid()) { return; }
+            auto mutation = out_view.begin_mutation(out_view.evaluation_time());
+            static_cast<void>(mutation.copy_value_from(default_value->value()));
+        }
+
+        template <ValueTypeKind Kind>
+        void resolve_container_agg_output(ResolutionMap &resolution,
+                                          OperatorCallContext context,
+                                          const ValueTypeMetaData *out_meta)
+        {
+            for (const WiringArg &arg : context.args)
+            {
+                if (arg.kind != WiringArg::Kind::TimeSeries || arg.port.schema == nullptr) { continue; }
+                if (container_agg_element_meta<Kind>(arg.port.schema->value_schema) == nullptr) { continue; }
+                resolution.bind_scalar("E", out_meta);
+                return;
+            }
+        }
+
+        template <typename Element>
+        [[nodiscard]] constexpr Float numeric_as_float(Element value) noexcept
+        {
+            return static_cast<Float>(value);
+        }
+
+        template <typename Element, ValueTypeKind Kind>
+        struct numeric_container_stats
+        {
+            std::size_t count{0};
+            Float       sum{0.0};
+            Int         int_sum{0};
+            Int         int_sum_sq{0};
+
+            static numeric_container_stats collect(const ValueView &container)
+            {
+                numeric_container_stats stats;
+                for_each_container_element<Kind>(container, [&](const ValueView &item) {
+                    const Element value = item.checked_as<Element>();
+                    ++stats.count;
+                    stats.sum += numeric_as_float(value);
+                    if constexpr (std::is_same_v<Element, Int>)
+                    {
+                        stats.int_sum += value;
+                        stats.int_sum_sq += value * value;
+                    }
+                });
+                return stats;
+            }
+        };
+
+        template <ContainerAgg Agg, bool HasDefault, ValueTypeKind Kind>
+        struct container_extremum_impl
         {
             static constexpr auto name = Agg == ContainerAgg::Min   ? (HasDefault ? "min_container_d" : "min_container")
-                                         : Agg == ContainerAgg::Max ? (HasDefault ? "max_container_d" : "max_container")
-                                         : Agg == ContainerAgg::Sum ? (HasDefault ? "sum_container_d" : "sum_container")
-                                         : Agg == ContainerAgg::Mean ? (HasDefault ? "mean_container_d" : "mean_container")
-                                         : Agg == ContainerAgg::Std ? (HasDefault ? "std_container_d" : "std_container")
-                                                                    : (HasDefault ? "var_container_d" : "var_container");
+                                                                    : (HasDefault ? "max_container_d" : "max_container");
+
+            static_assert(Agg == ContainerAgg::Min || Agg == ContainerAgg::Max);
 
             static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
             {
-                return container_agg_requires(resolution);
+                return container_agg_requires<Kind>(resolution);
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                for (const WiringArg &arg : context.args)
-                {
-                    if (arg.kind != WiringArg::Kind::TimeSeries || arg.port.schema == nullptr) { continue; }
-                    const auto *value_meta = arg.port.schema->value_schema;
-                    const auto *element    = container_element_meta(value_meta);
-                    if (element == nullptr) { continue; }
-                    const auto *out_meta = (Agg == ContainerAgg::Mean || Agg == ContainerAgg::Std ||
-                                            Agg == ContainerAgg::Var)
-                                               ? scalar_descriptor<Float>::value_meta()
-                                               : element;
-                    resolution.bind_scalar("E", out_meta);
-                    return;
-                }
+                const auto *meta = resolution.find_scalar("T");
+                const auto *element = container_agg_element_meta<Kind>(meta);
+                if (element != nullptr) { resolve_container_agg_output<Kind>(resolution, context, element); }
             }
 
             static void do_eval(const ValueView &container, const TSInputView *default_value,
                                 const TSOutputView &out_view)
             {
-                std::size_t count = 0;
-                if constexpr (Agg == ContainerAgg::Min || Agg == ContainerAgg::Max)
+                Value best;
+                for_each_container_element<Kind>(container, [&](const ValueView &item) {
+                    if (!best.has_value() ||
+                        (Agg == ContainerAgg::Min
+                             ? item.compare(best.view()) == std::partial_ordering::less
+                             : item.compare(best.view()) == std::partial_ordering::greater))
+                    {
+                        best = Value{item};
+                    }
+                });
+
+                if (best.has_value())
                 {
-                    Value best;   // owned copy of the current extremum
-                    for_each_container_element(container, [&](const ValueView &item) {
-                        ++count;
-                        if (!best.has_value() ||
-                            (Agg == ContainerAgg::Min
-                                 ? item.compare(best.view()) == std::partial_ordering::less
-                                 : item.compare(best.view()) == std::partial_ordering::greater))
-                        {
-                            best = Value{item};
-                        }
-                    });
-                    if (count > 0)
-                    {
-                        auto mutation = out_view.begin_mutation(out_view.evaluation_time());
-                        static_cast<void>(mutation.move_value_from(std::move(best)));
-                        return;
-                    }
-                }
-                else
-                {
-                    Float sum = 0.0;
-                    for_each_container_element(container, [&](const ValueView &item) {
-                        ++count;
-                        sum += numeric_of(item);
-                    });
-                    if (Agg == ContainerAgg::Sum)
-                    {
-                        // Empty sums yield the ZERO of the element type.
-                        Value result;
-                        if (out_view.schema()->value_schema == scalar_descriptor<Int>::value_meta())
-                        {
-                            result = Value{static_cast<Int>(sum)};
-                        }
-                        else { result = Value{sum}; }
-                        auto mutation = out_view.begin_mutation(out_view.evaluation_time());
-                        static_cast<void>(mutation.move_value_from(std::move(result)));
-                        return;
-                    }
-                    // hgraph parity: mean of EMPTY is NaN; std/var of
-                    // empty/singleton spreads are 0.0. SAMPLE variance -
-                    // python's statistics module computes with exact
-                    // fractions, so INT elements use the exact integer
-                    // formula (correctly-rounded double at the end);
-                    // float elements fall back to the two-pass formula.
-                    Float out = Agg == ContainerAgg::Mean && count == 0
-                                    ? std::numeric_limits<Float>::quiet_NaN()
-                                    : 0.0;
-                    if (count > 0)
-                    {
-                        const Float mean_v = sum / static_cast<Float>(count);
-                        out                = mean_v;
-                        if constexpr (Agg == ContainerAgg::Std || Agg == ContainerAgg::Var)
-                        {
-                            Float variance = 0.0;
-                            if (count > 1)
-                            {
-                                bool all_int = true;
-                                Int  int_sum = 0, int_sum_sq = 0;
-                                for_each_container_element(container, [&](const ValueView &item) {
-                                    if (!all_int || item.schema() != scalar_descriptor<Int>::value_meta())
-                                    {
-                                        all_int = false;
-                                        return;
-                                    }
-                                    const Int v = item.checked_as<Int>();
-                                    int_sum += v;
-                                    int_sum_sq += v * v;
-                                });
-                                if (all_int)
-                                {
-                                    const Int n = static_cast<Int>(count);
-                                    const Int num = n * int_sum_sq - int_sum * int_sum;
-                                    const Int den = n * (n - 1);
-                                    if constexpr (Agg == ContainerAgg::Std)
-                                    {
-                                        out = sqrt_rational(num, den);
-                                        goto publish;
-                                    }
-                                    variance = static_cast<Float>(num) / static_cast<Float>(den);
-                                }
-                                else
-                                {
-                                    Float squares = 0.0;
-                                    for_each_container_element(container, [&](const ValueView &item) {
-                                        const Float d = numeric_of(item) - mean_v;
-                                        squares += d * d;
-                                    });
-                                    variance = squares / static_cast<Float>(count - 1);
-                                }
-                            }
-                            out = Agg == ContainerAgg::Std ? std::sqrt(variance) : variance;
-                        }
-                    }
-                publish:;
-                    Value result{out};
-                    auto  mutation = out_view.begin_mutation(out_view.evaluation_time());
-                    static_cast<void>(mutation.move_value_from(std::move(result)));
+                    publish_value(out_view, std::move(best));
                     return;
                 }
-                if (default_value != nullptr && default_value->valid())
-                {
-                    auto mutation = out_view.begin_mutation(out_view.evaluation_time());
-                    static_cast<void>(mutation.copy_value_from(default_value->value()));
-                }
+
+                publish_default_if_valid(default_value, out_view);
             }
         };
 
-        template <ContainerAgg Agg>
-        struct container_agg_plain : container_agg_impl<Agg, false>
+        template <ContainerAgg Agg, bool HasDefault, ValueTypeKind Kind, typename Element>
+        struct container_numeric_agg_impl
+        {
+            static constexpr auto name = Agg == ContainerAgg::Sum   ? (HasDefault ? "sum_container_d" : "sum_container")
+                                         : Agg == ContainerAgg::Mean ? (HasDefault ? "mean_container_d" : "mean_container")
+                                         : Agg == ContainerAgg::Std ? (HasDefault ? "std_container_d" : "std_container")
+                                                                    : (HasDefault ? "var_container_d" : "var_container");
+
+            static_assert(Agg == ContainerAgg::Sum || Agg == ContainerAgg::Mean || Agg == ContainerAgg::Std ||
+                          Agg == ContainerAgg::Var);
+            static_assert(std::is_same_v<Element, Int> || std::is_same_v<Element, Float>);
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *meta = resolution.find_scalar("T");
+                return container_agg_element_meta<Kind>(meta) == scalar_descriptor<Element>::value_meta();
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                const auto *out_meta = Agg == ContainerAgg::Sum ? scalar_descriptor<Element>::value_meta()
+                                                                : scalar_descriptor<Float>::value_meta();
+                resolve_container_agg_output<Kind>(resolution, context, out_meta);
+            }
+
+            static void do_eval(const ValueView &container, const TSOutputView &out_view)
+            {
+                const auto stats = numeric_container_stats<Element, Kind>::collect(container);
+                if constexpr (Agg == ContainerAgg::Sum)
+                {
+                    if constexpr (std::is_same_v<Element, Int>)
+                    {
+                        publish_scalar(out_view, stats.int_sum);
+                    }
+                    else { publish_scalar(out_view, stats.sum); }
+                    return;
+                }
+
+                Float out = Agg == ContainerAgg::Mean && stats.count == 0
+                                ? std::numeric_limits<Float>::quiet_NaN()
+                                : 0.0;
+                if (stats.count > 0)
+                {
+                    const Float mean_v = stats.sum / static_cast<Float>(stats.count);
+                    out = mean_v;
+                    if constexpr (Agg == ContainerAgg::Std || Agg == ContainerAgg::Var)
+                    {
+                        out = 0.0;   // singleton spread stays 0.0
+                        if (stats.count > 1)
+                        {
+                            Float variance = 0.0;
+                            if constexpr (std::is_same_v<Element, Int>)
+                            {
+                                const Int n   = static_cast<Int>(stats.count);
+                                const Int num = n * stats.int_sum_sq - stats.int_sum * stats.int_sum;
+                                const Int den = n * (n - 1);
+                                if constexpr (Agg == ContainerAgg::Std) { out = sqrt_rational(num, den); }
+                                else { variance = static_cast<Float>(num) / static_cast<Float>(den); }
+                            }
+                            else
+                            {
+                                Float squares = 0.0;
+                                for_each_container_element<Kind>(container, [&](const ValueView &item) {
+                                    const Float d = item.checked_as<Element>() - mean_v;
+                                    squares += d * d;
+                                });
+                                variance = squares / static_cast<Float>(stats.count - 1);
+                            }
+                            if constexpr (Agg == ContainerAgg::Std)
+                            {
+                                if constexpr (!std::is_same_v<Element, Int>) { out = std::sqrt(variance); }
+                            }
+                            else { out = variance; }
+                        }
+                    }
+                }
+                publish_scalar(out_view, out);
+            }
+        };
+
+        template <ContainerAgg Agg, ValueTypeKind Kind>
+        struct container_extremum_plain : container_extremum_impl<Agg, false, Kind>
         {
             static void eval(In<"ts", TS<ScalarVar<"T">>> ts, Out<TS<ScalarVar<"E">>> out)
             {
-                container_agg_impl<Agg, false>::do_eval(ts.base().value(), nullptr,
-                                                        static_cast<const TSOutputView &>(out));
+                container_extremum_impl<Agg, false, Kind>::do_eval(ts.base().value(), nullptr,
+                                                                   static_cast<const TSOutputView &>(out));
             }
         };
 
-        template <ContainerAgg Agg>
-        struct container_agg_default : container_agg_impl<Agg, true>
+        template <ContainerAgg Agg, ValueTypeKind Kind>
+        struct container_extremum_default : container_extremum_impl<Agg, true, Kind>
         {
             static void eval(In<"ts", TS<ScalarVar<"T">>> ts,
                              In<"default_value", TS<ScalarVar<"E">>, InputValidity::Unchecked> default_value,
                              Out<TS<ScalarVar<"E">>> out)
             {
                 const auto &fallback = default_value.base();
-                container_agg_impl<Agg, true>::do_eval(ts.base().value(), &fallback,
-                                                       static_cast<const TSOutputView &>(out));
+                container_extremum_impl<Agg, true, Kind>::do_eval(ts.base().value(), &fallback,
+                                                                  static_cast<const TSOutputView &>(out));
             }
         };
+
+        template <ContainerAgg Agg, ValueTypeKind Kind, typename Element>
+        struct container_numeric_agg_plain : container_numeric_agg_impl<Agg, false, Kind, Element>
+        {
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts, Out<TS<ScalarVar<"E">>> out)
+            {
+                container_numeric_agg_impl<Agg, false, Kind, Element>::do_eval(
+                    ts.base().value(), static_cast<const TSOutputView &>(out));
+            }
+        };
+
+        template <ContainerAgg Agg, ValueTypeKind Kind, typename Element>
+        struct container_numeric_agg_default : container_numeric_agg_impl<Agg, true, Kind, Element>
+        {
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts,
+                             In<"default_value", TS<ScalarVar<"E">>, InputValidity::Unchecked> default_value,
+                             Out<TS<ScalarVar<"E">>> out)
+            {
+                (void)default_value;
+                container_numeric_agg_impl<Agg, true, Kind, Element>::do_eval(
+                    ts.base().value(), static_cast<const TSOutputView &>(out));
+            }
+        };
+
+        template <ValueTypeKind Kind>
+        void register_container_extremum_aggregates()
+        {
+            register_overload<min_, container_extremum_plain<ContainerAgg::Min, Kind>>();
+            register_overload<min_, container_extremum_default<ContainerAgg::Min, Kind>>();
+            register_overload<max_, container_extremum_plain<ContainerAgg::Max, Kind>>();
+            register_overload<max_, container_extremum_default<ContainerAgg::Max, Kind>>();
+        }
+
+        template <ValueTypeKind Kind, typename Element>
+        void register_container_numeric_aggregates()
+        {
+            register_overload<sum_, container_numeric_agg_plain<ContainerAgg::Sum, Kind, Element>>();
+            register_overload<sum_, container_numeric_agg_default<ContainerAgg::Sum, Kind, Element>>();
+            register_overload<mean, container_numeric_agg_plain<ContainerAgg::Mean, Kind, Element>>();
+            register_overload<mean, container_numeric_agg_default<ContainerAgg::Mean, Kind, Element>>();
+            register_overload<std_, container_numeric_agg_plain<ContainerAgg::Std, Kind, Element>>();
+            register_overload<std_, container_numeric_agg_default<ContainerAgg::Std, Kind, Element>>();
+            register_overload<var_, container_numeric_agg_plain<ContainerAgg::Var, Kind, Element>>();
+            register_overload<var_, container_numeric_agg_default<ContainerAgg::Var, Kind, Element>>();
+        }
+
+        template <ValueTypeKind Kind>
+        void register_container_aggregates()
+        {
+            register_container_extremum_aggregates<Kind>();
+            register_container_numeric_aggregates<Kind, Int>();
+            register_container_numeric_aggregates<Kind, Float>();
+        }
     }  // namespace arithmetic_impl_detail
 
     /** Register the arithmetic operator overloads (``add_`` / ``sub_`` / ``div_``). */
@@ -1077,21 +1168,9 @@ namespace hgraph::stdlib
         register_overload<len_, arithmetic_impl_detail::len_container_impl>();
 
         {
-            using arithmetic_impl_detail::ContainerAgg;
-            using arithmetic_impl_detail::container_agg_default;
-            using arithmetic_impl_detail::container_agg_plain;
-            register_overload<min_, container_agg_plain<ContainerAgg::Min>>();
-            register_overload<min_, container_agg_default<ContainerAgg::Min>>();
-            register_overload<max_, container_agg_plain<ContainerAgg::Max>>();
-            register_overload<max_, container_agg_default<ContainerAgg::Max>>();
-            register_overload<sum_, container_agg_plain<ContainerAgg::Sum>>();
-            register_overload<sum_, container_agg_default<ContainerAgg::Sum>>();
-            register_overload<mean, container_agg_plain<ContainerAgg::Mean>>();
-            register_overload<mean, container_agg_default<ContainerAgg::Mean>>();
-            register_overload<std_, container_agg_plain<ContainerAgg::Std>>();
-            register_overload<std_, container_agg_default<ContainerAgg::Std>>();
-            register_overload<var_, container_agg_plain<ContainerAgg::Var>>();
-            register_overload<var_, container_agg_default<ContainerAgg::Var>>();
+            arithmetic_impl_detail::register_container_aggregates<ValueTypeKind::Map>();
+            arithmetic_impl_detail::register_container_aggregates<ValueTypeKind::Set>();
+            arithmetic_impl_detail::register_container_aggregates<ValueTypeKind::List>();
         }
         register_overload<sum_, arithmetic_impl_detail::running_sum_impl<Int>>();
         register_overload<sum_, arithmetic_impl_detail::running_sum_impl<Float>>();

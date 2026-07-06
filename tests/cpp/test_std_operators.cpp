@@ -14,6 +14,8 @@
 // with ``Value`` equality.
 
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/standard_types.h>
+#include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/record_replay.h>
@@ -50,6 +52,42 @@ namespace
         return Date{year{y} / month{m} / day{d}};
     }
 
+    [[nodiscard]] WiringArg scalar_arg(Value value)
+    {
+        WiringArg arg;
+        arg.kind         = WiringArg::Kind::Scalar;
+        arg.scalar_value = std::move(value);
+        arg.scalar_meta  = arg.scalar_value.schema();
+        return arg;
+    }
+
+    template <typename GraphT, typename Out>
+    [[nodiscard]] std::vector<std::optional<Out>>
+    eval_runtime_schema_graph(const TSValueTypeMetaData *input_schema,
+                              const std::vector<std::optional<Value>> &input)
+    {
+        Wiring w;
+        std::array<WiringArg, 1> replay_args{scalar_arg(Value{Str{"eval_node::in"}})};
+        OperatorWireResult replay =
+            wire_operator(w, "replay", std::span<const WiringArg>{replay_args}, true, input_schema);
+        if (!replay.has_output) { throw std::logic_error("runtime-schema replay did not produce an output"); }
+
+        Port<TS<Out>> out = GraphT::compose(w, replay.output);
+        wire<record>(w, out, std::string{"eval_node::out"});
+
+        GraphBuilder gb = std::move(w).finish();
+        set_replay_deltas(gb.global_state(), "eval_node::in", input);
+
+        GraphExecutorBuilder eb;
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
+        GraphExecutorValue executor = eb.make_executor();
+        auto               view     = executor.view();
+        view.run();
+
+        auto recorded = get_recorded_values<Out>(view.graph().global_state(), "eval_node::out");
+        if (recorded.size() < input.size()) { recorded.resize(input.size()); }
+        return recorded;
+    }
 
     // Lightweight graphs with declared inputs/outputs, driven through eval_node.
     struct SyntaxArithmeticGraph
@@ -89,6 +127,41 @@ namespace
         {
             using namespace hgraph::stdlib::syntax;
             return (a / b).as<TS<Int>>();   // int / int -> float: the cast must throw
+        }
+    };
+
+    // Scalar-container TS schemas are runtime metadata today. The wrapper graph
+    // pins the output type expectation while eval_runtime_schema_graph supplies
+    // the input schema at replay.
+    struct ScalarContainerMinGraph
+    {
+        static Port<TS<Int>>  compose(Wiring &w, Port<void> ts)
+        {
+            return wire<stdlib::min_>(w, ts).as<TS<Int>>();
+        }
+    };
+
+    struct ScalarContainerSumGraph
+    {
+        static Port<TS<Int>>  compose(Wiring &w, Port<void> ts)
+        {
+            return wire<stdlib::sum_>(w, ts).as<TS<Int>>();
+        }
+    };
+
+    struct ScalarContainerMeanGraph
+    {
+        static Port<TS<Float>> compose(Wiring &w, Port<void> ts)
+        {
+            return wire<stdlib::mean>(w, ts).as<TS<Float>>();
+        }
+    };
+
+    struct ScalarContainerStdGraph
+    {
+        static Port<TS<Float>> compose(Wiring &w, Port<void> ts)
+        {
+            return wire<stdlib::std_>(w, ts).as<TS<Float>>();
         }
     };
 
@@ -480,6 +553,42 @@ TEST_CASE("std operators: min_ and max_ support binary scalar operands")
     CHECK_OUTPUT(eval_node<stdlib::max_>(values<Date>(ymd(2020, 1, 1), ymd(2020, 1, 10)),
                                          values<Date>(ymd(2020, 1, 3), ymd(2020, 1, 5))),
                  values<Date>(ymd(2020, 1, 3), ymd(2020, 1, 10)));
+}
+
+TEST_CASE("std operators: scalar container aggregate overloads resolve by kind and element type")
+{
+    const auto types = stdlib::register_standard_types();
+    stdlib::register_standard_operators();
+
+    auto &registry = TypeRegistry::instance();
+
+    CHECK_OUTPUT((eval_runtime_schema_graph<ScalarContainerMinGraph, Int>(
+                     registry.ts(registry.set(types.int_type)),
+                     values<Value>(stdlib::make_set<Int>({}),
+                                   stdlib::make_set<Int>({Int{1}, Int{2}, Int{-1}})))),
+                 values<Int>(none, Int{-1}));
+
+    CHECK_OUTPUT((eval_runtime_schema_graph<ScalarContainerSumGraph, Int>(
+                     registry.ts(registry.map(types.str_type, types.int_type)),
+                     values<Value>(stdlib::make_map<Str, Int>({}),
+                                   stdlib::make_map<Str, Int>({{Str{"a"}, Int{1}}, {Str{"b"}, Int{2}}})))),
+                 values<Int>(Int{0}, Int{3}));
+
+    const auto mean_out = eval_runtime_schema_graph<ScalarContainerMeanGraph, Float>(
+        registry.ts(registry.list(types.int_type)),
+        values<Value>(stdlib::make_list<Int>({}), stdlib::make_list<Int>({Int{1}, Int{2}})));
+    REQUIRE(mean_out.size() == 2);
+    REQUIRE(mean_out[0].has_value());
+    CHECK(std::isnan(*mean_out[0]));
+    REQUIRE(mean_out[1].has_value());
+    CHECK(*mean_out[1] == Float{1.5});
+
+    CHECK_OUTPUT((eval_runtime_schema_graph<ScalarContainerStdGraph, Float>(
+                     registry.ts(registry.set(types.float_type)),
+                     values<Value>(stdlib::make_set<Float>({}),
+                                   stdlib::make_set<Float>({Float{1.0}}),
+                                   stdlib::make_set<Float>({Float{1.0}, Float{2.0}})))),
+                 values<Float>(Float{0.0}, Float{0.0}, std::sqrt(Float{0.5})));
 }
 
 TEST_CASE("std operators: eq_ works for strings")
