@@ -54,10 +54,15 @@ def _gap(name):
     return _raise
 
 
-class BoolResult(Enum):
-    TRUE = 1
-    FALSE = 0
-    NONE = -1
+class BoolResult:
+    """hgraph's if_ result schema: {true: REF[T], false: REF[T]}."""
+
+    def __class_getitem__(cls, ts_type):
+        from ._types import REF
+
+        schema = type("BoolResult", (), {})
+        schema.__annotations__ = {"true": REF[ts_type], "false": REF[ts_type]}
+        return schema
 
 
 class CompoundScalar:

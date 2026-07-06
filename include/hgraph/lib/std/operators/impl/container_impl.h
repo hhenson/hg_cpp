@@ -224,9 +224,15 @@ namespace hgraph::stdlib
             if (schema == nullptr) { return false; }
 
             // Fixed-size scalar indexing is a structural wiring projection
-            // (tsl_element). Only non-fixed TSLs should promote a scalar key
-            // into the dynamic time-series index path.
-            if (context.args[1].kind == WiringArg::Kind::Scalar && schema->fixed_size() != 0) { return false; }
+            // (tsl_element) when the port is DIRECTLY TSL-shaped. A
+            // REF-wrapped fixed TSL has no structural form - it takes this
+            // dynamic path (the from-REF adaptation resolves the input).
+            const auto *port_schema = context.args[0].port.schema;
+            const bool  direct = port_schema != nullptr && port_schema->kind == TSTypeKind::TSL;
+            if (context.args[1].kind == WiringArg::Kind::Scalar && schema->fixed_size() != 0 && direct)
+            {
+                return false;
+            }
             return true;
         }
 

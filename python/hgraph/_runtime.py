@@ -128,11 +128,12 @@ for dunder, op_name in {
     setattr(WiringPort, dunder, (lambda op: lambda x: wire(op, x))(op_name))
 def _port_getitem(self, item):
     # Fixed-TSL integer indexing is the STRUCTURAL element projection
-    # (zero-copy, no node); everything else dispatches getitem_.
+    # (zero-copy, no node); a REF[TSL] port dereferences first (the input
+    # binding inserts the from-REF adaptation); everything else dispatches
+    # getitem_.
     if isinstance(item, int) and not isinstance(item, bool):
         raw = _unwrap(self)
-        ts_type = raw.ts_type
-        if ts_type.kind == _TSL_KIND and ts_type.fixed_size > 0:
+        if raw.ts_type.kind == _TSL_KIND and raw.ts_type.fixed_size > 0:
             return WiringPort(_hgraph.tsl_element(raw, item))
     return wire("getitem_", self, item)
 
@@ -1110,7 +1111,17 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             run = w.run(start_time=__start_time__, end_time=__end_time__)
             return None
         # hgraph parity: a REF graph output records its DEREFERENCED values.
-        w.wire("__harness_record", (_unwrap(out).dereferenced, "eval_node::out"), {})
+        # A TSB with REF fields records a STRUCTURAL bundle of per-field
+        # projections, each dereferenced (kind 5 = TSB, 6 = REF).
+        raw = _unwrap(out)
+        record_port = raw.dereferenced
+        if raw.ts_type.kind == 5 and any(t.kind == 6 for _, t in _hgraph.ts_field_types(raw.ts_type)):
+            fields = {
+                name: _unwrap(wire("getitem_", WiringPort(raw), name)).dereferenced
+                for name, _ in _hgraph.ts_field_types(raw.ts_type)
+            }
+            record_port = _hgraph.tsb_port(record_port.ts_type, fields)
+        w.wire("__harness_record", (record_port, "eval_node::out"), {})
         run = w.run(start_time=__start_time__, end_time=__end_time__)
     finally:
         _wiring_stack.pop()

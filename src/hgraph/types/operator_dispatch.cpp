@@ -126,6 +126,12 @@ namespace hgraph
                                                            ResolutionMap &map,
                                                            int &rank_adjustment)
         {
+            if (pattern.kind == TypePattern::Kind::REF && !pattern.children.empty())
+            {
+                // A scalar promoting into a REF input: the const it lifts to
+                // adapts through the to-REF binding, so match the TARGET.
+                return scalar_value_matches_ts_pattern(pattern.children[0], value, map, rank_adjustment);
+            }
             if (pattern.kind == TypePattern::Kind::Var)
             {
                 if (const TSValueTypeMetaData *bound = map.find_ts(pattern.name))

@@ -726,6 +726,12 @@ namespace hgraph
         [[nodiscard]] inline WiringPortRef wire_scalar_const(Wiring &w, const WiringArg &arg,
                                                              const TSValueTypeMetaData *target_schema)
         {
+            // A REF-shaped target: the const lifts at the TARGET's value
+            // type; the input binding inserts the to-REF adaptation.
+            while (target_schema != nullptr && target_schema->kind == TSTypeKind::REF)
+            {
+                target_schema = target_schema->referenced_ts();
+            }
             if (target_schema == nullptr || target_schema->value_schema == nullptr)
             {
                 throw std::logic_error("operator auto-const target schema is not resolved");

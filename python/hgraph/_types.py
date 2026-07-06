@@ -24,6 +24,7 @@ def _value_type(scalar):
     if isinstance(scalar, _TypeVarSentinel):
         raise _GenericType()
     # typing generics: tuple[X, ...] / tuple[A, B] / frozenset[X] / dict[K, V]
+    import enum as _enum
     import typing
 
     origin = typing.get_origin(scalar)
@@ -41,6 +42,13 @@ def _value_type(scalar):
     name = _SCALAR_NAMES.get(scalar)
     if name is None and scalar in (tuple, frozenset, set, dict):
         raise TypeError(f"bare '{scalar.__name__}' needs element types (e.g. tuple[int, ...])")
+    if name is None and isinstance(scalar, type) and issubclass(scalar, _enum.Enum):
+        # C++-registered enums resolve by CLASS NAME (CmpResult,
+        # DivideByZero); unknown enums stay python objects.
+        try:
+            return _hgraph.value_type(scalar.__name__)
+        except Exception:
+            pass
     if name is None and isinstance(scalar, type):
         # Any python class is a first-class scalar (hgraph parity): it maps
         # onto the "object" value kind; type checking stays python-side.

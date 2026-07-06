@@ -443,28 +443,54 @@ namespace hgraph::stdlib
 
     struct if_then_else_impl
     {
+        /** hgraph parity: REFERENCE-based - publishes the SELECTED branch's
+            reference with same-reference dedup. Value ticks flow THROUGH
+            the reference; a condition re-tick that selects the same target
+            does not re-emit. */
         static void eval(In<"condition", TS<Bool>> condition,
-                         In<"true_value", TsVar<"S">, InputValidity::Unchecked> true_value,
-                         In<"false_value", TsVar<"S">, InputValidity::Unchecked> false_value,
-                         Out<TsVar<"S">> out)
+                         In<"true_value", REF<TsVar<"S">>, InputValidity::Unchecked> true_value,
+                         In<"false_value", REF<TsVar<"S">>, InputValidity::Unchecked> false_value,
+                         Out<REF<TsVar<"S">>> out)
         {
             const TSInputView &selected = condition.value() ? true_value.base() : false_value.base();
-            if (selected.valid() && (condition.modified() || selected.modified())) { out.apply(selected.value()); }
+            if (!(condition.modified() || selected.modified())) { return; }
+            if (!selected.valid()) { return; }
+            auto reference = selected.value();
+            if (out.valid() &&
+                out.value().checked_as<TimeSeriesReference>() == reference.checked_as<TimeSeriesReference>())
+            {
+                return;
+            }
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            auto mutation = erased.begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.copy_value_from(reference));
         }
     };
 
     struct if_cmp_impl
     {
+        /** hgraph parity: REFERENCE-based like if_then_else - publishes the
+            selected branch's reference with same-reference dedup. */
         static void eval(In<"cmp", TS<CmpResult>> cmp,
-                         In<"lt", TsVar<"O">, InputValidity::Unchecked> lt,
-                         In<"eq", TsVar<"O">, InputValidity::Unchecked> eq,
-                         In<"gt", TsVar<"O">, InputValidity::Unchecked> gt,
-                         Out<TsVar<"O">> out)
+                         In<"lt", REF<TsVar<"O">>, InputValidity::Unchecked> lt,
+                         In<"eq", REF<TsVar<"O">>, InputValidity::Unchecked> eq,
+                         In<"gt", REF<TsVar<"O">>, InputValidity::Unchecked> gt,
+                         Out<REF<TsVar<"O">>> out)
         {
             const TSInputView &selected = cmp.value() == CmpResult::LT ? lt.base()
                                       : cmp.value() == CmpResult::EQ ? eq.base()
                                                                      : gt.base();
-            if (selected.valid() && (cmp.modified() || selected.modified())) { out.apply(selected.value()); }
+            if (!(cmp.modified() || selected.modified())) { return; }
+            if (!selected.valid()) { return; }
+            auto reference = selected.value();
+            if (out.valid() &&
+                out.value().checked_as<TimeSeriesReference>() == reference.checked_as<TimeSeriesReference>())
+            {
+                return;
+            }
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            auto mutation = erased.begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.copy_value_from(reference));
         }
     };
 

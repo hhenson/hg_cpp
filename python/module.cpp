@@ -1627,11 +1627,43 @@ NB_MODULE(_hgraph, m)
         .def_prop_ro("dereferenced", [](const PyPort &self) {
             // The descriptive-schema patch (the Port::as / reference-service
             // pattern): present a REF output as its value schema - input
-            // binding inserts the REF adaptation.
-            if (self.ref.schema == nullptr || self.ref.schema->kind != TSTypeKind::REF) { return self; }
-            PyPort patched = self;
-            patched.ref.schema = self.ref.schema->referenced_ts();
-            return patched;
+            // binding inserts the REF adaptation. Applied RECURSIVELY so a
+            // TSB with REF fields records its fields dereferenced
+            // (eval_node parity: REF outputs record dereferenced values).
+            if (self.ref.schema == nullptr) { return self; }
+            if (self.ref.schema->kind == TSTypeKind::REF)
+            {
+                PyPort patched = self;
+                patched.ref.schema = self.ref.schema->referenced_ts();
+                return patched;
+            }
+            if (self.ref.schema->kind == TSTypeKind::TSB)
+            {
+                const auto *fields = self.ref.schema->fields();
+                const auto  count  = self.ref.schema->field_count();
+                bool        has_ref = false;
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    const auto *type = fields[index].type;
+                    if (type != nullptr && type->kind == TSTypeKind::REF) { has_ref = true; break; }
+                }
+                if (has_ref)
+                {
+                    auto &registry = TypeRegistry::instance();
+                    std::vector<std::pair<std::string, const TSValueTypeMetaData *>> patched_fields;
+                    patched_fields.reserve(count);
+                    for (std::size_t index = 0; index < count; ++index)
+                    {
+                        const auto *type = fields[index].type;
+                        while (type != nullptr && type->kind == TSTypeKind::REF) { type = type->referenced_ts(); }
+                        patched_fields.emplace_back(std::string{fields[index].name}, type);
+                    }
+                    PyPort patched = self;
+                    patched.ref.schema = registry.un_named_tsb(patched_fields);
+                    return patched;
+                }
+            }
+            return self;
         });
     nb::class_<PyRun>(m, "Run").def("recorded", &PyRun::recorded, nb::arg("key"));
 
