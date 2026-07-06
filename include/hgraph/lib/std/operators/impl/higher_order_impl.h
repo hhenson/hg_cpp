@@ -724,7 +724,20 @@ namespace hgraph::stdlib
             if (output_schema == nullptr) { output_schema = compiled.output_schema; }
             else if (!time_series_schema_equivalent(output_schema, compiled.output_schema))
             {
-                throw std::invalid_argument("switch_: all branches must produce the same output schema");
+                // Branches may differ only in REF-ness (one produces the
+                // value, another the reference - hgraph parity): the switch
+                // output takes the REFERENCE shape; value branches adapt at
+                // the boundary binding.
+                auto &registry = TypeRegistry::instance();
+                if (time_series_schema_equivalent(registry.dereference(output_schema),
+                                                  registry.dereference(compiled.output_schema)))
+                {
+                    if (compiled.output_schema->kind == TSTypeKind::REF) { output_schema = compiled.output_schema; }
+                }
+                else
+                {
+                    throw std::invalid_argument("switch_: all branches must produce the same output schema");
+                }
             }
 
             SingleNestedGraphNodeSpec spec;

@@ -159,6 +159,30 @@ namespace hgraph
 
             auto branch_terminal = walk_ts_path(child.node_at(binding.source.node).output(evaluation_time),
                                                 binding.source.path);
+            // A VALUE branch feeding a REFERENCE-shaped switch output (the
+            // branches differ only in REF-ness) publishes a peered REFERENCE
+            // to its terminal instead of forwarding - consumers dereference
+            // through the sampled-rebind contract.
+            const auto *out_schema      = switch_output.schema();
+            const auto *terminal_schema = branch_terminal.schema();
+            if (out_schema != nullptr && out_schema->kind == TSTypeKind::REF && terminal_schema != nullptr &&
+                terminal_schema->kind != TSTypeKind::REF)
+            {
+                // The terminal stays a NORMAL output (no re-homing): clear
+                // any forwarding left from an earlier bind so the child
+                // writes its own storage.
+                if (branch_terminal.forwarding_bound()) { branch_terminal.clear_forwarding_target(); }
+                Value reference{TimeSeriesReference::peered(branch_terminal)};
+                auto  mutation = switch_output.begin_mutation(evaluation_time);
+                if (switch_output.data_view().has_current_value() &&
+                    switch_output.data_view().value().checked_as<TimeSeriesReference>() ==
+                        reference.view().checked_as<TimeSeriesReference>())
+                {
+                    return;   // same-reference dedup
+                }
+                static_cast<void>(mutation.move_value_from(std::move(reference)));
+                return;
+            }
             bind_forwarding_output_to_source(branch_terminal, switch_output);
         }
 

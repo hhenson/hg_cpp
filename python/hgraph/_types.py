@@ -171,7 +171,12 @@ class TimeSeriesSchema:
 
 class _TSBMeta(type):
     def __getitem__(cls, schema):
-        fields = [(name, _resolve(ts)) for name, ts in schema.__annotations__.items()]
+        # hgraph parity: schema INHERITANCE - base-class fields first (MRO
+        # reversed), subclass fields after; later duplicates override.
+        annotations = {}
+        for klass in reversed(schema.__mro__):
+            annotations.update(getattr(klass, "__annotations__", {}))
+        fields = [(name, _resolve(ts)) for name, ts in annotations.items()]
         return _TsExpr(_hgraph.tsb(schema.__name__, fields), f"TSB[{schema.__name__}]")
 
 

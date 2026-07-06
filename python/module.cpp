@@ -450,6 +450,21 @@ namespace
                 }
                 return builder.build();
             }
+            case ValueTypeKind::Bundle: {
+                // Target-directed: partial dicts mark exactly the provided
+                // fields (Bundle field validity, core_concepts.rst).
+                BundleBuilder builder{delta_binding(meta)};
+                auto          spec = nb::cast<nb::dict>(object);
+                for (std::size_t index = 0; index < meta->field_count; ++index)
+                {
+                    const auto &field = meta->fields[index];
+                    if (field.name == nullptr) { continue; }
+                    nb::str key{field.name};
+                    if (!spec.contains(key)) { continue; }
+                    builder.set(index, py_to_value_as(spec[key], field.type));
+                }
+                return builder.build();
+            }
             case ValueTypeKind::Any: {
                 Value inner = py_to_value(object);
                 Value boxed{delta_binding(meta)};
