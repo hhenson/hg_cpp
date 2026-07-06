@@ -34,7 +34,7 @@ from ._runtime import _Combine as _CombineClass
 combine = _CombineClass()
 
 REMOVE = REMOVED           # hgraph's TSD key-removal sentinel
-Removed = type(REMOVED)
+from ._runtime import Removed
 
 _OPERATOR_NAMES = frozenset(_hgraph.operator_names())
 

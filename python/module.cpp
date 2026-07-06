@@ -450,6 +450,19 @@ namespace
                 }
                 return builder.build();
             }
+            case ValueTypeKind::Tuple: {
+                // Heterogeneous tuple: positional, field-typed conversion.
+                BundleBuilder builder{delta_binding(meta)};
+                std::size_t   index = 0;
+                for (nb::handle item : object)
+                {
+                    if (index >= meta->field_count) { throw nb::type_error("tuple value has too many items"); }
+                    builder.set(index, py_to_value_as(item, meta->fields[index].type));
+                    ++index;
+                }
+                if (index != meta->field_count) { throw nb::type_error("tuple value has too few items"); }
+                return builder.build();
+            }
             case ValueTypeKind::Bundle: {
                 // Target-directed: partial dicts mark exactly the provided
                 // fields (Bundle field validity, core_concepts.rst).
@@ -1595,6 +1608,12 @@ NB_MODULE(_hgraph, m)
         })
         .def("__hash__", [](const PyTsType &self) { return std::hash<const void *>{}(self.meta); })
         .def_prop_ro("kind", [](const PyTsType &self) { return static_cast<int>(self.meta->kind); })
+        .def_prop_ro("value_kind",
+                     [](const PyTsType &self) {
+                         return self.meta->value_schema != nullptr
+                                    ? static_cast<int>(self.meta->value_schema->kind)
+                                    : -1;
+                     })
         .def_prop_ro("fixed_size", [](const PyTsType &self) {
             return self.meta->kind == TSTypeKind::TSL ? self.meta->fixed_size() : 0;
         })

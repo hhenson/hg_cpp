@@ -40,7 +40,6 @@ from hgraph import (
 )
 from hgraph.test import eval_node
 
-pytestmark = pytest.mark.wip   # burn-down in progress; excluded from the gate
 
 
 def test_sub_frozendicts():

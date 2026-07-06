@@ -94,6 +94,12 @@ namespace hgraph::stdlib
     {
     };
 
+    /** ``combine_map`` — build a TS[frozendict] from key/value time-series:
+        a single (key, value) pair, two same-length tuples, or two TSLs. */
+    struct combine_map : Operator<"combine_map", In<"keys", TsVar<"A">>, In<"values", TsVar<"B">>, Out<TsVar<"O">>>
+    {
+    };
+
     /** ``unpartition`` — merge a nested ``TSD[K1, TSD[K, V]]`` back into ``TSD[K, V]``. */
     struct unpartition : Operator<"unpartition", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {

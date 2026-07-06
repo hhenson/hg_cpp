@@ -1296,6 +1296,520 @@ namespace hgraph::stdlib
                 return acc.erased();
             }
         };
+        // -------------------------------------------------------------
+        // MAP-SCALAR transforms: per-tick operations over TS[frozendict]
+        // values (hgraph's frozendict operator family). Erased and
+        // kind-gated; the TSD forms coexist via requires_ (TSD-kind
+        // schemas reject these, TS-over-Map schemas reject those).
+        // -------------------------------------------------------------
+
+        [[nodiscard]] inline const ValueTypeMetaData *ts_map_meta(const TSValueTypeMetaData *ts) noexcept
+        {
+            if (ts == nullptr || ts->kind != TSTypeKind::TS || ts->value_schema == nullptr) { return nullptr; }
+            return ts->value_schema->kind == ValueTypeKind::Map ? ts->value_schema : nullptr;
+        }
+
+        [[nodiscard]] inline const ValueTypeBinding &map_scalar_binding(const ValueTypeMetaData *key,
+                                                                        const ValueTypeMetaData *value)
+        {
+            const auto *meta = TypeRegistry::instance().map(key, value);
+            return *ValuePlanFactory::instance().binding_for(meta);
+        }
+
+        [[nodiscard]] inline MapBuilder make_map_builder(const ValueTypeMetaData *key,
+                                                         const ValueTypeMetaData *value)
+        {
+            return MapBuilder{*ValuePlanFactory::instance().binding_for(key),
+                              *ValuePlanFactory::instance().binding_for(value)};
+        }
+
+        inline void publish_value(const TSOutputView &out, Value &&value)
+        {
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(value)));
+        }
+
+        /** keys_ over a map scalar -> TS[frozenset[K]] (default) or TSS[K]. */
+        struct keys_map_scalar
+        {
+            static constexpr auto name = "keys_map_scalar";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (ts_map_meta(resolution.find_ts("S")) == nullptr) { return false; }
+                const auto *out = resolution.find_ts("O");
+                if (out == nullptr) { return true; }
+                if (out->kind == TSTypeKind::TSS) { return true; }
+                return out->kind == TSTypeKind::TS && out->value_schema != nullptr &&
+                       out->value_schema->kind == ValueTypeKind::Set;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *map_meta = ts_map_meta(resolution.find_ts("S"));
+                if (map_meta == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                resolution.bind_ts("O", registry.ts(registry.set(map_meta->key_type)));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
+            {
+                auto map = ts.base().value().as_map();
+                const auto *key_meta = ts.base().schema()->value_schema->key_type;
+                SetBuilder builder{*ValuePlanFactory::instance().binding_for(key_meta)};
+                for (const auto key : map.keys()) { builder.insert_copy(key.data()); }
+                publish_value(static_cast<const TSOutputView &>(out), builder.build());
+            }
+        };
+
+        /** values_ over a map scalar -> TS[tuple[V, ...]] (iteration order). */
+        struct values_map_scalar
+        {
+            static constexpr auto name = "values_map_scalar";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                return ts_map_meta(resolution.find_ts("S")) != nullptr;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *map_meta = ts_map_meta(resolution.find_ts("S"));
+                if (map_meta == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                resolution.bind_ts("O", registry.ts(registry.list(map_meta->element_type, 0, true)));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
+            {
+                auto map = ts.base().value().as_map();
+                const auto *value_meta = ts.base().schema()->value_schema->element_type;
+                ListBuilder builder{*ValuePlanFactory::instance().binding_for(value_meta)};
+                for (const auto [key, item] : map) { builder.push_back_copy(item.data()); }
+                publish_value(static_cast<const TSOutputView &>(out), builder.build());
+            }
+        };
+
+        /** rekey(ts, new_keys) over map scalars: out[new_keys[k]] = ts[k]. */
+        struct rekey_map_scalar
+        {
+            static constexpr auto name = "rekey_map_scalar";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *ts = ts_map_meta(resolution.find_ts("S"));
+                const auto *keys = ts_map_meta(resolution.find_ts("K"));
+                return ts != nullptr && keys != nullptr && keys->key_type == ts->key_type;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *ts   = ts_map_meta(resolution.find_ts("S"));
+                const auto *keys = ts_map_meta(resolution.find_ts("K"));
+                if (ts == nullptr || keys == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                resolution.bind_ts("O", registry.ts(registry.map(keys->element_type, ts->element_type)));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, In<"new_keys", TsVar<"K">> new_keys, Out<TsVar<"O">> out)
+            {
+                auto data = ts.base().value().as_map();
+                auto mapping = new_keys.base().value().as_map();
+                const auto *ts_meta = ts.base().schema()->value_schema;
+                const auto *key_meta = new_keys.base().schema()->value_schema;
+                auto builder = make_map_builder(key_meta->element_type, ts_meta->element_type);
+                for (const auto [key, item] : data)
+                {
+                    if (!mapping.contains(key)) { continue; }
+                    builder.set_item_copy(mapping.at(key).data(), item.data());
+                }
+                publish_value(static_cast<const TSOutputView &>(out), builder.build());
+            }
+        };
+
+        /** flip over a map scalar: {v: k}. */
+        struct flip_map_scalar
+        {
+            static constexpr auto name = "flip_map_scalar";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                return ts_map_meta(resolution.find_ts("S")) != nullptr;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *ts = ts_map_meta(resolution.find_ts("S"));
+                if (ts == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                resolution.bind_ts("O", registry.ts(registry.map(ts->element_type, ts->key_type)));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
+            {
+                auto map = ts.base().value().as_map();
+                const auto *meta = ts.base().schema()->value_schema;
+                auto builder = make_map_builder(meta->element_type, meta->key_type);
+                for (const auto [key, item] : map) { builder.set_item_copy(item.data(), key.data()); }
+                publish_value(static_cast<const TSOutputView &>(out), builder.build());
+            }
+        };
+
+        /** partition(ts, partitions) over map scalars: group by partition label. */
+        struct partition_map_scalar
+        {
+            static constexpr auto name = "partition_map_scalar";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *ts = ts_map_meta(resolution.find_ts("S"));
+                const auto *parts = ts_map_meta(resolution.find_ts("P"));
+                return ts != nullptr && parts != nullptr && parts->key_type == ts->key_type;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *ts    = ts_map_meta(resolution.find_ts("S"));
+                const auto *parts = ts_map_meta(resolution.find_ts("P"));
+                if (ts == nullptr || parts == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                const auto *inner = registry.map(ts->key_type, ts->element_type);
+                resolution.bind_ts("O", registry.ts(registry.map(parts->element_type, inner)));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, In<"partitions", TsVar<"P">> partitions, Out<TsVar<"O">> out)
+            {
+                auto data = ts.base().value().as_map();
+                auto labels = partitions.base().value().as_map();
+                const auto *ts_meta = ts.base().schema()->value_schema;
+                const auto *part_meta = partitions.base().schema()->value_schema;
+                const auto *inner_meta = TypeRegistry::instance().map(ts_meta->key_type, ts_meta->element_type);
+
+                // label -> inner builder (ordered by first appearance)
+                std::vector<std::pair<Value, MapBuilder>> groups;
+                for (const auto [key, item] : data)
+                {
+                    if (!labels.contains(key)) { continue; }
+                    auto label = labels.at(key);
+                    MapBuilder *group = nullptr;
+                    for (auto &[seen, builder] : groups)
+                    {
+                        if (seen.view().equals(label)) { group = &builder; break; }
+                    }
+                    if (group == nullptr)
+                    {
+                        groups.emplace_back(Value{label},
+                                            make_map_builder(ts_meta->key_type, ts_meta->element_type));
+                        group = &groups.back().second;
+                    }
+                    group->set_item_copy(key.data(), item.data());
+                }
+                auto builder = make_map_builder(part_meta->element_type, inner_meta);
+                for (auto &[label, inner] : groups)
+                {
+                    Value built = inner.build();
+                    builder.set_item_copy(label.view().data(), built.view().data());
+                }
+                publish_value(static_cast<const TSOutputView &>(out), builder.build());
+            }
+        };
+
+        [[nodiscard]] inline const ValueTypeMetaData *nested_map_meta(const ValueTypeMetaData *meta) noexcept
+        {
+            if (meta == nullptr || meta->kind != ValueTypeKind::Map) { return nullptr; }
+            const auto *inner = meta->element_type;
+            return inner != nullptr && inner->kind == ValueTypeKind::Map ? inner : nullptr;
+        }
+
+        /** flip_keys over a NESTED map scalar: {k: {k1: v}} -> {k1: {k: v}}. */
+        struct flip_keys_map_scalar
+        {
+            static constexpr auto name = "flip_keys_map_scalar";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *ts = ts_map_meta(resolution.find_ts("S"));
+                return ts != nullptr && nested_map_meta(ts) != nullptr;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *ts    = ts_map_meta(resolution.find_ts("S"));
+                const auto *inner = nested_map_meta(ts);
+                if (ts == nullptr || inner == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                const auto *flipped_inner = registry.map(ts->key_type, inner->element_type);
+                resolution.bind_ts("O", registry.ts(registry.map(inner->key_type, flipped_inner)));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
+            {
+                const auto *meta  = ts.base().schema()->value_schema;
+                const auto *inner = nested_map_meta(meta);
+                const auto *flipped_inner = TypeRegistry::instance().map(meta->key_type, inner->element_type);
+
+                std::vector<std::pair<Value, MapBuilder>> groups;
+                for (const auto [outer_key, inner_value] : ts.base().value().as_map())
+                {
+                    for (const auto [inner_key, item] : inner_value.as_map())
+                    {
+                        MapBuilder *group = nullptr;
+                        for (auto &[seen, builder] : groups)
+                        {
+                            if (seen.view().equals(inner_key)) { group = &builder; break; }
+                        }
+                        if (group == nullptr)
+                        {
+                            groups.emplace_back(Value{inner_key},
+                                                make_map_builder(meta->key_type, inner->element_type));
+                            group = &groups.back().second;
+                        }
+                        group->set_item_copy(outer_key.data(), item.data());
+                    }
+                }
+                auto builder = make_map_builder(inner->key_type, flipped_inner);
+                for (auto &[label, group] : groups)
+                {
+                    Value built = group.build();
+                    builder.set_item_copy(label.view().data(), built.view().data());
+                }
+                publish_value(static_cast<const TSOutputView &>(out), builder.build());
+            }
+        };
+
+        /** collapse_keys over a NESTED map scalar: {k: {k1: v}} -> {(k, k1): v}. */
+        struct collapse_keys_map_scalar
+        {
+            static constexpr auto name = "collapse_keys_map_scalar";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *ts = ts_map_meta(resolution.find_ts("S"));
+                return ts != nullptr && nested_map_meta(ts) != nullptr;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *ts    = ts_map_meta(resolution.find_ts("S"));
+                const auto *inner = nested_map_meta(ts);
+                if (ts == nullptr || inner == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                const auto *pair = registry.tuple({ts->key_type, inner->key_type});
+                resolution.bind_ts("O", registry.ts(registry.map(pair, inner->element_type)));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
+            {
+                const auto *meta  = ts.base().schema()->value_schema;
+                const auto *inner = nested_map_meta(meta);
+                const auto *pair  = TypeRegistry::instance().tuple({meta->key_type, inner->key_type});
+                const auto *pair_binding = ValuePlanFactory::instance().binding_for(pair);
+
+                auto builder = make_map_builder(pair, inner->element_type);
+                for (const auto [outer_key, inner_value] : ts.base().value().as_map())
+                {
+                    for (const auto [inner_key, item] : inner_value.as_map())
+                    {
+                        BundleBuilder key_builder{*pair_binding};
+                        key_builder.set(0, Value{outer_key});
+                        key_builder.set(1, Value{inner_key});
+                        Value pair_key = key_builder.build();
+                        builder.set_item_copy(pair_key.view().data(), item.data());
+                    }
+                }
+                publish_value(static_cast<const TSOutputView &>(out), builder.build());
+            }
+        };
+
+        /** uncollapse_keys over a map scalar with TUPLE keys: {(k, k1): v} -> {k: {k1: v}}. */
+        struct uncollapse_keys_map_scalar
+        {
+            static constexpr auto name = "uncollapse_keys_map_scalar";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *ts = ts_map_meta(resolution.find_ts("S"));
+                return ts != nullptr && ts->key_type != nullptr &&
+                       ts->key_type->kind == ValueTypeKind::Tuple && ts->key_type->field_count == 2;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *ts = ts_map_meta(resolution.find_ts("S"));
+                if (ts == nullptr || ts->key_type == nullptr || ts->key_type->kind != ValueTypeKind::Tuple ||
+                    ts->key_type->field_count != 2) { return; }
+                auto &registry = TypeRegistry::instance();
+                const auto *inner = registry.map(ts->key_type->fields[1].type, ts->element_type);
+                resolution.bind_ts("O", registry.ts(registry.map(ts->key_type->fields[0].type, inner)));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
+            {
+                const auto *meta  = ts.base().schema()->value_schema;
+                const auto *outer_meta = meta->key_type->fields[0].type;
+                const auto *inner_key  = meta->key_type->fields[1].type;
+                const auto *inner_map  = TypeRegistry::instance().map(inner_key, meta->element_type);
+
+                std::vector<std::pair<Value, MapBuilder>> groups;
+                for (const auto [key, item] : ts.base().value().as_map())
+                {
+                    auto pair = key.as_indexed_view();
+                    auto outer = pair.at(0);
+                    MapBuilder *group = nullptr;
+                    for (auto &[seen, builder] : groups)
+                    {
+                        if (seen.view().equals(outer)) { group = &builder; break; }
+                    }
+                    if (group == nullptr)
+                    {
+                        groups.emplace_back(Value{outer}, make_map_builder(inner_key, meta->element_type));
+                        group = &groups.back().second;
+                    }
+                    group->set_item_copy(pair.at(1).data(), item.data());
+                }
+                auto builder = make_map_builder(outer_meta, inner_map);
+                for (auto &[label, group] : groups)
+                {
+                    Value built = group.build();
+                    builder.set_item_copy(label.view().data(), built.view().data());
+                }
+                publish_value(static_cast<const TSOutputView &>(out), builder.build());
+            }
+        };
+        [[nodiscard]] inline const ValueTypeMetaData *ts_scalar_meta(const TSValueTypeMetaData *ts) noexcept
+        {
+            if (ts == nullptr || ts->kind != TSTypeKind::TS) { return nullptr; }
+            return ts->value_schema;
+        }
+
+        /** combine_map from a single (key, value) TS pair. */
+        struct combine_map_pair
+        {
+            static constexpr auto name = "combine_map_pair";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
+                const auto *values = ts_scalar_meta(resolution.find_ts("B"));
+                return keys != nullptr && values != nullptr && keys->kind != ValueTypeKind::List &&
+                       values->kind != ValueTypeKind::List;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
+                const auto *values = ts_scalar_meta(resolution.find_ts("B"));
+                if (keys == nullptr || values == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                resolution.bind_ts("O", registry.ts(registry.map(keys, values)));
+            }
+
+            static void eval(In<"keys", TsVar<"A">> keys, In<"values", TsVar<"B">> values, Out<TsVar<"O">> out)
+            {
+                auto key = keys.base().value();
+                auto item = values.base().value();
+                auto builder = make_map_builder(key.schema(), item.schema());
+                builder.set_item_copy(key.data(), item.data());
+                publish_value(static_cast<const TSOutputView &>(out), builder.build());
+            }
+        };
+
+        /** combine_map from two same-length TUPLE scalars (zip). */
+        struct combine_map_tuples
+        {
+            static constexpr auto name = "combine_map_tuples";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
+                const auto *values = ts_scalar_meta(resolution.find_ts("B"));
+                return keys != nullptr && values != nullptr && keys->kind == ValueTypeKind::List &&
+                       values->kind == ValueTypeKind::List;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
+                const auto *values = ts_scalar_meta(resolution.find_ts("B"));
+                if (keys == nullptr || values == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                resolution.bind_ts("O", registry.ts(registry.map(keys->element_type, values->element_type)));
+            }
+
+            static void eval(In<"keys", TsVar<"A">> keys, In<"values", TsVar<"B">> values, Out<TsVar<"O">> out)
+            {
+                auto key_list  = keys.base().value().as_indexed_view();
+                auto item_list = values.base().value().as_indexed_view();
+                if (key_list.size() != item_list.size())
+                {
+                    throw std::invalid_argument("combine_map: keys and values must have the same length");
+                }
+                const auto *keys_meta   = keys.base().schema()->value_schema;
+                const auto *values_meta = values.base().schema()->value_schema;
+                auto builder = make_map_builder(keys_meta->element_type, values_meta->element_type);
+                for (std::size_t index = 0; index < key_list.size(); ++index)
+                {
+                    builder.set_item_copy(key_list.at(index).data(), item_list.at(index).data());
+                }
+                publish_value(static_cast<const TSOutputView &>(out), builder.build());
+            }
+        };
+
+        /** combine_map from two fixed TSLs (zip; every element must be valid). */
+        struct combine_map_tsls
+        {
+            static constexpr auto name = "combine_map_tsls";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *keys   = resolution.find_ts("A");
+                const auto *values = resolution.find_ts("B");
+                if (keys == nullptr || values == nullptr || keys->kind != TSTypeKind::TSL ||
+                    values->kind != TSTypeKind::TSL) { return; }
+                const auto *key_element   = keys->element_ts();
+                const auto *value_element = values->element_ts();
+                if (key_element == nullptr || value_element == nullptr ||
+                    key_element->kind != TSTypeKind::TS || value_element->kind != TSTypeKind::TS) { return; }
+                auto &registry = TypeRegistry::instance();
+                resolution.bind_ts("O",
+                                   registry.ts(registry.map(key_element->value_schema, value_element->value_schema)));
+            }
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *keys   = resolution.find_ts("A");
+                const auto *values = resolution.find_ts("B");
+                return keys != nullptr && values != nullptr && keys->kind == TSTypeKind::TSL &&
+                       values->kind == TSTypeKind::TSL && keys->fixed_size() == values->fixed_size() &&
+                       keys->fixed_size() != 0;
+            }
+
+            static void eval(In<"keys", TsVar<"A">> keys, In<"values", TsVar<"B">> values, Out<TsVar<"O">> out)
+            {
+                const auto *out_meta = static_cast<const TSOutputView &>(out).schema()->value_schema;
+                auto builder = make_map_builder(out_meta->key_type, out_meta->element_type);
+                const auto  size = keys.base().schema()->fixed_size();
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    auto key_child  = keys.base().indexed_child_at(index);
+                    auto item_child = values.base().indexed_child_at(index);
+                    if (!key_child.valid() || !item_child.valid()) { continue; }
+                    builder.set_item_copy(key_child.value().data(), item_child.value().data());
+                }
+                publish_value(static_cast<const TSOutputView &>(out), builder.build());
+            }
+        };
     }  // namespace collection_impl_detail
 
     template <typename Operator, template <typename...> class Kernel>
@@ -1325,6 +1839,17 @@ namespace hgraph::stdlib
         using tsb_itemwise_impl_detail::tsb_binary_map;
 
         register_graph_overload<keys_, collection_impl_detail::keys_tsd>();
+        register_overload<keys_, collection_impl_detail::keys_map_scalar>();
+        register_overload<values_, collection_impl_detail::values_map_scalar>();
+        register_overload<rekey, collection_impl_detail::rekey_map_scalar>();
+        register_overload<flip, collection_impl_detail::flip_map_scalar>();
+        register_overload<partition, collection_impl_detail::partition_map_scalar>();
+        register_overload<flip_keys, collection_impl_detail::flip_keys_map_scalar>();
+        register_overload<collapse_keys, collection_impl_detail::collapse_keys_map_scalar>();
+        register_overload<uncollapse_keys, collection_impl_detail::uncollapse_keys_map_scalar>();
+        register_overload<combine_map, collection_impl_detail::combine_map_pair>();
+        register_overload<combine_map, collection_impl_detail::combine_map_tuples>();
+        register_overload<combine_map, collection_impl_detail::combine_map_tsls>();
         register_overload<rekey, collection_impl_detail::rekey_tsd_scalar>();
         register_overload<flip, collection_impl_detail::flip_tsd_unique>();
         register_overload<partition, collection_impl_detail::partition_tsd_scalar>();

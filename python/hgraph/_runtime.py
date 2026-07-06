@@ -70,11 +70,20 @@ class _OperatorFunction:
 
     def __getitem__(self, item):
         # hgraph's ``op[TYPEVAR: TYPE]`` pre-resolution subscripts arrive as
-        # SLICES - drop them (resolution happens from the wired inputs);
-        # a plain type subscript is the requested output type.
-        items = item if isinstance(item, tuple) else (item,)
-        types = [i for i in items if not isinstance(i, slice)]
-        return _OperatorFunction(self.__name__, output_type=types[0] if types else None)
+        # SLICES. ``op[OUT: X]`` names the requested OUTPUT type; other
+        # typevar slices are dropped (resolution happens from the wired
+        # inputs). A plain type subscript is the requested output type.
+        from ._types import OUT
+
+        output_type = None
+        for i in (item if isinstance(item, tuple) else (item,)):
+            if isinstance(i, slice):
+                if i.start is OUT and output_type is None:
+                    output_type = i.stop
+                continue
+            if output_type is None:
+                output_type = i
+        return _OperatorFunction(self.__name__, output_type=output_type)
 
     def _normalise_type_arguments(self, args, kwargs):
         if "tp" in kwargs or "output_type" in kwargs:
@@ -877,7 +886,7 @@ def graph(fn):
 
 
 class _Removed:
-    """hgraph's REMOVE marker: a removed TSD key / TSS element in test output."""
+    """hgraph's REMOVE marker: a removed TSD key in test output."""
 
     _instance = None
 
@@ -893,6 +902,25 @@ class _Removed:
 REMOVED = _Removed()
 
 
+class Removed:
+    """hgraph's TSS removal wrapper: Removed(item) marks a removed set
+    element in a delta; hashes/compares as the item (hgraph parity)."""
+
+    __slots__ = ("item",)
+
+    def __init__(self, item):
+        self.item = item
+
+    def __hash__(self):
+        return hash(self.item)
+
+    def __eq__(self, other):
+        return self.item == other.item if type(other) is Removed else self.item == other
+
+    def __repr__(self):
+        return f"Removed({self.item!r})"
+
+
 def _simplify_delta(value):
     """Map canonical delta bundles back to hgraph's friendly test shapes:
     TSD {removed, modified} -> {key: value, removed_key: REMOVED};
@@ -903,9 +931,9 @@ def _simplify_delta(value):
             out.update({k: REMOVED for k in value["removed"]})
             return out
         if set(value.keys()) == {"added", "removed"}:
-            if value["removed"]:
-                return {"added": frozenset(value["added"]), "removed": frozenset(value["removed"])}
-            return frozenset(value["added"])
+            # hgraph's TSS delta shape: one set - added items plain,
+            # removed items wrapped in Removed(...).
+            return frozenset(value["added"]) | {Removed(r) for r in value["removed"]}
         return {k: _simplify_delta(v) for k, v in value.items()}
     return value
 

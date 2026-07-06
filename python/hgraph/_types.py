@@ -59,6 +59,13 @@ class _TsExpr:
         from ._runtime import WiringPort, _unwrap, wire
 
         if ports and not kwargs:
+            # combine[TS[frozendict...]](keys, values) -> the combine_map
+            # operator; TS value-kind 5 == Map. The BARE frozendict form
+            # resolves the key/value types from the inputs.
+            if getattr(self, "_bare_map", False):   # slot may be unset
+                return wire("combine_map", *ports)
+            if self.handle.kind == 0 and self.handle.value_kind == 5:
+                return wire("combine_map", *ports, output_type=self)
             return WiringPort(_m.tsl_port([_unwrap(p) for p in ports]))
         field_ports = {}
         field_types = dict(_m.ts_field_types(self.handle))
@@ -74,7 +81,7 @@ class _TsExpr:
 
     """A resolved time-series type: wraps the C++ TsType handle."""
 
-    __slots__ = ("handle", "_label", "is_ref")
+    __slots__ = ("handle", "_label", "is_ref", "_bare_map")
 
     def __init__(self, handle, label):
         self.handle = handle
@@ -98,9 +105,16 @@ class _GenericType(Exception):
 class _TSMeta(type):
     def __getitem__(cls, scalar):
         try:
-            return _TsExpr(_hgraph.ts(_value_type(scalar)), f"TS[{getattr(scalar, '__name__', scalar)}]")
+            expr = _TsExpr(_hgraph.ts(_value_type(scalar)), f"TS[{getattr(scalar, '__name__', scalar)}]")
         except _GenericType:
             return _GenericTsExpr(f"TS[{scalar!r}]")
+        # BARE frozendict (combine[TS[frozendict]](...)): the key/value
+        # types resolve from the wired inputs.
+        from frozendict import frozendict as _frozendict
+
+        if scalar is _frozendict:
+            expr._bare_map = True
+        return expr
 
 
 class TS(metaclass=_TSMeta):

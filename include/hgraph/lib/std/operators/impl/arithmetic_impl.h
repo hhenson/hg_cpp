@@ -791,6 +791,39 @@ namespace hgraph::stdlib
             }
         }
 
+        /** Correctly-rounded double sqrt of the exact rational num/den
+            (python's statistics module computes with exact fractions - a
+            plain sqrt(double(num)/double(den)) can be off by one ulp). */
+        [[nodiscard]] inline Float sqrt_rational(Int num, Int den)
+        {
+            if (num == 0) { return 0.0; }
+            // Normalize num/den by powers of 4 so the ratio lands in [1, 4):
+            // the scaled sqrt then has exactly 54 bits and one final rounding.
+            int e = 0;
+            unsigned __int128 n = static_cast<unsigned __int128>(num);
+            unsigned __int128 d = static_cast<unsigned __int128>(den);
+            while (n < d) { n <<= 2; e -= 1; }
+            while (n >= (d << 2)) { d <<= 2; e += 1; }
+            // q = floor(ratio * 2^108); sqrt gives a 55-BIT result - two
+            // guard bits over the 53-bit target, as python's
+            // _float_sqrt_of_frac uses (bit width 109). Round-to-odd at 55
+            // bits, then ONE float conversion rounds to nearest: with two
+            // guard bits round-to-odd provably avoids double rounding.
+            // (n << 108) would overflow 128 bits for large aggregates, so
+            // divide in two 54-bit steps: n/d * 2^108 = (q1 + r1/d) * 2^54.
+            const unsigned __int128 q1  = (n << 54) / d;
+            const unsigned __int128 r1  = (n << 54) % d;
+            const unsigned __int128 q   = (q1 << 54) + (r1 << 54) / d;
+            const unsigned __int128 rem = (r1 << 54) % d;
+            auto r = static_cast<unsigned __int128>(std::sqrt(static_cast<double>(q)));
+            for (int i = 0; i < 4; ++i) { r = (r + q / r) >> 1; }
+            while (r * r > q) { --r; }
+            while ((r + 1) * (r + 1) <= q) { ++r; }
+            const bool exact = r * r == q && rem == 0;
+            if (!exact) { r |= 1; }
+            return std::ldexp(static_cast<Float>(r), e - 54);
+        }
+
         [[nodiscard]] inline Float numeric_of(const ValueView &item)
         {
             const auto *meta = item.schema();
@@ -876,8 +909,11 @@ namespace hgraph::stdlib
                         return;
                     }
                     // hgraph parity: mean of EMPTY is NaN; std/var of
-                    // empty/singleton spreads are 0.0. SAMPLE variance via
-                    // the two-pass formula.
+                    // empty/singleton spreads are 0.0. SAMPLE variance -
+                    // python's statistics module computes with exact
+                    // fractions, so INT elements use the exact integer
+                    // formula (correctly-rounded double at the end);
+                    // float elements fall back to the two-pass formula.
                     Float out = Agg == ContainerAgg::Mean && count == 0
                                     ? std::numeric_limits<Float>::quiet_NaN()
                                     : 0.0;
@@ -887,15 +923,47 @@ namespace hgraph::stdlib
                         out                = mean_v;
                         if constexpr (Agg == ContainerAgg::Std || Agg == ContainerAgg::Var)
                         {
-                            Float squares = 0.0;
-                            for_each_container_element(container, [&](const ValueView &item) {
-                                const Float d = numeric_of(item) - mean_v;
-                                squares += d * d;
-                            });
-                            const Float variance = count > 1 ? squares / static_cast<Float>(count - 1) : 0.0;
+                            Float variance = 0.0;
+                            if (count > 1)
+                            {
+                                bool all_int = true;
+                                Int  int_sum = 0, int_sum_sq = 0;
+                                for_each_container_element(container, [&](const ValueView &item) {
+                                    if (!all_int || item.schema() != scalar_descriptor<Int>::value_meta())
+                                    {
+                                        all_int = false;
+                                        return;
+                                    }
+                                    const Int v = item.checked_as<Int>();
+                                    int_sum += v;
+                                    int_sum_sq += v * v;
+                                });
+                                if (all_int)
+                                {
+                                    const Int n = static_cast<Int>(count);
+                                    const Int num = n * int_sum_sq - int_sum * int_sum;
+                                    const Int den = n * (n - 1);
+                                    if constexpr (Agg == ContainerAgg::Std)
+                                    {
+                                        out = sqrt_rational(num, den);
+                                        goto publish;
+                                    }
+                                    variance = static_cast<Float>(num) / static_cast<Float>(den);
+                                }
+                                else
+                                {
+                                    Float squares = 0.0;
+                                    for_each_container_element(container, [&](const ValueView &item) {
+                                        const Float d = numeric_of(item) - mean_v;
+                                        squares += d * d;
+                                    });
+                                    variance = squares / static_cast<Float>(count - 1);
+                                }
+                            }
                             out = Agg == ContainerAgg::Std ? std::sqrt(variance) : variance;
                         }
                     }
+                publish:;
                     Value result{out};
                     auto  mutation = out_view.begin_mutation(out_view.evaluation_time());
                     static_cast<void>(mutation.move_value_from(std::move(result)));
