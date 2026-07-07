@@ -1,12 +1,12 @@
-"""GDB pretty printers for hgraph's type-erased runtime data structures.
+"""GDB pretty printers and child navigation for hgraph's type-erased runtime data structures.
 
 Load with:
 
     (gdb) source /path/to/hg_cpp/tools/debugger/hgraph_gdb.py
 
-The printers are deliberately read-only: they inspect debug-info fields and
-infer common scalar payloads from memory, but they do not call methods in the
-inferior process.
+The printers are deliberately read-only: they inspect debug-info fields,
+provide shallow navigation through the erased handles, and infer common scalar
+payloads from memory, but they do not call methods in the inferior process.
 """
 
 import struct
@@ -113,9 +113,13 @@ class ValuePrinter:
     def children(self):
         try:
             storage = field(self.value, "storage_")
-            yield "binding", field(storage, "m_identity")
-            yield "storage_state", storage_state(storage)
-            yield "data", value_storage_data_addr(storage, storage_state(storage))
+            yield "storage", storage
+            binding = binding_from_address(ptr_int(field(storage, "m_identity")), "value")
+            if binding is not None:
+                yield "binding", binding
+                yield from binding_children(binding)
+            yield "storage_state", gdb.Value(storage_state(storage))
+            yield "data", void_ptr(value_storage_data_addr(storage, storage_state(storage)))
         except Exception:
             return
 
@@ -150,8 +154,11 @@ class ValueViewPrinter:
     def children(self):
         try:
             bits = tagged_bits(field(self.value, "binding_"))
-            yield "binding", gdb.Value(bits & ~0x3).cast(value_binding_type().pointer())
-            yield "binding_tag", bits & 0x3
+            binding = binding_from_address(bits & ~0x3, "value")
+            if binding is not None:
+                yield "binding", binding
+                yield from binding_children(binding)
+            yield "binding_tag", gdb.Value(bits & 0x3)
             yield "data", field(self.value, "data_")
         except Exception:
             return
@@ -167,6 +174,12 @@ class ValueTypeMetaDataPrinter:
         except Exception as exc:  # pragma: no cover
             return "ValueTypeMetaData{<printer error: {}>}".format(exc)
 
+    def children(self):
+        try:
+            yield from value_meta_children(self.value)
+        except Exception:
+            return
+
 
 class TSValueTypeMetaDataPrinter:
     def __init__(self, value):
@@ -177,6 +190,12 @@ class TSValueTypeMetaDataPrinter:
             return ts_meta_summary(self.value)
         except Exception as exc:  # pragma: no cover
             return "TSValueTypeMetaData{<printer error: {}>}".format(exc)
+
+    def children(self):
+        try:
+            yield from ts_meta_children(self.value)
+        except Exception:
+            return
 
 
 class TypeMetaDataPrinter:
@@ -191,6 +210,13 @@ class TypeMetaDataPrinter:
             return "TypeMetaData{{category={}{} }}".format(category, suffix)
         except Exception as exc:  # pragma: no cover
             return "TypeMetaData{<printer error: {}>}".format(exc)
+
+    def children(self):
+        try:
+            yield "category", field(self.value, "category")
+            yield "display_name", field(self.value, "display_name")
+        except Exception:
+            return
 
 
 class TypeBindingPrinter:
@@ -207,6 +233,12 @@ class TypeBindingPrinter:
             )
         except Exception as exc:  # pragma: no cover
             return "TypeBinding{<printer error: {}>}".format(exc)
+
+    def children(self):
+        try:
+            yield from binding_children(self.value)
+        except Exception:
+            return
 
 
 class StoragePlanPrinter:
@@ -231,6 +263,19 @@ class StoragePlanPrinter:
         except Exception as exc:  # pragma: no cover
             return "StoragePlan{<printer error: {}>}".format(exc)
 
+    def children(self):
+        try:
+            yield "layout", field(self.value, "layout")
+            yield "lifecycle", field(self.value, "lifecycle")
+            yield "lifecycle_context", field(self.value, "lifecycle_context")
+            yield "composite_kind_tag", field(self.value, "composite_kind_tag")
+            yield "trivially_destructible", field(self.value, "trivially_destructible")
+            yield "trivially_copyable", field(self.value, "trivially_copyable")
+            yield "trivially_move_constructible", field(self.value, "trivially_move_constructible")
+            yield from storage_plan_children(self.value)
+        except Exception:
+            return
+
 
 class TSDataViewPrinter:
     def __init__(self, value):
@@ -241,6 +286,14 @@ class TSDataViewPrinter:
             return ts_data_view_text(self.value)
         except Exception as exc:  # pragma: no cover
             return "TSDataView{<printer error: {}>}".format(exc)
+
+    def children(self):
+        try:
+            storage = field(self.value, "storage_")
+            yield "storage", storage
+            yield from ts_data_storage_children(storage)
+        except Exception:
+            return
 
 
 class TSInputViewPrinter:
@@ -265,6 +318,19 @@ class TSInputViewPrinter:
         except Exception as exc:  # pragma: no cover
             return "TSInputView{<printer error: {}>}".format(exc)
 
+    def children(self):
+        try:
+            data_cursor = field(self.value, "data_")
+            yield "input", field(self.value, "input_")
+            yield "data_cursor", data_cursor
+            yield "value_data", field(data_cursor, "value_data")
+            yield "raw_data", field(data_cursor, "raw_data")
+            yield "target_node", field(data_cursor, "target_node")
+            yield "scheduling_notifier", field(self.value, "scheduling_notifier_")
+            yield "evaluation_time", field(self.value, "evaluation_time_")
+        except Exception:
+            return
+
 
 class TSOutputViewPrinter:
     def __init__(self, value):
@@ -280,6 +346,14 @@ class TSOutputViewPrinter:
             )
         except Exception as exc:  # pragma: no cover
             return "TSOutputView{<printer error: {}>}".format(exc)
+
+    def children(self):
+        try:
+            yield "output", field(self.value, "output_")
+            yield "data", field(self.value, "data_")
+            yield "evaluation_time", field(self.value, "evaluation_time_")
+        except Exception:
+            return
 
 
 def build_pretty_printer():
@@ -301,6 +375,121 @@ def register_hgraph_printers(obj=None):
     if obj is None:
         obj = gdb.current_objfile()
     gdb.printing.register_pretty_printer(obj, build_pretty_printer(), replace=True)
+
+
+def binding_children(binding):
+    type_meta = field(binding, "type_meta")
+    storage_plan = field(binding, "storage_plan")
+    yield "schema", deref(type_meta)
+    yield "type_meta", type_meta
+    yield "storage_plan", deref(storage_plan)
+    yield "storage_plan_ptr", storage_plan
+    yield "ops", field(binding, "ops")
+
+
+def value_meta_children(meta):
+    yield "category", field(meta, "category")
+    yield "display_name", field(meta, "display_name")
+    yield "kind", field(meta, "kind")
+    yield "flags", field(meta, "flags")
+    element_type = field(meta, "element_type")
+    key_type = field(meta, "key_type")
+    yield "element_type_ptr", element_type
+    yield "key_type_ptr", key_type
+    element = deref(element_type)
+    key = deref(key_type)
+    if element is not None:
+        yield "element_type", element
+    if key is not None:
+        yield "key_type", key
+    fields = field(meta, "fields")
+    yield "fields", fields
+    yield "field_count", field(meta, "field_count")
+    yield "fixed_size", field(meta, "fixed_size")
+    wrapped_un_named = field(meta, "wrapped_un_named")
+    yield "wrapped_un_named_ptr", wrapped_un_named
+    wrapped = deref(wrapped_un_named)
+    if wrapped is not None:
+        yield "wrapped_un_named", wrapped
+    yield from pointer_array_children(fields, int_value(field(meta, "field_count")), "field", max_items=32)
+
+
+def ts_meta_children(meta):
+    yield "category", field(meta, "category")
+    yield "display_name", field(meta, "display_name")
+    yield "kind", field(meta, "kind")
+    for name in ("value_type", "value_schema", "delta_value_schema"):
+        pointer = field(meta, name)
+        yield "{}_ptr".format(name), pointer
+        target = deref(pointer)
+        if target is not None:
+            yield name, target
+    data = field(meta, "data")
+    yield "data", data
+    tsb = field(data, "tsb")
+    yield from pointer_array_children(field(tsb, "fields"), int_value(field(tsb, "field_count")), "tsb_field", max_items=32)
+
+
+def storage_plan_children(plan):
+    context = ptr_int(field(plan, "lifecycle_context"))
+    if context == 0:
+        return
+
+    composite_kind = enum_int(field(plan, "composite_kind_tag"))
+    if composite_kind in (1, 2):
+        state_type = gdb.lookup_type("hgraph::MemoryUtils::CompositeState")
+        state = value_at(context, state_type)
+        yield "composite_state", state
+        component_type = gdb.lookup_type("hgraph::MemoryUtils::CompositeComponent")
+        component_base = context + state_type.sizeof
+        component_count = int_value(field(state, "component_count"))
+        yield from address_array_children(component_base, component_type, component_count, "component", max_items=32)
+    elif composite_kind == 3:
+        state_type = gdb.lookup_type("hgraph::MemoryUtils::ArrayState")
+        yield "array_state", value_at(context, state_type)
+
+
+def ts_data_storage_children(storage):
+    storage_ref = field(storage, "storage_")
+    yield "storage_ref", storage_ref
+    binding = binding_from_address(ptr_int(field(storage_ref, "m_binding")), "ts")
+    if binding is not None:
+        yield "binding", binding
+        yield from binding_children(binding)
+    yield "data", field(storage_ref, "m_data")
+    yield "ops", field(storage, "ops_")
+
+
+def binding_from_address(address, binding_kind):
+    if address == 0:
+        return None
+    binding_type = value_binding_type() if binding_kind == "value" else ts_binding_type()
+    return value_at(address, binding_type)
+
+
+def value_at(address, value_type):
+    if address == 0:
+        return None
+    return gdb.Value(address).cast(value_type.pointer()).dereference()
+
+
+def pointer_array_children(pointer, count, prefix, max_items):
+    if ptr_int(pointer) == 0 or count <= 0:
+        return
+    limit = min(count, max_items)
+    for index in range(limit):
+        yield "{}[{}]".format(prefix, index), (pointer + index).dereference()
+
+
+def address_array_children(base, element_type, count, prefix, max_items):
+    if base == 0 or count <= 0:
+        return
+    pointer = gdb.Value(base).cast(element_type.pointer())
+    yield from pointer_array_children(pointer, count, prefix, max_items)
+
+
+def void_ptr(address):
+    return gdb.Value(address).cast(gdb.lookup_type("void").pointer())
 
 
 def ts_data_view_text(value):

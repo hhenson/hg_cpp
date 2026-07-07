@@ -1,12 +1,12 @@
-"""LLDB summaries for hgraph's type-erased runtime data structures.
+"""LLDB summaries and synthetic children for hgraph's type-erased runtime data structures.
 
 Load with:
 
     (lldb) command script import /path/to/hg_cpp/tools/debugger/hgraph_lldb.py
 
-The printers are deliberately read-only: they inspect debug-info fields and
-infer common scalar payloads from memory, but they do not call methods in the
-inferior process.
+The printers are deliberately read-only: they inspect debug-info fields,
+provide shallow navigation through the erased handles, and infer common scalar
+payloads from memory, but they do not call methods in the inferior process.
 """
 
 import struct
@@ -86,7 +86,7 @@ SCALAR_FORMATS = {
 
 
 def __lldb_init_module(debugger, _internal_dict):
-    registrations = [
+    summary_registrations = [
         (r"^hgraph::Value$", "hgraph_lldb.value_summary"),
         (r"^hgraph::ValueView$", "hgraph_lldb.value_view_summary"),
         (r"^hgraph::ValueTypeMetaData$", "hgraph_lldb.value_type_meta_data_summary"),
@@ -98,14 +98,172 @@ def __lldb_init_module(debugger, _internal_dict):
         (r"^hgraph::TSInputView$", "hgraph_lldb.ts_input_view_summary"),
         (r"^hgraph::TSOutputView$", "hgraph_lldb.ts_output_view_summary"),
     ]
-    for pattern, function in registrations:
+    synthetic_registrations = [
+        (r"^hgraph::Value$", "hgraph_lldb.ValueSyntheticProvider"),
+        (r"^hgraph::ValueView$", "hgraph_lldb.ValueViewSyntheticProvider"),
+        (r"^hgraph::ValueTypeMetaData$", "hgraph_lldb.ValueTypeMetaDataSyntheticProvider"),
+        (r"^hgraph::TSValueTypeMetaData$", "hgraph_lldb.TSValueTypeMetaDataSyntheticProvider"),
+        (r"^hgraph::TypeMetaData$", "hgraph_lldb.TypeMetaDataSyntheticProvider"),
+        (r"^hgraph::TypeBinding<.*>$", "hgraph_lldb.TypeBindingSyntheticProvider"),
+        (r"^hgraph::MemoryUtils::StoragePlan$", "hgraph_lldb.StoragePlanSyntheticProvider"),
+        (r"^hgraph::TSDataView$", "hgraph_lldb.TSDataViewSyntheticProvider"),
+        (r"^hgraph::TSInputView$", "hgraph_lldb.TSInputViewSyntheticProvider"),
+        (r"^hgraph::TSOutputView$", "hgraph_lldb.TSOutputViewSyntheticProvider"),
+    ]
+    for pattern, function in summary_registrations:
         debugger.HandleCommand(
             'type summary add --category hgraph --regex "{pattern}" --python-function {function}'.format(
                 pattern=pattern, function=function
             )
         )
+    for pattern, provider in synthetic_registrations:
+        debugger.HandleCommand(
+            'type synthetic add --category hgraph --regex "{pattern}" --python-class {provider}'.format(
+                pattern=pattern, provider=provider
+            )
+        )
     debugger.HandleCommand("type category enable hgraph")
-    print("hgraph LLDB summaries loaded")
+    print("hgraph LLDB summaries and synthetic children loaded")
+
+
+class SyntheticProvider:
+    def __init__(self, valobj, _internal_dict):
+        self.valobj = valobj
+        self.children = []
+        self.update()
+
+    def update(self):
+        self.children = self.build_children()
+
+    def num_children(self):
+        return len(self.children)
+
+    def get_child_at_index(self, index):
+        if index < 0 or index >= len(self.children):
+            return lldb.SBValue()
+        return self.children[index][1]
+
+    def get_child_index(self, name):
+        for index, (child_name, value) in enumerate(self.children):
+            if name == child_name or name == value.GetName():
+                return index
+        return -1
+
+    def has_children(self):
+        return bool(self.children)
+
+    def build_children(self):
+        return []
+
+    def add(self, values, name, value):
+        if valid(value):
+            values.append((name, value))
+
+
+class ValueSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        storage = child(self.valobj, "storage_")
+        self.add(values, "storage", storage)
+        if not valid(storage):
+            return values
+
+        binding_addr = ptr_value(child(storage, "m_identity"))
+        binding = object_at(self.valobj.GetTarget(), binding_addr, value_binding_type_names(), "binding")
+        self.add(values, "binding", binding)
+        add_binding_children(values, binding)
+
+        state = storage_state(storage)
+        payload = value_storage_data_value(storage, state)
+        self.add(values, "payload", payload)
+        return values
+
+
+class ValueViewSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        bits = tagged_bits(child(self.valobj, "binding_"))
+        binding_addr = bits & ~0x3
+        binding = object_at(self.valobj.GetTarget(), binding_addr, value_binding_type_names(), "binding")
+        self.add(values, "binding", binding)
+        add_binding_children(values, binding)
+        self.add(values, "data", child(self.valobj, "data_"))
+        return values
+
+
+class TypeMetaDataSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        self.add(values, "category", child(self.valobj, "category"))
+        self.add(values, "display_name", child(self.valobj, "display_name"))
+        return values
+
+
+class ValueTypeMetaDataSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        add_value_meta_children(values, self.valobj)
+        return values
+
+
+class TSValueTypeMetaDataSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        add_ts_meta_children(values, self.valobj)
+        return values
+
+
+class TypeBindingSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        add_binding_children(values, self.valobj)
+        return values
+
+
+class StoragePlanSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        self.add(values, "layout", child(self.valobj, "layout"))
+        self.add(values, "lifecycle", child(self.valobj, "lifecycle"))
+        self.add(values, "lifecycle_context", child(self.valobj, "lifecycle_context"))
+        self.add(values, "composite_kind_tag", child(self.valobj, "composite_kind_tag"))
+        self.add(values, "trivially_destructible", child(self.valobj, "trivially_destructible"))
+        self.add(values, "trivially_copyable", child(self.valobj, "trivially_copyable"))
+        self.add(values, "trivially_move_constructible", child(self.valobj, "trivially_move_constructible"))
+        add_storage_plan_components(values, self.valobj)
+        return values
+
+
+class TSDataViewSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        storage = child(self.valobj, "storage_")
+        self.add(values, "storage", storage)
+        add_ts_data_storage_children(values, storage)
+        return values
+
+
+class TSInputViewSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        self.add(values, "input", child(self.valobj, "input_"))
+        data_cursor = child(self.valobj, "data_")
+        self.add(values, "data_cursor", data_cursor)
+        self.add(values, "value_data", child(data_cursor, "value_data"))
+        self.add(values, "raw_data", child(data_cursor, "raw_data"))
+        self.add(values, "target_node", child(data_cursor, "target_node"))
+        self.add(values, "scheduling_notifier", child(self.valobj, "scheduling_notifier_"))
+        self.add(values, "evaluation_time", child(self.valobj, "evaluation_time_"))
+        return values
+
+
+class TSOutputViewSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        self.add(values, "output", child(self.valobj, "output_"))
+        self.add(values, "data", child(self.valobj, "data_"))
+        self.add(values, "evaluation_time", child(self.valobj, "evaluation_time_"))
+        return values
 
 
 def value_summary(valobj, _internal_dict, _options):
@@ -258,6 +416,147 @@ def ts_output_view_summary(valobj, _internal_dict, _options):
         return "TSOutputView{<printer error: {}>}".format(exc)
 
 
+def add_child(values, name, value):
+    if valid(value):
+        values.append((name, value))
+
+
+def add_binding_children(values, binding):
+    if not valid(binding):
+        return
+    type_meta = child(binding, "type_meta")
+    storage_plan = child(binding, "storage_plan")
+    add_child(values, "schema", deref_named(type_meta, "schema"))
+    add_child(values, "type_meta", type_meta)
+    add_child(values, "storage_plan", deref_named(storage_plan, "storage_plan"))
+    add_child(values, "storage_plan_ptr", storage_plan)
+    add_child(values, "ops", child(binding, "ops"))
+
+
+def add_value_meta_children(values, meta):
+    add_child(values, "category", child(meta, "category"))
+    add_child(values, "display_name", child(meta, "display_name"))
+    add_child(values, "kind", child(meta, "kind"))
+    add_child(values, "flags", child(meta, "flags"))
+    add_child(values, "element_type", deref_named(child(meta, "element_type"), "element_type"))
+    add_child(values, "key_type", deref_named(child(meta, "key_type"), "key_type"))
+    add_child(values, "fields", child(meta, "fields"))
+    add_child(values, "field_count", child(meta, "field_count"))
+    add_child(values, "fixed_size", child(meta, "fixed_size"))
+    add_child(values, "wrapped_un_named", deref_named(child(meta, "wrapped_un_named"), "wrapped_un_named"))
+    add_pointer_array_children(
+        values,
+        child(meta, "fields"),
+        unsigned(child(meta, "field_count")),
+        "field",
+        max_items=32,
+    )
+
+
+def add_ts_meta_children(values, meta):
+    add_child(values, "category", child(meta, "category"))
+    add_child(values, "display_name", child(meta, "display_name"))
+    add_child(values, "kind", child(meta, "kind"))
+    add_child(values, "value_type", deref_named(child(meta, "value_type"), "value_type"))
+    add_child(values, "value_schema", deref_named(child(meta, "value_schema"), "value_schema"))
+    add_child(values, "delta_value_schema", deref_named(child(meta, "delta_value_schema"), "delta_value_schema"))
+    data = child(meta, "data")
+    add_child(values, "data", data)
+    tsb = child(data, "tsb")
+    add_pointer_array_children(
+        values,
+        child(tsb, "fields"),
+        unsigned(child(tsb, "field_count")),
+        "tsb_field",
+        max_items=32,
+    )
+
+
+def add_storage_plan_components(values, plan):
+    context = ptr_value(child(plan, "lifecycle_context"))
+    if context == 0:
+        return
+
+    target = plan.GetTarget()
+    composite_kind = enum_value(child(plan, "composite_kind_tag"))
+    if composite_kind in (1, 2):
+        state = object_at(target, context, ["hgraph::MemoryUtils::CompositeState"], "composite_state")
+        add_child(values, "composite_state", state)
+        component_count = unsigned(child(state, "component_count"))
+        component_type = target.FindFirstType("hgraph::MemoryUtils::CompositeComponent")
+        if component_type.IsValid():
+            add_address_array_children(
+                values,
+                target,
+                context + state.GetType().GetByteSize(),
+                component_type,
+                component_count,
+                "component",
+                max_items=32,
+            )
+    elif composite_kind == 3:
+        state = object_at(target, context, ["hgraph::MemoryUtils::ArrayState"], "array_state")
+        add_child(values, "array_state", state)
+
+
+def add_ts_data_storage_children(values, storage):
+    storage_ref = child(storage, "storage_")
+    add_child(values, "storage_ref", storage_ref)
+    binding_addr = ptr_value(child(storage_ref, "m_binding"))
+    binding = object_at(storage.GetTarget(), binding_addr, ts_binding_type_names(), "binding")
+    add_child(values, "binding", binding)
+    add_binding_children(values, binding)
+    add_child(values, "data", child(storage_ref, "m_data"))
+    add_child(values, "ops", child(storage, "ops_"))
+
+
+def add_pointer_array_children(values, pointer, count, prefix, max_items):
+    base = ptr_value(pointer)
+    if base == 0 or count == 0:
+        return
+    element_type = pointer.GetType().GetPointeeType() if valid(pointer) else lldb.SBType()
+    if not element_type.IsValid():
+        return
+    add_address_array_children(values, pointer.GetTarget(), base, element_type, count, prefix, max_items)
+
+
+def add_address_array_children(values, target, base, element_type, count, prefix, max_items):
+    if base == 0 or count == 0 or not element_type.IsValid():
+        return
+    stride = element_type.GetByteSize()
+    limit = min(count, max_items)
+    for index in range(limit):
+        value = target.CreateValueFromAddress(
+            "{}[{}]".format(prefix, index),
+            lldb.SBAddress(base + index * stride, target),
+            element_type,
+        )
+        add_child(values, "{}[{}]".format(prefix, index), value)
+
+
+def value_binding_type_names():
+    return [
+        "hgraph::ValueTypeBinding",
+        "hgraph::TypeBinding<hgraph::ValueTypeMetaData, hgraph::ValueOps>",
+    ]
+
+
+def ts_binding_type_names():
+    return [
+        "hgraph::TSDataBinding",
+        "hgraph::TypeBinding<hgraph::TSValueTypeMetaData, hgraph::TSDataOps>",
+    ]
+
+
+def value_storage_data_value(storage, state):
+    storage_union = child(storage, "m_storage")
+    if state == 1:
+        return child(storage_union, "inline_bytes")
+    if state == 2 or state == 3:
+        return child(storage_union, "ptr")
+    return lldb.SBValue()
+
+
 def ts_data_view_text(valobj):
     storage = child(valobj, "storage_")
     storage_ref = child(storage, "storage_")
@@ -288,14 +587,7 @@ def schema_from_binding_ptr(target, address, binding_kind):
     binding = object_at(
         target,
         address,
-        [
-            "hgraph::ValueTypeBinding" if binding_kind == "value" else "hgraph::TSDataBinding",
-            (
-                "hgraph::TypeBinding<hgraph::ValueTypeMetaData, hgraph::ValueOps>"
-                if binding_kind == "value"
-                else "hgraph::TypeBinding<hgraph::TSValueTypeMetaData, hgraph::TSDataOps>"
-            ),
-        ],
+        value_binding_type_names() if binding_kind == "value" else ts_binding_type_names(),
     )
     if not valid(binding):
         return lldb.SBValue()
@@ -508,14 +800,27 @@ def c_string(ptr):
     return result if error.Success() and result else None
 
 
-def object_at(target, address, type_names):
+def deref_named(ptr, name):
+    if not valid(ptr):
+        return lldb.SBValue()
+    address = ptr_value(ptr)
+    if address == 0:
+        return lldb.SBValue()
+    pointee_type = ptr.GetType().GetPointeeType()
+    if not pointee_type.IsValid():
+        return lldb.SBValue()
+    target = ptr.GetTarget()
+    return target.CreateValueFromAddress(name, lldb.SBAddress(address, target), pointee_type)
+
+
+def object_at(target, address, type_names, name="hgraph_debug_object"):
     if address == 0:
         return lldb.SBValue()
     for type_name in type_names:
         target_type = target.FindFirstType(type_name)
         if target_type.IsValid():
             return target.CreateValueFromAddress(
-                "hgraph_debug_object", lldb.SBAddress(address, target), target_type
+                name, lldb.SBAddress(address, target), target_type
             )
     return lldb.SBValue()
 

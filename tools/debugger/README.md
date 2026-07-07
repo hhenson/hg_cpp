@@ -1,7 +1,7 @@
 # hgraph Debugger Printers
 
-This directory contains opt-in debugger summaries for hgraph's type-erased
-runtime data structures.
+This directory contains opt-in debugger summaries and expandable navigation for
+hgraph's type-erased runtime data structures.
 
 The printers currently cover:
 
@@ -16,9 +16,9 @@ The printers currently cover:
 - `hgraph::TSInputView`
 - `hgraph::TSOutputView`
 
-They are intentionally read-only. They inspect fields from debug info and
-decode common scalar payloads directly from memory, but do not call methods in
-the debugged process.
+They are intentionally read-only. They inspect fields from debug info, expose
+the main erased pointers as expandable children, and decode common scalar
+payloads directly from memory, but do not call methods in the debugged process.
 
 ## LLDB
 
@@ -57,6 +57,8 @@ From an installed CMake package:
   fields that the printers inspect.
 - The scalar payload decoder is best-effort for common registered scalar names
   such as `bool`, `int`, `float`, `int32`, `datetime`, `timedelta`, and `time`.
-- Composite values are summarized by schema and storage state. Traversing
-  composite contents safely through ops tables can be added later as an
-  explicit debugger command if needed.
+- Expanding a value or view exposes its binding, schema, storage plan, ops
+  pointer, storage/data pointer, and metadata field arrays where available.
+- Composite values are still summarized by schema and storage state. Traversing
+  live composite payload contents safely through ops tables can be added later
+  as an explicit debugger command if needed.
