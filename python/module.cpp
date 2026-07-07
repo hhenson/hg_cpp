@@ -605,6 +605,37 @@ namespace
      * accessed. Kind-specific methods dispatch on the schema (TS/TSS/TSD/
      * TSL/TSB); child access returns child views sharing the same guard.
      */
+    /** Read-only view of the node's OWN OUTPUT (hgraph's ``_output``
+        injection): ``valid`` / ``value`` for delta-computing nodes. */
+    struct PyOutput
+    {
+        TSOutputHandle             handle;
+        DateTime                   now{};
+        std::shared_ptr<PyTsGuard> guard;
+
+        [[nodiscard]] TSOutputView checked() const
+        {
+            if (guard == nullptr || !guard->alive)
+            {
+                throw std::logic_error("an output view was accessed outside its node's evaluation");
+            }
+            return handle.view(now);
+        }
+
+        [[nodiscard]] bool valid() const
+        {
+            auto view = checked();
+            return view.valid() && view.data_view().has_current_value();
+        }
+
+        [[nodiscard]] nb::object value() const
+        {
+            auto view = checked();
+            if (!view.valid() || !view.data_view().has_current_value()) { return nb::none(); }
+            return value_to_py(view.data_view().value());
+        }
+    };
+
     struct PyTimeSeries
     {
         TSInputView                view;
@@ -776,7 +807,8 @@ namespace
     [[nodiscard]] bool py_assemble_args(std::string_view layout, const TSInputView &args, const ValueView &scalars,
                                         State<PyStateRef> &state, NodeScheduler scheduler, DateTime now,
                                         nb::list &call_args, nb::list &context_values,
-                                        const std::shared_ptr<PyTsGuard> &guard)
+                                        const std::shared_ptr<PyTsGuard> &guard,
+                                        const TSOutputView *output = nullptr)   // borrowed for the call only
     {
         auto        bundle       = args.as_bundle();
         std::size_t ts_index     = 0;
@@ -813,6 +845,14 @@ namespace
                     break;
                 }
                 case 'S': call_args.append(py_state_namespace(state)); break;
+                case 'o': {
+                    if (output == nullptr)
+                    {
+                        throw std::logic_error("_output injection requires a compute node");
+                    }
+                    call_args.append(nb::cast(PyOutput{output->handle(), now, guard}));
+                    break;
+                }
                 case 'c': call_args.append(nb::cast(PyEvalClock{now})); break;
                 case 'd': call_args.append(nb::cast(PyScheduler{scheduler})); break;
                 default: throw std::logic_error("python node: unknown layout marker");
@@ -864,8 +904,9 @@ namespace
             nb::list context_values;
             auto     guard   = std::make_shared<PyTsGuard>();
             auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
+            const auto &out_view = static_cast<const TSOutputView &>(out);
             if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args,
-                                  context_values, guard))
+                                  context_values, guard, &out_view))
             {
                 return;
             }
@@ -1399,6 +1440,9 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyNodeHandle>(m, "NodeRef");
     nb::class_<PyScalarValue>(m, "ScalarValue");
     nb::class_<PySender>(m, "Sender").def("send", &PySender::send, nb::arg("value"));
+    nb::class_<PyOutput>(m, "OutputView")
+        .def_prop_ro("valid", &PyOutput::valid)
+        .def_prop_ro("value", &PyOutput::value);
     nb::class_<PyTimeSeries>(m, "TimeSeries")
         .def_prop_ro("value", &PyTimeSeries::value)
         .def_prop_ro("_kind", [](const PyTimeSeries &self) { return static_cast<int>(self.kind()); })

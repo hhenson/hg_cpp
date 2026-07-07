@@ -350,6 +350,14 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/include")
 endif()
 install(FILES "${HGRAPH_VERSION_HEADER}" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hgraph)
 
+if(EXISTS "${PROJECT_SOURCE_DIR}/tools/debugger")
+    install(DIRECTORY tools/debugger/ DESTINATION ${CMAKE_INSTALL_DATADIR}/hgraph/debugger
+        FILES_MATCHING
+            PATTERN "*.py"
+            PATTERN "README.md"
+    )
+endif()
+
 write_basic_package_version_file(
     "${PROJECT_BINARY_DIR}/hgraphConfigVersion.cmake"
     VERSION ${PROJECT_VERSION}

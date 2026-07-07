@@ -424,6 +424,9 @@ class CLOCK:
 _INJECTABLE_MARKERS = {STATE: "S", CLOCK: "c", SCHEDULER: "d"}
 
 
+_MISSING = object()
+
+
 class _PyNode:
     """@compute_node / @sink_node: a Python function as a runtime node. The
     function runs on the graph thread (both modes) under the GIL, receives
@@ -478,7 +481,18 @@ class _PyNode:
                 ports.append(_unwrap(resolved))
                 keep_ref.append(False)
                 continue
-            value = next(supplied)
+            if param.name == "_output":
+                # hgraph's _output injection: the node's own output view.
+                layout.append("o")
+                continue
+            value = next(supplied, _MISSING)
+            if value is _MISSING:
+                if param.default is inspect.Parameter.empty:
+                    raise TypeError(f"{self.__name__}: missing argument '{param.name}'")
+                value = param.default
+                if value is None and isinstance(param.annotation, (_TsExpr,)):
+                    # unwired optional ts input: a never-ticking source
+                    value = wire("nothing", output_type=param.annotation)
             if isinstance(value, WiringPort):
                 required = self._valid is None or param.name in self._valid
                 layout.append("t" if required else "u")
@@ -1202,3 +1216,21 @@ def _combine_compound_scalars(orig, delta):
     # C++-first ruling (2026-07-06): CS = C++ Bundle value; the merge is
     # the erased C++ combine over bundle scalars.
     return wire("combine", orig, delta)
+
+
+def set_delta(added=None, removed=None, tp=None):
+    """hgraph's set-delta literal: the friendly TSS delta shape - added
+    items plain, removals wrapped in Removed."""
+    added = frozenset(added) if added else frozenset()
+    removed = frozenset(removed) if removed else frozenset()
+    return added | {Removed(r) for r in removed}
+
+
+def compute_set_delta(value, out):
+    """Delta between the node's CURRENT output set and the new target set
+    (hgraph parity: use with the _output injection)."""
+    target = frozenset(value.value if hasattr(value, "value") else value)
+    if out is not None and out.valid:
+        current = frozenset(out.value)
+        return set_delta(added=target - current, removed=current - target)
+    return set_delta(added=target)

@@ -60,3 +60,7 @@ __all__ = [
     "MIN_ST", "MIN_TD", "IN_MEMORY", "DATA_FRAME",
     "set_record_replay_config", "frame_store_contains", "frame_store_read", "evaluate_const",
 ]
+
+from ._runtime import set_delta, compute_set_delta
+from ._types import K_1
+default_path = ""   # hgraph's default service path sentinel
