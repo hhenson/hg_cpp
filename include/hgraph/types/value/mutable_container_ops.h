@@ -340,6 +340,22 @@ namespace hgraph
                 });
         }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline nb::object mutable_list_to_python(const void *, const void *memory)
+        {
+            const auto *storage = static_cast<const MutableListStorage *>(memory);
+            if (storage->element_binding() == nullptr) { return nb::list(); }
+            const auto &ops = storage->element_binding()->ops_ref();
+            nb::list    result;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                // UNSET elements (holes) read back as None.
+                result.append(storage->element_set(i) ? ops.to_python(storage->element_at(i)) : nb::none());
+            }
+            return result;
+        }
+#endif
+
         // -- structural-mutation thunks --
         inline void list_push_back(const void *, void *memory, const void *element)
         {
@@ -404,7 +420,7 @@ namespace hgraph
                &list_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                ,
-               nullptr,
+               &mutable_container_detail::mutable_list_to_python,
                nullptr
 #endif
               },
@@ -738,6 +754,23 @@ namespace hgraph
             // Maps have no natural order; equal maps are equivalent, otherwise unordered.
             return map_equals(ctx, lhs, rhs) ? std::partial_ordering::equivalent : std::partial_ordering::unordered;
         }
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline nb::object mutable_map_to_python(const void *, const void *m)
+        {
+            const auto *s = static_cast<const MutableMapStorage *>(m);
+            nb::dict    result;
+            if (s->key_binding() == nullptr) { return result; }
+            const auto &kops = s->key_binding()->ops_ref();
+            const auto &vops = s->value_binding()->ops_ref();
+            for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
+            {
+                if (!s->slot_live(slot)) { continue; }
+                result[kops.to_python(s->key_at(slot))] = vops.to_python(s->value_at_slot(slot));
+            }
+            return result;
+        }
+#endif
+
         inline std::string map_to_string(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
@@ -909,7 +942,7 @@ namespace hgraph
                &map_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                ,
-               nullptr,
+               &mutable_map_to_python,
                nullptr
 #endif
               },
@@ -1106,6 +1139,24 @@ namespace hgraph
         {
             return set_equals(ctx, lhs, rhs) ? std::partial_ordering::equivalent : std::partial_ordering::unordered;
         }
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline nb::object mutable_set_to_python(const void *, const void *m)
+        {
+            const auto *s = static_cast<const MutableSetStorage *>(m);
+            nb::list    items;
+            if (s->element_binding() != nullptr)
+            {
+                const auto &eops = s->element_binding()->ops_ref();
+                for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
+                {
+                    if (!s->slot_live(slot)) { continue; }
+                    items.append(eops.to_python(s->key_at(slot)));
+                }
+            }
+            return nb::steal(PyFrozenSet_New(items.ptr()));
+        }
+#endif
+
         inline std::string set_to_string(const void *, const void *m)
         {
             const auto *s    = static_cast<const MutableSetStorage *>(m);
@@ -1167,7 +1218,7 @@ namespace hgraph
                &set_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                ,
-               nullptr,
+               &mutable_set_to_python,
                nullptr
 #endif
               },

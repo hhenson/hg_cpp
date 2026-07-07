@@ -451,6 +451,11 @@ class _PyNode:
                     f"injectable parameter '{param.name}' of '{self.__name__}' must default to None"
                 )
 
+    def __getitem__(self, item):
+        # hgraph's node[TYPEVAR: TYPE] pre-resolution subscripts: types
+        # resolve from the wired inputs here - accept and ignore.
+        return self
+
     def __call__(self, *args, **kwargs):
         ref = _hgraph.node_ref(self.fn)
         layout, ports, scalars, keep_ref = [], [], [], []

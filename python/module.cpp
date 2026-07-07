@@ -1128,6 +1128,8 @@ NB_MODULE(_hgraph, m)
     nb::set_leak_warnings(false);
 
     stdlib::register_standard_operators();
+    python_bridge::py_infer_value_slot() =
+        reinterpret_cast<python_bridge::PyInferValueFn>(&python_bridge::py_to_value);
     (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar
     register_overload<op_materialize, materialize_node>();
     register_overload<op_py_compute, py_compute_node>();

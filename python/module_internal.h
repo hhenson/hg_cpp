@@ -3,6 +3,7 @@
 
 #include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/lib/std/operators/control.h>
+#include <hgraph/python/bridge_state.h>
 #include <hgraph/python/chrono.h>
 #include <hgraph/types/frame.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -22,6 +23,11 @@ namespace hgraph::python_bridge
 {
     namespace nb = nanobind;
 
+    struct PyObj;
+}
+
+namespace hgraph::python_bridge
+{
     struct PyObj
     {
         PyObject *object{nullptr};
@@ -38,6 +44,26 @@ namespace hgraph::python_bridge
 
         friend bool operator==(const PyObj &lhs, const PyObj &rhs) noexcept;
     };
+}
+
+namespace hgraph
+{
+    /** PyObj wraps python objects AS-IS (the object-keyed-TSD lesson: no
+        natural conversion may substitute). */
+    template <>
+    struct python_conversion_traits<python_bridge::PyObj>
+    {
+        static nanobind::object to_python(const python_bridge::PyObj &value) { return value.get(); }
+
+        static python_bridge::PyObj from_python(nanobind::handle source)
+        {
+            return python_bridge::PyObj{nanobind::borrow<nanobind::object>(source)};
+        }
+    };
+}
+
+namespace hgraph::python_bridge
+{
 
     struct PyOpaqueRef
     {
@@ -51,10 +77,6 @@ namespace hgraph::python_bridge
         [[nodiscard]] nb::object capsule() const;
     };
 
-    [[nodiscard]] nb::object &cmp_result_enum_slot();
-    [[nodiscard]] nb::object &divide_by_zero_enum_slot();
-    [[nodiscard]] nb::object &removed_sentinel_slot();
-    [[nodiscard]] nb::dict   &bundle_class_registry();
 
     [[nodiscard]] Value      py_to_value(nb::handle object);
     [[nodiscard]] nb::object value_to_py(const ValueView &view);

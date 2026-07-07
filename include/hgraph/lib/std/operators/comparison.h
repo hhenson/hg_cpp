@@ -84,4 +84,34 @@ namespace hgraph::stdlib
     };
 }  // namespace hgraph::stdlib
 
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+#include <hgraph/python/bridge_state.h>
+
+namespace hgraph
+{
+    /** Python conversion binds to the type AT DEFINITION (type-erasure rule:
+        every ops_for<CmpResult> instantiation must see this). */
+    template <>
+    struct python_conversion_traits<stdlib::CmpResult>
+    {
+        static nb::object to_python(const stdlib::CmpResult &value)
+        {
+            nb::object &enum_class = python_bridge::cmp_result_enum_slot();
+            const auto  raw        = static_cast<std::int64_t>(value);
+            return enum_class.is_valid() ? enum_class(raw) : nb::cast(raw);
+        }
+
+        static stdlib::CmpResult from_python(nb::handle source)
+        {
+            if (nb::hasattr(source, "value"))
+            {
+                return static_cast<stdlib::CmpResult>(nb::cast<std::int64_t>(source.attr("value")));
+            }
+            return static_cast<stdlib::CmpResult>(nb::cast<std::int64_t>(source));
+        }
+    };
+}  // namespace hgraph
+#endif  // HGRAPH_ENABLE_PYTHON_USER_NODES
+
 #endif  // HGRAPH_LIB_STD_OPERATORS_COMPARISON_H

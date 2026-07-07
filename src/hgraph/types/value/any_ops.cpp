@@ -5,6 +5,12 @@
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value.h>
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+#include <nanobind/nanobind.h>
+#include <hgraph/python/bridge_state.h>
+namespace hgraph { namespace nb = nanobind; }
+#endif
+
 #include <compare>
 #include <cstddef>
 #include <string>
@@ -48,6 +54,34 @@ namespace hgraph
             const Value &value = *static_cast<const Value *>(memory);
             return value.has_value() ? value.to_string() : std::string{"None"};
         }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        nb::object any_to_python(const void *, const void *memory)
+        {
+            const Value &value = *static_cast<const Value *>(memory);
+            if (!value.has_value()) { return nb::none(); }
+            // Type-erased delegation: the BOXED value's own binding converts.
+            return value.view().binding()->ops_ref().to_python(value.view().data());
+        }
+
+        void any_from_python(const void *, const ValueTypeBinding &, void *memory, nb::handle source)
+        {
+            Value &boxed = *static_cast<Value *>(memory);
+            if (source.is_none())
+            {
+                boxed = Value{};
+                return;
+            }
+            // Schema-free INFERENCE lives in the module (a dispatch on
+            // python types); it installs this hook at import.
+            const auto slot = python_bridge::py_infer_value_slot();
+            if (slot == nullptr)
+            {
+                throw std::logic_error("Any::from_python requires the python module's inference hook");
+            }
+            boxed = reinterpret_cast<Value (*)(nb::handle)>(slot)(source);
+        }
+#endif
     }  // namespace
 
     const ValueOps &any_ops() noexcept
@@ -60,9 +94,9 @@ namespace hgraph
             &any_compare,
             &any_to_string,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
-            nullptr,  // to_python (deferred)
-            nullptr,  // from_python (deferred)
-            nullptr,  // to_python_buffer (deferred)
+            &any_to_python,
+            &any_from_python,
+            nullptr,  // to_python_buffer
 #endif
             // copy_construct_view / copy_assign_view / owning_binding default to
             // nullptr: the storage plan's lifecycle copies the embedded Value.

@@ -23,6 +23,7 @@
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
 #include <hgraph/python/chrono.h>
+#include <hgraph/types/primitive_types.h>   // Time, Bytes (conversion traits)
 #include <nanobind/ndarray.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -347,6 +348,68 @@ namespace hgraph
             }
         }
 
+    }  // namespace value_ops_detail
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+    /**
+     * Python-conversion customization point for scalar types the generic
+     * nanobind cast cannot handle (the type-erasure rule: conversion binds
+     * onto the type's OPS at registration - specializations must be visible
+     * wherever ``register_scalar<T>`` / ``ops_for<T>`` first instantiates).
+     * Provide:
+     *   static nb::object to_python(const T &);
+     *   static T          from_python(nb::handle);
+     */
+    template <typename T>
+    struct python_conversion_traits;
+
+    template <>
+    struct python_conversion_traits<Time>
+    {
+        static nb::object to_python(const Time &value)
+        {
+            const auto  micro   = value.microseconds;
+            const auto  seconds = micro / 1'000'000;
+            return nb::module_::import_("datetime")
+                .attr("time")(static_cast<int>(seconds / 3600), static_cast<int>((seconds / 60) % 60),
+                              static_cast<int>(seconds % 60), static_cast<int>(micro % 1'000'000));
+        }
+
+        static Time from_python(nb::handle source)
+        {
+            const auto hours   = nb::cast<std::int64_t>(source.attr("hour"));
+            const auto minutes = nb::cast<std::int64_t>(source.attr("minute"));
+            const auto seconds = nb::cast<std::int64_t>(source.attr("second"));
+            const auto micro   = nb::cast<std::int64_t>(source.attr("microsecond"));
+            return Time{((hours * 60 + minutes) * 60 + seconds) * 1'000'000 + micro};
+        }
+    };
+
+    template <>
+    struct python_conversion_traits<Bytes>
+    {
+        static nb::object to_python(const Bytes &value)
+        {
+            return nb::steal(PyBytes_FromStringAndSize(value.data.data(),
+                                                       static_cast<Py_ssize_t>(value.data.size())));
+        }
+
+        static Bytes from_python(nb::handle source)
+        {
+            char       *buffer = nullptr;
+            Py_ssize_t  length = 0;
+            if (PyBytes_AsStringAndSize(source.ptr(), &buffer, &length) != 0)
+            {
+                throw nb::python_error();
+            }
+            return Bytes{std::string{buffer, static_cast<std::size_t>(length)}};
+        }
+    };
+
+#endif  // HGRAPH_ENABLE_PYTHON_USER_NODES
+
+    namespace value_ops_detail
+    {
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         template <typename T>
         constexpr bool python_scalar_castable =
@@ -354,11 +417,21 @@ namespace hgraph
             std::is_same_v<T, DateTime> || std::is_same_v<T, TimeDelta>;
 
         template <typename T>
+        concept has_python_conversion_traits = requires(const T &value, nb::handle source) {
+            { python_conversion_traits<T>::to_python(value) } -> std::same_as<nb::object>;
+            { python_conversion_traits<T>::from_python(source) } -> std::same_as<T>;
+        };
+
+        template <typename T>
         nb::object to_python_thunk(const void *, const void *memory)
         {
             if constexpr (python_scalar_castable<T>)
             {
                 return nb::cast(*static_cast<const T *>(memory));
+            }
+            else if constexpr (has_python_conversion_traits<T>)
+            {
+                return python_conversion_traits<T>::to_python(*static_cast<const T *>(memory));
             }
             else
             {
@@ -372,6 +445,10 @@ namespace hgraph
             if constexpr (python_scalar_castable<T>)
             {
                 *static_cast<T *>(memory) = nb::cast<T>(source);
+            }
+            else if constexpr (has_python_conversion_traits<T>)
+            {
+                *static_cast<T *>(memory) = python_conversion_traits<T>::from_python(source);
             }
             else
             {

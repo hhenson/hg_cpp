@@ -1,5 +1,9 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+#include <hgraph/python/bridge_state.h>
+#endif
+
 #include <hgraph/types/utils/intern_table.h>
 #include <hgraph/types/value/any_ops.h>
 #include <hgraph/types/value/compact_container_ops.h>
@@ -297,16 +301,31 @@ namespace hgraph
 
             if (bundle)
             {
+                // A NAMED bundle with a registered python class rebuilds the
+                // class (CompoundScalar read-back; UNSET fields -> None).
+                nb::object bundle_class;
+                if (!state->schema->name().empty())
+                {
+                    nb::dict &classes = python_bridge::bundle_class_registry();
+                    nb::str   key{std::string{state->schema->name()}.c_str()};
+                    if (classes.contains(key)) { bundle_class = classes[key]; }
+                }
                 nb::dict result;
                 for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
                 {
                     const char *name = state->schema->fields[index].name;
                     if (name == nullptr || *name == '\0') { continue; }
-                    if (!composite_field_set(state, memory, index)) { continue; }   // UNSET: omitted
+                    const bool set = composite_field_set(state, memory, index);
+                    if (!set)
+                    {
+                        if (bundle_class.is_valid()) { result[nb::str{name}] = nb::none(); }
+                        continue;   // plain dicts OMIT unset fields
+                    }
                     const auto &ops = state->child_bindings[index]->ops_ref();
                     const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                     result[nb::str{name}] = ops.to_python(child);
                 }
+                if (bundle_class.is_valid()) { return bundle_class(**result); }
                 return result;
             }
 
@@ -392,6 +411,9 @@ namespace hgraph
                 return;
             }
 
+            // ATTRIBUTE form (dataclass / CompoundScalar instances): None
+            // fields are UNSET (field validity - the CS convention).
+            composite_mark_all(state, memory, false);
             for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
             {
                 const char *name = state->schema->fields[index].name;
@@ -399,12 +421,10 @@ namespace hgraph
                 {
                     throw std::invalid_argument("Bundle value has an unnamed field and cannot be loaded from attributes");
                 }
-                if (!nb::hasattr(object, name))
-                {
-                    throw std::invalid_argument(fmt::format("Bundle value missing attribute '{}'", name));
-                }
+                if (!nb::hasattr(object, name)) { continue; }
                 nb::object value = nb::getattr(object, name);
-                auto      *child = static_cast<std::byte *>(memory) + state->offsets[index];
+                if (value.is_none()) { continue; }
+                auto *child = static_cast<std::byte *>(memory) + state->offsets[index];
                 assign_child_from_python(*state->child_bindings[index], child, value, "Bundle value");
                 composite_mark_field(state, memory, index, true);
             }

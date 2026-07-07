@@ -191,6 +191,14 @@ namespace hgraph
         }
 
         void list_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source);
+
+        /** The VARIADIC-TUPLE variant: same storage, python reads back a
+            TUPLE (ops-variant selection at binding time - the type-erasure
+            rule: no runtime flag checks). */
+        inline nb::object list_to_python_tuple(const void *context, const void *memory)
+        {
+            return nb::tuple(list_to_python(context, memory));
+        }
 #endif
 
         // ----- CyclicBuffer (read in ring order) ------------------------
@@ -897,33 +905,49 @@ namespace hgraph
     // and ``SetView``. The definition follows the binding accessors.
     SetView compact_map_key_set_thunk(const void *context, const ValueTypeBinding *map_binding, const void *memory);
 
+    namespace container_ops_detail
+    {
+        template <bool VariadicTuple>
+        [[nodiscard]] const ListValueOps &compact_list_ops_impl() noexcept;
+    }
+
+    namespace container_ops_detail
+    {
+        template <bool VariadicTuple>
+        [[nodiscard]] const ListValueOps &compact_list_ops_impl() noexcept
+        {
+            static const ListValueOps ops = {
+                {{// ValueOps:
+                  nullptr,
+                  false,
+                  &container_ops_detail::list_hash,
+                  &container_ops_detail::list_equals,
+                  &container_ops_detail::list_compare,
+                  &container_ops_detail::list_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                  ,
+                  VariadicTuple ? &container_ops_detail::list_to_python_tuple
+                                : &container_ops_detail::list_to_python,
+                  &container_ops_detail::list_from_python
+#endif
+                 },
+                 // IndexedValueOps:
+                 &container_ops_detail::list_size,
+                 &container_ops_detail::list_element_at,
+                 &container_ops_detail::list_element_binding,
+                 &container_ops_detail::dense_make_range<&container_ops_detail::list_size,
+                                                          &container_ops_detail::list_element_at,
+                                                          &container_ops_detail::list_element_binding>,
+                 nullptr},
+                // ListValueOps: no additions
+            };
+            return ops;
+        }
+    }  // namespace container_ops_detail
+
     [[nodiscard]] inline const ListValueOps &compact_list_ops() noexcept
     {
-        static const ListValueOps ops = {
-            {{// ValueOps:
-              nullptr,
-              false,
-              &container_ops_detail::list_hash,
-              &container_ops_detail::list_equals,
-              &container_ops_detail::list_compare,
-              &container_ops_detail::list_to_string
-#if HGRAPH_ENABLE_PYTHON_USER_NODES
-              ,
-              &container_ops_detail::list_to_python,
-              &container_ops_detail::list_from_python
-#endif
-             },
-             // IndexedValueOps:
-             &container_ops_detail::list_size,
-             &container_ops_detail::list_element_at,
-             &container_ops_detail::list_element_binding,
-             &container_ops_detail::dense_make_range<&container_ops_detail::list_size,
-                                                      &container_ops_detail::list_element_at,
-                                                      &container_ops_detail::list_element_binding>,
-             nullptr},
-            // ListValueOps: no additions
-        };
-        return ops;
+        return container_ops_detail::compact_list_ops_impl<false>();
     }
 
     [[nodiscard]] inline const SetValueOps &compact_set_ops() noexcept
@@ -1105,7 +1129,12 @@ namespace hgraph
     [[nodiscard]] inline const ValueTypeBinding &
     compact_list_binding(const ValueTypeBinding &element_binding, const ValueTypeMetaData &meta)
     {
-        return ValueTypeBinding::intern(meta, compact_list_plan(element_binding), compact_list_ops());
+        // Ops-variant selection AT BINDING TIME: a variadic tuple reads back
+        // as a python tuple through its OWN fn-ptr, not a runtime flag check.
+        const auto &ops = meta.has(ValueTypeFlags::VariadicTuple)
+                              ? container_ops_detail::compact_list_ops_impl<true>()
+                              : compact_list_ops();
+        return ValueTypeBinding::intern(meta, compact_list_plan(element_binding), ops);
     }
 
     [[nodiscard]] inline const ValueTypeBinding &compact_set_binding(const ValueTypeBinding &element_binding)

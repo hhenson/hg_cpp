@@ -139,13 +139,14 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         /** Same binding, or distinct schema identities over ONE layout
-            (variadic tuple vs list: same plan + ops, flag-only meta split). */
+            (variadic tuple vs list: the PLAN is the layout contract; the ops
+            may be per-binding variants, e.g. tuple-shaped python read-back). */
         [[nodiscard]] static bool atomic_value_binding_compatible(const ValueTypeBinding *source,
                                                                   const ValueTypeBinding *bound) noexcept
         {
             if (source == bound) { return true; }
             if (source == nullptr || bound == nullptr) { return false; }
-            return source->plan() == bound->plan() && source->ops == bound->ops;
+            return source->plan() == bound->plan();
         }
 
         [[nodiscard]] static bool atomic_copy_value_from(const void *context, void *memory, const ValueView &source,

@@ -118,4 +118,33 @@ namespace hgraph::stdlib
     };
 }  // namespace hgraph::stdlib
 
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+#include <hgraph/python/bridge_state.h>
+
+namespace hgraph
+{
+    /** Python conversion binds to the type AT DEFINITION (type-erasure rule). */
+    template <>
+    struct python_conversion_traits<stdlib::DivideByZero>
+    {
+        static nb::object to_python(const stdlib::DivideByZero &value)
+        {
+            nb::object &enum_class = python_bridge::divide_by_zero_enum_slot();
+            const auto  raw        = static_cast<std::int64_t>(value);
+            return enum_class.is_valid() ? enum_class(raw) : nb::cast(raw);
+        }
+
+        static stdlib::DivideByZero from_python(nb::handle source)
+        {
+            if (nb::hasattr(source, "value"))
+            {
+                return static_cast<stdlib::DivideByZero>(nb::cast<std::int64_t>(source.attr("value")));
+            }
+            return static_cast<stdlib::DivideByZero>(nb::cast<std::int64_t>(source));
+        }
+    };
+}  // namespace hgraph
+#endif  // HGRAPH_ENABLE_PYTHON_USER_NODES
+
 #endif  // HGRAPH_LIB_STD_OPERATORS_ARITHMETIC_H
