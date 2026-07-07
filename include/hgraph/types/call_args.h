@@ -422,8 +422,8 @@ namespace hgraph
             // Auto-bound (context) params have no positional slot: positional
             // arguments fill the caller-visible params in declaration order.
             constexpr std::size_t caller_params = caller_visible_param_count<ParamsTuple>();
-            constexpr auto        slot_to_param = positional_slot_to_param_index<ParamsTuple>();
-            std::array<bool, param_count> filled{};
+            [[maybe_unused]] constexpr auto        slot_to_param = positional_slot_to_param_index<ParamsTuple>();
+            [[maybe_unused]] std::array<bool, param_count> filled{};
             [[maybe_unused]] bool seen_named = false;
             [[maybe_unused]] std::size_t positional = 0;
 

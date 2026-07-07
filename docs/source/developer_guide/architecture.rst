@@ -217,11 +217,18 @@ The normal cycle shape is:
 1. run one-shot before-evaluation callbacks,
 2. notify lifecycle observers before graph evaluation,
 3. scan flattened nodes in rank order,
-4. evaluate nodes whose graph schedule equals ``evaluation_time``,
+4. evaluate nodes whose graph schedule equals ``evaluation_time``, notifying
+   lifecycle observers immediately before and after each node's evaluation,
 5. fold future node schedules into the clock's next scheduled evaluation time,
 6. notify lifecycle observers after graph evaluation,
 7. run one-shot after-evaluation callbacks,
 8. advance the engine clock.
+
+This shape is uniform for root and nested graphs alike: a nested graph's own
+``evaluate`` call brackets its scheduled nodes with the same before/after
+graph- and node-evaluation notifications, on the same shared observer list
+(see "Lifecycle Observers" below) — an observer registered once on the
+executor sees every graph in the run, not just the root.
 
 Push-source nodes are specialized node implementations, but they are still
 evaluated through the normal node evaluation interface. A push-source node owns
@@ -291,6 +298,61 @@ Stop processing runs in reverse rank order:
 
 Reverse stop order is intentional. Stop is a teardown operation and is similar to disposal: downstream nodes should be stopped before the upstream nodes they depend on. Subgraph lifecycle processing follows the same directional rule within the selected flattened range.
 
+Lifecycle Observers
+~~~~~~~~~~~~~~~~~~~
+
+``LifecycleObserver`` (``runtime/lifecycle_observer.h``) is the interface behind
+every "notify" step above: a fixed set of before/after hooks for graph/node
+start, stop, and evaluation, all defaulting to no-ops so an implementation
+overrides only what it needs.
+
+.. code-block:: cpp
+
+   struct LifecycleObserver
+   {
+       virtual void on_before_start_graph(const GraphView &);
+       virtual void on_after_start_graph(const GraphView &);
+       virtual void on_before_start_node(const NodeView &);
+       virtual void on_after_start_node(const NodeView &);
+
+       virtual void on_before_graph_evaluation(const GraphView &);
+       virtual void on_after_graph_evaluation(const GraphView &);
+       virtual void on_before_node_evaluation(const NodeView &);
+       virtual void on_after_node_evaluation(const NodeView &);
+
+       virtual void on_before_stop_node(const NodeView &);
+       virtual void on_after_stop_node(const NodeView &);
+       virtual void on_before_stop_graph(const GraphView &);
+       virtual void on_after_stop_graph(const GraphView &);
+   };
+
+There is exactly **one** ``LifecycleObserverList`` per executor run — it lives
+in the executor's runtime storage (run-level state folds into the executor's
+ops table rather than a separate engine object; see ``runtime/executor.h``),
+not on any individual graph. Root and nested graphs
+alike reach it through a raw ``LifecycleObserverList *`` cached once in their
+own runtime storage at construction: the root graph caches it directly from
+its executor, and a nested graph caches it with one hop to its parent graph's
+already-cached pointer. This keeps the hot path (start/stop/evaluate) to a
+plain field read — no ops-table dispatch, no walk up the nested-parent chain,
+no allocation — while still giving a single registration on the executor
+visibility into every graph and node in the run, at any nesting depth.
+
+Following ``types/utils/slot_observer.h``'s ``SlotObserver``/``SlotObserverList``
+idiom (not a shared generic template with it — two small concrete lists for
+two distinct event sets), registration is by raw non-owning pointer: the
+caller owns the ``LifecycleObserver`` instance and is responsible for
+unregistering it before either side is destroyed. Two registration points:
+
+- **Build time**: ``GraphExecutorBuilder::add_lifecycle_observer(observer)``,
+  seeded into the executor's list at construction.
+- **Runtime**: ``GraphExecutorView::lifecycle_observers()`` /
+  ``GraphView::lifecycle_observers()`` both return the same
+  ``LifecycleObserverList &``; call ``.add(observer)`` / ``.remove(observer)``
+  directly at any point before or during the run. Removal is safe from within
+  an observer's own callback (deferred compaction while a notification is in
+  progress, matching ``SlotObserverList``'s reentrancy guard).
+
 Observer And Callback Draining
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -298,10 +360,39 @@ Lifecycle observer lists should be processed consistently across handlers in reg
 
 One-shot before-evaluation and after-evaluation callbacks are drained until complete. If a callback registers additional callbacks of the same phase while draining, the newly registered callbacks must also run before that drain operation returns.
 
-The intended C++ contract is that after-evaluation callbacks follow the
-same registration-order rule as other lifecycle observer lists. If
-compatibility requires a different after-evaluation ordering, that
-exception must be documented explicitly before implementation.
+After-evaluation callbacks follow the same registration-order rule as other
+lifecycle observer lists (the open question about ordering is resolved —
+see below for the resolved exception-safety rule).
+
+**Resolved: exception safety for "after" notifications.** After-graph-evaluation,
+after-node-evaluation, and after-node-stop notifications fire **best-effort** —
+even when the operation they bracket throws — so an observer sees a matching
+before/after pair for every attempt, not just successful ones:
+
+- **Graph evaluation**: "after" fires exactly once per cycle, on whichever
+  call to ``evaluate`` either completes the cycle or lets an exception
+  propagate out of the node loop. It does **not** fire when a node pauses the
+  cycle (a resumed call later gets the same "after" treatment) — a paused
+  cycle is not a completed one.
+- **Node evaluation**: "after" always fires once the node's ``evaluate`` call
+  returns or throws, regardless of pause or exception — the node itself did
+  run once, independent of whether the enclosing graph cycle completed.
+- **Node stop**: "after" always fires once the node's ``stop`` call returns
+  or throws — consistent with stop's existing best-effort contract (every
+  node gets a stop attempt even if an earlier one failed).
+- **Node/graph start are the one asymmetric case**: "after start" is plain
+  sequential and is *not* guaranteed on exception. A node that fails to start
+  never really started, so no matching after-start notification fires for
+  it; nodes that failed to start are rolled back through the normal stop
+  path (and so do get before/after-stop notifications for that rollback).
+
+An observer's own exception during a best-effort "after" notification is
+swallowed rather than allowed to propagate — otherwise a buggy observer could
+either mask the real failure it was firing on, or terminate the process
+outright (a second exception escaping a destructor while the first is still
+unwinding calls ``std::terminate``). Observers should treat their own
+notification methods as diagnostic/logging code, not as a place to signal
+failure back into the runtime.
 
 Expected Runtime Phases
 -----------------------
@@ -323,5 +414,3 @@ Open Design Items
 
 - Define the exact graph IR passed from wiring to runtime construction.
 - Define how nested graphs share clocks, schedulers, and memory resources.
-- Confirm whether after-evaluation callback ordering can remain uniform
-  with the registration-order observer rule.

@@ -1,6 +1,7 @@
 #include <hgraph/runtime/graph.h>
 
 #include <hgraph/runtime/executor.h>
+#include <hgraph/runtime/lifecycle_observer.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/util/scope.h>
 
@@ -144,6 +145,10 @@ namespace hgraph
             /** Graph traits (parent-chained key-value metadata; GraphView::trait_or).
                 The same value-layer ``Map<string, Any>`` store as GlobalState. */
             GlobalState traits{};
+            /** The executor-owned lifecycle observer list, cached once at construction
+                (root: from the root executor; nested: one hop to the parent graph's own
+                cached pointer) so the hot path never walks the nested-parent chain. */
+            LifecycleObserverList *lifecycle_observers{nullptr};
         };
 
         struct RootGraphRuntimeStorage : GraphRuntimeBaseStorage
@@ -705,13 +710,21 @@ namespace hgraph
             auto       &state = graph_header<Storage>(runtime, graph.data());
             if (state.started) { return; }
 
+            state.lifecycle_observers->notify_before_start_graph(graph);
+
             state.evaluation_time = start_time;
             state.cycle_wall_start = current_wall_time();
             std::size_t started_nodes = 0;
             auto rollback = UnwindCleanupGuard([&] {
                 for (std::size_t index = started_nodes; index > 0; --index)
                 {
-                    graph_node_view(runtime, graph.data(), index - 1).stop(state.evaluation_time);
+                    NodeView node_view = graph_node_view(runtime, graph.data(), index - 1);
+                    state.lifecycle_observers->notify_before_stop_node(node_view);
+                    // HideExceptions: a buggy observer must not mask the rollback itself,
+                    // nor terminate() by throwing a second exception during unwind.
+                    auto after_notify = make_scope_exit<true>(
+                        [&] { state.lifecycle_observers->notify_after_stop_node(node_view); });
+                    node_view.stop(state.evaluation_time);
                 }
                 state.next_scheduled_time = MAX_DT;
                 state.started = false;
@@ -731,16 +744,21 @@ namespace hgraph
             // than the graph blanket-scheduling everything.
             for (std::size_t index = 0; index < runtime.layout.node_count; ++index)
             {
+                NodeView node_view = graph_node_view(runtime, graph.data(), index);
+                state.lifecycle_observers->notify_before_start_node(node_view);
+                // Plain sequential (no "after" on throw): a node that fails to start
+                // never really started, so no matching after-start notification fires.
+                // The rollback above still stops (and notifies) whatever DID start.
                 if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
                 {
-                    annotate_on_exception(
-                        [&] { graph_node_view(runtime, graph.data(), index).start(state.evaluation_time); },
-                        [&] { rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index), index, "start"); });
+                    annotate_on_exception([&] { node_view.start(state.evaluation_time); },
+                                          [&] { rethrow_with_node_identity(node_view, index, "start"); });
                 }
                 else
                 {
-                    graph_node_view(runtime, graph.data(), index).start(state.evaluation_time);
+                    node_view.start(state.evaluation_time);
                 }
+                state.lifecycle_observers->notify_after_start_node(node_view);
                 ++started_nodes;
             }
 
@@ -755,6 +773,7 @@ namespace hgraph
             }
             state.started = true;
             rollback.release();
+            state.lifecycle_observers->notify_after_start_graph(graph);
         }
 
         template <typename Storage>
@@ -764,22 +783,28 @@ namespace hgraph
             auto       &state = graph_header<Storage>(runtime, graph.data());
             if (!state.started) { return; }
 
+            state.lifecycle_observers->notify_before_stop_graph(graph);
+
             FirstExceptionRecorder exceptions;
             for (std::size_t index = runtime.layout.node_count; index > 0; --index)
             {
                 exceptions.capture([&] {
+                    NodeView node_view = graph_node_view(runtime, graph.data(), index - 1);
+                    state.lifecycle_observers->notify_before_stop_node(node_view);
+                    // Best-effort: every node gets a stop attempt (FirstExceptionRecorder
+                    // defers the throw), so "after" fires even when stop() itself throws.
+                    // HideExceptions guards against a buggy observer masking that throw or
+                    // terminate()-ing during its unwind.
+                    auto after_notify = make_scope_exit<true>(
+                        [&] { state.lifecycle_observers->notify_after_stop_node(node_view); });
                     if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
                     {
-                        annotate_on_exception(
-                            [&] { graph_node_view(runtime, graph.data(), index - 1).stop(state.evaluation_time); },
-                            [&] {
-                                rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index - 1),
-                                                           index - 1, "stop");
-                            });
+                        annotate_on_exception([&] { node_view.stop(state.evaluation_time); },
+                                              [&] { rethrow_with_node_identity(node_view, index - 1, "stop"); });
                     }
                     else
                     {
-                        graph_node_view(runtime, graph.data(), index - 1).stop(state.evaluation_time);
+                        node_view.stop(state.evaluation_time);
                     }
                 });
             }
@@ -790,6 +815,9 @@ namespace hgraph
             if (graph.schema() != nullptr) { unbind_edges(runtime, graph.data(), graph.schema()->edges); }
             release_alternative_subscriptions(runtime, graph.data(), state.evaluation_time);
             state.started = false;
+            // Fires even when one or more nodes failed to stop: the graph as a whole
+            // completed its (best-effort) stop attempt before the deferred throw below.
+            state.lifecycle_observers->notify_after_stop_graph(graph);
             exceptions.rethrow_if_any();
         }
 
@@ -799,6 +827,13 @@ namespace hgraph
             const auto &runtime = graph_context(context);
             if (index >= runtime.layout.node_count) { return MIN_DT; }
             return graph_schedule(runtime, const_cast<void *>(memory), index);
+        }
+
+        template <typename Storage>
+        LifecycleObserverList *lifecycle_observers_impl(const void *context, const void *memory) noexcept
+        {
+            const auto &runtime = graph_context(context);
+            return graph_header<Storage>(runtime, memory).lifecycle_observers;
         }
 
         template <typename Storage>
@@ -820,6 +855,15 @@ namespace hgraph
             state.evaluating = true;
             auto reset = make_scope_exit([&] noexcept { state.evaluating = false; });
 
+            // Fires once this cycle either genuinely completes or an exception escapes
+            // the node loop below — never on a pause (return false mid-cycle, suppressed
+            // via `paused`). HideExceptions: a buggy observer must not mask the real
+            // evaluation failure or terminate() by throwing during its unwind.
+            bool paused = false;
+            auto after_eval_notify = make_scope_exit<true>([&] {
+                if (!paused) { state.lifecycle_observers->notify_after_graph_evaluation(graph); }
+            });
+
             std::size_t first_normal_node = 0;
             if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
             {
@@ -828,6 +872,7 @@ namespace hgraph
 
             if (!resuming)
             {
+                state.lifecycle_observers->notify_before_graph_evaluation(graph);
                 state.cycle_wall_start = current_wall_time();
                 state.next_scheduled_time = MAX_DT;
 
@@ -845,12 +890,13 @@ namespace hgraph
                             {
                                 if (scheduled_now) { scheduled = MIN_DT; }
                                 state.evaluation_cursor = index;
+                                NodeView node_view = graph_node_view(runtime, graph.data(), index);
+                                state.lifecycle_observers->notify_before_node_evaluation(node_view);
+                                auto node_after_notify = make_scope_exit<true>(
+                                    [&] { state.lifecycle_observers->notify_after_node_evaluation(node_view); });
                                 annotate_on_exception(
-                                    [&] { graph_node_view(runtime, graph.data(), index).evaluate(evaluation_time); },
-                                    [&] {
-                                        rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index),
-                                                                   index, "evaluate");
-                                    });
+                                    [&] { node_view.evaluate(evaluation_time); },
+                                    [&] { rethrow_with_node_identity(node_view, index, "evaluate"); });
                             }
                             if (scheduled > evaluation_time && scheduled < state.next_scheduled_time)
                             {
@@ -868,24 +914,25 @@ namespace hgraph
                 if (scheduled == evaluation_time)
                 {
                     // post-eval MIN_DT stamp removed (see lazy-cleanup invariant)
-                    bool completed = true;
+                    bool     completed = true;
+                    NodeView node_view = graph_node_view(runtime, graph.data(), state.evaluation_cursor);
+                    state.lifecycle_observers->notify_before_node_evaluation(node_view);
+                    // Best-effort: the node did run once, so a matching "after" fires
+                    // regardless of a pause or a thrown exception (unlike the graph-level
+                    // notification above, which is about the whole CYCLE completing).
+                    auto node_after_notify = make_scope_exit<true>(
+                        [&] { state.lifecycle_observers->notify_after_node_evaluation(node_view); });
                     if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
                     {
                         completed = annotate_on_exception(
+                            [&] { return node_view.evaluate(state.evaluation_time); },
                             [&] {
-                                return graph_node_view(runtime, graph.data(), state.evaluation_cursor)
-                                    .evaluate(state.evaluation_time);
-                            },
-                            [&] {
-                                rethrow_with_node_identity(
-                                    graph_node_view(runtime, graph.data(), state.evaluation_cursor),
-                                    state.evaluation_cursor, "evaluate");
+                                rethrow_with_node_identity(node_view, state.evaluation_cursor, "evaluate");
                             });
                     }
                     else
                     {
-                        completed = graph_node_view(runtime, graph.data(), state.evaluation_cursor)
-                                        .evaluate(state.evaluation_time);
+                        completed = node_view.evaluate(state.evaluation_time);
                     }
                     if (!completed)
                     {
@@ -987,6 +1034,7 @@ namespace hgraph
                     .root_impl = &root_graph_root_impl,
                     .graph_executor_impl = &root_graph_executor_impl,
                     .parent_node_impl = &root_parent_node_impl,
+                    .lifecycle_observers_impl = &lifecycle_observers_impl<RootGraphRuntimeStorage>,
                 };
             }
 
@@ -1012,6 +1060,7 @@ namespace hgraph
                     .root_impl = &nested_graph_root_impl,
                     .graph_executor_impl = &nested_graph_executor_impl,
                     .parent_node_impl = &nested_parent_node_impl,
+                    .lifecycle_observers_impl = &lifecycle_observers_impl<NestedGraphRuntimeStorage>,
                 };
             }
 
@@ -1214,6 +1263,15 @@ namespace hgraph
         return ops().root_impl(ops().context, *this);
     }
 
+    LifecycleObserverList &GraphView::lifecycle_observers() const
+    {
+        auto *list = ops().lifecycle_observers_impl == nullptr
+                         ? nullptr
+                         : ops().lifecycle_observers_impl(ops().context, data());
+        if (list == nullptr) { throw std::logic_error("Graph is missing its lifecycle observer list"); }
+        return *list;
+    }
+
     void GraphView::start(DateTime start_time) const { ops().start_impl(ops().context, *this, start_time); }
     void GraphView::stop() const { ops().stop_impl(ops().context, *this); }
     bool GraphView::evaluate(DateTime evaluation_time) const { return ops().evaluate_impl(ops().context, *this, evaluation_time); }
@@ -1289,6 +1347,8 @@ namespace hgraph
                     state.global_state = builder.global_state_;
                     state.traits = builder.traits_;
                     state.root_executor_ref = root_executor;
+                    state.lifecycle_observers =
+                        &GraphExecutorView{root_executor.binding(), root_executor.data()}.lifecycle_observers();
                 });
         });
         attach_nodes();
@@ -1309,6 +1369,10 @@ namespace hgraph
                         throw std::invalid_argument("Nested graph construction requires a live node parent");
                     }
                     state.parent_node_ref = parent_node;
+                    // One hop to the parent graph's own cached pointer (already populated
+                    // during its construction) — O(1) regardless of nesting depth.
+                    state.lifecycle_observers =
+                        &NodeView{parent_node.binding(), parent_node.data()}.graph().lifecycle_observers();
                 });
         });
         attach_nodes();
