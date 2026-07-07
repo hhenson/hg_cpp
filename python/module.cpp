@@ -243,9 +243,21 @@ namespace
     {
         GraphExecutorValue executor;
 
-        [[nodiscard]] nb::list recorded(const std::string &key)
+        /** Recorded read-back. DENSE (default): per-cycle values, None = no
+            tick. SPARSE (recordings made with sparse=True, the harness's
+            __elide__): (cycle_offset, delta) pairs in time order. */
+        [[nodiscard]] nb::list recorded(const std::string &key, bool sparse)
         {
             nb::list result;
+            if (sparse)
+            {
+                for (const auto &[offset, delta] :
+                     testing::get_recorded_sparse(executor.view().graph().global_state(), key))
+                {
+                    result.append(nb::make_tuple(offset, value_to_py(delta.view())));
+                }
+                return result;
+            }
             for (const auto &delta : testing::get_recorded_deltas(executor.view().graph().global_state(), key))
             {
                 result.append(delta.has_value() ? value_to_py(delta->view()) : nb::none());
@@ -976,20 +988,24 @@ namespace
     {
         static constexpr auto name = "__harness_record";
 
+        static auto defaults() { return std::tuple{arg<"sparse">(Bool{false})}; }
+
         static void start(Scalar<"key", std::string> key, GlobalStateView gs)
         {
             testing::record::start(std::move(key), std::move(gs));
         }
 
-        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, GlobalStateView gs, DateTime now)
+        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse,
+                         GlobalStateView gs, DateTime now)
         {
-            testing::record::eval(std::move(ts), std::move(key), std::move(gs), now);
+            testing::record::eval(std::move(ts), std::move(key), std::move(sparse), std::move(gs), now);
         }
     };
 
     struct op_harness_replay
         : Operator<"__harness_replay", Scalar<"key", Str>, Out<TsVar<"S">>> {};
-    struct op_harness_record : Operator<"__harness_record", In<"ts", TsVar<"S">>, Scalar<"key", Str>> {};
+    struct op_harness_record
+        : Operator<"__harness_record", In<"ts", TsVar<"S">>, Scalar<"key", Str>, Scalar<"sparse", Bool>> {};
 
     /** Materialize a STRUCTURAL port through a real node output (child
         sub-graph outputs must be node outputs - a python function returning
@@ -1143,7 +1159,7 @@ NB_MODULE(_hgraph, m)
             }
             return self;
         });
-    nb::class_<PyRun>(m, "Run").def("recorded", &PyRun::recorded, nb::arg("key"));
+    nb::class_<PyRun>(m, "Run").def("recorded", &PyRun::recorded, nb::arg("key"), nb::arg("sparse") = false);
 
     m.def("ts_type", [](const std::string &name) {
         const auto *meta = TypeRegistry::instance().time_series_type(name);

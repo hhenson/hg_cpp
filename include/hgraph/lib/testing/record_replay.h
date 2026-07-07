@@ -72,6 +72,26 @@ namespace hgraph::testing
         return static_cast<std::size_t>((now - MIN_ST) / MIN_TD);
     }
 
+    /** Densification guard: a recording (or read-back) spanning more cycles
+        than this must go through the sparse path. */
+    inline constexpr std::size_t max_dense_cycles = 1'000'000;
+
+    /** The (Int cycle, Any delta) entry schema for SPARSE recordings. */
+    [[nodiscard]] inline const ValueTypeMetaData *sparse_entry_meta()
+    {
+        auto &registry = TypeRegistry::instance();
+        return registry.tuple({registry.value_type("int"), registry.any()});
+    }
+
+    /** Box a (cycle, delta) pair as a sparse-buffer entry. */
+    [[nodiscard]] inline Value make_sparse_entry(std::size_t offset, Value delta)
+    {
+        BundleBuilder entry{*ValuePlanFactory::instance().binding_for(sparse_entry_meta())};
+        entry.set(0, Value{static_cast<Int>(offset)});
+        entry.set(1, std::move(delta));
+        return make_any(entry.build());
+    }
+
     // -----------------------------------------------------------------
     // Delta buffer helpers (canonical delta Values <-> cycle-aligned buffer)
     //
@@ -94,7 +114,31 @@ namespace hgraph::testing
         gs.set(key, buffer);
     }
 
-    /** Read a recorded buffer back as a sequence of canonical delta ``Value``s (owning copies). */
+    /** Read a SPARSE recording back as (cycle, delta) pairs. The list is
+        written in evaluation order, so it is naturally time-sorted. */
+    [[nodiscard]] inline std::vector<std::pair<std::size_t, Value>> get_recorded_sparse(const GlobalStateView &gs,
+                                                                                        std::string_view key)
+    {
+        std::vector<std::pair<std::size_t, Value>> result;
+        const ValueView                            buffer = gs.get(key);
+        if (!buffer.valid()) { return result; }
+        const auto list = buffer.as_list();
+        result.reserve(list.size());
+        for (std::size_t i = 0; i < list.size(); ++i)
+        {
+            const auto boxed = list.at(i).as_any();
+            if (!boxed.has_value()) { continue; }
+            const auto entry  = boxed.get().as_indexed_view();
+            const auto offset = static_cast<std::size_t>(entry.at(0).checked_as<Int>());
+            const auto delta  = entry.at(1).as_any();
+            if (!delta.has_value()) { continue; }
+            result.emplace_back(offset, Value{delta.get()});
+        }
+        return result;
+    }
+
+    /** Read a DENSE recording back as a sequence of canonical delta
+        ``Value``s (owning copies; nullopt = no tick). */
     [[nodiscard]] inline std::vector<std::optional<Value>> get_recorded_deltas(const GlobalStateView &gs,
                                                                                std::string_view key)
     {
@@ -102,6 +146,12 @@ namespace hgraph::testing
         const ValueView                   buffer = gs.get(key);
         if (!buffer.valid()) { return result; }
         const auto list = buffer.as_list();
+        if (list.size() > max_dense_cycles)
+        {
+            throw std::logic_error(
+                "get_recorded_deltas: the recording spans too many cycles to read densely - "
+                "read it with get_recorded_sparse");
+        }
         result.reserve(list.size());
         for (std::size_t i = 0; i < list.size(); ++i)
         {
@@ -196,26 +246,44 @@ namespace hgraph::testing
             return record_replay::model_is(record_replay::IN_MEMORY);
         }
 
+        static auto defaults() { return std::tuple{arg<"sparse">(Bool{false})}; }
+
         static void start(Scalar<"key", std::string> key, GlobalStateView gs)
         {
-            gs.set(key.value(), make_buffer());  // fresh, empty cycle-aligned buffer
+            gs.set(key.value(), make_buffer());  // fresh, empty buffer
         }
 
-        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, GlobalStateView gs, DateTime now)
+        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse,
+                         GlobalStateView gs, DateTime now)
         {
             const std::size_t offset   = cycle_offset(now);
             const ValueView   buffer   = gs.get(key.value());
             auto              list     = buffer.as_list();
-            std::size_t       size     = list.size();
             auto              mutation = list.begin_mutation();
+            // The canonical per-tick delta, rebuilt as an owned value-layer Value (the
+            // runtime's transient delta storage omits copy hooks), then boxed.
+            Value delta = make_any(capture_delta(ts.base()));
+            if (sparse.value())
+            {
+                // SPARSE (the harness's __elide__): (cycle, delta) tuple
+                // entries in evaluation order - a recording that ticks days
+                // apart costs one entry per tick, never per-cycle padding.
+                mutation.push_back(make_sparse_entry(offset, std::move(delta)).view());
+                return;
+            }
+            std::size_t size = list.size();
+            if (offset - size > max_dense_cycles)
+            {
+                throw std::logic_error(
+                    "record: the tick gap spans too many cycles to record densely - "
+                    "record sparse (python: eval_node __elide__=True)");
+            }
             while (size < offset)  // pad skipped cycles so the buffer index matches the evaluation cycle
             {
                 mutation.push_back(empty_any().view());
                 ++size;
             }
-            // The canonical per-tick delta, rebuilt as an owned value-layer Value (the
-            // runtime's transient delta storage omits copy hooks), then boxed.
-            mutation.push_back(make_any(capture_delta(ts.base())).view());
+            mutation.push_back(delta.view());
         }
     };
 }  // namespace hgraph::testing

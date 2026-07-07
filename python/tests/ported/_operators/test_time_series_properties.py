@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, time
 import pytest
-pytestmark = pytest.mark.wip   # burn-down in progress; excluded from the gate
 
 from hgraph import (
     TIME_SERIES_TYPE,
@@ -64,6 +63,7 @@ def test_tsd_validity():
     assert eval_node(g) == [False, True]
 
 
+@pytest.mark.wip   # TSD rebind validity semantics - the one remaining burn-down item
 def test_tsd_validity_rebind():
     @graph
     def g(ts: TS[bool]) -> TS[bool]:

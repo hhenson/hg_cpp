@@ -1135,32 +1135,53 @@ namespace hgraph
         concept has_param_defaults = requires { T::defaults(); };
 
         /**
-         * Apply the impl's ``defaults()`` hook —
-         * ``static std::vector<std::pair<std::string_view, Value>> defaults()``
-         * — onto the named parameters. Defaults are ordinary values: they are
-         * pattern-checked like a passed argument when materialised.
+         * Apply the impl's ``defaults()`` hook onto the named parameters.
+         * Two shapes are accepted — the operator-registry form
+         * ``std::vector<std::pair<std::string_view, Value>>`` and the TYPED
+         * form ``std::tuple{arg<"name">(value)...}`` shared with the
+         * ``wire<T>`` call path (call_args.h) — so one ``defaults()`` serves
+         * an impl that is both registry-registered and typed-wired. Defaults
+         * are ordinary values: pattern-checked like passed arguments when
+         * materialised.
          */
+        inline void apply_one_param_default(OperatorImpl &impl, std::string_view param_name, Value value)
+        {
+            auto it = std::find_if(impl.params.begin(), impl.params.end(),
+                                   [&](const ParamPattern &p) { return p.name == param_name; });
+            if (it == impl.params.end())
+            {
+                throw std::logic_error("operator default names a parameter that does not exist");
+            }
+            if (!value.has_value() && it->kind != ParamPattern::Kind::Input)
+            {
+                // An EMPTY default is Python's None and is only meaningful
+                // for a time-series parameter (it becomes a null source — an
+                // unwired input).
+                throw std::logic_error("operator scalar default value must not be empty");
+            }
+            it->default_value = std::move(value);
+        }
+
         template <typename Impl>
         void apply_param_defaults(OperatorImpl &impl)
         {
             if constexpr (has_param_defaults<Impl>)
             {
-                for (auto &[param_name, value] : Impl::defaults())
+                using defaults_type = std::remove_cvref_t<decltype(Impl::defaults())>;
+                if constexpr (requires { std::tuple_size<defaults_type>::value; })
                 {
-                    auto it = std::find_if(impl.params.begin(), impl.params.end(),
-                                           [&](const ParamPattern &p) { return p.name == param_name; });
-                    if (it == impl.params.end())
+                    std::apply(
+                        [&](const auto &...entries) {
+                            (apply_one_param_default(impl, entries.name, Value{entries.value}), ...);
+                        },
+                        Impl::defaults());
+                }
+                else
+                {
+                    for (auto &[param_name, value] : Impl::defaults())
                     {
-                        throw std::logic_error("operator default names a parameter that does not exist");
+                        apply_one_param_default(impl, param_name, std::move(value));
                     }
-                    if (!value.has_value() && it->kind != ParamPattern::Kind::Input)
-                    {
-                        // An EMPTY default is Python's None and is only
-                        // meaningful for a time-series parameter (it becomes a
-                        // null source — an unwired input).
-                        throw std::logic_error("operator scalar default value must not be empty");
-                    }
-                    it->default_value = std::move(value);
                 }
             }
         }

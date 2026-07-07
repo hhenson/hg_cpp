@@ -51,6 +51,15 @@ namespace hgraph::stdlib
     {
     };
 
+    /** ``evaluation_time_in_range`` — where the evaluation time sits
+        relative to [start, end]: LT / EQ / GT, self-scheduling at the
+        boundaries (datetime / date / daily-recurring time overloads). */
+    struct evaluation_time_in_range
+        : Operator<"evaluation_time_in_range", In<"start_time", TsVar<"A">>, In<"end_time", TsVar<"B">>,
+                   Out<TS<CmpResult>>>
+    {
+    };
+
     struct isoformat : Operator<"isoformat", In<"ts", TS<Date>>, Out<TS<Str>>>
     {
     };
@@ -87,12 +96,6 @@ namespace hgraph::stdlib
     {
     };
 
-    /** ``evaluation_time_in_range`` — whether the current evaluation time is LT / EQ / GT the range. */
-    struct evaluation_time_in_range
-        : Operator<"evaluation_time_in_range", In<"start_time", TsVar<"S">>, In<"end_time", TsVar<"S">>,
-                   Out<TS<CmpResult>>>
-    {
-    };
 }  // namespace hgraph::stdlib
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_TEMPORAL_H

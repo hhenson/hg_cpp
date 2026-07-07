@@ -1066,7 +1066,8 @@ def _infer_ts_type(series):
 
 
 def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
-              __start_time__=None, __end_time__=None, __scalars__=None, **kwargs):
+              __start_time__=None, __end_time__=None, __scalars__=None,
+              __elide__=False, **kwargs):
     """Drive a @graph/composition ``fn`` with vectors of per-cycle values
     (None = no tick), mirroring hgraph's eval_node test util. Time-series
     input types come from ``fn``'s annotations. The run is unbounded by
@@ -1136,7 +1137,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                 extended[by_name[k]] = series
             return eval_node(fn, *extended, output_type=output_type, resolution_dict=resolution_dict,
                              __start_time__=__start_time__, __end_time__=__end_time__,
-                             __scalars__=__scalars__, **kwargs)
+                             __scalars__=__scalars__, __elide__=__elide__, **kwargs)
         scalars.update(kwargs)   # hgraph parity: extra kwargs flow to the node
         out = fn(*ports, **scalars)
         length = max((len(series) for series in inputs if isinstance(series, (list, tuple))), default=0)
@@ -1147,6 +1148,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         # A TSB with REF fields records a STRUCTURAL bundle of per-field
         # projections, each dereferenced (kind 5 = TSB, 6 = REF).
         raw = _unwrap(out)
+        record_kwargs = {"sparse": True} if __elide__ else {}
         record_port = raw.dereferenced
         if raw.ts_type.kind == 5 and any(t.kind == 6 for _, t in _hgraph.ts_field_types(raw.ts_type)):
             fields = {
@@ -1161,10 +1163,14 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             record_port = _hgraph.tsl_port(
                 [_hgraph.tsl_element(raw, i).dereferenced for i in range(raw.ts_type.fixed_size)]
             )
-        w.wire("__harness_record", (record_port, "eval_node::out"), {})
+        w.wire("__harness_record", (record_port, "eval_node::out"), record_kwargs)
         run = w.run(start_time=__start_time__, end_time=__end_time__)
     finally:
         _wiring_stack.pop()
+    if __elide__:
+        # hgraph parity: elide keeps only the ticked cycles, in order (the
+        # recording was made SPARSE, so this is just the list).
+        return [_simplify_delta(v) for _, v in run.recorded("eval_node::out", sparse=True)]
     recorded = [None if v is None else _simplify_delta(v) for v in run.recorded("eval_node::out")]
     recorded += [None] * (length - len(recorded))
     if not any(v is not None for v in recorded):

@@ -69,6 +69,102 @@ namespace hgraph::stdlib
         }
     };
 
+    namespace time_range_detail
+    {
+        /** Publish + schedule for the [start, end] window at ``et``. */
+        inline CmpResult classify_and_schedule(DateTime start, DateTime end, DateTime et,
+                                               const NodeScheduler &scheduler)
+        {
+            if (start > end)
+            {
+                throw std::invalid_argument("evaluation_time_in_range: start must be before end");
+            }
+            if (et < start)
+            {
+                scheduler.schedule(start, "_next");
+                return CmpResult::LT;
+            }
+            if (et <= end)
+            {
+                scheduler.schedule(end + MIN_TD, "_next");
+                return CmpResult::EQ;
+            }
+            // Past the window: clear any pending boundary wake-up (the end
+            // may have moved backwards).
+            scheduler.un_schedule("_next");
+            return CmpResult::GT;
+        }
+
+        [[nodiscard]] inline DateTime date_at(Date date, Time at) noexcept
+        {
+            return DateTime{std::chrono::sys_days{date}.time_since_epoch() +
+                            std::chrono::microseconds{at.microseconds}};
+        }
+    }  // namespace time_range_detail
+
+    struct evaluation_time_in_range_datetime_impl
+    {
+        static constexpr auto name = "evaluation_time_in_range_datetime";
+
+        static void eval(In<"start_time", TS<DateTime>> start_time, In<"end_time", TS<DateTime>> end_time,
+                         NodeScheduler scheduler, DateTime now, Out<TS<CmpResult>> out)
+        {
+            out.set(time_range_detail::classify_and_schedule(start_time.value(), end_time.value(), now, scheduler));
+        }
+    };
+
+    struct evaluation_time_in_range_date_impl
+    {
+        static constexpr auto name = "evaluation_time_in_range_date";
+
+        static void eval(In<"start_time", TS<Date>> start_time, In<"end_time", TS<Date>> end_time,
+                         NodeScheduler scheduler, DateTime now, Out<TS<CmpResult>> out)
+        {
+            // hgraph: the date window spans [start 00:00:00.000000,
+            // end 23:59:59.999999].
+            const DateTime start = time_range_detail::date_at(start_time.value(), Time{});
+            const DateTime end   = time_range_detail::date_at(end_time.value(), time_of_day(23, 59, 59, 999999));
+            out.set(time_range_detail::classify_and_schedule(start, end, now, scheduler));
+        }
+    };
+
+    struct evaluation_time_in_range_time_impl
+    {
+        static constexpr auto name = "evaluation_time_in_range_time";
+
+        static void eval(In<"start_time", TS<Time>> start_time, In<"end_time", TS<Time>> end_time,
+                         NodeScheduler scheduler, DateTime now, Out<TS<CmpResult>> out)
+        {
+            // A DAILY-recurring window, possibly wrapping midnight (hgraph's
+            // time overload; after the window it reports LT for the NEXT
+            // day's window and schedules its start).
+            const Date today = Date{std::chrono::floor<std::chrono::days>(now)};
+            DateTime   start = time_range_detail::date_at(today, start_time.value());
+            DateTime   end   = time_range_detail::date_at(today, end_time.value());
+            constexpr auto day = std::chrono::days{1};
+            if (start > end)
+            {
+                if (now < end) { start -= day; }
+                else { end += day; }
+            }
+            if (now < start)
+            {
+                scheduler.schedule(start, "_next");
+                out.set(CmpResult::LT);
+            }
+            else if (now <= end)
+            {
+                scheduler.schedule(end + MIN_TD, "_next");
+                out.set(CmpResult::EQ);
+            }
+            else
+            {
+                scheduler.schedule(start + day, "_next");
+                out.set(CmpResult::LT);
+            }
+        }
+    };
+
     struct month_of_year_impl
     {
         static void eval(In<"ts", TS<Date>> ts, Out<TS<Int>> out)
@@ -161,6 +257,9 @@ namespace hgraph::stdlib
         register_overload<day, day_of_month_impl>();
         register_overload<sub_, sub_date_timedelta_impl>();
         register_overload<isoformat, isoformat_impl>();
+        register_overload<evaluation_time_in_range, evaluation_time_in_range_datetime_impl>();
+        register_overload<evaluation_time_in_range, evaluation_time_in_range_date_impl>();
+        register_overload<evaluation_time_in_range, evaluation_time_in_range_time_impl>();
         register_overload<month, month_of_year_impl>();
         register_overload<weekday, weekday_impl>();
         register_overload<isoweekday, isoweekday_impl>();
