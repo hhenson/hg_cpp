@@ -23,6 +23,7 @@ namespace hgraph
     class GraphBuilder;
     class GraphExecutorView;
     class GraphValue;
+    class LifecycleObserverList;
     class NestedGraphView;
     class RootGraphView;
     class GraphView;
@@ -149,6 +150,8 @@ struct HGRAPH_EXPORT GraphEdge
         RootGraphView (*root_impl)(const void *context, const GraphView &graph) = nullptr;
         GraphExecutorView (*graph_executor_impl)(const void *context, void *memory) = nullptr;
         NodeView (*parent_node_impl)(const void *context, void *memory) = nullptr;
+        /** Cached pointer to the shared (executor-owned) lifecycle observer list; never null once constructed. */
+        LifecycleObserverList *(*lifecycle_observers_impl)(const void *context, const void *memory) noexcept = nullptr;
     };
 
     using GraphTypeBinding = TypeBinding<GraphTypeMetaData, GraphOps>;
@@ -205,6 +208,15 @@ struct HGRAPH_EXPORT GraphEdge
         [[nodiscard]] NestedGraphView as_nested() const;
         [[nodiscard]] GraphExecutorView executor() const;
         [[nodiscard]] RootGraphView root() const;
+
+        /**
+         * The lifecycle observer list shared by this graph's whole executor
+         * run (design record: architecture.rst, "Lifecycle Observers"). Root
+         * and nested graphs alike return the SAME list — a single
+         * registration on the executor observes every graph/node in the
+         * run. Cached at construction; O(1) regardless of nesting depth.
+         */
+        [[nodiscard]] LifecycleObserverList &lifecycle_observers() const;
 
         void start(DateTime start_time = MIN_ST) const;
         void stop() const;

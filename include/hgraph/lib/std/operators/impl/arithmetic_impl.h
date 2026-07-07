@@ -799,12 +799,13 @@ namespace hgraph::stdlib
             plain sqrt(double(num)/double(den)) can be off by one ulp). */
         [[nodiscard]] inline Float sqrt_rational(Int num, Int den)
         {
+            __extension__ using int128 = unsigned __int128;
             if (num == 0) { return 0.0; }
             // Normalize num/den by powers of 4 so the ratio lands in [1, 4):
             // the scaled sqrt then has exactly 54 bits and one final rounding.
             int e = 0;
-            unsigned __int128 n = static_cast<unsigned __int128>(num);
-            unsigned __int128 d = static_cast<unsigned __int128>(den);
+            int128 n = static_cast<int128>(num);
+            int128 d = static_cast<int128>(den);
             while (n < d) { n <<= 2; e -= 1; }
             while (n >= (d << 2)) { d <<= 2; e += 1; }
             // q = floor(ratio * 2^108); sqrt gives a 55-BIT result - two
@@ -814,11 +815,11 @@ namespace hgraph::stdlib
             // guard bits round-to-odd provably avoids double rounding.
             // (n << 108) would overflow 128 bits for large aggregates, so
             // divide in two 54-bit steps: n/d * 2^108 = (q1 + r1/d) * 2^54.
-            const unsigned __int128 q1  = (n << 54) / d;
-            const unsigned __int128 r1  = (n << 54) % d;
-            const unsigned __int128 q   = (q1 << 54) + (r1 << 54) / d;
-            const unsigned __int128 rem = (r1 << 54) % d;
-            auto r = static_cast<unsigned __int128>(std::sqrt(static_cast<double>(q)));
+            const int128 q1  = (n << 54) / d;
+            const int128 r1  = (n << 54) % d;
+            const int128 q   = (q1 << 54) + (r1 << 54) / d;
+            const int128 rem = (r1 << 54) % d;
+            auto r = static_cast<int128>(std::sqrt(static_cast<double>(q)));
             for (int i = 0; i < 4; ++i) { r = (r + q / r) >> 1; }
             while (r * r > q) { --r; }
             while ((r + 1) * (r + 1) <= q) { ++r; }

@@ -2,6 +2,7 @@
 #define HGRAPH_LIB_TESTING_MOCK_RUNTIME_H
 
 #include <hgraph/runtime/executor.h>
+#include <hgraph/runtime/lifecycle_observer.h>
 
 #include <chrono>
 #include <memory>
@@ -43,6 +44,7 @@ namespace hgraph::testing
                 return graph_value.view();
             }
 
+            LifecycleObserverList lifecycle_observers{};
             GraphValue      graph_value{};
             DateTime        start_time{MIN_ST};
             DateTime        end_time{MAX_ET};
@@ -148,6 +150,11 @@ namespace hgraph::testing
             return EvaluationClockStorageRef{mock_clock_binding(), memory};
         }
 
+        [[nodiscard]] inline LifecycleObserverList *lifecycle_observers_impl(const void *, void *memory) noexcept
+        {
+            return &mock_executor_storage(memory).lifecycle_observers;
+        }
+
         [[nodiscard]] inline const GraphExecutorOps &mock_executor_ops() noexcept
         {
             static const GraphExecutorOps table{
@@ -159,6 +166,7 @@ namespace hgraph::testing
                 .end_time_impl = &end_time_impl,
                 .graph_impl = &graph_impl,
                 .evaluation_clock_ref_impl = &evaluation_clock_ref_impl,
+                .lifecycle_observers_impl = &lifecycle_observers_impl,
             };
             return table;
         }

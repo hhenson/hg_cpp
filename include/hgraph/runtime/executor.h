@@ -15,6 +15,8 @@ namespace hgraph
     class GraphExecutorBuilder;
     class GraphExecutorValue;
     class GraphExecutorView;
+    struct LifecycleObserver;
+    class LifecycleObserverList;
     class PushQueueEngineView;
 
     /** Engine execution mode for the first-pass graph executor. */
@@ -49,6 +51,8 @@ namespace hgraph
         void (*mark_push_update_pending_impl)(const void *context, void *memory) = nullptr;
         bool (*is_push_update_pending_impl)(const void *context, void *memory) noexcept = nullptr;
         bool (*reset_push_update_pending_impl)(const void *context, void *memory) noexcept = nullptr;
+        /** The executor-owned lifecycle observer list; never null once constructed. */
+        LifecycleObserverList *(*lifecycle_observers_impl)(const void *context, void *memory) noexcept = nullptr;
     };
 
     /** Real-time push queue projection over the root graph executor. */
@@ -94,6 +98,15 @@ namespace hgraph
         [[nodiscard]] EvaluationClockView evaluation_clock() const noexcept;
         [[nodiscard]] PushQueueEngineView push_queue_engine() const noexcept;
 
+        /**
+         * The lifecycle observer list for this run (design record:
+         * architecture.rst, "Lifecycle Observers"). Add/remove observers
+         * directly on the returned list at any point before or during the
+         * run; every graph reached via ``GraphView::lifecycle_observers()``
+         * (root and nested alike) shares this same instance.
+         */
+        [[nodiscard]] LifecycleObserverList &lifecycle_observers() const;
+
         void run() const;
         void request_stop() const noexcept;
 
@@ -137,12 +150,15 @@ namespace hgraph
         GraphExecutorBuilder &mode(GraphExecutorMode mode) noexcept;
         GraphExecutorBuilder &start_time(DateTime start_time) noexcept;
         GraphExecutorBuilder &end_time(DateTime end_time) noexcept;
+        /** Register a lifecycle observer for this executor's run (see ``LifecycleObserver``). */
+        GraphExecutorBuilder &add_lifecycle_observer(LifecycleObserver *observer);
 
         [[nodiscard]] std::string_view label() const noexcept;
         [[nodiscard]] const GraphBuilder &graph_builder() const noexcept;
         [[nodiscard]] GraphExecutorMode mode() const noexcept;
         [[nodiscard]] DateTime start_time() const noexcept;
         [[nodiscard]] DateTime end_time() const noexcept;
+        [[nodiscard]] const std::vector<LifecycleObserver *> &lifecycle_observers() const noexcept;
         [[nodiscard]] const GraphTypeBinding &graph_binding() const;
         [[nodiscard]] const GraphExecutorTypeBinding &binding() const;
         [[nodiscard]] GraphExecutorValue make_executor() const;
@@ -150,11 +166,12 @@ namespace hgraph
       private:
         friend class GraphExecutorValue;
 
-        std::string       label_{};
-        GraphBuilder      graph_builder_{};
-        DateTime          start_time_{MIN_ST};
-        DateTime          end_time_{MAX_ET};
-        GraphExecutorMode mode_{GraphExecutorMode::Simulation};
+        std::string                     label_{};
+        GraphBuilder                    graph_builder_{};
+        DateTime                        start_time_{MIN_ST};
+        DateTime                        end_time_{MAX_ET};
+        GraphExecutorMode               mode_{GraphExecutorMode::Simulation};
+        std::vector<LifecycleObserver *> lifecycle_observers_{};
     };
 
 }  // namespace hgraph

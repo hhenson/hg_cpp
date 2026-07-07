@@ -57,6 +57,7 @@ endfunction()
 
 hgraph_add_test_objects(hgraph_runtime_test_objects
     test_check_output.cpp
+    test_lifecycle_observers.cpp
     test_context_node.cpp
     test_endpoint_owner.cpp
     test_feedback.cpp

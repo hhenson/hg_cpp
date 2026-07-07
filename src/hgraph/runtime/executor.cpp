@@ -1,4 +1,5 @@
 #include <hgraph/runtime/executor.h>
+#include <hgraph/runtime/lifecycle_observer.h>
 #include <hgraph/util/scope.h>
 
 #include <algorithm>
@@ -31,6 +32,7 @@ namespace hgraph
                   evaluation_time(builder.start_time()),
                   cycle_wall_start(current_wall_time())
             {
+                for (LifecycleObserver *observer : builder.lifecycle_observers()) { lifecycle_observers.add(observer); }
             }
 
             void set_evaluation_time(DateTime value) noexcept
@@ -39,6 +41,7 @@ namespace hgraph
                 cycle_wall_start = current_wall_time();
             }
 
+            LifecycleObserverList lifecycle_observers{}; // declared first so it is constructed before graph
             GraphValue       graph{};
             DateTime         start_time{MIN_ST};
             DateTime         end_time{MAX_ET};
@@ -57,6 +60,7 @@ namespace hgraph
                   end_time(builder.end_time()),
                   evaluation_time(builder.start_time())
             {
+                for (LifecycleObserver *observer : builder.lifecycle_observers()) { lifecycle_observers.add(observer); }
             }
 
             void set_evaluation_time(DateTime value) noexcept
@@ -64,6 +68,7 @@ namespace hgraph
                 evaluation_time = value;
             }
 
+            LifecycleObserverList lifecycle_observers{}; // declared first so it is constructed before graph
             GraphValue                   graph{};
             DateTime                     start_time{MIN_ST};
             DateTime                     end_time{MAX_ET};
@@ -426,6 +431,16 @@ namespace hgraph
             return realtime_storage(memory).graph.view();
         }
 
+        LifecycleObserverList *simulation_lifecycle_observers_impl(const void *, void *memory) noexcept
+        {
+            return &simulation_storage(memory).lifecycle_observers;
+        }
+
+        LifecycleObserverList *realtime_lifecycle_observers_impl(const void *, void *memory) noexcept
+        {
+            return &realtime_storage(memory).lifecycle_observers;
+        }
+
         [[nodiscard]] const GraphExecutorOps &simulation_executor_ops()
         {
             static const GraphExecutorOps table{
@@ -440,6 +455,7 @@ namespace hgraph
                 .mark_push_update_pending_impl = &simulation_mark_push_update_pending_impl,
                 .is_push_update_pending_impl = &simulation_is_push_update_pending_impl,
                 .reset_push_update_pending_impl = &simulation_reset_push_update_pending_impl,
+                .lifecycle_observers_impl = &simulation_lifecycle_observers_impl,
             };
             return table;
         }
@@ -458,6 +474,7 @@ namespace hgraph
                 .mark_push_update_pending_impl = &realtime_mark_push_update_pending_impl,
                 .is_push_update_pending_impl = &realtime_is_push_update_pending_impl,
                 .reset_push_update_pending_impl = &realtime_reset_push_update_pending_impl,
+                .lifecycle_observers_impl = &realtime_lifecycle_observers_impl,
             };
             return table;
         }
@@ -659,6 +676,14 @@ namespace hgraph
         return PushQueueEngineView{storage_};
     }
 
+    LifecycleObserverList &GraphExecutorView::lifecycle_observers() const
+    {
+        auto *list =
+            ops().lifecycle_observers_impl == nullptr ? nullptr : ops().lifecycle_observers_impl(ops().context, data());
+        if (list == nullptr) { throw std::logic_error("Graph executor is missing its lifecycle observer list"); }
+        return *list;
+    }
+
     void GraphExecutorView::run() const
     {
         ops().run_impl(ops().context, *this);
@@ -744,6 +769,12 @@ namespace hgraph
         return *this;
     }
 
+    GraphExecutorBuilder &GraphExecutorBuilder::add_lifecycle_observer(LifecycleObserver *observer)
+    {
+        if (observer != nullptr) { lifecycle_observers_.push_back(observer); }
+        return *this;
+    }
+
     std::string_view GraphExecutorBuilder::label() const noexcept
     {
         return label_;
@@ -767,6 +798,11 @@ namespace hgraph
     DateTime GraphExecutorBuilder::end_time() const noexcept
     {
         return end_time_;
+    }
+
+    const std::vector<LifecycleObserver *> &GraphExecutorBuilder::lifecycle_observers() const noexcept
+    {
+        return lifecycle_observers_;
     }
 
     const GraphTypeBinding &GraphExecutorBuilder::graph_binding() const
