@@ -27,6 +27,7 @@ namespace hgraph::stdlib
         register_graph_overload<getitem_, getitem_tsb_by_name>();
         register_graph_overload<getitem_, getitem_tsb_by_index>();
         register_graph_overload<getattr_, getattr_tsb>();
+        register_overload<getattr_, getattr_tsd>();
         register_graph_overload<len_, len_tsb>();
         register_graph_overload<is_empty, is_empty_tsb>();
     }

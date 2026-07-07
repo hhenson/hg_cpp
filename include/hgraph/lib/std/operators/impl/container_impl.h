@@ -251,6 +251,86 @@ namespace hgraph::stdlib
         }
     };
 
+    /** getattr_ over TSD<K, REF<TSB>>: per-key REFERENCE to the named field
+        child (hgraph's tsd_get_bundle_item; the race field_item shape). */
+    struct getattr_tsd
+    {
+        static constexpr auto name = "getattr_tsd";
+
+        [[nodiscard]] static const TSValueTypeMetaData *element_bundle_schema(const TSValueTypeMetaData *tsd)
+        {
+            if (tsd == nullptr || tsd->kind != TSTypeKind::TSD) { return nullptr; }
+            const auto *element = TypeRegistry::instance().dereference(tsd->element_ts());
+            return element != nullptr && element->kind == TSTypeKind::TSB ? element : nullptr;
+        }
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            if (context.args.size() != 2 || context.args[0].kind != WiringArg::Kind::TimeSeries) { return false; }
+            const auto *bundle = element_bundle_schema(context.args[0].port.schema);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            return bundle != nullptr && attr != nullptr &&
+                   container_impl_detail::find_tsb_field_index(*bundle, *attr).has_value();
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (resolution.find_ts("__out__") != nullptr) { return; }
+            if (context.args.size() != 2) { return; }
+            const auto *tsd    = context.args[0].port.schema;
+            const auto *bundle = element_bundle_schema(tsd);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            if (bundle == nullptr || attr == nullptr) { return; }
+            const auto index = container_impl_detail::find_tsb_field_index(*bundle, *attr);
+            if (!index.has_value()) { return; }
+            auto &registry = TypeRegistry::instance();
+            const auto *field = bundle->fields()[*index].type;
+            const auto *out_field = field->kind == TSTypeKind::REF ? field : registry.ref(field);
+            resolution.bind_ts("__out__", registry.tsd(tsd->key_type(), out_field));
+        }
+
+        /** The field child of a bundle reference (the race field_item shape:
+            peered -> the target's field handle; non-peered -> items()[i]). */
+        [[nodiscard]] static TimeSeriesReference field_item(const TimeSeriesReference &reference, std::size_t field)
+        {
+            if (reference.is_empty()) { return TimeSeriesReference{}; }
+            if (reference.is_non_peered())
+            {
+                return field < reference.items().size() ? reference[field] : TimeSeriesReference{};
+            }
+            const TSOutputHandle &target = reference.target_output();
+            auto data   = target.data_view();
+            auto bundle = data.as_bundle();
+            if (field >= bundle.size()) { return TimeSeriesReference{}; }
+            return TimeSeriesReference{TSOutputHandle{target.output(), bundle.at(field)}};
+        }
+
+        static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"S">>, InputValidity::Unchecked> ts,
+                         Scalar<"attr", Str> attr, Out<TsVar<"__out__">> out)
+        {
+            const auto *bundle_schema = element_bundle_schema(ts.base().schema());
+            const auto  field = *container_impl_detail::find_tsb_field_index(*bundle_schema, attr.value());
+
+            const auto &erased   = static_cast<const TSOutputView &>(out);
+            auto        dict_out = erased.data_view().as_dict();
+            auto        mutation = dict_out.begin_mutation(erased.evaluation_time());
+
+            const TSDInputView &dict = ts;
+            for (const auto key : dict.removed_keys()) { (void)mutation.erase(key); }
+            for (auto &&[key, child] : dict.modified_items())
+            {
+                // The child's OWN reference (input machinery: ref-element
+                // values pass through; plain elements produce peered refs).
+                const TimeSeriesReference reference = child.reference();
+                auto element = mutation.at(key);
+                auto element_mutation =
+                    TSOutputView{erased.output(), element, erased.evaluation_time()}
+                        .begin_mutation(erased.evaluation_time());
+                static_cast<void>(element_mutation.move_value_from(Value{field_item(reference, field)}));
+            }
+        }
+    };
+
     struct getitem_tsd_by_key
     {
         static bool requires_(const ResolutionMap &, OperatorCallContext context)

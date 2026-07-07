@@ -1174,6 +1174,18 @@ NB_MODULE(_hgraph, m)
                 patched.ref.schema = self.ref.schema->referenced_ts();
                 return patched;
             }
+            if (self.ref.schema->kind == TSTypeKind::TSD)
+            {
+                const auto *element = self.ref.schema->element_ts();
+                if (element != nullptr && element->kind == TSTypeKind::REF)
+                {
+                    auto  &registry = TypeRegistry::instance();
+                    PyPort patched  = self;
+                    patched.ref.schema =
+                        registry.tsd(self.ref.schema->key_type(), element->referenced_ts());
+                    return patched;   // the from-REF dict alternative resolves it
+                }
+            }
             if (self.ref.schema->kind == TSTypeKind::TSB)
             {
                 const auto *fields = self.ref.schema->fields();
