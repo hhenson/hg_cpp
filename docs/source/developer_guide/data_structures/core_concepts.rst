@@ -179,8 +179,14 @@ field lookup:
 
 ``Tuple`` composites stay dense (all-set). ``TSL`` carries the same
 CONTRACT: its delta (a sparse ``Map<index, delta>``) already expresses
-partial ticks; List VALUES with never-valid children take the same
-validity treatment when the need arises (recorded deferral).
+partial ticks; List VALUES carry the same treatment where needed:
+MUTABLE list storage now has element validity (a ``sul`` bitset with
+the same EMPTY-means-dense convention; ``push_back_unset`` appends a
+hole, reads report the element unset, equals/compare/hash/to_string
+honour the bits) - the dense recording buffer is its first consumer
+(``List<delta_schema>`` with holes as unset elements, replacing
+Any-boxed padding). Compact/fixed list validity remains deferred until
+a use arises.
 
 Audited value surfaces (2026-07-06 sweep — every place a composite value
 is ASSEMBLED or APPLIED honours the filter):

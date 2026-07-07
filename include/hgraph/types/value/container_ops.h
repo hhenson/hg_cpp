@@ -118,6 +118,9 @@ namespace hgraph
         void (*erase)(const void *context, void *memory, std::size_t index) = nullptr;
         void (*pop_back)(const void *context, void *memory) = nullptr;
         void (*clear)(const void *context, void *memory) = nullptr;
+        /** Append an UNSET element - a hole (element validity); LAST member
+            so positional initializers stay valid. */
+        void (*push_back_unset)(const void *context, void *memory) = nullptr;
     };
 
     struct CyclicBufferValueOps : IndexedValueOps

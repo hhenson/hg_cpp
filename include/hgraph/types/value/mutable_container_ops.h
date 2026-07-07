@@ -59,9 +59,11 @@ namespace hgraph
         }
 
         MutableListStorage(MutableListStorage &&other) noexcept
-            : element_binding_{other.element_binding_}, slots_{std::move(other.slots_)}, size_{other.size_}
+            : element_binding_{other.element_binding_}, slots_{std::move(other.slots_)}, size_{other.size_},
+              validity_{std::move(other.validity_)}
         {
             other.size_ = 0;
+            other.validity_.clear();
         }
 
         MutableListStorage &operator=(MutableListStorage &&other) noexcept
@@ -71,7 +73,9 @@ namespace hgraph
                 slots_           = std::move(other.slots_);
                 element_binding_ = other.element_binding_;
                 size_            = other.size_;
+                validity_        = std::move(other.validity_);
                 other.size_      = 0;
+                other.validity_.clear();
             }
             return *this;
         }
@@ -99,7 +103,28 @@ namespace hgraph
             require_bound();
             ensure_capacity(size_ + 1);
             slots_.construct_at(size_, src);  // copy-construct from src
+            if (!validity_.empty()) { validity_.push_back(true); }
             ++size_;
+        }
+
+        /** Append an UNSET element (a hole - element validity,
+            core_concepts.rst: an EMPTY bitset means dense/all-set; the
+            first hole sizes it). The slot default-constructs so the store's
+            lifetime invariants hold; reads report it unset. */
+        void push_back_unset()
+        {
+            require_bound();
+            ensure_capacity(size_ + 1);
+            slots_.construct_at(size_);  // default-construct
+            if (validity_.empty()) { validity_.resize(size_, true); }
+            validity_.push_back(false);
+            ++size_;
+        }
+
+        /** True when the element at ``index`` holds a live value. */
+        [[nodiscard]] bool element_set(std::size_t index) const noexcept
+        {
+            return validity_.empty() || (index < validity_.size() && validity_.test(index));
         }
 
         /** Replace the element at ``index`` with a copy of ``src``. */
@@ -113,6 +138,11 @@ namespace hgraph
         void erase(std::size_t index)
         {
             require_index(index);
+            if (!validity_.empty())
+            {
+                for (std::size_t j = index; j + 1 < validity_.size(); ++j) { validity_[j] = validity_[j + 1]; }
+                validity_.resize(size_ - 1);
+            }
             const auto &plan = element_binding_->checked_plan();
             for (std::size_t j = index; j + 1 < size_; ++j)
             {
@@ -128,6 +158,7 @@ namespace hgraph
             if (size_ == 0) { throw std::logic_error("MutableListStorage::pop_back on empty list"); }
             slots_.destroy_at(size_ - 1);
             --size_;
+            if (!validity_.empty()) { validity_.resize(size_); }
         }
 
         /** Destroy every element; capacity is retained for reuse. */
@@ -135,12 +166,16 @@ namespace hgraph
         {
             for (std::size_t index = size_; index > 0; --index) { slots_.destroy_at(index - 1); }
             size_ = 0;
+            validity_.clear();
         }
 
       private:
         const ValueTypeBinding *element_binding_{nullptr};
         ValueSlotStore          slots_{};
         std::size_t             size_{0};
+        // Element validity (holes): EMPTY = dense/all-set; sized on the
+        // first unset element (the Bundle-field-validity convention).
+        sul::dynamic_bitset<>   validity_{};
 
         void require_bound() const
         {
@@ -172,6 +207,7 @@ namespace hgraph
                 slots_.construct_at(index, other.element_at(index));
                 ++size_;
             }
+            validity_ = other.validity_;
         }
     };
 
@@ -220,7 +256,9 @@ namespace hgraph
         }
         inline const void *list_element_at(const void *, const void *memory, std::size_t index)
         {
-            return static_cast<const MutableListStorage *>(memory)->element_at(index);
+            const auto *storage = static_cast<const MutableListStorage *>(memory);
+            if (!storage->element_set(index)) { return nullptr; }   // hole: UNSET element
+            return storage->element_at(index);
         }
         inline const ValueTypeBinding *list_element_binding(const void *, const void *memory, std::size_t) noexcept
         {
@@ -234,7 +272,10 @@ namespace hgraph
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
-                seed = container_ops_detail::combine_hash(seed, ops.hash(storage->element_at(i)));
+                // UNSET elements hash with a distinct marker (element
+                // validity - the Bundle-field convention).
+                seed = container_ops_detail::combine_hash(
+                    seed, storage->element_set(i) ? ops.hash(storage->element_at(i)) : 0x9e3779b97f4a7c15ULL);
             }
             return seed;
         }
@@ -249,6 +290,9 @@ namespace hgraph
             const auto &ops = a->element_binding()->ops_ref();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
+                const bool a_set = a->element_set(i);
+                if (a_set != b->element_set(i)) { return false; }
+                if (!a_set) { continue; }   // both unset
                 if (!ops.equals(a->element_at(i), b->element_at(i))) { return false; }
             }
             return true;
@@ -265,6 +309,14 @@ namespace hgraph
             const auto  n   = std::min(a->size(), b->size());
             for (std::size_t i = 0; i < n; ++i)
             {
+                const bool a_set = a->element_set(i);
+                const bool b_set = b->element_set(i);
+                if (!a_set || !b_set)
+                {
+                    if (a_set == b_set) { continue; }             // both unset
+                    return a_set ? std::partial_ordering::greater  // unset < set
+                                 : std::partial_ordering::less;
+                }
                 const auto c = ops.compare(a->element_at(i), b->element_at(i));
                 if (c != 0) { return c; }
             }
@@ -279,6 +331,11 @@ namespace hgraph
             const auto &ops = storage->element_binding()->ops_ref();
             return container_ops_detail::format_delimited(
                 '[', ']', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
+                    if (!storage->element_set(i))
+                    {
+                        fmt::format_to(std::back_inserter(out), "<unset>");
+                        return;
+                    }
                     fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
                 });
         }
@@ -287,6 +344,10 @@ namespace hgraph
         inline void list_push_back(const void *, void *memory, const void *element)
         {
             static_cast<MutableListStorage *>(memory)->push_back(element);
+        }
+        inline void list_push_back_unset(const void *, void *memory)
+        {
+            static_cast<MutableListStorage *>(memory)->push_back_unset();
         }
         inline void list_set_element(const void *, void *memory, std::size_t index, const void *element)
         {
@@ -359,6 +420,7 @@ namespace hgraph
             &list_erase,
             &list_pop_back,
             &list_clear,
+            &list_push_back_unset,
         };
         return ops;
     }

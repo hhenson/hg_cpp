@@ -409,6 +409,17 @@ namespace hgraph
         /** Remove the element at ``index``, shifting later elements down. */
         void erase(std::size_t index) const { mutable_ops("erase")->erase(nullptr, mutable_data(), index); }
 
+        /** Append an UNSET element - a hole (element validity). */
+        void push_back_unset() const
+        {
+            const auto *ops = mutable_ops("push_back_unset");
+            if (ops->push_back_unset == nullptr)
+            {
+                throw std::logic_error("MutableListView::push_back_unset is not supported by this list");
+            }
+            ops->push_back_unset(nullptr, mutable_data());
+        }
+
         /** Drop the last element. */
         void pop_back() const { mutable_ops("pop_back")->pop_back(nullptr, mutable_data()); }
 

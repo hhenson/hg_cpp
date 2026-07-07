@@ -24,4 +24,9 @@
 #include <variant>
 #include <vector>
 
+// Stable third-party heavies: broadly included, effectively never change.
+#include <ankerl/unordered_dense.h>
+#include <fmt/format.h>
+#include <sul/dynamic_bitset.hpp>
+
 #endif  // HGRAPH_SRC_PCH_H

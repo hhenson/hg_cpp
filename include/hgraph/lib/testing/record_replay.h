@@ -57,13 +57,39 @@ namespace hgraph::testing
     /** An ``Any`` boxing a copy of ``inner``. */
     [[nodiscard]] inline Value make_any(const Value &inner) { return make_any(inner.view()); }
 
-    /** A fresh, empty cycle-aligned buffer (a mutable ``List<Any>``). */
+    /** A fresh, empty cycle-aligned buffer (a mutable ``List<Any>``) — the
+        SEEDED replay layout (set_replay does not know one element schema). */
     [[nodiscard]] inline Value make_buffer()
     {
         auto       &registry = TypeRegistry::instance();
         const auto *schema   = registry.mutable_list(registry.any());
         const auto *binding  = ValuePlanFactory::instance().binding_for(schema);
         return Value{*binding};
+    }
+
+    /** A fresh, empty TYPED dense recording buffer: ``List<delta_schema>``
+        with holes as UNSET elements (element validity). */
+    [[nodiscard]] inline Value make_dense_buffer(const ValueTypeMetaData *delta_schema)
+    {
+        auto       &registry = TypeRegistry::instance();
+        const auto *schema   = registry.mutable_list(delta_schema);
+        return Value{*ValuePlanFactory::instance().binding_for(schema)};
+    }
+
+    /** The delta at ``index`` of a dense buffer, either layout: the seeded
+        ``List<Any>`` (empty box = no tick) or the typed recorded list
+        (UNSET element = no tick). nullopt = no tick. */
+    [[nodiscard]] inline std::optional<Value> dense_entry_delta(const ListView &list, std::size_t index)
+    {
+        const auto element = list.at(index);
+        if (!element.has_value()) { return std::nullopt; }   // typed hole
+        if (element.schema()->kind == ValueTypeKind::Any)
+        {
+            const auto boxed = element.as_any();
+            if (!boxed.has_value()) { return std::nullopt; }   // legacy empty box
+            return Value{boxed.get()};
+        }
+        return Value{element};
     }
 
     /** The cycle index for ``now`` (offset from ``MIN_ST`` in ``MIN_TD`` steps). */
@@ -160,9 +186,7 @@ namespace hgraph::testing
         result.reserve(list.size());
         for (std::size_t i = 0; i < list.size(); ++i)
         {
-            const auto element = list.at(i).as_any();
-            if (element.has_value()) { result.emplace_back(Value{element.get()}); }
-            else { result.emplace_back(std::nullopt); }
+            result.emplace_back(dense_entry_delta(list, i));
         }
         return result;
     }
@@ -232,8 +256,12 @@ namespace hgraph::testing
             const auto size = static_cast<Int>(list.size());
             if (i < size)
             {
-                const auto element = list.at(static_cast<std::size_t>(i)).as_any();
-                if (element.has_value()) { apply_delta(out, element.get()); }
+                // Either dense layout: seeded List<Any> or a typed recording
+                // (component ReplayOutput replays recorded buffers).
+                if (auto delta = dense_entry_delta(list, static_cast<std::size_t>(i)); delta.has_value())
+                {
+                    apply_delta(out, delta->view());
+                }
             }
             index.set(i + 1);
             if (i + 1 < size) { sched.schedule(MIN_TD); }  // re-arm for the next cycle
@@ -253,11 +281,11 @@ namespace hgraph::testing
 
         static auto defaults() { return std::tuple{arg<"sparse">(Bool{false})}; }
 
-        static void start(Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse, GlobalStateView gs)
+        static void start(Scalar<"key", std::string>, Scalar<"sparse", Bool>, GlobalStateView)
         {
-            // The SPARSE buffer is typed by the recorded delta schema, which
-            // the first eval sees; dense buffers seed here as before.
-            if (!sparse.value()) { gs.set(key.value(), make_buffer()); }
+            // Both buffer layouts are TYPED by the recorded delta schema,
+            // which only eval sees - creation is lazy on the first tick (a
+            // never-ticking recording reads back empty either way).
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse,
@@ -282,8 +310,17 @@ namespace hgraph::testing
                 mutation.push_back(make_sparse_entry(delta_schema, now, std::move(delta)).view());
                 return;
             }
+            // DENSE: a TYPED List<delta_schema>; skipped cycles are UNSET
+            // elements (element validity) - one default-constructed slot per
+            // hole instead of a boxed Any.
+            const auto *delta_schema = ts.base().schema()->delta_value_schema;
+            ValueView   buffer       = gs.get(key.value());
+            if (!buffer.valid())
+            {
+                gs.set(key.value(), make_dense_buffer(delta_schema));
+                buffer = gs.get(key.value());
+            }
             const std::size_t offset   = cycle_offset(now);
-            const ValueView   buffer   = gs.get(key.value());
             auto              list     = buffer.as_list();
             auto              mutation = list.begin_mutation();
             std::size_t       size     = list.size();
@@ -295,10 +332,10 @@ namespace hgraph::testing
             }
             while (size < offset)  // pad skipped cycles so the buffer index matches the evaluation cycle
             {
-                mutation.push_back(empty_any().view());
+                mutation.push_back_unset();
                 ++size;
             }
-            mutation.push_back(make_any(delta.view()).view());
+            mutation.push_back(delta.view());
         }
     };
 }  // namespace hgraph::testing
