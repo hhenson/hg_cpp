@@ -1,30 +1,36 @@
-set(HGRAPH_CORE_SOURCES
+set(HGRAPH_RUNTIME_SOURCES
     hgraph/version.cpp
+    hgraph/runtime/context_node.cpp
     hgraph/runtime/executor.cpp
     hgraph/runtime/feedback_node.cpp
+    hgraph/runtime/global_state.cpp
     hgraph/runtime/graph.cpp
-    hgraph/runtime/context_node.cpp
-    hgraph/runtime/shared_output_node.cpp
-    hgraph/runtime/service_node.cpp
+    hgraph/runtime/logger.cpp
+    hgraph/runtime/map_node.cpp
+    hgraph/runtime/mesh_node.cpp
     hgraph/runtime/nested_graph_node.cpp
     hgraph/runtime/node.cpp
     hgraph/runtime/node_error.cpp
     hgraph/runtime/push_source_node.cpp
     hgraph/runtime/race_tsd_node.cpp
-    hgraph/runtime/switch_node.cpp
-    hgraph/runtime/map_node.cpp
-    hgraph/runtime/mesh_node.cpp
     hgraph/runtime/reduce_node.cpp
+    hgraph/runtime/service_node.cpp
+    hgraph/runtime/shared_output_node.cpp
+    hgraph/runtime/switch_node.cpp
     hgraph/runtime/try_except_node.cpp
-    hgraph/types/metadata/type_registry.cpp
+    hgraph/types/frame.cpp
     hgraph/types/metadata/ts_data_atomic_ops.cpp
     hgraph/types/metadata/ts_data_dynamic_list_ops.cpp
     hgraph/types/metadata/ts_data_fixed_structured_ops.cpp
     hgraph/types/metadata/ts_data_fixed_structured_plan.cpp
+    hgraph/types/metadata/ts_data_plan_factory.cpp
     hgraph/types/metadata/ts_data_slot_ops.cpp
     hgraph/types/metadata/ts_data_window_ops.cpp
-    hgraph/types/metadata/ts_data_plan_factory.cpp
+    hgraph/types/metadata/type_registry.cpp
     hgraph/types/metadata/value_plan_factory.cpp
+    hgraph/types/primitive_types.cpp
+    hgraph/types/time_series/endpoint_owner.cpp
+    hgraph/types/time_series/endpoint_schema.cpp
     hgraph/types/time_series/ts_data/base_view.cpp
     hgraph/types/time_series/ts_data/dict_view.cpp
     hgraph/types/time_series/ts_data/indexed_view.cpp
@@ -34,8 +40,8 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series/ts_data/storage.cpp
     hgraph/types/time_series/ts_data/types.cpp
     hgraph/types/time_series/ts_data/window_view.cpp
-    hgraph/types/time_series/endpoint_owner.cpp
-    hgraph/types/time_series/endpoint_schema.cpp
+    hgraph/types/time_series/ts_delta.cpp
+    hgraph/types/time_series/ts_input.cpp
     hgraph/types/time_series/ts_input/base_view.cpp
     hgraph/types/time_series/ts_input/bundle_view.cpp
     hgraph/types/time_series/ts_input/dict_view.cpp
@@ -44,7 +50,8 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series/ts_input/target_link.cpp
     hgraph/types/time_series/ts_input/target_link_ops.cpp
     hgraph/types/time_series/ts_input/window_view.cpp
-    hgraph/types/time_series/ts_input.cpp
+    hgraph/types/time_series/ts_output.cpp
+    hgraph/types/time_series/ts_output/alternative.cpp
     hgraph/types/time_series/ts_output/base_view.cpp
     hgraph/types/time_series/ts_output/bundle_view.cpp
     hgraph/types/time_series/ts_output/dict_view.cpp
@@ -52,145 +59,47 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series/ts_output/mutation_view.cpp
     hgraph/types/time_series/ts_output/set_view.cpp
     hgraph/types/time_series/ts_output/window_view.cpp
-    hgraph/types/time_series/ts_output.cpp
-    hgraph/types/time_series/ts_output/alternative.cpp
-    hgraph/types/time_series/ts_delta.cpp
     hgraph/types/time_series_reference.cpp
-    hgraph/runtime/global_state.cpp
-    hgraph/runtime/logger.cpp
     hgraph/types/value/any_ops.cpp
     hgraph/types/value/compact_container_ops.cpp
-    hgraph/types/value/value_view.cpp
-    hgraph/types/graph_wiring.cpp
-    hgraph/types/type_pattern.cpp
-    hgraph/types/operator_dispatch.cpp
-    hgraph/types/registry_reset.cpp
-    hgraph/types/record_replay.cpp
-    hgraph/types/service_runtime.cpp
-    hgraph/types/primitive_types.cpp
-    hgraph/lib/std/operators/json_impl.cpp
     hgraph/types/value/json_codec.cpp
     hgraph/types/value/table_codec.cpp
-    hgraph/types/frame.cpp
+    hgraph/types/value/value_view.cpp
     hgraph/util/date_time.cpp
 )
 
-# Public headers — listed so CLion (and other IDEs) pick them up under the
-# library target. They are not compiled directly; the build relies on
-# include directories. ``CMAKE_CURRENT_SOURCE_DIR/../include`` is already
-# on the include path via the parent CMakeLists.
-set(HGRAPH_CORE_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/hgraph.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/hgraph_export.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/evaluation_clock.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/executor.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/feedback_node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/graph.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/context_node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/shared_output_node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/service_node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/nested_graph_node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/node_fwd.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/push_source_node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/nested_bindings.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/switch_node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/map_node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/reduce_node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/runtime.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/logger.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/python/chrono.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/notifiable.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/primitive_types.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_schema.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/call_args.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/graph_wiring.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/adaptor_wiring.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/context_wiring.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/service_wiring.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/subgraph_wiring.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/wired_fn.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/type_pattern.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/operator_dispatch.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/record_replay.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/service_runtime.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/std/component.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series_reference.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_data_plan_factory.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_data_plan_factory_detail.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_value_type_meta_data.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/type_binding.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/type_meta_data.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/type_registry.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/value_plan_factory.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/value_type_meta_data.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/json_codec.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/table_codec.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/frame.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/intern_table.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/key_slot_store.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/memory_utils.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/slot_observer.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/stable_slot_storage.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/value_slot_store.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/base_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/dict_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/indexed_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/ops.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/proxy.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/set_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/storage.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/types.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/window_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/endpoint_owner.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/endpoint_schema.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/typed_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/base_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/bundle_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/detail.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/dict_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/list_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/set_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/target_link.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/typed_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/view_common.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/window_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/base_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/alternative.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/bundle_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/dict_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/list_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/mutation_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/set_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/typed_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/view_common.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/window_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/global_state.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/node_scheduler.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/testing/record_replay.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/testing/eval_node.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/testing/runtime_support.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/std/std_nodes.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/std/standard_types.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/std/value_util.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/any_ops.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_container_ops.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/mutable_container_ops.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_storage.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/container_ops.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/specialized_views.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/value.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/value_builder.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/value_ops.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/value_range.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/value_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/util/date_time.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/util/scope.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/util/tagged_ptr.h
+set(HGRAPH_WIRING_SOURCES
+    hgraph/types/graph_wiring.cpp
+    hgraph/types/operator_dispatch.cpp
+    hgraph/types/record_replay.cpp
+    hgraph/types/registry_reset.cpp
+    hgraph/types/service_runtime.cpp
+    hgraph/types/type_pattern.cpp
 )
 
-add_library(hgraph_core ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_CORE_SOURCES} ${HGRAPH_CORE_HEADERS})
+set(HGRAPH_STDLIB_SOURCES
+    hgraph/lib/std/operators/json_impl.cpp
+    hgraph/lib/std/operators/registration.cpp
+)
+
+add_library(hgraph_runtime ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_RUNTIME_SOURCES})
+add_library(hgraph_wiring ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_WIRING_SOURCES})
+add_library(hgraph_stdlib ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_STDLIB_SOURCES})
+add_library(hgraph_core INTERFACE)
+
+add_library(hgraph::runtime ALIAS hgraph_runtime)
+add_library(hgraph::wiring ALIAS hgraph_wiring)
+add_library(hgraph::stdlib ALIAS hgraph_stdlib)
+
+target_link_libraries(hgraph_runtime PUBLIC hgraph::options)
+target_link_libraries(hgraph_wiring PUBLIC hgraph_runtime hgraph::options)
+target_link_libraries(hgraph_stdlib PUBLIC hgraph_wiring hgraph::options)
+target_link_libraries(hgraph_core INTERFACE hgraph_stdlib hgraph::options)
+
+hgraph_enable_private_pch(hgraph_runtime)
+hgraph_enable_private_pch(hgraph_wiring)
+hgraph_enable_private_pch(hgraph_stdlib)
+
+set_target_properties(hgraph_runtime PROPERTIES EXPORT_NAME runtime)
+set_target_properties(hgraph_wiring PROPERTIES EXPORT_NAME wiring)
+set_target_properties(hgraph_stdlib PROPERTIES EXPORT_NAME stdlib)

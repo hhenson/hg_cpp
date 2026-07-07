@@ -57,6 +57,27 @@ option(HGRAPH_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(HGRAPH_BUILD_PYTHON_BINDINGS "Build the Python extension bridge" OFF)
 option(HGRAPH_ENABLE_PYTHON_USER_NODES "Enable C++ runtime support for Python user nodes" OFF)
 option(HGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS "Use local .venv Python/nanobind headers for IDE code models when Python support is disabled" ON)
+option(HGRAPH_ENABLE_COMPILER_CACHE "Use sccache or ccache when available" ON)
+option(HGRAPH_ENABLE_PCH "Use private precompiled headers for repository targets" ON)
+
+if(HGRAPH_ENABLE_COMPILER_CACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    find_program(HGRAPH_COMPILER_CACHE_PROGRAM sccache)
+    if(NOT HGRAPH_COMPILER_CACHE_PROGRAM)
+        find_program(HGRAPH_COMPILER_CACHE_PROGRAM ccache)
+    endif()
+    if(HGRAPH_COMPILER_CACHE_PROGRAM)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${HGRAPH_COMPILER_CACHE_PROGRAM}" CACHE STRING "C++ compiler launcher" FORCE)
+        message(STATUS "hgraph compiler cache: ${HGRAPH_COMPILER_CACHE_PROGRAM}")
+    endif()
+endif()
+
+function(hgraph_enable_private_pch target_name)
+    if(HGRAPH_ENABLE_PCH)
+        target_precompile_headers(${target_name} PRIVATE
+            "$<$<COMPILE_LANGUAGE:CXX>:${PROJECT_SOURCE_DIR}/src/hgraph/pch.h>"
+        )
+    endif()
+endfunction()
 
 if(HGRAPH_ENABLE_TSAN AND (HGRAPH_ENABLE_ASAN OR HGRAPH_ENABLE_UBSAN))
     message(FATAL_ERROR "HGRAPH_ENABLE_TSAN is mutually exclusive with ASAN and UBSAN")
@@ -311,7 +332,7 @@ if(BUILD_TESTING AND EXISTS "${PROJECT_SOURCE_DIR}/tests/CMakeLists.txt")
     add_subdirectory(tests)
 endif()
 
-set(_hgraph_export_targets hgraph_options hgraph_core)
+set(_hgraph_export_targets hgraph_options hgraph_runtime hgraph_wiring hgraph_stdlib hgraph_core)
 install(TARGETS ${_hgraph_export_targets}
     EXPORT hgraphTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

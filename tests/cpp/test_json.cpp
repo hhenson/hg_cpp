@@ -1,4 +1,5 @@
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/operators/impl/json_impl.h>
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>

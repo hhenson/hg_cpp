@@ -8,6 +8,7 @@
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/operators/impl/conversion_impl.h>
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>

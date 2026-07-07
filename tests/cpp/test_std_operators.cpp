@@ -14,6 +14,7 @@
 // with ``Value`` equality.
 
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/operators/impl/string_impl.h>
 #include <hgraph/lib/std/standard_types.h>
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/check_output.h>
