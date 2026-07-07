@@ -1154,7 +1154,11 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             named_ports = {}
             for k in [k for k, v in kwargs.items() if isinstance(v, (list, tuple))]:
                 series = kwargs.pop(k)
-                annotation = _infer_ts_type(series)
+                annotation = None
+                if resolution_dict and k in resolution_dict and isinstance(resolution_dict[k], _TsExpr):
+                    annotation = resolution_dict[k]   # the dict types NAMED series too
+                if annotation is None:
+                    annotation = _infer_ts_type(series)
                 if annotation is None:
                     raise TypeError(f"named series '{k}' needs typed sample values")
                 key = f"eval_node::{k}"

@@ -26,7 +26,7 @@ namespace hgraph::stdlib
      */
 
     /** ``merge`` — forward the first of the inputs to tick this cycle (variadic). */
-    struct merge : Operator<"merge", VarIn<"ts", TsVar<"S">>, Out<TsVar<"S">>>
+    struct merge : Operator<"merge", VarIn<"tsl", TsVar<"S">>, Out<TsVar<"S">>>
     {
     };
 

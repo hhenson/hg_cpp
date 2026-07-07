@@ -3,6 +3,7 @@
 
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
+#include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/runtime/race_tsd_node.h>
 #include <hgraph/lib/std/operators/conversion.h>
 #include <hgraph/lib/std/operators/higher_order.h>
@@ -153,10 +154,45 @@ namespace hgraph::stdlib
             resolution.bind_ts("__out__", schema);
         }
 
-        static auto compose(Wiring &w, VarIn<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
+        static auto compose(Wiring &w, VarIn<"tsl", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
         {
             if (ts.empty()) { throw std::invalid_argument("merge requires at least one input"); }
             return wire<map_>(w, fn<merge>(), ts);
+        }
+    };
+
+    /** merge over ONE fixed TSL argument expands its elements as the
+        variadic inputs (hgraph's ``*tsl: TSL[...]`` calling shape). */
+    struct merge_tsl_graph_impl
+    {
+        static constexpr auto name = "merge_tsl";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            if (context.args.size() != 1 || context.args[0].kind != WiringArg::Kind::TimeSeries) { return false; }
+            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
+            return schema != nullptr && schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
+            if (schema == nullptr || schema->kind != TSTypeKind::TSL) { return; }
+            resolution.bind_ts("__out__", schema->element_ts());
+        }
+
+        static WiringPortRef compose(Wiring &w, NamedPort<"tsl", TsVar<"S">> ts)
+        {
+            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(ts.erased().schema);
+            std::vector<WiringPortRef> elements;
+            elements.reserve(schema->fixed_size());
+            for (std::size_t index = 0; index < schema->fixed_size(); ++index)
+            {
+                elements.push_back(subgraph_wiring_detail::tsl_element_ref(ts.erased(), index,
+                                                                           schema->element_ts()));
+            }
+            return wire_erased_operator(w, "merge", {elements.data(), elements.size()}, true);
         }
     };
 
@@ -166,10 +202,13 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            // TSD arguments merge PER-KEY through merge_tsd_graph_impl.
+            // TSD arguments merge PER-KEY (merge_tsd_graph_impl); ONE fixed
+            // TSL argument is the *tsl collection shape (merge_tsl_graph_impl).
             if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return true; }
             const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
-            return schema == nullptr || schema->kind != TSTypeKind::TSD;
+            if (schema == nullptr) { return true; }
+            if (schema->kind == TSTypeKind::TSD) { return false; }
+            return !(context.args.size() == 1 && schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0);
         }
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -180,7 +219,7 @@ namespace hgraph::stdlib
             resolution.bind_ts("__out__", schema);
         }
 
-        static auto compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
+        static auto compose(Wiring &w, VarIn<"tsl", TsVar<"S">> ts)
         {
             if (ts.empty()) { throw std::invalid_argument("merge requires at least one input"); }
             return wire<reduce_>(w, fn<control_impl_detail::merge_binary>(), ts);

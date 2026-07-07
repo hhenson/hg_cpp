@@ -6,6 +6,7 @@ namespace hgraph::stdlib
     {
         register_graph_overload<merge, merge_graph_impl>();
         register_graph_overload<merge, merge_tsd_graph_impl>();
+        register_graph_overload<merge, merge_tsl_graph_impl>();
         register_graph_overload<race, race_graph_impl>();
         register_graph_overload<reduce_tsd_with_race, race_tsd_graph_impl>();
         register_graph_overload<reduce_tsd_of_bundles_with_race, race_tsd_graph_impl>();
