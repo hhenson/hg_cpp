@@ -339,6 +339,16 @@ namespace hgraph
             throw std::logic_error("TSInputView::reference requires a typed input view");
         }
 
+        // A REF-typed input's reference IS its VALUE (one dereference level:
+        // hgraph's ts.value on a REF input) - an emptied upstream reference
+        // reads empty here, so assemblies observe invalidation without any
+        // unbind notification (UNBIND IS SILENT, linking_strategies.rst).
+        if (view_schema->kind == TSTypeKind::REF)
+        {
+            if (!valid()) { return TimeSeriesReference::empty(view_schema->referenced_ts()); }
+            return value().checked_as<TimeSeriesReference>();
+        }
+
         if (is_target_position())
         {
             const auto *target_schema = detail::target_link_schema(data_.raw_data);

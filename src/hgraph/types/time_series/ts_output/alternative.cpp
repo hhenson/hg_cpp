@@ -242,15 +242,18 @@ namespace hgraph::detail
             return {};
         }
 
-        void unbind_target_link_at(const TSDataView &target, DateTime modified_time)
+        void unbind_target_link_at(const TSDataView &target, DateTime)
         {
             auto *link = mutable_target_link_storage(target);
             if (link == nullptr)
             {
                 throw std::logic_error("TSOutput from-REF target unbinding requires TargetLink storage");
             }
+            // UNBIND IS SILENT (hgraph parity, linking_strategies.rst): an
+            // EMPTY reference detaches the input - it reads not-valid from
+            // here on - but does NOT notify consumers. Only a rebind to a
+            // live target samples.
             link->unbind();
-            link->record_target_modified(modified_time);
         }
 
         void bind_target_link_at(const TSDataView &target, const TSOutputView &output, DateTime modified_time)

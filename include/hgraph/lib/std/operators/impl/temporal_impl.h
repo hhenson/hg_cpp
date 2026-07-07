@@ -203,6 +203,14 @@ namespace hgraph::stdlib
     {
         static constexpr bool schedule_on_start = true;
 
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            // REF-shaped sources take the reference-aware overload below.
+            return context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries ||
+                   context.args[0].port.schema == nullptr ||
+                   context.args[0].port.schema->kind != TSTypeKind::REF;
+        }
+
         static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Out<TS<Bool>> out)
         {
             // hgraph parity: ticks only when the answer CHANGES.
@@ -210,6 +218,86 @@ namespace hgraph::stdlib
             const auto &erased = static_cast<const TSOutputView &>(out);
             if (erased.valid() && erased.data_view().value().checked_as<Bool>() == value) { return; }
             out.set(value);
+        }
+    };
+
+    namespace valid_ref_detail
+    {
+        /** hgraph's UNBOUND-input validity is KIND-dependent: a leaf reads
+            False, a dynamic container (TSD / TSS / dynamic TSL) reads
+            vacuously TRUE - zero children, all valid. An EMPTY reference
+            therefore leaves valid(tsd) True (pinned by
+            test_tsd_validity_rebind). */
+        [[nodiscard]] inline bool empty_reference_validity(const TSValueTypeMetaData *target) noexcept
+        {
+            if (target == nullptr) { return false; }
+            switch (target->kind)
+            {
+                case TSTypeKind::TSD:
+                case TSTypeKind::TSS: return true;
+                case TSTypeKind::TSL: return target->fixed_size() == 0;
+                default: return false;
+            }
+        }
+    }  // namespace valid_ref_detail
+
+    /** valid over a REFERENCE source (hgraph's valid_impl shape): the ACTIVE
+        REF input observes retargets (an emptied reference is a value tick -
+        UNBIND IS SILENT on the deref'd side, linking_strategies.rst); the
+        deref'd input wakes the node when the bound target's validity
+        transitions. Ticks only when the answer changes. */
+    struct valid_ref_impl
+    {
+        static constexpr auto name              = "valid_ref";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(In<"ts", REF<TsVar<"S">>, InputValidity::Unchecked> ts,
+                         In<"ts_value", TsVar<"S">, InputValidity::Unchecked> ts_value,
+                         DateTime now,
+                         Out<TS<Bool>> out)
+        {
+            Bool value = false;
+            if (ts.valid())
+            {
+                const auto reference = ts.value();
+                if (reference.is_empty())
+                {
+                    value = valid_ref_detail::empty_reference_validity(ts.base().schema()->referenced_ts());
+                }
+                else { value = reference.is_valid(now) || ts_value.valid(); }
+            }
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            if (erased.valid() && erased.data_view().value().checked_as<Bool>() == value) { return; }
+            out.set(value);
+        }
+    };
+
+    /** valid(REF-shaped port): compose the REF + deref'd pair onto
+        valid_ref_impl (the race values-input pattern). */
+    struct valid_ref_graph_impl
+    {
+        static constexpr auto name = "valid";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return !context.args.empty() && context.args[0].kind == WiringArg::Kind::TimeSeries &&
+                   context.args[0].port.schema != nullptr &&
+                   context.args[0].port.schema->kind == TSTypeKind::REF;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+        {
+            if (resolution.find_ts("__out__") != nullptr) { return; }
+            resolution.bind_ts("__out__", TypeRegistry::instance().ts(scalar_descriptor<Bool>::value_meta()));
+        }
+
+        static WiringPortRef compose(Wiring &w, NamedPort<"ts", REF<TsVar<"S">>> ts)
+        {
+            WiringPortRef ref_port = ts.erased();
+            WiringPortRef deref    = ref_port;
+            deref.schema           = ref_port.schema->referenced_ts();   // the descriptive-schema patch
+            return wire<valid_ref_impl>(w, Port<void>{w, std::move(ref_port)}, Port<void>{w, std::move(deref)})
+                .erased();
         }
     };
 

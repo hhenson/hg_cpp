@@ -419,6 +419,15 @@ never dereferenced via ``.output``); code needing the dereferenced value
 accepts it as a (passive) input. Retargeting therefore must LOOK like a
 tick to consumers — the sampled-runtime contract at the input boundary:
 
+**Unbind is silent (hgraph parity).** The inverse case does *not* sample:
+when a reference goes EMPTY, the from-REF input unbinds - it reads
+not-valid from that point - but consumers are NOT notified. A node
+observing the input (e.g. ``valid``) keeps its last output until
+something else evaluates it. Only a rebind to a live target records
+modified and samples. (``test_tsd_validity_rebind`` pins this: routing
+away from a branch must not tick ``valid`` False, and routing back to
+an unchanged target re-evaluates but dedups.)
+
 - ``TSInputView::delta_value()``: when the position's LINK was modified
   after the target's own last tick (a from-REF retarget bound an
   already-valid output), the delta IS the current value — the target's

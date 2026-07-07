@@ -20,6 +20,7 @@ namespace hgraph::stdlib
         register_overload<year, year_impl>();
         register_overload<explode, explode_date_impl>();
         register_overload<valid, valid_impl>();
+        register_graph_overload<valid, valid_ref_graph_impl>();
         register_overload<modified, modified_impl>();
         register_overload<last_modified_time, last_modified_time_impl>();
         register_overload<last_modified_wall_clock_time, last_modified_wall_clock_time_impl>();

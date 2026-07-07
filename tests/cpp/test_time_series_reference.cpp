@@ -759,9 +759,11 @@ TEST_CASE("TimeSeriesReference: from-REF alternative binds peered target and fol
 
     set_output_reference(ref_output, TimeSeriesReference::empty(ts_int), t5);
     auto after_unbind = handle.view(t5);
+    // UNBIND IS SILENT (linking_strategies.rst): the input reads not-valid
+    // but is NOT marked modified - consumers are not notified.
     REQUIRE_FALSE(after_unbind.valid());
-    REQUIRE(after_unbind.modified());
-    REQUIRE(after_unbind.last_modified_time() == t5);
+    REQUIRE_FALSE(after_unbind.modified());
+    REQUIRE(after_unbind.last_modified_time() == t4);
 }
 
 TEST_CASE("TimeSeriesReference: from-REF set alternative rebinds target links")
@@ -818,7 +820,7 @@ TEST_CASE("TimeSeriesReference: from-REF set alternative rebinds target links")
     auto after_unbind = handle.view(t5);
     auto unbound_set  = after_unbind.as_set();
     REQUIRE_FALSE(after_unbind.valid());
-    REQUIRE(after_unbind.modified());
+    REQUIRE_FALSE(after_unbind.modified());   // unbind is silent
     REQUIRE(unbound_set.size() == 0);
     REQUIRE_FALSE(unbound_set.contains(three.view()));
 }
@@ -877,7 +879,7 @@ TEST_CASE("TimeSeriesReference: from-REF dict alternative rebinds target links")
     auto after_unbind = handle.view(t5);
     auto unbound_dict = after_unbind.as_dict();
     REQUIRE_FALSE(after_unbind.valid());
-    REQUIRE(after_unbind.modified());
+    REQUIRE_FALSE(after_unbind.modified());   // unbind is silent
     REQUIRE(unbound_dict.size() == 0);
     REQUIRE_FALSE(unbound_dict.contains(key_two.view()));
 }

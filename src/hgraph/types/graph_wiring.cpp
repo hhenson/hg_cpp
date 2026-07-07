@@ -186,6 +186,42 @@ namespace hgraph
             }
         }
 
+        /** The ts-input schema preserving the SOURCE children's REF-ness.
+            A REF-typed child keeps its REF schema so an emptied reference is
+            an ordinary VALUE tick on this node's input (hgraph parity:
+            UNBIND IS SILENT, so notification must not depend on the deref'd
+            write-through - linking_strategies.rst). Falls back to the deref'd
+            target schema when the source shape cannot be preserved. */
+        [[nodiscard]] const TSValueTypeMetaData *structural_ref_input_ts_schema(
+            const TSValueTypeMetaData *target_schema, const WiringPortRef &source)
+        {
+            if (!source.is_structural_source()) { return target_schema; }
+            const auto &children = source.structural_children();
+            if (children.empty()) { return target_schema; }
+            const TSValueTypeMetaData *element = children[0].schema;
+            for (const WiringPortRef &child : children)
+            {
+                if (child.schema == nullptr) { return target_schema; }
+                if (child.schema != element) { element = nullptr; }
+            }
+            auto &registry = TypeRegistry::instance();
+            if (target_schema->kind == TSTypeKind::TSL && element != nullptr)
+            {
+                return registry.tsl(element, children.size());
+            }
+            if (target_schema->kind == TSTypeKind::TSB && children.size() == target_schema->field_count())
+            {
+                std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+                fields.reserve(children.size());
+                for (std::size_t index = 0; index < children.size(); ++index)
+                {
+                    fields.emplace_back(target_schema->fields()[index].name, children[index].schema);
+                }
+                return registry.un_named_tsb(fields);
+            }
+            return target_schema;
+        }
+
         [[nodiscard]] NodeBuilder structural_ref_node_builder(const TSValueTypeMetaData *target_schema,
                                                               const WiringPortRef       &source)
         {
@@ -195,7 +231,8 @@ namespace hgraph
             }
 
             auto       &registry      = TypeRegistry::instance();
-            const auto *input_schema  = registry.un_named_tsb({{"ts", target_schema}});
+            const auto *ts_schema     = structural_ref_input_ts_schema(target_schema, source);
+            const auto *input_schema  = registry.un_named_tsb({{"ts", ts_schema}});
             const auto *output_schema = registry.ref(target_schema);
 
             NodeTypeMetaData schema;
