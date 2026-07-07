@@ -430,34 +430,7 @@ namespace hgraph::stdlib
         }
     };
 
-    inline void register_container_operators()
-    {
-        register_overload<getitem_, getitem_string>();
-        register_overload<contains_, contains_string>();
-        register_overload<len_, len_string>();
-        register_overload<is_empty, is_empty_string>();
-
-        register_overload<len_, len_tss>();
-        register_overload<len_, len_tsd>();
-        register_overload<len_, len_tsl>();
-
-        register_overload<is_empty, is_empty_tss>();
-        register_overload<is_empty, is_empty_tsd>();
-
-        register_overload<contains_, contains_tss_item>();
-        register_overload<contains_, contains_tss_subset>();
-        register_overload<contains_, contains_tsd_key>();
-
-        register_overload<getitem_, getitem_tsl_by_index>();
-        register_overload<getitem_, getitem_tsd_by_key>();
-        register_overload<index_of, index_of_tsl>();
-
-        register_graph_overload<getitem_, getitem_tsb_by_name>();
-        register_graph_overload<getitem_, getitem_tsb_by_index>();
-        register_graph_overload<getattr_, getattr_tsb>();
-        register_graph_overload<len_, len_tsb>();
-        register_graph_overload<is_empty, is_empty_tsb>();
-    }
+    void register_container_operators();
 }  // namespace hgraph::stdlib
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_IMPL_CONTAINER_IMPL_H

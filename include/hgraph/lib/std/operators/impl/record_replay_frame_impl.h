@@ -286,13 +286,7 @@ namespace hgraph::stdlib
     };
 
     /** Register the data-frame record/replay backend overloads. */
-    inline void register_record_replay_frame_operators()
-    {
-        register_overload<record, record_frame_impl>();
-        register_overload<replay, replay_frame_impl>();
-        register_overload<compare, compare_impl>();
-        register_overload<replay_const, replay_const_impl>();
-    }
+    void register_record_replay_frame_operators();
 }  // namespace hgraph::stdlib
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_IMPL_RECORD_REPLAY_FRAME_IMPL_H

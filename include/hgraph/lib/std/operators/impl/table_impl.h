@@ -100,12 +100,7 @@ namespace hgraph::stdlib
     };
 
     /** Register the table operator overloads. */
-    inline void register_table_operators()
-    {
-        register_overload<to_table, to_table_impl>();
-        register_overload<from_table, from_table_impl>();
-        register_overload<from_table_const, from_table_const_impl>();
-    }
+    void register_table_operators();
 }  // namespace hgraph::stdlib
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_IMPL_TABLE_IMPL_H

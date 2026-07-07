@@ -2184,23 +2184,7 @@ namespace hgraph::stdlib
                    w, placeholder.erased(), scalar_descriptor<KeyT>::value_meta(), name)};
     }
 
-    inline void register_higher_order_operators()
-    {
-        register_graph_overload<reduce_, higher_order_impl_detail::reduce_variadic_tsl>();
-        register_graph_overload<reduce_, higher_order_impl_detail::reduce_lifted_tsl>();
-        register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsl>();
-        register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsl_zero>();
-        register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsd>();
-        register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsd_zero>();
-
-        register_graph_overload<switch_, higher_order_impl_detail::switch_impl>();
-
-        register_graph_overload<map_, higher_order_impl_detail::map_impl_tsd>();
-        register_graph_overload<map_, higher_order_impl_detail::map_lifted_tsl>();
-        register_graph_overload<map_, higher_order_impl_detail::map_impl_tsl>();
-
-        register_graph_overload<mesh_, higher_order_impl_detail::mesh_impl_tsd>();
-    }
+    void register_higher_order_operators();
 }  // namespace hgraph::stdlib
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_IMPL_HIGHER_ORDER_IMPL_H

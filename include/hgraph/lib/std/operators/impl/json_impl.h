@@ -456,24 +456,7 @@ namespace hgraph::stdlib
     };
 
     /** Register the JSON operator overloads. */
-    inline void register_json_operators()
-    {
-        register_overload<json_object_, json_object_impl>();
-        register_graph_overload<combine_json, combine_json_impl>();
-        register_overload<json_encode, json_encode_impl>();
-        register_overload<json_encode, json_encode_bytes_impl>();
-        register_overload<json_decode, json_decode_impl>();
-        register_overload<json_decode, json_decode_bytes_impl>();
-        register_overload<getitem_, getitem_json_impl<true>>();
-        register_overload<getitem_, getitem_json_impl<false>>();
-        register_overload<json_as_int, json_as_impl<Int>>();
-        register_overload<json_as_float, json_as_impl<Float>>();
-        register_overload<json_as_str, json_as_impl<Str>>();
-        register_overload<json_as_bool, json_as_impl<Bool>>();
-        register_overload<to_json, to_json_value_impl>();
-        register_overload<to_json, to_json_delta_impl>();
-        register_overload<from_json, from_json_impl>();
-    }
+    void register_json_operators();
 }  // namespace hgraph::stdlib
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_IMPL_JSON_IMPL_H

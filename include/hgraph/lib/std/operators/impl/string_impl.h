@@ -557,18 +557,7 @@ namespace hgraph::stdlib
         }
     };
 
-    inline void register_string_operators()
-    {
-        register_overload<match_, match_impl>();
-        register_overload<replace, replace_impl>();
-        register_overload<substr, substr_impl>();
-        register_overload<split, split_tsl_impl>();
-        register_overload<split, split_tuple_impl>();
-        register_overload<join, join_tsl_impl>();
-        register_graph_overload<join, join_multi_impl>();
-        register_overload<join, join_tuple_impl>();
-        register_graph_overload<format_, format_graph_impl>();
-    }
+    void register_string_operators();
 }  // namespace hgraph::stdlib
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_IMPL_STRING_IMPL_H
