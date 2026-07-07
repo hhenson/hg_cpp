@@ -221,6 +221,15 @@ namespace hgraph
         ops.reserve_impl(ops.context, mutation_.mutable_data(), capacity);
     }
 
+    void TSSDataMutationView::touch()
+    {
+        const auto &ops = set_ops();
+        if (ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time()))
+        {
+            mutation_.mark_modified();
+        }
+    }
+
     bool TSSDataMutationView::add(const ValueView &key)
     {
         const auto &ops    = set_ops();

@@ -722,8 +722,10 @@ namespace hgraph::stdlib
         {
             static constexpr auto name = "difference_tss";
 
-            static void eval(In<"lhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> lhs,
-                             In<"rhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> rhs,
+            // hgraph gating: BOTH inputs must be valid (test: lhs valid
+            // before rhs emits NOTHING until rhs arrives).
+            static void eval(In<"lhs", TSS<ScalarVar<"K">>> lhs,
+                             In<"rhs", TSS<ScalarVar<"K">>> rhs,
                              Out<TSS<ScalarVar<"K">>> out)
             {
                 auto lhs_set = lhs.data_view();
@@ -741,6 +743,47 @@ namespace hgraph::stdlib
                     if (!rhs_set.contains(key) && !out.contains(key)) { added.emplace_back(key); }
                 }
 
+                apply_tss_delta(out, removed, added);
+            }
+        };
+
+        /** TSS +/- a SCALAR element (hgraph's add_tss_and_scalar /
+            sub_tss_and_scalar): reconcile own output against
+            lhs u {rhs} / lhs \ {rhs}. */
+        template <bool Add>
+        struct tss_scalar_adjust
+        {
+            static constexpr auto name = Add ? "add_tss_scalar" : "sub_tss_scalar";
+
+            static void eval(In<"lhs", TSS<ScalarVar<"K">>> lhs, In<"rhs", TS<ScalarVar<"K">>> rhs,
+                             Out<TSS<ScalarVar<"K">>> out)
+            {
+                // hgraph parity (add_tss_and_scalar / sub_tss_and_scalar):
+                // forward lhs's DELTA, adjusted for the scalar - elements
+                // added by PAST scalar ticks persist unless lhs removes them.
+                const auto          scalar = rhs.base().value();
+                const TSSInputView &set    = lhs;   // erased delta accessors
+
+                std::vector<Value> added;
+                std::vector<Value> removed;
+                for (const ValueView &key : set.added())
+                {
+                    if (!Add || !key.equals(scalar)) { added.emplace_back(key); }
+                    else if (!out.contains(key)) { added.emplace_back(key); }
+                }
+                for (const ValueView &key : set.removed())
+                {
+                    if (Add && key.equals(scalar)) { continue; }   // the scalar keeps it alive
+                    removed.emplace_back(key);
+                }
+                if (Add)
+                {
+                    if (!out.contains(scalar)) { added.emplace_back(Value{scalar}); }
+                }
+                else
+                {
+                    if (out.contains(scalar)) { removed.emplace_back(Value{scalar}); }
+                }
                 apply_tss_delta(out, removed, added);
             }
         };

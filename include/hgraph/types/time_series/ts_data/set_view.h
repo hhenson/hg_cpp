@@ -104,6 +104,10 @@ namespace hgraph
         /** Remove all currently live keys. */
         void clear();
 
+        /** Mark this set modified WITHOUT changing membership - an
+            explicitly EMPTY tick still validates the set. */
+        void touch();
+
         /** Replace the set from a value-layer set view. */
         [[nodiscard]] bool copy_value_from(const ValueView &source);
 

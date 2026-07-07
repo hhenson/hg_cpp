@@ -524,6 +524,9 @@ namespace hgraph
             const auto bundle  = delta.as_bundle();
             auto       set_out = out.as_set();
             auto       mutation = set_out.begin_mutation(out.evaluation_time());
+            // An explicitly EMPTY tick still VALIDATES the set (hgraph: an
+            // empty first tick makes the TSS valid with the empty value).
+            mutation.touch();
             const auto removed = bundle.field("removed").as_indexed_view();
             for (std::size_t i = 0; i < removed.size(); ++i) { (void)mutation.remove(removed.at(i)); }
             const auto added = bundle.field("added").as_indexed_view();

@@ -1099,6 +1099,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         params = list(fn_sig.parameters.values())
     except (TypeError, ValueError):
         params = []
+    params = [p for p in params
+              if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
     w = _hgraph.Wiring()
     _wiring_stack.append(w)
     try:
@@ -1107,6 +1109,13 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             annotation = params[i].annotation if i < len(params) else None
             if resolution_dict and i < len(params) and params[i].name in resolution_dict:
                 annotation = resolution_dict[params[i].name]
+            elif resolution_dict and not params and len(resolution_dict) == len(inputs):
+                # OPERATOR functions have no python signature: when the dict
+                # has one entry per positional input, its entries type them
+                # in order (keys are the operator's own parameter names). A
+                # SHORTER dict types a variadic collection - inference per
+                # input applies then.
+                annotation = list(resolution_dict.values())[i]
             if not isinstance(series, (list, tuple)):
                 # hgraph parity: a non-list argument is a plain value (lifted
                 # to const where a TS input is expected, or a scalar param).
@@ -1129,8 +1138,6 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         # hgraph parity: keyword arguments naming the function's parameters
         # are INPUT SERIES (eval_node(g, a=[...], b=[...])); the rest flow to
         # the node as scalars.
-        params = [p for p in params
-                  if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
         param_names = {p.name for p in params}
         if not params:
             # OPERATOR functions have no python signature: named list kwargs

@@ -34,6 +34,8 @@ namespace hgraph::stdlib
         register_overload<eq_, collection_impl_detail::eq_tsd>();
         register_overload<min_, collection_impl_detail::min_tss_unary>();
         register_overload<min_, collection_impl_detail::extremum_tss_default<true>>();
+        register_overload<add_, collection_impl_detail::tss_scalar_adjust<true>>();
+        register_overload<sub_, collection_impl_detail::tss_scalar_adjust<false>>();
         register_overload<max_, collection_impl_detail::extremum_tss_default<false>>();
         register_overload<max_, collection_impl_detail::max_tss_unary>();
         register_overload<min_, collection_impl_detail::min_tsd_unary>();
