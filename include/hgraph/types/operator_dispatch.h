@@ -1501,6 +1501,23 @@ namespace hgraph
         return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs);
     }
 
+    /** The wired_fn.h hook: dispatch a VarIn-tailed operator over erased ports. */
+    [[nodiscard]] inline WiringPortRef wire_erased_operator(Wiring &w, std::string_view name,
+                                                            std::span<const WiringPortRef> args, bool has_output)
+    {
+        std::vector<WiringArg> wiring_args;
+        wiring_args.reserve(args.size());
+        for (const WiringPortRef &port : args)
+        {
+            WiringArg arg;
+            arg.kind = WiringArg::Kind::TimeSeries;
+            arg.port = port;
+            wiring_args.push_back(std::move(arg));
+        }
+        auto result = wire_operator(w, name, {wiring_args.data(), wiring_args.size()}, has_output);
+        return has_output ? result.output.erased() : WiringPortRef{};
+    }
+
     namespace operator_dispatch_detail
     {
         // Definition of the operator arm of wire<> (forward-declared in graph_wiring.h).

@@ -61,7 +61,11 @@ namespace hgraph::stdlib
             const TSValueTypeMetaData *expected_output = nullptr)
         {
             if (func.lifted != nullptr) { return func.lifted->valid() ? func.lifted : nullptr; }
-            if (func.operator_name.empty() || func.arity != input_schemas.size()) { return nullptr; }
+            if (func.operator_name.empty()) { return nullptr; }
+            if (func.variadic ? input_schemas.size() < func.arity : func.arity != input_schemas.size())
+            {
+                return nullptr;
+            }
 
             std::vector<WiringArg> args;
             args.reserve(input_schemas.size());
@@ -1044,8 +1048,8 @@ namespace hgraph::stdlib
             const MapArgClassification classified = classify_map_args(ts_schemas, arg_tags);
 
             const std::size_t base_arity = ts_schemas.size();
-            const bool        takes_key  = func.arity == base_arity + 1;
-            if (!takes_key && func.arity != base_arity)
+            const bool        takes_key  = !func.variadic && func.arity == base_arity + 1;
+            if (!takes_key && (func.variadic ? base_arity < func.arity : func.arity != base_arity))
             {
                 throw std::invalid_argument(
                     "map_: 'func' must take one parameter per time-series argument, with an optional key "
@@ -1055,7 +1059,7 @@ namespace hgraph::stdlib
             const auto *key_ts = registry.ts(classified.key_meta);
 
             std::vector<const TSValueTypeMetaData *> schemas;
-            schemas.reserve(func.arity);
+            schemas.reserve(base_arity + (takes_key ? 1 : 0));
             if (takes_key) { schemas.push_back(key_ts); }
             schemas.insert(schemas.end(), classified.child_schemas.begin(), classified.child_schemas.end());
 
@@ -1748,7 +1752,11 @@ namespace hgraph::stdlib
             std::span<const std::uint8_t> arg_tags,
             bool takes_key)
         {
-            if (takes_key || !func.has_output || func.arity != schemas.size()) { return std::nullopt; }
+            if (takes_key || !func.has_output ||
+                (func.variadic ? schemas.size() < func.arity : func.arity != schemas.size()))
+            {
+                return std::nullopt;
+            }
 
             auto &registry = TypeRegistry::instance();
             std::size_t size = 0;

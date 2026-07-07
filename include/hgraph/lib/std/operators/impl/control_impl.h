@@ -138,9 +138,39 @@ namespace hgraph::stdlib
 
     }  // namespace control_impl_detail
 
+    /** merge over TSDs is PER-KEY (hgraph's merge_tsd): map_(merge, *tsl)
+        recurses the merge into each key's elements. Whole-dict reduce (the
+        generic merge below) would take the last-modified dict wholesale. */
+    struct merge_tsd_graph_impl
+    {
+        static constexpr auto name = "merge_tsd";
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
+            if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return; }
+            resolution.bind_ts("__out__", schema);
+        }
+
+        static auto compose(Wiring &w, VarIn<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
+        {
+            if (ts.empty()) { throw std::invalid_argument("merge requires at least one input"); }
+            return wire<map_>(w, fn<merge>(), ts);
+        }
+    };
+
     struct merge_graph_impl
     {
         static constexpr auto name = "merge";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            // TSD arguments merge PER-KEY through merge_tsd_graph_impl.
+            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return true; }
+            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
+            return schema == nullptr || schema->kind != TSTypeKind::TSD;
+        }
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {

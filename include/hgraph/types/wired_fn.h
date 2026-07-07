@@ -121,6 +121,7 @@ namespace hgraph
         std::string_view      operator_name{};
         const LiftedKernel   *lifted{nullptr};
         std::size_t           arity{0};
+        bool                  variadic{false};   // operator marker with a VarIn tail
         bool                  has_output{false};
 
         /**
@@ -225,7 +226,9 @@ namespace hgraph
                                         std::string{key_arg} +
                                         "' (the key) but its arity does not leave room for it");
         }
-        if (!result.takes_leading_key && func.arity != filled)
+        // A VarIn-tailed operator takes any argument count at or above its
+        // fixed inputs (runtime-matcher capability).
+        if (!result.takes_leading_key && (func.variadic ? filled < func.arity : func.arity != filled))
         {
             throw std::invalid_argument(
                 std::string{op_name} + ": 'func' takes a different number of time-series arguments (name the "
@@ -285,8 +288,35 @@ namespace hgraph
         };
     }  // namespace static_schema_detail
 
+    template <fixed_string Name, typename S>
+    struct VarIn;   // operator_dispatch.h
+
+    /** Erased variadic-operator dispatch (defined in operator_dispatch.h -
+        wired_fn.h precedes the registry in the include order). */
+    [[nodiscard]] WiringPortRef wire_erased_operator(Wiring &w, std::string_view name,
+                                                     std::span<const WiringPortRef> args, bool has_output);
+
     namespace wired_fn_detail
     {
+        template <typename T> struct is_var_input_selector : std::false_type {};
+        template <fixed_string N, typename S> struct is_var_input_selector<VarIn<N, S>> : std::true_type {};
+
+        /** Operator markers with a VarIn tail accept ANY argument count at or
+            above the fixed inputs (runtime-matcher capability). */
+        template <typename X>
+        [[nodiscard]] consteval bool variadic_of()
+        {
+            if constexpr (std::is_base_of_v<operator_tag, X>)
+            {
+                using params = typename X::param_types;
+                return []<std::size_t... I>(std::index_sequence<I...>) {
+                    return (false || ... ||
+                            is_var_input_selector<std::tuple_element_t<I, params>>::value);
+                }(std::make_index_sequence<std::tuple_size_v<params>>{});
+            }
+            else { return false; }
+        }
+
         template <typename X>
         [[nodiscard]] consteval std::size_t arity_of()
         {
@@ -329,6 +359,16 @@ namespace hgraph
         [[nodiscard]] WiringPortRef wire_thunk(Wiring &w, std::span<const WiringPortRef> args)
         {
             constexpr std::size_t arity = arity_of<X>();
+            if constexpr (variadic_of<X>())
+            {
+                // A VarIn-tailed operator takes ANY argument count: dispatch
+                // through the erased registry entry (runtime matcher).
+                if (args.size() < arity)
+                {
+                    throw std::invalid_argument("fn<X>: wired argument count does not match the function's inputs");
+                }
+                return wire_erased_operator(w, std::string_view{X::name}, args, X::has_output);
+            }
             if (args.size() != arity)
             {
                 throw std::invalid_argument("fn<X>: wired argument count does not match the function's inputs");
@@ -355,6 +395,31 @@ namespace hgraph
         [[nodiscard]] CompiledSubGraph compile_thunk(std::span<const TSValueTypeMetaData *const> input_schemas)
         {
             constexpr std::size_t arity = arity_of<X>();
+            if constexpr (variadic_of<X>())
+            {
+                if (input_schemas.size() < arity)
+                {
+                    throw std::invalid_argument(
+                        "fn<X>: compiled input schema count does not match the function's inputs");
+                }
+                Wiring                                   w;
+                std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
+                std::vector<WiringPortRef>               ports;
+                ports.reserve(input_schemas.size());
+                for (std::size_t index = 0; index < input_schemas.size(); ++index)
+                {
+                    ports.push_back(WiringPortRef::boundary_source(index, {}, input_schemas[index]));
+                }
+                auto out = wire_thunk<X>(w, {ports.data(), ports.size()});
+                if constexpr (has_output_of<X>())
+                {
+                    return std::move(w).finish_subgraph(out, std::move(schemas));
+                }
+                else
+                {
+                    return std::move(w).finish_subgraph(std::nullopt, std::move(schemas));
+                }
+            }
             if (input_schemas.size() != arity)
             {
                 throw std::invalid_argument("fn<X>: compiled input schema count does not match the function's inputs");
@@ -492,6 +557,7 @@ namespace hgraph
                 else { return std::string_view{}; }
             }(),
             .arity          = wired_fn_detail::arity_of<X>(),
+            .variadic       = wired_fn_detail::variadic_of<X>(),
             .has_output     = wired_fn_detail::has_output_of<X>(),
         };
     }

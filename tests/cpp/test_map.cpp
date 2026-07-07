@@ -446,6 +446,20 @@ TEST_CASE("map_ over TSD: variadic broadcast arguments feed every child")
                                dict_delta<Str, TS<Int>>({{"a"s, 211}, {"b"s, 212}})));
 }
 
+TEST_CASE("merge over TSDs is per-key (map_ with a lifted variadic operator)")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // hgraph's merge_tsd: merge(tsd1, tsd2) == map_(merge, tsd1, tsd2) - the
+    // union key set, per-key leftmost-modified value.
+    CHECK_OUTPUT((eval_node<stdlib::merge, TSD<Str, TS<Int>>, TSD<Str, TS<Int>>>(
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}}), none),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"b"s, 6}}), dict_delta<Str, TS<Int>>({{"a"s, 9}})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 6}}),
+                               dict_delta<Str, TS<Int>>({{"a"s, 9}})));   // leftmost MODIFIED wins
+}
+
 TEST_CASE("map_ over TSL: ndx key plus broadcast")
 {
     using namespace hgraph;
