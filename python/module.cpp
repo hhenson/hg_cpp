@@ -990,9 +990,9 @@ namespace
 
         static auto defaults() { return std::tuple{arg<"sparse">(Bool{false})}; }
 
-        static void start(Scalar<"key", std::string> key, GlobalStateView gs)
+        static void start(Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse, GlobalStateView gs)
         {
-            testing::record::start(std::move(key), std::move(gs));
+            testing::record::start(std::move(key), std::move(sparse), std::move(gs));
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse,

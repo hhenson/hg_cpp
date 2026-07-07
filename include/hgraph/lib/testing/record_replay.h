@@ -76,20 +76,30 @@ namespace hgraph::testing
         than this must go through the sparse path. */
     inline constexpr std::size_t max_dense_cycles = 1'000'000;
 
-    /** The (Int cycle, Any delta) entry schema for SPARSE recordings. */
-    [[nodiscard]] inline const ValueTypeMetaData *sparse_entry_meta()
+    /** SPARSE recordings are TYPED: the recorded schema is known when the
+        node runs, so the buffer is ``List<Tuple<datetime, delta_schema>>``
+        - no per-entry ``Any`` boxing. */
+    [[nodiscard]] inline const ValueTypeMetaData *sparse_entry_meta(const ValueTypeMetaData *delta_schema)
     {
         auto &registry = TypeRegistry::instance();
-        return registry.tuple({registry.value_type("int"), registry.any()});
+        return registry.tuple({registry.value_type("datetime"), delta_schema});
     }
 
-    /** Box a (cycle, delta) pair as a sparse-buffer entry. */
-    [[nodiscard]] inline Value make_sparse_entry(std::size_t offset, Value delta)
+    /** A fresh, empty sparse buffer for the given delta schema. */
+    [[nodiscard]] inline Value make_sparse_buffer(const ValueTypeMetaData *delta_schema)
     {
-        BundleBuilder entry{*ValuePlanFactory::instance().binding_for(sparse_entry_meta())};
-        entry.set(0, Value{static_cast<Int>(offset)});
+        auto       &registry = TypeRegistry::instance();
+        const auto *schema   = registry.mutable_list(sparse_entry_meta(delta_schema));
+        return Value{*ValuePlanFactory::instance().binding_for(schema)};
+    }
+
+    /** Build a (time, delta) sparse-buffer entry. */
+    [[nodiscard]] inline Value make_sparse_entry(const ValueTypeMetaData *delta_schema, DateTime when, Value delta)
+    {
+        BundleBuilder entry{*ValuePlanFactory::instance().binding_for(sparse_entry_meta(delta_schema))};
+        entry.set(0, Value{when});
         entry.set(1, std::move(delta));
-        return make_any(entry.build());
+        return entry.build();
     }
 
     // -----------------------------------------------------------------
@@ -126,13 +136,8 @@ namespace hgraph::testing
         result.reserve(list.size());
         for (std::size_t i = 0; i < list.size(); ++i)
         {
-            const auto boxed = list.at(i).as_any();
-            if (!boxed.has_value()) { continue; }
-            const auto entry  = boxed.get().as_indexed_view();
-            const auto offset = static_cast<std::size_t>(entry.at(0).checked_as<Int>());
-            const auto delta  = entry.at(1).as_any();
-            if (!delta.has_value()) { continue; }
-            result.emplace_back(offset, Value{delta.get()});
+            const auto entry = list.at(i).as_indexed_view();
+            result.emplace_back(cycle_offset(entry.at(0).checked_as<DateTime>()), Value{entry.at(1)});
         }
         return result;
     }
@@ -248,30 +253,40 @@ namespace hgraph::testing
 
         static auto defaults() { return std::tuple{arg<"sparse">(Bool{false})}; }
 
-        static void start(Scalar<"key", std::string> key, GlobalStateView gs)
+        static void start(Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse, GlobalStateView gs)
         {
-            gs.set(key.value(), make_buffer());  // fresh, empty buffer
+            // The SPARSE buffer is typed by the recorded delta schema, which
+            // the first eval sees; dense buffers seed here as before.
+            if (!sparse.value()) { gs.set(key.value(), make_buffer()); }
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse,
                          GlobalStateView gs, DateTime now)
         {
+            // The canonical per-tick delta, rebuilt as an owned value-layer Value (the
+            // runtime's transient delta storage omits copy hooks).
+            Value delta = capture_delta(ts.base());
+            if (sparse.value())
+            {
+                // SPARSE (the harness's __elide__): TYPED (time, delta)
+                // tuple entries in evaluation order - one entry per tick
+                // regardless of the gap, no Any boxing.
+                const auto *delta_schema = ts.base().schema()->delta_value_schema;
+                ValueView   buffer       = gs.get(key.value());
+                if (!buffer.valid())
+                {
+                    gs.set(key.value(), make_sparse_buffer(delta_schema));
+                    buffer = gs.get(key.value());
+                }
+                auto mutation = buffer.as_list().begin_mutation();
+                mutation.push_back(make_sparse_entry(delta_schema, now, std::move(delta)).view());
+                return;
+            }
             const std::size_t offset   = cycle_offset(now);
             const ValueView   buffer   = gs.get(key.value());
             auto              list     = buffer.as_list();
             auto              mutation = list.begin_mutation();
-            // The canonical per-tick delta, rebuilt as an owned value-layer Value (the
-            // runtime's transient delta storage omits copy hooks), then boxed.
-            Value delta = make_any(capture_delta(ts.base()));
-            if (sparse.value())
-            {
-                // SPARSE (the harness's __elide__): (cycle, delta) tuple
-                // entries in evaluation order - a recording that ticks days
-                // apart costs one entry per tick, never per-cycle padding.
-                mutation.push_back(make_sparse_entry(offset, std::move(delta)).view());
-                return;
-            }
-            std::size_t size = list.size();
+            std::size_t       size     = list.size();
             if (offset - size > max_dense_cycles)
             {
                 throw std::logic_error(
@@ -283,7 +298,7 @@ namespace hgraph::testing
                 mutation.push_back(empty_any().view());
                 ++size;
             }
-            mutation.push_back(delta.view());
+            mutation.push_back(make_any(delta.view()).view());
         }
     };
 }  // namespace hgraph::testing
