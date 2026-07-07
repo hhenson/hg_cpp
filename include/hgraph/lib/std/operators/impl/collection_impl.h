@@ -125,7 +125,9 @@ namespace hgraph::stdlib
 
             static void eval(In<"ts", TSS<ScalarVar<"K">>, InputValidity::Unchecked> ts, Out<TS<Bool>> out)
             {
-                out.set(ts.empty());
+                // hgraph parity: ticks only when the answer CHANGES.
+                const Bool value = ts.empty();
+                if (!out.valid() || out.value().checked_as<Bool>() != value) { out.set(value); }
             }
         };
 
@@ -232,6 +234,37 @@ namespace hgraph::stdlib
                     }
                 }
                 if (best.has_value()) { out.apply(best->view()); }
+            }
+        };
+
+        /** min_/max_ over a TSS with a default for the EMPTY set. */
+        template <bool Min>
+        struct extremum_tss_default
+        {
+            static constexpr auto name = Min ? "min_tss_default" : "max_tss_default";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSS<ScalarVar<"K">>, InputValidity::Unchecked> ts,
+                             In<"default_value", TS<ScalarVar<"K">>, InputValidity::Unchecked> default_value,
+                             Out<TS<ScalarVar<"K">>> out)
+            {
+                const TSSInputView  &set = ts;
+                std::optional<Value> best;
+                for (const ValueView &key : set.values())
+                {
+                    if (!best.has_value() ||
+                        (Min ? key.compare(best->view()) == std::partial_ordering::less
+                             : key.compare(best->view()) == std::partial_ordering::greater))
+                    {
+                        best.emplace(key);
+                    }
+                }
+                if (best.has_value())
+                {
+                    out.apply(best->view());
+                    return;
+                }
+                if (default_value.valid()) { out.apply(default_value.base().value()); }
             }
         };
 

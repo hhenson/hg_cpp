@@ -281,7 +281,19 @@ namespace hgraph::python_bridge
                 }
                 if (add_from.is_valid())
                 {
-                    for (nb::handle item : add_from) { (void)added.insert_copy(py_to_value_as(item, elem).view().data()); }
+                    for (nb::handle item : add_from)
+                    {
+                        // hgraph's set-delta literal: Removed(x) members of a
+                        // plain set are REMOVALS (TS-schema shaping - this is
+                        // exactly py_to_delta's job).
+                        if (nb::hasattr(item, "item") &&
+                            nb::str(item.type().attr("__name__")).c_str() == std::string_view{"Removed"})
+                        {
+                            (void)removed.insert_copy(py_to_value_as(item.attr("item"), elem).view().data());
+                            continue;
+                        }
+                        (void)added.insert_copy(py_to_value_as(item, elem).view().data());
+                    }
                 }
                 if (remove_from.is_valid())
                 {
