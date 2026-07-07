@@ -146,10 +146,8 @@ namespace hgraph::stdlib
         struct and_tss
         {
             static constexpr auto name = "and_tss";
-            static constexpr bool schedule_on_start = true;
 
-            static void eval(In<"lhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> lhs,
-                             In<"rhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> rhs,
+            static void eval(In<"lhs", TSS<ScalarVar<"K">>> lhs, In<"rhs", TSS<ScalarVar<"K">>> rhs,
                              Out<TS<Bool>> out)
             {
                 out.set(!lhs.empty() && !rhs.empty());
@@ -159,10 +157,8 @@ namespace hgraph::stdlib
         struct or_tss
         {
             static constexpr auto name = "or_tss";
-            static constexpr bool schedule_on_start = true;
 
-            static void eval(In<"lhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> lhs,
-                             In<"rhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> rhs,
+            static void eval(In<"lhs", TSS<ScalarVar<"K">>> lhs, In<"rhs", TSS<ScalarVar<"K">>> rhs,
                              Out<TS<Bool>> out)
             {
                 out.set(!lhs.empty() || !rhs.empty());
@@ -172,10 +168,8 @@ namespace hgraph::stdlib
         struct eq_tss
         {
             static constexpr auto name = "eq_tss";
-            static constexpr bool schedule_on_start = true;
 
-            static void eval(In<"lhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> lhs,
-                             In<"rhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> rhs,
+            static void eval(In<"lhs", TSS<ScalarVar<"K">>> lhs, In<"rhs", TSS<ScalarVar<"K">>> rhs,
                              Out<TS<Bool>> out)
             {
                 out.set(tss_equal(lhs, rhs));
@@ -768,8 +762,9 @@ namespace hgraph::stdlib
                 std::vector<Value> removed;
                 for (const ValueView &key : set.added())
                 {
-                    if (!Add || !key.equals(scalar)) { added.emplace_back(key); }
-                    else if (!out.contains(key)) { added.emplace_back(key); }
+                    // The scalar's membership is decided below, not by lhs.
+                    if (key.equals(scalar)) { continue; }
+                    added.emplace_back(key);
                 }
                 for (const ValueView &key : set.removed())
                 {

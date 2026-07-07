@@ -30,9 +30,6 @@ from hgraph.test import eval_node
 import pytest
 pytestmark = pytest.mark.smoke
 
-import pytest as _pytest_mark
-pytestmark = _pytest_mark.mark.wip   # batch-3 burn-down; excluded from the gate
-
 def test_is_empty():
     @graph
     def is_empty_test(tss: TSS[int]) -> TS[bool]:

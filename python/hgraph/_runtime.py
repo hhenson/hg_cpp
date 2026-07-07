@@ -63,13 +63,14 @@ class _OperatorFunction:
     hgraph's SUBSCRIPT form ``op[TYPE](...)`` - the type becomes the
     requested output type of the call."""
 
-    __slots__ = ("__name__", "__qualname__", "_output_type", "_sizes")
+    __slots__ = ("__name__", "__qualname__", "_output_type", "_sizes", "_ts_hint")
 
-    def __init__(self, name, output_type=None, sizes=None):
+    def __init__(self, name, output_type=None, sizes=None, ts_hint=None):
         self.__name__ = name
         self.__qualname__ = name
         self._output_type = output_type
         self._sizes = sizes
+        self._ts_hint = ts_hint
 
     def __call__(self, *args, **kwargs):
         if self._output_type is not None and "tp" not in kwargs and "output_type" not in kwargs:
@@ -88,16 +89,22 @@ class _OperatorFunction:
 
         output_type = None
         sizes = []
+        ts_hint = None
         for i in (item if isinstance(item, tuple) else (item,)):
             if isinstance(i, slice):
                 if i.start is OUT and output_type is None:
                     output_type = i.stop
                 elif isinstance(i.stop, int):
                     sizes.append(i.stop)   # op[SIZE: Size[4]] pins size vars
+                else:
+                    # op[TIME_SERIES_TYPE: TSS[int]]: the resolution also
+                    # types the eval_node input series.
+                    ts_hint = i.stop
                 continue
             if output_type is None:
                 output_type = i
-        return _OperatorFunction(self.__name__, output_type=output_type, sizes=sizes or None)
+        return _OperatorFunction(self.__name__, output_type=output_type, sizes=sizes or None,
+                                 ts_hint=ts_hint)
 
     def _normalise_type_arguments(self, args, kwargs):
         if "tp" in kwargs or "output_type" in kwargs:
@@ -1107,6 +1114,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         ports = []
         for i, series in enumerate(inputs):
             annotation = params[i].annotation if i < len(params) else None
+            if annotation is None and getattr(fn, "_ts_hint", None) is not None:
+                annotation = fn._ts_hint   # op[TYPEVAR: TYPE] types the inputs
             if resolution_dict and i < len(params) and params[i].name in resolution_dict:
                 annotation = resolution_dict[params[i].name]
             elif resolution_dict and not params and len(resolution_dict) == len(inputs):

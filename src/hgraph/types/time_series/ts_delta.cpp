@@ -470,20 +470,32 @@ namespace hgraph
             return delta.has_value();
         }
 
-        bool delta_has_effect_tss(const TSOutputView &, const ValueView &delta)
+        bool delta_has_effect_tss(const TSOutputView &out, const ValueView &delta)
         {
             if (!delta.has_value()) { return false; }
             const auto bundle = delta.as_bundle();
-            return bundle.field("added").as_indexed_view().size() != 0 ||
-                   bundle.field("removed").as_indexed_view().size() != 0;
+            if (bundle.field("added").as_indexed_view().size() != 0 ||
+                bundle.field("removed").as_indexed_view().size() != 0)
+            {
+                return true;
+            }
+            // An explicitly EMPTY tick VALIDATES a fresh set (hgraph: the
+            // TSS becomes valid with the empty value); on an already-valid
+            // set it stays a no-op (dedup).
+            return !out.valid();
         }
 
-        bool delta_has_effect_tsd(const TSOutputView &, const ValueView &delta)
+        bool delta_has_effect_tsd(const TSOutputView &out, const ValueView &delta)
         {
             if (!delta.has_value()) { return false; }
             const auto bundle = delta.as_bundle();
-            return bundle.field("removed").as_indexed_view().size() != 0 ||
-                   bundle.field("modified").as_map().size() != 0;
+            if (bundle.field("removed").as_indexed_view().size() != 0 ||
+                bundle.field("modified").as_map().size() != 0)
+            {
+                return true;
+            }
+            // The empty-tick validation rule, as for TSS.
+            return !out.valid();
         }
 
         bool delta_has_effect_tsl(const TSOutputView &, const ValueView &delta)
@@ -539,6 +551,7 @@ namespace hgraph
             auto       dict_out = out.as_dict();
             auto       mutation = dict_out.begin_mutation(out.evaluation_time());
 
+            mutation.touch();   // the empty-tick validation rule (as for TSS)
             const auto removed = bundle.field("removed").as_indexed_view();
             for (std::size_t i = 0; i < removed.size(); ++i) { (void)mutation.erase(removed.at(i)); }
 
