@@ -476,6 +476,43 @@ requested ``REF`` values directly. A request for
 ``TSDProxy``, but the proxy child is the requested ``TSB`` structure;
 the two ``REF`` leaves are materialised inside that child.
 
+The inverse (from-``REF``) direction supports the same interior
+positions as to-``REF``. The keyed shape mirrors the keyed to-``REF``
+conversion:
+
+.. code-block:: text
+
+   direct value conversion:
+       source:    TSD[K, REF[V]]
+       requested: TSD[K, V]
+
+   keyed path conversion:
+       source:    TSD[K, TSB/TSL[..., REF[V]]]
+       requested: TSD[K, TSB/TSL[..., V]]
+
+Both store a ``TSDProxy`` over the source dictionary whose child
+binding is the requested element's *input endpoint* binding (TargetLink
+leaves). The proxy's value-builder applies each source element - a
+``REF`` leaf binds the link from the reference; a subtree that is
+already the requested shape binds one whole-subtree link directly to
+the source child; a structural subtree recurses; a nested ``TSD``
+element with interior references owns its own proxy. Because element
+references can retarget, a from-``REF`` proxy binds with the
+``OnChildTick`` child-refresh policy: a live slot whose source child
+ticks re-runs the builder (to-``REF`` proxies keep the default
+``StructureOnly`` policy - a child value tick does not change the
+materialised identity). The proxy only marks itself modified when the
+refreshed child actually recorded at that time, so same-reference
+re-publication stays silent. A key inserted and written within one
+source mutation notifies observers at insert time; child reads
+lazily re-run the builder for a slot whose source child recorded at
+or after its last build and whose value never materialised. Fixed ``TSB``/``TSL``
+sources with interior references expose the requested shape through a
+normal non-peered endpoint whose ref-positions are applied from the
+corresponding source children; a ``TSD`` below a fixed prefix is only
+supported when that subtree is already reference-free (deeper
+combinations remain unimplemented and throw).
+
 The inverse request ``REF[TS[int]]`` exposed as ``TS[int]`` stores a
 single TargetLink-backed endpoint. When the source reference ticks, the
 link binds, rebinds, or unbinds that endpoint. A request such as

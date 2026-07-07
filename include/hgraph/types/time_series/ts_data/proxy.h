@@ -7,6 +7,7 @@
 #include <hgraph/types/utils/value_slot_store.h>
 
 #include <cstddef>
+#include <vector>
 
 namespace hgraph
 {
@@ -44,6 +45,17 @@ namespace hgraph
      * modification notification supplies the evaluation time used to materialise
      * added/removed proxy children.
      */
+    /** How a proxy reacts to a LIVE source child recording a value tick.
+        To-REF proxies materialise identities - a child value tick does not
+        change them (StructureOnly). From-REF proxies hold links bound FROM
+        child reference values - a retarget must re-run the builder
+        (OnChildTick). */
+    enum class TSDProxyChildRefresh : std::uint8_t
+    {
+        StructureOnly,
+        OnChildTick,
+    };
+
     class TSDProxy final
     {
       public:
@@ -74,7 +86,8 @@ namespace hgraph
                   const TSDDataView   &source,
                   ValueBuilder         builder,
                   const void          *builder_context,
-                  DateTime        modified_time);
+                  DateTime        modified_time,
+                  TSDProxyChildRefresh child_refresh = TSDProxyChildRefresh::StructureOnly);
 
         [[nodiscard]] TSDataView source_view() const noexcept;
         [[nodiscard]] TSDDataView source_dict() const;
@@ -86,6 +99,16 @@ namespace hgraph
         [[nodiscard]] bool child_updated(std::size_t slot) const noexcept;
         [[nodiscard]] const void *child_at_slot(std::size_t slot) const;
         [[nodiscard]] void *child_at_slot(std::size_t slot);
+
+        /**
+         * LAZY re-materialisation (single-threaded runtime): a key inserted
+         * and value-written within ONE source mutation notifies observers at
+         * insert time - the builder may run before the value lands, and the
+         * once-per-time notification contract suppresses a second wake. Child
+         * reads therefore re-run the builder when the source child recorded
+         * after the slot was last built.
+         */
+        void refresh_stale_child(std::size_t slot) const;
 
         /** Ops hooks used by the proxy TSData binding. */
         void record_child_modified(std::size_t slot, DateTime modified_time);
@@ -109,6 +132,7 @@ namespace hgraph
         void construct_child_at_slot(std::size_t slot);
         void ensure_child_at_slot(std::size_t slot, DateTime modified_time);
         void refresh_child_at_slot(std::size_t slot, DateTime modified_time);
+        void stamp_built(std::size_t slot, DateTime modified_time);
         void mark_modified(DateTime modified_time);
 
         const TSDataBinding          *self_binding_{nullptr};
@@ -118,6 +142,8 @@ namespace hgraph
         ValueBuilder                  value_builder_{nullptr};
         const void                   *value_builder_context_{nullptr};
         ValueSlotStore                values_{};
+        std::vector<DateTime>         built_times_{};
+        TSDProxyChildRefresh          child_refresh_{TSDProxyChildRefresh::StructureOnly};
         TSDataTracking                tracking_{};
         SlotObserverList              slot_observers_{};
         bool                          subscribed_{false};
@@ -138,7 +164,8 @@ namespace hgraph
                         const TSDDataView      &source,
                         TSDProxy::ValueBuilder  builder,
                         const void             *builder_context,
-                        DateTime           modified_time);
+                        DateTime           modified_time,
+                        TSDProxyChildRefresh    child_refresh = TSDProxyChildRefresh::StructureOnly);
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_TS_DATA_PROXY_H

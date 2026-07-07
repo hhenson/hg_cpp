@@ -1,5 +1,9 @@
 #include <hgraph/types/time_series/ts_data/proxy.h>
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+#include <nanobind/nanobind.h>
+#endif
+
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/utils/value_slot_store.h>
@@ -244,7 +248,13 @@ namespace hgraph
             [[nodiscard]] SetValueOps set_value_ops_for()
             {
                 SetValueOps ops{
-                    {{this, false, nullptr, nullptr, nullptr, nullptr},
+                    {{this, false, nullptr, nullptr, nullptr, nullptr
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                      ,
+                      &set_surface_to_python<Surface>,
+                      nullptr
+#endif
+                     },
                      &set_size<Surface>,
                      &set_element_at<Surface>,
                      &set_element_binding,
@@ -262,7 +272,13 @@ namespace hgraph
             [[nodiscard]] MapValueOps map_value_ops_for()
             {
                 MapValueOps ops{
-                    {{this, false, nullptr, nullptr, nullptr, nullptr},
+                    {{this, false, nullptr, nullptr, nullptr, nullptr
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                      ,
+                      &map_surface_to_python<Surface>,
+                      nullptr
+#endif
+                     },
                      &map_size<Surface>,
                      &map_key_at_index<Surface>,
                      &set_element_binding,
@@ -687,6 +703,47 @@ namespace hgraph
                 return slot != TS_DATA_NO_CHILD_ID && map_slot_in_surface<Surface>(context, memory, slot);
             }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+            /** Surface read-back for python (type-erasure rule: conversion
+                binds to the ops). Children are read through their TS views -
+                link-endpoint children resolve to their targets. */
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static nanobind::object map_surface_to_python(const void *context, const void *memory)
+            {
+                namespace nb = nanobind;
+                const auto *state = ctx(context);
+                const auto &proxy = proxy_storage(memory);
+                auto        dict  = source_dict(memory);
+                nb::dict    result;
+                for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                {
+                    if (!map_slot_in_surface<Surface>(context, memory, slot) || !proxy.has_child(slot)) { continue; }
+                    auto child = TSDataView{state->element_binding, proxy.child_at_slot(slot)};
+                    auto value = child.value();
+                    if (!value.valid()) { continue; }
+                    auto key = dict.key_at_slot(slot);
+                    result[key.binding()->ops_ref().to_python(key.data())] =
+                        value.binding()->ops_ref().to_python(value.data());
+                }
+                return result;
+            }
+
+            template <TSDProxySetSurface Surface>
+            [[nodiscard]] static nanobind::object set_surface_to_python(const void *context, const void *memory)
+            {
+                namespace nb = nanobind;
+                auto     dict = source_dict(memory);
+                nb::list items;
+                for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                {
+                    if (!slot_in_set_surface<Surface>(context, memory, slot)) { continue; }
+                    auto key = dict.key_at_slot(slot);
+                    items.append(key.binding()->ops_ref().to_python(key.data()));
+                }
+                return nb::steal(PyFrozenSet_New(items.ptr()));
+            }
+#endif
+
             template <TSDProxyMapSurface Surface>
             [[nodiscard]] static const void *map_value_at(const void *context, const void *memory, const void *key)
             {
@@ -939,8 +996,10 @@ namespace hgraph
                         const TSDDataView   &source,
                         ValueBuilder         builder,
                         const void          *builder_context,
-                        DateTime        modified_time)
+                        DateTime        modified_time,
+                        TSDProxyChildRefresh child_refresh)
     {
+        child_refresh_ = child_refresh;
         if (source.schema() == nullptr || source.schema()->kind != TSTypeKind::TSD)
         {
             throw std::invalid_argument("TSDProxy requires a TSD source view");
@@ -982,12 +1041,14 @@ namespace hgraph
     void TSDProxy::on_slot_capacity(std::size_t old_capacity, std::size_t new_capacity)
     {
         values_.reserve_to(new_capacity);
+        if (built_times_.size() < new_capacity) { built_times_.resize(new_capacity, MIN_DT); }
         slot_observers_.notify_capacity(old_capacity, new_capacity);
     }
 
     void TSDProxy::on_slot_inserted(std::size_t slot)
     {
         construct_child_at_slot(slot);
+        if (slot < built_times_.size()) { built_times_[slot] = MIN_DT; }
         slot_observers_.notify_insert(slot);
     }
 
@@ -1000,12 +1061,14 @@ namespace hgraph
     void TSDProxy::on_slot_erased(std::size_t slot)
     {
         values_.destroy_at(slot);
+        if (slot < built_times_.size()) { built_times_[slot] = MIN_DT; }
         slot_observers_.notify_erase(slot);
     }
 
     void TSDProxy::on_slots_cleared()
     {
         values_.destroy_all();
+        built_times_.assign(built_times_.size(), MIN_DT);
         slot_observers_.notify_clear();
     }
 
@@ -1021,6 +1084,20 @@ namespace hgraph
             {
                 ensure_child_at_slot(slot, modified_time);
                 touched = true;
+                continue;
+            }
+            // OnChildTick proxies (from-REF): a LIVE slot whose source child
+            // ticked re-runs the builder so links rebind on a retarget. The
+            // proxy only marks itself modified when the child actually
+            // recorded at this time, so same-reference re-publication stays
+            // silent. StructureOnly proxies (to-REF) never rebuild on value
+            // ticks - the materialised identity did not change.
+            if (child_refresh_ == TSDProxyChildRefresh::OnChildTick && dict.slot_live(slot) &&
+                dict.slot_modified(slot) && has_child(slot))
+            {
+                refresh_child_at_slot(slot, modified_time);
+                auto child = TSDataView{element_binding_, values_.value_memory(slot)};
+                if (child.tracking().last_modified_time == modified_time) { touched = true; }
             }
         }
 
@@ -1067,12 +1144,14 @@ namespace hgraph
     const void *TSDProxy::child_at_slot(std::size_t slot) const
     {
         if (!has_child(slot)) { throw std::out_of_range("TSDProxy child slot is not constructed"); }
+        refresh_stale_child(slot);
         return values_.value_memory(slot);
     }
 
     void *TSDProxy::child_at_slot(std::size_t slot)
     {
         if (!has_child(slot)) { throw std::out_of_range("TSDProxy child slot is not constructed"); }
+        refresh_stale_child(slot);
         return values_.value_memory(slot);
     }
 
@@ -1110,6 +1189,7 @@ namespace hgraph
 
         auto dict = source_dict();
         values_.reserve_to(dict.slot_capacity());
+        if (built_times_.size() < dict.slot_capacity()) { built_times_.resize(dict.slot_capacity(), MIN_DT); }
 
         bool changed = force_modified;
         for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
@@ -1156,6 +1236,7 @@ namespace hgraph
         construct_child_at_slot(slot);
         auto target = TSDataView{element_binding_, values_.value_memory(slot)};
         value_builder_(*this, slot, target, source_child_at_slot(slot), modified_time, value_builder_context_);
+        stamp_built(slot, modified_time);
     }
 
     void TSDProxy::refresh_child_at_slot(std::size_t slot, DateTime modified_time)
@@ -1166,6 +1247,39 @@ namespace hgraph
         }
         auto target = TSDataView{element_binding_, values_.value_memory(slot)};
         value_builder_(*this, slot, target, source_child_at_slot(slot), modified_time, value_builder_context_);
+        stamp_built(slot, modified_time);
+    }
+
+    void TSDProxy::stamp_built(std::size_t slot, DateTime modified_time)
+    {
+        // Capacity is managed by the slot-observer callbacks (aligned with
+        // ``values_`` and the source keyset); sync_from_source pre-reserves
+        // for the initial bind, so this only defends against a stale call.
+        if (built_times_.size() <= slot) { built_times_.resize(slot + 1, MIN_DT); }
+        built_times_[slot] = modified_time;
+    }
+
+    void TSDProxy::refresh_stale_child(std::size_t slot) const
+    {
+        if (!has_child(slot) || value_builder_ == nullptr || !source_storage_.valid()) { return; }
+        auto source_child = source_child_at_slot(slot);
+        if (!source_child.valid() || source_child.binding() == nullptr) { return; }
+        const auto source_time = source_child.tracking().last_modified_time;
+        const auto built_time  = slot < built_times_.size() ? built_times_[slot] : MIN_DT;
+        if (source_time == MIN_DT || source_time < built_time) { return; }
+        if (source_time == built_time)
+        {
+            // Same-time writes are indistinguishable by stamp (insert + write
+            // in one mutation share the evaluation time). Re-run the builder
+            // only for a child that never materialised - the builder saw the
+            // pre-write source; materialised children keep run-once semantics.
+            auto child = TSDataView{element_binding_, values_.value_memory(slot)};
+            if (child.has_current_value()) { return; }
+        }
+        // Deliberate interior mutability: derived state catching up with its
+        // source on read (see refresh_stale_child in the header).
+        auto *self = const_cast<TSDProxy *>(this);
+        self->refresh_child_at_slot(slot, source_time);
     }
 
     void TSDProxy::mark_modified(DateTime modified_time)
@@ -1208,7 +1322,8 @@ namespace hgraph
                         const TSDDataView      &source,
                         TSDProxy::ValueBuilder  builder,
                         const void             *builder_context,
-                        DateTime           modified_time)
+                        DateTime modified_time,
+                        TSDProxyChildRefresh child_refresh)
     {
         if (!proxy.valid()) { throw std::invalid_argument("bind_tsd_proxy requires a live proxy view"); }
         if (proxy.schema() == nullptr || proxy.schema()->kind != TSTypeKind::TSD)
@@ -1233,6 +1348,6 @@ namespace hgraph
         }
 
         auto &storage = proxy_storage(const_cast<void *>(proxy.data()));
-        storage.bind(*proxy.binding(), *layout.element_binding, source, builder, builder_context, modified_time);
+        storage.bind(*proxy.binding(), *layout.element_binding, source, builder, builder_context, modified_time, child_refresh);
     }
 }  // namespace hgraph

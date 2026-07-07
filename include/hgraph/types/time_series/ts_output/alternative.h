@@ -30,6 +30,7 @@ namespace hgraph::detail
       public:
         struct ToRefAlternativeState;
         struct RefLinkAlternativeState;
+        struct InteriorFromRefAlternativeState;
 
         TSOutputAlternativeStore() noexcept;
         TSOutputAlternativeStore(const TSOutputAlternativeStore &) = delete;
@@ -83,11 +84,16 @@ namespace hgraph::detail
         [[nodiscard]] TSOutputHandle from_ref_binding(const AlternativeKey &key,
                                                       const TSOutputView &source,
                                                       const TSValueTypeMetaData &requested_schema);
+        [[nodiscard]] TSOutputHandle from_ref_interior_binding(const AlternativeKey &key,
+                                                               const TSOutputView &source,
+                                                               const TSValueTypeMetaData &requested_schema);
 
         std::unordered_map<AlternativeKey, std::unique_ptr<ToRefAlternativeState>, AlternativeKeyHash>
             to_ref_alternatives_{};
         std::unordered_map<AlternativeKey, std::unique_ptr<RefLinkAlternativeState>, AlternativeKeyHash>
             ref_link_alternatives_{};
+        std::unordered_map<AlternativeKey, std::unique_ptr<InteriorFromRefAlternativeState>, AlternativeKeyHash>
+            interior_from_ref_alternatives_{};
     };
 }  // namespace hgraph::detail
 
@@ -103,6 +109,12 @@ namespace std
     struct default_delete<hgraph::detail::TSOutputAlternativeStore::RefLinkAlternativeState>
     {
         void operator()(hgraph::detail::TSOutputAlternativeStore::RefLinkAlternativeState *) noexcept;
+    };
+
+    template<>
+    struct default_delete<hgraph::detail::TSOutputAlternativeStore::InteriorFromRefAlternativeState>
+    {
+        void operator()(hgraph::detail::TSOutputAlternativeStore::InteriorFromRefAlternativeState *) noexcept;
     };
 }  // namespace std
 

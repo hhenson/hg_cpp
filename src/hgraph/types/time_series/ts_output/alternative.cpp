@@ -170,6 +170,107 @@ namespace hgraph::detail
                    requested_schema.kind != TSTypeKind::REF;
         }
 
+        /**
+         * INTERIOR from-REF shapes (time_series.rst, keyed/structural
+         * inverse conversion): the source carries REF positions below the
+         * top level where the requested schema wants the dereferenced
+         * value. ``allow_dict`` distinguishes the keyed recursion (a TSD
+         * element may itself convert) from fixed prefixes (a TSD below a
+         * fixed container is only supported when already reference-free -
+         * such a subtree passes via schema equivalence).
+         */
+        [[nodiscard]] bool is_from_ref_interior_shape(const TSValueTypeMetaData *source_schema,
+                                                      const TSValueTypeMetaData *requested_schema,
+                                                      bool allow_dict);
+
+        [[nodiscard]] bool from_ref_interior_shape_matches_unsupported(const TSValueTypeMetaData *,
+                                                                       const TSValueTypeMetaData *, bool) noexcept
+        {
+            return false;
+        }
+
+        [[nodiscard]] bool from_ref_interior_shape_matches_bundle(const TSValueTypeMetaData *source_schema,
+                                                                  const TSValueTypeMetaData *requested_schema, bool)
+        {
+            if (source_schema->field_count() != requested_schema->field_count()) { return false; }
+            for (std::size_t index = 0; index < requested_schema->field_count(); ++index)
+            {
+                if (!field_name_equal(source_schema->fields()[index], requested_schema->fields()[index]))
+                {
+                    return false;
+                }
+                if (!is_from_ref_interior_shape(source_schema->fields()[index].type,
+                                                requested_schema->fields()[index].type, false))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        [[nodiscard]] bool from_ref_interior_shape_matches_list(const TSValueTypeMetaData *source_schema,
+                                                                const TSValueTypeMetaData *requested_schema, bool)
+        {
+            return source_schema->fixed_size() == requested_schema->fixed_size() &&
+                   requested_schema->fixed_size() != 0 &&
+                   is_from_ref_interior_shape(source_schema->element_ts(), requested_schema->element_ts(), false);
+        }
+
+        [[nodiscard]] bool from_ref_interior_shape_matches_dict(const TSValueTypeMetaData *source_schema,
+                                                                const TSValueTypeMetaData *requested_schema,
+                                                                bool allow_dict)
+        {
+            return allow_dict && source_schema->key_type() == requested_schema->key_type() &&
+                   is_from_ref_interior_shape(source_schema->element_ts(), requested_schema->element_ts(), true);
+        }
+
+        using FromRefInteriorShapeMatchesFn = bool (*)(const TSValueTypeMetaData *, const TSValueTypeMetaData *,
+                                                       bool);
+
+        [[nodiscard]] FromRefInteriorShapeMatchesFn from_ref_interior_shape_matcher_for(TSTypeKind kind) noexcept
+        {
+            static constexpr std::size_t kind_count = ts_kind_index(TSTypeKind::SIGNAL) + 1U;
+            static const std::array<FromRefInteriorShapeMatchesFn, kind_count> table{
+                &from_ref_interior_shape_matches_unsupported,
+                &from_ref_interior_shape_matches_unsupported,
+                &from_ref_interior_shape_matches_dict,
+                &from_ref_interior_shape_matches_list,
+                &from_ref_interior_shape_matches_unsupported,
+                &from_ref_interior_shape_matches_bundle,
+                &from_ref_interior_shape_matches_unsupported,
+                &from_ref_interior_shape_matches_unsupported,
+            };
+
+            const auto index = ts_kind_index(kind);
+            return index < table.size() ? table[index] : &from_ref_interior_shape_matches_unsupported;
+        }
+
+        /** BUILD-TIME: runs once per [source view, requested schema] route
+            probe; the resulting alternative is cached by that key. */
+        [[nodiscard]] bool is_from_ref_interior_shape(const TSValueTypeMetaData *source_schema,
+                                                      const TSValueTypeMetaData *requested_schema,
+                                                      bool allow_dict)
+        {
+            if (source_schema == nullptr || requested_schema == nullptr) { return false; }
+            if (time_series_schema_equivalent(source_schema, requested_schema)) { return true; }
+            if (source_schema->kind == TSTypeKind::REF && requested_schema->kind != TSTypeKind::REF)
+            {
+                return schema_equivalent_after_dereference(source_schema->referenced_ts(), requested_schema);
+            }
+            if (source_schema->kind != requested_schema->kind) { return false; }
+            return from_ref_interior_shape_matcher_for(requested_schema->kind)(source_schema, requested_schema,
+                                                                               allow_dict);
+        }
+
+        [[nodiscard]] bool alternative_route_matches_from_ref_interior(const TSValueTypeMetaData *source_schema,
+                                                                       const TSValueTypeMetaData &requested_schema)
+        {
+            return source_schema != nullptr && source_schema->kind != TSTypeKind::REF &&
+                   requested_schema.kind != TSTypeKind::REF &&
+                   !time_series_schema_equivalent(source_schema, &requested_schema) &&
+                   is_from_ref_interior_shape(source_schema, &requested_schema, true);
+        }
+
         [[nodiscard]] TSOutputView source_child_view(const TSOutputView &parent, const TSDataView &child)
         {
             return TSOutputView{parent.output(), child.borrowed_ref(), parent.evaluation_time()};
@@ -468,6 +569,169 @@ namespace hgraph::detail
 
             from_ref_role_ops_for(endpoint_schema.role()).apply_non_peered_reference(target, endpoint_schema, reference,
                                                                                     modified_time);
+        }
+
+        // ----- interior from-REF (keyed / structural inverse conversion) -----
+
+        struct FromRefBuildContext
+        {
+            const TSOutput *output{nullptr};
+        };
+
+        /**
+         * TSData binding for an interior from-REF alternative. A requested
+         * ``TSD`` whose source element still converts stores a ``TSDProxy``
+         * over the source dictionary (recursively for nested dictionaries);
+         * every other shape is a normal input endpoint tree - TargetLink
+         * leaves at (and whole-subtree links below) the source's REF
+         * positions.
+         */
+        [[nodiscard]] const TSDataBinding &from_ref_interior_binding_for(const TSValueTypeMetaData &requested,
+                                                                         const TSValueTypeMetaData &source)
+        {
+            if (requested.kind == TSTypeKind::TSD && source.kind == TSTypeKind::TSD &&
+                !time_series_schema_equivalent(&source, &requested))
+            {
+                return tsd_proxy_binding_for(
+                    requested, from_ref_interior_binding_for(*requested.element_ts(), *source.element_ts()));
+            }
+            return checked_endpoint_binding(from_ref_endpoint_schema_for(&requested));
+        }
+
+        void build_from_ref_proxy_value(TSDProxy &, std::size_t, const TSDataView &target,
+                                        const TSDataView &source, DateTime modified_time, const void *context);
+
+        void apply_from_ref_interior(const TSDataView          &target,
+                                     const TSValueTypeMetaData &requested,
+                                     const TSOutputView        &source_view,
+                                     DateTime                   modified_time,
+                                     const FromRefBuildContext &build_context);
+
+        using FromRefInteriorApplyFn = void (*)(const TSDataView &, const TSValueTypeMetaData &,
+                                                const TSOutputView &, DateTime, const FromRefBuildContext &);
+
+        void apply_from_ref_interior_unsupported(const TSDataView &, const TSValueTypeMetaData &,
+                                                 const TSOutputView &, DateTime, const FromRefBuildContext &)
+        {
+            throw std::logic_error("TSOutput interior from-REF encountered an unsupported requested schema");
+        }
+
+        void apply_from_ref_interior_dict(const TSDataView &target, const TSValueTypeMetaData &,
+                                          const TSOutputView &source_view, DateTime modified_time,
+                                          const FromRefBuildContext &build_context)
+        {
+            bind_tsd_proxy(target.borrowed_ref(), source_view.data_view().as_dict(), &build_from_ref_proxy_value,
+                           &build_context, modified_time, TSDProxyChildRefresh::OnChildTick);
+        }
+
+        void apply_from_ref_interior_bundle(const TSDataView &target, const TSValueTypeMetaData &requested,
+                                            const TSOutputView &source_view, DateTime modified_time,
+                                            const FromRefBuildContext &build_context)
+        {
+            const auto *source_schema = source_view.data_view().schema();
+            for (std::size_t index = 0; index < requested.field_count(); ++index)
+            {
+                apply_from_ref_interior(endpoint_child_view(target, index), *requested.fields()[index].type,
+                                        output_child_view(source_view, *source_schema, index), modified_time,
+                                        build_context);
+            }
+        }
+
+        void apply_from_ref_interior_list(const TSDataView &target, const TSValueTypeMetaData &requested,
+                                          const TSOutputView &source_view, DateTime modified_time,
+                                          const FromRefBuildContext &build_context)
+        {
+            const auto *source_schema = source_view.data_view().schema();
+            for (std::size_t index = 0; index < requested.fixed_size(); ++index)
+            {
+                apply_from_ref_interior(endpoint_child_view(target, index), *requested.element_ts(),
+                                        output_child_view(source_view, *source_schema, index), modified_time,
+                                        build_context);
+            }
+        }
+
+        [[nodiscard]] FromRefInteriorApplyFn from_ref_interior_applier_for(TSTypeKind kind) noexcept
+        {
+            static constexpr std::size_t kind_count = ts_kind_index(TSTypeKind::SIGNAL) + 1U;
+            static const std::array<FromRefInteriorApplyFn, kind_count> table{
+                &apply_from_ref_interior_unsupported,
+                &apply_from_ref_interior_unsupported,
+                &apply_from_ref_interior_dict,
+                &apply_from_ref_interior_list,
+                &apply_from_ref_interior_unsupported,
+                &apply_from_ref_interior_bundle,
+                &apply_from_ref_interior_unsupported,
+                &apply_from_ref_interior_unsupported,
+            };
+
+            const auto index = ts_kind_index(kind);
+            return index < table.size() ? table[index] : &apply_from_ref_interior_unsupported;
+        }
+
+        /**
+         * Apply one source subtree into the requested-shaped target. REF
+         * positions apply their reference; a subtree already in the requested
+         * shape binds ONE whole-subtree link directly to the source child;
+         * fixed containers recurse; a converting ``TSD`` (re)binds its proxy.
+         *
+         * REFRESH-TIME temperature: this runs when the source reports key
+         * changes or a reference RETARGET (and once per slot at build) - not
+         * on ordinary value ticks, which write through the bound links.
+         */
+        void apply_from_ref_interior(const TSDataView          &target,
+                                     const TSValueTypeMetaData &requested,
+                                     const TSOutputView        &source_view,
+                                     DateTime                   modified_time,
+                                     const FromRefBuildContext &build_context)
+        {
+            const auto *source_schema = source_view.data_view().schema();
+            if (source_schema == nullptr)
+            {
+                throw std::logic_error("TSOutput interior from-REF requires a typed source child");
+            }
+
+            if (source_schema->kind == TSTypeKind::REF)
+            {
+                const auto endpoint = from_ref_endpoint_schema_for(&requested);
+                if (!source_view.data_view().has_current_value())
+                {
+                    unbind_from_ref_data(target, endpoint, modified_time);
+                    return;
+                }
+                const auto &reference = source_view.value().checked_as<TimeSeriesReference>();
+                apply_reference_to_from_ref_data(target, endpoint, reference, modified_time);
+                return;
+            }
+
+            if (time_series_schema_equivalent(source_schema, &requested))
+            {
+                // Reference-free subtree: one link to the source child.
+                apply_output_to_from_ref_data(target, TSEndpointSchema::peered(&requested), source_view,
+                                              modified_time);
+                return;
+            }
+
+            from_ref_interior_applier_for(requested.kind)(target, requested, source_view, modified_time,
+                                                          build_context);
+        }
+
+        void build_from_ref_proxy_value(TSDProxy &, std::size_t, const TSDataView &target,
+                                        const TSDataView &source, DateTime modified_time, const void *context)
+        {
+            const auto *build_context = static_cast<const FromRefBuildContext *>(context);
+            if (build_context == nullptr || build_context->output == nullptr)
+            {
+                throw std::logic_error("TSOutput from-REF proxy value builder requires an output context");
+            }
+            if (!source.valid()) { throw std::logic_error("TSOutput from-REF proxy source child is not live"); }
+            if (target.schema() == nullptr)
+            {
+                throw std::logic_error("TSOutput from-REF proxy target child is not typed");
+            }
+
+            apply_from_ref_interior(target.borrowed_ref(), *target.schema(),
+                                    TSOutputView{build_context->output, source.borrowed_ref(), modified_time},
+                                    modified_time, *build_context);
         }
 
         [[nodiscard]] const TSDataBinding &to_ref_ts_data_binding_for(const TSValueTypeMetaData &schema);
@@ -812,6 +1076,142 @@ namespace hgraph::detail
         }
     };
 
+    struct TSOutputAlternativeStore::InteriorFromRefAlternativeState final
+    {
+        struct SourceNotifier final : Notifiable
+        {
+            explicit SourceNotifier(InteriorFromRefAlternativeState &owner) noexcept
+                : owner{&owner}
+            {
+            }
+
+            void notify(DateTime modified_time) override
+            {
+                if (owner != nullptr) { owner->refresh(modified_time); }
+            }
+
+            InteriorFromRefAlternativeState *owner{nullptr};
+        };
+
+        InteriorFromRefAlternativeState(const TSValueTypeMetaData &requested_schema, const TSOutputView &source)
+            : requested_schema{&requested_schema},
+              data{from_ref_interior_binding_for(requested_schema, *source.schema())},
+              notifier{*this}
+        {
+            rebind(source);
+        }
+
+        InteriorFromRefAlternativeState(const InteriorFromRefAlternativeState &) = delete;
+        InteriorFromRefAlternativeState &operator=(const InteriorFromRefAlternativeState &) = delete;
+
+        ~InteriorFromRefAlternativeState() noexcept
+        {
+            if (!source.bound()) { return; }
+            static_cast<void>(fallback_on_exception(false, [&] {
+                auto view = source.data_view();
+                if (view.valid() && view.tracking().observers.contains(&notifier)) { view.unsubscribe(&notifier); }
+                return true;
+            }));
+        }
+
+        const TSValueTypeMetaData *requested_schema{nullptr};
+        TSData                     data{};
+        TSOutputHandle             source{};
+        SourceNotifier             notifier;
+        FromRefBuildContext        build_context{};
+
+        [[nodiscard]] TSOutputHandle handle(const TSOutput *output) noexcept
+        {
+            return TSOutputHandle{output, data.view()};
+        }
+
+        [[nodiscard]] bool proxy_backed() const noexcept
+        {
+            return requested_schema != nullptr && requested_schema->kind == TSTypeKind::TSD;
+        }
+
+        void rebind(const TSOutputView &new_source)
+        {
+            const auto next_source = new_source.handle();
+            const bool source_changed = !source.same_as(next_source);
+            if (source_changed)
+            {
+                unsubscribe_source();
+                source               = next_source;
+                build_context.output = new_source.output();
+                // A proxy-backed alternative subscribes THROUGH its proxy
+                // (key sync + child refresh); only structural shapes need the
+                // state-level notifier to drive re-application.
+                if (!proxy_backed()) { subscribe_source(); }
+            }
+            const auto modified_time = concrete_reference_time(new_source.evaluation_time());
+            if (proxy_backed())
+            {
+                // (Re)binding the proxy also performs the initial sync.
+                if (source_changed)
+                {
+                    apply_from_ref_interior(data.view(), *requested_schema, source.view(modified_time),
+                                            modified_time, build_context);
+                }
+                return;
+            }
+            refresh(modified_time);
+        }
+
+        void release_subscriptions(DateTime release_time) noexcept
+        {
+            unsubscribe_source();
+            source.reset();
+            build_context.output = nullptr;
+            static_cast<void>(fallback_on_exception(false, [&] {
+                release_links(release_time);
+                return true;
+            }));
+        }
+
+      private:
+        void release_links(DateTime release_time)
+        {
+            auto target = data.view();
+            if (proxy_backed())
+            {
+                // Unbind every materialised element's links while targets
+                // are still alive; the proxy itself unsubscribes in its dtor.
+                auto dict = target.as_dict();
+                for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                {
+                    if (!dict.slot_occupied(slot)) { continue; }
+                    auto child = dict.at_slot(slot);
+                    if (!child.valid() || child.schema() == nullptr) { continue; }
+                    unbind_from_ref_data(child, from_ref_endpoint_schema_for(child.schema()), release_time);
+                }
+                return;
+            }
+            unbind_from_ref_data(target, from_ref_endpoint_schema_for(requested_schema), release_time);
+        }
+
+        void subscribe_source()
+        {
+            if (source.bound()) { source.data_view().subscribe(&notifier); }
+        }
+
+        void unsubscribe_source() noexcept
+        {
+            if (!source.bound()) { return; }
+            static_cast<void>(fallback_on_exception(false, [&] {
+                source.data_view().unsubscribe(&notifier);
+                return true;
+            }));
+        }
+
+        void refresh(DateTime modified_time)
+        {
+            if (modified_time == MIN_DT || requested_schema == nullptr || !source.bound()) { return; }
+            apply_from_ref_interior(data.view(), *requested_schema, source.view(modified_time), modified_time,
+                                    build_context);
+        }
+    };
+
 }  // namespace hgraph::detail
 
 namespace std
@@ -824,6 +1224,12 @@ namespace std
 
     void default_delete<hgraph::detail::TSOutputAlternativeStore::RefLinkAlternativeState>::operator()(
         hgraph::detail::TSOutputAlternativeStore::RefLinkAlternativeState *p) noexcept
+    {
+        delete p;
+    }
+
+    void default_delete<hgraph::detail::TSOutputAlternativeStore::InteriorFromRefAlternativeState>::operator()(
+        hgraph::detail::TSOutputAlternativeStore::InteriorFromRefAlternativeState *p) noexcept
     {
         delete p;
     }
@@ -843,6 +1249,10 @@ namespace hgraph::detail
             if (state != nullptr) { state->release_subscriptions(); }
         }
         for (auto &[key, state] : ref_link_alternatives_)
+        {
+            if (state != nullptr) { state->release_subscriptions(release_time); }
+        }
+        for (auto &[key, state] : interior_from_ref_alternatives_)
         {
             if (state != nullptr) { state->release_subscriptions(release_time); }
         }
@@ -889,9 +1299,10 @@ namespace hgraph::detail
             BindFn                    bind{nullptr};
         };
 
-        static constexpr std::array<AlternativeRoute, 2> routes{{
+        static constexpr std::array<AlternativeRoute, 3> routes{{
             {&alternative_route_matches_to_ref, &TSOutputAlternativeStore::to_ref_binding},
             {&alternative_route_matches_from_ref, &TSOutputAlternativeStore::from_ref_binding},
+            {&alternative_route_matches_from_ref_interior, &TSOutputAlternativeStore::from_ref_interior_binding},
         }};
 
         const auto *source_schema = source.schema();
@@ -966,6 +1377,28 @@ namespace hgraph::detail
             if (it->second->requested_schema != &requested_schema)
             {
                 throw std::logic_error("TSOutput from-REF alternative cache key resolved to the wrong requested schema");
+            }
+            it->second->rebind(source);
+        }
+        return it->second->handle(source.output());
+    }
+
+    TSOutputHandle TSOutputAlternativeStore::from_ref_interior_binding(const AlternativeKey &key,
+                                                                       const TSOutputView &source,
+                                                                       const TSValueTypeMetaData &requested_schema)
+    {
+        auto it = interior_from_ref_alternatives_.find(key);
+        if (it == interior_from_ref_alternatives_.end())
+        {
+            auto state = std::make_unique<InteriorFromRefAlternativeState>(requested_schema, source);
+            it = interior_from_ref_alternatives_.emplace(key, std::move(state)).first;
+        }
+        else
+        {
+            if (it->second->requested_schema != &requested_schema)
+            {
+                throw std::logic_error(
+                    "TSOutput interior from-REF alternative cache key resolved to the wrong requested schema");
             }
             it->second->rebind(source);
         }

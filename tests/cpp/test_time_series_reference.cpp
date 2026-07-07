@@ -825,6 +825,84 @@ TEST_CASE("TimeSeriesReference: from-REF set alternative rebinds target links")
     REQUIRE_FALSE(unbound_set.contains(three.view()));
 }
 
+TEST_CASE("TimeSeriesReference: elementwise from-REF dict alternative follows per-key references")
+{
+    using namespace hgraph;
+    auto       &registry  = TypeRegistry::instance();
+    const auto *int_meta  = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts_int    = registry.ts(int_meta);
+    const auto *ref_ts    = registry.ref(ts_int);
+    const auto *source_schema    = registry.tsd(int_meta, ref_ts);   // TSD[int, REF[TS[int]]]
+    const auto *requested_schema = registry.tsd(int_meta, ts_int);   // TSD[int, TS[int]]
+
+    TSOutput target_a{*ts_int};
+    TSOutput target_b{*ts_int};
+    TSOutput source{*source_schema};
+
+    const auto [t1, t2, t3, t4, t5] = sequential_times<5>();
+    Value key_one{std::int32_t{1}};
+    Value key_two{std::int32_t{2}};
+
+    set_output_value(target_a, 11, t1);
+
+    // key 1 -> ref(target_a)
+    {
+        Value ref_value{TimeSeriesReference{target_a.view(t2)}};
+        auto  data     = source.data_view();
+        auto  dict     = data.as_dict();
+        auto  mutation = dict.begin_mutation(t2);
+        auto  child    = mutation.at(key_one.view());
+        REQUIRE(child.begin_mutation(t2).copy_value_from(ref_value.view()));
+    }
+
+    auto handle       = source.view(t2).binding_for(*requested_schema);
+    auto dereferenced = handle.view(t2);
+    auto dict         = dereferenced.as_dict();
+    REQUIRE(dereferenced.valid());
+    REQUIRE(dereferenced.modified());
+    REQUIRE(dict.size() == 1);
+    REQUIRE(dict.contains(key_one.view()));
+    REQUIRE(dict.at(key_one.view()).value().checked_as<std::int32_t>() == 11);
+
+    // The referenced target ticks: write-through, no proxy involvement.
+    set_output_value(target_a, 12, t3);
+    {
+        auto view = handle.view(t3);
+        auto d    = view.as_dict();
+        REQUIRE(d.at(key_one.view()).value().checked_as<std::int32_t>() == 12);
+        REQUIRE(d.at(key_one.view()).last_modified_time() == t3);
+    }
+
+    // RETARGET key 1 to target_b: the proxy refreshes the LIVE slot.
+    set_output_value(target_b, 22, t3);
+    {
+        Value ref_value{TimeSeriesReference{target_b.view(t4)}};
+        auto  data        = source.data_view();
+        auto  source_dict = data.as_dict();
+        auto  mutation    = source_dict.begin_mutation(t4);
+        auto  child       = mutation.at(key_one.view());
+        REQUIRE(child.begin_mutation(t4).copy_value_from(ref_value.view()));
+    }
+    auto retargeted = handle.view(t4);
+    auto retargeted_dict = retargeted.as_dict();
+    REQUIRE(retargeted.modified());
+    REQUIRE(retargeted_dict.at(key_one.view()).value().checked_as<std::int32_t>() == 22);
+
+    // A NEW key materialises its own link.
+    {
+        Value ref_value{TimeSeriesReference{target_a.view(t5)}};
+        auto  data        = source.data_view();
+        auto  source_dict = data.as_dict();
+        auto  mutation    = source_dict.begin_mutation(t5);
+        auto  child       = mutation.at(key_two.view());
+        REQUIRE(child.begin_mutation(t5).copy_value_from(ref_value.view()));
+    }
+    auto grown = handle.view(t5);
+    auto grown_dict = grown.as_dict();
+    REQUIRE(grown_dict.size() == 2);
+    REQUIRE(grown_dict.at(key_two.view()).value().checked_as<std::int32_t>() == 12);
+}
+
 TEST_CASE("TimeSeriesReference: from-REF dict alternative rebinds target links")
 {
     using namespace hgraph;
