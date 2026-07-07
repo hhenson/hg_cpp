@@ -1034,7 +1034,10 @@ namespace hgraph
             source_storage_ = TSDDataStorageRef{source.base().storage_ref(), TSTypeKind::TSD};
         }
 
-        sync_from_source(modified_time, true);
+        // The initial sync only FORCES a modified mark when the source has
+        // actually ticked - binding over a never-ticked source must not
+        // fabricate an empty first tick for the alternative's consumers.
+        sync_from_source(modified_time, source_view().has_current_value());
         subscribe_source();
     }
 
@@ -1289,8 +1292,18 @@ namespace hgraph
 
     void TSDProxy::record_child_modified(std::size_t slot, DateTime modified_time)
     {
-        (void)modified_time;
         if (!has_child(slot)) { return; }
+        // LAZY delta-window roll: updated bits describe the CURRENT window
+        // only - a record at a new time clears the previous window's bits
+        // (they otherwise over-report the Modified surface forever).
+        if (modified_time != MIN_DT && modified_time != updated_window_)
+        {
+            for (std::size_t index = 0; index < built_times_.size(); ++index)
+            {
+                if (values_.has_slot(index)) { values_.clear_updated(index); }
+            }
+            updated_window_ = modified_time;
+        }
         auto dict = source_dict();
         if (dict.slot_live(slot)) { values_.mark_updated(slot); }
     }

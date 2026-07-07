@@ -536,13 +536,15 @@ namespace hgraph
             const auto bundle  = delta.as_bundle();
             auto       set_out = out.as_set();
             auto       mutation = set_out.begin_mutation(out.evaluation_time());
-            // An explicitly EMPTY tick still VALIDATES the set (hgraph: an
-            // empty first tick makes the TSS valid with the empty value).
-            mutation.touch();
             const auto removed = bundle.field("removed").as_indexed_view();
             for (std::size_t i = 0; i < removed.size(); ++i) { (void)mutation.remove(removed.at(i)); }
             const auto added = bundle.field("added").as_indexed_view();
             for (std::size_t i = 0; i < added.size(); ++i) { (void)mutation.add(added.at(i)); }
+            // Touch LAST: the once-per-time notification rides the FIRST
+            // record and must carry the real changes; the trailing touch
+            // VALIDATES an explicitly-empty tick (hgraph: an empty first
+            // tick makes the set valid with the empty value).
+            mutation.touch();
         }
 
         void apply_delta_tsd(const TSOutputView &out, const ValueView &delta)
@@ -551,7 +553,6 @@ namespace hgraph
             auto       dict_out = out.as_dict();
             auto       mutation = dict_out.begin_mutation(out.evaluation_time());
 
-            mutation.touch();   // the empty-tick validation rule (as for TSS)
             const auto removed = bundle.field("removed").as_indexed_view();
             for (std::size_t i = 0; i < removed.size(); ++i) { (void)mutation.erase(removed.at(i)); }
 
@@ -561,6 +562,7 @@ namespace hgraph
                 auto child = mutation.at(key);
                 apply_delta(TSOutputView{out.output(), child, out.evaluation_time()}, child_delta);
             }
+            mutation.touch();   // LAST - the empty-tick validation rule (see apply_delta_tss)
         }
 
         void apply_delta_tsl(const TSOutputView &out, const ValueView &delta)

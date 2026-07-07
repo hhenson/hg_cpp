@@ -143,6 +143,7 @@ namespace hgraph
         const void                   *value_builder_context_{nullptr};
         ValueSlotStore                values_{};
         std::vector<DateTime>         built_times_{};
+        DateTime                      updated_window_{MIN_DT};   // lazy delta-window roll
         TSDProxyChildRefresh          child_refresh_{TSDProxyChildRefresh::StructureOnly};
         TSDataTracking                tracking_{};
         SlotObserverList              slot_observers_{};

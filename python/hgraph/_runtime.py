@@ -1125,9 +1125,17 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                 # SHORTER dict types a variadic collection - inference per
                 # input applies then.
                 annotation = list(resolution_dict.values())[i]
-            if not isinstance(series, (list, tuple)):
+            import types as _pytypes
+            import typing as _typing
+            scalar_annotation = (
+                (isinstance(annotation, type) and annotation in (bool, int, float, str, bytes))
+                or (isinstance(annotation, (_pytypes.GenericAlias, type(_typing.Tuple[int, ...])))
+                    and _typing.get_origin(annotation) is tuple))
+            if not isinstance(series, (list, tuple)) or scalar_annotation:
                 # hgraph parity: a non-list argument is a plain value (lifted
                 # to const where a TS input is expected, or a scalar param).
+                # A SCALAR-annotated param keeps tuple values verbatim
+                # (keys: tuple[str, ...] is not a series).
                 if isinstance(annotation, _TsExpr):
                     src = w.wire("const", (series,), {}, output_type=annotation.handle)
                     ports.append(WiringPort(src))

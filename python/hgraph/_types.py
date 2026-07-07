@@ -179,6 +179,19 @@ class TSS(metaclass=_TSSMeta):
 
 
 class _TSDMeta(type):
+    @staticmethod
+    def from_ts(*args, **kwargs):
+        """hgraph parity: combine[TSD](keys, *values) / TSD.from_ts(a=..., b=...)
+        wires the combine_tsd operator family (static or ticking key sets)."""
+        from ._runtime import wire
+
+        strict = kwargs.pop("__strict__", None)
+        if kwargs and not args:
+            # the kwargs form: field names are the static key set
+            args = (tuple(kwargs.keys()), *kwargs.values())
+        extra = {} if strict is None else {"__strict__": strict}
+        return wire("combine_tsd", *args, **extra)
+
     def __getitem__(cls, item):
         key, value = item
         try:

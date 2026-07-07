@@ -1884,6 +1884,290 @@ namespace hgraph::stdlib
                 publish_value(static_cast<const TSOutputView &>(out), builder.build());
             }
         };
+        // ----- combine_tsd (hgraph's combine[TSD] family) -----------------
+
+        /** Write ``mapping`` into the owned TSD-of-REF output: apply each
+            pair's reference (same-ref dedup keeps unchanged elements silent),
+            erase keys no longer present. */
+        inline void publish_tsd_refs(const TSOutputView &out,
+                                     const std::vector<std::pair<Value, Value>> &pairs)
+        {
+            auto dict_out = out.data_view().as_dict();
+            auto mutation = dict_out.begin_mutation(out.evaluation_time());
+
+            std::vector<Value> stale;
+            for (auto &&[key, child] : dict_out.items())
+            {
+                bool keep = false;
+                for (const auto &pair : pairs)
+                {
+                    if (pair.first.view().equals(key)) { keep = true; break; }
+                }
+                if (!keep) { stale.emplace_back(key); }
+            }
+            for (const Value &key : stale) { (void)mutation.erase(key.view()); }
+
+            for (const auto &[key, reference] : pairs)
+            {
+                auto element = mutation.at(key.view());
+                // SAME-REFERENCE dedup (the getitem_ lesson): re-applying an
+                // unchanged reference must not record modified.
+                if (element.has_current_value() &&
+                    element.value().checked_as<TimeSeriesReference>() ==
+                        reference.view().checked_as<TimeSeriesReference>())
+                {
+                    continue;
+                }
+                auto element_mutation =
+                    TSOutputView{out.output(), element, out.evaluation_time()}.begin_mutation(out.evaluation_time());
+                static_cast<void>(element_mutation.move_value_from(Value{reference.view()}));
+            }
+            // Touch LAST: the once-per-time notification rides the FIRST
+            // record - it must carry the real slot changes (derived
+            // structures such as the from-REF proxy sync on it); the trailing
+            // touch only validates an otherwise-empty tick.
+            mutation.touch();
+        }
+
+        /** combine_tsd(keys TSL[TS[K]], values TSL[REF[V]]): zip valid key
+            elements to value references; keys vanished from the zip erase
+            (hgraph's combine_tsd_from_tsl_and_tsl). */
+        struct combine_tsd_tsls
+        {
+            static constexpr auto name = "combine_tsd_tsls";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *keys   = resolution.find_ts("A");
+                const auto *values = resolution.find_ts("B");
+                return keys != nullptr && values != nullptr && keys->kind == TSTypeKind::TSL &&
+                       values->kind == TSTypeKind::TSL && keys->fixed_size() == values->fixed_size() &&
+                       keys->fixed_size() != 0 && keys->element_ts() != nullptr &&
+                       keys->element_ts()->kind == TSTypeKind::TS;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *keys   = resolution.find_ts("A");
+                const auto *values = resolution.find_ts("B");
+                if (keys == nullptr || values == nullptr || keys->kind != TSTypeKind::TSL ||
+                    values->kind != TSTypeKind::TSL)
+                {
+                    return;
+                }
+                auto       &registry = TypeRegistry::instance();
+                const auto *element  = registry.dereference(values->element_ts());
+                resolution.bind_ts("O", registry.tsd(keys->element_ts()->value_schema, registry.ref(element)));
+            }
+
+            static auto defaults() { return std::tuple{arg<"__strict__">(Bool{true})}; }
+
+            static void eval(In<"keys", TsVar<"A">, InputValidity::Unchecked> keys,
+                             In<"values", TsVar<"B">, InputValidity::Unchecked> values,
+                             Scalar<"__strict__", Bool> strict, Out<TsVar<"O">> out)
+            {
+                const auto size = keys.base().schema()->fixed_size();
+                std::vector<std::pair<Value, Value>> pairs;
+                pairs.reserve(size);
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    auto key_child  = keys.base().indexed_child_at(index);
+                    auto item_child = values.base().indexed_child_at(index);
+                    if (!key_child.valid() || !item_child.valid())
+                    {
+                        if (strict.value()) { return; }   // strict: wait for the full zip
+                        continue;
+                    }
+                    pairs.emplace_back(Value{key_child.value()}, Value{item_child.reference()});
+                }
+                publish_tsd_refs(static_cast<const TSOutputView &>(out), pairs);
+            }
+        };
+
+        /** combine_tsd(keys tuple scalar, values TSL[REF[V]]): the static
+            key set (hgraph's combine_tsd_from_tuple_and_tsl; the TSD.from_ts
+            shape - the variadic values collect through the graph overload). */
+        struct combine_tsd_tuple_values
+        {
+            static constexpr auto name = "combine_tsd_tuple_values";
+
+            [[nodiscard]] static const ValueTypeMetaData *keys_meta(OperatorCallContext context)
+            {
+                const WiringArg *arg = context.scalar("keys");
+                return arg != nullptr ? arg->scalar_value.schema() : nullptr;
+            }
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+            {
+                const auto *values = resolution.find_ts("B");
+                const auto *keys   = keys_meta(context);
+                return values != nullptr && values->kind == TSTypeKind::TSL && values->fixed_size() != 0 &&
+                       keys != nullptr && keys->kind == ValueTypeKind::List;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *values = resolution.find_ts("B");
+                const auto *keys   = keys_meta(context);
+                if (values == nullptr || values->kind != TSTypeKind::TSL || keys == nullptr) { return; }
+                auto       &registry = TypeRegistry::instance();
+                const auto *element  = registry.dereference(values->element_ts());
+                resolution.bind_ts("O", registry.tsd(keys->element_type, registry.ref(element)));
+            }
+
+            static auto defaults() { return std::tuple{arg<"__strict__">(Bool{true})}; }
+
+            static void eval(Scalar<"keys", ScalarVar<"KS">> keys,
+                             In<"values", TsVar<"B">, InputValidity::Unchecked> values,
+                             Scalar<"__strict__", Bool> strict, Out<TsVar<"O">> out)
+            {
+                auto       key_list = keys.value().as_indexed_view();
+                const auto size     = values.base().schema()->fixed_size();
+                if (key_list.size() != size)
+                {
+                    throw std::invalid_argument("combine_tsd: keys and values must have the same length");
+                }
+                std::vector<std::pair<Value, Value>> pairs;
+                pairs.reserve(size);
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    auto item_child = values.base().indexed_child_at(index);
+                    if (!item_child.valid())
+                    {
+                        if (strict.value()) { return; }
+                        continue;
+                    }
+                    pairs.emplace_back(Value{key_list.at(index)}, Value{item_child.reference()});
+                }
+                publish_tsd_refs(static_cast<const TSOutputView &>(out), pairs);
+            }
+        };
+
+        /** The VARIADIC calling shape combine_tsd(keys_tuple, ts1, ts2, ...):
+            collect the element ports into a structural TSL (the race collect
+            pattern) and re-dispatch onto combine_tsd_tuple_values. */
+        struct combine_tsd_variadic
+        {
+            static constexpr auto name = "combine_tsd_variadic";
+
+            static auto defaults() { return std::tuple{arg<"__strict__">(Bool{true})}; }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (resolution.find_ts("__out__") != nullptr) { return; }
+                if (context.args.size() < 2 || context.args[0].kind != WiringArg::Kind::Scalar) { return; }
+                const auto *keys = context.args[0].scalar_value.schema();
+                if (keys == nullptr || keys->kind != ValueTypeKind::List) { return; }
+                // The VarIn tail normalises LAST (after fixed params + the
+                // injected __strict__ default): the first VALUE port is the
+                // first TimeSeries argument from the back-half.
+                const WiringArg *first_value = nullptr;
+                for (const WiringArg &arg : context.args.subspan(1))
+                {
+                    if (arg.kind == WiringArg::Kind::TimeSeries) { first_value = &arg; break; }
+                }
+                if (first_value == nullptr) { return; }
+                auto       &registry = TypeRegistry::instance();
+                const auto *element  = registry.dereference(first_value->port.schema);
+                if (element == nullptr) { return; }
+                resolution.bind_ts("__out__", registry.tsd(keys->element_type, registry.ref(element)));
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"keys", ScalarVar<"KS">> keys,
+                                         VarIn<"values", TsVar<"V">> values, Scalar<"__strict__", Bool> strict)
+            {
+                if (values.empty()) { throw std::invalid_argument("combine_tsd requires at least one value"); }
+
+                auto       &registry   = TypeRegistry::instance();
+                const auto *target     = registry.dereference(values[0].schema);
+                const auto *ref_schema = registry.ref(target);
+                std::vector<WiringPortRef> children;
+                children.reserve(values.size());
+                for (const WiringPortRef &port : values)
+                {
+                    children.push_back(graph_wiring_detail::adapt_source_for_input(w, ref_schema, port));
+                }
+                WiringPortRef packed = WiringPortRef::structural_source(registry.tsl(ref_schema, values.size()),
+                                                                        std::move(children));
+
+                std::array<WiringArg, 3> args{};
+                args[0].kind         = WiringArg::Kind::Scalar;
+                args[0].scalar_value = Value{keys.value()};
+                args[0].scalar_meta  = args[0].scalar_value.schema();
+                args[1].kind         = WiringArg::Kind::TimeSeries;
+                args[1].port         = packed;
+                args[2].kind         = WiringArg::Kind::Scalar;
+                args[2].scalar_value = Value{strict.value()};
+                args[2].scalar_meta  = args[2].scalar_value.schema();
+                args[2].name         = "__strict__";
+                auto result = wire_operator(w, "combine_tsd", {args.data(), args.size()}, true);
+                return result.output.erased();
+            }
+        };
+
+        /** combine_tsd(keys TS[tuple[K,...]], values TS[tuple[V,...]]):
+            VALUE elements diffed against own output (hgraph's
+            combine_tsd_from_tuple_and_tuple). */
+        struct combine_tsd_tuples
+        {
+            static constexpr auto name = "combine_tsd_tuples";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
+                const auto *values = ts_scalar_meta(resolution.find_ts("B"));
+                return keys != nullptr && values != nullptr && keys->kind == ValueTypeKind::List &&
+                       values->kind == ValueTypeKind::List;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
+                const auto *values = ts_scalar_meta(resolution.find_ts("B"));
+                if (keys == nullptr || values == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                resolution.bind_ts("O", registry.tsd(keys->element_type, registry.ts(values->element_type)));
+            }
+
+            static void eval(In<"keys", TsVar<"A">> keys, In<"values", TsVar<"B">> values, Out<TsVar<"O">> out)
+            {
+                auto key_list  = keys.base().value().as_indexed_view();
+                auto item_list = values.base().value().as_indexed_view();
+                if (key_list.size() != item_list.size())
+                {
+                    throw std::invalid_argument("combine_tsd: keys and values must have the same length");
+                }
+
+                const auto &erased   = static_cast<const TSOutputView &>(out);
+                auto        dict_out = erased.data_view().as_dict();
+                auto        mutation = dict_out.begin_mutation(erased.evaluation_time());
+
+                std::vector<Value> stale;
+                for (auto &&[key, child] : dict_out.items())
+                {
+                    bool keep = false;
+                    for (std::size_t index = 0; index < key_list.size(); ++index)
+                    {
+                        if (key_list.at(index).equals(key)) { keep = true; break; }
+                    }
+                    if (!keep) { stale.emplace_back(key); }
+                }
+                for (const Value &key : stale) { (void)mutation.erase(key.view()); }
+
+                for (std::size_t index = 0; index < key_list.size(); ++index)
+                {
+                    auto element = mutation.at(key_list.at(index));
+                    auto element_mutation = TSOutputView{erased.output(), element, erased.evaluation_time()}
+                                                .begin_mutation(erased.evaluation_time());
+                    static_cast<void>(element_mutation.copy_value_from(item_list.at(index)));
+                }
+                mutation.touch();   // LAST (see publish_tsd_refs)
+            }
+        };
+
         /** combine(orig, delta) over BUNDLE scalars: recursive right-over-
             left merge honouring FIELD VALIDITY - delta's UNSET fields keep
             the original (hgraph's combine_compound_scalars; C++-first
