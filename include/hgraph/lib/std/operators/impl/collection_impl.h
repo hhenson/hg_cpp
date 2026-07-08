@@ -3282,24 +3282,28 @@ namespace hgraph::stdlib
             value from field ports by NAME - valid inputs set their fields,
             the rest stay UNSET (CS IS a Bundle value; py from_ts wires a
             structural TSB into this node). */
+        template <bool Strict>
         struct combine_cs_from_fields
         {
-            static constexpr auto name = "combine_cs_from_fields";
+            static constexpr auto name = Strict ? "combine_cs_from_fields" : "combine_cs_from_fields_lenient";
 
-            static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Out<TsVar<"__out__">> out)
+            static void eval_impl(const TSInputView &fields, const TSOutputView &erased)
             {
-                const auto &erased = static_cast<const TSOutputView &>(out);
                 const auto *target = erased.schema()->value_schema;
                 BundleBuilder builder{*ValuePlanFactory::instance().binding_for(target)};
 
-                const TSInputView &fields = ts;
                 const auto *input_schema = fields.schema();
                 for (std::size_t index = 0; index < input_schema->field_count(); ++index)
                 {
                     const char *field_name = input_schema->fields()[index].name;
                     if (field_name == nullptr) { continue; }
                     auto child = fields.indexed_child_at(index);
-                    if (!child.valid()) { continue; }
+                    if constexpr (Strict)
+                    {
+                        // hgraph default: EVERY supplied field must be valid.
+                        if (!child.valid()) { return; }
+                    }
+                    else if (!child.valid()) { continue; }
                     for (std::size_t target_index = 0; target_index < target->field_count; ++target_index)
                     {
                         if (target->fields[target_index].name != nullptr &&
@@ -3314,6 +3318,93 @@ namespace hgraph::stdlib
                 if (erased.data_view().has_current_value() && erased.value().equals(bundle.view())) { return; }
                 auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
                 static_cast<void>(mutation.move_value_from(std::move(bundle)));
+            }
+
+            static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Out<TsVar<"__out__">> out)
+                requires Strict
+            {
+                eval_impl(ts, static_cast<const TSOutputView &>(out));
+            }
+
+            static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                             Scalar<"__strict__", Bool>,
+                             Out<TsVar<"__out__">> out)
+                requires (!Strict)
+            {
+                eval_impl(ts, static_cast<const TSOutputView &>(out));
+            }
+        };
+
+        /** convert[TS[CS]](tsb): the whole-bundle VALUE of a TSB (strict:
+            every field valid; None until then - hgraph parity). */
+        struct convert_tsb_to_cs_impl
+        {
+            static constexpr auto name = "convert_tsb_to_cs";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+            {
+                const auto *out = operator_impl_detail::time_series_schema_at(context, 0);
+                const auto *requested = resolution.find_ts("__out__");
+                if (out == nullptr || out->kind != TSTypeKind::TSB || requested == nullptr ||
+                    requested->kind != TSTypeKind::TS)
+                {
+                    return false;
+                }
+                const auto *bundle_value = requested->value_schema;
+                return bundle_value != nullptr && bundle_value->kind == ValueTypeKind::Bundle;
+            }
+
+            static void eval(In<"ts", TsVar<"S">, InputValidity::AllValid> ts, Out<TsVar<"__out__">> out)
+            {
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                const auto  value  = ts.base().value();
+                if (erased.data_view().has_current_value() && erased.value().equals(value)) { return; }
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.copy_value_from(value));
+            }
+        };
+
+        /** The lenient (__strict__=False) TSB->CS variant: partial fields
+            emit with UNSET holes. */
+        struct convert_tsb_to_cs_lenient_impl
+        {
+            static constexpr auto name = "convert_tsb_to_cs_lenient";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+            {
+                return convert_tsb_to_cs_impl::requires_(resolution, context);
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Scalar<"__strict__", Bool>, Out<TsVar<"__out__">> out)
+            {
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                const auto  value  = ts.base().value();
+                if (erased.data_view().has_current_value() && erased.value().equals(value)) { return; }
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.copy_value_from(value));
+            }
+        };
+
+        /** convert[TSB](ts_cs): distribute a whole-bundle VALUE onto the TSB
+            output's fields. */
+        struct convert_cs_to_tsb_impl
+        {
+            static constexpr auto name = "convert_cs_to_tsb";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+            {
+                const auto *requested = resolution.find_ts("__out__");
+                const auto *in        = operator_impl_detail::time_series_schema_at(context, 0);
+                return requested != nullptr && requested->kind == TSTypeKind::TSB && in != nullptr &&
+                       in->kind == TSTypeKind::TS && in->value_schema != nullptr &&
+                       in->value_schema->kind == ValueTypeKind::Bundle;
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+            {
+                const auto &erased  = static_cast<const TSOutputView &>(out);
+                auto        mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.copy_value_from(ts.base().value()));
             }
         };
 

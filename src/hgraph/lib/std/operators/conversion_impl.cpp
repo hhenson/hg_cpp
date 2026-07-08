@@ -1,3 +1,4 @@
+#include <hgraph/lib/std/operators/impl/collection_impl.h>
 #include <hgraph/lib/std/operators/impl/conversion_impl.h>
 
 namespace hgraph::stdlib
@@ -36,6 +37,9 @@ namespace hgraph::stdlib
         register_overload<convert, convert_map_to_tsd_impl>();
         register_overload<convert, convert_kv_to_map_impl>();
         register_overload<convert, convert_kv_to_tsd_impl>();
+        register_overload<convert, collection_impl_detail::convert_tsb_to_cs_impl>();
+        register_overload<convert, collection_impl_detail::convert_tsb_to_cs_lenient_impl>();
+        register_overload<convert, collection_impl_detail::convert_cs_to_tsb_impl>();
         register_overload<combine, combine_date_impl>();
         register_overload<combine, combine_timedelta_impl<true>>();
         register_overload<combine, combine_timedelta_impl<false>>();

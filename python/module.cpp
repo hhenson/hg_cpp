@@ -1277,6 +1277,20 @@ NB_MODULE(_hgraph, m)
     m.def("vt_element", [](PyValueType v) { return PyValueType{v.meta->element_type}; });
     m.def("vt_key", [](PyValueType v) { return PyValueType{v.meta->key_type}; });
     m.def("tsd_key_vt", [](PyTsType t) { return PyValueType{t.meta->key_type()}; });
+    m.def("tsb_value_vt", [](PyTsType t) { return PyValueType{t.meta->value_schema}; });
+    m.def("tsb_for_bundle", [](PyValueType v) {
+        // The named TSB whose fields lift a BUNDLE value's fields to TS
+        // (CS -> TSB conversion targets).
+        auto &registry = TypeRegistry::instance();
+        std::vector<std::pair<std::string, const TSValueTypeMetaData *>> entries;
+        entries.reserve(v.meta->field_count);
+        for (std::size_t index = 0; index < v.meta->field_count; ++index)
+        {
+            entries.emplace_back(std::string{v.meta->fields[index].name},
+                                 registry.ts(v.meta->fields[index].type));
+        }
+        return PyTsType{registry.tsb(std::string{v.meta->name()}, entries)};
+    });
     m.def("tsd_value_ts", [](PyTsType t) { return PyTsType{t.meta->element_ts()}; });
     m.def("tss", [](PyValueType v) { return PyTsType{TypeRegistry::instance().tss(v.meta)}; });
     m.def("tsd", [](PyValueType k, PyTsType v) { return PyTsType{TypeRegistry::instance().tsd(k.meta, v.meta)}; });

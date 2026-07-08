@@ -26,7 +26,8 @@ namespace hgraph::stdlib
         register_overload<uncollapse_keys, collection_impl_detail::uncollapse_keys_map_scalar>();
         register_overload<uncollapse_keys, collection_impl_detail::uncollapse_keys_tsd>();
         register_overload<combine, collection_impl_detail::combine_bundles_impl>();
-        register_overload<combine_cs, collection_impl_detail::combine_cs_from_fields>();
+        register_overload<combine_cs, collection_impl_detail::combine_cs_from_fields<true>>();
+        register_overload<combine_cs, collection_impl_detail::combine_cs_from_fields<false>>();
         register_overload<mul_, collection_impl_detail::mul_tuple_int>();
         register_overload<getitem_, collection_impl_detail::getitem_ts_list>();
         register_overload<getitem_, collection_impl_detail::getitem_ts_fixed_tuple>();

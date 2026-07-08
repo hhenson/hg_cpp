@@ -473,6 +473,12 @@ class _Convert:
                 if _hgraph.vt_kind(vt) in (3, 4):
                     vt = _hgraph.vt_element(vt)
                 return wrap(_hgraph.ts(_hgraph.set_vt(vt)), "TS[set[inferred]]")
+        if label.startswith("TSB"):
+            if in_kind == 0 and _hgraph.vt_kind(_hgraph.ts_value_vt(handle)) == 2:   # Bundle value
+                return wrap(_hgraph.tsb_for_bundle(_hgraph.ts_value_vt(handle)), "TSB[inferred]")
+        if label.startswith("TS[CompoundScalar") or "CompoundScalar'>]" in label:
+            if in_kind == 5:   # TSB -> its whole-bundle VALUE
+                return wrap(_hgraph.ts(_hgraph.tsb_value_vt(handle)), "TS[cs[inferred]]")
         if label.startswith("TS[Mapping") or label.startswith("TS[dict"):
             if in_kind == 2:
                 k = _hgraph.tsd_key_vt(handle)

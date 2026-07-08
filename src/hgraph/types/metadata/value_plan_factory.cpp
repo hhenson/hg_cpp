@@ -402,6 +402,9 @@ namespace hgraph
                     // validity, core_concepts.rst) - absent = UNSET.
                     if (!map.contains(key)) { continue; }
                     nb::object value = map[key];
+                    // None = UNSET (field validity - the same convention as
+                    // the attribute form; eval_node bundles tick partially).
+                    if (value.is_none()) { continue; }
                     auto      *child = static_cast<std::byte *>(memory) + state->offsets[index];
                     assign_child_from_python(*state->child_bindings[index], child, value, "Bundle value");
                     composite_mark_field(state, memory, index, true);

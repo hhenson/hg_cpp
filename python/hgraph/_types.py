@@ -53,6 +53,8 @@ def _value_type(scalar):
     if name is None and isinstance(scalar, type):
         from ._compat import CompoundScalar
 
+        if scalar is CompoundScalar:
+            raise _GenericType("CompoundScalar")   # base: resolve from wiring
         if issubclass(scalar, CompoundScalar) and scalar is not CompoundScalar:
             # C++-first ruling (2026-07-06): a CompoundScalar IS a C++
             # Bundle value - the schema maps to a named bundle schema.
@@ -122,14 +124,26 @@ class _TsExpr:
                         call["__strict__"] = False
                 return _wire("combine", output_type=self, **call)
 
+        strict_cs = kwargs.pop("__strict__", True)
         if (kwargs and not ports and getattr(self.handle, "kind", None) == 0
                 and self.handle.value_kind == 2 and not getattr(self, "_json", False)):
             # combine[TS[CompoundScalar]](field=...): a structural TSB of the
             # provided fields feeds the erased combine_cs node (CS IS a
             # Bundle value; missing fields stay UNSET). Plain values
             # const-lift at their inferred types.
+            call = dict(kwargs)
+            cs_class = getattr(self, "_cs_class", None)
+            if cs_class is not None:
+                # hgraph parity: UNSUPPLIED fields take their dataclass
+                # defaults (supplied-but-invalid stays None in non-strict).
+                import dataclasses
+
+                for field in dataclasses.fields(cs_class):
+                    if (field.name not in call and field.default is not dataclasses.MISSING
+                            and field.default is not None):
+                        call[field.name] = field.default
             lifted = {}
-            for name, value in kwargs.items():
+            for name, value in call.items():
                 unwrapped = _unwrap(value)
                 if not isinstance(unwrapped, _m.Port):
                     from ._runtime import _infer_ts_type
@@ -142,6 +156,8 @@ class _TsExpr:
             fields = [(k, _unwrap(v).ts_type) for k, v in lifted.items()]
             tsb_type = _m.un_named_tsb_type(fields)
             structural = WiringPort(_m.tsb_port(tsb_type, {k: _unwrap(v) for k, v in lifted.items()}))
+            if strict_cs is False:
+                return wire("combine_cs", structural, __strict__=False, output_type=self)
             return wire("combine_cs", structural, output_type=self)
 
         if getattr(self, "_json", False):
@@ -185,7 +201,7 @@ class _TsExpr:
 
     """A resolved time-series type: wraps the C++ TsType handle."""
 
-    __slots__ = ("handle", "_label", "is_ref", "_bare_map", "_json")
+    __slots__ = ("handle", "_label", "is_ref", "_bare_map", "_json", "_cs_class")
 
     def __init__(self, handle, label):
         self.handle = handle
@@ -212,6 +228,10 @@ class _TSMeta(type):
             expr = _TsExpr(_hgraph.ts(_value_type(scalar)), f"TS[{getattr(scalar, '__name__', scalar)}]")
         except _GenericType:
             return _GenericTsExpr(f"TS[{scalar!r}]")
+        from ._compat import CompoundScalar as _CS
+
+        if isinstance(scalar, type) and issubclass(scalar, _CS):
+            expr._cs_class = scalar   # combine fills dataclass defaults at wiring
         # BARE frozendict (combine[TS[frozendict]](...)): the key/value
         # types resolve from the wired inputs.
         from frozendict import frozendict as _frozendict
@@ -327,6 +347,15 @@ class _TSBMeta(type):
         annotations = {}
         for klass in reversed(schema.__mro__):
             annotations.update(getattr(klass, "__annotations__", {}))
+        from ._compat import CompoundScalar as _CS
+
+        is_cs = isinstance(schema, type) and issubclass(schema, _CS)
+        if is_cs:
+            # TSB[CompoundScalar]: scalar annotations LIFT to TS fields; the
+            # bundle keeps the CS NAME (and registers the class) so its
+            # value side IS the CS bundle and reads back as the dataclass.
+            _value_type(schema)
+            annotations = {name: TS[tp] for name, tp in annotations.items()}
         fields = [(name, _resolve(ts)) for name, ts in annotations.items()]
         # The registry's TSB namespace is GLOBAL; python classes are scoped
         # (tests re-define same-named local schemas freely). Qualify with the
@@ -334,7 +363,7 @@ class _TSBMeta(type):
         # __name__ stays for stable top-level classes (nicer diagnostics).
         name = schema.__name__
         qualname = getattr(schema, "__qualname__", name)
-        if "<locals>" in qualname:
+        if "<locals>" in qualname and not is_cs:
             name = f"{schema.__module__}.{qualname}"
         return _TsExpr(_hgraph.tsb(name, fields), f"TSB[{schema.__name__}]")
 
