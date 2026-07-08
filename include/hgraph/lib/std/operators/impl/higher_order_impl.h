@@ -458,6 +458,11 @@ namespace hgraph::stdlib
 
             const std::array<const TSValueTypeMetaData *, 2> schemas{element, element};
             CompiledSubGraph combiner_graph = combiner.compile({schemas.data(), schemas.size()});
+            if (!combiner_graph.captured_inputs.empty())
+            {
+                throw std::invalid_argument(
+                    "reduce: the combiner captured outer ports - outer-port capture is only supported by map_ yet");
+            }
             if (combiner_graph.output_schema == nullptr || !combiner_graph.output_binding.has_value())
             {
                 throw std::invalid_argument("reduce: the combiner must produce an output");
@@ -703,6 +708,11 @@ namespace hgraph::stdlib
             for (const std::size_t slot : bound_slots.ordered) { schemas.push_back(slot_schemas[slot]); }
 
             CompiledSubGraph compiled = branch.compile({schemas.data(), schemas.size()});
+            if (!compiled.captured_inputs.empty())
+            {
+                throw std::invalid_argument(
+                    "switch_: a branch captured outer ports - outer-port capture is only supported by map_ yet");
+            }
 
             if (compiled.output_schema == nullptr)
             {
@@ -1019,7 +1029,8 @@ namespace hgraph::stdlib
         [[nodiscard]] inline MapNodeSpec compile_map_child(const WiredFn &func,
                                                            std::span<const TSValueTypeMetaData *const> ts_schemas,
                                                            std::span<const std::uint8_t> arg_tags,
-                                                           const TSValueTypeMetaData *&output_schema)
+                                                           const TSValueTypeMetaData *&output_schema,
+                                                           std::vector<WiringPortRef> *captured = nullptr)
         {
             if (!func.valid())
             {
@@ -1114,6 +1125,24 @@ namespace hgraph::stdlib
                     spec.args.push_back(MapArgSource{.kind = MapArgSourceKind::OuterInput, .outer_index = i});
                 }
             }
+            // Outer-port CAPTURES (nested_graphs.rst): the compose body
+            // referenced enclosing-wiring ports. Each becomes an extra
+            // pass-through (broadcast) input appended after the declared
+            // arguments; the caller wires the captured ports.
+            if (!compiled.captured_inputs.empty())
+            {
+                if (captured == nullptr)
+                {
+                    throw std::invalid_argument(
+                        "the child graph captured outer ports - outer-port capture is only supported by map_ yet");
+                }
+                for (std::size_t i = 0; i < compiled.captured_inputs.size(); ++i)
+                {
+                    spec.args.push_back(
+                        MapArgSource{.kind = MapArgSourceKind::OuterInput, .outer_index = ts_schemas.size() + i});
+                }
+                *captured = std::move(compiled.captured_inputs);
+            }
             return spec;
         }
 
@@ -1124,7 +1153,8 @@ namespace hgraph::stdlib
         {
             return fallback_on_exception<std::optional<const TSValueTypeMetaData *>>(std::nullopt, [&] {
                 const TSValueTypeMetaData *output_schema = nullptr;
-                (void)compile_map_child(func, ts_schemas, arg_tags, output_schema);
+                std::vector<WiringPortRef> captured;
+                (void)compile_map_child(func, ts_schemas, arg_tags, output_schema, &captured);
                 if (output_schema == nullptr) { return std::optional<const TSValueTypeMetaData *>{}; }
                 return std::optional<const TSValueTypeMetaData *>{output_schema};
             });
@@ -1151,8 +1181,18 @@ namespace hgraph::stdlib
             }
 
             const TSValueTypeMetaData *output_schema = nullptr;
+            std::vector<WiringPortRef> captured;
             MapNodeSpec spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
-                                                 {arg_tags.data(), arg_tags.size()}, output_schema);
+                                                 {arg_tags.data(), arg_tags.size()}, output_schema, &captured);
+            // Captured outer ports join the node's inputs as PASS-THROUGH
+            // broadcasts after the declared arguments (spec.args already
+            // references these positions).
+            for (WiringPortRef &outer : captured)
+            {
+                ts_schemas.push_back(outer.schema);
+                arg_tags.push_back(static_cast<std::uint8_t>(WiringPortRef::ArgTag::PassThrough));
+                ordered.push_back(std::move(outer));
+            }
 
             // The lifecycle key set: an explicit ``__keys__`` when supplied,
             // else derived from the multiplexed dicts — ``keys_(tsd)`` for

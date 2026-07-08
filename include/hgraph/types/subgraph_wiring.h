@@ -39,6 +39,14 @@ namespace hgraph
         /** Boundary time-series input schemas, in compose ``Port`` parameter order. */
         std::vector<const TSValueTypeMetaData *> input_schemas{};
         const TSValueTypeMetaData               *output_schema{nullptr};
+        /**
+         * Outer-port CAPTURES (nested_graphs.rst): OUTER-wiring ports the
+         * compose body referenced (closure capture). One per boundary index
+         * appended after the declared inputs - the caller binds them
+         * (map_: pass-through broadcast args). Consumers without capture
+         * support must reject a non-empty list.
+         */
+        std::vector<WiringPortRef> captured_inputs{};
     };
 
     namespace subgraph_wiring_detail

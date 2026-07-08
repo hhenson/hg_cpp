@@ -80,6 +80,24 @@ delta window structurally but never mark the inner modified surface -
 the nested map-in-map case (TSD elements that are themselves TSDs,
 enabled by the storage-stability ruling) depends on it.
 
+**Outer-port capture (auto-import).** A sub-graph compose body - most
+commonly a Python lambda handed to ``map_``/``switch_`` - may reference
+ports of the ENCLOSING wiring (closure capture: ``map_(lambda x: x + c,
+ts)`` where ``c`` is an outer port). During ``finish_subgraph``, a
+peered source whose producing node does not belong to the sub-graph's
+wiring is a CAPTURE: it converts to a fresh boundary argument appended
+after the declared inputs (deduplicated by source identity), and the
+compile result reports the captured outer ports in
+``CompiledSubGraph::captured_inputs`` (parallel to the appended
+boundary indices). The CALLER binds them: ``map_`` appends each
+captured port to its argument list as a pass-through (broadcast,
+never multiplexed) input. Consumers that do not yet support captures
+reject a compile whose ``captured_inputs`` is non-empty rather than
+mis-bind. A plain ``finish`` (root graphs) reports a foreign source as
+an error - captures only make sense across a sub-graph boundary.
+Captured producers contribute no rank edge inside the child (they rank
+in the OUTER graph; the child sees them as boundary inputs).
+
 **Structural boundary args.** An outer structural initializer
 (``nested_<G>(w, {a, b})``, or named TSB form) is mirrored into the child
 compile as a structural source whose **leaves are boundary refs**. The child

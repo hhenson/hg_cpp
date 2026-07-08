@@ -257,11 +257,14 @@ namespace hgraph
             return builder;
         }
 
-        void collect_producers(const WiringPortRef &source, std::vector<const WiringInstance *> &producers)
+        void collect_producers(const WiringPortRef &source, std::vector<const WiringInstance *> &producers,
+                               const std::unordered_set<const WiringInstance *> &owned)
         {
             if (source.is_peered_source())
             {
-                producers.push_back(source.peered_node());
+                // Foreign producers (outer captures) rank in the OUTER graph;
+                // inside the child they behave as boundary inputs.
+                if (owned.contains(source.peered_node())) { producers.push_back(source.peered_node()); }
                 return;
             }
             if (source.is_null_source() || source.is_boundary_source()) { return; }
@@ -269,25 +272,73 @@ namespace hgraph
             {
                 throw std::logic_error("Wiring::finish encountered an unbound wiring source");
             }
-            for (const WiringPortRef &child : source.structural_children()) { collect_producers(child, producers); }
+            for (const WiringPortRef &child : source.structural_children())
+            {
+                collect_producers(child, producers, owned);
+            }
         }
 
         // One edge emitter for both finish flavours. A boundary source is only
         // legal when compiling a sub-graph (``boundary_bindings`` supplied): it
         // becomes a nested-graph input binding (outer input root path =
         // {arg} + boundary path) instead of an edge.
+        /**
+         * Outer-port CAPTURES (nested_graphs.rst, "Outer-port capture"): a
+         * peered source whose producer is not part of this wiring converts
+         * to a fresh boundary argument appended after the declared inputs;
+         * the outer refs are reported for the caller to bind.
+         */
+        struct OuterCaptureCollector
+        {
+            std::size_t                base_index{0};
+            std::vector<WiringPortRef> captured{};
+
+            [[nodiscard]] std::size_t index_for(const WiringPortRef &outer)
+            {
+                for (std::size_t index = 0; index < captured.size(); ++index)
+                {
+                    const auto &existing = captured[index];
+                    if (existing.peered_node() == outer.peered_node() &&
+                        existing.peered_path() == outer.peered_path() &&
+                        existing.peered_output_kind() == outer.peered_output_kind())
+                    {
+                        return index;
+                    }
+                }
+                captured.push_back(outer);
+                return captured.size() - 1;
+            }
+        };
+
         void emit_edges(const WiringPortRef                                             &source,
                         const std::vector<std::size_t>                                 &target_path,
                         const std::unordered_map<const WiringInstance *, std::size_t>   &index_of,
                         GraphBuilder                                                   &graph_builder,
                         std::size_t                                                     target_node,
-                        std::vector<NestedGraphInputBinding>                           *boundary_bindings)
+                        std::vector<NestedGraphInputBinding>                           *boundary_bindings,
+                        OuterCaptureCollector                                          *captures)
         {
             if (source.is_peered_source())
             {
+                const auto it = index_of.find(source.peered_node());
+                if (it == index_of.end())
+                {
+                    // A FOREIGN producer: an outer-wiring port referenced
+                    // inside a sub-graph compose (closure capture).
+                    if (boundary_bindings == nullptr || captures == nullptr)
+                    {
+                        throw std::logic_error(
+                            "Wiring::finish encountered a port from a different wiring; outer-port capture "
+                            "applies only inside a sub-graph compile (map_/switch_ child)");
+                    }
+                    boundary_bindings->push_back(NestedGraphInputBinding{
+                        .source_path = {captures->base_index + captures->index_for(source)},
+                        .target      = NestedGraphEndpoint{.node = target_node, .path = target_path},
+                    });
+                    return;
+                }
                 graph_builder.add_edge(GraphEdge{
-                    .source_node = make_graph_edge_source(index_of.at(source.peered_node()),
-                                                          source.peered_output_kind()),
+                    .source_node = make_graph_edge_source(it->second, source.peered_output_kind()),
                     .source_path = source.peered_path(),
                     .target_node = target_node,
                     .target_path = target_path,
@@ -323,7 +374,7 @@ namespace hgraph
                 std::vector<std::size_t> child_target_path = target_path;
                 child_target_path.push_back(index);
                 emit_edges(children[index], child_target_path, index_of, graph_builder, target_node,
-                           boundary_bindings);
+                           boundary_bindings, captures);
             }
         }
 
@@ -338,11 +389,13 @@ namespace hgraph
         // order breaks ties), then nodes + edges into a GraphBuilder.
         [[nodiscard]] RankedGraphBuild build_ranked_graph(
             const std::deque<WiringInstance>     &instances,
-            std::vector<NestedGraphInputBinding> *boundary_bindings)
+            std::vector<NestedGraphInputBinding> *boundary_bindings,
+            OuterCaptureCollector                *captures = nullptr)
         {
             std::vector<const WiringInstance *> all;
             all.reserve(instances.size());
             for (const auto &instance : instances) { all.push_back(&instance); }
+            std::unordered_set<const WiringInstance *> owned{all.begin(), all.end()};
 
             std::unordered_map<const WiringInstance *, std::size_t>                         indegree;
             std::unordered_map<const WiringInstance *, std::vector<const WiringInstance *>>  consumers;
@@ -353,7 +406,7 @@ namespace hgraph
                 {
                     if (!input.rank_dependency) { continue; }
                     std::vector<const WiringInstance *> producers;
-                    collect_producers(input.source, producers);
+                    collect_producers(input.source, producers, owned);
                     for (const WiringInstance *producer : producers)
                     {
                         ++indegree[instance];
@@ -421,7 +474,7 @@ namespace hgraph
                     {
                         if (!input.rank_dependency) { continue; }
                         std::vector<const WiringInstance *> producers;
-                        collect_producers(input.source, producers);
+                        collect_producers(input.source, producers, owned);
                         for (const WiringInstance *producer : producers)
                         {
                             if (indegree[producer] == 0) { continue; }
@@ -457,7 +510,7 @@ namespace hgraph
                     std::vector<std::size_t> target_path =
                         input.target_path.empty() ? std::vector<std::size_t>{input_index} : input.target_path;
                     emit_edges(input.source, target_path, build.index_of, build.graph_builder, i,
-                               boundary_bindings);
+                               boundary_bindings, captures);
                 }
             }
             return build;
@@ -1031,7 +1084,13 @@ namespace hgraph
         CompiledSubGraph compiled;
         compiled.input_schemas = std::move(input_schemas);
 
-        RankedGraphBuild build = build_ranked_graph(impl_->instances, &compiled.input_bindings);
+        OuterCaptureCollector captures{.base_index = compiled.input_schemas.size()};
+        RankedGraphBuild build = build_ranked_graph(impl_->instances, &compiled.input_bindings, &captures);
+        for (const WiringPortRef &outer : captures.captured)
+        {
+            compiled.input_schemas.push_back(outer.schema);
+        }
+        compiled.captured_inputs = std::move(captures.captured);
         validate_same_cycle_pairs(build.index_of);
         for (const auto [key, boxed] : impl_->traits.as_value().view().as_map())
         {
