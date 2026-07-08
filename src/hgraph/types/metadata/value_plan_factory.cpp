@@ -332,6 +332,13 @@ namespace hgraph
             nb::list result;
             for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
             {
+                // UNSET tuple fields read back as None (field validity - the
+                // relaxed combine/partial convert convention).
+                if (!composite_field_set(state, memory, index))
+                {
+                    result.append(nb::none());
+                    continue;
+                }
                 const auto &ops = state->child_bindings[index]->ops_ref();
                 const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                 result.append(ops.to_python(child));
