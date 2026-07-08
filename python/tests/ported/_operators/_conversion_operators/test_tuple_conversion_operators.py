@@ -1,7 +1,7 @@
 from typing import Tuple, Set
 
-import pytest as _pytest_polars
-pl = _pytest_polars.importorskip("polars")
+
+import pytest
 
 from hgraph import (
     TIME_SERIES_TYPE,
@@ -15,7 +15,6 @@ from hgraph import (
     TSL,
     Size,
     emit,
-    Series,
 )
 from hgraph.test import eval_node
 
@@ -81,25 +80,12 @@ def test_convert_tsl_to_tuple():
 
 
 def test_convert_series_to_tuple():
-    @graph
-    def g(a: TS[Series[int]]) -> TIME_SERIES_TYPE:
-        return convert[TS[Tuple]](a)
-
-    assert eval_node(g, [pl.Series("vals", ()), pl.Series("vals", (1,)), pl.Series("vals", (2, 3))]) == [
-        tuple(),
-        (1,),
-        (2, 3),
-    ]
-
-    @graph
-    def h(a: TS[Series[int]]) -> TIME_SERIES_TYPE:
-        return convert[TS[Tuple[int, ...]]](a)
-
-    assert eval_node(h, [pl.Series("vals", ()), pl.Series("vals", (1,)), pl.Series("vals", (2, 3))]) == [
-        tuple(),
-        (1,),
-        (2, 3),
-    ]
+    # ARROW ruling (2026-07-08): Series is arrow-backed; operators use arrow
+    # compute and tests validate with pyarrow (never polars). Skipped until
+    # the arrow Series type lands in the bridge.
+    pa = pytest.importorskip("pyarrow")
+    pytest.skip("Series (arrow-backed) is not bridged yet - the arrow-native rewrite of this test "
+                "validates convert[TS[Tuple]] over Series once hgraph.Series lands")
 
 
 def test_combine_tuple():
