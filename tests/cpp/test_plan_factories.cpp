@@ -142,6 +142,14 @@ namespace
         Value delta{root.delta_value(modified_time)};
         REQUIRE(delta.binding() == ValuePlanFactory::instance().binding_for(root.schema()->delta_value_schema));
     }
+
+    void require_no_tsdata_relocation_hooks(const hgraph::MemoryUtils::StoragePlan &plan)
+    {
+        CHECK_FALSE(plan.can_copy_construct());
+        CHECK_FALSE(plan.can_move_construct());
+        CHECK_FALSE(plan.can_copy_assign());
+        CHECK_FALSE(plan.can_move_assign());
+    }
 }  // namespace
 
 TEST_CASE("ValuePlanFactory: atomic round-trip via TypeRegistry")
@@ -879,6 +887,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSL owns embedded TSS child storage")
 
     const auto *binding = factory.binding_for(tsl);
     REQUIRE(binding != nullptr);
+    require_no_tsdata_relocation_hooks(binding->checked_plan());
     const auto *aux_component = binding->plan()->find_component("aux");
     REQUIRE(aux_component != nullptr);
     const auto *elements_component = aux_component->plan->find_component("elements");
@@ -1294,6 +1303,7 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
 
     const auto *binding = factory.binding_for(tss);
     REQUIRE(binding != nullptr);
+    require_no_tsdata_relocation_hooks(binding->checked_plan());
 
     TSData data{*binding};
     auto   view = data.view();
@@ -1365,6 +1375,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
 
     const auto *binding = factory.binding_for(tsd);
     REQUIRE(binding != nullptr);
+    require_no_tsdata_relocation_hooks(binding->checked_plan());
 
     TSData data{*binding};
     auto   view = data.view();
@@ -1520,6 +1531,32 @@ TEST_CASE("TSDataPlanFactory: empty collection copy still marks the collection m
     REQUIRE(dict_delta.at("modified").as_map().empty());
 }
 
+TEST_CASE("TSDataPlanFactory: nested TSD rejects whole-child move replacement")
+{
+    using namespace hgraph;
+    auto       &registry     = TypeRegistry::instance();
+    auto       &factory      = TSDataPlanFactory::instance();
+    const auto *int_meta     = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts_int       = registry.ts(int_meta);
+    const auto *inner_tsd    = registry.tsd(int_meta, ts_int);
+    const auto *outer_tsd    = registry.tsd(int_meta, inner_tsd);
+    const auto *key_binding  = registry.scalar_binding<std::int32_t>();
+    const auto *dict_binding = factory.binding_for(outer_tsd);
+    REQUIRE(key_binding != nullptr);
+    REQUIRE(dict_binding != nullptr);
+    require_no_tsdata_relocation_hooks(dict_binding->checked_plan());
+
+    Value inner_map = stdlib::make_map<std::int32_t, std::int32_t>({{2, 3}});
+    Value outer_key{1};
+    MapBuilder outer_builder{*key_binding, *inner_map.binding()};
+    outer_builder.set_item_copy(outer_key.view().data(), inner_map.view().data());
+    Value source = outer_builder.build();
+
+    TSData data{*dict_binding};
+    auto   mutation = data.view().begin_mutation(MIN_ST);
+    REQUIRE_THROWS_AS(mutation.move_value_from(std::move(source)), std::logic_error);
+}
+
 TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
 {
     using namespace hgraph;
@@ -1532,6 +1569,7 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     const auto *binding = factory.binding_for(tsl);
     REQUIRE(binding != nullptr);
     REQUIRE(factory.plan_for(tsl) == binding->plan());
+    require_no_tsdata_relocation_hooks(binding->checked_plan());
 
     TSData data{*binding};
     auto   view = data.view();
@@ -1553,6 +1591,10 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     REQUIRE(view.all_valid());
     REQUIRE(list.at(0).value().checked_as<std::int32_t>() == 11);
     REQUIRE(list.at(1).value().checked_as<std::int32_t>() == 22);
+    const void *child0_data = list.at(0).data();
+    const void *child1_data = list.at(1).data();
+    REQUIRE(child0_data != nullptr);
+    REQUIRE(child1_data != nullptr);
 
     Value parent_snapshot{view.value()};
     REQUIRE(parent_snapshot.binding() == ValuePlanFactory::instance().binding_for(tsl->value_schema));
@@ -1575,6 +1617,8 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     }
     list = view.as_list();
     REQUIRE(list.size() == 3);
+    REQUIRE(list.at(0).data() == child0_data);
+    REQUIRE(list.at(1).data() == child1_data);
     REQUIRE(list.at(2).value().checked_as<std::int32_t>() == 44);
     auto grown_t1_delta = view.delta_value(t1).as_map();
     REQUIRE(grown_t1_delta.contains(key_zero.view()));

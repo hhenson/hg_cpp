@@ -68,10 +68,14 @@ namespace hgraph::ts_data_plan_factory_detail
                   keys_(key_binding.checked_plan(), key_store_ops(key_binding))
             {}
 
+            // Slot-backed TSData is published by address through TSDataView
+            // and TSParentLink. Once a slot or root storage address is visible,
+            // growth and mutation must preserve it; generic relocation is not
+            // a valid operation for this storage shape.
             TSSSlotStorage(const TSSSlotStorage &)            = delete;
             TSSSlotStorage &operator=(const TSSSlotStorage &) = delete;
-            TSSSlotStorage(TSSSlotStorage &&) noexcept        = default;
-            TSSSlotStorage &operator=(TSSSlotStorage &&) noexcept = default;
+            TSSSlotStorage(TSSSlotStorage &&)                 = delete;
+            TSSSlotStorage &operator=(TSSSlotStorage &&)      = delete;
             ~TSSSlotStorage() = default;
 
             [[nodiscard]] const ValueTypeBinding &key_binding() const { return *key_binding_; }
@@ -262,6 +266,9 @@ namespace hgraph::ts_data_plan_factory_detail
                   values_(keys_, element_binding.checked_plan())
             {}
 
+            // A TSD publishes both key slots and child TSData slots. Children
+            // must be mutated in place so existing input/proxy bindings and
+            // parent links remain valid across structural updates.
             TSDSlotStorage(const TSDSlotStorage &)            = delete;
             TSDSlotStorage &operator=(const TSDSlotStorage &) = delete;
             TSDSlotStorage(TSDSlotStorage &&)                 = delete;
@@ -532,16 +539,6 @@ namespace hgraph::ts_data_plan_factory_detail
         void slot_storage_destroy(void *memory, const void *) noexcept
         {
             std::destroy_at(static_cast<Storage *>(memory));
-        }
-
-        void tss_storage_move_construct(void *dst, void *src, const void *)
-        {
-            std::construct_at(static_cast<TSSSlotStorage *>(dst), std::move(*static_cast<TSSSlotStorage *>(src)));
-        }
-
-        void tss_storage_move_assign(void *dst, void *src, const void *)
-        {
-            *static_cast<TSSSlotStorage *>(dst) = std::move(*static_cast<TSSSlotStorage *>(src));
         }
 
         struct SlotPlanEntry
@@ -2755,6 +2752,9 @@ namespace hgraph::ts_data_plan_factory_detail
             auto entry = std::make_unique<SlotPlanEntry>();
             entry->tsd_context = TSDStoragePlanContext{.key_binding = &key_binding,
                                                        .element_binding = &element_binding};
+            // Deliberately no copy/move lifecycle hooks: TSD values expose
+            // stable child TSData addresses, so assignment is expressed as
+            // in-place key/child mutation through TSDDataMutationView.
             entry->storage_plan = std::make_unique<MemoryUtils::StoragePlan>(MemoryUtils::StoragePlan{
                 .layout                       = MemoryUtils::layout_for<TSDSlotStorage>(),
                 .lifecycle                    = {.construct      = &tsd_storage_construct,
@@ -2806,14 +2806,16 @@ namespace hgraph::ts_data_plan_factory_detail
         if (schema.kind == TSTypeKind::TSS)
         {
             entry->tss_context = TSSStoragePlanContext{.key_binding = &key_binding};
+            // Deliberately no copy/move lifecycle hooks: TSS slots are stable
+            // path targets for observers and key-set projections.
             entry->storage_plan = std::make_unique<MemoryUtils::StoragePlan>(MemoryUtils::StoragePlan{
                 .layout                       = MemoryUtils::layout_for<TSSSlotStorage>(),
                 .lifecycle                    = {.construct      = &tss_storage_construct,
                                                  .destroy        = &slot_storage_destroy<TSSSlotStorage>,
                                                  .copy_construct = nullptr,
-                                                 .move_construct = &tss_storage_move_construct,
+                                                 .move_construct = nullptr,
                                                  .copy_assign    = nullptr,
-                                                 .move_assign    = &tss_storage_move_assign},
+                                                 .move_assign    = nullptr},
                 .lifecycle_context            = &entry->tss_context,
                 .composite_kind_tag           = MemoryUtils::CompositeKind::None,
                 .trivially_destructible       = false,

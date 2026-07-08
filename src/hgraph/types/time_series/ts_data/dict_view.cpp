@@ -466,7 +466,9 @@ namespace hgraph
         const auto &child_ops = layout().element_binding->ops_ref();
         if (child_ops.move_value_from_impl == &ts_data_detail::missing_move_value_from)
         {
-            throw std::logic_error("TSDDataMutationView::move_value_from requires movable child TSData");
+            throw std::logic_error(
+                "TSDDataMutationView::move_value_from cannot relocate non-movable child TSData; update nested "
+                "time-series collections in place");
         }
         for (const auto [key, value] : source_map.items())
         {

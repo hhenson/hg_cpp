@@ -1025,6 +1025,13 @@ implemented by recording borrowed handles to output TSData positions,
 and those handles must remain valid across ticks, rebinds, and
 structural mutation of containers.
 
+This is a **TSData invariant**, not a general rule for unrelated
+scalar ``Value`` objects. The scalar value layer may use compacting or
+move-based storage when the value schema permits it. Time-series
+storage is different because inputs, child views, proxies, observers,
+and parent links borrow concrete TSData addresses across evaluation
+cycles.
+
 For fixed-shape time-series (``TS``, ``TSB``, and fixed-size ``TSL``),
 stability is trivial: the value lives in node-owned storage and
 survives until the owning node is destroyed. Tick-count ``TSW`` also
@@ -1042,8 +1049,9 @@ previously published slot addresses.
 
 Dynamic ``TSL`` has indexed growth but no removals today. It keeps child
 TSData storage stable by allocating each child behind its own TSData
-storage handle; growing the parent list can relocate handles, but not
-the child allocations they reference.
+heap storage handle; growing the parent list can relocate handles, but
+not the child allocations they reference. The dynamic ``TSL`` storage
+plan also withholds erased copy/move lifecycle hooks.
 
 .. _ts-path-construction:
 
@@ -1218,6 +1226,16 @@ slot holds a complete time-series value (most often a ``TS``, but
 ``TSD`` are all permitted by the schema). Memory stability is preserved by the underlying
 ``StableSlotStorage`` so consumers can bind to a specific slot's value
 without worrying about future structural changes.
+
+Slot-backed TSData must be updated in place. Its erased storage plans
+must not expose copy or move lifecycle hooks: those hooks would let
+generic code relocate a published slot store or replace a child
+time-series allocation behind an existing binding. Whole-collection
+assignment is therefore implemented by TSData mutation views
+(``add``/``remove``/``set``/``erase`` and delta application), never by
+copying or moving the storage object. If a helper cannot preserve this
+rule, it must reject the operation rather than synthesize a replacement
+collection.
 
 Per-key modification time is read from the child value stored in the
 matching value slot. The TSD-level ``modified`` bitset is the current

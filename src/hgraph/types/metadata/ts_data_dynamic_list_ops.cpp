@@ -34,8 +34,20 @@ namespace hgraph::ts_data_plan_factory_detail
             return seed;
         }
 
+        struct HeapOnlyTSDataStoragePolicy
+        {
+            static constexpr std::size_t inline_bytes = sizeof(void *);
+
+            [[nodiscard]] static constexpr std::size_t storage_alignment() noexcept { return alignof(void *); }
+
+            [[nodiscard]] static constexpr bool can_store_inline(MemoryUtils::StorageLayout, bool, bool) noexcept
+            {
+                return false;
+            }
+        };
+
         using TSDataStorageHandle =
-            MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TSDataBinding>;
+            MemoryUtils::StorageHandle<HeapOnlyTSDataStoragePolicy, TSDataBinding>;
 
         class DynamicTSLStorage
         {
@@ -86,6 +98,9 @@ namespace hgraph::ts_data_plan_factory_detail
           private:
             const TSDataBinding              *element_binding_{nullptr};
             TSDataTracking                    tracking_{};
+            // Handles may move as the vector grows, but the child TSData bytes
+            // must not. The heap-only policy above keeps published child
+            // addresses stable while preserving vector locality for handles.
             std::vector<TSDataStorageHandle>  elements_{};
             std::vector<std::int64_t>         ordinal_keys_{};
         };

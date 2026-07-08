@@ -137,6 +137,10 @@ namespace hgraph
                                            void *memory,
                                            std::size_t child_id,
                                            DateTime modified_time) = &ts_data_detail::noop_record_child_modified;
+        // Value-assignment hooks for mutating live TSData in place. These do
+        // not grant permission to copy/move the TSData storage object itself;
+        // slot-backed TSData plans must keep storage lifecycle copy/move hooks
+        // absent so published child addresses remain stable.
         bool (*copy_value_from_impl)(const void *context, void *memory, const ValueView &source,
                                      DateTime modified_time) = &ts_data_detail::missing_copy_value_from;
         bool (*move_value_from_impl)(const void *context, void *memory, Value &&source,
