@@ -724,7 +724,11 @@ namespace hgraph
         void mark_field(std::size_t index)
         {
             const auto *meta = binding_->type_meta;
-            if (meta == nullptr || meta->kind != ValueTypeKind::Bundle || meta->field_count == 0) { return; }
+            if (meta == nullptr || meta->field_count == 0 ||
+                (meta->kind != ValueTypeKind::Bundle && meta->kind != ValueTypeKind::Tuple))
+            {
+                return;
+            }
             if (index >= meta->field_count) { throw std::out_of_range("BundleBuilder: field index out of range"); }
             const auto &plan = binding_->checked_plan();
             if (plan.component_count() <= meta->field_count) { return; }

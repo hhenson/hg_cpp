@@ -656,7 +656,8 @@ namespace hgraph
              * is intentionally not discoverable through ``find_component``.
              */
             CompositePlanBuilder &add_hidden_plan(const StoragePlan &plan) {
-                ensure_kind(CompositeKind::NamedTuple, "add_hidden_plan");
+                // A trailing UNNAMED component (field-validity words) - valid
+                // for both tuple and named-tuple builders.
                 add_pending_component({}, plan);
                 return *this;
             }

@@ -202,9 +202,16 @@ TEST_CASE("ValuePlanFactory: tuple synthesis matches MemoryUtils::tuple_plan")
 
     REQUIRE(plan != nullptr);
     REQUIRE(plan->is_tuple());
-    REQUIRE(plan->component_count() == 2);
-    REQUIRE(plan == &MemoryUtils::tuple_plan(
-                        {&MemoryUtils::plan_for<std::int32_t>(), &MemoryUtils::plan_for<float>()}));
+    // Public fields + a hidden trailing validity-words component (field
+    // validity, core_concepts.rst): fixed tuples now track per-slot
+    // set-ness so a partial tuple (relaxed combine) reads unset slots as
+    // None. The validity component is unnamed and appended last.
+    REQUIRE(plan->component_count() == 3);
+    REQUIRE(plan->component(0).plan == &MemoryUtils::plan_for<std::int32_t>());
+    REQUIRE(plan->component(1).plan == &MemoryUtils::plan_for<float>());
+    REQUIRE(plan->component(2).name == nullptr);
+    REQUIRE(plan->component(2).plan->is_array());
+    REQUIRE(&plan->component(2).plan->array_element_plan() == &MemoryUtils::plan_for<std::uint64_t>());
 }
 
 TEST_CASE("ValuePlanFactory: bundle synthesis preserves field names and shape")
@@ -266,11 +273,14 @@ TEST_CASE("ValuePlanFactory: nested composites synthesise correctly")
 
     REQUIRE(plan != nullptr);
     REQUIRE(plan->is_tuple());
-    REQUIRE(plan->component_count() == 2);
+    // field_count public components + the hidden validity words.
+    REQUIRE(plan->component_count() == 3);
 
     const auto *inner_plan = factory.plan_for(inner);
     REQUIRE(plan->component(0).plan == inner_plan);
     REQUIRE(plan->component(1).plan == &MemoryUtils::plan_for<std::int32_t>());
+    REQUIRE(plan->component(2).name == nullptr);
+    REQUIRE(plan->component(2).plan->is_array());
 }
 
 TEST_CASE("ValuePlanFactory: caching returns the same pointer on repeat lookups")

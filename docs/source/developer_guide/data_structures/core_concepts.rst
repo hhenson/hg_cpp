@@ -177,7 +177,14 @@ field lookup:
 - ``capture_delta`` over TSB sets only modified+valid children;
   ``apply_delta`` / ``delta_has_effect`` skip unset fields.
 
-``Tuple`` composites stay dense (all-set). ``TSL`` carries the same
+**Fixed ``Tuple`` composites carry the same hidden validity words**
+(ruling 2026-07-08): a ``combine[TS[Tuple]](a, b, __strict__=False)``
+must be able to emit a partial tuple whose unfilled slot reads back as
+``None``, so fixed tuples now allocate the same trailing validity
+component as bundles. ``BundleBuilder`` marks tuple slots on ``set`` (it
+no longer short-circuits on non-bundle kinds); a sequence/dict fill
+marks every supplied slot; ``equals``/``compare``/``to_python`` honour
+the bits (unset tuple slot → ``None``). ``TSL`` carries the same
 CONTRACT: its delta (a sparse ``Map<index, delta>``) already expresses
 partial ticks; List VALUES carry the same treatment where needed:
 MUTABLE list storage now has element validity (a ``sul`` bitset with

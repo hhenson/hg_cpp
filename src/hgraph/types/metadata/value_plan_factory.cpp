@@ -653,7 +653,9 @@ namespace hgraph
             CompositeIndexedOpsEntry(const ValueTypeMetaData &schema, const MemoryUtils::StoragePlan &plan)
             {
                 const std::size_t validity_words =
-                    schema.kind == ValueTypeKind::Bundle ? bundle_validity_word_count(schema.field_count) : 0;
+                    (schema.kind == ValueTypeKind::Bundle || schema.kind == ValueTypeKind::Tuple)
+                        ? bundle_validity_word_count(schema.field_count)
+                        : 0;
                 const std::size_t validity_components = validity_words == 0 ? 0 : 1;
                 if (!plan.is_composite() || plan.component_count() != schema.field_count + validity_components)
                 {
@@ -914,7 +916,8 @@ namespace hgraph
             case ValueTypeKind::Tuple:
             {
                 auto builder = MemoryUtils::tuple();
-                builder.reserve(schema->field_count);
+                const std::size_t validity_words = bundle_validity_word_count(schema->field_count);
+                builder.reserve(schema->field_count + (validity_words == 0 ? 0 : 1));
                 for (size_t index = 0; index < schema->field_count; ++index)
                 {
                     const ValueTypeMetaData *field_type = schema->fields[index].type;
@@ -924,6 +927,14 @@ namespace hgraph
                         throw std::logic_error("ValuePlanFactory: tuple field has no resolvable plan");
                     }
                     builder.add_plan(*field_plan);
+                }
+                if (validity_words != 0)
+                {
+                    // Fixed tuples carry the same hidden field-validity words
+                    // as bundles so a partial tuple (relaxed combine) reads
+                    // its unset slots as None. Appended last: field i stays
+                    // component i.
+                    builder.add_hidden_plan(bundle_validity_plan(schema->field_count));
                 }
                 plan = &builder.build();
                 break;
