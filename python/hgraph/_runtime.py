@@ -481,6 +481,11 @@ class _Convert:
                 ports[-1], (_TsExpr, _GenericTsExpr, type)) and not isinstance(ports[-1], WiringPort):
             to = ports.pop()   # hgraph's positional ``to`` parameter
         target = to if to is not None else self._to
+        from ._types import _TsExpr as _TE
+
+        if (isinstance(target, _TE) and len(ports) == 1 and isinstance(ports[0], WiringPort)
+                and _unwrap(ports[0]).ts_type == target.handle and not kwargs):
+            return ports[0]   # convert to the SAME type is a no-op (hgraph: j is i)
 
         if not isinstance(target, _TsExpr):
             label = (getattr(target, "label", None) or getattr(target, "__name__", None) or
@@ -1424,6 +1429,13 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             extended = list(inputs) + [None] * (max(by_name[k] for k in named_series) + 1 - len(inputs))
             for k, series in named_series.items():
                 extended[by_name[k]] = series
+            # Scalar-supplied kwargs whose position got padded move INTO the
+            # positional slot (a plain value const-lifts there); otherwise the
+            # None padding would wire a const None over the kwarg.
+            for k in list(kwargs):
+                index = by_name.get(k)
+                if index is not None and index < len(extended) and extended[index] is None:
+                    extended[index] = kwargs.pop(k)
             return eval_node(fn, *extended, output_type=output_type, resolution_dict=resolution_dict,
                              __start_time__=__start_time__, __end_time__=__end_time__,
                              __scalars__=__scalars__, __elide__=__elide__, **kwargs)

@@ -108,6 +108,9 @@ class _TsExpr:
                 call = dict(kwargs)
                 strict = call.pop("__strict__", True)
                 for name, value in list(call.items()):
+                    if value is None:
+                        call.pop(name)   # unsupplied positional padding
+                        continue
                     if not isinstance(value, _WP):
                         tp = _infer_ts_type([value]) if not isinstance(value, int) else TS[int]
                         call[name] = _wire("const", value, output_type=tp)
