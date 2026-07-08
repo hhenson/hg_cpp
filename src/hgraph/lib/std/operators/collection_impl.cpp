@@ -11,6 +11,7 @@ namespace hgraph::stdlib
 
         register_graph_overload<keys_, collection_impl_detail::keys_tsd>();
         register_overload<keys_, collection_impl_detail::keys_tsd_as_set>();
+        register_overload<values_, collection_impl_detail::values_tsd_as_tss>();
         register_overload<keys_, collection_impl_detail::keys_map_scalar>();
         register_overload<values_, collection_impl_detail::values_map_scalar>();
         register_overload<rekey, collection_impl_detail::rekey_map_scalar>();

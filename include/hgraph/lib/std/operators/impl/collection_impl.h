@@ -109,6 +109,52 @@ namespace hgraph::stdlib
             }
         };
 
+        /** values_[TSS[V]](tsd): the dictionary's VALUES as a TSS (hgraph's
+            values_tsd_to_tss - own-output reconciliation; expensive on a
+            large dict by design). */
+        struct values_tsd_as_tss
+        {
+            static constexpr auto name = "values_tsd_as_tss";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+            {
+                const auto *element = resolution.find_scalar("E");
+                if (element == nullptr) { return false; }
+                if (context.args.size() != 1 || context.args[0].kind != WiringArg::Kind::TimeSeries) { return false; }
+                const auto *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
+                return schema != nullptr && schema->kind == TSTypeKind::TSD && schema->element_ts() != nullptr &&
+                       schema->element_ts()->kind == TSTypeKind::TS &&
+                       schema->element_ts()->value_schema == element;
+            }
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts, Out<TSS<ScalarVar<"E">>> out)
+            {
+                const TSDInputView  &dict    = ts;
+                TSSOutputView       &erased  = out;
+                // TSS value schema = Set[element]; the element binding builds it.
+                const auto *element_meta = erased.schema()->value_schema->element_type;
+                SetBuilder union_builder{*ValuePlanFactory::instance().binding_for(element_meta)};
+                for (auto &&[key, child] : dict.items())
+                {
+                    if (child.valid()) { (void)union_builder.insert_copy(child.value().data()); }
+                }
+                Value current = union_builder.build();
+                auto  current_set = current.view().as_set();
+
+                std::vector<Value> removed;
+                for (const ValueView &value : out.values())
+                {
+                    if (!current_set.contains(value)) { removed.emplace_back(value); }
+                }
+                std::vector<Value> added;
+                for (const ValueView &value : current_set.values())
+                {
+                    if (!out.contains(value)) { added.emplace_back(value); }
+                }
+                apply_tss_delta(out, removed, added);
+            }
+        };
+
         struct keys_tsd
         {
             static constexpr auto name = "keys_tsd";
