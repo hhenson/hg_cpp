@@ -349,6 +349,13 @@ def combine(*args, __output_type__=None, **kwargs):
     (the subscript names the target type) builds a structural bundle;
     plain values const-lift at the field types. The UNSUBSCRIPTED binary
     form merges two CompoundScalar time-series (delta over orig)."""
+    if __output_type__ is not None and (getattr(__output_type__, "__name__", "") == "TSD" or
+                                        repr(__output_type__).startswith("TSD")) and args and isinstance(
+                                            args[0], tuple):
+        # combine[TSD](("a", "b"), a, b): the keys tuple + element ports feed
+        # the combine_tsd kernel (non-strict when requested).
+        strict = kwargs.pop("__strict__", True)
+        return wire("combine_tsd", args[0], *args[1:], __strict__=strict, **kwargs)
     if __output_type__ is None:
         if len(args) == 2 and not kwargs and all(isinstance(a, WiringPort) for a in args):
             return _combine_compound_scalars(*args)
@@ -492,6 +499,26 @@ class _Convert:
                      repr(target)).replace("typing.", "")
             named = [kwargs[n] for n in ("key", "ts") if n in kwargs]
             pair = list(ports) + named
+            if label.startswith("TSD") and len(pair) == 1 and _unwrap(pair[0]).ts_type.kind == 3:
+                # TSL -> TSD[int, element]: modified elements write at their
+                # index (the existing combine_tsd kernel, non-strict).
+                tsl = pair[0]
+                size = _unwrap(tsl).ts_type.fixed_size
+                return wire("combine_tsd", tuple(range(size)), *[tsl[i] for i in range(size)],
+                            __strict__=False)
+            if label.startswith("TSD") and len(pair) >= 2:
+                key_handle = _unwrap(pair[0]).ts_type
+                if key_handle.kind == 1:                      # TSS[K]
+                    k = _hgraph.vt_element(_hgraph.ts_value_vt(key_handle))
+                elif _hgraph.vt_kind(_hgraph.ts_value_vt(key_handle)) == 4:   # TS[Set[K]]
+                    k = _hgraph.vt_element(_hgraph.ts_value_vt(key_handle))
+                else:
+                    k = _hgraph.ts_value_vt(key_handle)
+                v = _unwrap(pair[1]).ts_type
+                from ._types import _TsExpr as _E2
+
+                target = _E2(_hgraph.tsd(k, v), "TSD[inferred]")
+                return wire("convert", *ports, output_type=target, **kwargs)
             if label.startswith("TS[Mapping") and len(pair) >= 2:
                 k = _hgraph.ts_value_vt(_unwrap(pair[0]).ts_type)
                 v = _hgraph.ts_value_vt(_unwrap(pair[1]).ts_type)
@@ -504,6 +531,12 @@ class _Convert:
 
 
 convert = _Convert()
+
+
+def _TsExprFor(handle):
+    from ._types import _TsExpr
+
+    return _TsExpr(handle, "inferred")
 
 
 class _Collect:
@@ -527,10 +560,24 @@ class _Collect:
             return target
         label = (getattr(target, "label", None) or getattr(target, "__name__", None) or repr(target))
         label = label.replace("typing.", "")
-        if label.startswith("TSD") and len(ports) >= 2:
-            k = _hgraph.ts_value_vt(_unwrap(ports[0]).ts_type)
-            v = _unwrap(ports[1]).ts_type
-            return _TsExpr(_hgraph.tsd(k, v), "TSD[inferred]")
+        if label.startswith("TSD"):
+            first = _unwrap(ports[0]).ts_type
+            if first.kind == 2:            # collect over a TSD: same shape
+                return _TsExpr(first, "TSD[inferred]")
+            if len(ports) == 1:            # a mapping stream
+                vt = _hgraph.ts_value_vt(first)
+                if _hgraph.vt_kind(vt) == 5:
+                    return _TsExpr(_hgraph.tsd(_hgraph.vt_key(vt), _hgraph.ts(_hgraph.vt_element(vt))),
+                                   "TSD[inferred]")
+            if len(ports) >= 2:
+                k = _hgraph.ts_value_vt(first)
+                if _hgraph.vt_kind(k) in (3, 4):   # tuple/set of keys: element
+                    k = _hgraph.vt_element(k)
+                v = _unwrap(ports[1]).ts_type
+                vv = _hgraph.ts_value_vt(v)
+                if _hgraph.vt_kind(vv) == 3:       # paired value tuples: element
+                    v = _hgraph.ts(_hgraph.vt_element(vv))
+                return _TsExpr(_hgraph.tsd(k, v), "TSD[inferred]")
         if label.startswith("TS[Mapping") and len(ports) >= 2:
             k = _hgraph.ts_value_vt(_unwrap(ports[0]).ts_type)
             v = _hgraph.ts_value_vt(_unwrap(ports[1]).ts_type)
@@ -538,12 +585,20 @@ class _Collect:
         # Set/Tuple targets share convert's element inference.
         return _Convert._infer(target, ports[0])
 
-    def __call__(self, *ports, reset=None, **kwargs):
+    def __call__(self, *ports, reset=None, exclude=None, **kwargs):
         from ._types import TS
 
         target = self._infer(ports)
         if reset is None:
             reset = wire("nothing", output_type=TS[bool])
+        if ports and _unwrap(ports[0]).ts_type.kind == 2:
+            # collect over a TSD: reset AND exclude inputs (nothing-filled).
+            if exclude is None:
+                exclude = wire("nothing",
+                               output_type=_TsExprFor(_hgraph.tss(_hgraph.tsd_key_vt(_unwrap(ports[0]).ts_type))))
+            return wire("collect", *ports, reset=reset, exclude=exclude, output_type=target, **kwargs)
+        if exclude is not None:
+            return wire("collect", *ports, exclude=exclude, output_type=target, **kwargs)
         return wire("collect", *ports, reset=reset, output_type=target, **kwargs)
 
 

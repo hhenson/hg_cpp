@@ -617,6 +617,89 @@ namespace hgraph::stdlib
         }
     };
 
+    /** convert[TSD](keys, value): the desired dictionary {current keys ->
+        current value}; previous keys drop out. Keys may arrive as a scalar
+        TS[K], a set-valued TS[Set[K]], or a TSS[K] membership. */
+    struct convert_kv_to_tsd_impl
+    {
+        static constexpr auto name = "convert_kv_to_tsd";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            if (out == nullptr || out->kind != TSTypeKind::TSD || v == nullptr) { return false; }
+            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
+            if (element == nullptr || element->kind != TSTypeKind::TS || element->value_schema != v)
+            {
+                return false;
+            }
+            const auto *keys = operator_impl_detail::time_series_schema_at(context, 0);
+            if (keys == nullptr) { return false; }
+            if (keys->kind == TSTypeKind::TSS)
+            {
+                return keys->value_schema->element_type == out->key_type();
+            }
+            if (keys->kind != TSTypeKind::TS) { return false; }
+            const auto *key_value = keys->value_schema;
+            if (key_value->kind == ValueTypeKind::Set) { return key_value->element_type == out->key_type(); }
+            return key_value == out->key_type();
+        }
+
+        static void eval(In<"key", TsVar<"K">> key, In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased  = static_cast<const TSOutputView &>(out);
+            auto        dict    = erased.as_dict();
+            auto        mutation = dict.begin_mutation(erased.evaluation_time());
+
+            // The desired key set for THIS cycle.
+            std::vector<Value> desired;
+            const auto *key_schema = key.base().schema();
+            if (key_schema->kind == TSTypeKind::TSS)
+            {
+                const TSSInputView set_input{key.base().borrowed_ref()};
+                auto data = set_input.data_view();
+                for (const ValueView &element : data.values()) { desired.emplace_back(element); }
+            }
+            else
+            {
+                const auto value = key.base().value();
+                if (value.schema()->kind == ValueTypeKind::Set)
+                {
+                    auto items = value.as_indexed_view();
+                    for (std::size_t index = 0; index < items.size(); ++index)
+                    {
+                        desired.emplace_back(items.at(index));
+                    }
+                }
+                else { desired.emplace_back(value); }
+            }
+
+            const auto is_desired = [&](const ValueView &candidate) {
+                for (const Value &want : desired)
+                {
+                    if (want.view().equals(candidate)) { return true; }
+                }
+                return false;
+            };
+            std::vector<Value> stale;
+            for (const ValueView &existing : mutation.view().keys())
+            {
+                if (!is_desired(existing)) { stale.emplace_back(existing); }
+            }
+            for (const Value &existing : stale) { static_cast<void>(mutation.erase(existing.view())); }
+
+            const auto value = ts.base().value();
+            for (const Value &want : desired)
+            {
+                auto element = mutation.at(want.view());
+                if (element.has_current_value() && element.value().equals(value)) { continue; }
+                auto element_mutation = element.begin_mutation(erased.evaluation_time());
+                static_cast<void>(element_mutation.copy_value_from(value));
+            }
+        }
+    };
+
     // ----- combine over date/time scalars ---------------------------------
 
     /** combine[TS[date]](year=, month=, day=). */
@@ -968,6 +1051,236 @@ namespace hgraph::stdlib
         }
     };
 
+    /** convert[TSD[int, TS[V]]](TS[tuple[V,...]]): the ENUMERATED desired
+        dictionary {index: element}; a shorter tuple drops the tail keys. */
+    struct convert_list_to_enumerated_tsd_impl
+    {
+        static constexpr auto name = "convert_list_to_enumerated_tsd";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            if (out == nullptr || out->kind != TSTypeKind::TSD || in == nullptr ||
+                in->kind != ValueTypeKind::List)
+            {
+                return false;
+            }
+            auto       &registry = TypeRegistry::instance();
+            const auto *element  = registry.dereference(out->element_ts());
+            return out->key_type() == registry.value_type("int") && element != nullptr &&
+                   element->kind == TSTypeKind::TS && element->value_schema == in->element_type;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased  = static_cast<const TSOutputView &>(out);
+            auto        dict    = erased.as_dict();
+            auto        mutation = dict.begin_mutation(erased.evaluation_time());
+            auto        items   = ts.base().value().as_indexed_view();
+
+            std::vector<Value> stale;
+            for (const ValueView &existing : mutation.view().keys())
+            {
+                if (existing.checked_as<Int>() >= static_cast<Int>(items.size()))
+                {
+                    stale.emplace_back(existing);
+                }
+            }
+            for (const Value &existing : stale) { static_cast<void>(mutation.erase(existing.view())); }
+            for (std::size_t index = 0; index < items.size(); ++index)
+            {
+                Value key{static_cast<Int>(index)};
+                auto  element = mutation.at(key.view());
+                if (element.has_current_value() && element.value().equals(items.at(index))) { continue; }
+                auto element_mutation = element.begin_mutation(erased.evaluation_time());
+                static_cast<void>(element_mutation.copy_value_from(items.at(index)));
+            }
+        }
+    };
+
+    /** collect[TSD](k_tuple, v_tuple, reset=...): ZIP the paired tuples into
+        the accumulated dictionary. */
+    struct collect_tsd_zip_impl
+    {
+        static constexpr auto name = "collect_tsd_zip";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            if (out == nullptr || out->kind != TSTypeKind::TSD || k == nullptr || v == nullptr ||
+                k->kind != ValueTypeKind::List || v->kind != ValueTypeKind::List)
+            {
+                return false;
+            }
+            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
+            return out->key_type() == k->element_type && element != nullptr &&
+                   element->kind == TSTypeKind::TS && element->value_schema == v->element_type;
+        }
+
+        static void eval(In<"key", TsVar<"K">, InputValidity::Unchecked> key,
+                         In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         In<"reset", TS<Bool>, InputValidity::Unchecked> reset,
+                         Out<TsVar<"__out__">> out)
+        {
+            const bool fresh  = reset.valid() && reset.modified() && reset.value();
+            const bool ticked = key.valid() && ts.valid() && (key.modified() || ts.modified());
+            if (!fresh && !ticked) { return; }
+            const auto &erased  = static_cast<const TSOutputView &>(out);
+            auto        dict    = erased.as_dict();
+            auto        mutation = dict.begin_mutation(erased.evaluation_time());
+            auto        keys    = key.base().value().as_indexed_view();
+            auto        values  = ts.base().value().as_indexed_view();
+            const std::size_t count = std::min(keys.size(), values.size());
+
+            if (fresh)
+            {
+                const auto keeps = [&](const ValueView &candidate) {
+                    for (std::size_t index = 0; index < count; ++index)
+                    {
+                        if (keys.at(index).equals(candidate)) { return true; }
+                    }
+                    return false;
+                };
+                std::vector<Value> stale;
+                for (const ValueView &existing : mutation.view().keys())
+                {
+                    if (!keeps(existing)) { stale.emplace_back(existing); }
+                }
+                for (const Value &existing : stale) { static_cast<void>(mutation.erase(existing.view())); }
+            }
+            if (!ticked) { return; }
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                auto element = mutation.at(keys.at(index));
+                // A reset cycle RE-PUBLISHES surviving entries (hgraph's
+                // delta contract); otherwise equal values dedup.
+                if (!fresh && element.has_current_value() && element.value().equals(values.at(index)))
+                {
+                    continue;
+                }
+                auto element_mutation = element.begin_mutation(erased.evaluation_time());
+                static_cast<void>(element_mutation.copy_value_from(values.at(index)));
+            }
+        }
+    };
+
+    /** collect[TSD](mapping_ts, reset=...): accumulate mapping entries. */
+    struct collect_tsd_from_map_impl
+    {
+        static constexpr auto name = "collect_tsd_from_map";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            if (out == nullptr || out->kind != TSTypeKind::TSD || in == nullptr ||
+                in->kind != ValueTypeKind::Map)
+            {
+                return false;
+            }
+            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
+            return out->key_type() == in->key_type && element != nullptr &&
+                   element->kind == TSTypeKind::TS && element->value_schema == in->element_type;
+        }
+
+        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         In<"reset", TS<Bool>, InputValidity::Unchecked> reset,
+                         Out<TsVar<"__out__">> out)
+        {
+            const bool fresh = reset.valid() && reset.modified() && reset.value();
+            if (!fresh && !ts.modified()) { return; }
+            const auto &erased  = static_cast<const TSOutputView &>(out);
+            auto        dict    = erased.as_dict();
+            auto        mutation = dict.begin_mutation(erased.evaluation_time());
+            auto        map     = ts.valid() ? std::optional{ts.base().value().as_map()} : std::nullopt;
+
+            if (fresh)
+            {
+                std::vector<Value> stale;
+                for (const ValueView &existing : mutation.view().keys())
+                {
+                    if (!map.has_value() || !map->contains(existing)) { stale.emplace_back(existing); }
+                }
+                for (const Value &existing : stale) { static_cast<void>(mutation.erase(existing.view())); }
+            }
+            if (!ts.modified() || !map.has_value()) { return; }
+            for (const auto [k, v] : *map)
+            {
+                auto element = mutation.at(k);
+                if (!fresh && element.has_current_value() && element.value().equals(v)) { continue; }
+                auto element_mutation = element.begin_mutation(erased.evaluation_time());
+                static_cast<void>(element_mutation.copy_value_from(v));
+            }
+        }
+    };
+
+    /** collect[TSD](tsd, exclude=tss): accumulate a dictionary's DELTA
+        entries; keys in the exclude set never enter (and drop on exclusion). */
+    struct collect_tsd_from_tsd_impl
+    {
+        static constexpr auto name = "collect_tsd_from_tsd";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSD);
+            return out != nullptr && out->kind == TSTypeKind::TSD && in == out;
+        }
+
+        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         In<"reset", TS<Bool>, InputValidity::Unchecked> reset,
+                         In<"exclude", TsVar<"E">, InputValidity::Unchecked> exclude,
+                         Out<TsVar<"__out__">> out)
+        {
+            const bool fresh = reset.valid() && reset.modified() && reset.value();
+            if (!ts.modified() && !exclude.modified() && !fresh) { return; }
+            const auto &erased  = static_cast<const TSOutputView &>(out);
+            auto        dict    = erased.as_dict();
+            auto        mutation = dict.begin_mutation(erased.evaluation_time());
+
+            const auto excluded = [&](const ValueView &candidate) {
+                if (!exclude.valid()) { return false; }
+                const TSSInputView set_input{exclude.base().borrowed_ref()};
+                return set_input.data_view().contains(candidate);
+            };
+
+            if (fresh)
+            {
+                std::vector<Value> stale;
+                for (const ValueView &existing : mutation.view().keys()) { stale.emplace_back(existing); }
+                for (const Value &existing : stale) { static_cast<void>(mutation.erase(existing.view())); }
+            }
+            if (exclude.modified() && exclude.valid())
+            {
+                const TSSInputView set_input{exclude.base().borrowed_ref()};
+                std::vector<Value> stale;
+                for (const ValueView &added : set_input.data_view().added())
+                {
+                    if (mutation.view().contains(added)) { stale.emplace_back(added); }
+                }
+                for (const Value &existing : stale) { static_cast<void>(mutation.erase(existing.view())); }
+            }
+            if (ts.modified() && ts.valid())
+            {
+                const TSDInputView in_dict{ts.base().borrowed_ref()};
+                for (auto &&[k, child] : in_dict.items())
+                {
+                    if (!child.modified() || !child.valid() || excluded(k)) { continue; }
+                    auto element = mutation.at(k);
+                    if (!fresh && element.has_current_value() && element.value().equals(child.value()))
+                    {
+                        continue;
+                    }
+                    auto element_mutation = element.begin_mutation(erased.evaluation_time());
+                    static_cast<void>(element_mutation.copy_value_from(child.value()));
+                }
+            }
+        }
+    };
+
     namespace convert_detail
     {
         struct EmitQueueState
@@ -1130,17 +1443,13 @@ namespace hgraph::stdlib
                 current.buffer.pop_front();
                 Value value = std::move(current.buffer.front());
                 current.buffer.pop_front();
-                auto bundle = erased.as_bundle();
-                {
-                    auto field    = bundle.at(0);
-                    auto mutation = field.data_view().begin_mutation(erased.evaluation_time());
-                    static_cast<void>(mutation.copy_value_from(key.view()));
-                }
-                {
-                    auto field    = bundle.at(1);
-                    auto mutation = field.data_view().begin_mutation(erased.evaluation_time());
-                    static_cast<void>(mutation.copy_value_from(value.view()));
-                }
+                // WHOLE-VALUE write: works uniformly for the structural
+                // un_named bundle and a requested NAMED (compact) KeyValue.
+                BundleBuilder builder{*ValuePlanFactory::instance().binding_for(erased.schema()->value_schema)};
+                builder.set(0, std::move(key));
+                builder.set(1, std::move(value));
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(builder.build()));
                 if (!current.buffer.empty()) { scheduler.schedule(MIN_TD); }
             }
             state.set(std::move(current));
