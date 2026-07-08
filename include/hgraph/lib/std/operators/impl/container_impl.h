@@ -356,6 +356,72 @@ namespace hgraph::stdlib
         }
     };
 
+    /** getattr_(TS[CompoundScalar], attr): the named FIELD of the bundle
+        value (hgraph's getattr_cs; CS IS a Bundle value - the C++-first
+        ruling). An UNSET field does not tick. */
+    struct getattr_ts_bundle
+    {
+        static constexpr auto name = "getattr_ts_bundle";
+
+        [[nodiscard]] static const ValueTypeMetaData *bundle_meta(OperatorCallContext context)
+        {
+            const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS);
+            if (schema == nullptr || schema->value_schema == nullptr ||
+                schema->value_schema->kind != ValueTypeKind::Bundle)
+            {
+                return nullptr;
+            }
+            return schema->value_schema;
+        }
+
+        [[nodiscard]] static std::optional<std::size_t> field_index(const ValueTypeMetaData *bundle,
+                                                                    std::string_view name)
+        {
+            for (std::size_t index = 0; index < bundle->field_count; ++index)
+            {
+                if (bundle->fields[index].name != nullptr && bundle->fields[index].name == name) { return index; }
+            }
+            return std::nullopt;
+        }
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *bundle = bundle_meta(context);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            return bundle != nullptr && attr != nullptr && field_index(bundle, *attr).has_value();
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const auto *bundle = bundle_meta(context);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            if (bundle == nullptr || attr == nullptr) { return; }
+            const auto index = field_index(bundle, *attr);
+            if (!index.has_value()) { return; }
+            operator_impl_detail::bind_output(resolution,
+                                              TypeRegistry::instance().ts(bundle->fields[*index].type));
+        }
+
+        static void eval(In<"ts", TS<ScalarVar<"S">>> ts, Scalar<"attr", Str> attr, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto  value  = ts.base().value();
+            auto        fields = value.as_indexed_view();
+            const auto *meta   = value.schema();
+            for (std::size_t index = 0; index < meta->field_count; ++index)
+            {
+                if (meta->fields[index].name == nullptr || attr.value() != meta->fields[index].name) { continue; }
+                auto field = fields.at(index);
+                if (!field.valid()) { return; }   // UNSET fields do not tick
+                if (erased.data_view().has_current_value() && erased.value().equals(field)) { return; }
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.copy_value_from(field));
+                return;
+            }
+        }
+    };
+
     /** getattr_ over NESTED TSDs: collapse -> project -> uncollapse
         (hgraph's tsd_get_bundle_item_2/_nested route). */
     struct getattr_tsd_nested

@@ -2885,6 +2885,45 @@ namespace hgraph::stdlib
             }
         };
 
+        /** combine[TS[CompoundScalar]](a=..., b=...): assemble a BUNDLE
+            value from field ports by NAME - valid inputs set their fields,
+            the rest stay UNSET (CS IS a Bundle value; py from_ts wires a
+            structural TSB into this node). */
+        struct combine_cs_from_fields
+        {
+            static constexpr auto name = "combine_cs_from_fields";
+
+            static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Out<TsVar<"__out__">> out)
+            {
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                const auto *target = erased.schema()->value_schema;
+                BundleBuilder builder{*ValuePlanFactory::instance().binding_for(target)};
+
+                const TSInputView &fields = ts;
+                const auto *input_schema = fields.schema();
+                for (std::size_t index = 0; index < input_schema->field_count(); ++index)
+                {
+                    const char *field_name = input_schema->fields()[index].name;
+                    if (field_name == nullptr) { continue; }
+                    auto child = fields.indexed_child_at(index);
+                    if (!child.valid()) { continue; }
+                    for (std::size_t target_index = 0; target_index < target->field_count; ++target_index)
+                    {
+                        if (target->fields[target_index].name != nullptr &&
+                            std::string_view{target->fields[target_index].name} == field_name)
+                        {
+                            builder.set(target_index, Value{child.value()});
+                            break;
+                        }
+                    }
+                }
+                Value bundle = builder.build();
+                if (erased.data_view().has_current_value() && erased.value().equals(bundle.view())) { return; }
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(std::move(bundle)));
+            }
+        };
+
         /** combine(orig, delta) over BUNDLE scalars: recursive right-over-
             left merge honouring FIELD VALIDITY - delta's UNSET fields keep
             the original (hgraph's combine_compound_scalars; C++-first

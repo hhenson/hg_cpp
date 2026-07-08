@@ -29,6 +29,7 @@ namespace hgraph::stdlib
         register_graph_overload<getattr_, getattr_tsb>();
         register_overload<getattr_, getattr_tsd>();
         register_overload<getitem_, getitem_tsd_by_keys>();
+        register_overload<getattr_, getattr_ts_bundle>();
         register_graph_overload<getattr_, getattr_tsd_nested>();
         register_graph_overload<len_, len_tsb>();
         register_graph_overload<is_empty, is_empty_tsb>();

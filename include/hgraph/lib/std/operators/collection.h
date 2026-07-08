@@ -102,6 +102,12 @@ namespace hgraph::stdlib
     {
     };
 
+    /** ``combine_cs`` — assemble a compound-scalar (Bundle) value from field
+        ports (the runtime half of ``combine[TS[CS]](field=...)``). */
+    struct combine_cs : Operator<"combine_cs", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    {
+    };
+
     struct combine_map : Operator<"combine_map", In<"keys", TsVar<"A">>, In<"values", TsVar<"B">>, Out<TsVar<"O">>>
     {
     };

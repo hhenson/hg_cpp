@@ -82,6 +82,28 @@ class _TsExpr:
 
         from ._runtime import WiringPort, _unwrap, wire
 
+        if (kwargs and not ports and getattr(self.handle, "kind", None) == 0
+                and self.handle.value_kind == 2 and not getattr(self, "_json", False)):
+            # combine[TS[CompoundScalar]](field=...): a structural TSB of the
+            # provided fields feeds the erased combine_cs node (CS IS a
+            # Bundle value; missing fields stay UNSET). Plain values
+            # const-lift at their inferred types.
+            lifted = {}
+            for name, value in kwargs.items():
+                unwrapped = _unwrap(value)
+                if not isinstance(unwrapped, _m.Port):
+                    from ._runtime import _infer_ts_type
+
+                    tp = _infer_ts_type([value])
+                    if tp is None:
+                        raise TypeError(f"combine_cs: cannot infer a type for '{name}'")
+                    value = wire("const", value, output_type=tp)
+                lifted[name] = value
+            fields = [(k, _unwrap(v).ts_type) for k, v in lifted.items()]
+            tsb_type = _m.un_named_tsb_type(fields)
+            structural = WiringPort(_m.tsb_port(tsb_type, {k: _unwrap(v) for k, v in lifted.items()}))
+            return wire("combine_cs", structural, output_type=self)
+
         if getattr(self, "_json", False):
             # combine[TS[JSON]](**kwargs): the erased combine_json operator
             # (scalar kwargs const-lift at their inferred types).

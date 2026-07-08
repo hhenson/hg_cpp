@@ -483,9 +483,14 @@ namespace hgraph
             {
                 throw std::invalid_argument("map_node requires a TSD output schema");
             }
-            if (spec.multiplexed_inputs.empty())
+            if (spec.multiplexed_inputs.empty() && spec.key_output_schema == nullptr)
             {
-                throw std::invalid_argument("map_node requires at least one multiplexed TSD input");
+                // KEY-ONLY maps (an explicit __keys__, no multiplexed dicts)
+                // are legal when the child consumes the key; otherwise
+                // nothing would drive the children.
+                throw std::invalid_argument(
+                    "map_node requires at least one multiplexed TSD input (or a key-consuming child with "
+                    "an explicit __keys__)");
             }
             const auto *input_fields = meta.input_schema->fields();
             const TSValueTypeMetaData *anchor_tsd = nullptr;
@@ -628,7 +633,7 @@ namespace hgraph
                 const MapArgSource &arg = spec.args[binding.source_path[0]];
                 mark_source_arg(arg);
             }
-            if (!element_source_seen)
+            if (!element_source_seen && !spec.multiplexed_inputs.empty())
             {
                 throw std::invalid_argument("map_node requires one child input sourced from the mapped TSD element");
             }
@@ -640,7 +645,7 @@ namespace hgraph
                     throw std::invalid_argument("map_node key argument requires a key output schema");
                 }
                 if (spec.key_output_schema->kind != TSTypeKind::TS ||
-                    spec.key_output_schema->value_schema != tsd_schema->key_type())
+                    spec.key_output_schema->value_schema != meta.output_schema->key_type())
                 {
                     throw std::invalid_argument("map_node key output schema must be TS<K> for the mapped key type");
                 }

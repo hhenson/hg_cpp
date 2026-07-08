@@ -203,6 +203,13 @@ def _port_getattr(self, name):
         raise
 
 
+def _port_reduce(self, fn, zero=None):
+    if zero is not None:
+        return reduce(fn, self, zero)
+    return reduce(fn, self)
+
+
+WiringPort.reduce = _port_reduce
 WiringPort.__getattr__ = _port_getattr
 
 
