@@ -17,6 +17,7 @@
 #include <hgraph/util/date_time.h>
 
 #include <limits>
+#include <deque>
 #include <stdexcept>
 
 namespace hgraph::stdlib
@@ -613,6 +614,362 @@ namespace hgraph::stdlib
             }
             for (const Value &element : stale) { static_cast<void>(mutation.remove(element.view())); }
             static_cast<void>(mutation.add(value));
+        }
+    };
+
+    /** convert[TS[Mapping]](k, v): the SINGLETON mapping {k: v}. */
+    struct convert_kv_to_map_impl
+    {
+        static constexpr auto name = "convert_kv_to_map";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            return out != nullptr && out->kind == ValueTypeKind::Map && k != nullptr && v != nullptr &&
+                   out->key_type == k && out->element_type == v;
+        }
+
+        static void eval(In<"key", TsVar<"K">> key, In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto *meta   = erased.schema()->value_schema;
+            MapBuilder  builder{*ValuePlanFactory::instance().binding_for(meta->key_type),
+                                *ValuePlanFactory::instance().binding_for(meta->element_type)};
+            builder.set_item_copy(key.base().value().data(), ts.base().value().data());
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(builder.build()));
+        }
+    };
+
+    // ----- collect / emit ------------------------------------------------
+
+    /** collect[TS[Set/Tuple]](ts, reset=...): accumulate ticks into a
+        growing collection; a True reset clears BEFORE that cycle's tick.
+        A collection-valued tick unions ALL its elements in. */
+    struct collect_collection_impl
+    {
+        static constexpr auto name = "collect_collection";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            if (out == nullptr || in == nullptr ||
+                (out->kind != ValueTypeKind::Set && out->kind != ValueTypeKind::List))
+            {
+                return false;
+            }
+            const auto *element =
+                in->kind == ValueTypeKind::Set || in->kind == ValueTypeKind::List ? in->element_type : in;
+            return out->element_type == element;
+        }
+
+        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         In<"reset", TS<Bool>, InputValidity::Unchecked> reset,
+                         Out<TsVar<"__out__">> out)
+        {
+            if (!ts.modified() && !(reset.valid() && reset.modified())) { return; }
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto *meta   = erased.schema()->value_schema;
+            const bool  fresh  = reset.valid() && reset.modified() && reset.value();
+
+            const auto add_all = [&](auto &builder) {
+                if (!fresh && erased.data_view().has_current_value())
+                {
+                    auto prior = erased.value().as_indexed_view();
+                    for (std::size_t index = 0; index < prior.size(); ++index)
+                    {
+                        add_one(builder, prior.at(index));
+                    }
+                }
+                if (ts.valid() && ts.modified())
+                {
+                    const auto value = ts.base().value();
+                    const auto *in_meta = value.schema();
+                    if (in_meta->kind == ValueTypeKind::Set || in_meta->kind == ValueTypeKind::List)
+                    {
+                        auto items = value.as_indexed_view();
+                        for (std::size_t index = 0; index < items.size(); ++index)
+                        {
+                            add_one(builder, items.at(index));
+                        }
+                    }
+                    else { add_one(builder, value); }
+                }
+            };
+
+            Value result;
+            if (meta->kind == ValueTypeKind::Set)
+            {
+                SetBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
+                add_all(builder);
+                result = builder.build();
+            }
+            else
+            {
+                ListBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
+                add_all(builder);
+                result = builder.build();
+            }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(result)));
+        }
+
+      private:
+        static void add_one(SetBuilder &builder, const ValueView &value)
+        {
+            static_cast<void>(builder.insert_copy(value.data()));
+        }
+        static void add_one(ListBuilder &builder, const ValueView &value)
+        {
+            builder.push_back_copy(value.data());
+        }
+    };
+
+    /** collect[TS[Mapping]](k, v, reset=...): accumulate key/value pairs. */
+    struct collect_map_impl
+    {
+        static constexpr auto name = "collect_map";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            return out != nullptr && out->kind == ValueTypeKind::Map && k != nullptr && v != nullptr &&
+                   out->key_type == k && out->element_type == v;
+        }
+
+        static void eval(In<"key", TsVar<"K">, InputValidity::Unchecked> key,
+                         In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         In<"reset", TS<Bool>, InputValidity::Unchecked> reset,
+                         Out<TsVar<"__out__">> out)
+        {
+            const bool ticked = (key.modified() || ts.modified()) && key.valid() && ts.valid();
+            if (!ticked && !(reset.valid() && reset.modified())) { return; }
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto *meta   = erased.schema()->value_schema;
+            const bool  fresh  = reset.valid() && reset.modified() && reset.value();
+
+            MapBuilder builder{*ValuePlanFactory::instance().binding_for(meta->key_type),
+                               *ValuePlanFactory::instance().binding_for(meta->element_type)};
+            if (!fresh && erased.data_view().has_current_value())
+            {
+                for (const auto [k, v] : erased.value().as_map()) { builder.set_item_copy(k.data(), v.data()); }
+            }
+            if (ticked)
+            {
+                builder.set_item_copy(key.base().value().data(), ts.base().value().data());
+            }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(builder.build()));
+        }
+    };
+
+    /** collect[TSD](k, v, reset=...): accumulate into an owned dictionary. */
+    struct collect_tsd_impl
+    {
+        static constexpr auto name = "collect_tsd";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            if (out == nullptr || out->kind != TSTypeKind::TSD || k == nullptr || v == nullptr) { return false; }
+            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
+            return out->key_type() == k && element != nullptr && element->kind == TSTypeKind::TS &&
+                   element->value_schema == v;
+        }
+
+        static void eval(In<"key", TsVar<"K">, InputValidity::Unchecked> key,
+                         In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         In<"reset", TS<Bool>, InputValidity::Unchecked> reset,
+                         Out<TsVar<"__out__">> out)
+        {
+            const bool ticked = (key.modified() || ts.modified()) && key.valid() && ts.valid();
+            const bool fresh  = reset.valid() && reset.modified() && reset.value();
+            if (!ticked && !fresh) { return; }
+            const auto &erased  = static_cast<const TSOutputView &>(out);
+            auto        dict    = erased.as_dict();
+            auto        mutation = dict.begin_mutation(erased.evaluation_time());
+
+            if (fresh)
+            {
+                std::vector<Value> stale;
+                const auto key_value = key.base().value();
+                for (const ValueView &existing : mutation.view().keys())
+                {
+                    if (!(ticked && existing.equals(key_value))) { stale.emplace_back(existing); }
+                }
+                for (const Value &existing : stale) { static_cast<void>(mutation.erase(existing.view())); }
+            }
+            if (ticked)
+            {
+                auto element          = mutation.at(key.base().value());
+                auto element_mutation = element.begin_mutation(erased.evaluation_time());
+                static_cast<void>(element_mutation.copy_value_from(ts.base().value()));
+            }
+        }
+    };
+
+    namespace convert_detail
+    {
+        struct EmitQueueState
+        {
+            std::deque<Value> buffer{};
+        };
+    }  // namespace convert_detail
+
+}  // namespace hgraph::stdlib
+
+namespace hgraph::static_schema_detail
+{
+    template <>
+    struct scalar_name<stdlib::convert_detail::EmitQueueState>
+    {
+        static constexpr std::string_view value{"stdlib.emit_queue_state"};
+    };
+}  // namespace hgraph::static_schema_detail
+
+namespace hgraph::stdlib
+{
+    /** emit(TS[Set/Tuple]): drain the collection ONE ELEMENT PER CYCLE
+        (scheduler-driven; a new tick appends its elements). */
+    struct emit_collection_impl
+    {
+        static constexpr auto name = "emit_collection";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *in = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            return in != nullptr && (in->kind == ValueTypeKind::Set || in->kind == ValueTypeKind::List);
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const auto *in = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            if (in == nullptr) { return; }
+            operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(in->element_type));
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts,
+                         NodeScheduler scheduler,
+                         State<convert_detail::EmitQueueState> state,
+                         Out<TsVar<"__out__">> out)
+        {
+            auto current = state.get();
+            if (ts.modified())
+            {
+                auto items = ts.base().value().as_indexed_view();
+                for (std::size_t index = 0; index < items.size(); ++index)
+                {
+                    current.buffer.emplace_back(items.at(index));
+                }
+            }
+            if (!current.buffer.empty())
+            {
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                Value       next   = std::move(current.buffer.front());
+                current.buffer.pop_front();
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(std::move(next)));
+                if (!current.buffer.empty()) { scheduler.schedule(MIN_TD); }
+            }
+            state.set(std::move(current));
+        }
+    };
+
+    /** emit(TS[Mapping]) / emit(TSD): drain key/value PAIRS one per cycle
+        into a {key, value} bundle (hgraph's KeyValue shape). A TSD input
+        enqueues its DELTA entries; a mapping tick enqueues all entries. */
+    struct emit_map_impl
+    {
+        static constexpr auto name = "emit_map";
+
+        [[nodiscard]] static std::pair<const ValueTypeMetaData *, const ValueTypeMetaData *> kv_of(
+            OperatorCallContext context)
+        {
+            const auto *surface = operator_impl_detail::time_series_schema_at(context, 0);
+            if (surface == nullptr) { return {nullptr, nullptr}; }
+            if (surface->kind == TSTypeKind::TSD)
+            {
+                const auto *element = TypeRegistry::instance().dereference(surface->element_ts());
+                if (element == nullptr || element->kind != TSTypeKind::TS) { return {nullptr, nullptr}; }
+                return {surface->key_type(), element->value_schema};
+            }
+            const auto *value = convert_detail::ts_value(surface);
+            if (value == nullptr || value->kind != ValueTypeKind::Map) { return {nullptr, nullptr}; }
+            return {value->key_type, value->element_type};
+        }
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return kv_of(context).first != nullptr;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const auto [k, v] = kv_of(context);
+            if (k == nullptr) { return; }
+            auto &registry = TypeRegistry::instance();
+            operator_impl_detail::bind_output(
+                resolution, registry.un_named_tsb({{"key", registry.ts(k)}, {"value", registry.ts(v)}}));
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts,
+                         NodeScheduler scheduler,
+                         State<convert_detail::EmitQueueState> state,
+                         Out<TsVar<"__out__">> out)
+        {
+            auto current = state.get();
+            if (ts.modified())
+            {
+                const auto *surface = ts.base().schema();
+                if (surface->kind == TSTypeKind::TSD)
+                {
+                    const TSDInputView dict{ts.base().borrowed_ref()};
+                    for (auto &&[key, child] : dict.items())
+                    {
+                        if (!child.modified() || !child.valid()) { continue; }
+                        current.buffer.emplace_back(key);
+                        current.buffer.emplace_back(child.value());
+                    }
+                }
+                else
+                {
+                    for (const auto [key, value] : ts.base().value().as_map())
+                    {
+                        current.buffer.emplace_back(key);
+                        current.buffer.emplace_back(value);
+                    }
+                }
+            }
+            if (current.buffer.size() >= 2)
+            {
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                Value key   = std::move(current.buffer.front());
+                current.buffer.pop_front();
+                Value value = std::move(current.buffer.front());
+                current.buffer.pop_front();
+                auto bundle = erased.as_bundle();
+                {
+                    auto field    = bundle.at(0);
+                    auto mutation = field.data_view().begin_mutation(erased.evaluation_time());
+                    static_cast<void>(mutation.copy_value_from(key.view()));
+                }
+                {
+                    auto field    = bundle.at(1);
+                    auto mutation = field.data_view().begin_mutation(erased.evaluation_time());
+                    static_cast<void>(mutation.copy_value_from(value.view()));
+                }
+                if (!current.buffer.empty()) { scheduler.schedule(MIN_TD); }
+            }
+            state.set(std::move(current));
         }
     };
 

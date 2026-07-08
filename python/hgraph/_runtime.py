@@ -416,7 +416,7 @@ class _Convert:
         if isinstance(target, _TsExpr):
             return target
         handle = _unwrap(ts).ts_type
-        in_kind = handle.kind          # 0 TS, 2 TSS, 3 TSD, 4 TSL, 5 TSB
+        in_kind = handle.kind          # 0 TS, 1 TSS, 2 TSD, 3 TSL, 5 TSB
         label = getattr(target, "label", None) or getattr(target, "__name__", None) or repr(target)
         label = label.replace("typing.", "")
 
@@ -432,9 +432,9 @@ class _Convert:
                 vt = value_vt()
                 if _hgraph.vt_kind(vt) in (3, 4):   # List/Set value scalar
                     vt = _hgraph.vt_element(vt)
-            elif in_kind == 2:
+            elif in_kind == 1:
                 vt = _hgraph.vt_element(_hgraph.ts_value_vt(handle))
-            elif in_kind == 3:
+            elif in_kind == 2:
                 vt = _hgraph.tsd_key_vt(handle)
             else:
                 raise WiringError(f"convert: cannot infer TSS target from {handle!r}")
@@ -453,12 +453,12 @@ class _Convert:
                 if _hgraph.vt_kind(vt) in (3, 4):   # already a collection: element rides
                     vt = _hgraph.vt_element(vt)
                 return wrap(_hgraph.ts(_hgraph.tuple_vt(vt)), "TS[tuple[inferred]]")
-            if in_kind == 2:
+            if in_kind == 1:
                 vt = _hgraph.vt_element(_hgraph.ts_value_vt(handle))
                 return wrap(_hgraph.ts(_hgraph.tuple_vt(vt)), "TS[tuple[inferred]]")
 
         if label.startswith("TS[Set") or label.startswith("TS[set"):
-            if in_kind == 2:
+            if in_kind == 1:
                 vt = _hgraph.vt_element(_hgraph.ts_value_vt(handle))
                 return wrap(_hgraph.ts(_hgraph.set_vt(vt)), "TS[set[inferred]]")
             if in_kind == 0:
@@ -467,18 +467,82 @@ class _Convert:
                     vt = _hgraph.vt_element(vt)
                 return wrap(_hgraph.ts(_hgraph.set_vt(vt)), "TS[set[inferred]]")
         if label.startswith("TS[Mapping") or label.startswith("TS[dict"):
-            if in_kind == 3:
+            if in_kind == 2:
                 k = _hgraph.tsd_key_vt(handle)
                 v = _hgraph.ts_value_vt(_hgraph.tsd_value_ts(handle))
                 return wrap(_hgraph.ts(_hgraph.map_vt(k, v)), "TS[mapping[inferred]]")
         raise WiringError(f"convert: cannot resolve target '{label}' from input {handle!r}")
 
-    def __call__(self, ts, to=None, **kwargs):
+    def __call__(self, *ports, to=None, **kwargs):
+        from ._types import _TsExpr, _GenericTsExpr
+
+        ports = list(ports)
+        if to is None and len(ports) > 1 and isinstance(
+                ports[-1], (_TsExpr, _GenericTsExpr, type)) and not isinstance(ports[-1], WiringPort):
+            to = ports.pop()   # hgraph's positional ``to`` parameter
         target = to if to is not None else self._to
-        return wire("convert", ts, output_type=self._infer(target, ts), **kwargs)
+
+        if not isinstance(target, _TsExpr):
+            label = (getattr(target, "label", None) or getattr(target, "__name__", None) or
+                     repr(target)).replace("typing.", "")
+            named = [kwargs[n] for n in ("key", "ts") if n in kwargs]
+            pair = list(ports) + named
+            if label.startswith("TS[Mapping") and len(pair) >= 2:
+                k = _hgraph.ts_value_vt(_unwrap(pair[0]).ts_type)
+                v = _hgraph.ts_value_vt(_unwrap(pair[1]).ts_type)
+                from ._types import _TsExpr as _E
+
+                target = _E(_hgraph.ts(_hgraph.map_vt(k, v)), "TS[mapping[inferred]]")
+            else:
+                target = self._infer(target, pair[0] if pair else ports[0])
+        return wire("convert", *ports, output_type=target, **kwargs)
 
 
 convert = _Convert()
+
+
+class _Collect:
+    """hgraph's collect: accumulate ticks into a growing collection.
+    ``collect[TS[Set]](ts, reset=...)`` / ``collect[TSD](k, v, reset=...)``.
+    Generic targets infer from the input ports."""
+
+    __name__ = "collect"
+
+    def __init__(self, to=None):
+        self._to = to
+
+    def __getitem__(self, item):
+        return _Collect(item)
+
+    def _infer(self, ports):
+        from ._types import _TsExpr, TS
+
+        target = self._to
+        if isinstance(target, _TsExpr):
+            return target
+        label = (getattr(target, "label", None) or getattr(target, "__name__", None) or repr(target))
+        label = label.replace("typing.", "")
+        if label.startswith("TSD") and len(ports) >= 2:
+            k = _hgraph.ts_value_vt(_unwrap(ports[0]).ts_type)
+            v = _unwrap(ports[1]).ts_type
+            return _TsExpr(_hgraph.tsd(k, v), "TSD[inferred]")
+        if label.startswith("TS[Mapping") and len(ports) >= 2:
+            k = _hgraph.ts_value_vt(_unwrap(ports[0]).ts_type)
+            v = _hgraph.ts_value_vt(_unwrap(ports[1]).ts_type)
+            return _TsExpr(_hgraph.ts(_hgraph.map_vt(k, v)), "TS[mapping[inferred]]")
+        # Set/Tuple targets share convert's element inference.
+        return _Convert._infer(target, ports[0])
+
+    def __call__(self, *ports, reset=None, **kwargs):
+        from ._types import TS
+
+        target = self._infer(ports)
+        if reset is None:
+            reset = wire("nothing", output_type=TS[bool])
+        return wire("collect", *ports, reset=reset, output_type=target, **kwargs)
+
+
+collect = _Collect()
 
 
 class WiringError(RuntimeError):

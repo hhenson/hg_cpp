@@ -16,6 +16,7 @@ from ._compat import (CmpResult, DivideByZero, exception_time_series, OperatorWi
                       CompoundScalar, JSON, TimeSeriesReference)
 from ._runtime import filter_by
 from ._runtime import convert
+from ._runtime import collect
 from ._runtime import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, mesh_, mesh_ref, REMOVED, feedback, switch_, passive, compute_node, sink_node, generator, STATE, SCHEDULER, CLOCK, component, record_replay_scope, RecordReplayEnum, comparison_summary, push_queue, EvaluationMode, context, WiringError, reference_service, subscription_service, request_reply_service, register_service, service_impl, adaptor, adaptor_impl, register_adaptor, from_graph, to_graph, impl_input, impl_output, get_service_inputs, set_service_output
 
 MIN_ST = _hgraph.MIN_ST
