@@ -35,6 +35,10 @@ namespace hgraph::stdlib
         register_overload<convert, convert_tsd_to_map_impl>();
         register_overload<convert, convert_map_to_tsd_impl>();
         register_overload<convert, convert_kv_to_map_impl>();
+        register_overload<combine, combine_date_impl>();
+        register_overload<combine, combine_timedelta_impl<true>>();
+        register_overload<combine, combine_timedelta_impl<false>>();
+        register_overload<combine, combine_datetime_impl>();
         register_overload<collect, collect_collection_impl>();
         register_overload<collect, collect_map_impl>();
         register_overload<collect, collect_tsd_impl>();

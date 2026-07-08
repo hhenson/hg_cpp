@@ -86,6 +86,39 @@ class _TsExpr:
 
         from ._runtime import WiringPort, _unwrap, wire
 
+        if kwargs and not ports and getattr(self.handle, "kind", None) == 0 and not getattr(self, "_json", False):
+            import datetime as _dt
+
+            from ._runtime import wire as _wire
+
+            _COMPONENTS = {
+                _m.ts(_value_type(_dt.date)): ("year", "month", "day"),
+                _m.ts(_value_type(_dt.timedelta)): (
+                    "weeks", "days", "hours", "minutes", "seconds", "milliseconds", "microseconds"),
+                _m.ts(_value_type(_dt.datetime)): ("date", "time"),
+            }
+            components = _COMPONENTS.get(self.handle)
+            if components is not None and all(k in components or k == "__strict__" for k in kwargs):
+                # combine[TS[date/timedelta/datetime]](components...): plain
+                # values const-lift; absent numeric components fill with
+                # const 0 (hgraph parity).
+                from ._runtime import WiringPort as _WP
+                from ._runtime import _infer_ts_type
+
+                call = dict(kwargs)
+                strict = call.pop("__strict__", True)
+                for name, value in list(call.items()):
+                    if not isinstance(value, _WP):
+                        tp = _infer_ts_type([value]) if not isinstance(value, int) else TS[int]
+                        call[name] = _wire("const", value, output_type=tp)
+                if components[0] == "weeks":
+                    for name in components:
+                        if name not in call:
+                            call[name] = _wire("const", 0, output_type=TS[int])
+                    if strict is False:
+                        call["__strict__"] = False
+                return _wire("combine", output_type=self, **call)
+
         if (kwargs and not ports and getattr(self.handle, "kind", None) == 0
                 and self.handle.value_kind == 2 and not getattr(self, "_json", False)):
             # combine[TS[CompoundScalar]](field=...): a structural TSB of the

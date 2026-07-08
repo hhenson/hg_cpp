@@ -617,6 +617,93 @@ namespace hgraph::stdlib
         }
     };
 
+    // ----- combine over date/time scalars ---------------------------------
+
+    /** combine[TS[date]](year=, month=, day=). */
+    struct combine_date_impl
+    {
+        static constexpr auto name = "combine_date";
+
+        static void eval(In<"year", TS<Int>> year, In<"month", TS<Int>> month, In<"day", TS<Int>> day,
+                         Out<TS<Date>> out)
+        {
+            out.set(Date{std::chrono::year{static_cast<int>(year.value())},
+                         std::chrono::month{static_cast<unsigned>(month.value())},
+                         std::chrono::day{static_cast<unsigned>(day.value())}});
+        }
+    };
+
+    /** combine[TS[timedelta]](weeks=, days=, ..., microseconds=): every
+        component optional (the py bridge fills absent ones with const 0).
+        STRICT is the default validity (all supplied inputs valid); the
+        lenient variant treats not-yet-valid components as zero. */
+    template <bool Strict>
+    struct combine_timedelta_impl
+    {
+        static constexpr auto name = Strict ? "combine_timedelta" : "combine_timedelta_lenient";
+        static constexpr InputValidity validity = Strict ? InputValidity::Valid : InputValidity::Unchecked;
+
+        [[nodiscard]] static Int value_or_zero(const auto &input)
+        {
+            if constexpr (Strict) { return input.value(); }
+            else { return input.valid() ? input.value() : Int{0}; }
+        }
+
+        static void compute(const auto &weeks, const auto &days, const auto &hours, const auto &minutes,
+                            const auto &seconds, const auto &milliseconds, const auto &microseconds,
+                            Out<TS<TimeDelta>> &out)
+        {
+            const Int total_days = value_or_zero(weeks) * 7 + value_or_zero(days);
+            const Int total_seconds =
+                (value_or_zero(hours) * 60 + value_or_zero(minutes)) * 60 + value_or_zero(seconds);
+            out.set(TimeDelta{((total_days * 86'400 + total_seconds) * 1'000 + value_or_zero(milliseconds)) *
+                                  1'000 +
+                              value_or_zero(microseconds)});
+        }
+
+        // The LENIENT variant carries the __strict__ scalar so dispatch can
+        // tell the otherwise-identical signatures apart (py sends the kwarg
+        // only for __strict__=False).
+        static void eval(In<"weeks", TS<Int>, validity> weeks,
+                         In<"days", TS<Int>, validity> days,
+                         In<"hours", TS<Int>, validity> hours,
+                         In<"minutes", TS<Int>, validity> minutes,
+                         In<"seconds", TS<Int>, validity> seconds,
+                         In<"milliseconds", TS<Int>, validity> milliseconds,
+                         In<"microseconds", TS<Int>, validity> microseconds,
+                         Out<TS<TimeDelta>> out)
+            requires Strict
+        {
+            compute(weeks, days, hours, minutes, seconds, milliseconds, microseconds, out);
+        }
+
+        static void eval(In<"weeks", TS<Int>, validity> weeks,
+                         In<"days", TS<Int>, validity> days,
+                         In<"hours", TS<Int>, validity> hours,
+                         In<"minutes", TS<Int>, validity> minutes,
+                         In<"seconds", TS<Int>, validity> seconds,
+                         In<"milliseconds", TS<Int>, validity> milliseconds,
+                         In<"microseconds", TS<Int>, validity> microseconds,
+                         Scalar<"__strict__", Bool>,
+                         Out<TS<TimeDelta>> out)
+            requires (!Strict)
+        {
+            compute(weeks, days, hours, minutes, seconds, milliseconds, microseconds, out);
+        }
+    };
+
+    /** combine[TS[datetime]](date=, time=). */
+    struct combine_datetime_impl
+    {
+        static constexpr auto name = "combine_datetime";
+
+        static void eval(In<"date", TS<Date>> date, In<"time", TS<Time>> time, Out<TS<DateTime>> out)
+        {
+            out.set(DateTime{std::chrono::sys_days{date.value()}} +
+                    TimeDelta{time.value().microseconds});
+        }
+    };
+
     /** convert[TS[Mapping]](k, v): the SINGLETON mapping {k: v}. */
     struct convert_kv_to_map_impl
     {
