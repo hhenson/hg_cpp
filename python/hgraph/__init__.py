@@ -9,7 +9,7 @@ Agreed divergences from Python hgraph are recorded in
 docs/source/developer_guide/parity_matrix.rst (e.g. REF is value-only)."""
 import _hgraph
 
-from ._types import (TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, CONTEXT, REQUIRED, SCALAR, SCALAR_1,
+from ._types import (TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, CONTEXT, REQUIRED, SCALAR, SCALAR_1, TSW,
                      KEYABLE_SCALAR, TIME_SERIES_TYPE, TIME_SERIES_TYPE_1, TIME_SERIES_TYPE_2, OUT, SIZE,
                      DEFAULT, REF, K, V, SCHEMA, TS_SCHEMA)
 from ._compat import (CmpResult, DivideByZero, exception_time_series, OperatorWiringNodeClass, BoolResult,

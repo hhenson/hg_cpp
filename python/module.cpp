@@ -1260,6 +1260,9 @@ NB_MODULE(_hgraph, m)
     });
     m.def("tss", [](PyValueType v) { return PyTsType{TypeRegistry::instance().tss(v.meta)}; });
     m.def("tsd", [](PyValueType k, PyTsType v) { return PyTsType{TypeRegistry::instance().tsd(k.meta, v.meta)}; });
+    m.def("tsw", [](PyValueType v, std::size_t period, std::size_t min_period) {
+        return PyTsType{TypeRegistry::instance().tsw(v.meta, period, min_period)};
+    }, nb::arg("value"), nb::arg("period"), nb::arg("min_period") = 0);
     m.def("tsl", [](PyTsType e, std::size_t size) { return PyTsType{TypeRegistry::instance().tsl(e.meta, size)}; },
           nb::arg("element"), nb::arg("size") = 0);
     m.def("tsb", [](const std::string &name, nb::list fields) {

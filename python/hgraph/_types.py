@@ -228,6 +228,21 @@ class TSD(metaclass=_TSDMeta):
     """TSD[key_scalar, TS[...]] — a keyed time-series dictionary."""
 
 
+class _TSWMeta(type):
+    def __getitem__(cls, item):
+        # TSW[int] / TSW[int, Size[3]] - tick windows; period supplied at
+        # to_window time, so the bare form carries period 0 (unresolved).
+        if isinstance(item, tuple):
+            value, size = item[0], int(item[1])
+        else:
+            value, size = item, 0
+        return _TsExpr(_hgraph.tsw(_value_type(value), size), f"TSW[{item!r}]")
+
+
+class TSW(metaclass=_TSWMeta):
+    """TSW[T] — a tick-based window over TS[T]."""
+
+
 class Size:
     """Size[N] — the fixed-size marker for TSL."""
 

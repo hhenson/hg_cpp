@@ -2,7 +2,7 @@
 from ._runtime import compute_node, graph, wire, REMOVED
 from ._types import TS, TSD, TSS, K, K_1
 
-__all__ = ("make_tsd", "flatten_tsd", "extract_tsd", "keys_where_true", "where_true")
+__all__ = ("make_tsd", "flatten_tsd", "extract_tsd", "keys_where_true", "where_true", "tsl_to_tsd")
 
 
 @compute_node(valid=("key", "value"))
@@ -85,3 +85,18 @@ def _where_true_for(tp):
 
 keys_where_true = _KeySubscripted(_keys_where_true_for)
 where_true = _KeySubscripted(_where_true_for)
+
+
+class _TslToTsd:
+    """upstream shape: tsl_to_tsd(tsl, keys) - convert a TSL to a TSD with
+    the given keys (modified elements only, hgraph parity)."""
+
+    _cache = {}
+
+    def __call__(self, tsl, keys):
+        from ._runtime import wire
+
+        return wire("combine_tsd", tuple(keys), *[tsl[i] for i in range(len(keys))], __strict__=False)
+
+
+tsl_to_tsd = _TslToTsd()
