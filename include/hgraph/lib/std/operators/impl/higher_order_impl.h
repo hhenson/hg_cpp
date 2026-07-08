@@ -1078,14 +1078,9 @@ namespace hgraph::stdlib
                 throw std::invalid_argument("map_: the function output must be a whole node output");
             }
             const auto *out = compiled.output_schema;
-            // Reference-valued outputs back TSD elements as whole reference
-            // values (REF data is whole-value; the opaque-reference ruling).
-            if (out->kind == TSTypeKind::TSD || (out->kind == TSTypeKind::TSL && out->fixed_size() == 0))
-            {
-                throw std::invalid_argument(
-                    "map_: the function output cannot be embedded as a TSD element yet (TSD / dynamic-TSL "
-                    "elements are a recorded deferral)");
-            }
+            // TSD / dynamic-TSL elements embed since the storage-stability
+            // ruling (938a125): slot-backed TSData is construct-only in
+            // stable slots, so container children never relocate.
             output_schema = registry.tsd(classified.key_meta, out);
 
             MapNodeSpec spec;

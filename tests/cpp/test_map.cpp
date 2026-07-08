@@ -460,6 +460,18 @@ TEST_CASE("merge over TSDs is per-key (map_ with a lifted variadic operator)")
                                dict_delta<Str, TS<Int>>({{"a"s, 9}})));   // leftmost MODIFIED wins
 }
 
+TEST_CASE("merge over NESTED TSDs recurses per key (embedding)", "[.nested-embedding]")   // hidden: values through double forwarding pending
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    using Inner = TSD<Int, TS<Int>>;
+
+    CHECK_OUTPUT((eval_node<stdlib::merge, TSD<Str, Inner>, TSD<Str, Inner>>(
+                     values<Value>(dict_delta<Str, Inner>({{"a"s, dict_delta<Int, TS<Int>>({{1, 1}})}}), none),
+                     values<Value>(dict_delta<Str, Inner>({{"a"s, dict_delta<Int, TS<Int>>({{2, 6}})}}), none))),
+                 values<Value>(dict_delta<Str, Inner>({{"a"s, dict_delta<Int, TS<Int>>({{1, 1}, {2, 6}})}}), none));
+}
+
 TEST_CASE("map_ over TSL: ndx key plus broadcast")
 {
     using namespace hgraph;
