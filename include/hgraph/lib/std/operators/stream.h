@@ -82,8 +82,10 @@ namespace hgraph::stdlib
     {
     };
 
-    /** ``to_window`` — convert ``ts`` into a ``TSW`` time-series window of ``period``. */
-    struct to_window : Operator<"to_window", In<"ts", TsVar<"S">>, Scalar<"period", Int>, Out<TsVar<"O">>>
+    /** ``to_window`` — convert ``ts`` into a ``TSW`` time-series window of
+        ``period`` ticks, valid once ``min_window_period`` ticks arrived. */
+    struct to_window : Operator<"to_window", In<"ts", TsVar<"S">>, Scalar<"period", Int>,
+                                Scalar<"min_window_period", Int>, Out<TsVar<"O">>>
     {
     };
 

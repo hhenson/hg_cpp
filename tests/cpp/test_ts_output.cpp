@@ -1107,7 +1107,9 @@ TEST_CASE("TSOutputView delegates window all_valid through TSData ops")
         mutation.push(one.view());
     }
 
-    REQUIRE(output.view(t1).valid());
+    // hgraph parity: a tick window is INVALID below its minimum period
+    // (min_period=2, one element pushed).
+    REQUIRE_FALSE(output.view(t1).valid());
     REQUIRE_FALSE(output.view(t1).all_valid());
 
     {

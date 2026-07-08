@@ -2,6 +2,8 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_STREAM_IMPL_H
 
 #include <hgraph/lib/std/operators/stream.h>
+#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+#include <hgraph/lib/std/operators/collection.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
@@ -21,6 +23,214 @@ namespace hgraph::stdlib
 {
     namespace stream_impl_detail
     {
+        // ----- TSW: to_window + window aggregates --------------------------
+
+        /** to_window(ts, period, min_window_period): push each tick into a
+            size-based TSW (the TSW data layer handles eviction + validity). */
+        struct to_window_impl
+        {
+            static constexpr auto name = "to_window";
+
+            static auto defaults() { return std::tuple{arg<"min_window_period">(Int{0})}; }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS) != nullptr;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS);
+                const Int  *period = context.scalar_as<Int>("period");
+                if (schema == nullptr || period == nullptr) { return; }
+                const Int *min_period = context.scalar_as<Int>("min_window_period");
+                operator_impl_detail::bind_output(
+                    resolution, TypeRegistry::instance().tsw(schema->value_schema,
+                                                             static_cast<std::size_t>(*period),
+                                                             min_period != nullptr
+                                                                 ? static_cast<std::size_t>(*min_period)
+                                                                 : 0));
+            }
+
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts, Scalar<"period", Int>,
+                             Scalar<"min_window_period", Int>, Out<TsVar<"__out__">> out)
+            {
+                const auto &erased   = static_cast<const TSOutputView &>(out);
+                auto        window   = erased.as_window();
+                auto        mutation = window.begin_mutation(erased.evaluation_time());
+                mutation.push(ts.base().value());
+            }
+        };
+
+        /** The shared shape of the TSW aggregates: full-window recompute on
+            every tick (the window is small by construction). min_/max_ are
+            fully ERASED (Value::compare); sum_/mean use a numeric kernel
+            over the int/float leaves (an aggregate needs arithmetic - the
+            same specialisation the lifted kernels make). */
+        enum class TswAggregate : std::uint8_t
+        {
+            Sum,
+            Mean,
+            Min,
+            Max,
+        };
+
+        template <TswAggregate Op>
+        struct tsw_aggregate_impl
+        {
+            static constexpr auto name = Op == TswAggregate::Sum    ? "sum_tsw"
+                                         : Op == TswAggregate::Mean ? "mean_tsw"
+                                         : Op == TswAggregate::Min  ? "min_tsw"
+                                                                    : "max_tsw";
+
+
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW);
+                if (schema == nullptr) { return false; }
+                if constexpr (Op == TswAggregate::Sum || Op == TswAggregate::Mean)
+                {
+                    // TSW value_schema = List[element]; the element is the
+                    // window's tick type.
+                    auto &registry = TypeRegistry::instance();
+                    const auto *element = schema->value_schema->element_type;
+                    return element == registry.value_type("int") || element == registry.value_type("float");
+                }
+                return true;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW);
+                if (schema == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                const auto *element = Op == TswAggregate::Mean ? registry.value_type("float")
+                                                               : schema->value_schema->element_type;
+                operator_impl_detail::bind_output(resolution, registry.ts(element));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+            {
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                if (!ts.valid()) { return; }
+                const TSWInputView window_input{ts.base().borrowed_ref()};
+                // A LIVE local data view: ranges/at() borrow its storage.
+                auto window = window_input.data_view();
+                // Below the window's MINIMUM PERIOD nothing emits.
+                if (window.size() == 0 || window.size() < window.min_period()) { return; }
+
+                // Recompute EMITS every window tick (hgraph parity: min over
+                // a sliding window re-ticks the same value as it slides).
+                const auto publish = [&](Value &&value) {
+                    auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                    static_cast<void>(mutation.move_value_from(std::move(value)));
+                };
+
+                if constexpr (Op == TswAggregate::Min || Op == TswAggregate::Max)
+                {
+                    std::optional<Value> best;
+                    for (std::size_t index = 0; index < window.size(); ++index)
+                    {
+                        const ValueView value = window.at(index);
+                        const bool better =
+                            !best.has_value() ||
+                            (Op == TswAggregate::Min
+                                 ? value.compare(best->view()) == std::partial_ordering::less
+                                 : value.compare(best->view()) == std::partial_ordering::greater);
+                        if (better) { best.emplace(value); }
+                    }
+                    publish(std::move(*best));
+                    return;
+                }
+
+                auto      &registry = TypeRegistry::instance();
+                const bool floating =
+                    window.schema()->value_schema->element_type == registry.value_type("float");
+                if (floating || Op == TswAggregate::Mean)
+                {
+                    Float total = 0.0;
+                    for (std::size_t index = 0; index < window.size(); ++index)
+                    {
+                        const ValueView value = window.at(index);
+                        total += floating ? value.checked_as<Float>()
+                                          : static_cast<Float>(value.checked_as<Int>());
+                    }
+                    if constexpr (Op == TswAggregate::Mean)
+                    {
+                        publish(Value{total / static_cast<Float>(window.size())});
+                    }
+                    else { publish(Value{total}); }
+                    return;
+                }
+                Int total = 0;
+                for (std::size_t index = 0; index < window.size(); ++index)
+                {
+                    total += window.at(index).checked_as<Int>();
+                }
+                publish(Value{total});
+            }
+        };
+
+        /** min_/max_ over a TSW with a default while the window is below its
+            minimum period (hgraph's default_value kwarg; a separate variant -
+            the extremum_tss_default pattern). */
+        template <bool Min>
+        struct tsw_extremum_default_impl
+        {
+            static constexpr auto name = Min ? "min_tsw_default" : "max_tsw_default";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW) != nullptr;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW);
+                if (schema == nullptr) { return; }
+                operator_impl_detail::bind_output(
+                    resolution, TypeRegistry::instance().ts(schema->value_schema->element_type));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Scalar<"default_value", ScalarVar<"D">> default_value,
+                             Out<TsVar<"__out__">> out)
+            {
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                const auto publish = [&](const ValueView &value) {
+                    // Recompute EMITS every tick (no dedup - the aggregate rule).
+                    auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                    static_cast<void>(mutation.copy_value_from(value));
+                };
+
+                if (!ts.valid())
+                {
+                    publish(default_value.value());
+                    return;
+                }
+                const TSWInputView window_input{ts.base().borrowed_ref()};
+                auto window = window_input.data_view();
+                if (window.size() == 0 || window.size() < window.min_period())
+                {
+                    publish(default_value.value());
+                    return;
+                }
+                std::optional<Value> best;
+                for (std::size_t index = 0; index < window.size(); ++index)
+                {
+                    const ValueView value = window.at(index);
+                    const bool better = !best.has_value() ||
+                                        (Min ? value.compare(best->view()) == std::partial_ordering::less
+                                             : value.compare(best->view()) == std::partial_ordering::greater);
+                    if (better) { best.emplace(value); }
+                }
+                publish(best->view());
+            }
+        };
+
         struct DeltaQueueState
         {
             std::deque<Value> buffer{};
