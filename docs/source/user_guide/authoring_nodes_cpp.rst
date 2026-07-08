@@ -1047,6 +1047,146 @@ the per-tick delta can stay erased through ``capture_delta`` / ``apply_delta``:
        return d.delta_value
 
 
+Operator resolution helpers
+---------------------------
+
+Most C++ nodes do not need custom resolution hooks: their ``In``/``Out`` and
+``Scalar`` selectors are enough. Stdlib-style operator overloads sometimes need
+``requires_`` and ``resolve_default_types`` hooks when the output depends on the
+normalised call shape, for example ``TSL`` element type, ``TSD`` key type, or an
+explicitly requested output schema.
+
+Use ``<hgraph/lib/std/operators/impl/type_resolution_helpers.h>`` for these
+hooks. The helpers keep the resolver and predicate null-safe and consistent.
+Every extractor returns a pointer or ``nullptr``. ``nullptr`` means either the
+argument is missing, the argument has the wrong surface shape, or the extracted
+schema does not match the requested pattern. A resolver should return quietly on
+``nullptr`` because ``resolve_default_types`` runs before ``requires_``.
+
+The common extraction patterns are:
+
+- ``arg_at(context, index)`` extracts the raw normalised ``WiringArg`` at a
+  positional index. It returns ``nullptr`` when the call has fewer arguments.
+- ``time_series_arg_at(context, index)`` extracts the raw argument only when it
+  is a time-series port. It returns the ``WiringArg`` so callers can inspect
+  call metadata such as ``from_variadic_tail``.
+- ``scalar_arg_at(context, index)`` extracts the raw argument only when it is a
+  scalar argument.
+- ``time_series_schema_at(context, index)`` extracts the schema of a
+  time-series argument. By default it dereferences ``REF<T>`` and returns
+  ``T``; pass ``SchemaRefMode::Direct`` when the overload needs to distinguish
+  an actual ``REF`` surface from its target.
+- ``time_series_arg_of_kind(context, index, kind)`` extracts a time-series
+  schema and keeps it only when ``schema->kind == kind``. This is the usual
+  shape gate for ``TS``, ``TSS``, ``TSD``, ``TSL`` and ``TSB`` overloads.
+- ``fixed_tsl_arg(context, index)`` extracts ``TSL[...]`` only when the list has
+  a positive fixed size. Dynamic ``TSL`` and non-``TSL`` inputs return
+  ``nullptr``.
+- ``same_fixed_tsl_size(context, lhs, rhs)`` extracts two fixed ``TSL`` schemas
+  and returns ``true`` only when both exist and have the same fixed size.
+- ``all_time_series_args_of_kind(context, kind)`` extracts every supplied
+  argument as a time-series schema of the requested kind. It returns ``false``
+  for an empty call.
+- ``ts_value_schema(ts_schema)`` extracts the current-value schema ``T`` from a
+  plain ``TS<T>``. Collection time-series shapes return ``nullptr``.
+- ``ts_map_value_schema(ts_schema)`` extracts the scalar value schema from
+  ``TS<Map[K, V]]``. Non-map ``TS`` values and non-``TS`` schemas return
+  ``nullptr``.
+
+Output binding has two variants. Use the one that matches how the overload was
+registered:
+
+- Static-node overloads registered with ``register_overload`` normally declare
+  an output such as ``Out<TsVar<"O">>``. Use
+  ``local_output_bound(resolution, "O")`` and
+  ``bind_local_output(resolution, output_schema, "O")``. This defaults only the
+  local output variable.
+- Graph overloads registered with ``register_graph_overload`` often return an
+  erased ``WiringPortRef`` or ``Port<void>``. Their declared output pattern is
+  the graph-output sentinel ``__out__``. Use ``output_bound(resolution)`` and
+  ``bind_output(resolution, output_schema, "V")``. The optional local variable
+  name also binds the graph's internal generic such as ``V``.
+
+The bind helpers intentionally call ``ResolutionMap::bind_ts`` for local output
+variables. If the caller supplied an explicit output type and the computed
+default disagrees, the resolver throws, the candidate is rejected, and overload
+resolution can continue.
+
+Static-node example: default ``keys_(TS<Map[K, V]>)`` to
+``TS<Set[K]>`` unless the caller has already requested a compatible output:
+
+.. code-block:: cpp
+
+   #include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+
+   namespace detail = hgraph::stdlib::operator_impl_detail;
+
+   struct keys_map_scalar_like
+   {
+       static bool requires_(const ResolutionMap &resolution,
+                             OperatorCallContext)
+       {
+           return detail::ts_map_value_schema(resolution.find_ts("S")) != nullptr;
+       }
+
+       static void resolve_default_types(ResolutionMap &resolution,
+                                         OperatorCallContext)
+       {
+           if (detail::local_output_bound(resolution, "O")) { return; }
+
+           const auto *map = detail::ts_map_value_schema(resolution.find_ts("S"));
+           if (map == nullptr) { return; }
+
+           auto &registry = TypeRegistry::instance();
+           detail::bind_local_output(
+               resolution,
+               registry.ts(registry.set(map->key_type)),
+               "O");
+       }
+
+       static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
+       {
+           // ...
+       }
+   };
+
+Graph-overload example: accept a fixed ``TSL`` and default the graph output to
+the element time-series type:
+
+.. code-block:: cpp
+
+   #include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+
+   namespace detail = hgraph::stdlib::operator_impl_detail;
+
+   struct reduce_tsl_like
+   {
+       static bool requires_(const ResolutionMap &, OperatorCallContext context)
+       {
+           return detail::fixed_tsl_arg(context, 0) != nullptr;
+       }
+
+       static void resolve_default_types(ResolutionMap &resolution,
+                                         OperatorCallContext context)
+       {
+           if (detail::output_bound(resolution)) { return; }
+           const auto *tsl = detail::fixed_tsl_arg(context, 0);
+           if (tsl == nullptr) { return; }
+           detail::bind_output(resolution, tsl->element_ts(), "V");
+       }
+
+       static auto compose(Wiring &w, NamedPort<"ts", TSL<TsVar<"V">>> ts)
+       {
+           // ...
+       }
+   };
+
+The important pattern is to use the same extractor in ``requires_`` and
+``resolve_default_types``. The resolver handles the early, possibly mismatched
+call shape without throwing; the predicate makes the final overload decision
+once default type variables have been filled.
+
+
 Assembling and running a graph
 ------------------------------
 

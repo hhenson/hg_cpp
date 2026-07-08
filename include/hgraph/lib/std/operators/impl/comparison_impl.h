@@ -4,6 +4,7 @@
 #include <hgraph/lib/std/lifted_kernels.h>
 #include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>   // eq_ / ne_ / lt_ / ...
+#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/std/operators/json.h>
 #include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
@@ -70,7 +71,7 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return tsl_itemwise_impl_detail::same_fixed_tsl_size(context);
+                return operator_impl_detail::same_fixed_tsl_size(context, 0, 1);
             }
 
             static Port<TS<Bool>> compose(Wiring &w,
@@ -88,7 +89,7 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return tsl_itemwise_impl_detail::same_fixed_tsl_size(context);
+                return operator_impl_detail::same_fixed_tsl_size(context, 0, 1);
             }
 
             static Port<TS<Bool>> compose(Wiring &w,

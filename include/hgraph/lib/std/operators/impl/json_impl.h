@@ -2,6 +2,7 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_JSON_IMPL_H
 
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
+#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
 #include <hgraph/lib/std/operators/container.h>
 #include <hgraph/lib/std/operators/json.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -166,6 +167,21 @@ namespace hgraph::stdlib
 
         std::ostream &operator<<(std::ostream &out, const JsonValue &value);
     }  // namespace json_tree
+
+    inline void resolve_json_output(ResolutionMap &resolution,
+                                    std::string_view local_var = "O",
+                                    bool graph_output = false)
+    {
+        const TSValueTypeMetaData *output = TypeRegistry::instance().ts(json_tree::json_meta());
+        if (graph_output)
+        {
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            operator_impl_detail::bind_output(resolution, output, local_var);
+            return;
+        }
+        if (operator_impl_detail::local_output_bound(resolution, local_var)) { return; }
+        operator_impl_detail::bind_local_output(resolution, output, local_var);
+    }
 }  // namespace hgraph::stdlib
 
 template <>
@@ -200,8 +216,7 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
         {
-            if (resolution.find_ts("O") != nullptr) { return; }
-            resolution.bind_ts("O", TypeRegistry::instance().ts(json_tree::json_meta()));
+            resolve_json_output(resolution);
         }
 
         static void eval(In<"values", TsVar<"V">> values, Scalar<"keys", ScalarVar<"K">> keys, Out<TsVar<"O">> out)
@@ -231,8 +246,7 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
         {
-            higher_order_impl_detail::bind_graph_output(
-                resolution, TypeRegistry::instance().ts(json_tree::json_meta()), "O");
+            resolve_json_output(resolution, "O", true);
         }
 
         static WiringPortRef compose(Wiring &w, VarKwIn<"kwargs"> kwargs)
@@ -307,8 +321,7 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
         {
-            if (resolution.find_ts("O") != nullptr) { return; }
-            resolution.bind_ts("O", TypeRegistry::instance().ts(json_tree::json_meta()));
+            resolve_json_output(resolution);
         }
 
         static Value parse_all(const Str &text)
@@ -330,8 +343,7 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
         {
-            if (resolution.find_ts("O") != nullptr) { return; }
-            resolution.bind_ts("O", TypeRegistry::instance().ts(json_tree::json_meta()));
+            resolve_json_output(resolution);
         }
 
         static void eval(In<"ts", TS<Bytes>> ts, Out<TsVar<"O">> out)
@@ -361,8 +373,7 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
         {
-            if (resolution.find_ts("O") != nullptr) { return; }
-            resolution.bind_ts("O", TypeRegistry::instance().ts(json_tree::json_meta()));
+            resolve_json_output(resolution);
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::conditional_t<ByName, Str, Int>> key,

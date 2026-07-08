@@ -3,6 +3,7 @@
 
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
+#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/runtime/race_tsd_node.h>
 #include <hgraph/lib/std/operators/conversion.h>
@@ -148,10 +149,10 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
-            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const TSValueTypeMetaData *schema = operator_impl_detail::time_series_schema_at(context, 0);
             if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return; }
-            resolution.bind_ts("__out__", schema);
+            operator_impl_detail::bind_output(resolution, schema);
         }
 
         static auto compose(Wiring &w, VarIn<"tsl", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
@@ -169,17 +170,17 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            if (context.args.size() != 1 || context.args[0].kind != WiringArg::Kind::TimeSeries) { return false; }
-            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
+            if (context.args.size() != 1) { return false; }
+            const TSValueTypeMetaData *schema = operator_impl_detail::time_series_schema_at(context, 0);
             return schema != nullptr && schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0;
         }
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
-            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const TSValueTypeMetaData *schema = operator_impl_detail::fixed_tsl_arg(context, 0);
             if (schema == nullptr || schema->kind != TSTypeKind::TSL) { return; }
-            resolution.bind_ts("__out__", schema->element_ts());
+            operator_impl_detail::bind_output(resolution, schema->element_ts());
         }
 
         static WiringPortRef compose(Wiring &w, NamedPort<"tsl", TsVar<"S">> ts)
@@ -204,8 +205,7 @@ namespace hgraph::stdlib
         {
             // TSD arguments merge PER-KEY (merge_tsd_graph_impl); ONE fixed
             // TSL argument is the *tsl collection shape (merge_tsl_graph_impl).
-            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return true; }
-            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
+            const TSValueTypeMetaData *schema = operator_impl_detail::time_series_schema_at(context, 0);
             if (schema == nullptr) { return true; }
             if (schema->kind == TSTypeKind::TSD) { return false; }
             return !(context.args.size() == 1 && schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0);
@@ -213,10 +213,8 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
-            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
-            resolution.bind_ts("S", schema);
-            resolution.bind_ts("__out__", schema);
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            operator_impl_detail::bind_output_like_arg(resolution, context, 0, "S");
         }
 
         static auto compose(Wiring &w, VarIn<"tsl", TsVar<"S">> ts)

@@ -16,6 +16,7 @@
 #include <hgraph/lib/std/operators/collection.h>
 #include <hgraph/lib/std/operators/conversion.h>
 #include <hgraph/lib/std/operators/comparison.h>
+#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
 #include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
 #include <hgraph/lib/std/operators/logical.h>
@@ -1955,24 +1956,13 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline bool all_args_are_tss(OperatorCallContext context)
         {
-            if (context.args.empty()) { return false; }
-            for (const WiringArg &argument : context.args)
-            {
-                if (argument.kind != WiringArg::Kind::TimeSeries) { return false; }
-                const auto *schema = TypeRegistry::instance().dereference(argument.port.schema);
-                if (schema == nullptr || schema->kind != TSTypeKind::TSS) { return false; }
-            }
-            return true;
+            return operator_impl_detail::all_time_series_args_of_kind(context, TSTypeKind::TSS);
         }
 
         inline void resolve_output_to_first_arg(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__out__") != nullptr) { return; }
-            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
-            const TSValueTypeMetaData *output = TypeRegistry::instance().dereference(context.args[0].port.schema);
-            if (output == nullptr) { return; }
-            if (resolution.find_ts("O") == nullptr) { resolution.bind_ts("O", output); }
-            resolution.bind_ts("__out__", output);
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            operator_impl_detail::bind_output_like_arg(resolution, context, 0, "O");
         }
 
         /** ``union(*ts)`` — n-ary TSS union, folded pairwise at wiring time. */
@@ -2094,8 +2084,7 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline const ValueTypeMetaData *ts_map_meta(const TSValueTypeMetaData *ts) noexcept
         {
-            if (ts == nullptr || ts->kind != TSTypeKind::TS || ts->value_schema == nullptr) { return nullptr; }
-            return ts->value_schema->kind == ValueTypeKind::Map ? ts->value_schema : nullptr;
+            return operator_impl_detail::ts_map_value_schema(ts);
         }
 
         [[nodiscard]] inline const ValueTypeBinding &map_scalar_binding(const ValueTypeMetaData *key,
@@ -2135,11 +2124,11 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *map_meta = ts_map_meta(resolution.find_ts("S"));
                 if (map_meta == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                resolution.bind_ts("O", registry.ts(registry.set(map_meta->key_type)));
+                operator_impl_detail::bind_local_output(resolution, registry.ts(registry.set(map_meta->key_type)), "O");
             }
 
             static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
@@ -2164,11 +2153,12 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *map_meta = ts_map_meta(resolution.find_ts("S"));
                 if (map_meta == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                resolution.bind_ts("O", registry.ts(registry.list(map_meta->element_type, 0, true)));
+                operator_impl_detail::bind_local_output(
+                    resolution, registry.ts(registry.list(map_meta->element_type, 0, true)), "O");
             }
 
             static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
@@ -2195,12 +2185,13 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *ts   = ts_map_meta(resolution.find_ts("S"));
                 const auto *keys = ts_map_meta(resolution.find_ts("K"));
                 if (ts == nullptr || keys == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                resolution.bind_ts("O", registry.ts(registry.map(keys->element_type, ts->element_type)));
+                operator_impl_detail::bind_local_output(
+                    resolution, registry.ts(registry.map(keys->element_type, ts->element_type)), "O");
             }
 
             static void eval(In<"ts", TsVar<"S">> ts, In<"new_keys", TsVar<"K">> new_keys, Out<TsVar<"O">> out)
@@ -2231,11 +2222,12 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *ts = ts_map_meta(resolution.find_ts("S"));
                 if (ts == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                resolution.bind_ts("O", registry.ts(registry.map(ts->element_type, ts->key_type)));
+                operator_impl_detail::bind_local_output(
+                    resolution, registry.ts(registry.map(ts->element_type, ts->key_type)), "O");
             }
 
             static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
@@ -2262,13 +2254,14 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *ts    = ts_map_meta(resolution.find_ts("S"));
                 const auto *parts = ts_map_meta(resolution.find_ts("P"));
                 if (ts == nullptr || parts == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
                 const auto *inner = registry.map(ts->key_type, ts->element_type);
-                resolution.bind_ts("O", registry.ts(registry.map(parts->element_type, inner)));
+                operator_impl_detail::bind_local_output(
+                    resolution, registry.ts(registry.map(parts->element_type, inner)), "O");
             }
 
             static void eval(In<"ts", TsVar<"S">> ts, In<"partitions", TsVar<"P">> partitions, Out<TsVar<"O">> out)
@@ -2328,13 +2321,14 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *ts    = ts_map_meta(resolution.find_ts("S"));
                 const auto *inner = nested_map_meta(ts);
                 if (ts == nullptr || inner == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
                 const auto *flipped_inner = registry.map(ts->key_type, inner->element_type);
-                resolution.bind_ts("O", registry.ts(registry.map(inner->key_type, flipped_inner)));
+                operator_impl_detail::bind_local_output(
+                    resolution, registry.ts(registry.map(inner->key_type, flipped_inner)), "O");
             }
 
             static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
@@ -2385,13 +2379,14 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *ts    = ts_map_meta(resolution.find_ts("S"));
                 const auto *inner = nested_map_meta(ts);
                 if (ts == nullptr || inner == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
                 const auto *pair = registry.tuple({ts->key_type, inner->key_type});
-                resolution.bind_ts("O", registry.ts(registry.map(pair, inner->element_type)));
+                operator_impl_detail::bind_local_output(
+                    resolution, registry.ts(registry.map(pair, inner->element_type)), "O");
             }
 
             static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
@@ -2431,13 +2426,14 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *ts = ts_map_meta(resolution.find_ts("S"));
                 if (ts == nullptr || ts->key_type == nullptr || ts->key_type->kind != ValueTypeKind::Tuple ||
                     ts->key_type->field_count != 2) { return; }
                 auto &registry = TypeRegistry::instance();
                 const auto *inner = registry.map(ts->key_type->fields[1].type, ts->element_type);
-                resolution.bind_ts("O", registry.ts(registry.map(ts->key_type->fields[0].type, inner)));
+                operator_impl_detail::bind_local_output(
+                    resolution, registry.ts(registry.map(ts->key_type->fields[0].type, inner)), "O");
             }
 
             static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
@@ -2494,12 +2490,12 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
                 const auto *values = ts_scalar_meta(resolution.find_ts("B"));
                 if (keys == nullptr || values == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                resolution.bind_ts("O", registry.ts(registry.map(keys, values)));
+                operator_impl_detail::bind_local_output(resolution, registry.ts(registry.map(keys, values)), "O");
             }
 
             static void eval(In<"keys", TsVar<"A">> keys, In<"values", TsVar<"B">> values, Out<TsVar<"O">> out)
@@ -2527,12 +2523,13 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
                 const auto *values = ts_scalar_meta(resolution.find_ts("B"));
                 if (keys == nullptr || values == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                resolution.bind_ts("O", registry.ts(registry.map(keys->element_type, values->element_type)));
+                operator_impl_detail::bind_local_output(
+                    resolution, registry.ts(registry.map(keys->element_type, values->element_type)), "O");
             }
 
             static void eval(In<"keys", TsVar<"A">> keys, In<"values", TsVar<"B">> values, Out<TsVar<"O">> out)
@@ -2561,7 +2558,7 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *keys   = resolution.find_ts("A");
                 const auto *values = resolution.find_ts("B");
                 if (keys == nullptr || values == nullptr || keys->kind != TSTypeKind::TSL ||
@@ -2571,8 +2568,10 @@ namespace hgraph::stdlib
                 if (key_element == nullptr || value_element == nullptr ||
                     key_element->kind != TSTypeKind::TS || value_element->kind != TSTypeKind::TS) { return; }
                 auto &registry = TypeRegistry::instance();
-                resolution.bind_ts("O",
-                                   registry.ts(registry.map(key_element->value_schema, value_element->value_schema)));
+                operator_impl_detail::bind_local_output(
+                    resolution,
+                    registry.ts(registry.map(key_element->value_schema, value_element->value_schema)),
+                    "O");
             }
 
             static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
@@ -2663,17 +2662,18 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *keys   = resolution.find_ts("A");
                 const auto *values = resolution.find_ts("B");
                 if (keys == nullptr || values == nullptr || keys->kind != TSTypeKind::TSL ||
-                    values->kind != TSTypeKind::TSL)
+                    values->kind != TSTypeKind::TSL || keys->element_ts() == nullptr)
                 {
                     return;
                 }
                 auto       &registry = TypeRegistry::instance();
                 const auto *element  = registry.dereference(values->element_ts());
-                resolution.bind_ts("O", registry.tsd(keys->element_ts()->value_schema, registry.ref(element)));
+                operator_impl_detail::bind_local_output(
+                    resolution, registry.tsd(keys->element_ts()->value_schema, registry.ref(element)), "O");
             }
 
             static auto defaults() { return std::tuple{arg<"__strict__">(Bool{true})}; }
@@ -2723,13 +2723,14 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *values = resolution.find_ts("B");
                 const auto *keys   = keys_meta(context);
                 if (values == nullptr || values->kind != TSTypeKind::TSL || keys == nullptr) { return; }
                 auto       &registry = TypeRegistry::instance();
                 const auto *element  = registry.dereference(values->element_ts());
-                resolution.bind_ts("O", registry.tsd(keys->element_type, registry.ref(element)));
+                operator_impl_detail::bind_local_output(
+                    resolution, registry.tsd(keys->element_type, registry.ref(element)), "O");
             }
 
             static auto defaults() { return std::tuple{arg<"__strict__">(Bool{true})}; }
@@ -2771,7 +2772,7 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (resolution.find_ts("__out__") != nullptr) { return; }
+                if (operator_impl_detail::output_bound(resolution)) { return; }
                 if (context.args.size() < 2 || context.args[0].kind != WiringArg::Kind::Scalar) { return; }
                 const auto *keys = context.args[0].scalar_value.schema();
                 if (keys == nullptr || keys->kind != ValueTypeKind::List) { return; }
@@ -2787,7 +2788,7 @@ namespace hgraph::stdlib
                 auto       &registry = TypeRegistry::instance();
                 const auto *element  = registry.dereference(first_value->port.schema);
                 if (element == nullptr) { return; }
-                resolution.bind_ts("__out__", registry.tsd(keys->element_type, registry.ref(element)));
+                operator_impl_detail::bind_output(resolution, registry.tsd(keys->element_type, registry.ref(element)));
             }
 
             static WiringPortRef compose(Wiring &w, Scalar<"keys", ScalarVar<"KS">> keys,
@@ -2839,12 +2840,13 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
                 const auto *values = ts_scalar_meta(resolution.find_ts("B"));
                 if (keys == nullptr || values == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                resolution.bind_ts("O", registry.tsd(keys->element_type, registry.ts(values->element_type)));
+                operator_impl_detail::bind_local_output(
+                    resolution, registry.tsd(keys->element_type, registry.ts(values->element_type)), "O");
             }
 
             static void eval(In<"keys", TsVar<"A">> keys, In<"values", TsVar<"B">> values, Out<TsVar<"O">> out)
@@ -2901,9 +2903,9 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
+                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
                 const auto *orig = resolution.find_ts("A");
-                if (orig != nullptr) { resolution.bind_ts("O", orig); }
+                operator_impl_detail::bind_local_output(resolution, orig, "O");
             }
 
             static Value merge(const ValueView &orig, const ValueView &delta)

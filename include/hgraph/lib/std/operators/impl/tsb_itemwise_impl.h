@@ -1,9 +1,9 @@
 #ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_TSB_ITEMWISE_IMPL_H
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_TSB_ITEMWISE_IMPL_H
 
+#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/subgraph_wiring.h>
-#include <hgraph/util/scope.h>
 
 #include <array>
 #include <cstddef>
@@ -161,11 +161,11 @@ namespace hgraph::stdlib::tsb_itemwise_impl_detail
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__out__") != nullptr || context.args.size() != 1) { return; }
+            if (operator_impl_detail::output_bound(resolution) || context.args.size() != 1) { return; }
             const TSValueTypeMetaData *schema = direct_tsb_schema(context.args[0]);
             if (schema == nullptr) { return; }
             const TSValueTypeMetaData *output = resolve_unary_output_schema<Op>(*schema);
-            if (output != nullptr) { resolution.bind_ts("__out__", output); }
+            operator_impl_detail::bind_output(resolution, output);
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
@@ -188,12 +188,12 @@ namespace hgraph::stdlib::tsb_itemwise_impl_detail
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__out__") != nullptr || context.args.size() != 2) { return; }
+            if (operator_impl_detail::output_bound(resolution) || context.args.size() != 2) { return; }
             const TSValueTypeMetaData *lhs = direct_tsb_schema(context.args[0]);
             const TSValueTypeMetaData *rhs = direct_tsb_schema(context.args[1]);
             if (lhs == nullptr || rhs == nullptr) { return; }
             const TSValueTypeMetaData *output = resolve_binary_output_schema<Op>(*lhs, *rhs);
-            if (output != nullptr) { resolution.bind_ts("__out__", output); }
+            operator_impl_detail::bind_output(resolution, output);
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)

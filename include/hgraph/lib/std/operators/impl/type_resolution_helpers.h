@@ -1,0 +1,267 @@
+#ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_TYPE_RESOLUTION_HELPERS_H
+#define HGRAPH_LIB_STD_OPERATORS_IMPL_TYPE_RESOLUTION_HELPERS_H
+
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/operator_dispatch.h>
+
+#include <cstddef>
+#include <string_view>
+
+namespace hgraph::stdlib::operator_impl_detail
+{
+    /**
+     * Small, null-safe helpers for operator ``requires_`` and
+     * ``resolve_default_types`` implementations.
+     *
+     * Operator default resolution runs before ``requires_``. A resolver must
+     * therefore be at least as defensive as the predicate it pairs with:
+     * inspect the normalised call shape, return quietly when the candidate
+     * is not applicable, and bind only when the output is known.
+     *
+     * Extraction helpers return a pointer, or ``nullptr`` when the requested
+     * pattern is not present. Typical patterns are:
+     *
+     * - ``time_series_schema_at`` extracts a TS argument schema, dereferencing
+     *   REF by default.
+     * - ``time_series_arg_of_kind`` extracts only a specific ``TSTypeKind``.
+     * - ``fixed_tsl_arg`` extracts only a positive fixed-size TSL.
+     * - ``ts_value_schema`` extracts ``T`` from ``TS<T>``.
+     * - ``ts_map_value_schema`` extracts the scalar map schema from
+     *   ``TS<Map[K, V]>``.
+     *
+     * Output helpers are split by overload kind. Static-node overloads whose
+     * output pattern is a local variable such as ``O`` should use
+     * ``local_output_bound`` and ``bind_local_output``. Graph overloads whose
+     * erased output pattern is ``__out__`` should use ``output_bound`` and
+     * ``bind_output``.
+     *
+     * Graph-overload example:
+     *
+     * ````cpp
+     * static bool requires_(const ResolutionMap &, OperatorCallContext context)
+     * {
+     *     return fixed_tsl_arg(context, 1) != nullptr;
+     * }
+     *
+     * static void resolve_default_types(ResolutionMap &resolution,
+     *                                   OperatorCallContext context)
+     * {
+     *     if (output_bound(resolution)) { return; }
+     *     const auto *tsl = fixed_tsl_arg(context, 1);
+     *     if (tsl == nullptr) { return; }
+     *     bind_output(resolution, tsl->element_ts(), "V");
+     * }
+     * ````
+     *
+     * Static-node example:
+     *
+     * ````cpp
+     * static void resolve_default_types(ResolutionMap &resolution,
+     *                                   OperatorCallContext)
+     * {
+     *     if (local_output_bound(resolution, "O")) { return; }
+     *     const auto *map = ts_map_value_schema(resolution.find_ts("S"));
+     *     if (map == nullptr) { return; }
+     *     bind_local_output(resolution,
+     *                       TypeRegistry::instance().ts(
+     *                           TypeRegistry::instance().set(map->key_type)),
+     *                       "O");
+     * }
+     * ````
+     *
+     * Prefer these helpers over ad hoc ``context.args[N]`` indexing so the
+     * resolver and predicate share the same guard semantics.
+     */
+
+    /** Whether returned schemas should preserve REF wrappers or dereference them. */
+    enum class SchemaRefMode
+    {
+        Direct,
+        Dereference
+    };
+
+    /** Return argument ``index``, or null when the call is shorter. */
+    [[nodiscard]] inline const WiringArg *arg_at(OperatorCallContext context, std::size_t index) noexcept
+    {
+        return index < context.args.size() ? &context.args[index] : nullptr;
+    }
+
+    /** Return argument ``index`` only when it is a time-series argument. */
+    [[nodiscard]] inline const WiringArg *time_series_arg_at(OperatorCallContext context,
+                                                             std::size_t index) noexcept
+    {
+        const WiringArg *arg = arg_at(context, index);
+        return arg != nullptr && arg->kind == WiringArg::Kind::TimeSeries ? arg : nullptr;
+    }
+
+    /** Return argument ``index`` only when it is a scalar argument. */
+    [[nodiscard]] inline const WiringArg *scalar_arg_at(OperatorCallContext context, std::size_t index) noexcept
+    {
+        const WiringArg *arg = arg_at(context, index);
+        return arg != nullptr && arg->kind == WiringArg::Kind::Scalar ? arg : nullptr;
+    }
+
+    /**
+     * Return the time-series schema for ``arg``. ``Dereference`` turns a
+     * REF-shaped port into its target schema; ``Direct`` preserves the REF
+     * wrapper so callers can gate on the actual surface shape.
+     */
+    [[nodiscard]] inline const TSValueTypeMetaData *time_series_schema(
+        const WiringArg &arg,
+        SchemaRefMode    mode = SchemaRefMode::Dereference) noexcept
+    {
+        if (arg.kind != WiringArg::Kind::TimeSeries || arg.port.schema == nullptr) { return nullptr; }
+        return mode == SchemaRefMode::Dereference ? TypeRegistry::instance().dereference(arg.port.schema)
+                                                  : arg.port.schema;
+    }
+
+    /** Return the time-series schema at ``index``, or null for non-TS/missing args. */
+    [[nodiscard]] inline const TSValueTypeMetaData *time_series_schema_at(
+        OperatorCallContext context,
+        std::size_t         index,
+        SchemaRefMode       mode = SchemaRefMode::Dereference) noexcept
+    {
+        const WiringArg *arg = time_series_arg_at(context, index);
+        return arg != nullptr ? time_series_schema(*arg, mode) : nullptr;
+    }
+
+    /** Return the time-series schema at ``index`` only when it has ``kind``. */
+    [[nodiscard]] inline const TSValueTypeMetaData *time_series_arg_of_kind(
+        OperatorCallContext context,
+        std::size_t         index,
+        TSTypeKind          kind,
+        SchemaRefMode       mode = SchemaRefMode::Dereference) noexcept
+    {
+        const TSValueTypeMetaData *schema = time_series_schema_at(context, index, mode);
+        return schema != nullptr && schema->kind == kind ? schema : nullptr;
+    }
+
+    /** Return a fixed-size TSL schema at ``index``. Dynamic TSL returns null. */
+    [[nodiscard]] inline const TSValueTypeMetaData *fixed_tsl_arg(
+        OperatorCallContext context,
+        std::size_t         index,
+        SchemaRefMode       mode = SchemaRefMode::Dereference) noexcept
+    {
+        const TSValueTypeMetaData *schema = time_series_arg_of_kind(context, index, TSTypeKind::TSL, mode);
+        return schema != nullptr && schema->fixed_size() > 0 ? schema : nullptr;
+    }
+
+    /** True when both arguments are fixed-size TSL with the same size. */
+    [[nodiscard]] inline bool same_fixed_tsl_size(OperatorCallContext context,
+                                                  std::size_t lhs_index,
+                                                  std::size_t rhs_index,
+                                                  SchemaRefMode mode = SchemaRefMode::Dereference) noexcept
+    {
+        const TSValueTypeMetaData *lhs = fixed_tsl_arg(context, lhs_index, mode);
+        const TSValueTypeMetaData *rhs = fixed_tsl_arg(context, rhs_index, mode);
+        return lhs != nullptr && rhs != nullptr && lhs->fixed_size() == rhs->fixed_size();
+    }
+
+    /** True when every argument is a time-series argument of ``kind``. */
+    [[nodiscard]] inline bool all_time_series_args_of_kind(
+        OperatorCallContext context,
+        TSTypeKind          kind,
+        SchemaRefMode       mode = SchemaRefMode::Dereference) noexcept
+    {
+        if (context.args.empty()) { return false; }
+        for (std::size_t index = 0; index < context.args.size(); ++index)
+        {
+            if (time_series_arg_of_kind(context, index, kind, mode) == nullptr) { return false; }
+        }
+        return true;
+    }
+
+    /** Return a TS value schema when ``ts`` is a plain ``TS<T>``. */
+    [[nodiscard]] inline const ValueTypeMetaData *ts_value_schema(const TSValueTypeMetaData *ts) noexcept
+    {
+        return ts != nullptr && ts->kind == TSTypeKind::TS ? ts->value_schema : nullptr;
+    }
+
+    /** Return a TS value schema at ``index`` when the argument is a plain ``TS<T>``. */
+    [[nodiscard]] inline const ValueTypeMetaData *ts_value_schema_at(
+        OperatorCallContext context,
+        std::size_t         index,
+        SchemaRefMode       mode = SchemaRefMode::Dereference) noexcept
+    {
+        return ts_value_schema(time_series_schema_at(context, index, mode));
+    }
+
+    /** Return the map value schema from TS[Map[K, V]], or null for non-map values. */
+    [[nodiscard]] inline const ValueTypeMetaData *ts_map_value_schema(const TSValueTypeMetaData *ts) noexcept
+    {
+        const ValueTypeMetaData *value = ts_value_schema(ts);
+        return value != nullptr && value->kind == ValueTypeKind::Map ? value : nullptr;
+    }
+
+    /** True when ``resolution`` already carries the erased graph-output binding. */
+    [[nodiscard]] inline bool output_bound(const ResolutionMap &resolution) noexcept
+    {
+        return resolution.find_ts("__out__") != nullptr;
+    }
+
+    /** True when a local output type variable such as ``O`` is already bound. */
+    [[nodiscard]] inline bool local_output_bound(const ResolutionMap &resolution,
+                                                 std::string_view     local_var) noexcept
+    {
+        return !local_var.empty() && resolution.find_ts(local_var) != nullptr;
+    }
+
+    /** Bind ``name`` only when ``schema`` is non-null and the name is still unbound. */
+    inline void bind_if_unbound(ResolutionMap &resolution,
+                                std::string_view name,
+                                const TSValueTypeMetaData *schema)
+    {
+        if (schema != nullptr && resolution.find_ts(name) == nullptr) { resolution.bind_ts(name, schema); }
+    }
+
+    /**
+     * Bind the resolved graph-overload output. ``__out__`` is the erased
+     * graph-output sentinel and is only defaulted when absent. ``local_var`` is
+     * for graph implementations whose compose signature also needs an internal
+     * named variable such as ``V``; rebinding it preserves ResolutionMap's
+     * inconsistent-resolution check.
+     */
+    inline void bind_output(ResolutionMap &resolution,
+                            const TSValueTypeMetaData *output,
+                            std::string_view local_var = {})
+    {
+        if (output == nullptr) { return; }
+        if (!local_var.empty()) { resolution.bind_ts(local_var, output); }
+        bind_if_unbound(resolution, "__out__", output);
+    }
+
+    /** Bind graph output to the schema of argument ``index``. */
+    inline void bind_output_like_arg(ResolutionMap &resolution,
+                                     OperatorCallContext context,
+                                     std::size_t index,
+                                     std::string_view local_var = {},
+                                     SchemaRefMode mode = SchemaRefMode::Dereference)
+    {
+        bind_output(resolution, time_series_schema_at(context, index, mode), local_var);
+    }
+
+    /**
+     * Bind only a static-node local output variable such as ``O``. Use this
+     * when the implementation's declared output pattern is the local variable,
+     * not the erased graph-output sentinel ``__out__``. Rebinding is deliberate:
+     * a mismatch rejects the candidate through ResolutionMap.
+     */
+    inline void bind_local_output(ResolutionMap &resolution,
+                                  const TSValueTypeMetaData *output,
+                                  std::string_view local_var)
+    {
+        if (output != nullptr && !local_var.empty()) { resolution.bind_ts(local_var, output); }
+    }
+
+    /** Bind local output to the schema of argument ``index``. */
+    inline void bind_local_output_like_arg(ResolutionMap &resolution,
+                                           OperatorCallContext context,
+                                           std::size_t index,
+                                           std::string_view local_var,
+                                           SchemaRefMode mode = SchemaRefMode::Dereference)
+    {
+        bind_local_output(resolution, time_series_schema_at(context, index, mode), local_var);
+    }
+}  // namespace hgraph::stdlib::operator_impl_detail
+
+#endif  // HGRAPH_LIB_STD_OPERATORS_IMPL_TYPE_RESOLUTION_HELPERS_H

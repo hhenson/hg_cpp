@@ -3,6 +3,7 @@
 
 #include <hgraph/lib/std/operators/container.h>
 #include <hgraph/lib/std/operators/conversion.h>
+#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
@@ -42,22 +43,20 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline const TSValueTypeMetaData *direct_tsb_schema(const WiringArg &arg) noexcept
         {
-            if (arg.kind != WiringArg::Kind::TimeSeries) { return nullptr; }
-            const TSValueTypeMetaData *schema = arg.port.schema;
+            const TSValueTypeMetaData *schema =
+                operator_impl_detail::time_series_schema(arg, operator_impl_detail::SchemaRefMode::Direct);
             return schema != nullptr && schema->kind == TSTypeKind::TSB ? schema : nullptr;
         }
 
         [[nodiscard]] inline const TSValueTypeMetaData *direct_tsl_schema(const WiringArg &arg) noexcept
         {
-            if (arg.kind != WiringArg::Kind::TimeSeries) { return nullptr; }
-            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(arg.port.schema);
+            const TSValueTypeMetaData *schema = operator_impl_detail::time_series_schema(arg);
             return schema != nullptr && schema->kind == TSTypeKind::TSL ? schema : nullptr;
         }
 
         [[nodiscard]] inline const TSValueTypeMetaData *direct_tsd_schema(const WiringArg &arg) noexcept
         {
-            if (arg.kind != WiringArg::Kind::TimeSeries) { return nullptr; }
-            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(arg.port.schema);
+            const TSValueTypeMetaData *schema = operator_impl_detail::time_series_schema(arg);
             return schema != nullptr && schema->kind == TSTypeKind::TSD ? schema : nullptr;
         }
 
@@ -88,6 +87,32 @@ namespace hgraph::stdlib
         {
             std::optional<std::size_t> index = find_tsb_field_index(schema, key);
             return index.has_value() ? schema.fields()[*index].type : nullptr;
+        }
+
+        template <typename Key>
+        [[nodiscard]] inline const TSValueTypeMetaData *tsb_field_schema_from_context(
+            OperatorCallContext context,
+            std::string_view    key_name)
+        {
+            if (context.args.size() != 2) { return nullptr; }
+            const TSValueTypeMetaData *schema = direct_tsb_schema(context.args[0]);
+            const Key                 *key    = context.scalar_as<Key>(key_name);
+            return schema != nullptr && key != nullptr ? tsb_field_schema(*schema, *key) : nullptr;
+        }
+
+        template <typename Key>
+        [[nodiscard]] inline bool has_tsb_field(OperatorCallContext context, std::string_view key_name)
+        {
+            return tsb_field_schema_from_context<Key>(context, key_name) != nullptr;
+        }
+
+        template <typename Key>
+        inline void resolve_tsb_field_output(ResolutionMap &resolution,
+                                             OperatorCallContext context,
+                                             std::string_view    key_name)
+        {
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            operator_impl_detail::bind_output(resolution, tsb_field_schema_from_context<Key>(context, key_name));
         }
     }  // namespace container_impl_detail
 
@@ -529,24 +554,12 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__out__") != nullptr) { return; }
-            if (context.args.size() != 2) { return; }
-
-            const TSValueTypeMetaData *schema = container_impl_detail::direct_tsb_schema(context.args[0]);
-            const Str                 *key    = context.scalar_as<Str>("key");
-            if (schema == nullptr || key == nullptr) { return; }
-
-            const TSValueTypeMetaData *field_schema = container_impl_detail::tsb_field_schema(*schema, *key);
-            if (field_schema != nullptr) { resolution.bind_ts("__out__", field_schema); }
+            container_impl_detail::resolve_tsb_field_output<Str>(resolution, context, "key");
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            if (context.args.size() != 2) { return false; }
-            const TSValueTypeMetaData *schema = container_impl_detail::direct_tsb_schema(context.args[0]);
-            const Str                 *key    = context.scalar_as<Str>("key");
-            return schema != nullptr && key != nullptr &&
-                   container_impl_detail::find_tsb_field_index(*schema, *key).has_value();
+            return container_impl_detail::has_tsb_field<Str>(context, "key");
         }
 
         static WiringPortRef compose(Wiring &, NamedPort<"ts", TsVar<"S">> ts, Scalar<"key", Str> key)
@@ -563,24 +576,12 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__out__") != nullptr) { return; }
-            if (context.args.size() != 2) { return; }
-
-            const TSValueTypeMetaData *schema = container_impl_detail::direct_tsb_schema(context.args[0]);
-            const Int                 *key    = context.scalar_as<Int>("key");
-            if (schema == nullptr || key == nullptr) { return; }
-
-            const TSValueTypeMetaData *field_schema = container_impl_detail::tsb_field_schema(*schema, *key);
-            if (field_schema != nullptr) { resolution.bind_ts("__out__", field_schema); }
+            container_impl_detail::resolve_tsb_field_output<Int>(resolution, context, "key");
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            if (context.args.size() != 2) { return false; }
-            const TSValueTypeMetaData *schema = container_impl_detail::direct_tsb_schema(context.args[0]);
-            const Int                 *key    = context.scalar_as<Int>("key");
-            return schema != nullptr && key != nullptr &&
-                   container_impl_detail::find_tsb_field_index(*schema, *key).has_value();
+            return container_impl_detail::has_tsb_field<Int>(context, "key");
         }
 
         static WiringPortRef compose(Wiring &, NamedPort<"ts", TsVar<"S">> ts, Scalar<"key", Int> key)
@@ -597,24 +598,12 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__out__") != nullptr) { return; }
-            if (context.args.size() != 2) { return; }
-
-            const TSValueTypeMetaData *schema = container_impl_detail::direct_tsb_schema(context.args[0]);
-            const Str                 *attr   = context.scalar_as<Str>("attr");
-            if (schema == nullptr || attr == nullptr) { return; }
-
-            const TSValueTypeMetaData *field_schema = container_impl_detail::tsb_field_schema(*schema, *attr);
-            if (field_schema != nullptr) { resolution.bind_ts("__out__", field_schema); }
+            container_impl_detail::resolve_tsb_field_output<Str>(resolution, context, "attr");
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            if (context.args.size() != 2) { return false; }
-            const TSValueTypeMetaData *schema = container_impl_detail::direct_tsb_schema(context.args[0]);
-            const Str                 *attr   = context.scalar_as<Str>("attr");
-            return schema != nullptr && attr != nullptr &&
-                   container_impl_detail::find_tsb_field_index(*schema, *attr).has_value();
+            return container_impl_detail::has_tsb_field<Str>(context, "attr");
         }
 
         static WiringPortRef compose(Wiring &, NamedPort<"ts", TsVar<"S">> ts, Scalar<"attr", Str> attr)

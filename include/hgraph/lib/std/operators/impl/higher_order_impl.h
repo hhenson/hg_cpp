@@ -4,6 +4,7 @@
 #include <hgraph/lib/std/operators/conversion.h>  // nothing (placeholder for the mesh_subscribe value input)
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/std/operators/impl/reduce_layout.h>
+#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/mesh_node.h>
 #include <hgraph/runtime/reduce_node.h>
@@ -40,15 +41,7 @@ namespace hgraph::stdlib
                                       const TSValueTypeMetaData *output,
                                       std::string_view legacy_var = {})
         {
-            if (output == nullptr) { return; }
-            if (!legacy_var.empty() && resolution.find_ts(legacy_var) == nullptr)
-            {
-                resolution.bind_ts(legacy_var, output);
-            }
-            if (resolution.find_ts("__out__") == nullptr)
-            {
-                resolution.bind_ts("__out__", output);
-            }
+            operator_impl_detail::bind_output(resolution, output, legacy_var);
         }
 
         struct lifted_reduce_tsl_node_tag
@@ -334,14 +327,9 @@ namespace hgraph::stdlib
 
         inline void resolve_reduce_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__out__") != nullptr ||
-                context.args.size() < 2 ||
-                context.args[1].kind != WiringArg::Kind::TimeSeries)
-            {
-                return;
-            }
-            const auto *schema = TypeRegistry::instance().dereference(context.args[1].port.schema);
-            if (schema == nullptr || schema->kind != TSTypeKind::TSL) { return; }
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TSL);
+            if (schema == nullptr) { return; }
             bind_graph_output(resolution, schema->element_ts(), "V");
         }
 
@@ -520,14 +508,9 @@ namespace hgraph::stdlib
 
         inline void resolve_reduce_tsd_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__out__") != nullptr ||
-                context.args.size() < 2 ||
-                context.args[1].kind != WiringArg::Kind::TimeSeries)
-            {
-                return;
-            }
-            const auto *schema = TypeRegistry::instance().dereference(context.args[1].port.schema);
-            if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return; }
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TSD);
+            if (schema == nullptr) { return; }
             bind_graph_output(resolution, schema->element_ts(), "V");
         }
 
