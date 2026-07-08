@@ -288,7 +288,15 @@ class _TSBMeta(type):
         for klass in reversed(schema.__mro__):
             annotations.update(getattr(klass, "__annotations__", {}))
         fields = [(name, _resolve(ts)) for name, ts in annotations.items()]
-        return _TsExpr(_hgraph.tsb(schema.__name__, fields), f"TSB[{schema.__name__}]")
+        # The registry's TSB namespace is GLOBAL; python classes are scoped
+        # (tests re-define same-named local schemas freely). Qualify with the
+        # module + qualname so distinct classes never collide; the plain
+        # __name__ stays for stable top-level classes (nicer diagnostics).
+        name = schema.__name__
+        qualname = getattr(schema, "__qualname__", name)
+        if "<locals>" in qualname:
+            name = f"{schema.__module__}.{qualname}"
+        return _TsExpr(_hgraph.tsb(name, fields), f"TSB[{schema.__name__}]")
 
 
 class TSB(metaclass=_TSBMeta):
