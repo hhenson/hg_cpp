@@ -807,6 +807,31 @@ namespace hgraph::detail
             ::hgraph::apply_delta(target_link_delta_target(binding->ops_ref().context, out), delta);
         }
 
+        /**
+         * Child-modification notifications for children reached THROUGH a
+         * link view: ``at_slot``/child projections stamp the accessing view
+         * as the child's parent, so a child written via a forwarding link
+         * carries the LINK as its parent. The link is a transparent alias -
+         * the notification must land on the TARGET (slot/delta bits + the
+         * target's own tracking and parent chain), exactly as if the child
+         * had been reached through the target directly. The generic caller
+         * (TSParentLink::notify_child_modified) separately records the
+         * link's own tracking and continues the LINK's chain.
+         */
+        void target_link_record_child_modified(const void *context, void *memory, std::size_t child_id,
+                                               DateTime modified_time)
+        {
+            auto target = target_link_target_view(context, memory);
+            if (!target.valid()) { return; }
+            const auto &ops = target.ops();
+            ops.record_child_modified_impl(ops.context, const_cast<void *>(target.data()), child_id, modified_time);
+            auto *state = ops.mutable_tracking_impl(ops.context, const_cast<void *>(target.data()));
+            if (state != nullptr && state->record_modified(modified_time))
+            {
+                state->parent.notify_child_modified(modified_time);
+            }
+        }
+
         [[nodiscard]] TSDataOps target_link_base_ops(TSInputTargetLinkContext &context)
         {
             return TSDataOps{
@@ -820,6 +845,7 @@ namespace hgraph::detail
                 .all_valid_impl            = &target_link_all_valid,
                 .value_memory_impl         = &target_link_value_memory,
                 .delta_memory_impl         = &target_link_delta_memory,
+                .record_child_modified_impl = &target_link_record_child_modified,
                 .copy_value_from_impl      = &target_link_copy_value_from,
                 .move_value_from_impl      = &target_link_move_value_from,
                 .delta_has_effect_impl     = &target_link_delta_has_effect_op,

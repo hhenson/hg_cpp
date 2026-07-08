@@ -66,6 +66,20 @@ while the upstream is unbound). This is the RFC's ``alias_parent_input`` mode
 and is what identity branches of ``switch_`` / ``map_`` and component-style
 wrappers rely on.
 
+**Forwarding links are transparent parents.** Views projected THROUGH a
+forwarding link (a nested map's output operating on its element, a child
+reached by ``at_slot`` on a link-backed dictionary) stamp the accessing
+link view as the child's ``TSParentLink``. A child-modification
+notification arriving at a link therefore delegates to the TARGET: the
+target's per-slot delta bits, its own tracking record, and its parent
+chain all fire exactly as if the child had been reached through the
+target directly, while the generic notify path separately records the
+link's own tracking and continues the link's chain (node scheduling).
+Without this delegation a nested container's writes join the outer
+delta window structurally but never mark the inner modified surface -
+the nested map-in-map case (TSD elements that are themselves TSDs,
+enabled by the storage-stability ruling) depends on it.
+
 **Structural boundary args.** An outer structural initializer
 (``nested_<G>(w, {a, b})``, or named TSB form) is mirrored into the child
 compile as a structural source whose **leaves are boundary refs**. The child

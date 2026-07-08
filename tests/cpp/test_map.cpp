@@ -460,7 +460,7 @@ TEST_CASE("merge over TSDs is per-key (map_ with a lifted variadic operator)")
                                dict_delta<Str, TS<Int>>({{"a"s, 9}})));   // leftmost MODIFIED wins
 }
 
-TEST_CASE("merge over NESTED TSDs recurses per key (embedding)", "[.nested-embedding]")   // hidden: values through double forwarding pending
+TEST_CASE("merge over NESTED TSDs recurses per key (embedding)")
 {
     using namespace hgraph;
     stdlib::register_standard_operators();
