@@ -29,7 +29,9 @@ namespace hgraph::stdlib
         register_overload<combine_map, collection_impl_detail::combine_map_tuples>();
         register_overload<combine_map, collection_impl_detail::combine_map_tsls>();
         register_overload<rekey, collection_impl_detail::rekey_tsd_scalar>();
+        register_overload<rekey, collection_impl_detail::rekey_tsd_set>();
         register_overload<flip, collection_impl_detail::flip_tsd_unique>();
+        register_overload<flip, collection_impl_detail::flip_tsd_non_unique>();
         register_overload<partition, collection_impl_detail::partition_tsd_scalar>();
         register_overload<unpartition, collection_impl_detail::unpartition_tsd>();
         register_overload<not_, collection_impl_detail::not_tss>();

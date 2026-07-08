@@ -1032,11 +1032,98 @@ namespace hgraph::stdlib
             }
         };
 
+        /** rekey(ts, new_keys: TSD[K, TSS[K1]]): each source key maps to a
+            SET of output keys (hgraph's rekey with set-valued mappings). */
+        struct rekey_tsd_set
+        {
+            static constexpr auto name = "rekey_tsd_set";
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+                             In<"new_keys", TSD<ScalarVar<"K">, TSS<ScalarVar<"K1">>>,
+                                InputValidity::Unchecked> new_keys,
+                             RecordableState<TSD<ScalarVar<"K">, TSS<ScalarVar<"K1">>>> previous,
+                             Out<TSD<ScalarVar<"K1">, TsVar<"V">>> out)
+            {
+                TSDOutputView &out_dict = out;
+                TSDOutputView &prev     = previous;
+                auto           out_mutation  = out_dict.begin_mutation(out_dict.evaluation_time());
+                auto           prev_mutation = prev.begin_mutation(prev.evaluation_time());
+
+                const auto erase_mapped = [&](const ValueView &source_key) {
+                    TSOutputView mapped = prev.at(source_key);
+                    if (!mapped.valid()) { return; }
+                    auto mapped_set = mapped.data_view().as_set();
+                    for (const ValueView &new_key : mapped_set.values()) { (void)out_mutation.erase(new_key); }
+                };
+
+                for (const ValueView &source_key : ts.removed_keys()) { erase_mapped(source_key); }
+
+                for (const ValueView &source_key : new_keys.removed_keys())
+                {
+                    erase_mapped(source_key);
+                    (void)prev_mutation.erase(source_key);
+                }
+
+                const TSDInputView &source_dict = ts;
+                for (const auto [source_key, mapping] : new_keys.modified_items())
+                {
+                    if (!mapping.valid())
+                    {
+                        erase_mapped(source_key);
+                        (void)prev_mutation.erase(source_key);
+                        continue;
+                    }
+
+                    const TSInputView &mapping_base = mapping.base();
+                    const auto         new_set      = mapping_base.value();
+                    auto               new_view     = new_set.as_set();
+
+                    // Output keys dropped from the mapping erase.
+                    TSOutputView mapped = prev.at(source_key);
+                    if (mapped.valid())
+                    {
+                        auto mapped_set = mapped.data_view().as_set();
+                        for (const ValueView &old_key : mapped_set.values())
+                        {
+                            if (!new_view.contains(old_key)) { (void)out_mutation.erase(old_key); }
+                        }
+                    }
+
+                    prev_mutation.set(source_key, new_set);
+                    TSInputView source = source_dict.at(source_key);
+                    for (const ValueView &new_key : new_view.values())
+                    {
+                        copy_tsd_child_if_changed(out_mutation, out_dict, new_key, source);
+                    }
+                }
+
+                for (const auto [source_key, source] : ts.modified_items())
+                {
+                    TSOutputView mapped = prev.at(source_key);
+                    if (!mapped.valid()) { continue; }
+                    auto mapped_set = mapped.data_view().as_set();
+                    for (const ValueView &new_key : mapped_set.values())
+                    {
+                        copy_tsd_child_if_changed(out_mutation, out_dict, new_key, source);
+                    }
+                }
+            }
+        };
+
         struct flip_tsd_unique
         {
             static constexpr auto name = "flip_tsd_unique";
 
+            static auto defaults() { return std::tuple{arg<"unique">(Bool{true})}; }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                const Bool *unique = context.scalar_as<Bool>("unique");
+                return unique == nullptr || *unique;
+            }
+
             static void eval(In<"ts", TSD<ScalarVar<"K">, TS<ScalarVar<"K1">>>, InputValidity::Unchecked> ts,
+                             Scalar<"unique", Bool>,
                              Out<TSD<ScalarVar<"K1">, TS<ScalarVar<"K">>>> out)
             {
                 TSDOutputView &out_dict = out;
@@ -1066,6 +1153,84 @@ namespace hgraph::stdlib
                     }
 
                     copy_value_if_changed(out_mutation, out_dict, value_base.value(), source_key);
+                }
+            }
+        };
+
+        /** flip(ts, unique=False): GROUP source keys by value - the output
+            is TSD[V, TSS[K]]; empty groups REMOVE (hgraph's non-unique
+            flip). Full own-output reconciliation, no node state. */
+        struct flip_tsd_non_unique
+        {
+            static constexpr auto name = "flip_tsd_non_unique";
+
+            static auto defaults() { return std::tuple{arg<"unique">(Bool{true})}; }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                const Bool *unique = context.scalar_as<Bool>("unique");
+                return unique != nullptr && !*unique;
+            }
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TS<ScalarVar<"K1">>>, InputValidity::Unchecked> ts,
+                             Scalar<"unique", Bool>,
+                             Out<TSD<ScalarVar<"K1">, TSS<ScalarVar<"K">>>> out)
+            {
+                TSDOutputView &out_dict = out;
+                const auto     evaluation_time = out_dict.evaluation_time();
+                const TSDInputView &dict = ts;
+
+                ankerl::unordered_dense::map<Value, std::vector<Value>, ValueKeyHash, ValueKeyEqual> groups;
+                for (auto &&[key, child] : dict.items())
+                {
+                    if (child.valid()) { groups[Value{child.value()}].emplace_back(key); }
+                }
+
+                auto out_mutation = out_dict.begin_mutation(evaluation_time);
+
+                std::vector<Value> stale;
+                for (const auto [group_key, members] : out_dict.items())
+                {
+                    if (!groups.contains(Value{group_key})) { stale.emplace_back(group_key); }
+                }
+                for (const Value &group_key : stale) { (void)out_mutation.erase(group_key.view()); }
+
+                for (const auto &[group_key, members] : groups)
+                {
+                    // Compare on the READ side first: mutation.at() marks the
+                    // key modified, so an unchanged group must not reach it.
+                    std::vector<Value> gone;
+                    bool               additions = false;
+                    {
+                        TSOutputView current = out_dict.at(group_key.view());
+                        if (current.valid())
+                        {
+                            auto current_set = current.data_view().as_set();
+                            for (const ValueView &member : current_set.values())
+                            {
+                                const bool keep = std::ranges::any_of(members, [&](const Value &candidate) {
+                                    return candidate.view().equals(member);
+                                });
+                                if (!keep) { gone.emplace_back(member); }
+                            }
+                            for (const Value &member : members)
+                            {
+                                if (!current_set.contains(member.view()))
+                                {
+                                    additions = true;
+                                    break;
+                                }
+                            }
+                        }
+                        else { additions = true; }
+                        if (gone.empty() && !additions) { continue; }
+                    }
+
+                    auto inner          = out_mutation.at(group_key.view());
+                    auto inner_set      = inner.as_set();
+                    auto inner_mutation = inner_set.begin_mutation(evaluation_time);
+                    for (const Value &member : gone) { (void)inner_mutation.remove(member.view()); }
+                    for (const Value &member : members) { (void)inner_mutation.add(member.view()); }
                 }
             }
         };
