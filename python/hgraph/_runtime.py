@@ -457,6 +457,9 @@ class _PyNode:
         self._valid = valid
         self.__name__ = fn.__name__
         sig = inspect.signature(fn)
+        # Callers introspecting the NODE (eval_node's input typing) must see
+        # the user function's signature, not _PyNode.__call__'s.
+        self.__signature__ = sig
         self._out_tp = sig.return_annotation if has_output else None
         self._params = list(sig.parameters.values())
         # Injectable parameters MUST default to None (hgraph convention):
