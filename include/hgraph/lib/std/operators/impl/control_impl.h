@@ -3,6 +3,7 @@
 
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
+#include <hgraph/lib/std/operators/impl/collection_impl.h>
 #include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/runtime/race_tsd_node.h>
@@ -139,6 +140,109 @@ namespace hgraph::stdlib
         }
 
     }  // namespace control_impl_detail
+
+    namespace control_impl_detail
+    {
+        /** merge(*tsds, disjoint=True): the LEFTMOST dictionary holding a
+            key supplies its element REFERENCE; keys absent from every input
+            REMOVE (hgraph's merge_tsd_disjoint as stateless own-output
+            reconciliation over the packed inputs). */
+        struct merge_tsd_disjoint_node
+        {
+            static constexpr auto name = "merge_tsd_disjoint";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *tsl = operator_impl_detail::fixed_tsl_arg(context, 0);
+                if (tsl == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                const auto *element = registry.dereference(tsl->element_ts());
+                if (element == nullptr || element->kind != TSTypeKind::TSD) { return; }
+                operator_impl_detail::bind_output(
+                    resolution, registry.tsd(element->key_type(),
+                                             registry.ref(registry.dereference(element->element_ts()))));
+            }
+
+            static void eval(In<"tsl", TSL<TSD<ScalarVar<"K">, TsVar<"V">>, SIZE<"N">>,
+                                InputValidity::Unchecked> tsl,
+                             Out<TsVar<"__out__">> out)
+            {
+                std::vector<std::pair<Value, Value>> pairs;
+                const std::size_t size = tsl.size();
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    TSDInputView dict{tsl[index].base().borrowed_ref()};
+                    for (auto &&[key, child] : dict.items())
+                    {
+                        if (!child.valid()) { continue; }
+                        bool seen = false;
+                        for (const auto &pair : pairs)
+                        {
+                            if (pair.first.view().equals(key)) { seen = true; break; }
+                        }
+                        if (!seen) { pairs.emplace_back(Value{key}, Value{child.reference()}); }
+                    }
+                }
+                collection_impl_detail::publish_tsd_refs(static_cast<const TSOutputView &>(out), pairs);
+            }
+        };
+    }  // namespace control_impl_detail
+
+    /** The graph overload gating merge's ``disjoint=True`` calling shape:
+        collect the variadic dictionaries and wire the erased node. */
+    struct merge_tsd_disjoint_graph_impl
+    {
+        static constexpr auto name = "merge_tsd_disjoint_graph";
+
+        static auto defaults() { return std::tuple{arg<"disjoint">(Bool{false})}; }
+
+        [[nodiscard]] static const TSValueTypeMetaData *first_dict_arg(OperatorCallContext context)
+        {
+            // The VarIn tail normalises AFTER the scalar: scan for the first
+            // time-series argument.
+            for (std::size_t index = 0; index < context.args.size(); ++index)
+            {
+                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, index, TSTypeKind::TSD);
+                if (schema != nullptr) { return schema; }
+            }
+            return nullptr;
+        }
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const Bool *disjoint = context.scalar_as<Bool>("disjoint");
+            if (disjoint == nullptr || !*disjoint) { return false; }
+            return first_dict_arg(context) != nullptr;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const auto *schema = first_dict_arg(context);
+            if (schema == nullptr) { return; }
+            auto &registry = TypeRegistry::instance();
+            operator_impl_detail::bind_output(
+                resolution,
+                registry.tsd(schema->key_type(), registry.ref(registry.dereference(schema->element_ts()))));
+        }
+
+        static WiringPortRef compose(Wiring &w, VarIn<"tsl", TSD<ScalarVar<"K">, TsVar<"V">>> ts,
+                                     Scalar<"disjoint", Bool>)
+        {
+            if (ts.empty()) { throw std::invalid_argument("merge requires at least one input"); }
+            auto &registry = TypeRegistry::instance();
+            const auto *element = registry.dereference(ts[0].schema);
+            std::vector<WiringPortRef> children{ts.begin(), ts.end()};
+            WiringPortRef packed =
+                WiringPortRef::structural_source(registry.tsl(element, ts.size()), std::move(children));
+            std::array<WiringArg, 1> args{};
+            args[0].kind = WiringArg::Kind::TimeSeries;
+            args[0].port = packed;
+            auto result = wire_operator(w, "merge_tsd_disjoint", {args.data(), args.size()}, true);
+            return result.output.erased();
+        }
+    };
 
     /** merge over TSDs is PER-KEY (hgraph's merge_tsd): map_(merge, *tsl)
         recurses the merge into each key's elements. Whole-dict reduce (the

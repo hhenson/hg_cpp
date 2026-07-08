@@ -26,6 +26,13 @@ namespace hgraph::stdlib
      */
 
     /** ``merge`` — forward the first of the inputs to tick this cycle (variadic). */
+    /** Runtime half of merge(disjoint=True): leftmost-wins reference merge
+        over a packed TSL of dictionaries. */
+    struct merge_tsd_disjoint_marker
+        : Operator<"merge_tsd_disjoint", In<"tsl", TsVar<"S">>, Out<TsVar<"O">>>
+    {
+    };
+
     struct merge : Operator<"merge", VarIn<"tsl", TsVar<"S">>, Out<TsVar<"S">>>
     {
     };
