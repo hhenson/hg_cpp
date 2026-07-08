@@ -331,6 +331,86 @@ namespace hgraph::stdlib
         }
     };
 
+    /** getattr_ over NESTED TSDs: collapse -> project -> uncollapse
+        (hgraph's tsd_get_bundle_item_2/_nested route). */
+    struct getattr_tsd_nested
+    {
+        static constexpr auto name = "getattr_tsd_nested";
+
+        [[nodiscard]] static const TSValueTypeMetaData *nested_bundle_leaf(const TSValueTypeMetaData *schema,
+                                                                           std::size_t &depth)
+        {
+            auto &registry = TypeRegistry::instance();
+            const auto *current = registry.dereference(schema);
+            depth = 0;
+            while (current != nullptr && current->kind == TSTypeKind::TSD)
+            {
+                ++depth;
+                current = registry.dereference(current->element_ts());
+            }
+            return current != nullptr && current->kind == TSTypeKind::TSB ? current : nullptr;
+        }
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            if (context.args.size() != 2 || context.args[0].kind != WiringArg::Kind::TimeSeries) { return false; }
+            std::size_t depth  = 0;
+            const auto *bundle = nested_bundle_leaf(context.args[0].port.schema, depth);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            return depth >= 2 && bundle != nullptr && attr != nullptr &&
+                   container_impl_detail::find_tsb_field_index(*bundle, *attr).has_value();
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (resolution.find_ts("__out__") != nullptr) { return; }
+            if (context.args.size() != 2) { return; }
+            std::size_t depth  = 0;
+            const auto *bundle = nested_bundle_leaf(context.args[0].port.schema, depth);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            if (depth < 2 || bundle == nullptr || attr == nullptr) { return; }
+            const auto index = container_impl_detail::find_tsb_field_index(*bundle, *attr);
+            if (!index.has_value()) { return; }
+            auto &registry = TypeRegistry::instance();
+            const auto *field = bundle->fields()[*index].type;
+            const TSValueTypeMetaData *out =
+                field->kind == TSTypeKind::REF ? field : registry.ref(field);
+            const auto *level = registry.dereference(context.args[0].port.schema);
+            std::vector<const ValueTypeMetaData *> keys;
+            while (level != nullptr && level->kind == TSTypeKind::TSD)
+            {
+                keys.push_back(level->key_type());
+                level = registry.dereference(level->element_ts());
+            }
+            for (std::size_t i = keys.size(); i-- > 0;) { out = registry.tsd(keys[i], out); }
+            resolution.bind_ts("__out__", out);
+        }
+
+        static WiringPortRef compose(Wiring &w, NamedPort<"ts", TsVar<"S">> ts, Scalar<"attr", Str> attr)
+        {
+            const auto ts_arg = [&](const WiringPortRef &port) {
+                WiringArg arg;
+                arg.kind = WiringArg::Kind::TimeSeries;
+                arg.port = port;
+                return arg;
+            };
+            WiringArg attr_arg;
+            attr_arg.kind         = WiringArg::Kind::Scalar;
+            attr_arg.scalar_value = Value{attr.value()};
+            attr_arg.scalar_meta  = attr_arg.scalar_value.schema();
+
+            std::array<WiringArg, 1> collapse_args{ts_arg(ts.erased())};
+            auto collapsed = wire_operator(w, "collapse_keys", {collapse_args.data(), collapse_args.size()}, true);
+
+            std::array<WiringArg, 2> project_args{ts_arg(collapsed.output.erased()), attr_arg};
+            auto projected = wire_operator(w, "getattr_", {project_args.data(), project_args.size()}, true);
+
+            std::array<WiringArg, 1> uncollapse_args{ts_arg(projected.output.erased())};
+            auto result = wire_operator(w, "uncollapse_keys", {uncollapse_args.data(), uncollapse_args.size()}, true);
+            return result.output.erased();
+        }
+    };
+
     struct getitem_tsd_by_key
     {
         static bool requires_(const ResolutionMap &, OperatorCallContext context)

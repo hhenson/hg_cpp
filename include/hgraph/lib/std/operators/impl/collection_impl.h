@@ -1287,6 +1287,124 @@ namespace hgraph::stdlib
             }
         };
 
+        /** flip_keys(TSD[K, TSD[K1, REF]]) -> TSD[K1, TSD[K, REF]] - the
+            pivot (hgraph's flip_keys_tsd): rebuild the desired mapping from
+            the FULL input and reconcile against own output. */
+        struct flip_keys_tsd
+        {
+            static constexpr auto name = "flip_keys_tsd";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                if (context.args.size() != 1 || context.args[0].kind != WiringArg::Kind::TimeSeries) { return false; }
+                auto &registry = TypeRegistry::instance();
+                const auto *schema = registry.dereference(context.args[0].port.schema);
+                if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return false; }
+                const auto *element = registry.dereference(schema->element_ts());
+                return element != nullptr && element->kind == TSTypeKind::TSD;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (resolution.find_ts("__out__") != nullptr) { return; }
+                if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+                auto &registry = TypeRegistry::instance();
+                const auto *schema = registry.dereference(context.args[0].port.schema);
+                if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return; }
+                const auto *element = registry.dereference(schema->element_ts());
+                if (element == nullptr || element->kind != TSTypeKind::TSD) { return; }
+                const auto *leaf = registry.dereference(element->element_ts());
+                resolution.bind_ts("__out__", registry.tsd(element->key_type(),
+                                                           registry.tsd(schema->key_type(), registry.ref(leaf))));
+            }
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+                             Out<TsVar<"__out__">> out)
+            {
+                const auto &erased          = static_cast<const TSOutputView &>(out);
+                const auto  evaluation_time = erased.evaluation_time();
+                auto        root_dict       = erased.data_view().as_dict();
+
+                // The desired pivot: inner key -> {outer key -> leaf ref}.
+                using Members = std::vector<std::pair<Value, Value>>;
+                ankerl::unordered_dense::map<Value, Members, ValueKeyHash, ValueKeyEqual> desired;
+                const TSDInputView &source = ts;
+                for (auto &&[outer_key, child] : source.items())
+                {
+                    if (!child.valid()) { continue; }
+                    TSDInputView inner{child.borrowed_ref()};
+                    for (auto &&[inner_key, leaf] : inner.items())
+                    {
+                        if (!leaf.valid()) { continue; }
+                        desired[Value{inner_key}].emplace_back(Value{outer_key}, Value{leaf.reference()});
+                    }
+                }
+
+                auto root_mutation = root_dict.begin_mutation(evaluation_time);
+
+                std::vector<Value> stale_groups;
+                for (const auto [group_key, group] : root_dict.items())
+                {
+                    if (!desired.contains(Value{group_key})) { stale_groups.emplace_back(group_key); }
+                }
+                for (const Value &group_key : stale_groups) { (void)root_mutation.erase(group_key.view()); }
+
+                for (const auto &[group_key, members] : desired)
+                {
+                    // READ-side compare first (the flip lesson): only touch
+                    // groups whose membership or references changed.
+                    std::vector<Value> gone;
+                    bool               changes = false;
+                    if (root_dict.contains(group_key.view()))
+                    {
+                        auto current      = root_dict.at(group_key.view());
+                        auto current_dict = current.as_dict();
+                        for (const auto [member_key, member] : current_dict.items())
+                        {
+                            bool keep = false;
+                            for (const auto &entry : members)
+                            {
+                                if (entry.first.view().equals(member_key)) { keep = true; break; }
+                            }
+                            if (!keep) { gone.emplace_back(member_key); }
+                        }
+                        for (const auto &[member_key, reference] : members)
+                        {
+                            if (!current_dict.contains(member_key.view())) { changes = true; break; }
+                            auto element = current_dict.at(member_key.view());
+                            if (!element.valid() || !element.has_current_value() ||
+                                !(element.value().checked_as<TimeSeriesReference>() ==
+                                  reference.view().checked_as<TimeSeriesReference>()))
+                            {
+                                changes = true;
+                                break;
+                            }
+                        }
+                    }
+                    else { changes = true; }
+                    if (gone.empty() && !changes) { continue; }
+
+                    auto group          = root_mutation.at(group_key.view());
+                    auto group_dict     = group.as_dict();
+                    auto group_mutation = group_dict.begin_mutation(evaluation_time);
+                    for (const Value &member_key : gone) { (void)group_mutation.erase(member_key.view()); }
+                    for (const auto &[member_key, reference] : members)
+                    {
+                        auto element = group_mutation.at(member_key.view());
+                        if (element.has_current_value() &&
+                            element.value().checked_as<TimeSeriesReference>() ==
+                                reference.view().checked_as<TimeSeriesReference>())
+                        {
+                            continue;
+                        }
+                        auto element_mutation = TSOutputView{erased.output(), element, evaluation_time}
+                                                    .begin_mutation(evaluation_time);
+                        static_cast<void>(element_mutation.move_value_from(Value{reference.view()}));
+                    }
+                }
+            }
+        };
+
         /** rekey(ts, new_keys: TSD[K, TSS[K1]]): each source key maps to a
             SET of output keys (hgraph's rekey with set-valued mappings). */
         struct rekey_tsd_set
