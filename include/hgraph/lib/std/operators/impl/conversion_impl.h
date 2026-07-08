@@ -815,6 +815,72 @@ namespace hgraph::stdlib
         }
     };
 
+    /** collect[TSS](ts, reset=...): accumulate elements into an owned TSS.
+        Scalar ticks add one; collection/TSS ticks add all their elements
+        (TSS ticks add the DELTA additions). A True reset clears first. */
+    struct collect_tss_impl
+    {
+        static constexpr auto name = "collect_tss";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            if (out == nullptr || out->kind != TSTypeKind::TSS) { return false; }
+            const auto *element = out->value_schema->element_type;
+            const auto *surface = operator_impl_detail::time_series_schema_at(context, 0);
+            if (surface == nullptr) { return false; }
+            if (surface->kind == TSTypeKind::TSS) { return surface->value_schema->element_type == element; }
+            if (surface->kind != TSTypeKind::TS) { return false; }
+            const auto *value = surface->value_schema;
+            if (value->kind == ValueTypeKind::Set || value->kind == ValueTypeKind::List)
+            {
+                return value->element_type == element;
+            }
+            return value == element;
+        }
+
+        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         In<"reset", TS<Bool>, InputValidity::Unchecked> reset,
+                         Out<TsVar<"__out__">> out)
+        {
+            const bool fresh = reset.valid() && reset.modified() && reset.value();
+            if (!ts.modified() && !fresh) { return; }
+            const auto &erased  = static_cast<const TSOutputView &>(out);
+            auto        set     = erased.as_set();
+            auto        mutation = set.begin_mutation(erased.evaluation_time());
+            if (fresh)
+            {
+                std::vector<Value> stale;
+                for (const ValueView &element : mutation.view().values()) { stale.emplace_back(element); }
+                for (const Value &element : stale) { static_cast<void>(mutation.remove(element.view())); }
+            }
+            if (!ts.valid() || !ts.modified()) { return; }
+            const auto *surface = ts.base().schema();
+            if (surface->kind == TSTypeKind::TSS)
+            {
+                const TSSInputView in_set{ts.base().borrowed_ref()};
+                auto data = in_set.data_view();
+                for (const ValueView &element : data.added()) { static_cast<void>(mutation.add(element)); }
+                if (fresh)
+                {
+                    // A reset cycle re-seeds from the FULL membership.
+                    for (const ValueView &element : data.values()) { static_cast<void>(mutation.add(element)); }
+                }
+                return;
+            }
+            const auto value = ts.base().value();
+            if (value.schema()->kind == ValueTypeKind::Set || value.schema()->kind == ValueTypeKind::List)
+            {
+                auto items = value.as_indexed_view();
+                for (std::size_t index = 0; index < items.size(); ++index)
+                {
+                    static_cast<void>(mutation.add(items.at(index)));
+                }
+            }
+            else { static_cast<void>(mutation.add(value)); }
+        }
+    };
+
     namespace convert_detail
     {
         struct EmitQueueState
@@ -842,18 +908,30 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "emit_collection";
 
+        [[nodiscard]] static const ValueTypeMetaData *element_of(OperatorCallContext context)
+        {
+            const auto *surface = operator_impl_detail::time_series_schema_at(context, 0);
+            if (surface == nullptr) { return nullptr; }
+            if (surface->kind == TSTypeKind::TSS) { return surface->value_schema->element_type; }
+            const auto *value = convert_detail::ts_value(surface);
+            if (value != nullptr && (value->kind == ValueTypeKind::Set || value->kind == ValueTypeKind::List))
+            {
+                return value->element_type;
+            }
+            return nullptr;
+        }
+
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            const auto *in = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            return in != nullptr && (in->kind == ValueTypeKind::Set || in->kind == ValueTypeKind::List);
+            return element_of(context) != nullptr;
         }
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
             if (operator_impl_detail::output_bound(resolution)) { return; }
-            const auto *in = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            if (in == nullptr) { return; }
-            operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(in->element_type));
+            const auto *element = element_of(context);
+            if (element == nullptr) { return; }
+            operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(element));
         }
 
         static void eval(In<"ts", TsVar<"S">> ts,
@@ -864,10 +942,19 @@ namespace hgraph::stdlib
             auto current = state.get();
             if (ts.modified())
             {
-                auto items = ts.base().value().as_indexed_view();
-                for (std::size_t index = 0; index < items.size(); ++index)
+                if (ts.base().schema()->kind == TSTypeKind::TSS)
                 {
-                    current.buffer.emplace_back(items.at(index));
+                    const TSSInputView in_set{ts.base().borrowed_ref()};
+                    auto data = in_set.data_view();
+                    for (const ValueView &element : data.added()) { current.buffer.emplace_back(element); }
+                }
+                else
+                {
+                    auto items = ts.base().value().as_indexed_view();
+                    for (std::size_t index = 0; index < items.size(); ++index)
+                    {
+                        current.buffer.emplace_back(items.at(index));
+                    }
                 }
             }
             if (!current.buffer.empty())

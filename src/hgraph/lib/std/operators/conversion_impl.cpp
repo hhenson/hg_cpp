@@ -38,6 +38,7 @@ namespace hgraph::stdlib
         register_overload<collect, collect_collection_impl>();
         register_overload<collect, collect_map_impl>();
         register_overload<collect, collect_tsd_impl>();
+        register_overload<collect, collect_tss_impl>();
         register_overload<emit, emit_collection_impl>();
         register_overload<emit, emit_map_impl>();
         register_overload<str_, str_tsl_impl>();
