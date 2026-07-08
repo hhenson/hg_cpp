@@ -2061,46 +2061,39 @@ namespace hgraph
             return slots;
         }
 
-        template <typename ArgsTuple, std::size_t... I>
-        static constexpr bool tuple_has_scheduler(std::index_sequence<I...>)
+        template <template <typename> typename Predicate, typename ArgsTuple, std::size_t... I>
+        static constexpr bool tuple_has_selector(std::index_sequence<I...>)
         {
             return (false || ... ||
-                    static_node_detail::is_scheduler_selector<
-                        static_node_detail::selector_of<std::tuple_element_t<I, ArgsTuple>>>::value);
+                    Predicate<static_node_detail::selector_of<std::tuple_element_t<I, ArgsTuple>>>::value);
         }
 
-        template <typename ArgsTuple>
-        static constexpr bool args_have_scheduler()
+        template <template <typename> typename Predicate, typename ArgsTuple>
+        static constexpr bool args_have_selector()
         {
-            return tuple_has_scheduler<ArgsTuple>(std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
+            return tuple_has_selector<Predicate, ArgsTuple>(
+                std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
         }
 
-        template <typename ArgsTuple, std::size_t... I>
-        static constexpr bool tuple_has_global_state(std::index_sequence<I...>)
+        template <template <typename> typename Predicate>
+        static constexpr bool any_hook_uses_selector()
         {
-            return (false || ... ||
-                    static_node_detail::is_global_state_selector<
-                        static_node_detail::selector_of<std::tuple_element_t<I, ArgsTuple>>>::value);
-        }
-
-        template <typename ArgsTuple>
-        static constexpr bool args_have_global_state()
-        {
-            return tuple_has_global_state<ArgsTuple>(std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
-        }
-
-        template <typename ArgsTuple, std::size_t... I>
-        static constexpr bool tuple_has_evaluation_clock(std::index_sequence<I...>)
-        {
-            return (false || ... ||
-                    static_node_detail::is_evaluation_clock_selector<
-                        static_node_detail::selector_of<std::tuple_element_t<I, ArgsTuple>>>::value);
-        }
-
-        template <typename ArgsTuple>
-        static constexpr bool args_have_evaluation_clock()
-        {
-            return tuple_has_evaluation_clock<ArgsTuple>(std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
+            bool result = args_have_selector<Predicate, eval_args>();
+            if constexpr (static_node_detail::has_start<TImplementation>)
+            {
+                result = result || args_have_selector<
+                                       Predicate,
+                                       typename static_node_detail::fn_traits<
+                                           decltype(&TImplementation::start)>::args_tuple>();
+            }
+            if constexpr (static_node_detail::has_stop<TImplementation>)
+            {
+                result = result || args_have_selector<
+                                       Predicate,
+                                       typename static_node_detail::fn_traits<
+                                           decltype(&TImplementation::stop)>::args_tuple>();
+            }
+            return result;
         }
 
       public:
@@ -2151,18 +2144,7 @@ namespace hgraph
          */
         [[nodiscard]] static constexpr bool uses_scheduler()
         {
-            bool result = args_have_scheduler<eval_args>();
-            if constexpr (static_node_detail::has_start<TImplementation>)
-            {
-                result = result || args_have_scheduler<
-                                       typename static_node_detail::fn_traits<decltype(&TImplementation::start)>::args_tuple>();
-            }
-            if constexpr (static_node_detail::has_stop<TImplementation>)
-            {
-                result = result || args_have_scheduler<
-                                       typename static_node_detail::fn_traits<decltype(&TImplementation::stop)>::args_tuple>();
-            }
-            return result;
+            return any_hook_uses_selector<static_node_detail::is_scheduler_selector>();
         }
 
         /**
@@ -2171,18 +2153,7 @@ namespace hgraph
          */
         [[nodiscard]] static constexpr bool uses_global_state()
         {
-            bool result = args_have_global_state<eval_args>();
-            if constexpr (static_node_detail::has_start<TImplementation>)
-            {
-                result = result || args_have_global_state<
-                                       typename static_node_detail::fn_traits<decltype(&TImplementation::start)>::args_tuple>();
-            }
-            if constexpr (static_node_detail::has_stop<TImplementation>)
-            {
-                result = result || args_have_global_state<
-                                       typename static_node_detail::fn_traits<decltype(&TImplementation::stop)>::args_tuple>();
-            }
-            return result;
+            return any_hook_uses_selector<static_node_detail::is_global_state_selector>();
         }
 
         /**
@@ -2191,18 +2162,7 @@ namespace hgraph
          */
         [[nodiscard]] static constexpr bool uses_evaluation_clock()
         {
-            bool result = args_have_evaluation_clock<eval_args>();
-            if constexpr (static_node_detail::has_start<TImplementation>)
-            {
-                result = result || args_have_evaluation_clock<
-                                       typename static_node_detail::fn_traits<decltype(&TImplementation::start)>::args_tuple>();
-            }
-            if constexpr (static_node_detail::has_stop<TImplementation>)
-            {
-                result = result || args_have_evaluation_clock<
-                                       typename static_node_detail::fn_traits<decltype(&TImplementation::stop)>::args_tuple>();
-            }
-            return result;
+            return any_hook_uses_selector<static_node_detail::is_evaluation_clock_selector>();
         }
 
         [[nodiscard]] static std::optional<std::vector<std::size_t>> active_inputs()

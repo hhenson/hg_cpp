@@ -492,7 +492,10 @@ namespace hgraph
             return builder.build();
         }
 
-        // TODO: Review this code to see how it is used, if it is stored, we need to review the memory footprint
+        // Cached child descriptor for a non-peered TSInput binding. Instances
+        // live in process-lifetime binding contexts, not per input allocation
+        // or per tick; keep this as schema/binding pointers plus offsets only.
+        // Runtime child payload and validity live in the storage plan.
         struct InputChild
         {
             const TSValueTypeMetaData *schema{nullptr};

@@ -517,7 +517,7 @@ namespace hgraph
 
     struct Wiring::Impl
     {
-        struct ServiceImplementationScope
+        struct ServiceImplementationScopeState
         {
             std::string                          description{};
             std::unordered_set<std::string>      required_endpoints{};
@@ -548,7 +548,7 @@ namespace hgraph
         std::vector<ServiceClientRank>                                      service_client_ranks{};
         std::vector<SameCyclePair>                                          same_cycle_pairs{};
         GlobalState                                                         traits{};   // value-layer Map<string, Any>
-        std::vector<ServiceImplementationScope>                            implementation_scopes{};
+        std::vector<ServiceImplementationScopeState>                       implementation_scopes{};
         GlobalState                                                        global_state{};
     };
 
@@ -751,6 +751,79 @@ namespace hgraph
         });
     }
 
+    Wiring::ServiceImplementationScope::ServiceImplementationScope(
+        Wiring &wiring,
+        std::string description,
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints)
+        : wiring_{&wiring}
+    {
+        wiring_->begin_service_implementation(std::move(description), std::move(required_endpoints));
+        active_ = true;
+    }
+
+    Wiring::ServiceImplementationScope::ServiceImplementationScope(
+        Wiring &wiring,
+        std::string description,
+        std::vector<std::string> required_endpoints)
+        : wiring_{&wiring}
+    {
+        wiring_->begin_service_implementation(std::move(description), std::move(required_endpoints));
+        active_ = true;
+    }
+
+    Wiring::ServiceImplementationScope::ServiceImplementationScope(ServiceImplementationScope &&other) noexcept
+        : wiring_{std::exchange(other.wiring_, nullptr)},
+          active_{std::exchange(other.active_, false)}
+    {
+    }
+
+    Wiring::ServiceImplementationScope &Wiring::ServiceImplementationScope::operator=(
+        ServiceImplementationScope &&other) noexcept
+    {
+        if (this != &other)
+        {
+            cancel_if_active();
+            wiring_ = std::exchange(other.wiring_, nullptr);
+            active_ = std::exchange(other.active_, false);
+        }
+        return *this;
+    }
+
+    Wiring::ServiceImplementationScope::~ServiceImplementationScope() noexcept
+    {
+        cancel_if_active();
+    }
+
+    void Wiring::ServiceImplementationScope::complete()
+    {
+        if (!active_) { return; }
+        Wiring *wiring = wiring_;
+        active_ = false;
+        wiring_ = nullptr;
+        wiring->end_service_implementation();
+    }
+
+    void Wiring::ServiceImplementationScope::cancel_if_active() noexcept
+    {
+        if (active_ && wiring_ != nullptr) { wiring_->cancel_service_implementation(); }
+        active_ = false;
+        wiring_ = nullptr;
+    }
+
+    Wiring::ServiceImplementationScope Wiring::service_implementation_scope(
+        std::string description,
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints)
+    {
+        return ServiceImplementationScope{*this, std::move(description), std::move(required_endpoints)};
+    }
+
+    Wiring::ServiceImplementationScope Wiring::service_implementation_scope(
+        std::string description,
+        std::vector<std::string> required_endpoints)
+    {
+        return ServiceImplementationScope{*this, std::move(description), std::move(required_endpoints)};
+    }
+
     void Wiring::begin_service_implementation(std::string description, std::vector<std::string> required_endpoints)
     {
         std::vector<WiringServiceImplementationEndpoint> endpoints;
@@ -765,7 +838,7 @@ namespace hgraph
     void Wiring::begin_service_implementation(std::string description,
                                               std::vector<WiringServiceImplementationEndpoint> required_endpoints)
     {
-        Impl::ServiceImplementationScope scope;
+        Impl::ServiceImplementationScopeState scope;
         scope.description = std::move(description);
         scope.required_endpoints.reserve(required_endpoints.size());
         for (auto &endpoint : required_endpoints)

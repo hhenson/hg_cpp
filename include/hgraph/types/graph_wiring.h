@@ -651,6 +651,46 @@ namespace hgraph
         void register_service_client_rank(std::string path, std::string_view kind,
                                           const WiringInstance *node, bool receive);
 
+        /**
+         * RAII wrapper for implementation-owned service/adaptor stub scopes.
+         *
+         * Construction pushes the expected stub set; ``complete`` validates and
+         * pops it. Destruction cancels an unfinished scope, so exceptions while
+         * wiring an implementation cannot leak a stale active scope into the
+         * enclosing graph wiring.
+         */
+        class ServiceImplementationScope
+        {
+          public:
+            ServiceImplementationScope() noexcept = default;
+            ServiceImplementationScope(Wiring &wiring,
+                                       std::string description,
+                                       std::vector<WiringServiceImplementationEndpoint> required_endpoints);
+            ServiceImplementationScope(Wiring &wiring,
+                                       std::string description,
+                                       std::vector<std::string> required_endpoints);
+            ServiceImplementationScope(const ServiceImplementationScope &) = delete;
+            ServiceImplementationScope &operator=(const ServiceImplementationScope &) = delete;
+            ServiceImplementationScope(ServiceImplementationScope &&other) noexcept;
+            ServiceImplementationScope &operator=(ServiceImplementationScope &&other) noexcept;
+            ~ServiceImplementationScope() noexcept;
+
+            void complete();
+
+          private:
+            void cancel_if_active() noexcept;
+
+            Wiring *wiring_{nullptr};
+            bool    active_{false};
+        };
+
+        [[nodiscard]] ServiceImplementationScope service_implementation_scope(
+            std::string description,
+            std::vector<WiringServiceImplementationEndpoint> required_endpoints);
+        [[nodiscard]] ServiceImplementationScope service_implementation_scope(
+            std::string description,
+            std::vector<std::string> required_endpoints);
+
         void begin_service_implementation(std::string description, std::vector<std::string> required_endpoints);
         void begin_service_implementation(std::string description,
                                           std::vector<WiringServiceImplementationEndpoint> required_endpoints);

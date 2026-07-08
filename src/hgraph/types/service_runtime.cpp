@@ -3,7 +3,6 @@
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/adaptor_wiring.h>
-#include <hgraph/util/scope.h>
 #include <hgraph/types/service_wiring.h>
 
 #include <array>
@@ -526,11 +525,9 @@ namespace hgraph
                 default: break;
             }
         }
-        w.begin_service_implementation(std::move(description), std::move(required_endpoints));
-        auto unwind = UnwindCleanupGuard([&] { w.cancel_service_implementation(); });
+        auto scope = w.service_implementation_scope(std::move(description), std::move(required_endpoints));
         static_cast<void>(wire_impl(w, *descriptors.front(), impl, {}));
-        unwind.release();
-        w.end_service_implementation();
+        scope.complete();
     }
 
     // ------------------------------------------------------------------
@@ -644,10 +641,8 @@ namespace hgraph
         {
             required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/to_graph", {}});
         }
-        w.begin_service_implementation("adaptor " + base, std::move(required_endpoints));
-        auto unwind = UnwindCleanupGuard([&] { w.cancel_service_implementation(); });
+        auto scope = w.service_implementation_scope("adaptor " + base, std::move(required_endpoints));
         static_cast<void>(wire_impl(w, descriptor, impl, {}));
-        unwind.release();
-        w.end_service_implementation();
+        scope.complete();
     }
 }  // namespace hgraph

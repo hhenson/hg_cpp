@@ -2,15 +2,12 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_COLLECTION_IMPL_H
 
 /**
- * Collection-operator implementations (catalogue: ``operators/collection.h``).
- * Implemented so far: ``keys_`` (TSD -> TSS of its keys), ``rekey`` /
- * default-unique ``flip`` for TSDs, and TSS set algebra
- * (``union`` / ``intersection`` / ``difference`` / ``symmetric_difference``),
- * including the Python-compatible TSS/TSD operator aliases
- * (``|`` / ``&`` / ``-`` / ``^``), plus basic TSS/TSD truth/equality
- * overloads.
- * ``union`` is also what ``map_`` composes to derive its inferred ``__keys__``
- * lifecycle set, mirroring Python (``__keys__ = union(*key_sets)``).
+ * Collection-operator overloads (catalogue: ``operators/collection.h``).
+ *
+ * This header holds the templated/static-node bodies for collection views,
+ * scalar map transforms, TSS/TSD/TSL aggregates, set algebra, partitioning,
+ * and the combine-to-TSD family. Registration lives in
+ * ``src/hgraph/lib/std/operators/collection_impl.cpp``.
  */
 
 #include <hgraph/lib/std/lifted_kernels.h>

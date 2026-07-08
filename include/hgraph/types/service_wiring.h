@@ -968,17 +968,9 @@ namespace hgraph::service
                                            std::vector<WiringServiceImplementationEndpoint> required_endpoints,
                                            const Args &...args)
         {
-            w.begin_service_implementation(std::move(description), std::move(required_endpoints));
-            try
-            {
-                wire_service_graph<Impl>(w, user_path, args...);
-            }
-            catch (...)
-            {
-                w.cancel_service_implementation();
-                throw;
-            }
-            w.end_service_implementation();
+            auto scope = w.service_implementation_scope(std::move(description), std::move(required_endpoints));
+            wire_service_graph<Impl>(w, user_path, args...);
+            scope.complete();
         }
     }  // namespace detail
 
@@ -1745,17 +1737,9 @@ namespace hgraph::service_adaptor
                                   std::vector<WiringServiceImplementationEndpoint> required_endpoints,
                                   const Args &...args)
         {
-            w.begin_service_implementation(std::move(description), std::move(required_endpoints));
-            try
-            {
-                wire_impl<Impl>(w, user_path, args...);
-            }
-            catch (...)
-            {
-                w.cancel_service_implementation();
-                throw;
-            }
-            w.end_service_implementation();
+            auto scope = w.service_implementation_scope(std::move(description), std::move(required_endpoints));
+            wire_impl<Impl>(w, user_path, args...);
+            scope.complete();
         }
     }  // namespace detail
 
@@ -1812,19 +1796,12 @@ namespace hgraph::service_adaptor
 
         std::vector<WiringServiceImplementationEndpoint> required_endpoints;
         detail::append_required_stub_endpoints<Interface>(required_endpoints, user_path);
-        w.begin_service_implementation("service adaptor impl " + base_path, std::move(required_endpoints));
-        try
-        {
-            auto requests = from_graph<Interface>(w, user_path);
-            auto replies = detail::wire_impl_output<Impl, output_schema>(w, user_path, requests, args...);
-            to_graph<Interface>(w, user_path, replies);
-        }
-        catch (...)
-        {
-            w.cancel_service_implementation();
-            throw;
-        }
-        w.end_service_implementation();
+        auto scope = w.service_implementation_scope(
+            "service adaptor impl " + base_path, std::move(required_endpoints));
+        auto requests = from_graph<Interface>(w, user_path);
+        auto replies = detail::wire_impl_output<Impl, output_schema>(w, user_path, requests, args...);
+        to_graph<Interface>(w, user_path, replies);
+        scope.complete();
     }
 
     template <typename Interface, typename Impl, typename... Args>

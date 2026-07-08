@@ -446,17 +446,9 @@ namespace hgraph::adaptor
                                   std::vector<WiringServiceImplementationEndpoint> required_endpoints,
                                   const Args &...args)
         {
-            w.begin_service_implementation(std::move(description), std::move(required_endpoints));
-            try
-            {
-                wire_impl<Impl>(w, user_path, args...);
-            }
-            catch (...)
-            {
-                w.cancel_service_implementation();
-                throw;
-            }
-            w.end_service_implementation();
+            auto scope = w.service_implementation_scope(std::move(description), std::move(required_endpoints));
+            wire_impl<Impl>(w, user_path, args...);
+            scope.complete();
         }
     }  // namespace detail
 

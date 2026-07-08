@@ -1,13 +1,10 @@
 /**
- * The Python bridge (roadmap P4, slice 1): wiring and running graphs from
- * Python through the runtime-schema dispatch contract — the exact three
- * calls proven template-free by tests/cpp/test_erased_wiring.cpp (build
- * WiringArgs -> OperatorRegistry::resolve -> impl->wire), plus the eager
- * const-evaluable entry (P1) and the replay/record test harness.
+ * Optional Python bridge for the C++ runtime.
  *
- * Scalar coverage in this slice: bool/int/float/str plus the chrono types
- * (via the vendored nanobind casters). Containers, bundles, Frame and the
- * remaining atoms follow with the type-conversion layer.
+ * This module exposes wiring, graph execution, services/adaptors, Python
+ * user-authored nodes, value conversion, and the record/replay test harness
+ * through nanobind. The runtime, schemas, dispatch, and value storage remain
+ * C++-owned; this file is the compatibility/binding surface.
  */
 #include "module_internal.h"
 
