@@ -1141,7 +1141,11 @@ namespace hgraph
 
     bool TSDProxy::child_updated(std::size_t slot) const noexcept
     {
-        return values_.slot_updated(slot);
+        // TIME-ANCHORED: updated bits belong to the window they were marked
+        // in (updated_window_). A reader in a LATER window (the proxy has
+        // recorded since) must not see them - the lazy roll clears them on
+        // the next record, but reads can arrive first (iteration order).
+        return values_.slot_updated(slot) && updated_window_ == tracking_.last_modified_time;
     }
 
     const void *TSDProxy::child_at_slot(std::size_t slot) const
@@ -1199,9 +1203,18 @@ namespace hgraph
         {
             if (dict.slot_live(slot) || dict.slot_removed(slot))
             {
-                const bool existed = has_child(slot);
-                ensure_child_at_slot(slot, modified_time);
-                changed = changed || !existed;
+                // Only NEVER-MATERIALISED slots run the builder here. A
+                // re-sync of an already-bound proxy (an outer refresh
+                // re-applying a nested dictionary) must not rebuild live
+                // children - their storage is address-stable and rebuilding
+                // force-marks whole subtrees as updated (phantom deltas).
+                const bool materialised =
+                    has_child(slot) && slot < built_times_.size() && built_times_[slot] != MIN_DT;
+                if (!materialised)
+                {
+                    ensure_child_at_slot(slot, modified_time);
+                    changed = true;
+                }
                 continue;
             }
 

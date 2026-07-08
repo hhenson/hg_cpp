@@ -10,6 +10,7 @@
  * ``src/hgraph/lib/std/operators/collection_impl.cpp``.
  */
 
+#include <functional>
 #include <hgraph/lib/std/lifted_kernels.h>
 #include <hgraph/lib/std/operators/arithmetic.h>
 #include <hgraph/lib/std/operators/collection.h>
@@ -1028,6 +1029,260 @@ namespace hgraph::stdlib
                     {
                         copy_tsd_child_if_changed(out_mutation, out_dict, mapped_key.value(), source);
                     }
+                }
+            }
+        };
+
+        // ----- key pivots (collapse / uncollapse / flip_keys) --------------
+
+        /** The nested-TSD key components of ``schema`` down to the non-TSD
+            leaf: TSD[K, TSD[K1, V]] -> {K, K1}, leaf V. */
+        inline void nested_tsd_key_path(const TSValueTypeMetaData *schema,
+                                        std::vector<const ValueTypeMetaData *> &keys,
+                                        const TSValueTypeMetaData *&leaf)
+        {
+            auto &registry = TypeRegistry::instance();
+            const auto *current = registry.dereference(schema);
+            while (current != nullptr && current->kind == TSTypeKind::TSD)
+            {
+                keys.push_back(current->key_type());
+                current = registry.dereference(current->element_ts());
+            }
+            leaf = current;
+        }
+
+        /** collapse_keys(TSD[K, TSD[K1, ...]]) -> TSD[(K, K1, ...), REF[leaf]]
+            (hgraph's collapse_keys_tsd; ANY nesting depth in one erased walk -
+            the runtime can recurse schemas where python needed type-level
+            composition). Elements are REFERENCES to the leaves. */
+        struct collapse_keys_tsd
+        {
+            static constexpr auto name = "collapse_keys_tsd";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                if (context.args.size() != 1 || context.args[0].kind != WiringArg::Kind::TimeSeries) { return false; }
+                auto &registry = TypeRegistry::instance();
+                const auto *schema = registry.dereference(context.args[0].port.schema);
+                if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return false; }
+                const auto *element = registry.dereference(schema->element_ts());
+                return element != nullptr && element->kind == TSTypeKind::TSD;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (resolution.find_ts("__out__") != nullptr) { return; }
+                if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+                std::vector<const ValueTypeMetaData *> keys;
+                const TSValueTypeMetaData             *leaf = nullptr;
+                nested_tsd_key_path(context.args[0].port.schema, keys, leaf);
+                if (keys.size() < 2 || leaf == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                resolution.bind_ts("__out__", registry.tsd(registry.tuple(keys), registry.ref(leaf)));
+            }
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+                             Out<TsVar<"__out__">> out)
+            {
+                const auto &erased   = static_cast<const TSOutputView &>(out);
+                auto        dict_out = erased.data_view().as_dict();
+                const auto  evaluation_time = erased.evaluation_time();
+                auto        mutation = dict_out.begin_mutation(evaluation_time);
+                const auto *tuple_meta = erased.schema()->key_type();
+                const auto &tuple_binding = *ValuePlanFactory::instance().binding_for(tuple_meta);
+                const std::size_t depth = tuple_meta->field_count;
+
+                // Removed SUBTREES erase every output tuple-key with the
+                // matching prefix (own-output reconciliation - the removed
+                // child's keys are no longer readable).
+                const auto erase_prefix = [&](const std::vector<Value> &prefix) {
+                    std::vector<Value> stale;
+                    for (const auto [key, child] : dict_out.items())
+                    {
+                        auto components = key.as_indexed_view();
+                        bool match = true;
+                        for (std::size_t index = 0; index < prefix.size(); ++index)
+                        {
+                            if (!components.at(index).equals(prefix[index].view())) { match = false; break; }
+                        }
+                        if (match) { stale.emplace_back(key); }
+                    }
+                    for (const Value &key : stale) { (void)mutation.erase(key.view()); }
+                };
+
+                const auto make_tuple_key = [&](const std::vector<Value> &components) {
+                    BundleBuilder builder{tuple_binding};
+                    for (std::size_t index = 0; index < components.size(); ++index)
+                    {
+                        builder.set(index, Value{components[index].view()});
+                    }
+                    return builder.build();
+                };
+
+                // Recursive delta walk: at each level removed keys erase the
+                // prefix, modified children descend; at the leaf level the
+                // element's REFERENCE publishes under the full tuple key.
+                const std::function<void(const TSDInputView &, std::vector<Value> &)> walk =
+                    [&](const TSDInputView &level, std::vector<Value> &path) {
+                        for (const ValueView &removed : level.removed_keys())
+                        {
+                            path.emplace_back(removed);
+                            erase_prefix(path);
+                            path.pop_back();
+                        }
+                        for (const auto [key, child] : level.modified_items())
+                        {
+                            path.emplace_back(key);
+                            if (path.size() == depth)
+                            {
+                                if (child.valid())
+                                {
+                                    Value tuple_key = make_tuple_key(path);
+                                    auto  element   = mutation.at(tuple_key.view());
+                                    Value reference{child.reference()};
+                                    if (!(element.has_current_value() &&
+                                          element.value().checked_as<TimeSeriesReference>() ==
+                                              reference.view().checked_as<TimeSeriesReference>()))
+                                    {
+                                        auto element_mutation =
+                                            TSOutputView{erased.output(), element, evaluation_time}
+                                                .begin_mutation(evaluation_time);
+                                        static_cast<void>(element_mutation.move_value_from(std::move(reference)));
+                                    }
+                                }
+                            }
+                            else if (child.valid())
+                            {
+                                walk(TSDInputView{child.borrowed_ref()}, path);
+                            }
+                            path.pop_back();
+                        }
+                    };
+
+                const TSDInputView &root = ts;
+                std::vector<Value>  path;
+                walk(root, path);
+            }
+        };
+
+        /** uncollapse_keys(TSD[(K, K1, ...), REF[V]]) -> TSD[K, TSD[K1, ...]]
+            (hgraph's uncollapse_keys_tsd; ANY tuple arity in one erased
+            walk). ``remove_empty`` erases a group whose members all left. */
+        struct uncollapse_keys_tsd
+        {
+            static constexpr auto name = "uncollapse_keys_tsd";
+
+            static auto defaults() { return std::tuple{arg<"remove_empty">(Bool{true})}; }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return false; }
+                auto &registry = TypeRegistry::instance();
+                const auto *schema = registry.dereference(context.args[0].port.schema);
+                if (schema == nullptr || schema->kind != TSTypeKind::TSD || schema->key_type() == nullptr)
+                {
+                    return false;
+                }
+                const auto *key = schema->key_type();
+                return key->kind == ValueTypeKind::Tuple && key->field_count >= 2;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (resolution.find_ts("__out__") != nullptr) { return; }
+                if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+                auto &registry = TypeRegistry::instance();
+                const auto *schema = registry.dereference(context.args[0].port.schema);
+                if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return; }
+                const auto *key = schema->key_type();
+                if (key == nullptr || key->kind != ValueTypeKind::Tuple || key->field_count < 2) { return; }
+                const TSValueTypeMetaData *out =
+                    registry.ref(registry.dereference(schema->element_ts()));
+                for (std::size_t index = key->field_count; index-- > 0;)
+                {
+                    out = registry.tsd(key->fields[index].type, out);
+                }
+                resolution.bind_ts("__out__", out);
+            }
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+                             Scalar<"remove_empty", Bool> remove_empty, Out<TsVar<"__out__">> out)
+            {
+                const auto &erased          = static_cast<const TSOutputView &>(out);
+                const auto  evaluation_time = erased.evaluation_time();
+                auto        root_dict       = erased.data_view().as_dict();
+                auto        root_mutation   = root_dict.begin_mutation(evaluation_time);
+                const std::size_t depth     = erased.schema() != nullptr ? 0 : 0;
+                (void)depth;
+
+                // Descend to the group holding the tuple's LAST component,
+                // creating intermediate dictionaries as needed.
+                const auto leaf_group = [&](const ValueView &tuple_key, auto &&fn) {
+                    auto components = tuple_key.as_indexed_view();
+                    TSDataView current;
+                    for (std::size_t index = 0; index + 1 < components.size(); ++index)
+                    {
+                        if (index == 0) { current = root_mutation.at(components.at(0)); }
+                        else
+                        {
+                            auto dict = current.as_dict();
+                            auto mut  = dict.begin_mutation(evaluation_time);
+                            current   = mut.at(components.at(index));
+                        }
+                    }
+                    auto dict = current.as_dict();
+                    auto mut  = dict.begin_mutation(evaluation_time);
+                    fn(mut, components.at(components.size() - 1));
+                };
+
+                const TSDInputView &source = ts;
+                for (const ValueView &tuple_key : source.removed_keys())
+                {
+                    leaf_group(tuple_key, [&](TSDDataMutationView &group, const ValueView &leaf_key) {
+                        (void)group.erase(leaf_key);
+                    });
+                }
+
+                for (const auto [tuple_key, child] : source.modified_items())
+                {
+                    if (!child.valid()) { continue; }
+                    leaf_group(tuple_key, [&](TSDDataMutationView &group, const ValueView &leaf_key) {
+                        auto element = group.at(leaf_key);
+                        Value reference{child.reference()};
+                        if (element.has_current_value() &&
+                            element.value().checked_as<TimeSeriesReference>() ==
+                                reference.view().checked_as<TimeSeriesReference>())
+                        {
+                            return;
+                        }
+                        auto element_mutation = TSOutputView{erased.output(), element, evaluation_time}
+                                                    .begin_mutation(evaluation_time);
+                        static_cast<void>(element_mutation.move_value_from(std::move(reference)));
+                    });
+                }
+
+                if (remove_empty.value())
+                {
+                    // Erase groups (recursively) whose members all left.
+                    const std::function<bool(TSDDataMutationView &)> prune =
+                        [&](TSDDataMutationView &mutation) -> bool {
+                        std::vector<Value> empty_keys;
+                        {
+                            for (const auto [key, child] : mutation.view().items())
+                            {
+                                if (child.schema() != nullptr && child.schema()->kind == TSTypeKind::TSD)
+                                {
+                                    auto child_dict = child.as_dict();
+                                    auto child_mut  = child_dict.begin_mutation(evaluation_time);
+                                    (void)prune(child_mut);
+                                    if (child_dict.size() == 0) { empty_keys.emplace_back(key); }
+                                }
+                            }
+                        }
+                        for (const Value &key : empty_keys) { (void)mutation.erase(key.view()); }
+                        return mutation.view().size() == 0;
+                    };
+                    (void)prune(root_mutation);
                 }
             }
         };

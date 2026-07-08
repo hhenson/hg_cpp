@@ -19,7 +19,9 @@ namespace hgraph::stdlib
         register_overload<partition, collection_impl_detail::partition_map_scalar>();
         register_overload<flip_keys, collection_impl_detail::flip_keys_map_scalar>();
         register_overload<collapse_keys, collection_impl_detail::collapse_keys_map_scalar>();
+        register_overload<collapse_keys, collection_impl_detail::collapse_keys_tsd>();
         register_overload<uncollapse_keys, collection_impl_detail::uncollapse_keys_map_scalar>();
+        register_overload<uncollapse_keys, collection_impl_detail::uncollapse_keys_tsd>();
         register_overload<combine, collection_impl_detail::combine_bundles_impl>();
         register_overload<combine_tsd, collection_impl_detail::combine_tsd_tsls>();
         register_overload<combine_tsd, collection_impl_detail::combine_tsd_tuple_values>();

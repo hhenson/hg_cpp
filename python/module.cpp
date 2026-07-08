@@ -1173,13 +1173,28 @@ NB_MODULE(_hgraph, m)
             }
             if (self.ref.schema->kind == TSTypeKind::TSD)
             {
-                const auto *element = self.ref.schema->element_ts();
-                if (element != nullptr && element->kind == TSTypeKind::REF)
+                // DEEP dereference: REF elements at ANY nesting level patch
+                // to their referenced shape (the elementwise from-REF
+                // alternative recurses through nested dictionaries).
+                const std::function<const TSValueTypeMetaData *(const TSValueTypeMetaData *)> deep =
+                    [&](const TSValueTypeMetaData *schema) -> const TSValueTypeMetaData * {
+                    auto &registry = TypeRegistry::instance();
+                    const auto *current = registry.dereference(schema);
+                    if (current != nullptr && current->kind == TSTypeKind::TSD)
+                    {
+                        const auto *element = deep(current->element_ts());
+                        if (element != current->element_ts())
+                        {
+                            return registry.tsd(current->key_type(), element);
+                        }
+                    }
+                    return current;
+                };
+                const auto *patched_schema = deep(self.ref.schema);
+                if (patched_schema != self.ref.schema)
                 {
-                    auto  &registry = TypeRegistry::instance();
                     PyPort patched  = self;
-                    patched.ref.schema =
-                        registry.tsd(self.ref.schema->key_type(), element->referenced_ts());
+                    patched.ref.schema = patched_schema;
                     return patched;   // the from-REF dict alternative resolves it
                 }
             }
