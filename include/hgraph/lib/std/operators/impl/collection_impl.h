@@ -3317,6 +3317,180 @@ namespace hgraph::stdlib
             }
         };
 
+        // ----- TSB aggregates (homogeneous field bundles) -------------------
+
+        [[nodiscard]] inline const TSValueTypeMetaData *homogeneous_tsb(OperatorCallContext context,
+                                                                        std::size_t index = 0)
+        {
+            const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, index, TSTypeKind::TSB);
+            if (schema == nullptr || schema->field_count() == 0) { return nullptr; }
+            const auto *field = schema->fields()[0].type;
+            if (field == nullptr || field->kind != TSTypeKind::TS) { return nullptr; }
+            for (std::size_t i = 1; i < schema->field_count(); ++i)
+            {
+                if (schema->fields()[i].type != field) { return nullptr; }
+            }
+            return schema;
+        }
+
+        enum class TsbAggregate : std::uint8_t
+        {
+            Sum,
+            Mean,
+            Std,
+            Min,
+            Max,
+        };
+
+        /** Unary aggregates over a HOMOGENEOUS bundle's fields: min_/max_
+            via erased Value::compare, sum_/mean/std via the numeric kernel. */
+        template <TsbAggregate Op>
+        struct tsb_aggregate_impl
+        {
+            static constexpr auto name = Op == TsbAggregate::Sum    ? "sum_tsb"
+                                         : Op == TsbAggregate::Mean ? "mean_tsb"
+                                         : Op == TsbAggregate::Std  ? "std_tsb"
+                                         : Op == TsbAggregate::Min  ? "min_tsb"
+                                                                    : "max_tsb";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                if (context.args.size() != 1) { return false; }
+                const auto *schema = homogeneous_tsb(context);
+                if (schema == nullptr) { return false; }
+                if constexpr (Op == TsbAggregate::Min || Op == TsbAggregate::Max) { return true; }
+                auto &registry = TypeRegistry::instance();
+                const auto *element = schema->fields()[0].type->value_schema;
+                return element == registry.value_type("int") || element == registry.value_type("float");
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *schema = homogeneous_tsb(context);
+                if (schema == nullptr) { return; }
+                auto &registry = TypeRegistry::instance();
+                const auto *element = (Op == TsbAggregate::Mean || Op == TsbAggregate::Std)
+                                          ? registry.value_type("float")
+                                          : schema->fields()[0].type->value_schema;
+                operator_impl_detail::bind_output(resolution, registry.ts(element));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+            {
+                const auto        &erased = static_cast<const TSOutputView &>(out);
+                const TSInputView &bundle = ts;
+                const std::size_t  count  = bundle.schema()->field_count();
+
+                const auto publish = [&](Value &&value) {
+                    auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                    static_cast<void>(mutation.move_value_from(std::move(value)));
+                };
+
+                if constexpr (Op == TsbAggregate::Min || Op == TsbAggregate::Max)
+                {
+                    std::optional<Value> best;
+                    for (std::size_t index = 0; index < count; ++index)
+                    {
+                        const auto value = bundle.indexed_child_at(index).value();
+                        const bool better =
+                            !best.has_value() ||
+                            (Op == TsbAggregate::Min
+                                 ? value.compare(best->view()) == std::partial_ordering::less
+                                 : value.compare(best->view()) == std::partial_ordering::greater);
+                        if (better) { best.emplace(value); }
+                    }
+                    publish(std::move(*best));
+                    return;
+                }
+
+                auto      &registry = TypeRegistry::instance();
+                const bool floating =
+                    bundle.schema()->fields()[0].type->value_schema == registry.value_type("float");
+                Float total = 0.0;
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    const auto value = bundle.indexed_child_at(index).value();
+                    total += floating ? value.checked_as<Float>()
+                                      : static_cast<Float>(value.checked_as<Int>());
+                }
+                if constexpr (Op == TsbAggregate::Sum)
+                {
+                    if (floating) { publish(Value{total}); }
+                    else { publish(Value{static_cast<Int>(total)}); }
+                }
+                else if constexpr (Op == TsbAggregate::Mean)
+                {
+                    publish(Value{total / static_cast<Float>(count)});
+                }
+                else
+                {
+                    const Float mean = total / static_cast<Float>(count);
+                    Float       variance = 0.0;
+                    for (std::size_t index = 0; index < count; ++index)
+                    {
+                        const auto  value = bundle.indexed_child_at(index).value();
+                        const Float x = floating ? value.checked_as<Float>()
+                                                 : static_cast<Float>(value.checked_as<Int>());
+                        variance += (x - mean) * (x - mean);
+                    }
+                    // hgraph uses the SAMPLE standard deviation (ddof=1).
+                    publish(Value{count > 1 ? std::sqrt(variance / static_cast<Float>(count - 1)) : 0.0});
+                }
+            }
+        };
+
+        /** sub_ over strings is a WIRING error (hgraph's str overload raises;
+            the itemwise TSB sub_ then reports it during composition). */
+        struct sub_str_invalid
+        {
+            static constexpr auto name = "sub_str_invalid";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                auto &registry = TypeRegistry::instance();
+                const auto *str_meta = registry.value_type("str");
+                return operator_impl_detail::ts_value_schema_at(context, 0) == str_meta &&
+                       operator_impl_detail::ts_value_schema_at(context, 1) == str_meta;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                operator_impl_detail::bind_output_like_arg(resolution, context, 0);
+            }
+
+            static WiringPortRef compose(Wiring &, NamedPort<"lhs", TS<Str>>, NamedPort<"rhs", TS<Str>>)
+            {
+                throw std::invalid_argument("Cannot subtract one string from another");
+            }
+        };
+
+        /** eq_ over TSBs: whole-bundle value equality. Bundles of DIFFERENT
+            schemas are simply never equal. */
+        struct eq_tsb_impl
+        {
+            static constexpr auto name = "eq_tsb";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSB) != nullptr &&
+                       operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TSB) != nullptr;
+            }
+
+            static void eval(In<"lhs", TsVar<"L">> lhs, In<"rhs", TsVar<"R">> rhs, Out<TS<Bool>> out)
+            {
+                const TSInputView &left  = lhs;
+                const TSInputView &right = rhs;
+                if (left.schema() != right.schema())
+                {
+                    out.set(false);
+                    return;
+                }
+                out.set(left.value().equals(right.value()));
+            }
+        };
+
         /** combine(orig, delta) over BUNDLE scalars: recursive right-over-
             left merge honouring FIELD VALIDITY - delta's UNSET fields keep
             the original (hgraph's combine_compound_scalars; C++-first

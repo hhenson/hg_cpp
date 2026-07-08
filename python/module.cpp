@@ -9,6 +9,7 @@
 #include "module_internal.h"
 
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/types/time_series/ts_output/alternative.h>
 #include <hgraph/types/wired_fn.h>
 #include <hgraph/lib/std/component.h>
 #include <hgraph/types/time_series/ts_delta.h>
@@ -649,7 +650,18 @@ namespace
 
         [[nodiscard]] TSTypeKind kind() const { return checked().schema()->kind; }
 
-        [[nodiscard]] nb::object value() const { return value_to_py(checked().value()); }
+        [[nodiscard]] nb::object value() const
+        {
+            const auto &v = checked();
+            if (v.schema() != nullptr && v.schema()->kind == TSTypeKind::REF)
+            {
+                // A REF input's value is the REFERENCE - TSInputView::
+                // reference() reads the to-REF alternative's populated value
+                // (peered at the true upstream output).
+                return nb::cast(python_bridge::PyOpaqueRef{Value{v.reference()}});
+            }
+            return value_to_py(v.value());
+        }
 
         [[nodiscard]] nb::object delta_value() const
         {
@@ -1244,6 +1256,7 @@ NB_MODULE(_hgraph, m)
     });
     m.def("ts", [](PyValueType v) { return PyTsType{TypeRegistry::instance().ts(v.meta)}; });
     m.def("ref_ts", [](PyTsType target) { return PyTsType{TypeRegistry::instance().ref(target.meta)}; });
+    m.def("ref_target", [](PyTsType ref) { return PyTsType{TypeRegistry::instance().dereference(ref.meta)}; });
     m.def("set_vt", [](PyValueType e) { return PyValueType{TypeRegistry::instance().set(e.meta)}; });
     m.def("map_vt", [](PyValueType k, PyValueType v) {
         return PyValueType{TypeRegistry::instance().map(k.meta, v.meta)};

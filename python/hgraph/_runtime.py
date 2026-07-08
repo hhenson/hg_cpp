@@ -53,7 +53,8 @@ def wire(name, *args, __output_type__=None, **kwargs):
             result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type, sizes=sizes)
         else:
             result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type)
-    except RuntimeError as error:
+    except (RuntimeError, ValueError) as error:
+        # std::invalid_argument surfaces as ValueError; both are wiring-time.
         raise WiringError(str(error)) from error
     return WiringPort(result) if result is not None else None
 
@@ -494,6 +495,7 @@ class _PyNode:
     def __call__(self, *args, **kwargs):
         ref = _hgraph.node_ref(self.fn)
         layout, ports, scalars, keep_ref = [], [], [], []
+        generic_bindings = {}   # typevar label -> resolved ts_type handle
         supplied = iter(args)
         for param in self._params:
             marker = _INJECTABLE_MARKERS.get(param.annotation)
@@ -538,15 +540,35 @@ class _PyNode:
                 layout.append("t" if required else "u")
                 ports.append(_unwrap(value))
                 keep_ref.append(getattr(param.annotation, "is_ref", False))
+                annotation = param.annotation
+                if isinstance(annotation, _GenericTsExpr):
+                    # Resolve the typevar from the ACTUAL port so a generic
+                    # return annotation (e.g. REF[TIME_SERIES_TYPE]) can bind.
+                    actual = _unwrap(value).ts_type
+                    inner = getattr(annotation, "inner", None)
+                    if getattr(annotation, "is_ref", False) and inner is not None:
+                        if actual.kind == 6:   # already a REF: bind its target
+                            actual = _hgraph.ref_target(actual)
+                        generic_bindings[repr(inner)] = actual
+                    else:
+                        generic_bindings[repr(annotation)] = actual
             else:
                 layout.append("s")
                 scalars.append(value)
         packed = WiringPort(_hgraph.bundle_port(ports, keep_ref))
         kwargs = {"fn": ref, "config": "".join(layout), "scalars": _hgraph.any_list(scalars)}
         if self.has_output:
-            if not isinstance(self._out_tp, _TsExpr):
+            out_tp = self._out_tp
+            if isinstance(out_tp, _GenericTsExpr):
+                inner = getattr(out_tp, "inner", None)
+                key = repr(inner) if inner is not None else repr(out_tp)
+                bound = generic_bindings.get(key)
+                if bound is not None:
+                    handle = _hgraph.ref_ts(bound) if getattr(out_tp, "is_ref", False) else bound
+                    out_tp = _TsExpr(handle, f"resolved[{out_tp!r}]")
+            if not isinstance(out_tp, _TsExpr):
                 raise TypeError(f"@compute_node '{self.__name__}' needs a TS[...] return annotation")
-            return wire("__py_compute", packed, output_type=self._out_tp, **kwargs)
+            return wire("__py_compute", packed, output_type=out_tp, **kwargs)
         return wire("__py_sink", packed, **kwargs)
 
 
@@ -970,7 +992,19 @@ class _GraphFn:
         self.__doc__ = fn.__doc__
 
     def __call__(self, *args, **kwargs):
-        return self.fn(*args, **kwargs)
+        result = self.fn(*args, **kwargs)
+        if isinstance(result, dict) and result and all(isinstance(v, WiringPort) for v in result.values()):
+            # hgraph parity: a dict literal of ports returned from a @graph
+            # coerces to its annotated TSB output (a structural bundle when
+            # the annotation is generic/absent).
+            annotation = self.signature.return_annotation
+            if isinstance(annotation, _TsExpr) and getattr(annotation.handle, "kind", None) == 5:
+                fields = {k: _unwrap(v) for k, v in result.items()}
+                return WiringPort(_hgraph.tsb_port(annotation.handle, fields))
+            fields = [(k, _unwrap(v).ts_type) for k, v in result.items()]
+            tsb_type = _hgraph.un_named_tsb_type(fields)
+            return WiringPort(_hgraph.tsb_port(tsb_type, {k: _unwrap(v) for k, v in result.items()}))
+        return result
 
 
 def graph(fn):
@@ -1144,6 +1178,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     _wiring_stack.append(w)
     try:
         ports = []
+        deferred_replay = []
         scalar_positions = set()
         for i, series in enumerate(inputs):
             annotation = params[i].annotation if i < len(params) else None
@@ -1187,7 +1222,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                     raise TypeError(f"parameter '{name}' needs a TS[...] annotation or a typed sample value")
             key = f"eval_node::{params[i].name if i < len(params) else i}"
             src = w.wire("__harness_replay", (key,), {}, output_type=annotation.handle)
-            w.set_replay(key, list(series), ts_type=annotation.handle)
+            deferred_replay.append((key, list(series), annotation.handle))
             ports.append(WiringPort(src))
         scalars = dict(__scalars__ or {})
         # hgraph parity: keyword arguments naming the function's parameters
@@ -1209,7 +1244,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                     raise TypeError(f"named series '{k}' needs typed sample values")
                 key = f"eval_node::{k}"
                 src = w.wire("__harness_replay", (key,), {}, output_type=annotation.handle)
-                w.set_replay(key, list(series), ts_type=annotation.handle)
+                deferred_replay.append((key, list(series), annotation.handle))
                 named_ports[k] = WiringPort(src)
                 inputs = (*inputs, series)   # count toward the run length
             kwargs.update(named_ports)
@@ -1225,6 +1260,10 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                              __scalars__=__scalars__, __elide__=__elide__, **kwargs)
         scalars.update(kwargs)   # hgraph parity: extra kwargs flow to the node
         out = fn(*ports, **scalars)
+        # Replay values convert AFTER wiring: hgraph surfaces wiring errors
+        # before data-conversion errors, and tests pin that order.
+        for key, series, handle in deferred_replay:
+            w.set_replay(key, series, ts_type=handle)
         length = max((len(series) for i, series in enumerate(inputs)
                       if isinstance(series, (list, tuple)) and i not in scalar_positions), default=0)
         if out is None:

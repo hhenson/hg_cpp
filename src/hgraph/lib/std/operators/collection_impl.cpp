@@ -39,6 +39,13 @@ namespace hgraph::stdlib
         register_overload<add_, collection_impl_detail::add_ts_list_concat>();
         register_overload<add_, collection_impl_detail::add_ts_list_scalar>();
         register_overload<sub_, collection_impl_detail::sub_ts_list_scalar>();
+        register_overload<min_, collection_impl_detail::tsb_aggregate_impl<collection_impl_detail::TsbAggregate::Min>>();
+        register_overload<max_, collection_impl_detail::tsb_aggregate_impl<collection_impl_detail::TsbAggregate::Max>>();
+        register_overload<sum_, collection_impl_detail::tsb_aggregate_impl<collection_impl_detail::TsbAggregate::Sum>>();
+        register_overload<mean, collection_impl_detail::tsb_aggregate_impl<collection_impl_detail::TsbAggregate::Mean>>();
+        register_overload<std_, collection_impl_detail::tsb_aggregate_impl<collection_impl_detail::TsbAggregate::Std>>();
+        register_overload<eq_, collection_impl_detail::eq_tsb_impl>();
+        register_graph_overload<sub_, collection_impl_detail::sub_str_invalid>();
         register_overload<combine_tsd, collection_impl_detail::combine_tsd_tsls>();
         register_overload<combine_tsd, collection_impl_detail::combine_tsd_tuple_values>();
         register_overload<combine_tsd, collection_impl_detail::combine_tsd_tuples>();

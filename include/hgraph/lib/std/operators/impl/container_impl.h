@@ -48,6 +48,16 @@ namespace hgraph::stdlib
             return schema != nullptr && schema->kind == TSTypeKind::TSB ? schema : nullptr;
         }
 
+        /** REF[TSB] argument: the referenced bundle schema, or null. */
+        [[nodiscard]] inline const TSValueTypeMetaData *ref_tsb_schema(const WiringArg &arg) noexcept
+        {
+            const TSValueTypeMetaData *surface =
+                operator_impl_detail::time_series_schema(arg, operator_impl_detail::SchemaRefMode::Direct);
+            if (surface == nullptr || surface->kind != TSTypeKind::REF) { return nullptr; }
+            const TSValueTypeMetaData *target = TypeRegistry::instance().dereference(surface);
+            return target != nullptr && target->kind == TSTypeKind::TSB ? target : nullptr;
+        }
+
         [[nodiscard]] inline const TSValueTypeMetaData *direct_tsl_schema(const WiringArg &arg) noexcept
         {
             const TSValueTypeMetaData *schema = operator_impl_detail::time_series_schema(arg);
@@ -677,6 +687,75 @@ namespace hgraph::stdlib
             const TSValueTypeMetaData *schema = ts.erased().schema;
             std::size_t index = *container_impl_detail::find_tsb_field_index(*schema, attr.value());
             return subgraph_wiring_detail::tsb_field_ref(ts.erased(), index, schema->fields()[index].type);
+        }
+    };
+
+    /** Field projection over REF[TSB]: a runtime node reading the incoming
+        reference VALUE and emitting a reference to the FIELD (hgraph's
+        _tsb_ref_item). Wiring-time structural projection cannot work here -
+        the referenced output only exists at runtime. */
+    template <typename KeyT, fixed_string KeyName, fixed_string OpName>
+    struct tsb_ref_field_node
+    {
+        static constexpr const char *name = OpName.value;
+
+        [[nodiscard]] static const TSValueTypeMetaData *field_schema(OperatorCallContext context)
+        {
+            if (context.args.size() != 2) { return nullptr; }
+            const auto *bundle = container_impl_detail::ref_tsb_schema(context.args[0]);
+            const KeyT *key    = context.scalar_as<KeyT>(KeyName.sv());
+            if (bundle == nullptr || key == nullptr) { return nullptr; }
+            return container_impl_detail::tsb_field_schema(*bundle, *key);
+        }
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return field_schema(context) != nullptr;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const auto *field = field_schema(context);
+            if (field == nullptr) { return; }
+            operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ref(field));
+        }
+
+        static void eval(In<"ts", REF<TsVar<"S">>, InputValidity::Unchecked> ts,
+                         Scalar<KeyName, KeyT> key, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased    = static_cast<const TSOutputView &>(out);
+            const auto  reference = ts.base().reference();
+            const auto *bundle    = TypeRegistry::instance().dereference(ts.base().schema());
+            const auto  index     = container_impl_detail::find_tsb_field_index(*bundle, key.value());
+            if (!index.has_value()) { return; }
+            const auto *field_type = bundle->fields()[*index].type;
+
+            TimeSeriesReference result = TimeSeriesReference::empty(field_type);
+            if (reference.is_peered() && reference.has_output())
+            {
+                auto target = reference.target_output().view(erased.evaluation_time());
+                const auto *data_schema = target.data_view().schema();
+                if (data_schema != nullptr && data_schema->kind == TSTypeKind::REF)
+                {
+                    // A descriptive-schema reference: the surface says TSB but
+                    // the underlying DATA is itself a REF output (Port::as /
+                    // reference-service pattern) - hop through its from-REF
+                    // alternative before the field projection.
+                    const auto *deref = TypeRegistry::instance().dereference(data_schema);
+                    target = target.binding_for(*deref).view(erased.evaluation_time());
+                }
+                result = TimeSeriesReference::peered(target.indexed_child_at(*index));
+            }
+            else if (reference.is_non_peered() && *index < reference.items().size())
+            {
+                result = reference[*index];
+            }
+
+            Value value{std::move(result)};
+            if (erased.data_view().has_current_value() && erased.value().equals(value.view())) { return; }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(value)));
         }
     };
 

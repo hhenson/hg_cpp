@@ -378,12 +378,15 @@ K = _TypeVarSentinel("K")
 class _GenericTsExpr:
     """A generic (unresolved) time-series annotation: TS[SCALAR] etc.
     Treated like an absent annotation - types resolve from wired ports or
-    sample values."""
+    sample values. ``is_ref``/``inner`` carry REF[TYPEVAR] structure so
+    generic py nodes can resolve from actual arguments."""
 
-    __slots__ = ("label",)
+    __slots__ = ("label", "is_ref", "inner")
 
-    def __init__(self, label):
+    def __init__(self, label, is_ref=False, inner=None):
         self.label = label
+        self.is_ref = is_ref
+        self.inner = inner
 
     def __repr__(self):
         return self.label
@@ -406,6 +409,9 @@ class _REFMeta(type):
         # input bound to a REF source receives the DEREFERENCED value.
         import _hgraph as _m
 
+        if isinstance(item, (_TypeVarSentinel, _GenericTsExpr)):
+            # REF over a generic: resolved at call time from the actual arg.
+            return _GenericTsExpr(f"REF[{item!r}]", is_ref=True, inner=item)
         expr = _TsExpr(_m.ref_ts(_resolve(item)), f"REF[{item!r}]")
         expr.is_ref = True
         return expr
