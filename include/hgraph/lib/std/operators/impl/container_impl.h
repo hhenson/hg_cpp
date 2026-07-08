@@ -437,6 +437,73 @@ namespace hgraph::stdlib
         }
     };
 
+    /** getitem_(tsd, keys: TSS[K]) -> TSD[K, REF[V]] (hgraph's
+        tsd_get_items): the requested key set's PRESENT entries as
+        references; keys absent from the dict contribute nothing until
+        they appear. Stateless own-output reconciliation. */
+    struct getitem_tsd_by_keys
+    {
+        static constexpr auto name = "getitem_tsd_items";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            if (context.args.size() != 2 || context.args[1].kind != WiringArg::Kind::TimeSeries) { return false; }
+            const auto *tsd = container_impl_detail::direct_tsd_schema(context.args[0]);
+            auto &registry  = TypeRegistry::instance();
+            const auto *key = registry.dereference(context.args[1].port.schema);
+            return tsd != nullptr && key != nullptr && key->kind == TSTypeKind::TSS &&
+                   key->value_schema != nullptr && key->value_schema->element_type == tsd->key_type();
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (resolution.find_ts("__out__") != nullptr) { return; }
+            if (context.args.size() != 2) { return; }
+            const auto *tsd = container_impl_detail::direct_tsd_schema(context.args[0]);
+            if (tsd == nullptr) { return; }
+            auto &registry = TypeRegistry::instance();
+            const auto *element = registry.dereference(tsd->element_ts());
+            resolution.bind_ts("__out__", registry.tsd(tsd->key_type(), registry.ref(element)));
+        }
+
+        static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+                         In<"key", TSS<ScalarVar<"K">>, InputValidity::Unchecked> keys, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased          = static_cast<const TSOutputView &>(out);
+            const auto  evaluation_time = erased.evaluation_time();
+            auto        dict_out        = erased.data_view().as_dict();
+            auto        mutation        = dict_out.begin_mutation(evaluation_time);
+
+            const TSDInputView &dict    = ts;
+            const TSSInputView &key_set = keys;
+
+            std::vector<Value> stale;
+            for (const auto [key, child] : dict_out.items())
+            {
+                const bool keep = key_set.contains(key) && dict.contains(key);
+                if (!keep) { stale.emplace_back(key); }
+            }
+            for (const Value &key : stale) { (void)mutation.erase(key.view()); }
+
+            for (const ValueView &key : key_set.values())
+            {
+                const std::size_t slot = dict.find_slot(key);
+                if (slot == TS_DATA_NO_CHILD_ID) { continue; }
+                Value reference{dict.at_slot(slot).reference()};
+                auto  element = mutation.at(key);
+                if (element.has_current_value() &&
+                    element.value().checked_as<TimeSeriesReference>() ==
+                        reference.view().checked_as<TimeSeriesReference>())
+                {
+                    continue;
+                }
+                auto element_mutation =
+                    TSOutputView{erased.output(), element, evaluation_time}.begin_mutation(evaluation_time);
+                static_cast<void>(element_mutation.move_value_from(std::move(reference)));
+            }
+        }
+    };
+
     struct index_of_tsl
     {
         static void eval(In<"ts", TSL<TS<ScalarVar<"T">>, SIZE<"N">>, InputValidity::Unchecked> ts,
