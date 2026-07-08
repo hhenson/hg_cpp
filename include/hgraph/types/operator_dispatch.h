@@ -1185,6 +1185,41 @@ namespace hgraph
                 }
             }
         }
+
+        template <typename Impl>
+        void apply_common_operator_hooks(OperatorImpl &impl)
+        {
+            if constexpr (has_resolve_default_types_with_context<Impl>)
+            {
+                impl.default_resolver = [](ResolutionMap &m, OperatorCallContext c) {
+                    Impl::resolve_default_types(m, c);
+                };
+            }
+            else if constexpr (graph_wiring_detail::has_resolve_default_types<Impl>)
+            {
+                impl.default_resolver = [](ResolutionMap &m, OperatorCallContext) {
+                    Impl::resolve_default_types(m);
+                };
+            }
+            if constexpr (has_const_eval<Impl>)
+            {
+                impl.const_kernel = [](const TSValueTypeMetaData *resolved_output, OperatorCallContext c) {
+                    return Impl::const_eval(resolved_output, c);
+                };
+            }
+            if constexpr (has_requires_with_context<Impl>)
+            {
+                impl.requires_predicate = [](const ResolutionMap &m, OperatorCallContext c) {
+                    return Impl::requires_(m, c);
+                };
+            }
+            else if constexpr (has_requires<Impl>)
+            {
+                impl.requires_predicate = [](const ResolutionMap &m, OperatorCallContext) {
+                    return Impl::requires_(m);
+                };
+            }
+        }
     }  // namespace operator_dispatch_detail
 
     namespace operator_dispatch_detail
@@ -1289,29 +1324,7 @@ namespace hgraph
         operator_dispatch_detail::apply_param_defaults<Impl>(impl);
         impl.rank  = operator_dispatch_detail::operator_rank(impl.params);
         impl.label = operator_dispatch_detail::render_label<Impl>(impl.params, impl);
-
-        if constexpr (operator_dispatch_detail::has_resolve_default_types_with_context<Impl>)
-        {
-            impl.default_resolver = [](ResolutionMap &m, OperatorCallContext c) { Impl::resolve_default_types(m, c); };
-        }
-        else if constexpr (graph_wiring_detail::has_resolve_default_types<Impl>)
-        {
-            impl.default_resolver = [](ResolutionMap &m, OperatorCallContext) { Impl::resolve_default_types(m); };
-        }
-        if constexpr (operator_dispatch_detail::has_const_eval<Impl>)
-        {
-            impl.const_kernel = [](const TSValueTypeMetaData *resolved_output, OperatorCallContext c) {
-                return Impl::const_eval(resolved_output, c);
-            };
-        }
-        if constexpr (operator_dispatch_detail::has_requires_with_context<Impl>)
-        {
-            impl.requires_predicate = [](const ResolutionMap &m, OperatorCallContext c) { return Impl::requires_(m, c); };
-        }
-        else if constexpr (operator_dispatch_detail::has_requires<Impl>)
-        {
-            impl.requires_predicate = [](const ResolutionMap &m, OperatorCallContext) { return Impl::requires_(m); };
-        }
+        operator_dispatch_detail::apply_common_operator_hooks<Impl>(impl);
 
         impl.wire = [](Wiring &w, const ResolutionMap &map, std::span<const WiringArg> args,
                        std::span<const std::pair<std::string, WiringPortRef>>) -> OperatorWireResult {
@@ -1366,29 +1379,7 @@ namespace hgraph
         operator_dispatch_detail::apply_param_defaults<Impl>(impl);
         impl.rank  = operator_dispatch_detail::operator_rank(impl.params, impl.variadic);
         impl.label = operator_dispatch_detail::render_label<Impl>(impl.params, impl);
-
-        if constexpr (operator_dispatch_detail::has_resolve_default_types_with_context<Impl>)
-        {
-            impl.default_resolver = [](ResolutionMap &m, OperatorCallContext c) { Impl::resolve_default_types(m, c); };
-        }
-        else if constexpr (graph_wiring_detail::has_resolve_default_types<Impl>)
-        {
-            impl.default_resolver = [](ResolutionMap &m, OperatorCallContext) { Impl::resolve_default_types(m); };
-        }
-        if constexpr (operator_dispatch_detail::has_const_eval<Impl>)
-        {
-            impl.const_kernel = [](const TSValueTypeMetaData *resolved_output, OperatorCallContext c) {
-                return Impl::const_eval(resolved_output, c);
-            };
-        }
-        if constexpr (operator_dispatch_detail::has_requires_with_context<Impl>)
-        {
-            impl.requires_predicate = [](const ResolutionMap &m, OperatorCallContext c) { return Impl::requires_(m, c); };
-        }
-        else if constexpr (operator_dispatch_detail::has_requires<Impl>)
-        {
-            impl.requires_predicate = [](const ResolutionMap &m, OperatorCallContext) { return Impl::requires_(m); };
-        }
+        operator_dispatch_detail::apply_common_operator_hooks<Impl>(impl);
 
         impl.wire = [](Wiring &w, const ResolutionMap &map, std::span<const WiringArg> args,
                        std::span<const std::pair<std::string, WiringPortRef>> kwargs) -> OperatorWireResult {

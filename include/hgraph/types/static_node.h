@@ -2394,58 +2394,112 @@ namespace hgraph
     // NodeBuilder front-end
     // -----------------------------------------------------------------
 
+    namespace static_node_detail
+    {
+        template <typename TImplementation>
+        struct StaticNodeBuilderParts
+        {
+            NodeTypeMetaData schema{};
+            NodeCallbacks    callbacks{};
+            TSEndpointSchema input_endpoint{};
+        };
+
+        template <typename TImplementation>
+        [[nodiscard]] NodeTypeMetaData static_node_schema_base()
+        {
+            static_assert(std::is_class_v<TImplementation>, "Static node implementations must be class/struct types");
+            static_assert(std::is_empty_v<TImplementation>, "Static node implementations must be stateless");
+
+            using signature = StaticNodeSignature<TImplementation>;
+            static_assert(signature::output_count() <= 1, "Static nodes support at most one Out<...> parameter");
+            static_assert(signature::state_count() <= 1, "Static nodes support at most one State<...> parameter");
+            static_assert(signature::recordable_state_count() <= 1,
+                          "Static nodes support at most one RecordableState<...> parameter");
+            static_assert(signature::state_count() == 0 || signature::recordable_state_count() == 0,
+                          "Static nodes cannot mix State<...> and RecordableState<...>; recordable state replaces local state");
+            static_assert(signature::input_names_unique(), "Static node In<> selector names must be unique");
+            static_assert(signature::scalar_names_unique(), "Static node Scalar<> selector names must be unique");
+
+            NodeTypeMetaData schema;
+            if constexpr (has_name<TImplementation>) { schema.display_name = TImplementation::name; }
+            schema.node_kind             = signature::node_kind();
+            schema.uses_scheduler        = signature::uses_scheduler();
+            schema.uses_global_state     = signature::uses_global_state();
+            schema.uses_evaluation_clock = signature::uses_evaluation_clock();
+            schema.schedule_on_start     = signature::schedule_on_start();
+            schema.active_inputs         = signature::active_inputs();
+            schema.valid_inputs          = signature::valid_inputs();
+            schema.all_valid_inputs      = signature::all_valid_inputs();
+            return schema;
+        }
+
+        template <typename TImplementation>
+        [[nodiscard]] NodeCallbacks static_node_callbacks()
+        {
+            NodeCallbacks callbacks;
+            callbacks.evaluate = [](const NodeView &view, DateTime evaluation_time) {
+                invoke<&TImplementation::eval>(view, evaluation_time);
+            };
+            if constexpr (has_start<TImplementation>)
+            {
+                callbacks.start = [](const NodeView &view, DateTime evaluation_time) {
+                    invoke<&TImplementation::start>(view, evaluation_time);
+                };
+            }
+            if constexpr (has_stop<TImplementation>)
+            {
+                callbacks.stop = [](const NodeView &view, DateTime evaluation_time) {
+                    invoke<&TImplementation::stop>(view, evaluation_time);
+                };
+            }
+            return callbacks;
+        }
+
+        template <typename TImplementation>
+        [[nodiscard]] StaticNodeBuilderParts<TImplementation> static_node_builder_parts()
+        {
+            using signature = StaticNodeSignature<TImplementation>;
+            auto schema = static_node_schema_base<TImplementation>();
+            schema.input_schema            = signature::input_schema();
+            schema.output_schema           = signature::output_schema();
+            schema.state_schema            = signature::state_schema();
+            schema.scalar_schema           = signature::scalar_schema();
+            schema.recordable_state_schema = signature::recordable_state_schema();
+            return StaticNodeBuilderParts<TImplementation>{
+                .schema         = std::move(schema),
+                .callbacks      = static_node_callbacks<TImplementation>(),
+                .input_endpoint = signature::input_endpoint(),
+            };
+        }
+
+        template <typename TImplementation>
+        [[nodiscard]] StaticNodeBuilderParts<TImplementation> static_node_builder_parts(
+            const ResolutionMap &resolution)
+        {
+            // Resolved schema pointers substitute wiring-time type-var bindings.
+            // The callbacks stay schema-agnostic and read resolved endpoints from NodeView.
+            using signature = StaticNodeSignature<TImplementation>;
+            auto schema = static_node_schema_base<TImplementation>();
+            schema.input_schema            = signature::input_schema(resolution);
+            schema.output_schema           = signature::output_schema(resolution);
+            schema.state_schema            = signature::state_schema(resolution);
+            schema.scalar_schema           = signature::scalar_schema(resolution);
+            schema.recordable_state_schema = signature::recordable_state_schema(resolution);
+            return StaticNodeBuilderParts<TImplementation>{
+                .schema         = std::move(schema),
+                .callbacks      = static_node_callbacks<TImplementation>(),
+                .input_endpoint = signature::input_endpoint(resolution),
+            };
+        }
+    }  // namespace static_node_detail
+
     template <typename TImplementation>
     NodeBuilder &NodeBuilder::implementation()
     {
-        static_assert(std::is_class_v<TImplementation>, "Static node implementations must be class/struct types");
-        static_assert(std::is_empty_v<TImplementation>, "Static node implementations must be stateless");
-
-        using signature = StaticNodeSignature<TImplementation>;
-        static_assert(signature::output_count() <= 1, "Static nodes support at most one Out<...> parameter");
-        static_assert(signature::state_count() <= 1, "Static nodes support at most one State<...> parameter");
-        static_assert(signature::recordable_state_count() <= 1,
-                      "Static nodes support at most one RecordableState<...> parameter");
-        static_assert(signature::state_count() == 0 || signature::recordable_state_count() == 0,
-                      "Static nodes cannot mix State<...> and RecordableState<...>; recordable state replaces local state");
-        static_assert(signature::input_names_unique(), "Static node In<> selector names must be unique");
-        static_assert(signature::scalar_names_unique(), "Static node Scalar<> selector names must be unique");
-
-        NodeTypeMetaData schema;
-        if constexpr (static_node_detail::has_name<TImplementation>) { schema.display_name = TImplementation::name; }
-        schema.input_schema            = signature::input_schema();
-        schema.output_schema           = signature::output_schema();
-        schema.state_schema            = signature::state_schema();
-        schema.scalar_schema           = signature::scalar_schema();
-        schema.recordable_state_schema = signature::recordable_state_schema();
-        schema.node_kind               = signature::node_kind();
-        schema.uses_scheduler          = signature::uses_scheduler();
-        schema.uses_global_state       = signature::uses_global_state();
-        schema.uses_evaluation_clock   = signature::uses_evaluation_clock();
-        schema.schedule_on_start = signature::schedule_on_start();
-        schema.active_inputs     = signature::active_inputs();
-        schema.valid_inputs      = signature::valid_inputs();
-        schema.all_valid_inputs  = signature::all_valid_inputs();
-
-        NodeCallbacks callbacks;
-        callbacks.evaluate = [](const NodeView &view, DateTime evaluation_time) {
-            static_node_detail::invoke<&TImplementation::eval>(view, evaluation_time);
-        };
-        if constexpr (static_node_detail::has_start<TImplementation>)
-        {
-            callbacks.start = [](const NodeView &view, DateTime evaluation_time) {
-                static_node_detail::invoke<&TImplementation::start>(view, evaluation_time);
-            };
-        }
-        if constexpr (static_node_detail::has_stop<TImplementation>)
-        {
-            callbacks.stop = [](const NodeView &view, DateTime evaluation_time) {
-                static_node_detail::invoke<&TImplementation::stop>(view, evaluation_time);
-            };
-        }
-
+        auto parts = static_node_detail::static_node_builder_parts<TImplementation>();
         std::string saved_label{label_};
         Value       saved_scalars{std::move(scalars_)};
-        *this = NodeBuilder::native(std::move(schema), std::move(callbacks), signature::input_endpoint());
+        *this = NodeBuilder::native(std::move(parts.schema), std::move(parts.callbacks), std::move(parts.input_endpoint));
         if (!saved_label.empty()) { label(std::move(saved_label)); }
         if (saved_scalars.has_value()) { scalars(std::move(saved_scalars)); }
         return *this;
@@ -2454,59 +2508,10 @@ namespace hgraph
     template <typename TImplementation>
     NodeBuilder &NodeBuilder::implementation(const ResolutionMap &resolution)
     {
-        static_assert(std::is_class_v<TImplementation>, "Static node implementations must be class/struct types");
-        static_assert(std::is_empty_v<TImplementation>, "Static node implementations must be stateless");
-
-        using signature = StaticNodeSignature<TImplementation>;
-        static_assert(signature::output_count() <= 1, "Static nodes support at most one Out<...> parameter");
-        static_assert(signature::state_count() <= 1, "Static nodes support at most one State<...> parameter");
-        static_assert(signature::recordable_state_count() <= 1,
-                      "Static nodes support at most one RecordableState<...> parameter");
-        static_assert(signature::state_count() == 0 || signature::recordable_state_count() == 0,
-                      "Static nodes cannot mix State<...> and RecordableState<...>; recordable state replaces local state");
-        static_assert(signature::input_names_unique(), "Static node In<> selector names must be unique");
-        static_assert(signature::scalar_names_unique(), "Static node Scalar<> selector names must be unique");
-
-        // Identical to the concrete implementation() except the schema pointers are
-        // computed by substituting the wiring-time type-var bindings (``resolution``).
-        // The callbacks stay schema-agnostic — they read the resolved endpoints from
-        // the NodeView, so one closure over &eval serves every resolution.
-        NodeTypeMetaData schema;
-        if constexpr (static_node_detail::has_name<TImplementation>) { schema.display_name = TImplementation::name; }
-        schema.input_schema            = signature::input_schema(resolution);
-        schema.output_schema           = signature::output_schema(resolution);
-        schema.state_schema            = signature::state_schema(resolution);
-        schema.scalar_schema           = signature::scalar_schema(resolution);
-        schema.recordable_state_schema = signature::recordable_state_schema(resolution);
-        schema.node_kind         = signature::node_kind();
-        schema.uses_scheduler    = signature::uses_scheduler();
-        schema.uses_global_state = signature::uses_global_state();
-        schema.uses_evaluation_clock = signature::uses_evaluation_clock();
-        schema.schedule_on_start = signature::schedule_on_start();
-        schema.active_inputs     = signature::active_inputs();
-        schema.valid_inputs      = signature::valid_inputs();
-        schema.all_valid_inputs  = signature::all_valid_inputs();
-
-        NodeCallbacks callbacks;
-        callbacks.evaluate = [](const NodeView &view, DateTime evaluation_time) {
-            static_node_detail::invoke<&TImplementation::eval>(view, evaluation_time);
-        };
-        if constexpr (static_node_detail::has_start<TImplementation>)
-        {
-            callbacks.start = [](const NodeView &view, DateTime evaluation_time) {
-                static_node_detail::invoke<&TImplementation::start>(view, evaluation_time);
-            };
-        }
-        if constexpr (static_node_detail::has_stop<TImplementation>)
-        {
-            callbacks.stop = [](const NodeView &view, DateTime evaluation_time) {
-                static_node_detail::invoke<&TImplementation::stop>(view, evaluation_time);
-            };
-        }
-
+        auto parts = static_node_detail::static_node_builder_parts<TImplementation>(resolution);
         std::string saved_label{label_};
         Value       saved_scalars{std::move(scalars_)};
-        *this = NodeBuilder::native(std::move(schema), std::move(callbacks), signature::input_endpoint(resolution));
+        *this = NodeBuilder::native(std::move(parts.schema), std::move(parts.callbacks), std::move(parts.input_endpoint));
         if (!saved_label.empty()) { label(std::move(saved_label)); }
         if (saved_scalars.has_value()) { scalars(std::move(saved_scalars)); }
         return *this;
