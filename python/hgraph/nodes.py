@@ -26,22 +26,62 @@ def extract_tsd(ts: TS[object]) -> TSD[object, TS[object]]:
     return dict(ts.value)
 
 
-@compute_node
-def keys_where_true(ts: TSD[object, TS[bool]]) -> TSS[object]:
-    from ._runtime import Removed
+class _KeySubscripted:
+    """upstream shape: helper[K: int] specializes the key type (the py
+    node rebuilds with substituted annotations; cached per type)."""
 
-    delta = set()
-    for key in ts.removed_keys():
-        delta.add(Removed(key))
-    for key, value in ts.modified_items():
-        if value.value:
-            delta.add(key)
-        else:
+    def __init__(self, builder):
+        self._builder = builder
+        self._cache = {}
+
+    def _for(self, tp):
+        if tp not in self._cache:
+            self._cache[tp] = self._builder(tp)
+        return self._cache[tp]
+
+    def __getitem__(self, item):
+        tp = item.stop if isinstance(item, slice) else item
+        return self._for(tp)
+
+    def __call__(self, *args, **kwargs):
+        return self._for(object)(*args, **kwargs)
+
+
+def _keys_where_true_for(tp):
+    @compute_node
+    def keys_where_true(ts: TSD[tp, TS[bool]]) -> TSS[tp]:
+        from ._runtime import Removed
+
+        delta = set()
+        for key in ts.removed_keys():
             delta.add(Removed(key))
-    return delta
+        for key, value in ts.modified_items():
+            if value.value:
+                delta.add(key)
+            else:
+                delta.add(Removed(key))
+        return delta
+
+    return keys_where_true
 
 
-@compute_node
-def where_true(ts: TS[bool]) -> TS[bool]:
-    if ts.value:
-        return True
+def _where_true_for(tp):
+    @compute_node
+    def where_true(ts: TSD[tp, TS[bool]]) -> TSD[tp, TS[bool]]:
+        from ._runtime import REMOVED
+
+        out = {}
+        for key, value in ts.modified_items():
+            if value.value:
+                out[key] = value.value
+            else:
+                out[key] = REMOVED
+        for key in ts.removed_keys():
+            out[key] = REMOVED
+        return out
+
+    return where_true
+
+
+keys_where_true = _KeySubscripted(_keys_where_true_for)
+where_true = _KeySubscripted(_where_true_for)
