@@ -633,6 +633,10 @@ class _ServiceStub:
         self.descriptor = _hgraph.service_descriptor(**kwargs)
 
     def __call__(self, ts=None, *, path=""):
+        if isinstance(ts, str):
+            # hgraph's reference-service call shape: the interface takes
+            # ``path`` as its (only) positional parameter.
+            path, ts = ts, None
         w = _current_wiring()
         port = _hgraph.service_client(w, self.descriptor, path,
                                       None if ts is None else _unwrap(ts))

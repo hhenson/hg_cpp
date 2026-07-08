@@ -63,8 +63,6 @@ from hgraph.test import eval_node
 import pytest
 pytestmark = pytest.mark.smoke
 
-import pytest as _pytest_mark
-pytestmark = _pytest_mark.mark.wip   # batch-3 burn-down; excluded from the gate
 
 def test_make_tsd():
     assert eval_node(make_tsd, ["a", "b", "a"], [1, 2, 3]) == [{"a": 1}, {"b": 2}, {"a": 3}]

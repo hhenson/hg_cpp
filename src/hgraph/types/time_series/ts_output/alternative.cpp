@@ -374,7 +374,11 @@ namespace hgraph::detail
             {
                 throw std::logic_error("TSOutput from-REF target binding requires TargetLink storage");
             }
-            link->record_target_modified(modified_time);
+            // Only a rebind to a LIVE (valid) target samples
+            // (linking_strategies.rst): binding to a target that has never
+            // ticked must not fabricate a tick - the target's first real
+            // tick notifies through the link's subscription.
+            if (output.data_view().has_current_value()) { link->record_target_modified(modified_time); }
         }
 
         [[nodiscard]] TSOutputView output_child_view(const TSOutputView &parent,
