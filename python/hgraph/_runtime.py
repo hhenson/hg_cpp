@@ -371,8 +371,14 @@ def combine(*args, __output_type__=None, **kwargs):
             return wire("combine", structural, __strict__=False, output_type=target)
         return wire("combine", structural, output_type=target)
     if __output_type__ is None:
-        if len(args) == 2 and not kwargs and all(isinstance(a, WiringPort) for a in args):
-            return _combine_compound_scalars(*args)
+        kwargs.pop("__strict__", None)   # structural composites need no gate
+        if args and all(isinstance(a, WiringPort) for a in args) and not kwargs:
+            # UNSUBSCRIPTED positional: a structural TSL of the ports, UNLESS
+            # it is the binary CS-merge (two bundle-valued TS -> delta merge).
+            if (len(args) == 2 and all(_unwrap(a).ts_type.kind == 0
+                                       and _unwrap(a).ts_type.value_kind == 2 for a in args)):
+                return _combine_compound_scalars(*args)
+            return WiringPort(_hgraph.tsl_port([_unwrap(a) for a in args]))
         if kwargs and not args and all(isinstance(v, WiringPort) for v in kwargs.values()):
             # hgraph's un-subscripted kwargs form: a structural un-named TSB.
             fields = [(k, _unwrap(v).ts_type) for k, v in kwargs.items()]
@@ -480,6 +486,9 @@ class _Convert:
             if in_kind == 1:
                 vt = _hgraph.vt_element(_hgraph.ts_value_vt(handle))
                 return wrap(_hgraph.ts(_hgraph.tuple_vt(vt)), "TS[tuple[inferred]]")
+            if in_kind == 3:   # TSL -> tuple of the element scalar
+                vt = _hgraph.ts_value_vt(_hgraph.tsl_element_ts(handle))
+                return wrap(_hgraph.ts(_hgraph.tuple_vt(vt)), "TS[tuple[inferred]]")
 
         if label.startswith("TS[Set") or label.startswith("TS[set"):
             if in_kind == 1:
@@ -507,59 +516,56 @@ class _Convert:
                 return wrap(_hgraph.ts(_hgraph.map_vt(_hgraph.int_vt(), element)), "TS[mapping[inferred]]")
         raise WiringError(f"convert: cannot resolve target '{label}' from input {handle!r}")
 
-    def __call__(self, *ports, to=None, **kwargs):
+    def __call__(self, ts=None, *ports, to=None, **kwargs):
         from ._types import _TsExpr, _GenericTsExpr
 
-        ports = list(ports)
-        if to is None and len(ports) > 1 and isinstance(
-                ports[-1], (_TsExpr, _GenericTsExpr, type)) and not isinstance(ports[-1], WiringPort):
-            to = ports.pop()   # hgraph's positional ``to`` parameter
+        # Collect the time-series inputs in call order. hgraph names them
+        # ``key``/``ts`` for the multi-input converts; positionally the first
+        # is ``ts`` (or the key), extras follow. ``ts`` is a real param so
+        # eval_node/resolution_dict can type it.
+        inputs = []
+        if "key" in kwargs:
+            inputs.append(kwargs.pop("key"))
+        inputs.append(ts if ts is not None else kwargs.pop("ts", None))
+        inputs = [p for p in inputs if p is not None] + list(ports)
+        if to is None and inputs and isinstance(
+                inputs[-1], (_TsExpr, _GenericTsExpr, type)) and not isinstance(inputs[-1], WiringPort):
+            to = inputs.pop()   # hgraph's positional ``to`` type argument
         target = to if to is not None else self._to
-        from ._types import _TsExpr as _TE
 
-        if (isinstance(target, _TE) and len(ports) == 1 and isinstance(ports[0], WiringPort)
-                and _unwrap(ports[0]).ts_type == target.handle and not kwargs):
-            return ports[0]   # convert to the SAME type is a no-op (hgraph: j is i)
+        if (isinstance(target, _TsExpr) and len(inputs) == 1 and isinstance(inputs[0], WiringPort)
+                and _unwrap(inputs[0]).ts_type == target.handle):
+            return inputs[0]   # convert to the SAME type is a no-op (hgraph: j is i)
 
         if not isinstance(target, _TsExpr):
             label = (getattr(target, "label", None) or getattr(target, "__name__", None) or
                      repr(target)).replace("typing.", "")
-            named = [kwargs[n] for n in ("key", "ts") if n in kwargs]
-            pair = list(ports) + named
-            if label.startswith("TSD") and len(pair) == 1 and _unwrap(pair[0]).ts_type.kind == 3:
-                # TSL -> TSD[int, element]: modified elements write at their
-                # index (the existing combine_tsd kernel, non-strict).
-                tsl = pair[0]
+            if label.startswith("TSD") and len(inputs) == 1 and _unwrap(inputs[0]).ts_type.kind == 3:
+                tsl = inputs[0]                     # TSL -> TSD[int, element]
                 size = _unwrap(tsl).ts_type.fixed_size
                 return wire("combine_tsd", tuple(range(size)), *[tsl[i] for i in range(size)],
                             __strict__=False)
-            if label.startswith("TSD") and len(pair) >= 2:
-                key_handle = _unwrap(pair[0]).ts_type
-                if key_handle.kind == 1:                      # TSS[K]
+            if label.startswith("TSD") and len(inputs) >= 2:
+                key_handle = _unwrap(inputs[0]).ts_type
+                if key_handle.kind == 1:
                     k = _hgraph.vt_element(_hgraph.ts_value_vt(key_handle))
-                elif _hgraph.vt_kind(_hgraph.ts_value_vt(key_handle)) == 4:   # TS[Set[K]]
+                elif _hgraph.vt_kind(_hgraph.ts_value_vt(key_handle)) == 4:
                     k = _hgraph.vt_element(_hgraph.ts_value_vt(key_handle))
                 else:
                     k = _hgraph.ts_value_vt(key_handle)
-                v = _unwrap(pair[1]).ts_type
-                from ._types import _TsExpr as _E2
-
-                target = _E2(_hgraph.tsd(k, v), "TSD[inferred]")
-                return wire("convert", *ports, output_type=target, **kwargs)
-            if label.startswith("TS[Mapping") and len(pair) >= 2:
-                k = _hgraph.ts_value_vt(_unwrap(pair[0]).ts_type)
+                v = _unwrap(inputs[1]).ts_type
+                target = _TsExprFor(_hgraph.tsd(k, v))
+            elif label.startswith("TS[Mapping") and len(inputs) >= 2:
+                k = _hgraph.ts_value_vt(_unwrap(inputs[0]).ts_type)
                 if _hgraph.vt_kind(k) in (3, 4):
-                    k = _hgraph.vt_element(k)      # tuple/set of keys zip
-                v = _hgraph.ts_value_vt(_unwrap(pair[1]).ts_type)
+                    k = _hgraph.vt_element(k)
+                v = _hgraph.ts_value_vt(_unwrap(inputs[1]).ts_type)
                 if _hgraph.vt_kind(v) == 3:
-                    v = _hgraph.vt_element(v)      # paired value tuples
-                from ._types import _TsExpr as _E
-
-                target = _E(_hgraph.ts(_hgraph.map_vt(k, v)), "TS[mapping[inferred]]")
+                    v = _hgraph.vt_element(v)
+                target = _TsExprFor(_hgraph.ts(_hgraph.map_vt(k, v)))
             else:
-                target = self._infer(target, pair[0] if pair else ports[0])
-        return wire("convert", *ports, output_type=target, **kwargs)
-
+                target = self._infer(target, inputs[0])
+        return wire("convert", *inputs, output_type=target, **kwargs)
 
 convert = _Convert()
 

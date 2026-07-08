@@ -813,6 +813,40 @@ namespace hgraph::stdlib
         }
     };
 
+    /** convert[TS[tuple[V,...]]](tsl): the VALID children of a fixed TSL as
+        an ordered tuple (all-valid gated so a partial TSL stays invalid,
+        hgraph parity). */
+    struct convert_tsl_to_tuple_impl
+    {
+        static constexpr auto name = "convert_tsl_to_tuple";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *in  = operator_impl_detail::fixed_tsl_arg(context, 0);
+            if (out == nullptr || out->kind != ValueTypeKind::List || in == nullptr) { return false; }
+            const auto *element = TypeRegistry::instance().dereference(in->element_ts());
+            return element != nullptr && element->kind == TSTypeKind::TS &&
+                   element->value_schema == out->element_type;
+        }
+
+        static void eval(In<"ts", TsVar<"S">, InputValidity::AllValid> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto        &erased = static_cast<const TSOutputView &>(out);
+            const auto        *meta   = erased.schema()->value_schema;
+            const TSInputView &tsl    = ts;
+            ListBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
+            for (std::size_t index = 0; index < tsl.schema()->fixed_size(); ++index)
+            {
+                builder.push_back_copy(tsl.indexed_child_at(index).value().data());
+            }
+            Value tuple = builder.build();
+            if (erased.data_view().has_current_value() && erased.value().equals(tuple.view())) { return; }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(tuple)));
+        }
+    };
+
     /** convert[TS[Mapping]](k_tuple, v_tuple): ZIP the paired tuples into a
         mapping value. */
     struct convert_zip_to_map_impl
@@ -1068,11 +1102,11 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "convert_tsb_to_bool";
 
-        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        // Concrete Out<TS<Bool>> is gated by the dispatcher's requested-
+        // output match; requires_ checks the INPUT only (the dispatch rule).
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
-            return out == scalar_descriptor<Bool>::value_meta() &&
-                   operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSB) != nullptr;
+            return operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSB) != nullptr;
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Out<TS<Bool>> out)
@@ -1740,14 +1774,14 @@ namespace hgraph::stdlib
             return {value->key_type, value->element_type};
         }
 
-        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             return kv_of(context).first != nullptr;
         }
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (operator_impl_detail::output_bound(resolution)) { return; }
+
             const auto [k, v] = kv_of(context);
             if (k == nullptr) { return; }
             auto &registry = TypeRegistry::instance();

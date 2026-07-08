@@ -47,6 +47,7 @@ namespace hgraph::stdlib
         register_overload<collect, collect_collection_impl>();
         register_overload<collect, collect_map_impl>();
         register_overload<collect, collect_map_zip_impl>();
+        register_overload<convert, convert_tsl_to_tuple_impl>();
         register_overload<convert, convert_zip_to_map_impl>();
         register_overload<convert, convert_tsl_to_map_impl>();
         register_overload<convert, convert_tsb_to_map_impl>();
