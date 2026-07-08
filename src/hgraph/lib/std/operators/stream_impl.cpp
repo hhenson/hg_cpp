@@ -9,6 +9,7 @@ namespace hgraph::stdlib
         register_overload<sample, sample_impl>();
         register_overload<filter_, filter_impl>();
         register_overload<lag, lag_tick_impl>();
+        register_overload<lag, lag_time_impl>();
         register_overload<schedule, schedule_impl>();
         register_overload<resample, resample_impl>();
         register_overload<until_true, until_true_bool_impl>();

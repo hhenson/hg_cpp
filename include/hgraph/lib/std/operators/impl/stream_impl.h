@@ -334,6 +334,11 @@ namespace hgraph::stdlib
             std::deque<Value> buffer{};
         };
 
+        struct TimedDeltaQueueState
+        {
+            std::deque<std::pair<DateTime, Value>> buffer{};
+        };
+
         struct ThrottleState
         {
             DateTime  next_allowed{MIN_DT};
@@ -367,6 +372,12 @@ namespace hgraph::static_schema_detail
     struct scalar_name<stdlib::stream_impl_detail::DeltaQueueState>
     {
         static constexpr std::string_view value{"stdlib.delta_queue_state"};
+    };
+
+    template <>
+    struct scalar_name<stdlib::stream_impl_detail::TimedDeltaQueueState>
+    {
+        static constexpr std::string_view value{"stdlib.timed_delta_queue_state"};
     };
 
     template <>
@@ -423,6 +434,44 @@ namespace hgraph::stdlib
             if (current.buffer.size() > delay)
             {
                 Value delta = std::move(current.buffer.front());
+                current.buffer.pop_front();
+                apply_delta(out, delta.view());
+            }
+
+            state.set(std::move(current));
+        }
+    };
+
+    /** lag(ts, timedelta): the TIME lag - each tick's delta re-emits
+        ``period`` later (scheduler-driven deferred-delta buffer; the tick
+        variant above is the count form). */
+    struct lag_time_impl
+    {
+        static constexpr auto name = "lag_time";
+
+        static void start(Scalar<"period", TimeDelta> period)
+        {
+            stream_impl_detail::require_positive(period.value(), "period");
+        }
+
+        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         Scalar<"period", TimeDelta> period,
+                         NodeScheduler scheduler,
+                         State<stream_impl_detail::TimedDeltaQueueState> state,
+                         Out<TsVar<"S">> out)
+        {
+            const auto now     = static_cast<const TSOutputView &>(out).evaluation_time();
+            auto       current = state.get();
+
+            if (ts.modified() && ts.valid())
+            {
+                current.buffer.emplace_back(now + period.value(), capture_delta(ts.base()));
+                scheduler.schedule(period.value());
+            }
+
+            while (!current.buffer.empty() && current.buffer.front().first <= now)
+            {
+                Value delta = std::move(current.buffer.front().second);
                 current.buffer.pop_front();
                 apply_delta(out, delta.view());
             }

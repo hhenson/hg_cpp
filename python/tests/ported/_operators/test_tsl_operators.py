@@ -30,8 +30,6 @@ from hgraph import (
 from hgraph.nodes import tsl_to_tsd
 from hgraph.test import eval_node
 
-import pytest as _pytest_mark
-pytestmark = _pytest_mark.mark.wip   # batch-3 burn-down; excluded from the gate
 
 
 
