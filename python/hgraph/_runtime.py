@@ -59,6 +59,15 @@ def wire(name, *args, __output_type__=None, **kwargs):
 
 
 class _OperatorFunction:
+    def __rshift__(self, other):
+        # arrow-chain sugar: (eval_ | op >> assert_) - defer to the arrow
+        # module's chain so operators compose in pipelines.
+        from .arrow import _Assert, _Chain
+
+        if isinstance(other, _Assert):
+            return _Chain([self], other)
+        return _Chain([self]) >> other
+
     """A Python callable wiring the named registered operator. Supports
     hgraph's SUBSCRIPT form ``op[TYPE](...)`` - the type becomes the
     requested output type of the call."""

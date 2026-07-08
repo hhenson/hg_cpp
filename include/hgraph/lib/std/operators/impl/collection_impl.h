@@ -2975,6 +2975,84 @@ namespace hgraph::stdlib
             }
         };
 
+        /** index_of(tuple, item): first index or -1. */
+        struct index_of_ts_list
+        {
+            static constexpr auto name = "index_of_ts_list";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return ts_list_meta(context, 0) != nullptr;
+            }
+
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts, In<"item", TS<ScalarVar<"E">>> item,
+                             Out<TS<Int>> out)
+            {
+                const auto value  = ts.base().value();
+                auto       items  = value.as_indexed_view();
+                const auto needle = item.base().value();
+                Int found = -1;
+                for (std::size_t index = 0; index < items.size(); ++index)
+                {
+                    if (items.at(index).equals(needle)) { found = static_cast<Int>(index); break; }
+                }
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                Value result{found};
+                static_cast<void>(mutation.move_value_from(std::move(result)));
+            }
+        };
+
+        /** getitem_ over a FIXED (composite) homogeneous tuple value. */
+        struct getitem_ts_fixed_tuple
+        {
+            static constexpr auto name = "getitem_ts_fixed_tuple";
+
+            [[nodiscard]] static const ValueTypeMetaData *homogeneous_tuple(OperatorCallContext context)
+            {
+                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS);
+                if (schema == nullptr || schema->value_schema == nullptr ||
+                    schema->value_schema->kind != ValueTypeKind::Tuple || schema->value_schema->field_count == 0)
+                {
+                    return nullptr;
+                }
+                const auto *element = schema->value_schema->fields[0].type;
+                for (std::size_t index = 1; index < schema->value_schema->field_count; ++index)
+                {
+                    if (schema->value_schema->fields[index].type != element) { return nullptr; }
+                }
+                return element;
+            }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return homogeneous_tuple(context) != nullptr &&
+                       operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TS) != nullptr;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *element = homogeneous_tuple(context);
+                if (element == nullptr) { return; }
+                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(element));
+            }
+
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts, In<"key", TS<Int>> key, Out<TsVar<"__out__">> out)
+            {
+                const auto value = ts.base().value();
+                auto       items = value.as_indexed_view();
+                Int        index = key.value();
+                if (index < 0) { index += static_cast<Int>(items.size()); }
+                if (index < 0 || static_cast<std::size_t>(index) >= items.size()) { return; }
+                const auto &erased  = static_cast<const TSOutputView &>(out);
+                const auto  element = items.at(static_cast<std::size_t>(index));
+                if (erased.data_view().has_current_value() && erased.value().equals(element)) { return; }
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.copy_value_from(element));
+            }
+        };
+
         /** contains_(tuple, element). */
         struct contains_ts_list
         {

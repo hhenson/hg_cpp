@@ -89,8 +89,15 @@ class _EvalArrowInput:
                 ports.append(WiringPort(src))
 
             value = ports[0] if len(ports) == 1 else _Pair(*ports)
+            from ._runtime import _OperatorFunction
+
             for fn in chain.fns:
-                value = fn(value)
+                if isinstance(value, _Pair) and isinstance(fn, _OperatorFunction):
+                    # A bare binary OPERATOR in the chain consumes the pair as
+                    # its two arguments; user lambdas take the pair itself.
+                    value = fn(value[0], value[1])
+                else:
+                    value = fn(value)
             probed = _probe(value)
             w.wire("__harness_record", (_unwrap(probed), "arrow::out"), {"sparse": True})
             run = w.run()

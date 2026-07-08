@@ -352,14 +352,18 @@ namespace hgraph
             nb::object   object   = nb::borrow<nb::object>(source);
             nb::sequence sequence = nb::cast<nb::sequence>(object);
             const auto   count    = static_cast<std::size_t>(nb::len(sequence));
-            if (count != state->child_bindings.size())
+            // hgraph parity: a LONGER python sequence fills a fixed tuple's
+            // leading fields (python tuples don't length-validate upstream).
+            if (count > state->child_bindings.size()) { /* truncate below */ }
+            else if (count != state->child_bindings.size())
             {
                 throw std::invalid_argument(
                     fmt::format("{} expects {} elements, got {}", what, state->child_bindings.size(), count));
             }
 
             composite_mark_all(state, memory, true);   // sequences supply every field
-            for (std::size_t index = 0; index < count; ++index)
+            const std::size_t fill_count = std::min(count, state->child_bindings.size());
+            for (std::size_t index = 0; index < fill_count; ++index)
             {
                 nb::object element = sequence[index];
                 auto      *child   = static_cast<std::byte *>(memory) + state->offsets[index];

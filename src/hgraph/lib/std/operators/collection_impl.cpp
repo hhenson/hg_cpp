@@ -29,6 +29,8 @@ namespace hgraph::stdlib
         register_overload<combine_cs, collection_impl_detail::combine_cs_from_fields>();
         register_overload<mul_, collection_impl_detail::mul_tuple_int>();
         register_overload<getitem_, collection_impl_detail::getitem_ts_list>();
+        register_overload<getitem_, collection_impl_detail::getitem_ts_fixed_tuple>();
+        register_overload<index_of, collection_impl_detail::index_of_ts_list>();
         register_overload<contains_, collection_impl_detail::contains_ts_list>();
         register_overload<extremum_ts_list_marker, collection_impl_detail::extremum_ts_list_node<true>>();
         register_overload<extremum_ts_list_max_marker, collection_impl_detail::extremum_ts_list_node<false>>();
