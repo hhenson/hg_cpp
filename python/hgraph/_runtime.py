@@ -89,7 +89,7 @@ class _OperatorFunction:
 
         output_type = None
         sizes = []
-        ts_hint = None
+        ts_hints = []
         for i in (item if isinstance(item, tuple) else (item,)):
             if isinstance(i, slice):
                 if i.start is OUT and output_type is None:
@@ -97,14 +97,14 @@ class _OperatorFunction:
                 elif isinstance(i.stop, int):
                     sizes.append(i.stop)   # op[SIZE: Size[4]] pins size vars
                 else:
-                    # op[TIME_SERIES_TYPE: TSS[int]]: the resolution also
-                    # types the eval_node input series.
-                    ts_hint = i.stop
+                    # op[TYPEVAR: TYPE, ...]: the resolutions also type the
+                    # eval_node input series positionally.
+                    ts_hints.append(i.stop)
                 continue
             if output_type is None:
                 output_type = i
         return _OperatorFunction(self.__name__, output_type=output_type, sizes=sizes or None,
-                                 ts_hint=ts_hint)
+                                 ts_hint=ts_hints or None)
 
     def _normalise_type_arguments(self, args, kwargs):
         if "tp" in kwargs or "output_type" in kwargs:
@@ -1135,10 +1135,14 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     _wiring_stack.append(w)
     try:
         ports = []
+        scalar_positions = set()
         for i, series in enumerate(inputs):
             annotation = params[i].annotation if i < len(params) else None
             if annotation is None and getattr(fn, "_ts_hint", None) is not None:
-                annotation = fn._ts_hint   # op[TYPEVAR: TYPE] types the inputs
+                hints = fn._ts_hint       # op[TYPEVAR: TYPE, ...] types the inputs
+                if not isinstance(hints, list):
+                    hints = [hints]
+                annotation = hints[i] if i < len(hints) else hints[-1]
             if resolution_dict and i < len(params) and params[i].name in resolution_dict:
                 annotation = resolution_dict[params[i].name]
             elif resolution_dict and not params and len(resolution_dict) == len(inputs):
@@ -1151,9 +1155,11 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             import types as _pytypes
             import typing as _typing
             scalar_annotation = (
-                (isinstance(annotation, type) and annotation in (bool, int, float, str, bytes))
+                (isinstance(annotation, type) and annotation in (bool, int, float, str, bytes, tuple))
                 or (isinstance(annotation, (_pytypes.GenericAlias, type(_typing.Tuple[int, ...])))
                     and _typing.get_origin(annotation) is tuple))
+            if scalar_annotation:
+                scalar_positions.add(i)
             if not isinstance(series, (list, tuple)) or scalar_annotation:
                 # hgraph parity: a non-list argument is a plain value (lifted
                 # to const where a TS input is expected, or a scalar param).
@@ -1210,7 +1216,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                              __scalars__=__scalars__, __elide__=__elide__, **kwargs)
         scalars.update(kwargs)   # hgraph parity: extra kwargs flow to the node
         out = fn(*ports, **scalars)
-        length = max((len(series) for series in inputs if isinstance(series, (list, tuple))), default=0)
+        length = max((len(series) for i, series in enumerate(inputs)
+                      if isinstance(series, (list, tuple)) and i not in scalar_positions), default=0)
         if out is None:
             run = w.run(start_time=__start_time__, end_time=__end_time__)
             return None

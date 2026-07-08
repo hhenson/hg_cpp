@@ -87,16 +87,9 @@ keys_where_true = _KeySubscripted(_keys_where_true_for)
 where_true = _KeySubscripted(_where_true_for)
 
 
-class _TslToTsd:
+def tsl_to_tsd(tsl, keys: tuple = None):
     """upstream shape: tsl_to_tsd(tsl, keys) - convert a TSL to a TSD with
     the given keys (modified elements only, hgraph parity)."""
+    from ._runtime import wire
 
-    _cache = {}
-
-    def __call__(self, tsl, keys):
-        from ._runtime import wire
-
-        return wire("combine_tsd", tuple(keys), *[tsl[i] for i in range(len(keys))], __strict__=False)
-
-
-tsl_to_tsd = _TslToTsd()
+    return wire("combine_tsd", tuple(keys), *[tsl[i] for i in range(len(keys))], __strict__=False)

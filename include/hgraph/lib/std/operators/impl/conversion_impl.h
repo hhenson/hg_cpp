@@ -1,6 +1,7 @@
 #ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_CONVERSION_IMPL_H
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_CONVERSION_IMPL_H
 
+#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
 #include <hgraph/lib/std/operators/arithmetic.h>    // add_ / mul_ (zero_ op mapping)
 #include <hgraph/lib/std/operators/collection.h>    // sum_     (zero_ op mapping)
 #include <hgraph/lib/std/operators/comparison.h>    // min_ / max_ (zero_ op mapping)
@@ -190,9 +191,41 @@ namespace hgraph::stdlib
 
     struct str_impl
     {
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            // Fixed TSLs print tuple-style via str_tsl_impl.
+            return operator_impl_detail::fixed_tsl_arg(context, 0) == nullptr;
+        }
+
         static void eval(In<"ts", TsVar<"S">> ts, Out<TS<Str>> out)
         {
             out.set(ts.value().to_string());
+        }
+    };
+
+    /** str_ over a fixed TSL prints TUPLE style - "(a, b)" not "[a, b]"
+        (hgraph's python repr of the TSL value). */
+    struct str_tsl_impl
+    {
+        static constexpr auto name = "str_tsl";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return operator_impl_detail::fixed_tsl_arg(context, 0) != nullptr;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TS<Str>> out)
+        {
+            const auto  value  = ts.value();
+            auto        fields = value.as_indexed_view();
+            std::string text   = "(";
+            for (std::size_t index = 0; index < fields.size(); ++index)
+            {
+                if (index != 0) { text += ", "; }
+                text += fields.at(index).to_string();
+            }
+            text += ")";
+            out.set(Str{std::move(text)});
         }
     };
 

@@ -14,5 +14,6 @@ namespace hgraph::stdlib
 
         register_overload<default_, default_impl>();
         register_overload<str_, str_impl>();
+        register_overload<str_, str_tsl_impl>();
     }
 }  // namespace hgraph::stdlib
