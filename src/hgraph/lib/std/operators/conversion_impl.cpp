@@ -28,6 +28,12 @@ namespace hgraph::stdlib
         register_overload<convert, convert_list_to_bool_impl>();
         register_overload<convert, convert_date_to_datetime_impl>();
         register_overload<convert, convert_ts_to_tss_impl>();
+        register_overload<convert, convert_ts_to_collection_impl>();
+        register_overload<convert, convert_collection_to_collection_impl>();
+        register_overload<convert, convert_tss_to_collection_impl>();
+        register_overload<convert, convert_collection_to_tss_impl>();
+        register_overload<convert, convert_tsd_to_map_impl>();
+        register_overload<convert, convert_map_to_tsd_impl>();
         register_overload<str_, str_tsl_impl>();
     }
 }  // namespace hgraph::stdlib

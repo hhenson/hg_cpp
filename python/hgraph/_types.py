@@ -30,22 +30,26 @@ def _value_type(scalar):
     origin = typing.get_origin(scalar)
     if origin is not None:
         args = typing.get_args(scalar)
+        if not args:
+            raise _GenericType(repr(scalar))   # bare Tuple/Set/Mapping: resolve from wiring
         if origin is tuple:
             if len(args) == 2 and args[1] is Ellipsis:
                 return _hgraph.tuple_vt(_value_type(args[0]))
             return _hgraph.fixed_tuple_vt([_value_type(a) for a in args])
         if origin in (frozenset, set):
             return _hgraph.set_vt(_value_type(args[0]))
-        if origin is dict or getattr(origin, "__name__", "") == "frozendict":
+        if origin is dict or getattr(origin, "__name__", "") == "frozendict" or                 getattr(origin, "__name__", "") in ("Mapping", "MutableMapping") or                 origin.__module__ == "collections.abc":
             return _hgraph.map_vt(_value_type(args[0]), _value_type(args[1]))
         raise TypeError(f"unsupported generic scalar type for hgraph: {scalar!r}")
+    if scalar in (typing.Tuple, typing.Set, typing.Mapping, typing.FrozenSet):
+        raise _GenericType(repr(scalar))
     from ._compat import JSON as _JSON
 
     if scalar is _JSON:
         return _hgraph.value_type("JSON")
     name = _SCALAR_NAMES.get(scalar)
     if name is None and scalar in (tuple, frozenset, set, dict):
-        raise TypeError(f"bare '{scalar.__name__}' needs element types (e.g. tuple[int, ...])")
+        raise _GenericType(scalar.__name__)   # bare collection: resolve from wiring
     if name is None and isinstance(scalar, type):
         from ._compat import CompoundScalar
 

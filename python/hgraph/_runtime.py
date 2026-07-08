@@ -418,20 +418,19 @@ class _Convert:
         handle = _unwrap(ts).ts_type
         in_kind = handle.kind          # 0 TS, 2 TSS, 3 TSD, 4 TSL, 5 TSB
         label = getattr(target, "label", None) or getattr(target, "__name__", None) or repr(target)
+        label = label.replace("typing.", "")
 
         def value_vt():
             return _hgraph.ts_value_vt(handle)
 
         def wrap(h, text):
-            expr = _TsExpr.__new__(_TsExpr)
-            expr.handle, expr.label = h, text
-            return expr
+            return _TsExpr(h, text)
 
         if label.startswith("TSS"):
             # element = TS value / set element / dict key
             if in_kind == 0:
                 vt = value_vt()
-                if _hgraph.vt_kind(vt) in (5, 6):   # Set/List value scalar
+                if _hgraph.vt_kind(vt) in (3, 4):   # List/Set value scalar
                     vt = _hgraph.vt_element(vt)
             elif in_kind == 2:
                 vt = _hgraph.vt_element(_hgraph.ts_value_vt(handle))
@@ -443,7 +442,7 @@ class _Convert:
         if label.startswith("TSD"):
             if in_kind == 0:
                 vt = value_vt()             # TS[Mapping[K, V]]
-                if _hgraph.vt_kind(vt) != 7:
+                if _hgraph.vt_kind(vt) != 5:
                     raise WiringError(f"convert: TSD target needs a Mapping input, got {handle!r}")
                 return wrap(_hgraph.tsd(_hgraph.vt_key(vt), _hgraph.ts(_hgraph.vt_element(vt))),
                             "TSD[inferred]")
@@ -451,7 +450,7 @@ class _Convert:
         if label.startswith("TS[Tuple") or label.startswith("TS[tuple"):
             if in_kind == 0:
                 vt = value_vt()
-                if _hgraph.vt_kind(vt) in (5, 6):   # already a collection: element rides
+                if _hgraph.vt_kind(vt) in (3, 4):   # already a collection: element rides
                     vt = _hgraph.vt_element(vt)
                 return wrap(_hgraph.ts(_hgraph.tuple_vt(vt)), "TS[tuple[inferred]]")
             if in_kind == 2:
@@ -464,7 +463,7 @@ class _Convert:
                 return wrap(_hgraph.ts(_hgraph.set_vt(vt)), "TS[set[inferred]]")
             if in_kind == 0:
                 vt = value_vt()
-                if _hgraph.vt_kind(vt) in (5, 6):
+                if _hgraph.vt_kind(vt) in (3, 4):
                     vt = _hgraph.vt_element(vt)
                 return wrap(_hgraph.ts(_hgraph.set_vt(vt)), "TS[set[inferred]]")
         if label.startswith("TS[Mapping") or label.startswith("TS[dict"):

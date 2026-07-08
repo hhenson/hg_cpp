@@ -338,6 +338,253 @@ namespace hgraph::stdlib
         }
     };
 
+    /** convert TS[T] -> TS[Set[T]] / TS[tuple[T,...]]: the SINGLETON
+        collection value. */
+    struct convert_ts_to_collection_impl
+    {
+        static constexpr auto name = "convert_ts_to_collection";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            return out != nullptr && in != nullptr &&
+                   (out->kind == ValueTypeKind::Set || out->kind == ValueTypeKind::List) &&
+                   out->element_type == in;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto *meta   = erased.schema()->value_schema;
+            const auto  value  = ts.base().value();
+            Value       result;
+            if (meta->kind == ValueTypeKind::Set)
+            {
+                SetBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
+                static_cast<void>(builder.insert_copy(value.data()));
+                result = builder.build();
+            }
+            else
+            {
+                ListBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
+                builder.push_back_copy(value.data());
+                result = builder.build();
+            }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(result)));
+        }
+    };
+
+    /** convert between COLLECTION-VALUED TS: tuple <-> set (same element). */
+    struct convert_collection_to_collection_impl
+    {
+        static constexpr auto name = "convert_collection_to_collection";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            return out != nullptr && in != nullptr && out != in &&
+                   (out->kind == ValueTypeKind::Set || out->kind == ValueTypeKind::List) &&
+                   (in->kind == ValueTypeKind::Set || in->kind == ValueTypeKind::List) &&
+                   out->element_type == in->element_type;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto *meta   = erased.schema()->value_schema;
+            const auto  value  = ts.base().value();
+            auto        items  = value.as_indexed_view();
+            Value       result;
+            if (meta->kind == ValueTypeKind::Set)
+            {
+                SetBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
+                for (std::size_t index = 0; index < items.size(); ++index)
+                {
+                    static_cast<void>(builder.insert_copy(items.at(index).data()));
+                }
+                result = builder.build();
+            }
+            else
+            {
+                ListBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
+                for (std::size_t index = 0; index < items.size(); ++index)
+                {
+                    builder.push_back_copy(items.at(index).data());
+                }
+                result = builder.build();
+            }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(result)));
+        }
+    };
+
+    /** convert TSS[T] -> TS[Set[T]] / TS[tuple[T,...]]: the full membership
+        as a scalar collection each tick. */
+    struct convert_tss_to_collection_impl
+    {
+        static constexpr auto name = "convert_tss_to_collection";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSS);
+            return out != nullptr && in != nullptr &&
+                   (out->kind == ValueTypeKind::Set || out->kind == ValueTypeKind::List) &&
+                   out->element_type == in->value_schema->element_type;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto  &erased = static_cast<const TSOutputView &>(out);
+            const auto  *meta   = erased.schema()->value_schema;
+            TSSInputView set_input{ts.base().borrowed_ref()};
+            auto         set    = set_input.data_view();
+            Value        result;
+            if (meta->kind == ValueTypeKind::Set)
+            {
+                SetBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
+                for (const ValueView &element : set.values())
+                {
+                    static_cast<void>(builder.insert_copy(element.data()));
+                }
+                result = builder.build();
+            }
+            else
+            {
+                ListBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
+                for (const ValueView &element : set.values()) { builder.push_back_copy(element.data()); }
+                result = builder.build();
+            }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(result)));
+        }
+    };
+
+    /** convert TS[Set[T]] / TS[tuple[T,...]] -> TSS[T]: desired-membership
+        writes (adds + removals fall out of the diff). */
+    struct convert_collection_to_tss_impl
+    {
+        static constexpr auto name = "convert_collection_to_tss";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            return out != nullptr && out->kind == TSTypeKind::TSS && in != nullptr &&
+                   (in->kind == ValueTypeKind::Set || in->kind == ValueTypeKind::List) &&
+                   out->value_schema->element_type == in->element_type;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased  = static_cast<const TSOutputView &>(out);
+            auto        set     = erased.as_set();
+            auto        mutation = set.begin_mutation(erased.evaluation_time());
+            const auto  value   = ts.base().value();
+            auto        items   = value.as_indexed_view();
+
+            const auto contains_in_desired = [&](const ValueView &element) {
+                for (std::size_t index = 0; index < items.size(); ++index)
+                {
+                    if (items.at(index).equals(element)) { return true; }
+                }
+                return false;
+            };
+            std::vector<Value> stale;
+            for (const ValueView &element : mutation.view().values())
+            {
+                if (!contains_in_desired(element)) { stale.emplace_back(element); }
+            }
+            for (const Value &element : stale) { static_cast<void>(mutation.remove(element.view())); }
+            for (std::size_t index = 0; index < items.size(); ++index)
+            {
+                static_cast<void>(mutation.add(items.at(index)));
+            }
+        }
+    };
+
+    /** convert TSD[K, TS[V]] -> TS[Mapping[K, V]]: the full dictionary as a
+        scalar map each tick. */
+    struct convert_tsd_to_map_impl
+    {
+        static constexpr auto name = "convert_tsd_to_map";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSD);
+            if (out == nullptr || in == nullptr || out->kind != ValueTypeKind::Map) { return false; }
+            const auto *element = TypeRegistry::instance().dereference(in->element_ts());
+            return element != nullptr && element->kind == TSTypeKind::TS &&
+                   out->key_type == in->key_type() && out->element_type == element->value_schema;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto  &erased = static_cast<const TSOutputView &>(out);
+            const auto  *meta   = erased.schema()->value_schema;
+            const TSDInputView dict{ts.base().borrowed_ref()};
+            MapBuilder         builder{*ValuePlanFactory::instance().binding_for(meta->key_type),
+                                       *ValuePlanFactory::instance().binding_for(meta->element_type)};
+            for (auto &&[key, child] : dict.items())
+            {
+                if (!child.valid()) { continue; }
+                builder.set_item_copy(key.data(), child.value().data());
+            }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(builder.build()));
+        }
+    };
+
+    /** convert TS[Mapping[K, V]] -> TSD[K, TS[V]]: desired-map writes. */
+    struct convert_map_to_tsd_impl
+    {
+        static constexpr auto name = "convert_map_to_tsd";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            if (out == nullptr || out->kind != TSTypeKind::TSD || in == nullptr ||
+                in->kind != ValueTypeKind::Map)
+            {
+                return false;
+            }
+            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
+            return element != nullptr && element->kind == TSTypeKind::TS &&
+                   out->key_type() == in->key_type && element->value_schema == in->element_type;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            auto        dict   = erased.as_dict();
+            auto        mutation = dict.begin_mutation(erased.evaluation_time());
+            const auto  value  = ts.base().value();
+            auto        map    = value.as_map();
+
+            // Erase keys no longer present, then write every desired entry
+            // (equal values dedup before the write - READ-side compare, the
+            // flip_keys lesson).
+            std::vector<Value> stale;
+            for (const ValueView &key : mutation.view().keys())
+            {
+                if (!map.contains(key)) { stale.emplace_back(key); }
+            }
+            for (const Value &key : stale) { static_cast<void>(mutation.erase(key.view())); }
+            for (const auto [key, entry_value] : map)
+            {
+                auto element = mutation.at(key);
+                if (element.has_current_value() && element.value().equals(entry_value)) { continue; }
+                auto element_mutation = element.begin_mutation(erased.evaluation_time());
+                static_cast<void>(element_mutation.copy_value_from(entry_value));
+            }
+        }
+    };
+
     /** convert TS[T] -> TSS[T]: the tick value becomes the SINGLETON set
         (write-desired semantics produce add-new/remove-old deltas). */
     struct convert_ts_to_tss_impl
