@@ -46,6 +46,16 @@ namespace hgraph::stdlib
         register_overload<combine, combine_datetime_impl>();
         register_overload<collect, collect_collection_impl>();
         register_overload<collect, collect_map_impl>();
+        register_overload<collect, collect_map_zip_impl>();
+        register_overload<convert, convert_zip_to_map_impl>();
+        register_overload<convert, convert_tsl_to_map_impl>();
+        register_overload<convert, convert_tsb_to_map_impl>();
+        register_overload<combine, combine_tuple_impl<true>>();
+        register_overload<combine, combine_tuple_impl<false>>();
+        register_overload<convert, convert_list_to_tsl_impl>();
+        register_overload<convert, convert_tsb_to_bool_impl>();
+        register_overload<convert, convert_tsb_to_tsd_impl<false>>();
+        register_overload<convert, convert_tsb_to_tsd_impl<true>>();
         register_overload<collect, collect_tsd_impl>();
         register_overload<collect, collect_tss_impl>();
         register_overload<convert, convert_list_to_enumerated_tsd_impl>();

@@ -356,6 +356,20 @@ def combine(*args, __output_type__=None, **kwargs):
         # the combine_tsd kernel (non-strict when requested).
         strict = kwargs.pop("__strict__", True)
         return wire("combine_tsd", args[0], *args[1:], __strict__=strict, **kwargs)
+    label = "" if __output_type__ is None else (
+        getattr(__output_type__, "label", None) or getattr(__output_type__, "__name__", None) or
+        repr(__output_type__)).replace("typing.", "")
+    if label.startswith("TS[Tuple") and args and all(isinstance(a, WiringPort) for a in args):
+        # combine[TS[Tuple]](a, b, ...): a fixed tuple of the packed ports.
+        strict = kwargs.pop("__strict__", True)
+        fields = [(f"_{i}", _unwrap(a).ts_type) for i, a in enumerate(args)]
+        tsb_type = _hgraph.un_named_tsb_type(fields)
+        structural = WiringPort(_hgraph.tsb_port(tsb_type, {f"_{i}": _unwrap(a) for i, a in enumerate(args)}))
+        vts = [_hgraph.ts_value_vt(_unwrap(a).ts_type) for a in args]
+        target = _TsExprFor(_hgraph.ts(_hgraph.fixed_tuple_vt(vts)))
+        if strict is False:
+            return wire("combine", structural, __strict__=False, output_type=target)
+        return wire("combine", structural, output_type=target)
     if __output_type__ is None:
         if len(args) == 2 and not kwargs and all(isinstance(a, WiringPort) for a in args):
             return _combine_compound_scalars(*args)
@@ -447,6 +461,9 @@ class _Convert:
                 raise WiringError(f"convert: cannot infer TSS target from {handle!r}")
             return wrap(_hgraph.tss(vt), f"TSS[inferred]")
         if label.startswith("TSD"):
+            if in_kind == 5:   # TSB -> TSD[str, field TS] (homogeneous)
+                fields = _hgraph.ts_field_types(handle)
+                return wrap(_hgraph.tsd(_hgraph.str_vt(), fields[0][1]), "TSD[inferred]")
             if in_kind == 0:
                 vt = value_vt()             # TS[Mapping[K, V]]
                 if _hgraph.vt_kind(vt) != 5:
@@ -484,6 +501,10 @@ class _Convert:
                 k = _hgraph.tsd_key_vt(handle)
                 v = _hgraph.ts_value_vt(_hgraph.tsd_value_ts(handle))
                 return wrap(_hgraph.ts(_hgraph.map_vt(k, v)), "TS[mapping[inferred]]")
+            if in_kind == 3:   # TSL -> {index: element}
+                v = _hgraph.ts_value_vt(_hgraph.tsd_value_ts(handle)) if False else None
+                element = _hgraph.ts_value_vt(_hgraph.tsl_element_ts(handle))
+                return wrap(_hgraph.ts(_hgraph.map_vt(_hgraph.int_vt(), element)), "TS[mapping[inferred]]")
         raise WiringError(f"convert: cannot resolve target '{label}' from input {handle!r}")
 
     def __call__(self, *ports, to=None, **kwargs):
@@ -527,7 +548,11 @@ class _Convert:
                 return wire("convert", *ports, output_type=target, **kwargs)
             if label.startswith("TS[Mapping") and len(pair) >= 2:
                 k = _hgraph.ts_value_vt(_unwrap(pair[0]).ts_type)
+                if _hgraph.vt_kind(k) in (3, 4):
+                    k = _hgraph.vt_element(k)      # tuple/set of keys zip
                 v = _hgraph.ts_value_vt(_unwrap(pair[1]).ts_type)
+                if _hgraph.vt_kind(v) == 3:
+                    v = _hgraph.vt_element(v)      # paired value tuples
                 from ._types import _TsExpr as _E
 
                 target = _E(_hgraph.ts(_hgraph.map_vt(k, v)), "TS[mapping[inferred]]")
@@ -586,7 +611,11 @@ class _Collect:
                 return _TsExpr(_hgraph.tsd(k, v), "TSD[inferred]")
         if label.startswith("TS[Mapping") and len(ports) >= 2:
             k = _hgraph.ts_value_vt(_unwrap(ports[0]).ts_type)
+            if _hgraph.vt_kind(k) in (3, 4):
+                k = _hgraph.vt_element(k)          # tuple/set of keys zip
             v = _hgraph.ts_value_vt(_unwrap(ports[1]).ts_type)
+            if _hgraph.vt_kind(v) == 3:
+                v = _hgraph.vt_element(v)          # paired value tuples
             return _TsExpr(_hgraph.ts(_hgraph.map_vt(k, v)), "TS[mapping[inferred]]")
         # Set/Tuple targets share convert's element inference.
         return _Convert._infer(target, ports[0])

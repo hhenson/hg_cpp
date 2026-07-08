@@ -1278,6 +1278,9 @@ NB_MODULE(_hgraph, m)
     m.def("vt_key", [](PyValueType v) { return PyValueType{v.meta->key_type}; });
     m.def("tsd_key_vt", [](PyTsType t) { return PyValueType{t.meta->key_type()}; });
     m.def("tsb_value_vt", [](PyTsType t) { return PyValueType{t.meta->value_schema}; });
+    m.def("tsl_element_ts", [](PyTsType t) { return PyTsType{t.meta->element_ts()}; });
+    m.def("int_vt", [] { return PyValueType{TypeRegistry::instance().value_type("int")}; });
+    m.def("str_vt", [] { return PyValueType{TypeRegistry::instance().value_type("str")}; });
     m.def("tsb_for_bundle", [](PyValueType v) {
         // The named TSB whose fields lift a BUNDLE value's fields to TS
         // (CS -> TSB conversion targets).

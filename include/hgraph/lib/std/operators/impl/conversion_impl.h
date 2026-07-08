@@ -813,6 +813,353 @@ namespace hgraph::stdlib
         }
     };
 
+    /** convert[TS[Mapping]](k_tuple, v_tuple): ZIP the paired tuples into a
+        mapping value. */
+    struct convert_zip_to_map_impl
+    {
+        static constexpr auto name = "convert_zip_to_map";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            return out != nullptr && out->kind == ValueTypeKind::Map && k != nullptr && v != nullptr &&
+                   k->kind == ValueTypeKind::List && v->kind == ValueTypeKind::List &&
+                   out->key_type == k->element_type && out->element_type == v->element_type;
+        }
+
+        static void eval(In<"key", TsVar<"K">> key, In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto *meta   = erased.schema()->value_schema;
+            auto        keys   = key.base().value().as_indexed_view();
+            auto        values = ts.base().value().as_indexed_view();
+            MapBuilder  builder{*ValuePlanFactory::instance().binding_for(meta->key_type),
+                                *ValuePlanFactory::instance().binding_for(meta->element_type)};
+            const std::size_t count = std::min(keys.size(), values.size());
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                builder.set_item_copy(keys.at(index).data(), values.at(index).data());
+            }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(builder.build()));
+        }
+    };
+
+    /** convert[TS[Mapping[int, V]]](tsl): {index: element} over the VALID
+        elements of a fixed TSL. */
+    struct convert_tsl_to_map_impl
+    {
+        static constexpr auto name = "convert_tsl_to_map";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *in  = operator_impl_detail::fixed_tsl_arg(context, 0);
+            if (out == nullptr || out->kind != ValueTypeKind::Map || in == nullptr) { return false; }
+            auto       &registry = TypeRegistry::instance();
+            const auto *element  = registry.dereference(in->element_ts());
+            return out->key_type == registry.value_type("int") && element != nullptr &&
+                   element->kind == TSTypeKind::TS && element->value_schema == out->element_type;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto  &erased = static_cast<const TSOutputView &>(out);
+            const auto  *meta   = erased.schema()->value_schema;
+            const TSInputView &tsl = ts;
+            MapBuilder   builder{*ValuePlanFactory::instance().binding_for(meta->key_type),
+                                 *ValuePlanFactory::instance().binding_for(meta->element_type)};
+            for (std::size_t index = 0; index < tsl.schema()->fixed_size(); ++index)
+            {
+                auto child = tsl.indexed_child_at(index);
+                if (!child.valid()) { continue; }
+                Value key{static_cast<Int>(index)};
+                builder.set_item_copy(key.view().data(), child.value().data());
+            }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(builder.build()));
+        }
+    };
+
+    /** convert[TS[Mapping[str, V]]](tsb): {field name: value} over the VALID
+        fields of a homogeneous bundle. */
+    struct convert_tsb_to_map_impl
+    {
+        static constexpr auto name = "convert_tsb_to_map";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSB);
+            if (out == nullptr || out->kind != ValueTypeKind::Map || in == nullptr ||
+                in->field_count() == 0)
+            {
+                return false;
+            }
+            auto &registry = TypeRegistry::instance();
+            if (out->key_type != registry.value_type("str")) { return false; }
+            for (std::size_t index = 0; index < in->field_count(); ++index)
+            {
+                const auto *field = in->fields()[index].type;
+                if (field == nullptr || field->kind != TSTypeKind::TS ||
+                    field->value_schema != out->element_type)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto        &erased = static_cast<const TSOutputView &>(out);
+            const auto        *meta   = erased.schema()->value_schema;
+            const TSInputView &bundle = ts;
+            MapBuilder         builder{*ValuePlanFactory::instance().binding_for(meta->key_type),
+                                       *ValuePlanFactory::instance().binding_for(meta->element_type)};
+            for (std::size_t index = 0; index < bundle.schema()->field_count(); ++index)
+            {
+                auto child = bundle.indexed_child_at(index);
+                if (!child.valid()) { continue; }
+                Value key{Str{bundle.schema()->fields()[index].name}};
+                builder.set_item_copy(key.view().data(), child.value().data());
+            }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(builder.build()));
+        }
+    };
+
+    /** collect[TS[Mapping]](k_tuple, v_tuple, reset=...): zip-accumulate. */
+    struct collect_map_zip_impl
+    {
+        static constexpr auto name = "collect_map_zip";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            return out != nullptr && out->kind == ValueTypeKind::Map && k != nullptr && v != nullptr &&
+                   k->kind == ValueTypeKind::List && v->kind == ValueTypeKind::List &&
+                   out->key_type == k->element_type && out->element_type == v->element_type;
+        }
+
+        static void eval(In<"key", TsVar<"K">, InputValidity::Unchecked> key,
+                         In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         In<"reset", TS<Bool>, InputValidity::Unchecked> reset,
+                         Out<TsVar<"__out__">> out)
+        {
+            const bool fresh  = reset.valid() && reset.modified() && reset.value();
+            const bool ticked = key.valid() && ts.valid() && (key.modified() || ts.modified());
+            if (!fresh && !ticked) { return; }
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto *meta   = erased.schema()->value_schema;
+            MapBuilder  builder{*ValuePlanFactory::instance().binding_for(meta->key_type),
+                                *ValuePlanFactory::instance().binding_for(meta->element_type)};
+            if (!fresh && erased.data_view().has_current_value())
+            {
+                for (const auto [k, v] : erased.value().as_map()) { builder.set_item_copy(k.data(), v.data()); }
+            }
+            if (ticked)
+            {
+                auto keys   = key.base().value().as_indexed_view();
+                auto values = ts.base().value().as_indexed_view();
+                const std::size_t count = std::min(keys.size(), values.size());
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    builder.set_item_copy(keys.at(index).data(), values.at(index).data());
+                }
+            }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(builder.build()));
+        }
+    };
+
+    /** combine[TS[Tuple]](a, b, ...): the FIXED tuple of the packed fields
+        (heterogeneous allowed). Strict default; lenient fills None-slots...
+        (hgraph relaxed = emit with whatever is valid; fixed tuples cannot
+        hold holes, so lenient requires ALL-valid too but re-emits per tick). */
+    template <bool Strict>
+    struct combine_tuple_impl
+    {
+        static constexpr auto name = Strict ? "combine_tuple" : "combine_tuple_lenient";
+
+        static void eval_impl(const TSInputView &fields, const TSOutputView &erased)
+        {
+            const auto *target = erased.schema()->value_schema;
+            BundleBuilder builder{*ValuePlanFactory::instance().binding_for(target)};
+            for (std::size_t index = 0; index < fields.schema()->field_count(); ++index)
+            {
+                auto child = fields.indexed_child_at(index);
+                if (!child.valid())
+                {
+                    if constexpr (Strict) { return; }
+                    continue;
+                }
+                builder.set(index, Value{child.value()});
+            }
+            Value tuple = builder.build();
+            if (erased.data_view().has_current_value() && erased.value().equals(tuple.view())) { return; }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(tuple)));
+        }
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            return out != nullptr && out->kind == ValueTypeKind::Tuple;
+        }
+
+        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Out<TsVar<"__out__">> out)
+            requires Strict
+        {
+            eval_impl(ts, static_cast<const TSOutputView &>(out));
+        }
+
+        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Scalar<"__strict__", Bool>,
+                         Out<TsVar<"__out__">> out)
+            requires (!Strict)
+        {
+            eval_impl(ts, static_cast<const TSOutputView &>(out));
+        }
+    };
+
+    /** convert[TSL[TS[T], Size[N]]](tuple_ts): distribute the tuple's
+        elements onto the fixed TSL's children. */
+    struct convert_list_to_tsl_impl
+    {
+        static constexpr auto name = "convert_list_to_tsl";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            if (out == nullptr || out->kind != TSTypeKind::TSL || out->fixed_size() == 0 || in == nullptr ||
+                in->kind != ValueTypeKind::List)
+            {
+                return false;
+            }
+            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
+            return element != nullptr && element->kind == TSTypeKind::TS &&
+                   element->value_schema == in->element_type;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            auto        items  = ts.base().value().as_indexed_view();
+            auto        list   = erased.as_list();
+            const std::size_t count = std::min<std::size_t>(items.size(), erased.schema()->fixed_size());
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                auto child = list.at(index);
+                if (child.data_view().has_current_value() && child.value().equals(items.at(index))) { continue; }
+                auto mutation = child.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.copy_value_from(items.at(index)));
+            }
+        }
+    };
+
+    /** convert[TS[bool]](tsb): python truthiness of a bundle - True once
+        ANY field is valid (hgraph parity). */
+    struct convert_tsb_to_bool_impl
+    {
+        static constexpr auto name = "convert_tsb_to_bool";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            return out == scalar_descriptor<Bool>::value_meta() &&
+                   operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSB) != nullptr;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TS<Bool>> out)
+        {
+            const TSInputView &bundle = ts;
+            bool any = false;
+            for (std::size_t index = 0; index < bundle.schema()->field_count(); ++index)
+            {
+                if (bundle.indexed_child_at(index).valid()) { any = true; break; }
+            }
+            out.set(any);
+        }
+    };
+
+    /** convert[TSD[str, TS[V]]](tsb[, keys=...]): the bundle's VALID fields
+        as a string-keyed dictionary (an optional keys tuple restricts). */
+    template <bool WithKeys>
+    struct convert_tsb_to_tsd_impl
+    {
+        static constexpr auto name = WithKeys ? "convert_tsb_to_tsd_keys" : "convert_tsb_to_tsd";
+
+        [[nodiscard]] static bool shape_ok(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSB);
+            if (out == nullptr || out->kind != TSTypeKind::TSD || in == nullptr) { return false; }
+            auto &registry = TypeRegistry::instance();
+            if (out->key_type() != registry.value_type("str")) { return false; }
+            const auto *element = registry.dereference(out->element_ts());
+            if (element == nullptr || element->kind != TSTypeKind::TS) { return false; }
+            for (std::size_t index = 0; index < in->field_count(); ++index)
+            {
+                const auto *field = in->fields()[index].type;
+                if (field == nullptr || field->kind != TSTypeKind::TS ||
+                    field->value_schema != element->value_schema)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            return shape_ok(resolution, context);
+        }
+
+        template <typename KeyFilter>
+        static void eval_impl(const TSInputView &bundle, const TSOutputView &erased, KeyFilter &&wanted)
+        {
+            auto dict     = erased.as_dict();
+            auto mutation = dict.begin_mutation(erased.evaluation_time());
+            for (std::size_t index = 0; index < bundle.schema()->field_count(); ++index)
+            {
+                const char *field_name = bundle.schema()->fields()[index].name;
+                if (field_name == nullptr || !wanted(field_name)) { continue; }
+                auto child = bundle.indexed_child_at(index);
+                if (!child.valid() || !child.modified()) { continue; }
+                Value key{Str{field_name}};
+                auto  element = mutation.at(key.view());
+                if (element.has_current_value() && element.value().equals(child.value())) { continue; }
+                auto element_mutation = element.begin_mutation(erased.evaluation_time());
+                static_cast<void>(element_mutation.copy_value_from(child.value()));
+            }
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+            requires (!WithKeys)
+        {
+            eval_impl(ts, static_cast<const TSOutputView &>(out), [](const char *) { return true; });
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"keys", ScalarVar<"KS">> keys,
+                         Out<TsVar<"__out__">> out)
+            requires WithKeys
+        {
+            auto key_list = keys.value().as_indexed_view();
+            eval_impl(ts, static_cast<const TSOutputView &>(out), [&](const char *name) {
+                for (std::size_t index = 0; index < key_list.size(); ++index)
+                {
+                    if (key_list.at(index).template checked_as<Str>() == name) { return true; }
+                }
+                return false;
+            });
+        }
+    };
+
     // ----- collect / emit ------------------------------------------------
 
     /** collect[TS[Set/Tuple]](ts, reset=...): accumulate ticks into a
@@ -1443,13 +1790,32 @@ namespace hgraph::stdlib
                 current.buffer.pop_front();
                 Value value = std::move(current.buffer.front());
                 current.buffer.pop_front();
-                // WHOLE-VALUE write: works uniformly for the structural
-                // un_named bundle and a requested NAMED (compact) KeyValue.
-                BundleBuilder builder{*ValuePlanFactory::instance().binding_for(erased.schema()->value_schema)};
-                builder.set(0, std::move(key));
-                builder.set(1, std::move(value));
-                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
-                static_cast<void>(mutation.move_value_from(builder.build()));
+                const auto *bundle_value = erased.schema()->value_schema;
+                if (bundle_value != nullptr && bundle_value->kind == ValueTypeKind::Bundle)
+                {
+                    // COMPACT (whole-value) bundle output: one bundle write.
+                    BundleBuilder builder{*ValuePlanFactory::instance().binding_for(bundle_value)};
+                    builder.set(0, std::move(key));
+                    builder.set(1, std::move(value));
+                    auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                    static_cast<void>(mutation.move_value_from(builder.build()));
+                }
+                else
+                {
+                    // STRUCTURAL bundle (e.g. a TSL-valued KeyValue): write
+                    // the fields individually.
+                    auto bundle = erased.as_bundle();
+                    {
+                        auto field    = bundle.at(0);
+                        auto mutation = field.data_view().begin_mutation(erased.evaluation_time());
+                        static_cast<void>(mutation.copy_value_from(key.view()));
+                    }
+                    {
+                        auto field    = bundle.at(1);
+                        auto mutation = field.data_view().begin_mutation(erased.evaluation_time());
+                        static_cast<void>(mutation.copy_value_from(value.view()));
+                    }
+                }
                 if (!current.buffer.empty()) { scheduler.schedule(MIN_TD); }
             }
             state.set(std::move(current));
