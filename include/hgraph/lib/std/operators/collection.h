@@ -117,6 +117,14 @@ namespace hgraph::stdlib
     };
 
     /** ``collapse_keys`` — collapse a nested ``TSD[K, TSD[K1, V]]`` to ``TSD[Tuple[K, K1], V]``. */
+    /** ``filter_tsd_by_matches`` — keep the TSD entries whose per-key
+        boolean match is TRUE (the runtime half of ``filter_by``; the match
+        dictionary is produced by ``map_`` over the caller's expression). */
+    struct filter_tsd_by_matches
+        : Operator<"filter_tsd_by_matches", In<"ts", TsVar<"S">>, In<"matches", TsVar<"M">>, Out<TsVar<"O">>>
+    {
+    };
+
     struct collapse_keys : Operator<"collapse_keys", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };

@@ -264,6 +264,38 @@ namespace hgraph::stdlib
             }
         };
 
+        /** eq_(tsd, tsd, epsilon=ts): float dictionaries compare within a
+            ticking tolerance (hgraph's epsilon comparison). */
+        struct eq_tsd_epsilon
+        {
+            static constexpr auto name = "eq_tsd_epsilon";
+
+            static void eval(In<"lhs", TSD<ScalarVar<"K">, TS<Float>>> lhs,
+                             In<"rhs", TSD<ScalarVar<"K">, TS<Float>>> rhs, In<"epsilon", TS<Float>> epsilon,
+                             Out<TS<Bool>> out)
+            {
+                const TSDInputView &lhs_dict = lhs;
+                const TSDInputView &rhs_dict = rhs;
+                const Float         eps      = epsilon.value();
+
+                bool equal = lhs_dict.size() == rhs_dict.size();
+                if (equal)
+                {
+                    for (auto &&[key, child] : lhs_dict.items())
+                    {
+                        if (!rhs_dict.contains(key)) { equal = false; break; }
+                        auto other = rhs_dict.at(key);
+                        if (!child.valid() || !other.valid()) { equal = false; break; }
+                        const Float a = child.value().checked_as<Float>();
+                        const Float b = other.value().checked_as<Float>();
+                        const Float diff = a > b ? a - b : b - a;
+                        if (diff > eps) { equal = false; break; }
+                    }
+                }
+                out.set(equal);
+            }
+        };
+
         struct eq_tsd
         {
             static constexpr auto name = "eq_tsd";
@@ -1033,6 +1065,9 @@ namespace hgraph::stdlib
             }
         };
 
+        inline void publish_tsd_refs(const TSOutputView &out,
+                                      const std::vector<std::pair<Value, Value>> &pairs);   // defined below
+
         // ----- key pivots (collapse / uncollapse / flip_keys) --------------
 
         /** The nested-TSD key components of ``schema`` down to the non-TSD
@@ -1284,6 +1319,43 @@ namespace hgraph::stdlib
                     };
                     (void)prune(root_mutation);
                 }
+            }
+        };
+
+        /** filter_tsd_by_matches(ts, matches): entries whose match is TRUE
+            as references (hgraph's _filter_by_tsd; stateless own-output
+            reconciliation - matches drive membership, ts drives values). */
+        struct filter_tsd_by_matches_impl
+        {
+            static constexpr auto name = "filter_tsd_by_matches";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (resolution.find_ts("__out__") != nullptr) { return; }
+                if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+                auto &registry = TypeRegistry::instance();
+                const auto *schema = registry.dereference(context.args[0].port.schema);
+                if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return; }
+                const auto *element = registry.dereference(schema->element_ts());
+                resolution.bind_ts("__out__", registry.tsd(schema->key_type(), registry.ref(element)));
+            }
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+                             In<"matches", TSD<ScalarVar<"K">, TS<Bool>>, InputValidity::Unchecked> matches,
+                             Out<TsVar<"__out__">> out)
+            {
+                const TSDInputView &dict      = ts;
+                const TSDInputView &match_map = matches;
+
+                std::vector<std::pair<Value, Value>> pairs;
+                for (auto &&[key, match] : match_map.items())
+                {
+                    if (!match.valid() || !match.value().checked_as<Bool>()) { continue; }
+                    const std::size_t slot = dict.find_slot(key);
+                    if (slot == TS_DATA_NO_CHILD_ID) { continue; }
+                    pairs.emplace_back(Value{key}, Value{dict.at_slot(slot).reference()});
+                }
+                publish_tsd_refs(static_cast<const TSOutputView &>(out), pairs);
             }
         };
 

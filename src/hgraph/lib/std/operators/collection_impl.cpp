@@ -19,6 +19,7 @@ namespace hgraph::stdlib
         register_overload<partition, collection_impl_detail::partition_map_scalar>();
         register_overload<flip_keys, collection_impl_detail::flip_keys_map_scalar>();
         register_overload<flip_keys, collection_impl_detail::flip_keys_tsd>();
+        register_overload<filter_tsd_by_matches, collection_impl_detail::filter_tsd_by_matches_impl>();
         register_overload<collapse_keys, collection_impl_detail::collapse_keys_map_scalar>();
         register_overload<collapse_keys, collection_impl_detail::collapse_keys_tsd>();
         register_overload<uncollapse_keys, collection_impl_detail::uncollapse_keys_map_scalar>();
@@ -43,6 +44,7 @@ namespace hgraph::stdlib
         register_overload<or_, collection_impl_detail::or_tss>();
         register_overload<eq_, collection_impl_detail::eq_tss>();
         register_overload<eq_, collection_impl_detail::eq_tsd>();
+        register_overload<eq_, collection_impl_detail::eq_tsd_epsilon>();
         register_overload<min_, collection_impl_detail::min_tss_unary>();
         register_overload<min_, collection_impl_detail::extremum_tss_default<true>>();
         register_overload<add_, collection_impl_detail::tss_scalar_adjust<true>>();

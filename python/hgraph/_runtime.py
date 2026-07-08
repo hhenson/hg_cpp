@@ -187,6 +187,8 @@ WiringPort.__iter__ = _port_iter
 def _port_getattr(self, name):
     if name.startswith("_"):
         raise AttributeError(name)
+    if name == "key_set":
+        return wire("keys_", self)   # hgraph's TSD.key_set property
     # JSON leaf coercions: j["a"].int / .float / .str / .bool
     # (value kind 8 = Any; the JSON meta rides Any storage).
     if name in ("int", "float", "str", "bool") and _unwrap(self).ts_type.value_kind == 8:
@@ -353,6 +355,13 @@ class _Combine:
 
     def __call__(self, *args, **kwargs):
         return combine(*args, **kwargs)
+
+
+def filter_by(ts, expr, **kwargs):
+    """hgraph's filter_by: keep TSD entries where expr(value, **kwargs) is
+    true - map_ computes the per-key matches, the runtime node filters."""
+    matches = map_(expr, ts, **kwargs)
+    return wire("filter_tsd_by_matches", ts, matches)
 
 
 def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):

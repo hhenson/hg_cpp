@@ -88,6 +88,13 @@ namespace hgraph
                 if (view.schema() == nullptr) { throw std::logic_error("Graph output path requires a typed output view"); }
                 if (component == ts_key_set_path_component)
                 {
+                    if (view.schema()->kind == TSTypeKind::REF)
+                    {
+                        // A REF[TSD] source resolves through its from-REF
+                        // alternative before the key-set hop.
+                        const auto *target = TypeRegistry::instance().dereference(view.schema());
+                        view = view.binding_for(*target).view(view.evaluation_time());
+                    }
                     view = view.as_dict().key_set();
                     continue;
                 }
