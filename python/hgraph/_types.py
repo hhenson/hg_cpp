@@ -401,6 +401,34 @@ class DEFAULT(metaclass=_DefaultMeta):
     """hgraph's DEFAULT[...] output marker (documentary here)."""
 
 
+class _KeyValueMeta(type):
+    def __getitem__(cls, item):
+        # KeyValue[K, TS_TYPE] - hgraph's generic key/value schema for
+        # dict-to-bundle conversions: fields key: TS[K], value: TS_TYPE.
+        key_scalar, value_ts = item
+        label = f"KeyValue[{key_scalar!r}, {value_ts!r}]"
+        schema = type("KeyValue", (TimeSeriesSchema,), {
+            "__annotations__": {"key": TS[key_scalar], "value": value_ts},
+        })
+        schema.__qualname__ = f"<locals>.{label}"   # unique registry name per instantiation
+        return schema
+
+
+class KeyValue(metaclass=_KeyValueMeta):
+    """KeyValue[K, TS] - the key/value TimeSeriesSchema (hgraph parity)."""
+
+
+class _AutoResolve:
+    """AUTO_RESOLVE - a Type[...] parameter default that receives the
+    RESOLVED type at wiring (hgraph parity)."""
+
+    def __repr__(self):
+        return "AUTO_RESOLVE"
+
+
+AUTO_RESOLVE = _AutoResolve()
+
+
 class _REFMeta(type):
     def __getitem__(cls, item):
         # Howard's REF ruling (2026-07-05): references are OPAQUE VALUES -

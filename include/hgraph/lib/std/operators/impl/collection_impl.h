@@ -3342,26 +3342,17 @@ namespace hgraph::stdlib
             Max,
         };
 
-        /** Unary aggregates over a HOMOGENEOUS bundle's fields: min_/max_
-            via erased Value::compare, sum_/mean/std via the numeric kernel. */
+        /** min_/max_ over a HOMOGENEOUS bundle: fully ERASED via
+            Value::compare - no numeric kernel needed. */
         template <TsbAggregate Op>
-        struct tsb_aggregate_impl
+        struct tsb_extremum_impl
         {
-            static constexpr auto name = Op == TsbAggregate::Sum    ? "sum_tsb"
-                                         : Op == TsbAggregate::Mean ? "mean_tsb"
-                                         : Op == TsbAggregate::Std  ? "std_tsb"
-                                         : Op == TsbAggregate::Min  ? "min_tsb"
-                                                                    : "max_tsb";
+            static_assert(Op == TsbAggregate::Min || Op == TsbAggregate::Max);
+            static constexpr auto name = Op == TsbAggregate::Min ? "min_tsb" : "max_tsb";
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                if (context.args.size() != 1) { return false; }
-                const auto *schema = homogeneous_tsb(context);
-                if (schema == nullptr) { return false; }
-                if constexpr (Op == TsbAggregate::Min || Op == TsbAggregate::Max) { return true; }
-                auto &registry = TypeRegistry::instance();
-                const auto *element = schema->fields()[0].type->value_schema;
-                return element == registry.value_type("int") || element == registry.value_type("float");
+                return context.args.size() == 1 && homogeneous_tsb(context) != nullptr;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -3369,10 +3360,61 @@ namespace hgraph::stdlib
                 if (operator_impl_detail::output_bound(resolution)) { return; }
                 const auto *schema = homogeneous_tsb(context);
                 if (schema == nullptr) { return; }
+                operator_impl_detail::bind_output(
+                    resolution, TypeRegistry::instance().ts(schema->fields()[0].type->value_schema));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+            {
+                const auto        &erased = static_cast<const TSOutputView &>(out);
+                const TSInputView &bundle = ts;
+                const std::size_t  count  = bundle.schema()->field_count();
+
+                std::optional<Value> best;
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    const auto value  = bundle.indexed_child_at(index).value();
+                    const bool better = !best.has_value() ||
+                                        (Op == TsbAggregate::Min
+                                             ? value.compare(best->view()) == std::partial_ordering::less
+                                             : value.compare(best->view()) == std::partial_ordering::greater);
+                    if (better) { best.emplace(value); }
+                }
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(std::move(*best)));
+            }
+        };
+
+        /** sum_/mean/std over a HOMOGENEOUS NUMERIC bundle. The element type
+            is a TEMPLATE parameter selected at node-selection time
+            (requires_ gates on the element meta) - the per-tick path never
+            branches on type. */
+        template <TsbAggregate Op, typename T>
+        struct tsb_numeric_aggregate_impl
+        {
+            static_assert(Op == TsbAggregate::Sum || Op == TsbAggregate::Mean || Op == TsbAggregate::Std);
+
+            static constexpr auto name = Op == TsbAggregate::Sum    ? (std::same_as<T, Int> ? "sum_tsb_int" : "sum_tsb_float")
+                                         : Op == TsbAggregate::Mean ? (std::same_as<T, Int> ? "mean_tsb_int" : "mean_tsb_float")
+                                                                    : (std::same_as<T, Int> ? "std_tsb_int" : "std_tsb_float");
+
+            [[nodiscard]] static bool matches(OperatorCallContext context)
+            {
+                if (context.args.size() != 1) { return false; }
+                const auto *schema = homogeneous_tsb(context);
+                return schema != nullptr &&
+                       schema->fields()[0].type->value_schema == scalar_descriptor<T>::value_meta();
+            }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context) { return matches(context); }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                if (!matches(context)) { return; }
                 auto &registry = TypeRegistry::instance();
-                const auto *element = (Op == TsbAggregate::Mean || Op == TsbAggregate::Std)
-                                          ? registry.value_type("float")
-                                          : schema->fields()[0].type->value_schema;
+                const auto *element = Op == TsbAggregate::Sum ? scalar_descriptor<T>::value_meta()
+                                                              : scalar_descriptor<Float>::value_meta();
                 operator_impl_detail::bind_output(resolution, registry.ts(element));
             }
 
@@ -3387,51 +3429,24 @@ namespace hgraph::stdlib
                     static_cast<void>(mutation.move_value_from(std::move(value)));
                 };
 
-                if constexpr (Op == TsbAggregate::Min || Op == TsbAggregate::Max)
-                {
-                    std::optional<Value> best;
-                    for (std::size_t index = 0; index < count; ++index)
-                    {
-                        const auto value = bundle.indexed_child_at(index).value();
-                        const bool better =
-                            !best.has_value() ||
-                            (Op == TsbAggregate::Min
-                                 ? value.compare(best->view()) == std::partial_ordering::less
-                                 : value.compare(best->view()) == std::partial_ordering::greater);
-                        if (better) { best.emplace(value); }
-                    }
-                    publish(std::move(*best));
-                    return;
-                }
-
-                auto      &registry = TypeRegistry::instance();
-                const bool floating =
-                    bundle.schema()->fields()[0].type->value_schema == registry.value_type("float");
-                Float total = 0.0;
+                T total{};
                 for (std::size_t index = 0; index < count; ++index)
                 {
-                    const auto value = bundle.indexed_child_at(index).value();
-                    total += floating ? value.checked_as<Float>()
-                                      : static_cast<Float>(value.checked_as<Int>());
+                    total += bundle.indexed_child_at(index).value().checked_as<T>();
                 }
-                if constexpr (Op == TsbAggregate::Sum)
-                {
-                    if (floating) { publish(Value{total}); }
-                    else { publish(Value{static_cast<Int>(total)}); }
-                }
+                if constexpr (Op == TsbAggregate::Sum) { publish(Value{total}); }
                 else if constexpr (Op == TsbAggregate::Mean)
                 {
-                    publish(Value{total / static_cast<Float>(count)});
+                    publish(Value{static_cast<Float>(total) / static_cast<Float>(count)});
                 }
                 else
                 {
-                    const Float mean = total / static_cast<Float>(count);
+                    const Float mean     = static_cast<Float>(total) / static_cast<Float>(count);
                     Float       variance = 0.0;
                     for (std::size_t index = 0; index < count; ++index)
                     {
-                        const auto  value = bundle.indexed_child_at(index).value();
-                        const Float x = floating ? value.checked_as<Float>()
-                                                 : static_cast<Float>(value.checked_as<Int>());
+                        const auto x =
+                            static_cast<Float>(bundle.indexed_child_at(index).value().checked_as<T>());
                         variance += (x - mean) * (x - mean);
                     }
                     // hgraph uses the SAMPLE standard deviation (ddof=1).
