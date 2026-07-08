@@ -14,6 +14,20 @@ namespace hgraph::stdlib
 
         register_overload<default_, default_impl>();
         register_overload<str_, str_impl>();
+        register_overload<convert, convert_identity_impl>();
+        register_overload<convert, convert_numeric_impl<Int, Float>>();
+        register_overload<convert, convert_numeric_impl<Float, Int>>();
+        register_overload<convert, convert_numeric_impl<Int, Bool>>();
+        register_overload<convert, convert_numeric_impl<Bool, Int>>();
+        register_overload<convert, convert_numeric_impl<Float, Bool>>();
+        register_overload<convert, convert_numeric_impl<Bool, Float>>();
+        register_overload<convert, convert_to_str_impl<Int>>();
+        register_overload<convert, convert_to_str_impl<Float>>();
+        register_overload<convert, convert_to_str_impl<Bool>>();
+        register_overload<convert, convert_list_to_str_impl>();
+        register_overload<convert, convert_list_to_bool_impl>();
+        register_overload<convert, convert_date_to_datetime_impl>();
+        register_overload<convert, convert_ts_to_tss_impl>();
         register_overload<str_, str_tsl_impl>();
     }
 }  // namespace hgraph::stdlib

@@ -395,6 +395,93 @@ def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
     return wire("switch_", key, erased, *args, **kwargs)
 
 
+class _Convert:
+    """hgraph's convert: ``convert[TO](ts)`` or ``convert(ts, to)``. The
+    target may be GENERIC (bare TSD/TSS/TSB, unparameterized TS[Tuple] /
+    TS[Set] / TS[Mapping]) - the full output type is inferred from the
+    INPUT port at wiring, so the C++ overloads always see a bound __out__."""
+
+    __name__ = "convert"
+
+    def __init__(self, to=None):
+        self._to = to
+
+    def __getitem__(self, item):
+        return _Convert(item)
+
+    @staticmethod
+    def _infer(target, ts):
+        from ._types import _TsExpr, TS, TSS, TSD
+
+        if isinstance(target, _TsExpr):
+            return target
+        handle = _unwrap(ts).ts_type
+        in_kind = handle.kind          # 0 TS, 2 TSS, 3 TSD, 4 TSL, 5 TSB
+        label = getattr(target, "label", None) or getattr(target, "__name__", None) or repr(target)
+
+        def value_vt():
+            return _hgraph.ts_value_vt(handle)
+
+        def wrap(h, text):
+            expr = _TsExpr.__new__(_TsExpr)
+            expr.handle, expr.label = h, text
+            return expr
+
+        if label.startswith("TSS"):
+            # element = TS value / set element / dict key
+            if in_kind == 0:
+                vt = value_vt()
+                if _hgraph.vt_kind(vt) in (5, 6):   # Set/List value scalar
+                    vt = _hgraph.vt_element(vt)
+            elif in_kind == 2:
+                vt = _hgraph.vt_element(_hgraph.ts_value_vt(handle))
+            elif in_kind == 3:
+                vt = _hgraph.tsd_key_vt(handle)
+            else:
+                raise WiringError(f"convert: cannot infer TSS target from {handle!r}")
+            return wrap(_hgraph.tss(vt), f"TSS[inferred]")
+        if label.startswith("TSD"):
+            if in_kind == 0:
+                vt = value_vt()             # TS[Mapping[K, V]]
+                if _hgraph.vt_kind(vt) != 7:
+                    raise WiringError(f"convert: TSD target needs a Mapping input, got {handle!r}")
+                return wrap(_hgraph.tsd(_hgraph.vt_key(vt), _hgraph.ts(_hgraph.vt_element(vt))),
+                            "TSD[inferred]")
+            raise WiringError(f"convert: cannot infer TSD target from {handle!r}")
+        if label.startswith("TS[Tuple") or label.startswith("TS[tuple"):
+            if in_kind == 0:
+                vt = value_vt()
+                if _hgraph.vt_kind(vt) in (5, 6):   # already a collection: element rides
+                    vt = _hgraph.vt_element(vt)
+                return wrap(_hgraph.ts(_hgraph.tuple_vt(vt)), "TS[tuple[inferred]]")
+            if in_kind == 2:
+                vt = _hgraph.vt_element(_hgraph.ts_value_vt(handle))
+                return wrap(_hgraph.ts(_hgraph.tuple_vt(vt)), "TS[tuple[inferred]]")
+
+        if label.startswith("TS[Set") or label.startswith("TS[set"):
+            if in_kind == 2:
+                vt = _hgraph.vt_element(_hgraph.ts_value_vt(handle))
+                return wrap(_hgraph.ts(_hgraph.set_vt(vt)), "TS[set[inferred]]")
+            if in_kind == 0:
+                vt = value_vt()
+                if _hgraph.vt_kind(vt) in (5, 6):
+                    vt = _hgraph.vt_element(vt)
+                return wrap(_hgraph.ts(_hgraph.set_vt(vt)), "TS[set[inferred]]")
+        if label.startswith("TS[Mapping") or label.startswith("TS[dict"):
+            if in_kind == 3:
+                k = _hgraph.tsd_key_vt(handle)
+                v = _hgraph.ts_value_vt(_hgraph.tsd_value_ts(handle))
+                return wrap(_hgraph.ts(_hgraph.map_vt(k, v)), "TS[mapping[inferred]]")
+        raise WiringError(f"convert: cannot resolve target '{label}' from input {handle!r}")
+
+    def __call__(self, ts, to=None, **kwargs):
+        target = to if to is not None else self._to
+        return wire("convert", ts, output_type=self._infer(target, ts), **kwargs)
+
+
+convert = _Convert()
+
+
 class WiringError(RuntimeError):
     """A wiring-time error (hgraph parity)."""
 
@@ -990,6 +1077,25 @@ class _GraphFn:
         self.signature = inspect.signature(fn)
         self.__name__ = fn.__name__
         self.__doc__ = fn.__doc__
+
+    def __getitem__(self, item):
+        # g[str] pins the graph's typevar-defaulted params (hgraph's
+        # DEFAULT[SCALAR_1] pattern): params whose default is a typevar
+        # sentinel receive the subscript items in declaration order.
+        from ._types import _TypeVarSentinel
+
+        items = item if isinstance(item, tuple) else (item,)
+        pinned, index = {}, 0
+        for name, param in self.signature.parameters.items():
+            if isinstance(param.default, _TypeVarSentinel) and index < len(items):
+                pinned[name] = items[index]
+                index += 1
+        import functools
+
+        wrapper = functools.partial(self, **pinned)
+        wrapper.__name__ = self.__name__
+        wrapper.__signature__ = self.signature
+        return wrapper
 
     def __call__(self, *args, **kwargs):
         result = self.fn(*args, **kwargs)

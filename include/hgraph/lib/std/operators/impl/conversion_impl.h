@@ -189,6 +189,186 @@ namespace hgraph::stdlib
         }
     };
 
+    namespace convert_detail
+    {
+        /** The requested target: __out__ (bound from the explicit ``to`` /
+            subscript by the py bridge or wire<> caller). */
+        [[nodiscard]] inline const TSValueTypeMetaData *requested_out(const ResolutionMap &resolution)
+        {
+            return resolution.find_ts("__out__");
+        }
+
+        [[nodiscard]] inline const ValueTypeMetaData *ts_value(const TSValueTypeMetaData *schema)
+        {
+            return schema != nullptr && schema->kind == TSTypeKind::TS ? schema->value_schema : nullptr;
+        }
+    }  // namespace convert_detail
+
+    /** convert(ts, to=SAME) - identical schemas pass the value through. */
+    struct convert_identity_impl
+    {
+        static constexpr auto name = "convert_identity";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            return out != nullptr &&
+                   operator_impl_detail::time_series_schema_at(context, 0) == out;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.copy_value_from(ts.base().value()));
+        }
+    };
+
+    /** Numeric/bool scalar conversions: TYPED kernels selected at node-
+        selection time (the typed-kernel rule - no per-tick type branch). */
+    template <typename From, typename To>
+    struct convert_numeric_impl
+    {
+        static_assert(!std::same_as<From, To>);
+        static constexpr auto name = "convert_numeric";
+
+        // The concrete Out<TS<To>> is gated by the dispatcher's requested-
+        // output match; requires_ only checks the INPUT.
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0)) ==
+                   scalar_descriptor<From>::value_meta();
+        }
+
+        static void eval(In<"ts", TS<From>> ts, Out<TS<To>> out)
+        {
+            if constexpr (std::same_as<To, Bool>) { out.set(ts.value() != From{}); }
+            else { out.set(static_cast<To>(ts.value())); }
+        }
+    };
+
+    /** Python-style str() conversions (py parity: 0.0 -> "0.0",
+        True -> "True", tuples print as "(1, 2)"). */
+    template <typename From>
+    struct convert_to_str_impl
+    {
+        static constexpr auto name = "convert_to_str";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0)) ==
+                   scalar_descriptor<From>::value_meta();
+        }
+
+        static void eval(In<"ts", TS<From>> ts, Out<TS<Str>> out)
+        {
+            if constexpr (std::same_as<From, Bool>) { out.set(Str{ts.value() ? "True" : "False"}); }
+            else if constexpr (std::same_as<From, Float>)
+            {
+                const Float value = ts.value();
+                std::string text  = fmt::format("{}", value);
+                if (text.find('.') == std::string::npos && text.find('e') == std::string::npos &&
+                    text.find("inf") == std::string::npos && text.find("nan") == std::string::npos)
+                {
+                    text += ".0";   // python float repr always shows the point
+                }
+                out.set(Str{std::move(text)});
+            }
+            else { out.set(Str{fmt::format("{}", ts.value())}); }
+        }
+    };
+
+    /** str() of a LIST-valued TS: python TUPLE style - "(1, 2)", "(1,)". */
+    struct convert_list_to_str_impl
+    {
+        static constexpr auto name = "convert_list_to_str";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *in = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            return in != nullptr && in->kind == ValueTypeKind::List;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TS<Str>> out)
+        {
+            const auto  value = ts.base().value();
+            auto        items = value.as_indexed_view();
+            std::string text  = "(";
+            for (std::size_t index = 0; index < items.size(); ++index)
+            {
+                if (index != 0) { text += ", "; }
+                text += items.at(index).to_string();
+            }
+            text += items.size() == 1 ? ",)" : ")";
+            out.set(Str{std::move(text)});
+        }
+    };
+
+    /** bool() of a LIST-valued TS: python truthiness (non-empty). */
+    struct convert_list_to_bool_impl
+    {
+        static constexpr auto name = "convert_list_to_bool";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *in = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            return in != nullptr && in->kind == ValueTypeKind::List;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TS<Bool>> out)
+        {
+            out.set(ts.base().value().as_indexed_view().size() > 0);
+        }
+    };
+
+    /** date -> datetime (midnight). */
+    struct convert_date_to_datetime_impl
+    {
+        static constexpr auto name = "convert_date_to_datetime";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0)) ==
+                   scalar_descriptor<Date>::value_meta();
+        }
+
+        static void eval(In<"ts", TS<Date>> ts, Out<TS<DateTime>> out)
+        {
+            out.set(DateTime{std::chrono::sys_days{ts.value()}});
+        }
+    };
+
+    /** convert TS[T] -> TSS[T]: the tick value becomes the SINGLETON set
+        (write-desired semantics produce add-new/remove-old deltas). */
+    struct convert_ts_to_tss_impl
+    {
+        static constexpr auto name = "convert_ts_to_tss";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS);
+            return out != nullptr && out->kind == TSTypeKind::TSS && in != nullptr &&
+                   out->value_schema->element_type == in->value_schema;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            auto        set    = erased.as_set();
+            auto        mutation = set.begin_mutation(erased.evaluation_time());
+            const auto  value  = ts.base().value();
+            // Desired = {value}: remove everything else, insert the value.
+            std::vector<Value> stale;
+            for (const ValueView &element : mutation.view().values())
+            {
+                if (!element.equals(value)) { stale.emplace_back(element); }
+            }
+            for (const Value &element : stale) { static_cast<void>(mutation.remove(element.view())); }
+            static_cast<void>(mutation.add(value));
+        }
+    };
+
     struct str_impl
     {
         static bool requires_(const ResolutionMap &, OperatorCallContext context)

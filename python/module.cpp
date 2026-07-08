@@ -1271,6 +1271,13 @@ NB_MODULE(_hgraph, m)
         for (nb::handle element : elements) { metas.push_back(nb::cast<PyValueType &>(element).meta); }
         return PyValueType{TypeRegistry::instance().tuple(metas)};
     });
+    // Type INTROSPECTION for wiring-time target inference (py convert etc.).
+    m.def("ts_value_vt", [](PyTsType t) { return PyValueType{t.meta->value_schema}; });
+    m.def("vt_kind", [](PyValueType v) { return static_cast<int>(v.meta->kind); });
+    m.def("vt_element", [](PyValueType v) { return PyValueType{v.meta->element_type}; });
+    m.def("vt_key", [](PyValueType v) { return PyValueType{v.meta->key_type}; });
+    m.def("tsd_key_vt", [](PyTsType t) { return PyValueType{t.meta->key_type()}; });
+    m.def("tsd_value_ts", [](PyTsType t) { return PyTsType{t.meta->element_ts()}; });
     m.def("tss", [](PyValueType v) { return PyTsType{TypeRegistry::instance().tss(v.meta)}; });
     m.def("tsd", [](PyValueType k, PyTsType v) { return PyTsType{TypeRegistry::instance().tsd(k.meta, v.meta)}; });
     m.def("tsw", [](PyValueType v, std::size_t period, std::size_t min_period) {
