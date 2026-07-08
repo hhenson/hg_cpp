@@ -1,3 +1,4 @@
+#include <hgraph/lib/std/operators/container.h>
 #include <hgraph/lib/std/operators/impl/collection_impl.h>
 
 namespace hgraph::stdlib
@@ -26,6 +27,16 @@ namespace hgraph::stdlib
         register_overload<uncollapse_keys, collection_impl_detail::uncollapse_keys_tsd>();
         register_overload<combine, collection_impl_detail::combine_bundles_impl>();
         register_overload<combine_cs, collection_impl_detail::combine_cs_from_fields>();
+        register_overload<mul_, collection_impl_detail::mul_tuple_int>();
+        register_overload<getitem_, collection_impl_detail::getitem_ts_list>();
+        register_overload<contains_, collection_impl_detail::contains_ts_list>();
+        register_overload<extremum_ts_list_marker, collection_impl_detail::extremum_ts_list_node<true>>();
+        register_overload<extremum_ts_list_max_marker, collection_impl_detail::extremum_ts_list_node<false>>();
+        register_graph_overload<min_, collection_impl_detail::extremum_ts_list_graph<true>>();
+        register_graph_overload<max_, collection_impl_detail::extremum_ts_list_graph<false>>();
+        register_overload<add_, collection_impl_detail::add_ts_list_concat>();
+        register_overload<add_, collection_impl_detail::add_ts_list_scalar>();
+        register_overload<sub_, collection_impl_detail::sub_ts_list_scalar>();
         register_overload<combine_tsd, collection_impl_detail::combine_tsd_tsls>();
         register_overload<combine_tsd, collection_impl_detail::combine_tsd_tuple_values>();
         register_overload<combine_tsd, collection_impl_detail::combine_tsd_tuples>();

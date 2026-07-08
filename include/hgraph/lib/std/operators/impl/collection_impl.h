@@ -2885,6 +2885,321 @@ namespace hgraph::stdlib
             }
         };
 
+        // ----- TS[tuple-scalar] operator family (hgraph tuple ops) ---------
+
+        [[nodiscard]] inline const ValueTypeMetaData *ts_list_meta(OperatorCallContext context, std::size_t index)
+        {
+            const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, index, TSTypeKind::TS);
+            if (schema == nullptr || schema->value_schema == nullptr ||
+                schema->value_schema->kind != ValueTypeKind::List)
+            {
+                return nullptr;
+            }
+            return schema->value_schema;
+        }
+
+        [[nodiscard]] inline ListBuilder make_list_builder(const ValueTypeMetaData *list_meta)
+        {
+            return ListBuilder{*ValuePlanFactory::instance().binding_for(list_meta->element_type)};
+        }
+
+        /** mul_(tuple, n): python tuple repetition. */
+        struct mul_tuple_int
+        {
+            static constexpr auto name = "mul_tuple_int";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return ts_list_meta(context, 0) != nullptr &&
+                       operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TS) != nullptr;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *list = ts_list_meta(context, 0);
+                if (list == nullptr) { return; }
+                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list));
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<Int>> rhs, Out<TsVar<"__out__">> out)
+            {
+                const auto  value = lhs.base().value();
+                auto        items = value.as_indexed_view();
+                auto        builder = make_list_builder(value.schema());
+                const auto  repeats = rhs.value();
+                for (Int r = 0; r < repeats; ++r)
+                {
+                    for (std::size_t index = 0; index < items.size(); ++index)
+                    {
+                        (void)builder.push_back_copy(items.at(index).data());
+                    }
+                }
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(builder.build()));
+            }
+        };
+
+        /** getitem_(tuple, ts_index). */
+        struct getitem_ts_list
+        {
+            static constexpr auto name = "getitem_ts_list";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return ts_list_meta(context, 0) != nullptr &&
+                       operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TS) != nullptr;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *list = ts_list_meta(context, 0);
+                if (list == nullptr) { return; }
+                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list->element_type));
+            }
+
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts, In<"key", TS<Int>> key, Out<TsVar<"__out__">> out)
+            {
+                const auto value = ts.base().value();
+                auto       items = value.as_indexed_view();
+                Int        index = key.value();
+                if (index < 0) { index += static_cast<Int>(items.size()); }
+                if (index < 0 || static_cast<std::size_t>(index) >= items.size()) { return; }
+                const auto &erased  = static_cast<const TSOutputView &>(out);
+                const auto  element = items.at(static_cast<std::size_t>(index));
+                if (erased.data_view().has_current_value() && erased.value().equals(element)) { return; }
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.copy_value_from(element));
+            }
+        };
+
+        /** contains_(tuple, element). */
+        struct contains_ts_list
+        {
+            static constexpr auto name = "contains_ts_list";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return ts_list_meta(context, 0) != nullptr;
+            }
+
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts, In<"item", TS<ScalarVar<"E">>> item,
+                             Out<TS<Bool>> out)
+            {
+                const auto value = ts.base().value();
+                auto       items = value.as_indexed_view();
+                const auto needle = item.base().value();
+                bool found = false;
+                for (std::size_t index = 0; index < items.size(); ++index)
+                {
+                    if (items.at(index).equals(needle)) { found = true; break; }
+                }
+                out.set(found);
+            }
+        };
+
+        /** min_/max_ over N same-typed LIST-valued TS: whole-value ordering
+            via Value::compare (tuples compare lexicographically); an erased
+            node over the packed TSL (numeric kernels keep the scalar space). */
+        template <bool Min>
+        struct extremum_ts_list_node
+        {
+            static constexpr auto name = Min ? "min_ts_list" : "max_ts_list";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *tsl = operator_impl_detail::fixed_tsl_arg(context, 0);
+                if (tsl == nullptr) { return; }
+                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().dereference(tsl->element_ts()));
+            }
+
+            static void eval(In<"tsl", TSL<TS<ScalarVar<"T">>, SIZE<"N">>> tsl, Out<TsVar<"__out__">> out)
+            {
+                std::optional<Value> best;
+                for (std::size_t index = 0; index < tsl.size(); ++index)
+                {
+                    auto child = tsl[index];
+                    if (!child.valid()) { return; }   // strict: every input
+                    const auto value = child.base().value();
+                    const bool better =
+                        !best.has_value() ||
+                        (Min ? value.compare(best->view()) == std::partial_ordering::less
+                             : value.compare(best->view()) == std::partial_ordering::greater);
+                    if (better) { best.emplace(value); }
+                }
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(std::move(*best)));
+            }
+        };
+
+        /** The min_/max_ graph overload gating LIST-valued TS args: collect
+            and wire the packed node. */
+        template <bool Min>
+        struct extremum_ts_list_graph
+        {
+            static constexpr auto name = Min ? "min_ts_list_graph" : "max_ts_list_graph";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                if (context.args.empty()) { return false; }
+                for (std::size_t index = 0; index < context.args.size(); ++index)
+                {
+                    if (context.args[index].kind != WiringArg::Kind::TimeSeries ||
+                        ts_list_meta(context, index) == nullptr)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *list = ts_list_meta(context, 0);
+                if (list == nullptr) { return; }
+                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list));
+            }
+
+            static WiringPortRef compose(Wiring &w, VarIn<"tsl", TS<ScalarVar<"T">>> ts)
+            {
+                if (ts.empty()) { throw std::invalid_argument("min_/max_ requires at least one input"); }
+                auto &registry = TypeRegistry::instance();
+                std::vector<WiringPortRef> children{ts.begin(), ts.end()};
+                WiringPortRef packed =
+                    WiringPortRef::structural_source(registry.tsl(ts[0].schema, ts.size()), std::move(children));
+                std::array<WiringArg, 1> args{};
+                args[0].kind = WiringArg::Kind::TimeSeries;
+                args[0].port = packed;
+                auto result = wire_operator(w, Min ? "min_ts_list" : "max_ts_list", {args.data(), args.size()}, true);
+                return result.output.erased();
+            }
+        };
+
+        /** add_(tuple, tuple) = concat; non-strict emits whichever sides are
+            valid. add_(tuple, scalar) = append. sub_(tuple, scalar) = remove
+            every matching element. */
+        struct add_ts_list_concat
+        {
+            static constexpr auto name = "add_ts_list_concat";
+
+            static auto defaults() { return std::tuple{arg<"__strict__">(Bool{true})}; }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return ts_list_meta(context, 0) != nullptr && ts_list_meta(context, 1) != nullptr;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *list = ts_list_meta(context, 0);
+                if (list == nullptr) { return; }
+                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list));
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TS<ScalarVar<"T">>, InputValidity::Unchecked> rhs,
+                             Scalar<"__strict__", Bool> strict, Out<TsVar<"__out__">> out)
+            {
+                if (strict.value() && (!lhs.valid() || !rhs.valid())) { return; }
+                if (!lhs.valid() && !rhs.valid()) { return; }
+                const auto *list_meta =
+                    static_cast<const TSOutputView &>(out).schema()->value_schema;
+                auto builder = make_list_builder(list_meta);
+                const auto push_all = [&](const ValueView &value) {
+                    auto items = value.as_indexed_view();
+                    for (std::size_t index = 0; index < items.size(); ++index)
+                    {
+                        (void)builder.push_back_copy(items.at(index).data());
+                    }
+                };
+                if (lhs.valid()) { push_all(lhs.base().value()); }
+                if (rhs.valid()) { push_all(rhs.base().value()); }
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(builder.build()));
+            }
+        };
+
+        struct add_ts_list_scalar
+        {
+            static constexpr auto name = "add_ts_list_scalar";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                const auto *list = ts_list_meta(context, 0);
+                if (list == nullptr || ts_list_meta(context, 1) != nullptr) { return false; }
+                const auto *rhs = operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TS);
+                return rhs != nullptr && rhs->value_schema == list->element_type;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *list = ts_list_meta(context, 0);
+                if (list == nullptr) { return; }
+                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list));
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"E">>> rhs,
+                             Out<TsVar<"__out__">> out)
+            {
+                const auto value = lhs.base().value();
+                auto       items = value.as_indexed_view();
+                auto       builder = make_list_builder(value.schema());
+                for (std::size_t index = 0; index < items.size(); ++index)
+                {
+                    (void)builder.push_back_copy(items.at(index).data());
+                }
+                (void)builder.push_back_copy(rhs.base().value().data());
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(builder.build()));
+            }
+        };
+
+        struct sub_ts_list_scalar
+        {
+            static constexpr auto name = "sub_ts_list_scalar";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                const auto *list = ts_list_meta(context, 0);
+                if (list == nullptr || ts_list_meta(context, 1) != nullptr) { return false; }
+                const auto *rhs = operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TS);
+                return rhs != nullptr && rhs->value_schema == list->element_type;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *list = ts_list_meta(context, 0);
+                if (list == nullptr) { return; }
+                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list));
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"E">>> rhs,
+                             Out<TsVar<"__out__">> out)
+            {
+                const auto value  = lhs.base().value();
+                auto       items  = value.as_indexed_view();
+                const auto needle = rhs.base().value();
+                auto builder = make_list_builder(value.schema());
+                for (std::size_t index = 0; index < items.size(); ++index)
+                {
+                    if (!items.at(index).equals(needle)) { (void)builder.push_back_copy(items.at(index).data()); }
+                }
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(builder.build()));
+            }
+        };
+
         /** combine[TS[CompoundScalar]](a=..., b=...): assemble a BUNDLE
             value from field ports by NAME - valid inputs set their fields,
             the rest stay UNSET (CS IS a Bundle value; py from_ts wires a
