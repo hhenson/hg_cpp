@@ -63,6 +63,102 @@ namespace hgraph::stdlib
             }
         };
 
+        /** Window readiness: size windows need min_period elements, duration
+            windows need the newest-oldest span to reach min_time_range
+            (mirrors the data layer's all_valid). */
+        [[nodiscard]] inline bool tsw_ready(const TSWDataView &window)
+        {
+            if (window.size() == 0) { return false; }
+            if (window.time_based())
+            {
+                const auto min_range = window.min_time_range();
+                if (min_range <= TimeDelta{0}) { return true; }
+                return window.time_at(window.size() - 1) - window.time_at(0) >= min_range;
+            }
+            return window.size() >= window.min_period();
+        }
+
+        /** to_window(ts, timedelta[, timedelta]): the DURATION window form -
+            ticks within the trailing time range; ready once the span reaches
+            the minimum (defaults to the full range, hgraph parity). */
+        struct to_window_duration_impl
+        {
+            static constexpr auto name = "to_window_duration";
+
+            static auto defaults() { return std::tuple{arg<"min_window_period">(TimeDelta{0})}; }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS) != nullptr &&
+                       context.scalar_as<TimeDelta>("period") != nullptr;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS);
+                const auto *period = context.scalar_as<TimeDelta>("period");
+                if (schema == nullptr || period == nullptr) { return; }
+                const auto *min_period = context.scalar_as<TimeDelta>("min_window_period");
+                const TimeDelta min_range =
+                    min_period != nullptr && *min_period > TimeDelta{0} ? *min_period : *period;
+                operator_impl_detail::bind_output(
+                    resolution, TypeRegistry::instance().tsw_duration(schema->value_schema, *period, min_range));
+            }
+
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts, Scalar<"period", TimeDelta>,
+                             Scalar<"min_window_period", TimeDelta>, Out<TsVar<"__out__">> out)
+            {
+                const auto &erased   = static_cast<const TSOutputView &>(out);
+                auto        window   = erased.as_window();
+                auto        mutation = window.begin_mutation(erased.evaluation_time());
+                mutation.push(ts.base().value());
+            }
+        };
+
+        /** abs_ over a TSW: elementwise on the arriving tick - the output is
+            a window of the same shape whose newest element is |newest|. */
+        struct abs_tsw_impl
+        {
+            static constexpr auto name = "abs_tsw";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW);
+                if (schema == nullptr) { return false; }
+                auto &registry = TypeRegistry::instance();
+                const auto *element = schema->value_schema->element_type;
+                return element == registry.value_type("int") || element == registry.value_type("float");
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (operator_impl_detail::output_bound(resolution)) { return; }
+                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW);
+                if (schema == nullptr) { return; }
+                operator_impl_detail::bind_output(resolution, schema);
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+            {
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                const TSWInputView window_input{ts.base().borrowed_ref()};
+                auto window = window_input.data_view();
+                if (window.size() == 0) { return; }
+
+                auto      &registry = TypeRegistry::instance();
+                const bool floating =
+                    window.schema()->value_schema->element_type == registry.value_type("float");
+                const ValueView newest = window.at(window.size() - 1);
+                Value result = floating ? Value{std::abs(newest.checked_as<Float>())}
+                                        : Value{std::abs(newest.checked_as<Int>())};
+
+                auto out_window = erased.as_window();
+                auto mutation   = out_window.begin_mutation(erased.evaluation_time());
+                mutation.push(result.view());
+            }
+        };
+
         /** The shared shape of the TSW aggregates: full-window recompute on
             every tick (the window is small by construction). min_/max_ are
             fully ERASED (Value::compare); sum_/mean use a numeric kernel
@@ -119,8 +215,7 @@ namespace hgraph::stdlib
                 const TSWInputView window_input{ts.base().borrowed_ref()};
                 // A LIVE local data view: ranges/at() borrow its storage.
                 auto window = window_input.data_view();
-                // Below the window's MINIMUM PERIOD nothing emits.
-                if (window.size() == 0 || window.size() < window.min_period()) { return; }
+                if (!tsw_ready(window)) { return; }
 
                 // Recompute EMITS every window tick (hgraph parity: min over
                 // a sliding window re-ticks the same value as it slides).
@@ -213,9 +308,12 @@ namespace hgraph::stdlib
                 }
                 const TSWInputView window_input{ts.base().borrowed_ref()};
                 auto window = window_input.data_view();
-                if (window.size() == 0 || window.size() < window.min_period())
+                if (!tsw_ready(window))
                 {
-                    publish(default_value.value());
+                    // The default fills DURATION windows still reaching their
+                    // minimum span; a size window below minimum is an INVALID
+                    // input (never evaluated), so no default fires there.
+                    if (window.time_based()) { publish(default_value.value()); }
                     return;
                 }
                 std::optional<Value> best;

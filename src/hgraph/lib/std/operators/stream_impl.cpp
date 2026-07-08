@@ -1,5 +1,6 @@
 #include <hgraph/lib/std/operators/impl/stream_impl.h>
 #include <hgraph/lib/std/operators/comparison.h>
+#include <hgraph/lib/std/operators/arithmetic.h>
 
 namespace hgraph::stdlib
 {
@@ -14,6 +15,8 @@ namespace hgraph::stdlib
         register_overload<freeze, freeze_impl>();
         register_overload<gate, gate_impl>();
         register_overload<to_window, stream_impl_detail::to_window_impl>();
+        register_overload<to_window, stream_impl_detail::to_window_duration_impl>();
+        register_overload<abs_, stream_impl_detail::abs_tsw_impl>();
         register_overload<sum_, stream_impl_detail::tsw_aggregate_impl<stream_impl_detail::TswAggregate::Sum>>();
         register_overload<mean, stream_impl_detail::tsw_aggregate_impl<stream_impl_detail::TswAggregate::Mean>>();
         register_overload<min_, stream_impl_detail::tsw_aggregate_impl<stream_impl_detail::TswAggregate::Min>>();

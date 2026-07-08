@@ -2,8 +2,6 @@ from hgraph import graph, TS, sum_, to_window, abs_, TSW, mean, min_, max_
 from hgraph import MIN_TD
 from hgraph.test import eval_node
 
-import pytest as _pytest_mark
-pytestmark = _pytest_mark.mark.wip   # batch-3 burn-down; excluded from the gate
 
 
 
