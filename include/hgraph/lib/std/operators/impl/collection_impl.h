@@ -75,9 +75,51 @@ namespace hgraph::stdlib
          * via the ``ts_key_set_path_component`` path sentinel. This is the
          * C++ analogue of Python's ``keys_tsd_as_tss`` REF.
          */
+        /** keys_[OUT: TS[Set[K]]](tsd): the key set as a VALUE snapshot
+            (hgraph's keys_ TS[Set] overload) - the full set on every key
+            change, not the TSS projection. */
+        struct keys_tsd_as_set
+        {
+            static constexpr auto name = "keys_tsd_as_set";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+            {
+                // The output pattern TS<ScalarVar<"S">> binds S from the
+                // REQUESTED output (keys_[OUT: TS[Set[K]]]).
+                const auto *element = resolution.find_scalar("S");
+                if (element == nullptr || element->kind != ValueTypeKind::Set) { return false; }
+                if (context.args.size() != 1 || context.args[0].kind != WiringArg::Kind::TimeSeries) { return false; }
+                const auto *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
+                return schema != nullptr && schema->kind == TSTypeKind::TSD &&
+                       schema->key_type() == element->element_type;
+            }
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+                             Out<TS<ScalarVar<"S">>> out)
+            {
+                const TSDInputView &dict   = ts;
+                const auto         &erased = static_cast<const TSOutputView &>(out);
+                const auto *out_meta = erased.schema()->value_schema;
+                SetBuilder builder{*ValuePlanFactory::instance().binding_for(out_meta->element_type)};
+                for (const auto key : dict.keys()) { (void)builder.insert_copy(key.data()); }
+                Value set = builder.build();
+                if (erased.data_view().has_current_value() && erased.value().equals(set.view())) { return; }
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(std::move(set)));
+            }
+        };
+
         struct keys_tsd
         {
             static constexpr auto name = "keys_tsd";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                // The zero-copy TSS projection serves TSS requests only; a
+                // requested TS[Set[K]] snapshot goes to keys_tsd_as_set.
+                const auto *requested = resolution.find_ts("__out__");
+                return requested == nullptr || requested->kind == TSTypeKind::TSS;
+            }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
@@ -1093,8 +1135,9 @@ namespace hgraph::stdlib
         {
             static constexpr auto name = "difference_tsd";
 
-            static void eval(In<"lhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> lhs,
-                             In<"rhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> rhs,
+            // hgraph gating: BOTH inputs valid (lhs-before-rhs emits nothing).
+            static void eval(In<"lhs", TSD<ScalarVar<"K">, TsVar<"V">>> lhs,
+                             In<"rhs", TSD<ScalarVar<"K">, TsVar<"V">>> rhs,
                              Out<TSD<ScalarVar<"K">, TsVar<"V">>> out)
             {
                 const TSDInputView  &lhs_dict = lhs;
@@ -1117,6 +1160,15 @@ namespace hgraph::stdlib
                         copy_tsd_child_if_changed(mutation, out_dict, key, lhs_dict.at(key));
                     }
                 }
+                // Gated first cycles: lhs keys the output never saw (ticked
+                // while rhs was still invalid) backfill on this evaluation.
+                for (const auto [key, child] : lhs.items())
+                {
+                    if (!rhs_dict.contains(key) && !out_dict.contains(key))
+                    {
+                        copy_tsd_child_if_changed(mutation, out_dict, key, child);
+                    }
+                }
             }
         };
 
@@ -1124,8 +1176,8 @@ namespace hgraph::stdlib
         {
             static constexpr auto name = "intersection_tsd";
 
-            static void eval(In<"lhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> lhs,
-                             In<"rhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> rhs,
+            static void eval(In<"lhs", TSD<ScalarVar<"K">, TsVar<"V">>> lhs,
+                             In<"rhs", TSD<ScalarVar<"K">, TsVar<"V">>> rhs,
                              Out<TSD<ScalarVar<"K">, TsVar<"V">>> out)
             {
                 const TSDInputView  &lhs_dict = lhs;
@@ -1148,6 +1200,16 @@ namespace hgraph::stdlib
                         copy_tsd_child_if_changed(mutation, out_dict, key, lhs_dict.at(key));
                     }
                 }
+                for (const auto [key, child] : lhs.items())
+                {
+                    if (rhs_dict.contains(key) && !out_dict.contains(key))
+                    {
+                        copy_tsd_child_if_changed(mutation, out_dict, key, child);
+                    }
+                }
+                // A DISJOINT first tick still validates (emits the empty
+                // dict) - touch LAST per the write discipline.
+                mutation.touch();
             }
         };
 

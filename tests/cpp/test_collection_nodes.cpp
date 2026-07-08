@@ -813,13 +813,15 @@ TEST_CASE("collections: TSD bitwise and subtraction operators mirror set algebra
     using namespace hgraph::testing;
     stdlib::register_standard_operators();
 
+    // hgraph gating: BOTH inputs must be valid - lhs-before-rhs emits
+    // nothing until rhs arrives, then the withheld keys backfill.
     CHECK_OUTPUT((eval_node<stdlib::sub_, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
                      values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
                                    dict_delta<Int, TS<Int>>({{2, 2}})),
                      values<Value>(none,
                                    dict_delta<Int, TS<Int>>({{3, 2}})))),
-                 values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
-                               dict_delta<Int, TS<Int>>({{2, 2}})));
+                 values<Value>(none,
+                               dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}})));
 
     CHECK_OUTPUT((eval_node<stdlib::bit_or, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
                      values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
@@ -829,12 +831,13 @@ TEST_CASE("collections: TSD bitwise and subtraction operators mirror set algebra
                  values<Value>(dict_delta<Int, TS<Int>>({{1, 1}, {2, 3}}),
                                dict_delta<Int, TS<Int>>({{2, 2}, {3, 2}})));
 
+    // A DISJOINT first tick VALIDATES (the empty dict), hgraph parity.
     CHECK_OUTPUT((eval_node<stdlib::bit_and, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
                      values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
                                    dict_delta<Int, TS<Int>>({{2, 2}})),
                      values<Value>(dict_delta<Int, TS<Int>>({{2, 3}}),
                                    dict_delta<Int, TS<Int>>({{3, 2}})))),
-                 values<Value>(none,
+                 values<Value>(dict_delta<Int, TS<Int>>({}),
                                dict_delta<Int, TS<Int>>({{2, 2}})));
 
     CHECK_OUTPUT((eval_node<stdlib::bit_xor, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
