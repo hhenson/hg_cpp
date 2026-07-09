@@ -1,13 +1,11 @@
 #include <hgraph/lib/std/operators/type_request.h>
 #include <hgraph/types/metadata/type_registry.h>
-#include <hgraph/types/time_series/endpoint_schema.h>
+#include <hgraph/types/type_pattern.h>
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
 #include <stdexcept>
-#include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -49,11 +47,6 @@ namespace hgraph::stdlib
         [[nodiscard]] const TSValueTypeMetaData *deref(const TSValueTypeMetaData *schema)
         {
             return TypeRegistry::instance().dereference(schema);
-        }
-
-        [[nodiscard]] bool ts_equivalent(const TSValueTypeMetaData *lhs, const TSValueTypeMetaData *rhs)
-        {
-            return time_series_schema_equivalent(deref(lhs), deref(rhs));
         }
 
         [[nodiscard]] const ValueTypeMetaData *plain_ts_value(const TSValueTypeMetaData *schema)
@@ -219,13 +212,6 @@ namespace hgraph::stdlib
             return registry.tsb(bundle->display_name, fields);
         }
 
-        struct RequestBindings
-        {
-            std::unordered_map<std::string, const ValueTypeMetaData *> scalar;
-            std::unordered_map<std::string, const TSValueTypeMetaData *> ts;
-            std::unordered_map<std::string, std::size_t> size;
-        };
-
         [[nodiscard]] const TSValueTypeMetaData *require_one_input(
             std::span<const TSValueTypeMetaData *const> inputs,
             std::string_view request)
@@ -237,275 +223,110 @@ namespace hgraph::stdlib
             return deref(inputs[0]);
         }
 
-        [[nodiscard]] const ValueTypeMetaData *resolve_scalar_against(
-            const ScalarRequest &request,
-            const ValueTypeMetaData *candidate,
-            RequestBindings &bindings);
+        [[nodiscard]] ScalarPattern request_to_scalar_pattern(const ScalarRequest &request);
+        [[nodiscard]] TypePattern request_to_type_pattern(const TypeRequest &request);
 
-        [[nodiscard]] const TSValueTypeMetaData *resolve_type_against(
-            const TypeRequest &request,
-            const TSValueTypeMetaData *candidate,
-            RequestBindings &bindings);
-
-        [[nodiscard]] std::size_t resolve_size_against(
-            const SizeRequest &request,
-            std::size_t candidate,
-            RequestBindings &bindings)
+        [[nodiscard]] ScalarPattern request_to_scalar_pattern(const ScalarRequest &request)
         {
             return std::visit(overloaded{
-                                  [&](const SizeVariableRequest &node) {
-                                      auto [it, inserted] = bindings.size.emplace(node.name, candidate);
-                                      if (!inserted && it->second != candidate)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("size variable {} resolved to both {} and {}",
-                                                          node.name, it->second, candidate));
-                                      }
-                                      return candidate;
+                                  [](const ScalarVariableRequest &node) -> ScalarPattern {
+                                      return ScalarPattern::var(node.name);
                                   },
-                                  [&](const SizeConcreteRequest &node) {
-                                      if (node.value != candidate)
+                                  [](const ScalarConcreteRequest &node) -> ScalarPattern {
+                                      return ScalarPattern::concrete(node.schema);
+                                  },
+                                  [](const ScalarUnknownTupleRequest &node) -> ScalarPattern {
+                                      return node.element ? ScalarPattern::unknown_tuple(request_to_scalar_pattern(*node.element))
+                                                          : ScalarPattern::unknown_tuple();
+                                  },
+                                  [](const ScalarHomogeneousTupleRequest &node) -> ScalarPattern {
+                                      return ScalarPattern::homogeneous_tuple(request_to_scalar_pattern(*node.element));
+                                  },
+                                  [](const ScalarFixedTupleRequest &node) -> ScalarPattern {
+                                      std::vector<ScalarPattern> elements;
+                                      elements.reserve(node.elements.size());
+                                      for (const ScalarRequestPtr &element : node.elements)
                                       {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected size {}, got {}", node.value, candidate));
+                                          elements.push_back(request_to_scalar_pattern(*element));
                                       }
-                                      return candidate;
+                                      return ScalarPattern::fixed_tuple(std::move(elements));
+                                  },
+                                  [](const ScalarSetRequest &node) -> ScalarPattern {
+                                      return ScalarPattern::set(request_to_scalar_pattern(*node.element));
+                                  },
+                                  [](const ScalarMapRequest &node) -> ScalarPattern {
+                                      return ScalarPattern::map(request_to_scalar_pattern(*node.key),
+                                                                request_to_scalar_pattern(*node.value));
+                                  },
+                                  [](const ScalarBundleRequest &node) -> ScalarPattern {
+                                      return node.schema_variable ? ScalarPattern::bundle_var(*node.schema_variable)
+                                                                  : ScalarPattern::bundle();
                                   }},
                               request.node);
         }
 
-        [[nodiscard]] const ValueTypeMetaData *resolve_scalar_against(
-            const ScalarRequest &request,
-            const ValueTypeMetaData *candidate,
-            RequestBindings &bindings)
+        [[nodiscard]] TypePattern request_to_tsl_pattern(const TypeTslRequest &node)
         {
-            if (candidate == nullptr)
-            {
-                throw std::invalid_argument(
-                    fmt::format("cannot resolve scalar request {} against <null>", scalar_request_to_string(request)));
-            }
             return std::visit(overloaded{
-                                  [&](const ScalarVariableRequest &node) -> const ValueTypeMetaData * {
-                                      auto [it, inserted] = bindings.scalar.emplace(node.name, candidate);
-                                      if (!inserted && it->second != candidate)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("scalar variable {} resolved to both {} and {}",
-                                                          node.name, value_name(it->second), value_name(candidate)));
-                                      }
-                                      return candidate;
+                                  [&](const SizeVariableRequest &size) -> TypePattern {
+                                      return TypePattern::tsl_var(request_to_type_pattern(*node.element), size.name);
                                   },
-                                  [&](const ScalarConcreteRequest &node) -> const ValueTypeMetaData * {
-                                      if (node.schema != candidate)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected scalar {}, got {}",
-                                                          value_name(node.schema), value_name(candidate)));
-                                      }
-                                      return candidate;
+                                  [&](const SizeConcreteRequest &size) -> TypePattern {
+                                      return TypePattern::tsl(request_to_type_pattern(*node.element), size.value);
+                                  }},
+                              node.size.node);
+        }
+
+        [[nodiscard]] TypePattern request_to_type_pattern(const TypeRequest &request)
+        {
+            return std::visit(overloaded{
+                                  [](const TypeVariableRequest &node) -> TypePattern {
+                                      return TypePattern::var(node.name);
                                   },
-                                  [&](const ScalarUnknownTupleRequest &node) -> const ValueTypeMetaData * {
-                                      if (candidate->kind == ValueTypeKind::List)
-                                      {
-                                          if (node.element)
-                                          {
-                                              static_cast<void>(
-                                                  resolve_scalar_against(*node.element, candidate->element_type, bindings));
-                                          }
-                                          return candidate;
-                                      }
-                                      if (candidate->kind == ValueTypeKind::Tuple)
-                                      {
-                                          if (node.element)
-                                          {
-                                              const ValueTypeMetaData *element = homogeneous_tuple_element(candidate);
-                                              if (element == nullptr)
-                                              {
-                                                  throw std::invalid_argument(
-                                                      "cannot bind an element variable from a heterogeneous tuple");
-                                              }
-                                              static_cast<void>(resolve_scalar_against(*node.element, element, bindings));
-                                          }
-                                          return candidate;
-                                      }
-                                      throw std::invalid_argument(
-                                          fmt::format("expected tuple scalar, got {}", value_name(candidate)));
+                                  [](const TypeConcreteRequest &node) -> TypePattern {
+                                      return TypePattern::concrete(node.schema);
                                   },
-                                  [&](const ScalarHomogeneousTupleRequest &node) -> const ValueTypeMetaData * {
-                                      const ValueTypeMetaData *element = nullptr;
-                                      if (candidate->kind == ValueTypeKind::List) { element = candidate->element_type; }
-                                      else if (candidate->kind == ValueTypeKind::Tuple) { element = homogeneous_tuple_element(candidate); }
-                                      if (element == nullptr)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected homogeneous tuple scalar, got {}", value_name(candidate)));
-                                      }
-                                      static_cast<void>(resolve_scalar_against(*node.element, element, bindings));
-                                      return candidate;
+                                  [](const TypeTsRequest &node) -> TypePattern {
+                                      return TypePattern::ts(request_to_scalar_pattern(node.value));
                                   },
-                                  [&](const ScalarFixedTupleRequest &node) -> const ValueTypeMetaData * {
-                                      if (candidate->kind != ValueTypeKind::Tuple ||
-                                          candidate->field_count != node.elements.size())
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected fixed tuple with {} fields, got {}",
-                                                          node.elements.size(), value_name(candidate)));
-                                      }
-                                      for (std::size_t index = 0; index < node.elements.size(); ++index)
-                                      {
-                                          static_cast<void>(resolve_scalar_against(
-                                              *node.elements[index], candidate->fields[index].type, bindings));
-                                      }
-                                      return candidate;
+                                  [](const TypeTssRequest &node) -> TypePattern {
+                                      return TypePattern::tss(request_to_scalar_pattern(node.element));
                                   },
-                                  [&](const ScalarSetRequest &node) -> const ValueTypeMetaData * {
-                                      if (candidate->kind != ValueTypeKind::Set)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected set scalar, got {}", value_name(candidate)));
-                                      }
-                                      static_cast<void>(resolve_scalar_against(*node.element, candidate->element_type, bindings));
-                                      return candidate;
+                                  [](const TypeTsdRequest &node) -> TypePattern {
+                                      return TypePattern::tsd(request_to_scalar_pattern(node.key),
+                                                              request_to_type_pattern(*node.value));
                                   },
-                                  [&](const ScalarMapRequest &node) -> const ValueTypeMetaData * {
-                                      if (candidate->kind != ValueTypeKind::Map)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected map scalar, got {}", value_name(candidate)));
-                                      }
-                                      static_cast<void>(resolve_scalar_against(*node.key, candidate->key_type, bindings));
-                                      static_cast<void>(resolve_scalar_against(*node.value, candidate->element_type, bindings));
-                                      return candidate;
+                                  [](const TypeTslRequest &node) -> TypePattern {
+                                      return request_to_tsl_pattern(node);
                                   },
-                                  [&](const ScalarBundleRequest &node) -> const ValueTypeMetaData * {
-                                      if (candidate->kind != ValueTypeKind::Bundle)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected bundle scalar, got {}", value_name(candidate)));
-                                      }
-                                      if (node.schema_variable)
-                                      {
-                                          auto [it, inserted] = bindings.scalar.emplace(*node.schema_variable, candidate);
-                                          if (!inserted && it->second != candidate)
-                                          {
-                                              throw std::invalid_argument(
-                                                  fmt::format("bundle schema variable {} resolved to both {} and {}",
-                                                              *node.schema_variable,
-                                                              value_name(it->second),
-                                                              value_name(candidate)));
-                                          }
-                                      }
-                                      return candidate;
+                                  [](const TypeTsbRequest &node) -> TypePattern {
+                                      return TypePattern::tsb_var(node.schema_variable.value_or("SCHEMA"));
+                                  },
+                                  [](const TypeRefRequest &node) -> TypePattern {
+                                      return TypePattern::ref(request_to_type_pattern(*node.target));
                                   }},
                               request.node);
         }
 
-        [[nodiscard]] const TSValueTypeMetaData *resolve_type_against(
+        [[nodiscard]] const TSValueTypeMetaData *match_request_target(
             const TypeRequest &request,
-            const TSValueTypeMetaData *candidate,
-            RequestBindings &bindings)
+            const TSValueTypeMetaData *candidate)
         {
-            candidate = deref(candidate);
             if (candidate == nullptr)
             {
                 throw std::invalid_argument(
                     fmt::format("cannot resolve type request {} against <null>", type_request_to_string(request)));
             }
-            auto &registry = TypeRegistry::instance();
-            return std::visit(overloaded{
-                                  [&](const TypeVariableRequest &node) -> const TSValueTypeMetaData * {
-                                      auto [it, inserted] = bindings.ts.emplace(node.name, candidate);
-                                      if (!inserted && !ts_equivalent(it->second, candidate))
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("time-series variable {} resolved to both {} and {}",
-                                                          node.name, schema_name(it->second), schema_name(candidate)));
-                                      }
-                                      return candidate;
-                                  },
-                                  [&](const TypeConcreteRequest &node) -> const TSValueTypeMetaData * {
-                                      if (!ts_equivalent(node.schema, candidate))
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected time-series {}, got {}",
-                                                          schema_name(node.schema), schema_name(candidate)));
-                                      }
-                                      return candidate;
-                                  },
-                                  [&](const TypeTsRequest &node) -> const TSValueTypeMetaData * {
-                                      if (candidate->kind != TSTypeKind::TS)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected TS scalar, got {}", schema_name(candidate)));
-                                      }
-                                      const ValueTypeMetaData *value =
-                                          resolve_scalar_against(node.value, candidate->value_schema, bindings);
-                                      return registry.ts(value);
-                                  },
-                                  [&](const TypeTssRequest &node) -> const TSValueTypeMetaData * {
-                                      if (candidate->kind != TSTypeKind::TSS)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected TSS, got {}", schema_name(candidate)));
-                                      }
-                                      const ValueTypeMetaData *element =
-                                          resolve_scalar_against(node.element, tss_element(candidate), bindings);
-                                      return registry.tss(element);
-                                  },
-                                  [&](const TypeTsdRequest &node) -> const TSValueTypeMetaData * {
-                                      if (candidate->kind != TSTypeKind::TSD)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected TSD, got {}", schema_name(candidate)));
-                                      }
-                                      const ValueTypeMetaData *key =
-                                          resolve_scalar_against(node.key, candidate->key_type(), bindings);
-                                      const TSValueTypeMetaData *value =
-                                          resolve_type_against(*node.value, candidate->element_ts(), bindings);
-                                      return registry.tsd(key, value);
-                                  },
-                                  [&](const TypeTslRequest &node) -> const TSValueTypeMetaData * {
-                                      if (candidate->kind != TSTypeKind::TSL)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected TSL, got {}", schema_name(candidate)));
-                                      }
-                                      const TSValueTypeMetaData *element =
-                                          resolve_type_against(*node.element, candidate->element_ts(), bindings);
-                                      const std::size_t size = resolve_size_against(node.size, candidate->fixed_size(), bindings);
-                                      return registry.tsl(element, size);
-                                  },
-                                  [&](const TypeTsbRequest &node) -> const TSValueTypeMetaData * {
-                                      if (candidate->kind != TSTypeKind::TSB)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected TSB, got {}", schema_name(candidate)));
-                                      }
-                                      if (node.schema_variable)
-                                      {
-                                          auto [it, inserted] = bindings.ts.emplace(*node.schema_variable, candidate);
-                                          if (!inserted && !ts_equivalent(it->second, candidate))
-                                          {
-                                              throw std::invalid_argument(
-                                                  fmt::format("TSB schema variable {} resolved to both {} and {}",
-                                                              *node.schema_variable,
-                                                              schema_name(it->second),
-                                                              schema_name(candidate)));
-                                          }
-                                      }
-                                      return candidate;
-                                  },
-                                  [&](const TypeRefRequest &node) -> const TSValueTypeMetaData * {
-                                      if (candidate->kind != TSTypeKind::REF)
-                                      {
-                                          throw std::invalid_argument(
-                                              fmt::format("expected REF, got {}", schema_name(candidate)));
-                                      }
-                                      const TSValueTypeMetaData *target =
-                                          resolve_type_against(*node.target, candidate->referenced_ts(), bindings);
-                                      return registry.ref(target);
-                                  }},
-                              request.node);
+            const TypePattern pattern = request_to_type_pattern(request);
+            ResolutionMap     resolution;
+            if (!ts_pattern_match(pattern, candidate, resolution))
+            {
+                throw std::invalid_argument(
+                    fmt::format("resolved target {} does not satisfy requested {}",
+                                schema_name(candidate),
+                                type_request_to_string(request)));
+            }
+            return candidate;
         }
 
         [[nodiscard]] const ValueTypeMetaData *infer_tuple_value_candidate(
@@ -989,16 +810,14 @@ namespace hgraph::stdlib
                                                       std::span<const TSValueTypeMetaData *const> inputs,
                                                       std::span<const std::string> selected_keys)
     {
-        RequestBindings bindings;
         const TSValueTypeMetaData *candidate = infer_convert_candidate(request, inputs, selected_keys);
-        return resolve_type_against(request, candidate, bindings);
+        return match_request_target(request, candidate);
     }
 
     const TSValueTypeMetaData *resolve_collect_target(const TypeRequest &request,
                                                       std::span<const TSValueTypeMetaData *const> inputs)
     {
         if (inputs.empty()) { throw std::invalid_argument("collect target resolution requires at least one input"); }
-        RequestBindings bindings;
         const TSValueTypeMetaData *candidate = nullptr;
         if (is_tsd_request(request))
         {
@@ -1012,6 +831,6 @@ namespace hgraph::stdlib
         {
             candidate = infer_convert_candidate(request, inputs, {});
         }
-        return resolve_type_against(request, candidate, bindings);
+        return match_request_target(request, candidate);
     }
 }  // namespace hgraph::stdlib

@@ -28,28 +28,99 @@ namespace hgraph
      * ``TS<ScalarVar<"T">>`` lowers to ``TS(ScalarVar("T"))``).
      */
 
-    /** Scalar-layer pattern leaf: a ``ScalarVar`` placeholder or an interned scalar. */
+    /** Scalar-layer pattern: a scalar variable, an interned scalar, or a recursive scalar container shape. */
     struct ScalarPattern
     {
         enum class Kind
         {
             Var,
-            Concrete
+            Concrete,
+            UnknownTuple,
+            HomogeneousTuple,
+            FixedTuple,
+            Set,
+            Map,
+            Bundle
         };
 
         Kind                     kind{Kind::Concrete};
         std::string              name{};            ///< ``Var``: the variable name.
         const ValueTypeMetaData *meta{nullptr};     ///< ``Concrete``: the interned scalar.
         std::vector<const ValueTypeMetaData *> constraints{};  ///< ``Var``: accepted concrete scalar schemas.
+        std::vector<ScalarPattern> children{};      ///< recursive scalar payloads.
+        bool                       schema_var{false}; ///< ``Bundle``: true when ``name`` is a schema variable.
 
         [[nodiscard]] static ScalarPattern var(std::string name,
                                                std::vector<const ValueTypeMetaData *> constraints = {})
         {
-            return ScalarPattern{Kind::Var, std::move(name), nullptr, std::move(constraints)};
+            ScalarPattern p;
+            p.kind        = Kind::Var;
+            p.name        = std::move(name);
+            p.constraints = std::move(constraints);
+            return p;
         }
         [[nodiscard]] static ScalarPattern concrete(const ValueTypeMetaData *meta)
         {
-            return ScalarPattern{Kind::Concrete, {}, meta, {}};
+            ScalarPattern p;
+            p.kind = Kind::Concrete;
+            p.meta = meta;
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern unknown_tuple()
+        {
+            ScalarPattern p;
+            p.kind = Kind::UnknownTuple;
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern unknown_tuple(ScalarPattern element)
+        {
+            ScalarPattern p;
+            p.kind = Kind::UnknownTuple;
+            p.children.push_back(std::move(element));
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern homogeneous_tuple(ScalarPattern element)
+        {
+            ScalarPattern p;
+            p.kind = Kind::HomogeneousTuple;
+            p.children.push_back(std::move(element));
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern fixed_tuple(std::vector<ScalarPattern> elements)
+        {
+            ScalarPattern p;
+            p.kind     = Kind::FixedTuple;
+            p.children = std::move(elements);
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern set(ScalarPattern element)
+        {
+            ScalarPattern p;
+            p.kind = Kind::Set;
+            p.children.push_back(std::move(element));
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern map(ScalarPattern key, ScalarPattern value)
+        {
+            ScalarPattern p;
+            p.kind = Kind::Map;
+            p.children.push_back(std::move(key));
+            p.children.push_back(std::move(value));
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern bundle()
+        {
+            ScalarPattern p;
+            p.kind = Kind::Bundle;
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern bundle_var(std::string schema_variable)
+        {
+            ScalarPattern p;
+            p.kind       = Kind::Bundle;
+            p.name       = std::move(schema_variable);
+            p.schema_var = true;
+            return p;
         }
     };
 
@@ -84,6 +155,7 @@ namespace hgraph
         std::size_t                min_size{0};      ///< ``TSW`` min period.
         bool                       named_bundle{false}; ///< true for nominal ``TSB<Name,...>``.
         bool                       size_var{false};  ///< true when ``TSL`` size is a named variable.
+        bool                       schema_var{false}; ///< true when ``TSB`` binds the whole schema to ``name``.
 
         [[nodiscard]] static TypePattern var(std::string name,
                                              std::vector<const TSValueTypeMetaData *> constraints = {})
@@ -163,6 +235,14 @@ namespace hgraph
             p.children     = std::move(children);
             p.bundle_name  = std::move(bundle_name);
             p.named_bundle = named_bundle;
+            return p;
+        }
+        [[nodiscard]] static TypePattern tsb_var(std::string schema_variable)
+        {
+            TypePattern p;
+            p.kind       = Kind::TSB;
+            p.name       = std::move(schema_variable);
+            p.schema_var = true;
             return p;
         }
         [[nodiscard]] static TypePattern ref(TypePattern target)

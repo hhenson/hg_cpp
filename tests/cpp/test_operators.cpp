@@ -436,6 +436,58 @@ TEST_CASE("operators: TSL TypePattern supports named SIZE variables")
     CHECK_FALSE(ts_pattern_match(to_pattern<PairPattern>(), ts_type<PairConcreteMismatch>(), repeated));
 }
 
+TEST_CASE("operators: TypePattern supports recursive scalar container patterns")
+{
+    auto &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<Int>("int");
+    (void)registry.register_scalar<Str>("str");
+
+    {
+        const TypePattern pattern = TypePattern::ts(
+            ScalarPattern::homogeneous_tuple(ScalarPattern::var("T")));
+        ResolutionMap map;
+        REQUIRE(ts_pattern_match(pattern, registry.ts(registry.list(scalar_type<Int>(), 0, true)), map));
+        CHECK(map.find_scalar("T") == scalar_type<Int>());
+        CHECK(ts_pattern_to_string(pattern) == "TS[tuple[~T, ...]]");
+    }
+
+    {
+        const TypePattern pattern = TypePattern::ts(ScalarPattern::fixed_tuple({
+            ScalarPattern::concrete(scalar_type<Int>()),
+            ScalarPattern::var("T"),
+        }));
+        ResolutionMap map;
+        REQUIRE(ts_pattern_match(
+            pattern,
+            registry.ts(registry.tuple({scalar_type<Int>(), scalar_type<Str>()})),
+            map));
+        CHECK(map.find_scalar("T") == scalar_type<Str>());
+    }
+
+    {
+        const TypePattern pattern = TypePattern::ts(ScalarPattern::map(
+            ScalarPattern::concrete(scalar_type<Str>()),
+            ScalarPattern::var("V")));
+        ResolutionMap map;
+        REQUIRE(ts_pattern_match(pattern, registry.ts(registry.map(scalar_type<Str>(), scalar_type<Int>())), map));
+        CHECK(map.find_scalar("V") == scalar_type<Int>());
+    }
+}
+
+TEST_CASE("operators: TypePattern supports TSB schema variables")
+{
+    using Bundle = UnNamedTSB<Field<"x", TS<Int>>>;
+
+    const TypePattern pattern = TypePattern::tsb_var("SCHEMA");
+    ResolutionMap map;
+    REQUIRE(ts_pattern_match(pattern, ts_type<Bundle>(), map));
+    CHECK(map.find_ts("SCHEMA") == ts_type<Bundle>());
+    CHECK(ts_pattern_to_string(pattern) == "TSB[~SCHEMA]");
+
+    ResolutionMap other;
+    CHECK_FALSE(ts_pattern_match(pattern, ts_type<TS<Int>>(), other));
+}
+
 TEST_CASE("operators: a repeated type-variable name forces the operands to be aligned")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");

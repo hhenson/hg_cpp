@@ -927,10 +927,30 @@ namespace hgraph
 
         inline void collect_scalar_rank(const ScalarPattern &pattern, RankAccumulator &acc, int var_rank)
         {
-            if (pattern.kind == ScalarPattern::Kind::Var)
+            switch (pattern.kind)
             {
-                acc.add_var("scalar:" + pattern.name,
-                            pattern.constraints.empty() ? var_rank : std::max(1, var_rank / 2));
+                case ScalarPattern::Kind::Var:
+                    acc.add_var("scalar:" + pattern.name,
+                                pattern.constraints.empty() ? var_rank : std::max(1, var_rank / 2));
+                    break;
+                case ScalarPattern::Kind::Concrete:
+                    break;
+                case ScalarPattern::Kind::UnknownTuple:
+                case ScalarPattern::Kind::HomogeneousTuple:
+                case ScalarPattern::Kind::FixedTuple:
+                case ScalarPattern::Kind::Set:
+                case ScalarPattern::Kind::Map:
+                case ScalarPattern::Kind::Bundle:
+                    acc.structural += 1;
+                    for (const ScalarPattern &child : pattern.children)
+                    {
+                        collect_scalar_rank(child, acc, std::max(1, var_rank / 2));
+                    }
+                    if (pattern.kind == ScalarPattern::Kind::Bundle && pattern.schema_var)
+                    {
+                        acc.add_var("scalar:" + pattern.name, std::max(1, var_rank / 2));
+                    }
+                    break;
             }
         }
 
@@ -961,6 +981,12 @@ namespace hgraph
                     collect_ts_rank(pattern.children[0], acc);
                     break;
                 case TypePattern::Kind::TSB:
+                    if (pattern.schema_var)
+                    {
+                        acc.structural += 1;
+                        acc.add_var("ts:" + pattern.name, 5000);
+                        break;
+                    }
                     acc.structural += 1;
                     for (const TypePattern &child : pattern.children) { collect_ts_rank(child, acc); }
                     break;

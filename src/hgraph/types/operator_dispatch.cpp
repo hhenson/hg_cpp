@@ -91,6 +91,15 @@ namespace hgraph
                            input_ts_pattern_match(pattern.children[0], concrete->element_ts(), map);
                 case TypePattern::Kind::TSB:
                     if (concrete->kind != TSTypeKind::TSB) { return false; }
+                    if (pattern.schema_var)
+                    {
+                        if (const TSValueTypeMetaData *bound = map.find_ts(pattern.name))
+                        {
+                            return time_series_schema_equivalent(bound, concrete);
+                        }
+                        map.bind_ts(pattern.name, concrete);
+                        return true;
+                    }
                     if (pattern.named_bundle)
                     {
                         if (!concrete->is_named_tsb() || concrete->bundle_name() == nullptr ||

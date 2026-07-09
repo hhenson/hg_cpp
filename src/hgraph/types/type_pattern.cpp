@@ -48,6 +48,27 @@ namespace hgraph
                 return constraint == concrete;
             });
         }
+
+        [[nodiscard]] const ValueTypeMetaData *homogeneous_tuple_element(const ValueTypeMetaData *value)
+        {
+            if (value == nullptr || value->kind != ValueTypeKind::Tuple || value->field_count == 0)
+            {
+                return nullptr;
+            }
+            const ValueTypeMetaData *first = value->fields[0].type;
+            for (std::size_t index = 1; index < value->field_count; ++index)
+            {
+                if (value->fields[index].type != first) { return nullptr; }
+            }
+            return first;
+        }
+
+        [[nodiscard]] const ValueTypeMetaData *resolve_required_scalar_child(
+            const ScalarPattern &pattern,
+            const ResolutionMap &map)
+        {
+            return !pattern.children.empty() ? scalar_pattern_resolve(pattern.children[0], map) : nullptr;
+        }
     }  // namespace
 
     bool scalar_pattern_match(const ScalarPattern &pattern, const ValueTypeMetaData *concrete, ResolutionMap &map)
@@ -66,6 +87,50 @@ namespace hgraph
                 return true;
             }
             case ScalarPattern::Kind::Concrete: return pattern.meta == concrete;  // interned: pointer identity
+            case ScalarPattern::Kind::UnknownTuple:
+                if (concrete->kind == ValueTypeKind::List)
+                {
+                    return pattern.children.empty() ||
+                           scalar_pattern_match(pattern.children[0], concrete->element_type, map);
+                }
+                if (concrete->kind == ValueTypeKind::Tuple)
+                {
+                    if (pattern.children.empty()) { return true; }
+                    const ValueTypeMetaData *element = homogeneous_tuple_element(concrete);
+                    return element != nullptr && scalar_pattern_match(pattern.children[0], element, map);
+                }
+                return false;
+            case ScalarPattern::Kind::HomogeneousTuple:
+            {
+                const ValueTypeMetaData *element = nullptr;
+                if (concrete->kind == ValueTypeKind::List) { element = concrete->element_type; }
+                else if (concrete->kind == ValueTypeKind::Tuple) { element = homogeneous_tuple_element(concrete); }
+                return element != nullptr && !pattern.children.empty() &&
+                       scalar_pattern_match(pattern.children[0], element, map);
+            }
+            case ScalarPattern::Kind::FixedTuple:
+                if (concrete->kind != ValueTypeKind::Tuple || concrete->field_count != pattern.children.size())
+                {
+                    return false;
+                }
+                for (std::size_t index = 0; index < pattern.children.size(); ++index)
+                {
+                    if (!scalar_pattern_match(pattern.children[index], concrete->fields[index].type, map)) { return false; }
+                }
+                return true;
+            case ScalarPattern::Kind::Set:
+                return concrete->kind == ValueTypeKind::Set && !pattern.children.empty() &&
+                       scalar_pattern_match(pattern.children[0], concrete->element_type, map);
+            case ScalarPattern::Kind::Map:
+                return concrete->kind == ValueTypeKind::Map && pattern.children.size() == 2 &&
+                       scalar_pattern_match(pattern.children[0], concrete->key_type, map) &&
+                       scalar_pattern_match(pattern.children[1], concrete->element_type, map);
+            case ScalarPattern::Kind::Bundle:
+                if (concrete->kind != ValueTypeKind::Bundle) { return false; }
+                if (!pattern.schema_var) { return true; }
+                if (const ValueTypeMetaData *bound = map.find_scalar(pattern.name)) { return bound == concrete; }
+                map.bind_scalar(pattern.name, concrete);
+                return true;
         }
         return false;
     }
@@ -151,6 +216,16 @@ namespace hgraph
                        scalar_pattern_match(pattern.scalar, concrete->value_type, map);
             case TypePattern::Kind::TSB:
                 if (concrete->kind != TSTypeKind::TSB) { return false; }
+                if (pattern.schema_var)
+                {
+                    if (const TSValueTypeMetaData *bound = map.find_ts(pattern.name))
+                    {
+                        return time_series_schema_equivalent(bound, concrete);
+                    }
+                    if (!ts_allowed_by_constraints(pattern, concrete)) { return false; }
+                    map.bind_ts(pattern.name, concrete);
+                    return true;
+                }
                 if (pattern.named_bundle)
                 {
                     if (!concrete->is_named_tsb() || concrete->bundle_name() == nullptr ||
@@ -176,8 +251,25 @@ namespace hgraph
 
     int scalar_pattern_rank(const ScalarPattern &pattern)
     {
-        if (pattern.kind != ScalarPattern::Kind::Var) { return 0; }
-        return pattern.constraints.empty() ? SCALAR_VAR_RANK : SCALAR_VAR_RANK / 2;
+        switch (pattern.kind)
+        {
+            case ScalarPattern::Kind::Var: return pattern.constraints.empty() ? SCALAR_VAR_RANK : SCALAR_VAR_RANK / 2;
+            case ScalarPattern::Kind::Concrete: return 0;
+            case ScalarPattern::Kind::UnknownTuple:
+                return 1 + (pattern.children.empty() ? 0 : scalar_pattern_rank(pattern.children[0]) / 2);
+            case ScalarPattern::Kind::HomogeneousTuple:
+            case ScalarPattern::Kind::Set:
+                return 1 + (!pattern.children.empty() ? scalar_pattern_rank(pattern.children[0]) / 2 : 0);
+            case ScalarPattern::Kind::FixedTuple:
+            case ScalarPattern::Kind::Map:
+            {
+                int rank = 1;
+                for (const ScalarPattern &child : pattern.children) { rank += scalar_pattern_rank(child) / 2; }
+                return rank;
+            }
+            case ScalarPattern::Kind::Bundle: return pattern.schema_var ? SCALAR_VAR_RANK / 2 : 1;
+        }
+        return 0;
     }
 
     int ts_pattern_rank(const TypePattern &pattern)
@@ -195,6 +287,7 @@ namespace hgraph
             case TypePattern::Kind::TSW: return 1 + scalar_pattern_rank(pattern.scalar);
             case TypePattern::Kind::TSB:
             {
+                if (pattern.schema_var) { return LARGE_RANK / 2; }
                 int rank = 1;
                 for (const TypePattern &child : pattern.children) { rank += ts_pattern_rank(child); }
                 return rank;
@@ -211,6 +304,37 @@ namespace hgraph
         {
             case ScalarPattern::Kind::Var: return map.find_scalar(pattern.name);
             case ScalarPattern::Kind::Concrete: return pattern.meta;
+            case ScalarPattern::Kind::UnknownTuple: return nullptr;
+            case ScalarPattern::Kind::HomogeneousTuple:
+            {
+                const ValueTypeMetaData *element = resolve_required_scalar_child(pattern, map);
+                return element != nullptr ? TypeRegistry::instance().list(element, 0, true) : nullptr;
+            }
+            case ScalarPattern::Kind::FixedTuple:
+            {
+                std::vector<const ValueTypeMetaData *> fields;
+                fields.reserve(pattern.children.size());
+                for (const ScalarPattern &child : pattern.children)
+                {
+                    const ValueTypeMetaData *field = scalar_pattern_resolve(child, map);
+                    if (field == nullptr) { return nullptr; }
+                    fields.push_back(field);
+                }
+                return TypeRegistry::instance().tuple(fields);
+            }
+            case ScalarPattern::Kind::Set:
+            {
+                const ValueTypeMetaData *element = resolve_required_scalar_child(pattern, map);
+                return element != nullptr ? TypeRegistry::instance().set(element) : nullptr;
+            }
+            case ScalarPattern::Kind::Map:
+            {
+                if (pattern.children.size() != 2) { return nullptr; }
+                const ValueTypeMetaData *key = scalar_pattern_resolve(pattern.children[0], map);
+                const ValueTypeMetaData *value = scalar_pattern_resolve(pattern.children[1], map);
+                return key != nullptr && value != nullptr ? TypeRegistry::instance().map(key, value) : nullptr;
+            }
+            case ScalarPattern::Kind::Bundle: return pattern.schema_var ? map.find_scalar(pattern.name) : nullptr;
         }
         return nullptr;
     }
@@ -258,6 +382,7 @@ namespace hgraph
             }
             case TypePattern::Kind::TSB:
             {
+                if (pattern.schema_var) { return map.find_ts(pattern.name); }
                 std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
                 fields.reserve(pattern.children.size());
                 for (std::size_t i = 0; i < pattern.children.size(); ++i)
@@ -287,6 +412,34 @@ namespace hgraph
                 return (pattern.meta != nullptr && pattern.meta->display_name != nullptr)
                            ? std::string{pattern.meta->display_name}
                            : std::string{"scalar"};
+            case ScalarPattern::Kind::UnknownTuple:
+                return pattern.children.empty()
+                           ? std::string{"UnknownTuple"}
+                           : fmt::format("UnknownTuple[{}]", scalar_pattern_to_string(pattern.children[0]));
+            case ScalarPattern::Kind::HomogeneousTuple:
+                return fmt::format("tuple[{}, ...]",
+                                   pattern.children.empty() ? std::string{"scalar"}
+                                                            : scalar_pattern_to_string(pattern.children[0]));
+            case ScalarPattern::Kind::FixedTuple:
+            {
+                std::vector<std::string> parts;
+                parts.reserve(pattern.children.size());
+                for (const ScalarPattern &child : pattern.children) { parts.push_back(scalar_pattern_to_string(child)); }
+                return fmt::format("tuple[{}]", fmt::join(parts, ", "));
+            }
+            case ScalarPattern::Kind::Set:
+                return fmt::format("set[{}]",
+                                   pattern.children.empty() ? std::string{"scalar"}
+                                                            : scalar_pattern_to_string(pattern.children[0]));
+            case ScalarPattern::Kind::Map:
+                return pattern.children.size() == 2
+                           ? fmt::format("Mapping[{}, {}]",
+                                         scalar_pattern_to_string(pattern.children[0]),
+                                         scalar_pattern_to_string(pattern.children[1]))
+                           : std::string{"Mapping"};
+            case ScalarPattern::Kind::Bundle:
+                return pattern.schema_var ? fmt::format("CompoundScalar[~{}]", pattern.name)
+                                          : std::string{"CompoundScalar"};
         }
         return "?";
     }
@@ -314,6 +467,7 @@ namespace hgraph
                                    pattern.fixed_size, pattern.min_size);
             case TypePattern::Kind::TSB:
             {
+                if (pattern.schema_var) { return fmt::format("TSB[~{}]", pattern.name); }
                 std::vector<std::string> fields;
                 fields.reserve(pattern.children.size());
                 for (std::size_t i = 0; i < pattern.children.size(); ++i)
