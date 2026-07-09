@@ -432,6 +432,56 @@ namespace hgraph::stdlib
         }
     };
 
+    /** getattr_(ts, attr, default): the bundle field, or the DEFAULT scalar
+        when that field is UNSET (hgraph's default-valued attribute read). */
+    struct getattr_ts_bundle_default
+    {
+        static constexpr auto name = "getattr_ts_bundle_default";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *bundle = getattr_ts_bundle::bundle_meta(context);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            return bundle != nullptr && attr != nullptr &&
+                   getattr_ts_bundle::field_index(bundle, *attr).has_value() &&
+                   operator_impl_detail::scalar_arg_at(context, 2) != nullptr;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const auto *bundle = getattr_ts_bundle::bundle_meta(context);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            if (bundle == nullptr || attr == nullptr) { return; }
+            const auto index = getattr_ts_bundle::field_index(bundle, *attr);
+            if (!index.has_value()) { return; }
+            operator_impl_detail::bind_output(resolution,
+                                              TypeRegistry::instance().ts(bundle->fields[*index].type));
+        }
+
+        static void eval(In<"ts", TS<ScalarVar<"S">>> ts, Scalar<"attr", Str> attr,
+                         Scalar<"default", ScalarVar<"D">> fallback, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto  value  = ts.base().value();
+            auto        fields = value.as_indexed_view();
+            const auto *meta   = value.schema();
+            for (std::size_t index = 0; index < meta->field_count; ++index)
+            {
+                if (meta->fields[index].name == nullptr || attr.value() != meta->fields[index].name) { continue; }
+                auto field = fields.at(index);
+                const auto publish = [&](const ValueView &chosen) {
+                    if (erased.data_view().has_current_value() && erased.value().equals(chosen)) { return; }
+                    auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                    static_cast<void>(mutation.copy_value_from(chosen));
+                };
+                if (field.valid()) { publish(field); }
+                else { publish(fallback.value()); }
+                return;
+            }
+        }
+    };
+
     /** getattr_ over NESTED TSDs: collapse -> project -> uncollapse
         (hgraph's tsd_get_bundle_item_2/_nested route). */
     struct getattr_tsd_nested
