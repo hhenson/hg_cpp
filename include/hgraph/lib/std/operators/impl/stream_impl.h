@@ -138,8 +138,7 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
                 const auto *schema = time_series_schema_at(context, 0);
-                return time_series_schema_matches_pattern(
-                           schema, time_series_kind_pattern(TSTypeKind::TSW)) &&
+                return time_series_schema_matches<AnyTSW>(schema) &&
                        schema->value_schema->element_type == scalar_descriptor<T>::value_meta();
             }
 
@@ -147,8 +146,7 @@ namespace hgraph::stdlib
             {
                 if (output_bound(resolution)) { return; }
                 const auto *schema = time_series_schema_at(context, 0);
-                if (!time_series_schema_matches_pattern(
-                        schema, time_series_kind_pattern(TSTypeKind::TSW)))
+                if (!time_series_schema_matches<AnyTSW>(schema))
                 {
                     return;
                 }
@@ -179,16 +177,14 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return time_series_arg_matches_pattern(
-                    context, 0, time_series_kind_pattern(TSTypeKind::TSW));
+                return time_series_arg_matches<AnyTSW>(context, 0);
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (output_bound(resolution)) { return; }
                 const auto *schema = time_series_schema_at(context, 0);
-                if (!time_series_schema_matches_pattern(
-                        schema, time_series_kind_pattern(TSTypeKind::TSW)))
+                if (!time_series_schema_matches<AnyTSW>(schema))
                 {
                     return;
                 }
@@ -231,8 +227,7 @@ namespace hgraph::stdlib
             [[nodiscard]] static bool matches(OperatorCallContext context)
             {
                 const auto *schema = time_series_schema_at(context, 0);
-                return time_series_schema_matches_pattern(
-                           schema, time_series_kind_pattern(TSTypeKind::TSW)) &&
+                return time_series_schema_matches<AnyTSW>(schema) &&
                        schema->value_schema->element_type == scalar_descriptor<T>::value_meta();
             }
 
@@ -281,16 +276,14 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return time_series_arg_matches_pattern(
-                    context, 0, time_series_kind_pattern(TSTypeKind::TSW));
+                return time_series_arg_matches<AnyTSW>(context, 0);
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (output_bound(resolution)) { return; }
                 const auto *schema = time_series_schema_at(context, 0);
-                if (!time_series_schema_matches_pattern(
-                        schema, time_series_kind_pattern(TSTypeKind::TSW)))
+                if (!time_series_schema_matches<AnyTSW>(schema))
                 {
                     return;
                 }

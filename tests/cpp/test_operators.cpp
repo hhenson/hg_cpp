@@ -609,6 +609,7 @@ TEST_CASE("operators: typed broad schema aliases match runtime schemas")
     CHECK(time_series_schema_matches<AnyTSS>(ts_type<TSS<Int>>()));
     CHECK(time_series_schema_matches<AnyTSD>(ts_type<TSD<Int, TS<Str>>>()));
     CHECK(time_series_schema_matches<AnyTSL>(ts_type<TSL<TS<Int>, 2>>()));
+    CHECK(time_series_schema_matches<AnyTSW>(ts_type<TSW<Int, 3, 1>>()));
 
     using Bundle = UnNamedTSB<Field<"x", TS<Int>>>;
     CHECK(time_series_schema_matches<AnyTSB>(ts_type<Bundle>()));
@@ -784,7 +785,7 @@ TEST_CASE("operators: TypePattern matches generic TSW and TSB structures")
     {
         const auto *duration_window =
             TypeRegistry::instance().tsw_duration(scalar_type<Int>(), TimeDelta{10}, TimeDelta{2});
-        const TypePattern any_window = TypePattern::tsw_any(ScalarPattern::var("T"));
+        const TypePattern any_window = to_pattern<TSWAny<ScalarVar<"T">>>();
 
         ResolutionMap tick_map;
         REQUIRE(ts_pattern_match(any_window, ts_type<TSW<Int, 3, 1>>(), tick_map));

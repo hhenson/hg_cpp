@@ -87,6 +87,7 @@ namespace hgraph::operator_type_resolution
     using AnyTSS = TSS<ScalarVar<"__element">>;
     using AnyTSD = TSD<ScalarVar<"__key">, TsVar<"__value">>;
     using AnyTSL = TSL<TsVar<"__element">, SIZE<"__size">>;
+    using AnyTSW = TSWAny<ScalarVar<"__element">>;
     using AnyTSB = UnNamedTSB<TsVar<"__schema">>;
     using AnyREF = REF<TsVar<"__target">>;
 
@@ -192,7 +193,7 @@ namespace hgraph::operator_type_resolution
             case TSTypeKind::SIGNAL:
                 return TypePattern::signal();
             case TSTypeKind::TSW:
-                return TypePattern::tsw_any(ScalarPattern::var("__element"));
+                return to_pattern<AnyTSW>();
         }
         std::unreachable();
     }

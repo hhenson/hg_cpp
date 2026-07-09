@@ -241,6 +241,12 @@ namespace hgraph
         }
     };
 
+    template <typename V>
+    struct ts_resolver<TSWAny<V>>
+    {
+        [[nodiscard]] static const TSValueTypeMetaData *resolve(const ResolutionMap &) noexcept { return nullptr; }
+    };
+
     template <typename K, typename V>
     struct ts_resolver<TSD<K, V>>
     {
@@ -534,6 +540,16 @@ namespace hgraph
 
     template <typename V, std::size_t Period, std::size_t MinPeriod>
     struct ts_unifier<TSW<V, Period, MinPeriod>>
+    {
+        static void unify(const TSValueTypeMetaData *c, ResolutionMap &m)
+        {
+            c = unify_dereference(c);
+            scalar_unifier<V>::unify(c != nullptr && c->kind == TSTypeKind::TSW ? c->value_type : nullptr, m);
+        }
+    };
+
+    template <typename V>
+    struct ts_unifier<TSWAny<V>>
     {
         static void unify(const TSValueTypeMetaData *c, ResolutionMap &m)
         {

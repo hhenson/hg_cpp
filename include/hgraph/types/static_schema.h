@@ -141,6 +141,13 @@ namespace hgraph
         static constexpr std::size_t min_period = MinPeriod;
     };
 
+    /** Window time-series schema wildcard; matches any tick/duration window period. */
+    template <typename TValue>
+    struct TSWAny
+    {
+        using value_type = TValue;
+    };
+
     /** REF marker; equivalent to runtime ``REF<TSchema>``. */
     template <typename TSchema>
     struct REF
@@ -569,6 +576,14 @@ namespace hgraph
                 return nullptr;
             }
         }
+    };
+
+    template <typename TValue>
+    struct schema_descriptor<TSWAny<TValue>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept { return false; }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta() noexcept { return nullptr; }
     };
 
     template <typename TSchema>

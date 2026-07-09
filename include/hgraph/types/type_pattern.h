@@ -466,6 +466,15 @@ namespace hgraph
         }
     };
 
+    template <typename V>
+    struct ts_pattern_lower<TSWAny<V>>
+    {
+        [[nodiscard]] static TypePattern lower()
+        {
+            return TypePattern::tsw_any(to_scalar_pattern<V>());
+        }
+    };
+
     template <typename K, typename V>
     struct ts_pattern_lower<TSD<K, V>>
     {
