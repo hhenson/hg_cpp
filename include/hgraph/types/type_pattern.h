@@ -330,12 +330,20 @@ namespace hgraph
 
     // -----------------------------------------------------------------
     // Compile-time lowering of a static schema type into a runtime pattern.
-    // A concrete schema collapses to a single Concrete leaf; otherwise the
-    // structure is decomposed, emitting Var nodes for the type variables.
+    // Known schema forms are lowered recursively; opaque concrete forms remain
+    // Concrete leaves.
     // -----------------------------------------------------------------
 
     template <typename S>
-    struct ts_pattern_lower;  // specialised per generic schema kind below
+    struct ts_pattern_lower
+    {
+        [[nodiscard]] static TypePattern lower()
+        {
+            static_assert(schema_descriptor<S>::is_concrete(),
+                          "to_pattern<S>() requires a supported static time-series schema");
+            return TypePattern::concrete(schema_descriptor<S>::ts_meta());
+        }
+    };
 
     template <typename T>
     struct scalar_pattern_lower;  // specialised for ScalarVar below
@@ -388,8 +396,7 @@ namespace hgraph
     template <typename S>
     [[nodiscard]] inline TypePattern to_pattern()
     {
-        if constexpr (schema_descriptor<S>::is_concrete()) { return TypePattern::concrete(schema_descriptor<S>::ts_meta()); }
-        else { return ts_pattern_lower<S>::lower(); }
+        return ts_pattern_lower<S>::lower();
     }
 
     template <typename T>
@@ -437,6 +444,11 @@ namespace hgraph
         }
     };
 
+    template <typename C>
+    struct ts_pattern_lower<Args<C>> : ts_pattern_lower<TSL<C, SIZE<"args_len">>>
+    {
+    };
+
     template <typename V, std::size_t Period, std::size_t MinPeriod>
     struct ts_pattern_lower<TSW<V, Period, MinPeriod>>
     {
@@ -458,6 +470,12 @@ namespace hgraph
         [[nodiscard]] static TypePattern lower() { return TypePattern::ref(to_pattern<S>()); }
     };
 
+    template <>
+    struct ts_pattern_lower<SIGNAL>
+    {
+        [[nodiscard]] static TypePattern lower() { return TypePattern::signal(); }
+    };
+
     template <typename... Fields>
     struct ts_pattern_lower<UnNamedTSB<Fields...>>
     {
@@ -466,6 +484,12 @@ namespace hgraph
             return TypePattern::tsb(type_pattern_detail::tsb_field_names<Fields...>(),
                                     type_pattern_detail::tsb_field_patterns<Fields...>());
         }
+    };
+
+    template <fixed_string VarName, typename... C>
+    struct ts_pattern_lower<UnNamedTSB<TsVar<VarName, C...>>>
+    {
+        [[nodiscard]] static TypePattern lower() { return TypePattern::tsb_var(std::string{VarName.sv()}); }
     };
 
     template <fixed_string Name, typename... Fields>
@@ -477,6 +501,22 @@ namespace hgraph
                                     type_pattern_detail::tsb_field_patterns<Fields...>(),
                                     std::string{Name.sv()}, true);
         }
+    };
+
+    template <fixed_string Name, fixed_string VarName, typename... C>
+    struct ts_pattern_lower<TSB<Name, TsVar<VarName, C...>>>
+    {
+        [[nodiscard]] static TypePattern lower() { return TypePattern::tsb_var(std::string{VarName.sv()}); }
+    };
+
+    template <typename... Fields>
+    struct ts_pattern_lower<Kwargs<Fields...>> : ts_pattern_lower<UnNamedTSB<Fields...>>
+    {
+    };
+
+    template <>
+    struct ts_pattern_lower<Kwargs<>> : ts_pattern_lower<UnNamedTSB<TsVar<"kwargs">>>
+    {
     };
 
     template <fixed_string Name, typename... C>

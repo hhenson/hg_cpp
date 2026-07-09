@@ -378,18 +378,20 @@ TEST_CASE("operators: a scalar argument is coerced and forwarded to the resolved
 TEST_CASE("operators: a requires_ predicate that passes keeps the specific overload")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");
-    register_overload<gated_, gated_int_on>();      // specific (rank 0), accepted
+    register_overload<gated_, gated_int_on>();      // specific, accepted
     register_overload<gated_, gated_passthrough>();  // generic fallback (high rank)
 
     std::array<WiringArg, 1> args{ts_arg(ts_type<TS<Int>>())};
     auto [impl, map, call_args, call_kwargs] = OperatorRegistry::instance().resolve("gated", std::span<const WiringArg>{args});
-    CHECK(impl->rank == 0);  // the specific overload won
+    REQUIRE(impl != nullptr);
+    REQUIRE(impl->params.size() == 1);
+    CHECK(ts_pattern_to_string(impl->params[0].ts) == "TS[int]");
 }
 
 TEST_CASE("operators: a requires_ predicate that fails vetoes the specific overload")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");
-    register_overload<gated_, gated_int_off>();      // specific (rank 0), vetoed
+    register_overload<gated_, gated_int_off>();      // specific, vetoed
     register_overload<gated_, gated_passthrough>();  // generic fallback (high rank)
 
     std::array<WiringArg, 1> args{ts_arg(ts_type<TS<Int>>())};
@@ -435,6 +437,28 @@ TEST_CASE("operators: TSL TypePattern supports named SIZE variables")
                                             Field<"rhs", TSL<TS<Int>, 3>>>;
     ResolutionMap repeated;
     CHECK_FALSE(ts_pattern_match(to_pattern<PairPattern>(), ts_type<PairConcreteMismatch>(), repeated));
+}
+
+TEST_CASE("operators: native concrete TypePatterns lower recursively")
+{
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    (void)TypeRegistry::instance().register_scalar<Float>("float");
+    (void)TypeRegistry::instance().register_scalar<Str>("str");
+
+    const TypePattern list_pattern = to_pattern<TSL<TS<Int>>>();
+    CHECK(ts_pattern_to_string(list_pattern) == "TSL[TS[int], 0]");
+
+    ResolutionMap list_match;
+    REQUIRE(ts_pattern_match(list_pattern, ts_type<TSL<TS<Int>, 2>>(), list_match));
+
+    ResolutionMap list_mismatch;
+    CHECK_FALSE(ts_pattern_match(list_pattern, ts_type<TSL<TS<Float>, 2>>(), list_mismatch));
+
+    const TypePattern dict_pattern = to_pattern<TSD<Str, TS<Int>>>();
+    CHECK(ts_pattern_to_string(dict_pattern) == "TSD[str, TS[int]]");
+
+    ResolutionMap dict_match;
+    REQUIRE(ts_pattern_match(dict_pattern, ts_type<TSD<Str, TS<Int>>>(), dict_match));
 }
 
 TEST_CASE("operators: operator helpers match recursive time-series patterns")
