@@ -375,8 +375,10 @@ namespace hgraph::stdlib
 
         [[nodiscard]] static const ValueTypeMetaData *bundle_meta(OperatorCallContext context)
         {
-            const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS);
-            if (schema == nullptr || schema->value_schema == nullptr ||
+            const auto *schema = operator_impl_detail::time_series_schema_at(context, 0);
+            if (!operator_impl_detail::time_series_schema_matches_pattern(
+                    schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS)) ||
+                schema->value_schema == nullptr ||
                 schema->value_schema->kind != ValueTypeKind::Bundle)
             {
                 return nullptr;

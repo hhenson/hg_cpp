@@ -328,8 +328,12 @@ namespace hgraph::stdlib
         inline void resolve_reduce_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
         {
             if (operator_impl_detail::output_bound(resolution)) { return; }
-            const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TSL);
-            if (schema == nullptr) { return; }
+            const auto *schema = operator_impl_detail::time_series_schema_at(context, 1);
+            if (!operator_impl_detail::time_series_schema_matches_pattern(
+                    schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSL)))
+            {
+                return;
+            }
             bind_graph_output(resolution, schema->element_ts(), "V");
         }
 
@@ -514,8 +518,12 @@ namespace hgraph::stdlib
         inline void resolve_reduce_tsd_output(ResolutionMap &resolution, OperatorCallContext context)
         {
             if (operator_impl_detail::output_bound(resolution)) { return; }
-            const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TSD);
-            if (schema == nullptr) { return; }
+            const auto *schema = operator_impl_detail::time_series_schema_at(context, 1);
+            if (!operator_impl_detail::time_series_schema_matches_pattern(
+                    schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSD)))
+            {
+                return;
+            }
             bind_graph_output(resolution, schema->element_ts(), "V");
         }
 

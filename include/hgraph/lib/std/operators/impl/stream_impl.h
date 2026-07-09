@@ -35,15 +35,21 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS) != nullptr;
+                return operator_impl_detail::time_series_arg_matches_pattern(
+                    context, 0, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS));
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (operator_impl_detail::output_bound(resolution)) { return; }
-                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS);
+                const auto *schema = operator_impl_detail::time_series_schema_at(context, 0);
                 const Int  *period = context.scalar_as<Int>("period");
-                if (schema == nullptr || period == nullptr) { return; }
+                if (!operator_impl_detail::time_series_schema_matches_pattern(
+                        schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS)) ||
+                    period == nullptr)
+                {
+                    return;
+                }
                 const Int *min_period = context.scalar_as<Int>("min_window_period");
                 operator_impl_detail::bind_output(
                     resolution, TypeRegistry::instance().tsw(schema->value_schema,
@@ -89,16 +95,22 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS) != nullptr &&
+                return operator_impl_detail::time_series_arg_matches_pattern(
+                           context, 0, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS)) &&
                        context.scalar_as<TimeDelta>("period") != nullptr;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (operator_impl_detail::output_bound(resolution)) { return; }
-                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS);
+                const auto *schema = operator_impl_detail::time_series_schema_at(context, 0);
                 const auto *period = context.scalar_as<TimeDelta>("period");
-                if (schema == nullptr || period == nullptr) { return; }
+                if (!operator_impl_detail::time_series_schema_matches_pattern(
+                        schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS)) ||
+                    period == nullptr)
+                {
+                    return;
+                }
                 const auto *min_period = context.scalar_as<TimeDelta>("min_window_period");
                 const TimeDelta min_range =
                     min_period != nullptr && *min_period > TimeDelta{0} ? *min_period : *period;
@@ -127,16 +139,21 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW);
-                return schema != nullptr &&
+                const auto *schema = operator_impl_detail::time_series_schema_at(context, 0);
+                return operator_impl_detail::time_series_schema_matches_pattern(
+                           schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSW)) &&
                        schema->value_schema->element_type == scalar_descriptor<T>::value_meta();
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (operator_impl_detail::output_bound(resolution)) { return; }
-                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW);
-                if (schema == nullptr) { return; }
+                const auto *schema = operator_impl_detail::time_series_schema_at(context, 0);
+                if (!operator_impl_detail::time_series_schema_matches_pattern(
+                        schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSW)))
+                {
+                    return;
+                }
                 operator_impl_detail::bind_output(resolution, schema);
             }
 
@@ -164,14 +181,19 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW) != nullptr;
+                return operator_impl_detail::time_series_arg_matches_pattern(
+                    context, 0, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSW));
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (operator_impl_detail::output_bound(resolution)) { return; }
-                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW);
-                if (schema == nullptr) { return; }
+                const auto *schema = operator_impl_detail::time_series_schema_at(context, 0);
+                if (!operator_impl_detail::time_series_schema_matches_pattern(
+                        schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSW)))
+                {
+                    return;
+                }
                 operator_impl_detail::bind_output(
                     resolution, TypeRegistry::instance().ts(schema->value_schema->element_type));
             }
@@ -210,8 +232,9 @@ namespace hgraph::stdlib
 
             [[nodiscard]] static bool matches(OperatorCallContext context)
             {
-                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW);
-                return schema != nullptr &&
+                const auto *schema = operator_impl_detail::time_series_schema_at(context, 0);
+                return operator_impl_detail::time_series_schema_matches_pattern(
+                           schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSW)) &&
                        schema->value_schema->element_type == scalar_descriptor<T>::value_meta();
             }
 
@@ -260,14 +283,19 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW) != nullptr;
+                return operator_impl_detail::time_series_arg_matches_pattern(
+                    context, 0, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSW));
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (operator_impl_detail::output_bound(resolution)) { return; }
-                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSW);
-                if (schema == nullptr) { return; }
+                const auto *schema = operator_impl_detail::time_series_schema_at(context, 0);
+                if (!operator_impl_detail::time_series_schema_matches_pattern(
+                        schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSW)))
+                {
+                    return;
+                }
                 operator_impl_detail::bind_output(
                     resolution, TypeRegistry::instance().ts(schema->value_schema->element_type));
             }

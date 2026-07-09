@@ -203,8 +203,12 @@ namespace hgraph::stdlib
             // time-series argument.
             for (std::size_t index = 0; index < context.args.size(); ++index)
             {
-                const auto *schema = operator_impl_detail::time_series_arg_of_kind(context, index, TSTypeKind::TSD);
-                if (schema != nullptr) { return schema; }
+                const auto *schema = operator_impl_detail::time_series_schema_at(context, index);
+                if (operator_impl_detail::time_series_schema_matches_pattern(
+                        schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSD)))
+                {
+                    return schema;
+                }
             }
             return nullptr;
         }

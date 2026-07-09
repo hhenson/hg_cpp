@@ -20,11 +20,12 @@ namespace hgraph::stdlib::operator_impl_detail
      * is not applicable, and bind only when the output is known.
      *
      * Extraction helpers return a pointer, or ``nullptr`` when the requested
-     * pattern is not present. Typical patterns are:
+     * shape is not present. Typical patterns are:
      *
      * - ``time_series_schema_at`` extracts a TS argument schema, dereferencing
      *   REF by default.
-     * - ``time_series_arg_of_kind`` extracts only a specific ``TSTypeKind``.
+     * - ``time_series_schema_at`` plus ``time_series_schema_matches_pattern``
+     *   answers recursive shape questions without a separate kind-specific API.
      * - ``fixed_tsl_arg`` extracts only a positive fixed-size TSL.
      * - ``ts_value_schema`` extracts ``T`` from ``TS<T>``.
      * - ``ts_map_value_schema`` extracts the scalar map schema from
@@ -181,59 +182,14 @@ namespace hgraph::stdlib::operator_impl_detail
         std::unreachable();
     }
 
-    /** Match a concrete schema against a broad time-series kind. */
-    [[nodiscard]] inline bool time_series_schema_matches_kind(
-        const TSValueTypeMetaData *schema,
-        TSTypeKind                 kind)
-    {
-        return time_series_schema_matches_pattern(schema, time_series_kind_pattern(kind));
-    }
-
-    /** Return ``schema`` only when it matches ``kind``. */
-    [[nodiscard]] inline const TSValueTypeMetaData *time_series_schema_of_kind(
-        const TSValueTypeMetaData *schema,
-        TSTypeKind                 kind)
-    {
-        return time_series_schema_matches_kind(schema, kind) ? schema : nullptr;
-    }
-
-    /** Match argument ``index`` against a broad time-series kind. */
-    [[nodiscard]] inline bool time_series_arg_matches_kind(
-        OperatorCallContext context,
-        std::size_t         index,
-        TSTypeKind          kind,
-        SchemaRefMode       mode = SchemaRefMode::Dereference)
-    {
-        return time_series_schema_matches_kind(time_series_schema_at(context, index, mode), kind);
-    }
-
-    /** True when the argument is any TSL shape, using the recursive pattern matcher. */
-    [[nodiscard]] inline bool time_series_arg_is_tsl(
-        OperatorCallContext context,
-        std::size_t         index,
-        SchemaRefMode       mode = SchemaRefMode::Dereference)
-    {
-        return time_series_arg_matches_kind(context, index, TSTypeKind::TSL, mode);
-    }
-
-    /** Return the time-series schema at ``index`` only when it has ``kind``. */
-    [[nodiscard]] inline const TSValueTypeMetaData *time_series_arg_of_kind(
-        OperatorCallContext context,
-        std::size_t         index,
-        TSTypeKind          kind,
-        SchemaRefMode       mode = SchemaRefMode::Dereference)
-    {
-        return time_series_schema_of_kind(time_series_schema_at(context, index, mode), kind);
-    }
-
     /** Return a fixed-size TSL schema at ``index``. Dynamic TSL returns null. */
     [[nodiscard]] inline const TSValueTypeMetaData *fixed_tsl_arg(
         OperatorCallContext context,
         std::size_t         index,
         SchemaRefMode       mode = SchemaRefMode::Dereference)
     {
-        if (!time_series_arg_is_tsl(context, index, mode)) { return nullptr; }
         const TSValueTypeMetaData *schema = time_series_schema_at(context, index, mode);
+        if (!time_series_schema_matches_pattern(schema, time_series_kind_pattern(TSTypeKind::TSL))) { return nullptr; }
         return schema != nullptr && schema->fixed_size() > 0 ? schema : nullptr;
     }
 
@@ -246,20 +202,6 @@ namespace hgraph::stdlib::operator_impl_detail
         const TSValueTypeMetaData *lhs = fixed_tsl_arg(context, lhs_index, mode);
         const TSValueTypeMetaData *rhs = fixed_tsl_arg(context, rhs_index, mode);
         return lhs != nullptr && rhs != nullptr && lhs->fixed_size() == rhs->fixed_size();
-    }
-
-    /** True when every argument is a time-series argument of ``kind``. */
-    [[nodiscard]] inline bool all_time_series_args_of_kind(
-        OperatorCallContext context,
-        TSTypeKind          kind,
-        SchemaRefMode       mode = SchemaRefMode::Dereference)
-    {
-        if (context.args.empty()) { return false; }
-        for (std::size_t index = 0; index < context.args.size(); ++index)
-        {
-            if (time_series_arg_of_kind(context, index, kind, mode) == nullptr) { return false; }
-        }
-        return true;
     }
 
     /** Return a TS value schema when ``ts`` is a plain ``TS<T>``. */
@@ -312,25 +254,6 @@ namespace hgraph::stdlib::operator_impl_detail
         SchemaRefMode        mode = SchemaRefMode::Direct)
     {
         return output_matches_pattern(resolution, to_pattern<Schema>(), mode);
-    }
-
-    /** Match the resolved graph output against a broad time-series kind. */
-    [[nodiscard]] inline bool output_matches_kind(
-        const ResolutionMap &resolution,
-        TSTypeKind           kind,
-        SchemaRefMode        mode = SchemaRefMode::Direct)
-    {
-        return output_matches_pattern(resolution, time_series_kind_pattern(kind), mode);
-    }
-
-    /** Return the graph output schema only when it matches ``kind``. */
-    [[nodiscard]] inline const TSValueTypeMetaData *output_of_kind(
-        const ResolutionMap &resolution,
-        TSTypeKind           kind,
-        SchemaRefMode        mode = SchemaRefMode::Direct)
-    {
-        const TSValueTypeMetaData *schema = output_schema(resolution, mode);
-        return schema != nullptr && output_matches_kind(resolution, kind, mode) ? schema : nullptr;
     }
 
     /** Return ``T`` when the resolved graph output is ``TS<T>``. */

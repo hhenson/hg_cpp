@@ -118,7 +118,8 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
             return series_impl_detail::is_series_arg(context, 0) &&
-                   operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TS) != nullptr;
+                   operator_impl_detail::time_series_arg_matches_pattern(
+                       context, 1, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS));
         }
 
         static void eval(In<"ts", TS<ScalarVar<"S">>> ts, In<"key", TS<Int>> key, Out<TsVar<"O">> out)
