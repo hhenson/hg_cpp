@@ -92,6 +92,7 @@ set(HGRAPH_STDLIB_SOURCES
     hgraph/lib/std/operators/record_replay_frame_impl.cpp
     hgraph/lib/std/operators/registration.cpp
     hgraph/lib/std/operators/stream_impl.cpp
+    hgraph/lib/std/operators/series_impl.cpp
     hgraph/lib/std/operators/string_impl.cpp
     hgraph/lib/std/operators/table_impl.cpp
     hgraph/lib/std/operators/temporal_impl.cpp

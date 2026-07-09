@@ -1,4 +1,5 @@
 #include <hgraph/lib/std/operators/impl/operators_impl.h>
+#include <hgraph/lib/std/operators/impl/series_impl.h>
 #include <hgraph/lib/std/operators/registration.h>
 
 namespace hgraph::stdlib
@@ -18,6 +19,7 @@ namespace hgraph::stdlib
         register_table_operators();
         register_record_replay_frame_operators();
         register_stream_operators();
+        register_series_operators();
         register_string_operators();
         register_temporal_operators();
     }

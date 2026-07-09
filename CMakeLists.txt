@@ -156,7 +156,8 @@ target_link_libraries(hgraph_options INTERFACE fmt::fmt)
 # (`brew install apache-arrow` / `apt install libarrow-dev`); Arrow is too
 # heavy to FetchContent by default.
 find_package(Arrow CONFIG REQUIRED)
-target_link_libraries(hgraph_options INTERFACE Arrow::arrow_shared)
+find_package(ArrowCompute CONFIG REQUIRED)  # Arrow 24 splits compute into its own lib
+target_link_libraries(hgraph_options INTERFACE Arrow::arrow_shared ArrowCompute::arrow_compute_shared)
 
 # spdlog backs the LOGGER injectable (ruling 2026-07-04), built in
 # SPDLOG_FMT_EXTERNAL mode against the fmt above so there is exactly one fmt
@@ -368,6 +369,7 @@ set(_hgraph_config_dependencies
     "find_dependency(Threads)\n"
     "find_dependency(fmt CONFIG)\n"
     "find_dependency(Arrow CONFIG)\n"
+    "find_dependency(ArrowCompute CONFIG)\n"
     "find_dependency(spdlog CONFIG)\n"
 )
 if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
