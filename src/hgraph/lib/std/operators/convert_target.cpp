@@ -16,6 +16,12 @@ namespace hgraph::stdlib
         using hgraph::operator_type_resolution::collection_element_or_self_schema;
         using hgraph::operator_type_resolution::collection_element_schema;
         using hgraph::operator_type_resolution::homogeneous_tuple_element_schema;
+        using hgraph::operator_type_resolution::AnyTS;
+        using hgraph::operator_type_resolution::AnyTSB;
+        using hgraph::operator_type_resolution::AnyTSD;
+        using hgraph::operator_type_resolution::AnyTSL;
+        using hgraph::operator_type_resolution::AnyTSS;
+        using hgraph::operator_type_resolution::time_series_schema_as;
         using hgraph::operator_type_resolution::ts_value_schema;
 
         [[nodiscard]] std::string schema_name(const TSValueTypeMetaData *schema)
@@ -38,23 +44,23 @@ namespace hgraph::stdlib
 
         [[nodiscard]] const ValueTypeMetaData *tss_element(const TSValueTypeMetaData *schema)
         {
-            schema = deref(schema);
-            return schema != nullptr && schema->kind == TSTypeKind::TSS && schema->value_schema != nullptr
+            schema = time_series_schema_as<AnyTSS>(schema);
+            return schema != nullptr && schema->value_schema != nullptr
                        ? schema->value_schema->element_type
                        : nullptr;
         }
 
         [[nodiscard]] const ValueTypeMetaData *tsd_value_scalar(const TSValueTypeMetaData *schema)
         {
-            schema = deref(schema);
-            if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return nullptr; }
+            schema = time_series_schema_as<AnyTSD>(schema);
+            if (schema == nullptr) { return nullptr; }
             return ts_value_schema(deref(schema->element_ts()));
         }
 
         [[nodiscard]] const ValueTypeMetaData *tsl_element_scalar(const TSValueTypeMetaData *schema)
         {
-            schema = deref(schema);
-            if (schema == nullptr || schema->kind != TSTypeKind::TSL) { return nullptr; }
+            schema = time_series_schema_as<AnyTSL>(schema);
+            if (schema == nullptr) { return nullptr; }
             return ts_value_schema(deref(schema->element_ts()));
         }
 
@@ -62,7 +68,7 @@ namespace hgraph::stdlib
         {
             schema = deref(schema);
             if (schema == nullptr) { return nullptr; }
-            if (schema->kind == TSTypeKind::TSS) { return tss_element(schema); }
+            if (time_series_schema_as<AnyTSS>(schema) != nullptr) { return tss_element(schema); }
             return collection_element_or_self_schema(ts_value_schema(schema));
         }
 
@@ -71,7 +77,8 @@ namespace hgraph::stdlib
             std::span<const std::string> selected_keys)
         {
             std::vector<std::size_t> indices;
-            if (schema == nullptr || schema->kind != TSTypeKind::TSB) { return indices; }
+            schema = time_series_schema_as<AnyTSB>(schema);
+            if (schema == nullptr) { return indices; }
             if (selected_keys.empty())
             {
                 indices.reserve(schema->field_count());
@@ -207,9 +214,9 @@ namespace hgraph::stdlib
         {
             auto &registry = TypeRegistry::instance();
             const TSValueTypeMetaData *input = require_one_input(inputs, "TS[tuple]");
-            if (input->kind == TSTypeKind::TS)
+            if (const TSValueTypeMetaData *ts = time_series_schema_as<AnyTS>(input))
             {
-                const ValueTypeMetaData *value = input->value_schema;
+                const ValueTypeMetaData *value = ts->value_schema;
                 if (value != nullptr && (value->kind == ValueTypeKind::Tuple || value->kind == ValueTypeKind::List))
                 {
                     return value;
@@ -217,19 +224,19 @@ namespace hgraph::stdlib
                 const ValueTypeMetaData *element = collection_element_or_self_schema(value);
                 if (element != nullptr) { return registry.list(element, 0, true); }
             }
-            if (input->kind == TSTypeKind::TSS)
+            if (time_series_schema_as<AnyTSS>(input) != nullptr)
             {
                 const ValueTypeMetaData *element = tss_element(input);
                 if (element != nullptr) { return registry.list(element, 0, true); }
             }
-            if (input->kind == TSTypeKind::TSL)
+            if (const TSValueTypeMetaData *tsl = time_series_schema_as<AnyTSL>(input))
             {
-                const ValueTypeMetaData *element = tsl_element_scalar(input);
-                if (element == nullptr || input->fixed_size() == 0)
+                const ValueTypeMetaData *element = tsl_element_scalar(tsl);
+                if (element == nullptr || tsl->fixed_size() == 0)
                 {
                     throw std::invalid_argument(fmt::format("cannot infer fixed tuple target from {}", schema_name(input)));
                 }
-                std::vector<const ValueTypeMetaData *> fields(input->fixed_size(), element);
+                std::vector<const ValueTypeMetaData *> fields(tsl->fixed_size(), element);
                 return registry.tuple(fields);
             }
             throw std::invalid_argument(fmt::format("cannot infer TS[tuple] target from {}", schema_name(input)));
@@ -241,8 +248,11 @@ namespace hgraph::stdlib
             auto &registry = TypeRegistry::instance();
             const TSValueTypeMetaData *input = require_one_input(inputs, "TS[set]");
             const ValueTypeMetaData *element = nullptr;
-            if (input->kind == TSTypeKind::TS) { element = collection_element_or_self_schema(input->value_schema); }
-            else if (input->kind == TSTypeKind::TSS) { element = tss_element(input); }
+            if (const TSValueTypeMetaData *ts = time_series_schema_as<AnyTS>(input))
+            {
+                element = collection_element_or_self_schema(ts->value_schema);
+            }
+            else if (time_series_schema_as<AnyTSS>(input) != nullptr) { element = tss_element(input); }
             if (element == nullptr)
             {
                 throw std::invalid_argument(fmt::format("cannot infer TS[set] target from {}", schema_name(input)));
@@ -257,24 +267,24 @@ namespace hgraph::stdlib
             const TSValueTypeMetaData *first = require_one_input(inputs, "TS[Mapping]");
             if (inputs.size() == 1)
             {
-                if (first->kind == TSTypeKind::TS)
+                if (const TSValueTypeMetaData *ts = time_series_schema_as<AnyTS>(first))
                 {
-                    if (first->value_schema != nullptr && first->value_schema->kind == ValueTypeKind::Map)
+                    if (ts->value_schema != nullptr && ts->value_schema->kind == ValueTypeKind::Map)
                     {
-                        return first->value_schema;
+                        return ts->value_schema;
                     }
                 }
-                if (first->kind == TSTypeKind::TSD)
+                if (const TSValueTypeMetaData *tsd = time_series_schema_as<AnyTSD>(first))
                 {
-                    const ValueTypeMetaData *value = tsd_value_scalar(first);
-                    if (value != nullptr) { return registry.map(first->key_type(), value); }
+                    const ValueTypeMetaData *value = tsd_value_scalar(tsd);
+                    if (value != nullptr) { return registry.map(tsd->key_type(), value); }
                 }
-                if (first->kind == TSTypeKind::TSL)
+                if (time_series_schema_as<AnyTSL>(first) != nullptr)
                 {
                     const ValueTypeMetaData *value = tsl_element_scalar(first);
                     if (value != nullptr) { return registry.map(registry.value_type("int"), value); }
                 }
-                if (first->kind == TSTypeKind::TSB)
+                if (time_series_schema_as<AnyTSB>(first) != nullptr)
                 {
                     const ValueTypeMetaData *value = homogeneous_tsb_value_scalar(first, {});
                     return registry.map(registry.value_type("str"), value);
@@ -300,21 +310,21 @@ namespace hgraph::stdlib
             const TSValueTypeMetaData *first = require_one_input(inputs, "TSD");
             if (inputs.size() == 1)
             {
-                if (first->kind == TSTypeKind::TSB)
+                if (time_series_schema_as<AnyTSB>(first) != nullptr)
                 {
                     return registry.tsd(registry.value_type("str"), homogeneous_tsb_value_ts(first, selected_keys));
                 }
-                if (first->kind == TSTypeKind::TS)
+                if (const TSValueTypeMetaData *ts = time_series_schema_as<AnyTS>(first))
                 {
-                    const ValueTypeMetaData *value = first->value_schema;
+                    const ValueTypeMetaData *value = ts->value_schema;
                     if (value != nullptr && value->kind == ValueTypeKind::Map)
                     {
                         return registry.tsd(value->key_type, registry.ts(value->element_type));
                     }
                 }
-                if (first->kind == TSTypeKind::TSL)
+                if (const TSValueTypeMetaData *tsl = time_series_schema_as<AnyTSL>(first))
                 {
-                    const TSValueTypeMetaData *element = deref(first->element_ts());
+                    const TSValueTypeMetaData *element = deref(tsl->element_ts());
                     if (element != nullptr)
                     {
                         return registry.tsd(registry.value_type("int"), registry.ref(element));
@@ -337,10 +347,11 @@ namespace hgraph::stdlib
         {
             auto &registry = TypeRegistry::instance();
             const TSValueTypeMetaData *input = require_one_input(inputs, "TSL");
-            if (input->kind == TSTypeKind::TSL) { return input; }
-            if (input->kind == TSTypeKind::TS && input->value_schema != nullptr)
+            if (time_series_schema_as<AnyTSL>(input) != nullptr) { return input; }
+            if (const TSValueTypeMetaData *ts = time_series_schema_as<AnyTS>(input);
+                ts != nullptr && ts->value_schema != nullptr)
             {
-                const ValueTypeMetaData *value = input->value_schema;
+                const ValueTypeMetaData *value = ts->value_schema;
                 if (value->kind == ValueTypeKind::List && value->fixed_size > 0)
                 {
                     return registry.tsl(registry.ts(value->element_type), value->fixed_size);
@@ -361,7 +372,7 @@ namespace hgraph::stdlib
             std::span<const TSValueTypeMetaData *const> inputs)
         {
             const TSValueTypeMetaData *input = require_one_input(inputs, "TSB");
-            if (input->kind == TSTypeKind::TSB) { return input; }
+            if (time_series_schema_as<AnyTSB>(input) != nullptr) { return input; }
             const ValueTypeMetaData *value = ts_value_schema(input);
             if (const TSValueTypeMetaData *bundle = tsb_for_bundle_value(value)) { return bundle; }
             throw std::invalid_argument(fmt::format("cannot infer TSB target from {}", schema_name(input)));
@@ -377,7 +388,7 @@ namespace hgraph::stdlib
                 case ScalarPattern::Kind::Var:
                 {
                     const TSValueTypeMetaData *input = require_one_input(inputs, "TS[T]");
-                    if (input->kind != TSTypeKind::TS)
+                    if (time_series_schema_as<AnyTS>(input) == nullptr)
                     {
                         throw std::invalid_argument(
                             fmt::format("cannot infer TS[T] target from {}", schema_name(input)));
@@ -393,14 +404,16 @@ namespace hgraph::stdlib
                 case ScalarPattern::Kind::Bundle:
                 {
                     const TSValueTypeMetaData *input = require_one_input(inputs, "TS[CompoundScalar]");
-                    if (input->kind == TSTypeKind::TSB && input->value_schema != nullptr)
+                    if (const TSValueTypeMetaData *tsb = time_series_schema_as<AnyTSB>(input);
+                        tsb != nullptr && tsb->value_schema != nullptr)
                     {
-                        return registry.ts(input->value_schema);
+                        return registry.ts(tsb->value_schema);
                     }
-                    if (input->kind == TSTypeKind::TS && input->value_schema != nullptr &&
-                        input->value_schema->kind == ValueTypeKind::Bundle)
+                    if (const TSValueTypeMetaData *ts = time_series_schema_as<AnyTS>(input);
+                        ts != nullptr && ts->value_schema != nullptr &&
+                        ts->value_schema->kind == ValueTypeKind::Bundle)
                     {
-                        return input;
+                        return ts;
                     }
                     throw std::invalid_argument(
                         fmt::format("cannot infer TS[CompoundScalar] target from {}", schema_name(input)));
@@ -424,9 +437,15 @@ namespace hgraph::stdlib
                 {
                     const TSValueTypeMetaData *input = require_one_input(inputs, ts_pattern_to_string(pattern));
                     const ValueTypeMetaData *element = nullptr;
-                    if (input->kind == TSTypeKind::TS) { element = collection_element_or_self_schema(input->value_schema); }
-                    else if (input->kind == TSTypeKind::TSS) { element = tss_element(input); }
-                    else if (input->kind == TSTypeKind::TSD) { element = input->key_type(); }
+                    if (const TSValueTypeMetaData *ts = time_series_schema_as<AnyTS>(input))
+                    {
+                        element = collection_element_or_self_schema(ts->value_schema);
+                    }
+                    else if (time_series_schema_as<AnyTSS>(input) != nullptr) { element = tss_element(input); }
+                    else if (const TSValueTypeMetaData *tsd = time_series_schema_as<AnyTSD>(input))
+                    {
+                        element = tsd->key_type();
+                    }
                     if (element == nullptr)
                     {
                         throw std::invalid_argument(
@@ -460,11 +479,12 @@ namespace hgraph::stdlib
         {
             auto &registry = TypeRegistry::instance();
             const TSValueTypeMetaData *first = require_one_input(inputs, "collect[TSD]");
-            if (first != nullptr && first->kind == TSTypeKind::TSD) { return first; }
-            if (inputs.size() == 1 && first != nullptr && first->kind == TSTypeKind::TS &&
-                first->value_schema != nullptr && first->value_schema->kind == ValueTypeKind::Map)
+            if (time_series_schema_as<AnyTSD>(first) != nullptr) { return first; }
+            const auto *first_ts = time_series_schema_as<AnyTS>(first);
+            if (inputs.size() == 1 && first_ts != nullptr &&
+                first_ts->value_schema != nullptr && first_ts->value_schema->kind == ValueTypeKind::Map)
             {
-                return registry.tsd(first->value_schema->key_type, registry.ts(first->value_schema->element_type));
+                return registry.tsd(first_ts->value_schema->key_type, registry.ts(first_ts->value_schema->element_type));
             }
             if (inputs.size() >= 2)
             {
