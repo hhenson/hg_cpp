@@ -30,8 +30,8 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline bool is_series_arg(OperatorCallContext context, std::size_t index)
         {
-            const auto *schema = time_series_schema_at(context, index);
-            return schema != nullptr && schema->kind == TSTypeKind::TS && schema->value_schema == series_meta();
+            const auto *schema = time_series_schema_at_as<AnyTS>(context, index);
+            return schema != nullptr && schema->value_schema == series_meta();
         }
 
         /** A ``arrow::Datum`` for one operand: the Series' array, or a scalar
