@@ -439,8 +439,7 @@ namespace hgraph::stdlib
             const auto *out_element = collection_element_schema(output_ts_value_schema(resolution));
             const auto *in          = time_series_schema_at(context, 0);
             return out_element != nullptr &&
-                   time_series_schema_matches_pattern(
-                       in, time_series_kind_pattern(TSTypeKind::TSS)) &&
+                   time_series_schema_matches<AnyTSS>(in) &&
                    out_element == in->value_schema->element_type;
         }
 
@@ -481,8 +480,7 @@ namespace hgraph::stdlib
         {
             const auto *out = output_schema(resolution);
             const auto *in  = ts_value_schema_at(context, 0);
-            return output_matches_pattern(
-                       resolution, time_series_kind_pattern(TSTypeKind::TSS)) &&
+            return output_matches<AnyTSS>(resolution) &&
                    collection_element_schema(in) == out->value_schema->element_type;
         }
 
@@ -525,8 +523,7 @@ namespace hgraph::stdlib
             const auto *out = output_ts_value_schema(resolution);
             const auto *in  = time_series_schema_at(context, 0);
             if (out == nullptr ||
-                !time_series_schema_matches_pattern(
-                    in, time_series_kind_pattern(TSTypeKind::TSD)) ||
+                !time_series_schema_matches<AnyTSD>(in) ||
                 out->kind != ValueTypeKind::Map)
             {
                 return false;
@@ -562,8 +559,7 @@ namespace hgraph::stdlib
         {
             const auto *out = output_schema(resolution);
             const auto *in  = ts_value_schema_at(context, 0);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSD)) ||
+            if (!output_matches<AnyTSD>(resolution) ||
                 in == nullptr || in->kind != ValueTypeKind::Map)
             {
                 return false;
@@ -610,10 +606,8 @@ namespace hgraph::stdlib
         {
             const auto *out = output_schema(resolution);
             const auto *in  = time_series_schema_at(context, 0);
-            return output_matches_pattern(
-                       resolution, time_series_kind_pattern(TSTypeKind::TSS)) &&
-                   time_series_schema_matches_pattern(
-                       in, time_series_kind_pattern(TSTypeKind::TS)) &&
+            return output_matches<AnyTSS>(resolution) &&
+                   time_series_schema_matches<AnyTS>(in) &&
                    out->value_schema->element_type == in->value_schema;
         }
 
@@ -645,8 +639,7 @@ namespace hgraph::stdlib
         {
             const auto *out = output_schema(resolution);
             const auto *v   = ts_value_schema_at(context, 1);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSD)) ||
+            if (!output_matches<AnyTSD>(resolution) ||
                 v == nullptr)
             {
                 return false;
@@ -915,8 +908,7 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out = output_schema(resolution);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSS)) ||
+            if (!output_matches<AnyTSS>(resolution) ||
                 context.args.empty())
             {
                 return false;
@@ -925,8 +917,7 @@ namespace hgraph::stdlib
             for (std::size_t index = 0; index < context.args.size(); ++index)
             {
                 const auto *arg = time_series_schema_at(context, index);
-                if (!time_series_schema_matches_pattern(
-                        arg, time_series_kind_pattern(TSTypeKind::TS)) ||
+                if (!time_series_schema_matches<AnyTS>(arg) ||
                     arg->value_schema != element)
                 {
                     return false;
@@ -1004,8 +995,7 @@ namespace hgraph::stdlib
         {
             const auto *out = output_schema(resolution);
             const auto *in  = fixed_tsl_arg(context, 0);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSD)) ||
+            if (!output_matches<AnyTSD>(resolution) ||
                 in == nullptr)
             {
                 return false;
@@ -1072,8 +1062,7 @@ namespace hgraph::stdlib
             const auto *out = output_schema(resolution);
             const auto *k   = ts_value_schema_at(context, 0);
             const auto *v   = ts_value_schema_at(context, 1);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSD)) ||
+            if (!output_matches<AnyTSD>(resolution) ||
                 k == nullptr || v == nullptr || k->kind != ValueTypeKind::List ||
                 v->kind != ValueTypeKind::List)
             {
@@ -1199,8 +1188,7 @@ namespace hgraph::stdlib
             const auto *out = output_ts_value_schema(resolution);
             const auto *in  = time_series_schema_at(context, 0);
             if (out == nullptr || out->kind != ValueTypeKind::Map ||
-                !time_series_schema_matches_pattern(
-                    in, time_series_kind_pattern(TSTypeKind::TSB)) ||
+                !time_series_schema_matches<AnyTSB>(in) ||
                 in->field_count() == 0)
             {
                 return false;
@@ -1343,8 +1331,7 @@ namespace hgraph::stdlib
         {
             const auto *out = output_schema(resolution);
             const auto *in  = ts_value_schema_at(context, 0);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSL)) ||
+            if (!output_matches<AnyTSL>(resolution) ||
                 out->fixed_size() == 0 || in == nullptr)
             {
                 return false;
@@ -1383,8 +1370,7 @@ namespace hgraph::stdlib
         // output match; requires_ checks the INPUT only (the dispatch rule).
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return time_series_arg_matches_pattern(
-                context, 0, time_series_kind_pattern(TSTypeKind::TSB));
+            return time_series_arg_matches<AnyTSB>(context, 0);
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Out<TS<Bool>> out)
@@ -1410,10 +1396,8 @@ namespace hgraph::stdlib
         {
             const auto *out = output_schema(resolution);
             const auto *in  = time_series_schema_at(context, 0);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSD)) ||
-                !time_series_schema_matches_pattern(
-                    in, time_series_kind_pattern(TSTypeKind::TSB)))
+            if (!output_matches<AnyTSD>(resolution) ||
+                !time_series_schema_matches<AnyTSB>(in))
             {
                 return false;
             }
@@ -1645,8 +1629,7 @@ namespace hgraph::stdlib
             const auto *out = output_schema(resolution);
             const auto *k   = ts_value_schema_at(context, 0);
             const auto *v   = ts_value_schema_at(context, 1);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSD)) ||
+            if (!output_matches<AnyTSD>(resolution) ||
                 k == nullptr || v == nullptr)
             {
                 return false;
@@ -1697,8 +1680,7 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out = output_schema(resolution);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSS)))
+            if (!output_matches<AnyTSS>(resolution))
             {
                 return false;
             }
@@ -1761,8 +1743,7 @@ namespace hgraph::stdlib
         {
             const auto *out = output_schema(resolution);
             const auto *in  = ts_value_schema_at(context, 0);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSD)) ||
+            if (!output_matches<AnyTSD>(resolution) ||
                 in == nullptr || in->kind != ValueTypeKind::List)
             {
                 return false;
@@ -1811,8 +1792,7 @@ namespace hgraph::stdlib
             const auto *out = output_schema(resolution);
             const auto *k   = ts_value_schema_at(context, 0);
             const auto *v   = ts_value_schema_at(context, 1);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSD)) ||
+            if (!output_matches<AnyTSD>(resolution) ||
                 k == nullptr || v == nullptr || k->kind != ValueTypeKind::List ||
                 v->kind != ValueTypeKind::List)
             {
@@ -1879,8 +1859,7 @@ namespace hgraph::stdlib
         {
             const auto *out = output_schema(resolution);
             const auto *in  = ts_value_schema_at(context, 0);
-            if (!output_matches_pattern(
-                    resolution, time_series_kind_pattern(TSTypeKind::TSD)) ||
+            if (!output_matches<AnyTSD>(resolution) ||
                 in == nullptr || in->kind != ValueTypeKind::Map)
             {
                 return false;
@@ -1931,10 +1910,8 @@ namespace hgraph::stdlib
         {
             const auto *out = output_schema(resolution);
             const auto *in  = time_series_schema_at(context, 0);
-            return output_matches_pattern(
-                       resolution, time_series_kind_pattern(TSTypeKind::TSD)) &&
-                   time_series_schema_matches_pattern(
-                       in, time_series_kind_pattern(TSTypeKind::TSD)) &&
+            return output_matches<AnyTSD>(resolution) &&
+                   time_series_schema_matches<AnyTSD>(in) &&
                    in == out;
         }
 

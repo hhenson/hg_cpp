@@ -82,6 +82,14 @@ namespace hgraph::operator_type_resolution
         Dereference
     };
 
+    /** Broad static patterns for readable kind checks in operator predicates. */
+    using AnyTS  = TS<ScalarVar<"__value">>;
+    using AnyTSS = TSS<ScalarVar<"__element">>;
+    using AnyTSD = TSD<ScalarVar<"__key">, TsVar<"__value">>;
+    using AnyTSL = TSL<TsVar<"__element">, SIZE<"__size">>;
+    using AnyTSB = UnNamedTSB<TsVar<"__schema">>;
+    using AnyREF = REF<TsVar<"__target">>;
+
     /** Return argument ``index``, or null when the call is shorter. */
     [[nodiscard]] inline const WiringArg *arg_at(OperatorCallContext context, std::size_t index) noexcept
     {
@@ -137,6 +145,13 @@ namespace hgraph::operator_type_resolution
         return input_ts_pattern_match(pattern, schema, scratch);
     }
 
+    /** Typed counterpart of ``time_series_schema_matches_pattern``. */
+    template <typename Schema>
+    [[nodiscard]] inline bool time_series_schema_matches(const TSValueTypeMetaData *schema)
+    {
+        return time_series_schema_matches_pattern(schema, to_pattern<Schema>());
+    }
+
     /** Match argument ``index`` against a full recursive time-series pattern. */
     [[nodiscard]] inline bool time_series_arg_matches_pattern(
         OperatorCallContext context,
@@ -163,17 +178,17 @@ namespace hgraph::operator_type_resolution
         switch (kind)
         {
             case TSTypeKind::TS:
-                return TypePattern::ts(ScalarPattern::var("__value"));
+                return to_pattern<AnyTS>();
             case TSTypeKind::TSS:
-                return TypePattern::tss(ScalarPattern::var("__element"));
+                return to_pattern<AnyTSS>();
             case TSTypeKind::TSL:
-                return TypePattern::tsl_var(TypePattern::var("__element"), "__size");
+                return to_pattern<AnyTSL>();
             case TSTypeKind::TSD:
-                return TypePattern::tsd(ScalarPattern::var("__key"), TypePattern::var("__value"));
+                return to_pattern<AnyTSD>();
             case TSTypeKind::TSB:
-                return TypePattern::tsb_var("__schema");
+                return to_pattern<AnyTSB>();
             case TSTypeKind::REF:
-                return TypePattern::ref(TypePattern::var("__target"));
+                return to_pattern<AnyREF>();
             case TSTypeKind::SIGNAL:
                 return TypePattern::signal();
             case TSTypeKind::TSW:
@@ -189,7 +204,7 @@ namespace hgraph::operator_type_resolution
         SchemaRefMode       mode = SchemaRefMode::Dereference)
     {
         const TSValueTypeMetaData *schema = time_series_schema_at(context, index, mode);
-        if (!time_series_schema_matches_pattern(schema, time_series_kind_pattern(TSTypeKind::TSL))) { return nullptr; }
+        if (!time_series_schema_matches<AnyTSL>(schema)) { return nullptr; }
         return schema != nullptr && schema->fixed_size() > 0 ? schema : nullptr;
     }
 

@@ -596,6 +596,25 @@ TEST_CASE("operators: TypePattern supports recursive scalar container patterns")
     }
 }
 
+TEST_CASE("operators: typed broad schema aliases match runtime schemas")
+{
+    using namespace hgraph::operator_type_resolution;
+
+    auto &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<Int>("int");
+    (void)registry.register_scalar<Str>("str");
+
+    CHECK(time_series_schema_matches<AnyTS>(ts_type<TS<Int>>()));
+    CHECK_FALSE(time_series_schema_matches<AnyTS>(ts_type<TSS<Int>>()));
+    CHECK(time_series_schema_matches<AnyTSS>(ts_type<TSS<Int>>()));
+    CHECK(time_series_schema_matches<AnyTSD>(ts_type<TSD<Int, TS<Str>>>()));
+    CHECK(time_series_schema_matches<AnyTSL>(ts_type<TSL<TS<Int>, 2>>()));
+
+    using Bundle = UnNamedTSB<Field<"x", TS<Int>>>;
+    CHECK(time_series_schema_matches<AnyTSB>(ts_type<Bundle>()));
+    CHECK(time_series_schema_matches<AnyREF>(registry.ref(ts_type<TS<Int>>())));
+}
+
 TEST_CASE("operators: TypePattern supports TSB schema variables")
 {
     using Bundle = UnNamedTSB<Field<"x", TS<Int>>>;
