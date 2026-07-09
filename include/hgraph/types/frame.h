@@ -76,4 +76,40 @@ struct std::hash<hgraph::Frame>
     }
 };
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+#include <hgraph/types/value/value_ops.h>
+
+#include <nanobind/nanobind.h>
+
+namespace hgraph
+{
+    /** Frame <-> pyarrow binds onto the type-erased ops (module installs the
+        hooks; core dispatches uniformly - no kind-switch). */
+    template <>
+    struct python_conversion_traits<Frame>
+    {
+        inline static nanobind::object (*to_python_hook)(const Frame &) = nullptr;
+        inline static Frame (*from_python_hook)(nanobind::handle)       = nullptr;
+
+        static nanobind::object to_python(const Frame &value)
+        {
+            if (to_python_hook == nullptr)
+            {
+                throw std::logic_error("Frame python conversion hook not installed (import the module)");
+            }
+            return to_python_hook(value);
+        }
+
+        static Frame from_python(nanobind::handle source)
+        {
+            if (from_python_hook == nullptr)
+            {
+                throw std::logic_error("Frame python conversion hook not installed (import the module)");
+            }
+            return from_python_hook(source);
+        }
+    };
+}  // namespace hgraph
+#endif  // HGRAPH_ENABLE_PYTHON_USER_NODES
+
 #endif  // HGRAPH_TYPES_FRAME_H

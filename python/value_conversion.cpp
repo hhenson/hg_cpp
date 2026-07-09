@@ -275,17 +275,10 @@ namespace hgraph::python_bridge
     nb::object value_to_py(const ValueView &view)
     {
         if (!view.valid()) { return nb::none(); }
-        // Frame -> pyarrow needs the module's arrow linkage; everything else
-        // dispatches through the BINDING's ops (the type-erasure rule - each
-        // kind's conversion lives with its ops installation).
-        if (view.schema() == scalar_descriptor<Frame>::value_meta())
-        {
-            return frame_to_py(view.checked_as<Frame>());
-        }
-        if (view.schema() == scalar_descriptor<Series>::value_meta())
-        {
-            return series_to_py(view.checked_as<Series>());
-        }
+        // Frame/Series -> pyarrow dispatch through the type-erased ops (the
+        // python_conversion_traits hooks installed at module init); no
+        // kind-switch here (the type-erasure rule - conversion lives with the
+        // ops).
         if (view.schema()->display_name != nullptr &&
             std::string_view{view.schema()->display_name} == "TimeSeriesReference")
         {
@@ -303,17 +296,26 @@ namespace hgraph::python_bridge
 
     Value py_to_value_as(nb::handle object, const ValueTypeMetaData *meta)
     {
-        // Frame -> arrow needs the module's linkage; everything else is the
-        // BINDING's from_python (the type-erasure rule - target-directed
-        // conversion lives with each kind's ops).
-        if (meta == scalar_descriptor<Frame>::value_meta()) { return py_arrow_to_frame(object); }
-        if (meta == scalar_descriptor<Series>::value_meta()) { return py_arrow_to_series(object); }
+        // Frame/Series -> arrow go through the BINDING's from_python (the
+        // type-erased python_conversion_traits hooks); no kind-switch.
         if (nb::isinstance<PyOpaqueRef>(object)) { return Value{nb::cast<PyOpaqueRef &>(object).value.view()}; }
         const auto *binding = ValuePlanFactory::instance().binding_for(meta);
         if (binding == nullptr) { throw nb::type_error("schema has no canonical binding"); }
         Value result{*binding};
         result.view().assign_from_python(object);
         return result;
+    }
+
+    void install_arrow_conversion_hooks()
+    {
+        python_conversion_traits<Frame>::to_python_hook   = &frame_to_py;
+        python_conversion_traits<Frame>::from_python_hook = [](nb::handle o) {
+            return py_arrow_to_frame(o).view().checked_as<Frame>();
+        };
+        python_conversion_traits<Series>::to_python_hook   = &series_to_py;
+        python_conversion_traits<Series>::from_python_hook = [](nb::handle o) {
+            return py_arrow_to_series(o).view().checked_as<Series>();
+        };
     }
 
     Value py_to_delta(nb::handle object, const TSValueTypeMetaData *ts)

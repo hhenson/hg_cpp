@@ -97,6 +97,7 @@ namespace hgraph::python_bridge
     [[nodiscard]] const ValueTypeBinding &delta_binding(const ValueTypeMetaData *meta);
     [[nodiscard]] Value                   py_to_value_as(nb::handle object, const ValueTypeMetaData *meta);
     [[nodiscard]] Value                   py_to_delta(nb::handle object, const TSValueTypeMetaData *ts);
+    void                                  install_arrow_conversion_hooks();
 }  // namespace hgraph::python_bridge
 
 template <>
