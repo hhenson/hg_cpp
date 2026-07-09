@@ -659,6 +659,40 @@ class _Collect:
 collect = _Collect()
 
 
+class _Emit:
+    """hgraph's emit: drain a collection/dict one element per cycle.
+    ``emit(x)`` infers the output; ``emit[VALUE_TS](x)`` hints the per-key
+    VALUE time-series type for a dict/mapping (the KeyValue value field -
+    e.g. emit[TSL[TS[int], Size[2]]](tsd_of_tuples))."""
+
+    __name__ = "emit"
+
+    def __init__(self, value_ts=None):
+        self._value_ts = value_ts
+
+    def __getitem__(self, item):
+        return _Emit(item)
+
+    def __call__(self, ts, **kwargs):
+        from ._types import _TsExpr
+
+        if self._value_ts is None or not isinstance(self._value_ts, _TsExpr):
+            return wire("emit", ts, **kwargs)
+        # Build the KeyValue output {key: TS[K], value: <value_ts>} from the
+        # dict/mapping key type and the hinted value TS.
+        handle = _unwrap(ts).ts_type
+        if handle.kind == 2:                       # TSD[K, ...]
+            key_vt = _hgraph.tsd_key_vt(handle)
+        else:                                       # TS[Mapping[K, V]]
+            key_vt = _hgraph.vt_key(_hgraph.ts_value_vt(handle))
+        fields = [("key", _hgraph.ts(key_vt)), ("value", self._value_ts.handle)]
+        out = _TsExprFor(_hgraph.un_named_tsb_type(fields))
+        return wire("emit", ts, output_type=out, **kwargs)
+
+
+emit = _Emit()
+
+
 class WiringError(RuntimeError):
     """A wiring-time error (hgraph parity)."""
 

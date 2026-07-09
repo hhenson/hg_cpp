@@ -2057,11 +2057,20 @@ namespace hgraph::stdlib
                 current.buffer.pop_front();
                 Value value = std::move(current.buffer.front());
                 current.buffer.pop_front();
-                const auto *bundle_value = erased.schema()->value_schema;
-                if (bundle_value != nullptr && bundle_value->kind == ValueTypeKind::Bundle)
+                // A KeyValue with only scalar-TS fields is a COMPACT bundle
+                // (whole-value write); a non-scalar field (TSL/TSD/TSB value)
+                // makes it STRUCTURAL (per-field write).
+                const auto *out_schema = erased.schema();
+                bool        compact    = out_schema->value_schema != nullptr &&
+                               out_schema->value_schema->kind == ValueTypeKind::Bundle;
+                for (std::size_t index = 0; compact && index < out_schema->field_count(); ++index)
+                {
+                    if (out_schema->fields()[index].type->kind != TSTypeKind::TS) { compact = false; }
+                }
+                if (compact)
                 {
                     // COMPACT (whole-value) bundle output: one bundle write.
-                    BundleBuilder builder{*ValuePlanFactory::instance().binding_for(bundle_value)};
+                    BundleBuilder builder{*ValuePlanFactory::instance().binding_for(out_schema->value_schema)};
                     builder.set(0, std::move(key));
                     builder.set(1, std::move(value));
                     auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
@@ -2078,9 +2087,26 @@ namespace hgraph::stdlib
                         static_cast<void>(mutation.copy_value_from(key.view()));
                     }
                     {
-                        auto field    = bundle.at(1);
-                        auto mutation = field.data_view().begin_mutation(erased.evaluation_time());
-                        static_cast<void>(mutation.copy_value_from(value.view()));
+                        auto field = bundle.at(1);
+                        if (field.schema() != nullptr && field.schema()->kind == TSTypeKind::TSL)
+                        {
+                            // The value is a tuple/list scalar distributed
+                            // across the TSL field's slots.
+                            auto items = value.view().as_indexed_view();
+                            auto list  = field.as_list();
+                            for (std::size_t index = 0;
+                                 index < items.size() && index < field.schema()->fixed_size(); ++index)
+                            {
+                                auto slot     = list.at(index);
+                                auto mutation = slot.data_view().begin_mutation(erased.evaluation_time());
+                                static_cast<void>(mutation.copy_value_from(items.at(index)));
+                            }
+                        }
+                        else
+                        {
+                            auto mutation = field.data_view().begin_mutation(erased.evaluation_time());
+                            static_cast<void>(mutation.copy_value_from(value.view()));
+                        }
                     }
                 }
                 if (!current.buffer.empty()) { scheduler.schedule(MIN_TD); }
