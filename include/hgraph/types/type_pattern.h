@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace hgraph
@@ -346,7 +347,15 @@ namespace hgraph
     };
 
     template <typename T>
-    struct scalar_pattern_lower;  // specialised for ScalarVar below
+    struct scalar_pattern_lower
+    {
+        [[nodiscard]] static ScalarPattern lower()
+        {
+            static_assert(scalar_descriptor<T>::is_concrete(),
+                          "to_scalar_pattern<T>() requires a supported static scalar schema");
+            return ScalarPattern::concrete(scalar_descriptor<T>::value_meta());
+        }
+    };
 
     template <typename S>
     [[nodiscard]] inline TypePattern to_pattern();
@@ -402,8 +411,7 @@ namespace hgraph
     template <typename T>
     [[nodiscard]] inline ScalarPattern to_scalar_pattern()
     {
-        if constexpr (scalar_descriptor<T>::is_concrete()) { return ScalarPattern::concrete(scalar_descriptor<T>::value_meta()); }
-        else { return scalar_pattern_lower<T>::lower(); }
+        return scalar_pattern_lower<T>::lower();
     }
 
     template <fixed_string Name, typename... C>
@@ -525,6 +533,60 @@ namespace hgraph
         [[nodiscard]] static ScalarPattern lower()
         {
             return ScalarPattern::var(std::string{Name.sv()}, type_pattern_detail::scalar_constraints<C...>());
+        }
+    };
+
+    template <>
+    struct scalar_pattern_lower<UnknownTuple<>>
+    {
+        [[nodiscard]] static ScalarPattern lower() { return ScalarPattern::unknown_tuple(); }
+    };
+
+    template <typename TElement>
+    struct scalar_pattern_lower<UnknownTuple<TElement>>
+    {
+        [[nodiscard]] static ScalarPattern lower()
+        {
+            return ScalarPattern::unknown_tuple(to_scalar_pattern<TElement>());
+        }
+    };
+
+    template <typename TElement>
+    struct scalar_pattern_lower<HomogeneousTuple<TElement>>
+    {
+        [[nodiscard]] static ScalarPattern lower()
+        {
+            return ScalarPattern::homogeneous_tuple(to_scalar_pattern<TElement>());
+        }
+    };
+
+    template <typename... TElements>
+    struct scalar_pattern_lower<FixedTuple<TElements...>>
+    {
+        [[nodiscard]] static ScalarPattern lower()
+        {
+            std::vector<ScalarPattern> elements;
+            elements.reserve(sizeof...(TElements));
+            (elements.push_back(to_scalar_pattern<TElements>()), ...);
+            return ScalarPattern::fixed_tuple(std::move(elements));
+        }
+    };
+
+    template <typename TElement>
+    struct scalar_pattern_lower<Set<TElement>>
+    {
+        [[nodiscard]] static ScalarPattern lower()
+        {
+            return ScalarPattern::set(to_scalar_pattern<TElement>());
+        }
+    };
+
+    template <typename TKey, typename TValue>
+    struct scalar_pattern_lower<Map<TKey, TValue>>
+    {
+        [[nodiscard]] static ScalarPattern lower()
+        {
+            return ScalarPattern::map(to_scalar_pattern<TKey>(), to_scalar_pattern<TValue>());
         }
     };
 }  // namespace hgraph

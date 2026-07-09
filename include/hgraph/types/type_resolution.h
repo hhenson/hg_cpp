@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace hgraph
@@ -122,6 +123,52 @@ namespace hgraph
     struct scalar_resolver<ScalarVar<Name, C...>>
     {
         [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &m) { return m.scalar(Name.sv()); }
+    };
+
+    template <typename... TElements>
+    struct scalar_resolver<UnknownTuple<TElements...>>
+    {
+        [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &) noexcept { return nullptr; }
+    };
+
+    template <typename TElement>
+    struct scalar_resolver<HomogeneousTuple<TElement>>
+    {
+        [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &m)
+        {
+            return TypeRegistry::instance().list(scalar_resolver<TElement>::resolve(m), 0, true);
+        }
+    };
+
+    template <typename... TElements>
+    struct scalar_resolver<FixedTuple<TElements...>>
+    {
+        [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &m)
+        {
+            std::vector<const ValueTypeMetaData *> elements;
+            elements.reserve(sizeof...(TElements));
+            (elements.push_back(scalar_resolver<TElements>::resolve(m)), ...);
+            return TypeRegistry::instance().tuple(elements);
+        }
+    };
+
+    template <typename TElement>
+    struct scalar_resolver<Set<TElement>>
+    {
+        [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &m)
+        {
+            return TypeRegistry::instance().set(scalar_resolver<TElement>::resolve(m));
+        }
+    };
+
+    template <typename TKey, typename TValue>
+    struct scalar_resolver<Map<TKey, TValue>>
+    {
+        [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &m)
+        {
+            return TypeRegistry::instance().map(scalar_resolver<TKey>::resolve(m),
+                                                scalar_resolver<TValue>::resolve(m));
+        }
     };
 
     template <auto TSize>
@@ -284,6 +331,98 @@ namespace hgraph
     struct scalar_unifier<ScalarVar<Name, C...>>
     {
         static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m) { m.bind_scalar(Name.sv(), concrete); }
+    };
+
+    namespace type_resolution_detail
+    {
+        [[nodiscard]] inline const ValueTypeMetaData *homogeneous_tuple_element(
+            const ValueTypeMetaData *concrete) noexcept
+        {
+            if (concrete == nullptr || concrete->kind != ValueTypeKind::Tuple || concrete->field_count == 0)
+            {
+                return nullptr;
+            }
+            const ValueTypeMetaData *first = concrete->fields[0].type;
+            for (std::size_t index = 1; index < concrete->field_count; ++index)
+            {
+                if (concrete->fields[index].type != first) { return nullptr; }
+            }
+            return first;
+        }
+
+        template <typename... TElements, std::size_t... I>
+        void unify_fixed_tuple_fields(const ValueTypeMetaData *concrete,
+                                      ResolutionMap &m,
+                                      std::index_sequence<I...>)
+        {
+            (scalar_unifier<TElements>::unify(concrete->fields[I].type, m), ...);
+        }
+    }  // namespace type_resolution_detail
+
+    template <>
+    struct scalar_unifier<UnknownTuple<>>
+    {
+        static void unify(const ValueTypeMetaData *, ResolutionMap &) noexcept {}
+    };
+
+    template <typename TElement>
+    struct scalar_unifier<UnknownTuple<TElement>>
+    {
+        static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
+        {
+            const ValueTypeMetaData *element = nullptr;
+            if (concrete != nullptr && concrete->kind == ValueTypeKind::List) { element = concrete->element_type; }
+            else { element = type_resolution_detail::homogeneous_tuple_element(concrete); }
+            scalar_unifier<TElement>::unify(element, m);
+        }
+    };
+
+    template <typename TElement>
+    struct scalar_unifier<HomogeneousTuple<TElement>>
+    {
+        static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
+        {
+            const ValueTypeMetaData *element = nullptr;
+            if (concrete != nullptr && concrete->kind == ValueTypeKind::List) { element = concrete->element_type; }
+            else { element = type_resolution_detail::homogeneous_tuple_element(concrete); }
+            scalar_unifier<TElement>::unify(element, m);
+        }
+    };
+
+    template <typename... TElements>
+    struct scalar_unifier<FixedTuple<TElements...>>
+    {
+        static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
+        {
+            if (concrete == nullptr || concrete->kind != ValueTypeKind::Tuple ||
+                concrete->field_count != sizeof...(TElements))
+            {
+                return;
+            }
+            type_resolution_detail::unify_fixed_tuple_fields<TElements...>(
+                concrete, m, std::make_index_sequence<sizeof...(TElements)>{});
+        }
+    };
+
+    template <typename TElement>
+    struct scalar_unifier<Set<TElement>>
+    {
+        static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
+        {
+            if (concrete == nullptr || concrete->kind != ValueTypeKind::Set) { return; }
+            scalar_unifier<TElement>::unify(concrete->element_type, m);
+        }
+    };
+
+    template <typename TKey, typename TValue>
+    struct scalar_unifier<Map<TKey, TValue>>
+    {
+        static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
+        {
+            if (concrete == nullptr || concrete->kind != ValueTypeKind::Map) { return; }
+            scalar_unifier<TKey>::unify(concrete->key_type, m);
+            scalar_unifier<TValue>::unify(concrete->element_type, m);
+        }
     };
 
     template <auto TSize>

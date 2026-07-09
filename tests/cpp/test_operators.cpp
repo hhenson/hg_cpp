@@ -555,8 +555,7 @@ TEST_CASE("operators: TypePattern supports recursive scalar container patterns")
     (void)registry.register_scalar<Str>("str");
 
     {
-        const TypePattern pattern = TypePattern::ts(
-            ScalarPattern::homogeneous_tuple(ScalarPattern::var("T")));
+        const TypePattern pattern = to_pattern<TS<HomogeneousTuple<ScalarVar<"T">>>>();
         ResolutionMap map;
         REQUIRE(ts_pattern_match(pattern, registry.ts(registry.list(scalar_type<Int>(), 0, true)), map));
         CHECK(map.find_scalar("T") == scalar_type<Int>());
@@ -564,10 +563,7 @@ TEST_CASE("operators: TypePattern supports recursive scalar container patterns")
     }
 
     {
-        const TypePattern pattern = TypePattern::ts(ScalarPattern::fixed_tuple({
-            ScalarPattern::concrete(scalar_type<Int>()),
-            ScalarPattern::var("T"),
-        }));
+        const TypePattern pattern = to_pattern<TS<Tuple<Int, ScalarVar<"T">>>>();
         ResolutionMap map;
         REQUIRE(ts_pattern_match(
             pattern,
@@ -577,12 +573,26 @@ TEST_CASE("operators: TypePattern supports recursive scalar container patterns")
     }
 
     {
-        const TypePattern pattern = TypePattern::ts(ScalarPattern::map(
-            ScalarPattern::concrete(scalar_type<Str>()),
-            ScalarPattern::var("V")));
+        const TypePattern pattern = to_pattern<TS<Map<Str, ScalarVar<"V">>>>();
         ResolutionMap map;
         REQUIRE(ts_pattern_match(pattern, registry.ts(registry.map(scalar_type<Str>(), scalar_type<Int>())), map));
         CHECK(map.find_scalar("V") == scalar_type<Int>());
+    }
+
+    {
+        const TypePattern pattern = to_pattern<TS<Set<ScalarVar<"E">>>>();
+        ResolutionMap map;
+        REQUIRE(ts_pattern_match(pattern, registry.ts(registry.set(scalar_type<Int>())), map));
+        CHECK(map.find_scalar("E") == scalar_type<Int>());
+        CHECK(ts_pattern_to_string(pattern) == "TS[set[~E]]");
+    }
+
+    {
+        const TypePattern pattern = to_pattern<TS<UnknownTuple<ScalarVar<"U">>>>();
+        ResolutionMap map;
+        REQUIRE(ts_pattern_match(pattern, registry.ts(registry.tuple({scalar_type<Int>(), scalar_type<Int>()})), map));
+        CHECK(map.find_scalar("U") == scalar_type<Int>());
+        CHECK(ts_pattern_to_string(pattern) == "TS[UnknownTuple[~U]]");
     }
 }
 

@@ -28,6 +28,35 @@ TEST_CASE("static_schema: scalar_descriptor maps built-ins to standard registry 
     REQUIRE(scalar_descriptor<bool>::value_meta() == registry.register_scalar<bool>("bool"));
 }
 
+TEST_CASE("static_schema: scalar_descriptor maps value containers to registry schemas")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+
+    const auto *int_meta = registry.value_type("int");
+    const auto *str_meta = registry.value_type("str");
+
+    REQUIRE_FALSE(scalar_descriptor<UnknownTuple<>>::is_concrete());
+    REQUIRE(scalar_descriptor<UnknownTuple<>>::value_meta() == nullptr);
+
+    REQUIRE(scalar_descriptor<HomogeneousTuple<Int>>::is_concrete());
+    REQUIRE(scalar_descriptor<HomogeneousTuple<Int>>::value_meta() ==
+            registry.list(int_meta, 0, true));
+
+    REQUIRE(scalar_descriptor<Tuple<Int, Str>>::is_concrete());
+    REQUIRE(scalar_descriptor<Tuple<Int, Str>>::value_meta() ==
+            registry.tuple({int_meta, str_meta}));
+
+    REQUIRE(scalar_descriptor<Set<Int>>::is_concrete());
+    REQUIRE(scalar_descriptor<Set<Int>>::value_meta() == registry.set(int_meta));
+
+    REQUIRE(scalar_descriptor<Map<Str, Int>>::is_concrete());
+    REQUIRE(scalar_descriptor<Map<Str, Int>>::value_meta() == registry.map(str_meta, int_meta));
+
+    REQUIRE_FALSE(scalar_descriptor<Map<Str, ScalarVar<"V">>>::is_concrete());
+    REQUIRE(scalar_descriptor<Map<Str, ScalarVar<"V">>>::value_meta() == nullptr);
+}
+
 TEST_CASE("static_schema: TS<T> descriptor matches registry.ts(...)")
 {
     using namespace hgraph;

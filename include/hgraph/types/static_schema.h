@@ -202,6 +202,44 @@ namespace hgraph
         static constexpr auto name_sv = Name;
     };
 
+    /** Scalar tuple shape that can match either a runtime tuple or homogeneous tuple-list. */
+    template <typename... TElements>
+    struct UnknownTuple
+    {
+        static_assert(sizeof...(TElements) <= 1, "UnknownTuple accepts zero or one element pattern");
+    };
+
+    /** Scalar homogeneous tuple, equivalent to Python ``tuple[T, ...]``. */
+    template <typename TElement>
+    struct HomogeneousTuple
+    {
+        using element_type = TElement;
+    };
+
+    /** Scalar fixed-position tuple. ``Tuple`` is the user-facing alias. */
+    template <typename... TElements>
+    struct FixedTuple
+    {
+    };
+
+    template <typename... TElements>
+    using Tuple = FixedTuple<TElements...>;
+
+    /** Scalar set. */
+    template <typename TElement>
+    struct Set
+    {
+        using element_type = TElement;
+    };
+
+    /** Scalar map. */
+    template <typename TKey, typename TValue>
+    struct Map
+    {
+        using key_type   = TKey;
+        using value_type = TValue;
+    };
+
     // -----------------------------------------------------------------
     // Descriptor traits: bridge to the runtime registry
     // -----------------------------------------------------------------
@@ -315,6 +353,97 @@ namespace hgraph
         [[nodiscard]] static constexpr bool is_concrete() noexcept { return false; }
 
         [[nodiscard]] static const ValueTypeMetaData *value_meta() noexcept { return nullptr; }
+    };
+
+    template <typename... TElements>
+    struct scalar_descriptor<UnknownTuple<TElements...>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept { return false; }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta() noexcept { return nullptr; }
+    };
+
+    template <typename TElement>
+    struct scalar_descriptor<HomogeneousTuple<TElement>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TElement>::is_concrete();
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                return TypeRegistry::instance().list(scalar_descriptor<TElement>::value_meta(), 0, true);
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <typename... TElements>
+    struct scalar_descriptor<FixedTuple<TElements...>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return (scalar_descriptor<TElements>::is_concrete() && ...);
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                std::vector<const ValueTypeMetaData *> elements;
+                elements.reserve(sizeof...(TElements));
+                (elements.push_back(scalar_descriptor<TElements>::value_meta()), ...);
+                return TypeRegistry::instance().tuple(elements);
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <typename TElement>
+    struct scalar_descriptor<Set<TElement>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TElement>::is_concrete();
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            if constexpr (is_concrete()) { return TypeRegistry::instance().set(scalar_descriptor<TElement>::value_meta()); }
+            else { return nullptr; }
+        }
+    };
+
+    template <typename TKey, typename TValue>
+    struct scalar_descriptor<Map<TKey, TValue>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TKey>::is_concrete() &&
+                   scalar_descriptor<TValue>::is_concrete();
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                return TypeRegistry::instance().map(scalar_descriptor<TKey>::value_meta(),
+                                                    scalar_descriptor<TValue>::value_meta());
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
     };
 
     /** Descriptor for a static time-series schema. Specialised per marker type below. */
@@ -666,6 +795,16 @@ namespace hgraph
                 return nullptr;
             }
         }
+    };
+
+    template <typename... TFields>
+    struct scalar_descriptor<UnNamedBundle<TFields...>> : value_schema_descriptor<UnNamedBundle<TFields...>>
+    {
+    };
+
+    template <fixed_string Name, typename... TFields>
+    struct scalar_descriptor<Bundle<Name, TFields...>> : value_schema_descriptor<Bundle<Name, TFields...>>
+    {
     };
 }  // namespace hgraph
 
