@@ -1322,16 +1322,55 @@ namespace hgraph::stdlib
             if (out->key_type() != registry.value_type("str")) { return false; }
             const auto *element = registry.dereference(out->element_ts());
             if (element == nullptr || element->kind != TSTypeKind::TS) { return false; }
-            for (std::size_t index = 0; index < in->field_count(); ++index)
+            if constexpr (WithKeys)
             {
-                const auto *field = in->fields()[index].type;
-                if (field == nullptr || field->kind != TSTypeKind::TS ||
-                    field->value_schema != element->value_schema)
+                // Only the SELECTED keys' fields must match the value type;
+                // other fields (e.g. an extra bool) are simply not exported.
+                const auto *keys = context.scalar_as<Str>("keys") == nullptr
+                                       ? operator_impl_detail::scalar_arg_at(context, 1)
+                                       : nullptr;
+                if (keys == nullptr) { return true; }   // presence checked at eval
+                auto key_list = keys->scalar_value.view().as_indexed_view();
+                for (std::size_t k = 0; k < key_list.size(); ++k)
                 {
-                    return false;
+                    const auto  wanted = key_list.at(k).template checked_as<Str>();
+                    const auto  index  = container_impl_detail_find(in, wanted);
+                    if (!index.has_value()) { continue; }
+                    const auto *field  = in->fields()[*index].type;
+                    if (field == nullptr || field->kind != TSTypeKind::TS ||
+                        field->value_schema != element->value_schema)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            else
+            {
+                for (std::size_t index = 0; index < in->field_count(); ++index)
+                {
+                    const auto *field = in->fields()[index].type;
+                    if (field == nullptr || field->kind != TSTypeKind::TS ||
+                        field->value_schema != element->value_schema)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+
+        [[nodiscard]] static std::optional<std::size_t> container_impl_detail_find(
+            const TSValueTypeMetaData *bundle, const Str &name)
+        {
+            for (std::size_t index = 0; index < bundle->field_count(); ++index)
+            {
+                if (bundle->fields()[index].name != nullptr && name == bundle->fields()[index].name)
+                {
+                    return index;
                 }
             }
-            return true;
+            return std::nullopt;
         }
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
