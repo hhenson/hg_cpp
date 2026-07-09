@@ -15,11 +15,11 @@
 
 namespace hgraph::stdlib::tsb_itemwise_impl_detail
 {
-    [[nodiscard]] inline const TSValueTypeMetaData *direct_tsb_schema(const WiringArg &arg) noexcept
+    [[nodiscard]] inline const TSValueTypeMetaData *direct_tsb_schema(const WiringArg &arg)
     {
-        if (arg.kind != WiringArg::Kind::TimeSeries) { return nullptr; }
-        const TSValueTypeMetaData *schema = arg.port.schema;
-        return schema != nullptr && schema->kind == TSTypeKind::TSB ? schema : nullptr;
+        return arg.kind == WiringArg::Kind::TimeSeries
+                   ? operator_impl_detail::time_series_schema_of_kind(arg.port.schema, TSTypeKind::TSB)
+                   : nullptr;
     }
 
     [[nodiscard]] inline std::string_view field_name_at(const TSValueTypeMetaData &schema,
