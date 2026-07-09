@@ -193,23 +193,6 @@ namespace hgraph::stdlib
         }
     };
 
-    namespace convert_detail
-    {
-        [[nodiscard]] inline const ValueTypeMetaData *homogeneous_tuple_element(const ValueTypeMetaData *schema)
-        {
-            if (schema == nullptr || schema->kind != ValueTypeKind::Tuple || schema->field_count == 0)
-            {
-                return nullptr;
-            }
-            const ValueTypeMetaData *first = schema->fields[0].type;
-            for (std::size_t index = 1; index < schema->field_count; ++index)
-            {
-                if (schema->fields[index].type != first) { return nullptr; }
-            }
-            return first;
-        }
-    }  // namespace convert_detail
-
     /** convert(ts, to=SAME) - identical schemas pass the value through. */
     struct convert_identity_impl
     {
@@ -374,9 +357,7 @@ namespace hgraph::stdlib
         {
             const auto *out = output_ts_value_schema(resolution);
             const auto *in  = ts_value_schema_at(context, 0);
-            return out != nullptr && in != nullptr &&
-                   (out->kind == ValueTypeKind::Set || out->kind == ValueTypeKind::List) &&
-                   out->element_type == in;
+            return collection_element_schema(out) == in && in != nullptr;
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
@@ -409,12 +390,12 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = output_ts_value_schema(resolution);
-            const auto *in  = ts_value_schema_at(context, 0);
+            const auto *out         = output_ts_value_schema(resolution);
+            const auto *in          = ts_value_schema_at(context, 0);
+            const auto *out_element = collection_element_schema(out);
+            const auto *in_element  = collection_element_schema(in);
             return out != nullptr && in != nullptr && out != in &&
-                   (out->kind == ValueTypeKind::Set || out->kind == ValueTypeKind::List) &&
-                   (in->kind == ValueTypeKind::Set || in->kind == ValueTypeKind::List) &&
-                   out->element_type == in->element_type;
+                   out_element != nullptr && out_element == in_element;
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
@@ -455,13 +436,12 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = output_ts_value_schema(resolution);
-            const auto *in  = time_series_schema_at(context, 0);
-            return out != nullptr &&
+            const auto *out_element = collection_element_schema(output_ts_value_schema(resolution));
+            const auto *in          = time_series_schema_at(context, 0);
+            return out_element != nullptr &&
                    time_series_schema_matches_pattern(
                        in, time_series_kind_pattern(TSTypeKind::TSS)) &&
-                   (out->kind == ValueTypeKind::Set || out->kind == ValueTypeKind::List) &&
-                   out->element_type == in->value_schema->element_type;
+                   out_element == in->value_schema->element_type;
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
@@ -503,9 +483,7 @@ namespace hgraph::stdlib
             const auto *in  = ts_value_schema_at(context, 0);
             return output_matches_pattern(
                        resolution, time_series_kind_pattern(TSTypeKind::TSS)) &&
-                   in != nullptr &&
-                   (in->kind == ValueTypeKind::Set || in->kind == ValueTypeKind::List) &&
-                   out->value_schema->element_type == in->element_type;
+                   collection_element_schema(in) == out->value_schema->element_type;
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
@@ -866,27 +844,9 @@ namespace hgraph::stdlib
         static constexpr auto name = Strict ? "convert_tsl_to_tuple" : "convert_tsl_to_tuple_lenient";
         static constexpr InputValidity validity = Strict ? InputValidity::AllValid : InputValidity::Unchecked;
 
-        // The homogeneous element of a variadic LIST or a fixed TUPLE (all
-        // fields one type), or null when heterogeneous / not a collection.
-        [[nodiscard]] static const ValueTypeMetaData *element_of(const ValueTypeMetaData *out)
-        {
-            if (out == nullptr) { return nullptr; }
-            if (out->kind == ValueTypeKind::List) { return out->element_type; }
-            if (out->kind == ValueTypeKind::Tuple && out->field_count != 0)
-            {
-                const auto *first = out->fields[0].type;
-                for (std::size_t index = 1; index < out->field_count; ++index)
-                {
-                    if (out->fields[index].type != first) { return nullptr; }
-                }
-                return first;
-            }
-            return nullptr;
-        }
-
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = element_of(output_ts_value_schema(resolution));
+            const auto *out = tuple_element_schema(output_ts_value_schema(resolution));
             const auto *in  = fixed_tsl_arg(context, 0);
             if (out == nullptr || in == nullptr) { return false; }
             const auto *element = TypeRegistry::instance().dereference(in->element_ts());
@@ -1389,20 +1349,9 @@ namespace hgraph::stdlib
             {
                 return false;
             }
-            const ValueTypeMetaData *source_element = nullptr;
-            if (in->kind == ValueTypeKind::List)
-            {
-                source_element = in->element_type;
-            }
-            else if (in->kind == ValueTypeKind::Tuple)
-            {
-                if (in->field_count != out->fixed_size()) { return false; }
-                source_element = convert_detail::homogeneous_tuple_element(in);
-            }
-            else
-            {
-                return false;
-            }
+            if (in->kind == ValueTypeKind::Tuple && in->field_count != out->fixed_size()) { return false; }
+            const ValueTypeMetaData *source_element = tuple_element_schema(in);
+            if (source_element == nullptr) { return false; }
             const auto *element = TypeRegistry::instance().dereference(out->element_ts());
             return element != nullptr && element->kind == TSTypeKind::TS &&
                    element->value_schema == source_element;
@@ -1579,16 +1528,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = output_ts_value_schema(resolution);
-            const auto *in  = ts_value_schema_at(context, 0);
-            if (out == nullptr || in == nullptr ||
-                (out->kind != ValueTypeKind::Set && out->kind != ValueTypeKind::List))
-            {
-                return false;
-            }
-            const auto *element =
-                in->kind == ValueTypeKind::Set || in->kind == ValueTypeKind::List ? in->element_type : in;
-            return out->element_type == element;
+            const auto *out_element = collection_element_schema(output_ts_value_schema(resolution));
+            const auto *in_element  = collection_element_or_self_schema(ts_value_schema_at(context, 0));
+            return out_element != nullptr && out_element == in_element;
         }
 
         static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
@@ -1613,7 +1555,7 @@ namespace hgraph::stdlib
                 {
                     const auto value = ts.base().value();
                     const auto *in_meta = value.schema();
-                    if (in_meta->kind == ValueTypeKind::Set || in_meta->kind == ValueTypeKind::List)
+                    if (collection_element_schema(in_meta) != nullptr)
                     {
                         auto items = value.as_indexed_view();
                         for (std::size_t index = 0; index < items.size(); ++index)
@@ -1765,12 +1707,7 @@ namespace hgraph::stdlib
             if (surface == nullptr) { return false; }
             if (surface->kind == TSTypeKind::TSS) { return surface->value_schema->element_type == element; }
             if (surface->kind != TSTypeKind::TS) { return false; }
-            const auto *value = surface->value_schema;
-            if (value->kind == ValueTypeKind::Set || value->kind == ValueTypeKind::List)
-            {
-                return value->element_type == element;
-            }
-            return value == element;
+            return collection_element_or_self_schema(surface->value_schema) == element;
         }
 
         static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
@@ -1802,7 +1739,7 @@ namespace hgraph::stdlib
                 return;
             }
             const auto value = ts.base().value();
-            if (value.schema()->kind == ValueTypeKind::Set || value.schema()->kind == ValueTypeKind::List)
+            if (collection_element_schema(value.schema()) != nullptr)
             {
                 auto items = value.as_indexed_view();
                 for (std::size_t index = 0; index < items.size(); ++index)
@@ -2136,11 +2073,7 @@ namespace hgraph::stdlib
             if (surface == nullptr) { return nullptr; }
             if (surface->kind == TSTypeKind::TSS) { return surface->value_schema->element_type; }
             const auto *value = ts_value_schema(surface);
-            if (value != nullptr && (value->kind == ValueTypeKind::Set || value->kind == ValueTypeKind::List))
-            {
-                return value->element_type;
-            }
-            return nullptr;
+            return collection_element_schema(value);
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)

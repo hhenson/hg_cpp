@@ -13,6 +13,9 @@ namespace hgraph::stdlib
 {
     namespace
     {
+        using hgraph::operator_type_resolution::collection_element_or_self_schema;
+        using hgraph::operator_type_resolution::collection_element_schema;
+        using hgraph::operator_type_resolution::homogeneous_tuple_element_schema;
         using hgraph::operator_type_resolution::ts_value_schema;
 
         [[nodiscard]] std::string schema_name(const TSValueTypeMetaData *schema)
@@ -26,36 +29,11 @@ namespace hgraph::stdlib
             return TypeRegistry::instance().dereference(schema);
         }
 
-        [[nodiscard]] const ValueTypeMetaData *homogeneous_tuple_element(const ValueTypeMetaData *value)
-        {
-            if (value == nullptr || value->kind != ValueTypeKind::Tuple || value->field_count == 0)
-            {
-                return nullptr;
-            }
-            const ValueTypeMetaData *first = value->fields[0].type;
-            for (std::size_t index = 1; index < value->field_count; ++index)
-            {
-                if (value->fields[index].type != first) { return nullptr; }
-            }
-            return first;
-        }
-
-        [[nodiscard]] const ValueTypeMetaData *collection_element_or_self(const ValueTypeMetaData *value)
-        {
-            if (value == nullptr) { return nullptr; }
-            if (value->kind == ValueTypeKind::List || value->kind == ValueTypeKind::Set) { return value->element_type; }
-            return value;
-        }
-
-        [[nodiscard]] bool is_collection(const ValueTypeMetaData *value)
-        {
-            return value != nullptr && (value->kind == ValueTypeKind::List || value->kind == ValueTypeKind::Set);
-        }
-
         [[nodiscard]] const TSValueTypeMetaData *ts_element_value_as_ts(const TSValueTypeMetaData *schema)
         {
             const ValueTypeMetaData *value = ts_value_schema(deref(schema));
-            return value != nullptr && is_collection(value) ? TypeRegistry::instance().ts(value->element_type) : schema;
+            const ValueTypeMetaData *element = collection_element_schema(value);
+            return element != nullptr ? TypeRegistry::instance().ts(element) : schema;
         }
 
         [[nodiscard]] const ValueTypeMetaData *tss_element(const TSValueTypeMetaData *schema)
@@ -85,7 +63,7 @@ namespace hgraph::stdlib
             schema = deref(schema);
             if (schema == nullptr) { return nullptr; }
             if (schema->kind == TSTypeKind::TSS) { return tss_element(schema); }
-            return collection_element_or_self(ts_value_schema(schema));
+            return collection_element_or_self_schema(ts_value_schema(schema));
         }
 
         [[nodiscard]] std::vector<std::size_t> selected_tsb_field_indices(
@@ -236,7 +214,7 @@ namespace hgraph::stdlib
                 {
                     return value;
                 }
-                const ValueTypeMetaData *element = collection_element_or_self(value);
+                const ValueTypeMetaData *element = collection_element_or_self_schema(value);
                 if (element != nullptr) { return registry.list(element, 0, true); }
             }
             if (input->kind == TSTypeKind::TSS)
@@ -263,7 +241,7 @@ namespace hgraph::stdlib
             auto &registry = TypeRegistry::instance();
             const TSValueTypeMetaData *input = require_one_input(inputs, "TS[set]");
             const ValueTypeMetaData *element = nullptr;
-            if (input->kind == TSTypeKind::TS) { element = collection_element_or_self(input->value_schema); }
+            if (input->kind == TSTypeKind::TS) { element = collection_element_or_self_schema(input->value_schema); }
             else if (input->kind == TSTypeKind::TSS) { element = tss_element(input); }
             if (element == nullptr)
             {
@@ -306,7 +284,7 @@ namespace hgraph::stdlib
 
             const ValueTypeMetaData *key = key_scalar_from_schema(first);
             const ValueTypeMetaData *value = ts_value_schema(deref(inputs[1]));
-            value = collection_element_or_self(value);
+            value = collection_element_or_self_schema(value);
             if (key == nullptr || value == nullptr)
             {
                 throw std::invalid_argument("cannot infer TS[Mapping] target from key/value inputs");
@@ -369,7 +347,7 @@ namespace hgraph::stdlib
                 }
                 if (value->kind == ValueTypeKind::Tuple)
                 {
-                    if (const ValueTypeMetaData *element = homogeneous_tuple_element(value))
+                    if (const ValueTypeMetaData *element = homogeneous_tuple_element_schema(value))
                     {
                         return registry.tsl(registry.ts(element), value->field_count);
                     }
@@ -446,7 +424,7 @@ namespace hgraph::stdlib
                 {
                     const TSValueTypeMetaData *input = require_one_input(inputs, ts_pattern_to_string(pattern));
                     const ValueTypeMetaData *element = nullptr;
-                    if (input->kind == TSTypeKind::TS) { element = collection_element_or_self(input->value_schema); }
+                    if (input->kind == TSTypeKind::TS) { element = collection_element_or_self_schema(input->value_schema); }
                     else if (input->kind == TSTypeKind::TSS) { element = tss_element(input); }
                     else if (input->kind == TSTypeKind::TSD) { element = input->key_type(); }
                     if (element == nullptr)

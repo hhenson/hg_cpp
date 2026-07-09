@@ -210,6 +210,49 @@ namespace hgraph::operator_type_resolution
         return ts != nullptr && ts->kind == TSTypeKind::TS ? ts->value_schema : nullptr;
     }
 
+    /** Return ``T`` from a scalar ``List<T>``/``Set<T>`` schema, or null otherwise. */
+    [[nodiscard]] inline const ValueTypeMetaData *collection_element_schema(
+        const ValueTypeMetaData *value) noexcept
+    {
+        return value != nullptr && (value->kind == ValueTypeKind::List || value->kind == ValueTypeKind::Set)
+                   ? value->element_type
+                   : nullptr;
+    }
+
+    /** Return the collection element when present, otherwise the original scalar schema. */
+    [[nodiscard]] inline const ValueTypeMetaData *collection_element_or_self_schema(
+        const ValueTypeMetaData *value) noexcept
+    {
+        if (const ValueTypeMetaData *element = collection_element_schema(value)) { return element; }
+        return value;
+    }
+
+    /** Return the element type for a homogeneous fixed tuple, or null otherwise. */
+    [[nodiscard]] inline const ValueTypeMetaData *homogeneous_tuple_element_schema(
+        const ValueTypeMetaData *value) noexcept
+    {
+        if (value == nullptr || value->kind != ValueTypeKind::Tuple || value->field_count == 0)
+        {
+            return nullptr;
+        }
+        const ValueTypeMetaData *first = value->fields[0].type;
+        for (std::size_t index = 1; index < value->field_count; ++index)
+        {
+            if (value->fields[index].type != first) { return nullptr; }
+        }
+        return first;
+    }
+
+    /** Return ``T`` from ``List<T>`` or homogeneous fixed ``Tuple<T, ...>``. */
+    [[nodiscard]] inline const ValueTypeMetaData *tuple_element_schema(
+        const ValueTypeMetaData *value) noexcept
+    {
+        if (value == nullptr) { return nullptr; }
+        if (value->kind == ValueTypeKind::List) { return value->element_type; }
+        if (value->kind == ValueTypeKind::Tuple) { return homogeneous_tuple_element_schema(value); }
+        return nullptr;
+    }
+
     /** Return a TS value schema at ``index`` when the argument is a plain ``TS<T>``. */
     [[nodiscard]] inline const ValueTypeMetaData *ts_value_schema_at(
         OperatorCallContext context,
