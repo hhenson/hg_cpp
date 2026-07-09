@@ -1959,10 +1959,9 @@ namespace hgraph::stdlib
         [[nodiscard]] inline bool all_args_are_tss(OperatorCallContext context)
         {
             if (context.args.empty()) { return false; }
-            const auto pattern = time_series_kind_pattern(TSTypeKind::TSS);
             for (std::size_t index = 0; index < context.args.size(); ++index)
             {
-                if (!time_series_arg_matches_pattern(context, index, pattern)) { return false; }
+                if (!time_series_arg_matches<AnyTSS>(context, index)) { return false; }
             }
             return true;
         }
@@ -2898,8 +2897,7 @@ namespace hgraph::stdlib
         [[nodiscard]] inline const ValueTypeMetaData *ts_list_meta(OperatorCallContext context, std::size_t index)
         {
             const auto *schema = time_series_schema_at(context, index);
-            if (!time_series_schema_matches_pattern(
-                    schema, time_series_kind_pattern(TSTypeKind::TS)) ||
+            if (!time_series_schema_matches<AnyTS>(schema) ||
                 schema->value_schema == nullptr ||
                 schema->value_schema->kind != ValueTypeKind::List)
             {
@@ -2921,8 +2919,7 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
                 return ts_list_meta(context, 0) != nullptr &&
-                       time_series_arg_matches_pattern(
-                           context, 1, time_series_kind_pattern(TSTypeKind::TS));
+                       time_series_arg_matches<AnyTS>(context, 1);
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -2960,8 +2957,7 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
                 return ts_list_meta(context, 0) != nullptr &&
-                       time_series_arg_matches_pattern(
-                           context, 1, time_series_kind_pattern(TSTypeKind::TS));
+                       time_series_arg_matches<AnyTS>(context, 1);
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -3023,8 +3019,7 @@ namespace hgraph::stdlib
             [[nodiscard]] static const ValueTypeMetaData *homogeneous_tuple(OperatorCallContext context)
             {
                 const auto *schema = time_series_schema_at(context, 0);
-                if (!time_series_schema_matches_pattern(
-                        schema, time_series_kind_pattern(TSTypeKind::TS)) ||
+                if (!time_series_schema_matches<AnyTS>(schema) ||
                     schema->value_schema == nullptr ||
                     schema->value_schema->kind != ValueTypeKind::Tuple || schema->value_schema->field_count == 0)
                 {
@@ -3041,8 +3036,7 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
                 return homogeneous_tuple(context) != nullptr &&
-                       time_series_arg_matches_pattern(
-                           context, 1, time_series_kind_pattern(TSTypeKind::TS));
+                       time_series_arg_matches<AnyTS>(context, 1);
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -3228,8 +3222,7 @@ namespace hgraph::stdlib
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr || ts_list_meta(context, 1) != nullptr) { return false; }
                 const auto *rhs = time_series_schema_at(context, 1);
-                return time_series_schema_matches_pattern(
-                           rhs, time_series_kind_pattern(TSTypeKind::TS)) &&
+                return time_series_schema_matches<AnyTS>(rhs) &&
                        rhs->value_schema == list->element_type;
             }
 
@@ -3267,8 +3260,7 @@ namespace hgraph::stdlib
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr || ts_list_meta(context, 1) != nullptr) { return false; }
                 const auto *rhs = time_series_schema_at(context, 1);
-                return time_series_schema_matches_pattern(
-                           rhs, time_series_kind_pattern(TSTypeKind::TS)) &&
+                return time_series_schema_matches<AnyTS>(rhs) &&
                        rhs->value_schema == list->element_type;
             }
 
@@ -3433,8 +3425,7 @@ namespace hgraph::stdlib
                                                                         std::size_t index = 0)
         {
             const auto *schema = time_series_schema_at(context, index);
-            if (!time_series_schema_matches_pattern(
-                    schema, time_series_kind_pattern(TSTypeKind::TSB)) ||
+            if (!time_series_schema_matches<AnyTSB>(schema) ||
                 schema->field_count() == 0)
             {
                 return nullptr;
@@ -3604,10 +3595,8 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return time_series_arg_matches_pattern(
-                           context, 0, time_series_kind_pattern(TSTypeKind::TSB)) &&
-                       time_series_arg_matches_pattern(
-                           context, 1, time_series_kind_pattern(TSTypeKind::TSB));
+                return time_series_arg_matches<AnyTSB>(context, 0) &&
+                       time_series_arg_matches<AnyTSB>(context, 1);
             }
 
             static void eval(In<"lhs", TsVar<"L">> lhs, In<"rhs", TsVar<"R">> rhs, Out<TS<Bool>> out)

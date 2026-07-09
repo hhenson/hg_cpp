@@ -378,8 +378,7 @@ namespace hgraph::stdlib
         [[nodiscard]] static const ValueTypeMetaData *bundle_meta(OperatorCallContext context)
         {
             const auto *schema = time_series_schema_at(context, 0);
-            if (!time_series_schema_matches_pattern(
-                    schema, time_series_kind_pattern(TSTypeKind::TS)) ||
+            if (!time_series_schema_matches<AnyTS>(schema) ||
                 schema->value_schema == nullptr ||
                 schema->value_schema->kind != ValueTypeKind::Bundle)
             {

@@ -206,8 +206,7 @@ namespace hgraph::stdlib
             for (std::size_t index = 0; index < context.args.size(); ++index)
             {
                 const auto *schema = time_series_schema_at(context, index);
-                if (time_series_schema_matches_pattern(
-                        schema, time_series_kind_pattern(TSTypeKind::TSD)))
+                if (time_series_schema_matches<AnyTSD>(schema))
                 {
                     return schema;
                 }

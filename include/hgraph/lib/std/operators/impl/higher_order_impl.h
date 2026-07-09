@@ -331,8 +331,7 @@ namespace hgraph::stdlib
         {
             if (output_bound(resolution)) { return; }
             const auto *schema = time_series_schema_at(context, 1);
-            if (!time_series_schema_matches_pattern(
-                    schema, time_series_kind_pattern(TSTypeKind::TSL)))
+            if (!time_series_schema_matches<AnyTSL>(schema))
             {
                 return;
             }
@@ -521,8 +520,7 @@ namespace hgraph::stdlib
         {
             if (output_bound(resolution)) { return; }
             const auto *schema = time_series_schema_at(context, 1);
-            if (!time_series_schema_matches_pattern(
-                    schema, time_series_kind_pattern(TSTypeKind::TSD)))
+            if (!time_series_schema_matches<AnyTSD>(schema))
             {
                 return;
             }

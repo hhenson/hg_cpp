@@ -37,8 +37,7 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return time_series_arg_matches_pattern(
-                    context, 0, time_series_kind_pattern(TSTypeKind::TS));
+                return time_series_arg_matches<AnyTS>(context, 0);
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -46,8 +45,7 @@ namespace hgraph::stdlib
                 if (output_bound(resolution)) { return; }
                 const auto *schema = time_series_schema_at(context, 0);
                 const Int  *period = context.scalar_as<Int>("period");
-                if (!time_series_schema_matches_pattern(
-                        schema, time_series_kind_pattern(TSTypeKind::TS)) ||
+                if (!time_series_schema_matches<AnyTS>(schema) ||
                     period == nullptr)
                 {
                     return;
@@ -97,8 +95,7 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return time_series_arg_matches_pattern(
-                           context, 0, time_series_kind_pattern(TSTypeKind::TS)) &&
+                return time_series_arg_matches<AnyTS>(context, 0) &&
                        context.scalar_as<TimeDelta>("period") != nullptr;
             }
 
@@ -107,8 +104,7 @@ namespace hgraph::stdlib
                 if (output_bound(resolution)) { return; }
                 const auto *schema = time_series_schema_at(context, 0);
                 const auto *period = context.scalar_as<TimeDelta>("period");
-                if (!time_series_schema_matches_pattern(
-                        schema, time_series_kind_pattern(TSTypeKind::TS)) ||
+                if (!time_series_schema_matches<AnyTS>(schema) ||
                     period == nullptr)
                 {
                     return;

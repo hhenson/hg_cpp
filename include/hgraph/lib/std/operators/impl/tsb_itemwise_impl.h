@@ -20,8 +20,7 @@ namespace hgraph::stdlib::tsb_itemwise_impl_detail
     [[nodiscard]] inline const TSValueTypeMetaData *direct_tsb_schema(const WiringArg &arg)
     {
         if (arg.kind != WiringArg::Kind::TimeSeries) { return nullptr; }
-        return time_series_schema_matches_pattern(
-                   arg.port.schema, time_series_kind_pattern(TSTypeKind::TSB))
+        return time_series_schema_matches<AnyTSB>(arg.port.schema)
                    ? arg.port.schema
                    : nullptr;
     }
