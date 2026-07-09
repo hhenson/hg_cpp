@@ -3,8 +3,6 @@ from typing import Tuple
 from hgraph import TIME_SERIES_TYPE, TS, graph, combine, TSL, Size, convert, emit
 from hgraph.test import eval_node
 
-import pytest as _pytest_mark
-pytestmark = _pytest_mark.mark.wip   # batch-3 conversion burn-down; excluded from the gate
 
 
 

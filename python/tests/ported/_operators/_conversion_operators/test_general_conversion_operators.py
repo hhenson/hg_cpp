@@ -1,8 +1,6 @@
 from hgraph import graph, TS, convert
 from hgraph.test import eval_node
 
-import pytest as _pytest_mark
-pytestmark = _pytest_mark.mark.wip   # batch-3 conversion burn-down; excluded from the gate
 
 
 

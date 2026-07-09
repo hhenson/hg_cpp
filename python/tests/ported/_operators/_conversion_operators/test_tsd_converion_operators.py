@@ -4,8 +4,6 @@ from frozendict import frozendict as fd
 from hgraph import TS, combine, TSD, graph, convert, REMOVE, Size, TSL, collect, TSS, Removed, TSB, emit, KeyValue
 from hgraph.test import eval_node
 
-import pytest as _pytest_mark
-pytestmark = _pytest_mark.mark.wip   # batch-3 conversion burn-down; excluded from the gate
 
 
 
