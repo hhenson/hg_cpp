@@ -1,7 +1,7 @@
 #ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_TSB_ITEMWISE_IMPL_H
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_TSB_ITEMWISE_IMPL_H
 
-#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+#include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/subgraph_wiring.h>
 
@@ -15,7 +15,7 @@
 
 namespace hgraph::stdlib::tsb_itemwise_impl_detail
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     [[nodiscard]] inline const TSValueTypeMetaData *direct_tsb_schema(const WiringArg &arg)
     {

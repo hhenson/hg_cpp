@@ -4,7 +4,7 @@
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
 #include <hgraph/lib/std/operators/impl/collection_impl.h>
-#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+#include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/runtime/race_tsd_node.h>
 #include <hgraph/lib/std/operators/conversion.h>
@@ -22,7 +22,7 @@
 
 namespace hgraph::stdlib
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     namespace control_impl_detail
     {
@@ -347,7 +347,7 @@ namespace hgraph::static_schema_detail
 
 namespace hgraph::stdlib
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     struct all_graph_impl
     {

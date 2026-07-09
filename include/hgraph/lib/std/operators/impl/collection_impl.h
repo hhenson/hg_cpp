@@ -16,7 +16,7 @@
 #include <hgraph/lib/std/operators/collection.h>
 #include <hgraph/lib/std/operators/conversion.h>
 #include <hgraph/lib/std/operators/comparison.h>
-#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+#include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
 #include <hgraph/lib/std/operators/logical.h>
@@ -38,7 +38,7 @@
 
 namespace hgraph::stdlib
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     namespace collection_impl_detail
     {

@@ -4,7 +4,7 @@
 #include <hgraph/lib/std/lifted_kernels.h>
 #include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>   // eq_ / ne_ / lt_ / ...
-#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+#include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/std/operators/json.h>
 #include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
@@ -20,7 +20,7 @@
 
 namespace hgraph::stdlib
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     /**
      * Implementations + registration for the comparison operators. The abstract markers

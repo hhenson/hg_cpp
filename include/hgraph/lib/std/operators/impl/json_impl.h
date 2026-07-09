@@ -2,7 +2,7 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_JSON_IMPL_H
 
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
-#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+#include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/lib/std/operators/container.h>
 #include <hgraph/lib/std/operators/json.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -30,7 +30,7 @@ namespace hgraph::static_schema_detail
 
 namespace hgraph::stdlib
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     /**
      * ``to_json`` — erased implementations over any time-series. The composed
@@ -194,7 +194,7 @@ struct std::hash<hgraph::stdlib::json_tree::JsonValue>
 
 namespace hgraph::stdlib
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     namespace json_tree
     {

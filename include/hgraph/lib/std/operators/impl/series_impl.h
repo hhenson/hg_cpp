@@ -3,7 +3,7 @@
 
 #include <hgraph/lib/std/operators/arithmetic.h>
 #include <hgraph/lib/std/operators/container.h>
-#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+#include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/series.h>
@@ -19,7 +19,7 @@
 
 namespace hgraph::stdlib
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     namespace series_impl_detail
     {

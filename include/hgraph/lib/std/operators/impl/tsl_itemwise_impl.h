@@ -2,7 +2,7 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_TSL_ITEMWISE_IMPL_H
 
 #include <hgraph/lib/std/operators/higher_order.h>
-#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+#include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/types/operator_dispatch.h>
 
 #include <span>
@@ -11,7 +11,7 @@
 
 namespace hgraph::stdlib::tsl_itemwise_impl_detail
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     inline void resolve_map_output_with_fn(ResolutionMap &resolution, OperatorCallContext context, WiredFn wired_fn)
     {

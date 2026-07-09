@@ -6,7 +6,7 @@
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/record_replay.h>
-#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+#include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/std/operators/impl/conversion_impl.h>
@@ -439,7 +439,7 @@ TEST_CASE("operators: TSL TypePattern supports named SIZE variables")
 
 TEST_CASE("operators: operator helpers match recursive time-series patterns")
 {
-    namespace type_resolution = hgraph::stdlib::operator_type_resolution;
+    namespace type_resolution = hgraph::operator_type_resolution;
 
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     (void)TypeRegistry::instance().register_scalar<Str>("str");

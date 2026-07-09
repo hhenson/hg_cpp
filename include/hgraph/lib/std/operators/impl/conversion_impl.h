@@ -1,7 +1,7 @@
 #ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_CONVERSION_IMPL_H
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_CONVERSION_IMPL_H
 
-#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+#include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/lib/std/operators/arithmetic.h>    // add_ / mul_ (zero_ op mapping)
 #include <hgraph/lib/std/operators/collection.h>    // sum_     (zero_ op mapping)
 #include <hgraph/lib/std/operators/comparison.h>    // min_ / max_ (zero_ op mapping)
@@ -23,7 +23,7 @@
 
 namespace hgraph::stdlib
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     /**
      * Implementations + registration for the conversion / utility operators. The abstract
@@ -2073,7 +2073,7 @@ namespace hgraph::static_schema_detail
 
 namespace hgraph::stdlib
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     /** emit(TS[Set/Tuple]): drain the collection ONE ELEMENT PER CYCLE
         (scheduler-driven; a new tick appends its elements). */

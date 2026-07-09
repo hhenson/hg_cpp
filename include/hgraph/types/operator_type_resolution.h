@@ -1,5 +1,5 @@
-#ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_TYPE_RESOLUTION_HELPERS_H
-#define HGRAPH_LIB_STD_OPERATORS_IMPL_TYPE_RESOLUTION_HELPERS_H
+#ifndef HGRAPH_TYPES_OPERATOR_TYPE_RESOLUTION_H
+#define HGRAPH_TYPES_OPERATOR_TYPE_RESOLUTION_H
 
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -8,7 +8,7 @@
 #include <string_view>
 #include <utility>
 
-namespace hgraph::stdlib::operator_type_resolution
+namespace hgraph::operator_type_resolution
 {
     /**
      * Small, null-safe helpers for operator ``requires_`` and
@@ -333,6 +333,6 @@ namespace hgraph::stdlib::operator_type_resolution
     {
         bind_local_output(resolution, time_series_schema_at(context, index, mode), local_var);
     }
-}  // namespace hgraph::stdlib::operator_type_resolution
+}  // namespace hgraph::operator_type_resolution
 
-#endif  // HGRAPH_LIB_STD_OPERATORS_IMPL_TYPE_RESOLUTION_HELPERS_H
+#endif  // HGRAPH_TYPES_OPERATOR_TYPE_RESOLUTION_H

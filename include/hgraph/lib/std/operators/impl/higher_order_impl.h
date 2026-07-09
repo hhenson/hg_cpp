@@ -4,7 +4,7 @@
 #include <hgraph/lib/std/operators/conversion.h>  // nothing (placeholder for the mesh_subscribe value input)
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/std/operators/impl/reduce_layout.h>
-#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
+#include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/mesh_node.h>
 #include <hgraph/runtime/reduce_node.h>
@@ -27,7 +27,7 @@
 
 namespace hgraph::stdlib
 {
-    using namespace operator_type_resolution;
+    using namespace hgraph::operator_type_resolution;
 
     /**
      * Default overloads for the higher-order operators — ordinary registered
