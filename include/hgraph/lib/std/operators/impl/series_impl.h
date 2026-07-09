@@ -19,6 +19,8 @@
 
 namespace hgraph::stdlib
 {
+    using namespace operator_type_resolution;
+
     namespace series_impl_detail
     {
         [[nodiscard]] inline const ValueTypeMetaData *series_meta()
@@ -28,7 +30,7 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline bool is_series_arg(OperatorCallContext context, std::size_t index)
         {
-            const auto *schema = operator_impl_detail::time_series_schema_at(context, index);
+            const auto *schema = time_series_schema_at(context, index);
             return schema != nullptr && schema->kind == TSTypeKind::TS && schema->value_schema == series_meta();
         }
 
@@ -87,12 +89,12 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (operator_impl_detail::output_bound(resolution)) { return; }
+            if (output_bound(resolution)) { return; }
             if (!series_impl_detail::is_series_arg(context, 0) && !series_impl_detail::is_series_arg(context, 1))
             {
                 return;
             }
-            operator_impl_detail::bind_output(
+            bind_output(
                 resolution, TypeRegistry::instance().ts(series_impl_detail::series_meta()));
         }
 
@@ -118,8 +120,8 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
             return series_impl_detail::is_series_arg(context, 0) &&
-                   operator_impl_detail::time_series_arg_matches_pattern(
-                       context, 1, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS));
+                   time_series_arg_matches_pattern(
+                       context, 1, time_series_kind_pattern(TSTypeKind::TS));
         }
 
         static void eval(In<"ts", TS<ScalarVar<"S">>> ts, In<"key", TS<Int>> key, Out<TsVar<"O">> out)

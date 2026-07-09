@@ -27,6 +27,8 @@
 
 namespace hgraph::stdlib
 {
+    using namespace operator_type_resolution;
+
     /**
      * Default overloads for the higher-order operators — ordinary registered
      * candidates (a graph overload per kind, like any other operator family).
@@ -41,7 +43,7 @@ namespace hgraph::stdlib
                                       const TSValueTypeMetaData *output,
                                       std::string_view legacy_var = {})
         {
-            operator_impl_detail::bind_output(resolution, output, legacy_var);
+            bind_output(resolution, output, legacy_var);
         }
 
         struct lifted_reduce_tsl_node_tag
@@ -290,7 +292,7 @@ namespace hgraph::stdlib
                 elements.push_back(
                     wire_operator(w, "default", {leaf_args.data(), leaf_args.size()}, true).output.erased());
             }
-            return operator_impl_detail::reduce_layout(w, combiner, std::move(elements));
+            return reduce_layout(w, combiner, std::move(elements));
         }
 
         /**
@@ -322,15 +324,15 @@ namespace hgraph::stdlib
             {
                 elements.push_back(subgraph_wiring_detail::tsl_element_ref(ts, i, element));
             }
-            return operator_impl_detail::reduce_layout(w, combiner, std::move(elements));
+            return reduce_layout(w, combiner, std::move(elements));
         }
 
         inline void resolve_reduce_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (operator_impl_detail::output_bound(resolution)) { return; }
-            const auto *schema = operator_impl_detail::time_series_schema_at(context, 1);
-            if (!operator_impl_detail::time_series_schema_matches_pattern(
-                    schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSL)))
+            if (output_bound(resolution)) { return; }
+            const auto *schema = time_series_schema_at(context, 1);
+            if (!time_series_schema_matches_pattern(
+                    schema, time_series_kind_pattern(TSTypeKind::TSL)))
             {
                 return;
             }
@@ -517,10 +519,10 @@ namespace hgraph::stdlib
 
         inline void resolve_reduce_tsd_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (operator_impl_detail::output_bound(resolution)) { return; }
-            const auto *schema = operator_impl_detail::time_series_schema_at(context, 1);
-            if (!operator_impl_detail::time_series_schema_matches_pattern(
-                    schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSD)))
+            if (output_bound(resolution)) { return; }
+            const auto *schema = time_series_schema_at(context, 1);
+            if (!time_series_schema_matches_pattern(
+                    schema, time_series_kind_pattern(TSTypeKind::TSD)))
             {
                 return;
             }

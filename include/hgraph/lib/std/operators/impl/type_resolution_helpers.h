@@ -8,7 +8,7 @@
 #include <string_view>
 #include <utility>
 
-namespace hgraph::stdlib::operator_impl_detail
+namespace hgraph::stdlib::operator_type_resolution
 {
     /**
      * Small, null-safe helpers for operator ``requires_`` and
@@ -333,6 +333,6 @@ namespace hgraph::stdlib::operator_impl_detail
     {
         bind_local_output(resolution, time_series_schema_at(context, index, mode), local_var);
     }
-}  // namespace hgraph::stdlib::operator_impl_detail
+}  // namespace hgraph::stdlib::operator_type_resolution
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_IMPL_TYPE_RESOLUTION_HELPERS_H

@@ -30,6 +30,8 @@ namespace hgraph::static_schema_detail
 
 namespace hgraph::stdlib
 {
+    using namespace operator_type_resolution;
+
     /**
      * ``to_json`` — erased implementations over any time-series. The composed
      * ``JsonConverter`` is resolved ONCE in ``start`` and carried in node
@@ -175,12 +177,12 @@ namespace hgraph::stdlib
         const TSValueTypeMetaData *output = TypeRegistry::instance().ts(json_tree::json_meta());
         if (graph_output)
         {
-            if (operator_impl_detail::output_bound(resolution)) { return; }
-            operator_impl_detail::bind_output(resolution, output, local_var);
+            if (output_bound(resolution)) { return; }
+            bind_output(resolution, output, local_var);
             return;
         }
-        if (operator_impl_detail::local_output_bound(resolution, local_var)) { return; }
-        operator_impl_detail::bind_local_output(resolution, output, local_var);
+        if (local_output_bound(resolution, local_var)) { return; }
+        bind_local_output(resolution, output, local_var);
     }
 }  // namespace hgraph::stdlib
 
@@ -192,6 +194,8 @@ struct std::hash<hgraph::stdlib::json_tree::JsonValue>
 
 namespace hgraph::stdlib
 {
+    using namespace operator_type_resolution;
+
     namespace json_tree
     {
         [[nodiscard]] const ValueTypeMetaData *json_lazy_meta();

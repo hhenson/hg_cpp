@@ -15,11 +15,13 @@
 
 namespace hgraph::stdlib::tsb_itemwise_impl_detail
 {
+    using namespace operator_type_resolution;
+
     [[nodiscard]] inline const TSValueTypeMetaData *direct_tsb_schema(const WiringArg &arg)
     {
         if (arg.kind != WiringArg::Kind::TimeSeries) { return nullptr; }
-        return operator_impl_detail::time_series_schema_matches_pattern(
-                   arg.port.schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSB))
+        return time_series_schema_matches_pattern(
+                   arg.port.schema, time_series_kind_pattern(TSTypeKind::TSB))
                    ? arg.port.schema
                    : nullptr;
     }
@@ -163,11 +165,11 @@ namespace hgraph::stdlib::tsb_itemwise_impl_detail
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (operator_impl_detail::output_bound(resolution) || context.args.size() != 1) { return; }
+            if (output_bound(resolution) || context.args.size() != 1) { return; }
             const TSValueTypeMetaData *schema = direct_tsb_schema(context.args[0]);
             if (schema == nullptr) { return; }
             const TSValueTypeMetaData *output = resolve_unary_output_schema<Op>(*schema);
-            operator_impl_detail::bind_output(resolution, output);
+            bind_output(resolution, output);
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
@@ -190,12 +192,12 @@ namespace hgraph::stdlib::tsb_itemwise_impl_detail
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (operator_impl_detail::output_bound(resolution) || context.args.size() != 2) { return; }
+            if (output_bound(resolution) || context.args.size() != 2) { return; }
             const TSValueTypeMetaData *lhs = direct_tsb_schema(context.args[0]);
             const TSValueTypeMetaData *rhs = direct_tsb_schema(context.args[1]);
             if (lhs == nullptr || rhs == nullptr) { return; }
             const TSValueTypeMetaData *output = resolve_binary_output_schema<Op>(*lhs, *rhs);
-            operator_impl_detail::bind_output(resolution, output);
+            bind_output(resolution, output);
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)

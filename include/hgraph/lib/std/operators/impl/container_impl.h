@@ -18,6 +18,8 @@
 
 namespace hgraph::stdlib
 {
+    using namespace operator_type_resolution;
+
     namespace container_impl_detail
     {
         [[nodiscard]] inline std::size_t normalize_item_index(Int index, std::size_t size,
@@ -44,7 +46,7 @@ namespace hgraph::stdlib
         [[nodiscard]] inline const TSValueTypeMetaData *direct_tsb_schema(const WiringArg &arg) noexcept
         {
             const TSValueTypeMetaData *schema =
-                operator_impl_detail::time_series_schema(arg, operator_impl_detail::SchemaRefMode::Direct);
+                time_series_schema(arg, SchemaRefMode::Direct);
             return schema != nullptr && schema->kind == TSTypeKind::TSB ? schema : nullptr;
         }
 
@@ -52,7 +54,7 @@ namespace hgraph::stdlib
         [[nodiscard]] inline const TSValueTypeMetaData *ref_tsb_schema(const WiringArg &arg) noexcept
         {
             const TSValueTypeMetaData *surface =
-                operator_impl_detail::time_series_schema(arg, operator_impl_detail::SchemaRefMode::Direct);
+                time_series_schema(arg, SchemaRefMode::Direct);
             if (surface == nullptr || surface->kind != TSTypeKind::REF) { return nullptr; }
             const TSValueTypeMetaData *target = TypeRegistry::instance().dereference(surface);
             return target != nullptr && target->kind == TSTypeKind::TSB ? target : nullptr;
@@ -60,13 +62,13 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline const TSValueTypeMetaData *direct_tsl_schema(const WiringArg &arg) noexcept
         {
-            const TSValueTypeMetaData *schema = operator_impl_detail::time_series_schema(arg);
+            const TSValueTypeMetaData *schema = time_series_schema(arg);
             return schema != nullptr && schema->kind == TSTypeKind::TSL ? schema : nullptr;
         }
 
         [[nodiscard]] inline const TSValueTypeMetaData *direct_tsd_schema(const WiringArg &arg) noexcept
         {
-            const TSValueTypeMetaData *schema = operator_impl_detail::time_series_schema(arg);
+            const TSValueTypeMetaData *schema = time_series_schema(arg);
             return schema != nullptr && schema->kind == TSTypeKind::TSD ? schema : nullptr;
         }
 
@@ -121,8 +123,8 @@ namespace hgraph::stdlib
                                              OperatorCallContext context,
                                              std::string_view    key_name)
         {
-            if (operator_impl_detail::output_bound(resolution)) { return; }
-            operator_impl_detail::bind_output(resolution, tsb_field_schema_from_context<Key>(context, key_name));
+            if (output_bound(resolution)) { return; }
+            bind_output(resolution, tsb_field_schema_from_context<Key>(context, key_name));
         }
     }  // namespace container_impl_detail
 
@@ -375,9 +377,9 @@ namespace hgraph::stdlib
 
         [[nodiscard]] static const ValueTypeMetaData *bundle_meta(OperatorCallContext context)
         {
-            const auto *schema = operator_impl_detail::time_series_schema_at(context, 0);
-            if (!operator_impl_detail::time_series_schema_matches_pattern(
-                    schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS)) ||
+            const auto *schema = time_series_schema_at(context, 0);
+            if (!time_series_schema_matches_pattern(
+                    schema, time_series_kind_pattern(TSTypeKind::TS)) ||
                 schema->value_schema == nullptr ||
                 schema->value_schema->kind != ValueTypeKind::Bundle)
             {
@@ -405,13 +407,13 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (operator_impl_detail::output_bound(resolution)) { return; }
+            if (output_bound(resolution)) { return; }
             const auto *bundle = bundle_meta(context);
             const Str  *attr   = context.scalar_as<Str>("attr");
             if (bundle == nullptr || attr == nullptr) { return; }
             const auto index = field_index(bundle, *attr);
             if (!index.has_value()) { return; }
-            operator_impl_detail::bind_output(resolution,
+            bind_output(resolution,
                                               TypeRegistry::instance().ts(bundle->fields[*index].type));
         }
 
@@ -446,18 +448,18 @@ namespace hgraph::stdlib
             const Str  *attr   = context.scalar_as<Str>("attr");
             return bundle != nullptr && attr != nullptr &&
                    getattr_ts_bundle::field_index(bundle, *attr).has_value() &&
-                   operator_impl_detail::scalar_arg_at(context, 2) != nullptr;
+                   scalar_arg_at(context, 2) != nullptr;
         }
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (operator_impl_detail::output_bound(resolution)) { return; }
+            if (output_bound(resolution)) { return; }
             const auto *bundle = getattr_ts_bundle::bundle_meta(context);
             const Str  *attr   = context.scalar_as<Str>("attr");
             if (bundle == nullptr || attr == nullptr) { return; }
             const auto index = getattr_ts_bundle::field_index(bundle, *attr);
             if (!index.has_value()) { return; }
-            operator_impl_detail::bind_output(resolution,
+            bind_output(resolution,
                                               TypeRegistry::instance().ts(bundle->fields[*index].type));
         }
 
@@ -500,8 +502,8 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (operator_impl_detail::output_bound(resolution)) { return; }
-            operator_impl_detail::bind_output_like_arg(resolution, context, 0);
+            if (output_bound(resolution)) { return; }
+            bind_output_like_arg(resolution, context, 0);
         }
 
         static void eval(In<"ts", TS<ScalarVar<"S">>> ts, Scalar<"attr", Str> attr,
@@ -815,10 +817,10 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (operator_impl_detail::output_bound(resolution)) { return; }
+            if (output_bound(resolution)) { return; }
             const auto *field = field_schema(context);
             if (field == nullptr) { return; }
-            operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ref(field));
+            bind_output(resolution, TypeRegistry::instance().ref(field));
         }
 
         static void eval(In<"ts", REF<TsVar<"S">>, InputValidity::Unchecked> ts,

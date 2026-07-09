@@ -38,6 +38,8 @@
 
 namespace hgraph::stdlib
 {
+    using namespace operator_type_resolution;
+
     namespace collection_impl_detail
     {
         struct ValueKeyHash
@@ -1957,18 +1959,18 @@ namespace hgraph::stdlib
         [[nodiscard]] inline bool all_args_are_tss(OperatorCallContext context)
         {
             if (context.args.empty()) { return false; }
-            const auto pattern = operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSS);
+            const auto pattern = time_series_kind_pattern(TSTypeKind::TSS);
             for (std::size_t index = 0; index < context.args.size(); ++index)
             {
-                if (!operator_impl_detail::time_series_arg_matches_pattern(context, index, pattern)) { return false; }
+                if (!time_series_arg_matches_pattern(context, index, pattern)) { return false; }
             }
             return true;
         }
 
         inline void resolve_output_to_first_arg(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (operator_impl_detail::output_bound(resolution)) { return; }
-            operator_impl_detail::bind_output_like_arg(resolution, context, 0, "O");
+            if (output_bound(resolution)) { return; }
+            bind_output_like_arg(resolution, context, 0, "O");
         }
 
         /** ``union(*ts)`` — n-ary TSS union, folded pairwise at wiring time. */
@@ -2090,7 +2092,7 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline const ValueTypeMetaData *ts_map_meta(const TSValueTypeMetaData *ts) noexcept
         {
-            return operator_impl_detail::ts_map_value_schema(ts);
+            return ts_map_value_schema(ts);
         }
 
         [[nodiscard]] inline const ValueTypeBinding &map_scalar_binding(const ValueTypeMetaData *key,
@@ -2130,11 +2132,11 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *map_meta = ts_map_meta(resolution.find_ts("S"));
                 if (map_meta == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                operator_impl_detail::bind_local_output(resolution, registry.ts(registry.set(map_meta->key_type)), "O");
+                bind_local_output(resolution, registry.ts(registry.set(map_meta->key_type)), "O");
             }
 
             static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"O">> out)
@@ -2159,11 +2161,11 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *map_meta = ts_map_meta(resolution.find_ts("S"));
                 if (map_meta == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution, registry.ts(registry.list(map_meta->element_type, 0, true)), "O");
             }
 
@@ -2191,12 +2193,12 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *ts   = ts_map_meta(resolution.find_ts("S"));
                 const auto *keys = ts_map_meta(resolution.find_ts("K"));
                 if (ts == nullptr || keys == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution, registry.ts(registry.map(keys->element_type, ts->element_type)), "O");
             }
 
@@ -2228,11 +2230,11 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *ts = ts_map_meta(resolution.find_ts("S"));
                 if (ts == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution, registry.ts(registry.map(ts->element_type, ts->key_type)), "O");
             }
 
@@ -2260,13 +2262,13 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *ts    = ts_map_meta(resolution.find_ts("S"));
                 const auto *parts = ts_map_meta(resolution.find_ts("P"));
                 if (ts == nullptr || parts == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
                 const auto *inner = registry.map(ts->key_type, ts->element_type);
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution, registry.ts(registry.map(parts->element_type, inner)), "O");
             }
 
@@ -2327,13 +2329,13 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *ts    = ts_map_meta(resolution.find_ts("S"));
                 const auto *inner = nested_map_meta(ts);
                 if (ts == nullptr || inner == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
                 const auto *flipped_inner = registry.map(ts->key_type, inner->element_type);
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution, registry.ts(registry.map(inner->key_type, flipped_inner)), "O");
             }
 
@@ -2385,13 +2387,13 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *ts    = ts_map_meta(resolution.find_ts("S"));
                 const auto *inner = nested_map_meta(ts);
                 if (ts == nullptr || inner == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
                 const auto *pair = registry.tuple({ts->key_type, inner->key_type});
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution, registry.ts(registry.map(pair, inner->element_type)), "O");
             }
 
@@ -2432,13 +2434,13 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *ts = ts_map_meta(resolution.find_ts("S"));
                 if (ts == nullptr || ts->key_type == nullptr || ts->key_type->kind != ValueTypeKind::Tuple ||
                     ts->key_type->field_count != 2) { return; }
                 auto &registry = TypeRegistry::instance();
                 const auto *inner = registry.map(ts->key_type->fields[1].type, ts->element_type);
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution, registry.ts(registry.map(ts->key_type->fields[0].type, inner)), "O");
             }
 
@@ -2496,12 +2498,12 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
                 const auto *values = ts_scalar_meta(resolution.find_ts("B"));
                 if (keys == nullptr || values == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                operator_impl_detail::bind_local_output(resolution, registry.ts(registry.map(keys, values)), "O");
+                bind_local_output(resolution, registry.ts(registry.map(keys, values)), "O");
             }
 
             static void eval(In<"keys", TsVar<"A">> keys, In<"values", TsVar<"B">> values, Out<TsVar<"O">> out)
@@ -2529,12 +2531,12 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
                 const auto *values = ts_scalar_meta(resolution.find_ts("B"));
                 if (keys == nullptr || values == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution, registry.ts(registry.map(keys->element_type, values->element_type)), "O");
             }
 
@@ -2564,7 +2566,7 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *keys   = resolution.find_ts("A");
                 const auto *values = resolution.find_ts("B");
                 if (keys == nullptr || values == nullptr || keys->kind != TSTypeKind::TSL ||
@@ -2574,7 +2576,7 @@ namespace hgraph::stdlib
                 if (key_element == nullptr || value_element == nullptr ||
                     key_element->kind != TSTypeKind::TS || value_element->kind != TSTypeKind::TS) { return; }
                 auto &registry = TypeRegistry::instance();
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution,
                     registry.ts(registry.map(key_element->value_schema, value_element->value_schema)),
                     "O");
@@ -2668,7 +2670,7 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *keys   = resolution.find_ts("A");
                 const auto *values = resolution.find_ts("B");
                 if (keys == nullptr || values == nullptr || keys->kind != TSTypeKind::TSL ||
@@ -2678,7 +2680,7 @@ namespace hgraph::stdlib
                 }
                 auto       &registry = TypeRegistry::instance();
                 const auto *element  = registry.dereference(values->element_ts());
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution, registry.tsd(keys->element_ts()->value_schema, registry.ref(element)), "O");
             }
 
@@ -2729,13 +2731,13 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *values = resolution.find_ts("B");
                 const auto *keys   = keys_meta(context);
                 if (values == nullptr || values->kind != TSTypeKind::TSL || keys == nullptr) { return; }
                 auto       &registry = TypeRegistry::instance();
                 const auto *element  = registry.dereference(values->element_ts());
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution, registry.tsd(keys->element_type, registry.ref(element)), "O");
             }
 
@@ -2778,7 +2780,7 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
+                if (output_bound(resolution)) { return; }
                 if (context.args.size() < 2 || context.args[0].kind != WiringArg::Kind::Scalar) { return; }
                 const auto *keys = context.args[0].scalar_value.schema();
                 if (keys == nullptr || keys->kind != ValueTypeKind::List) { return; }
@@ -2794,7 +2796,7 @@ namespace hgraph::stdlib
                 auto       &registry = TypeRegistry::instance();
                 const auto *element  = registry.dereference(first_value->port.schema);
                 if (element == nullptr) { return; }
-                operator_impl_detail::bind_output(resolution, registry.tsd(keys->element_type, registry.ref(element)));
+                bind_output(resolution, registry.tsd(keys->element_type, registry.ref(element)));
             }
 
             static WiringPortRef compose(Wiring &w, Scalar<"keys", ScalarVar<"KS">> keys,
@@ -2846,12 +2848,12 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *keys   = ts_scalar_meta(resolution.find_ts("A"));
                 const auto *values = ts_scalar_meta(resolution.find_ts("B"));
                 if (keys == nullptr || values == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                operator_impl_detail::bind_local_output(
+                bind_local_output(
                     resolution, registry.tsd(keys->element_type, registry.ts(values->element_type)), "O");
             }
 
@@ -2895,9 +2897,9 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline const ValueTypeMetaData *ts_list_meta(OperatorCallContext context, std::size_t index)
         {
-            const auto *schema = operator_impl_detail::time_series_schema_at(context, index);
-            if (!operator_impl_detail::time_series_schema_matches_pattern(
-                    schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS)) ||
+            const auto *schema = time_series_schema_at(context, index);
+            if (!time_series_schema_matches_pattern(
+                    schema, time_series_kind_pattern(TSTypeKind::TS)) ||
                 schema->value_schema == nullptr ||
                 schema->value_schema->kind != ValueTypeKind::List)
             {
@@ -2919,16 +2921,16 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
                 return ts_list_meta(context, 0) != nullptr &&
-                       operator_impl_detail::time_series_arg_matches_pattern(
-                           context, 1, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS));
+                       time_series_arg_matches_pattern(
+                           context, 1, time_series_kind_pattern(TSTypeKind::TS));
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
+                if (output_bound(resolution)) { return; }
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr) { return; }
-                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list));
+                bind_output(resolution, TypeRegistry::instance().ts(list));
             }
 
             static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<Int>> rhs, Out<TsVar<"__out__">> out)
@@ -2958,16 +2960,16 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
                 return ts_list_meta(context, 0) != nullptr &&
-                       operator_impl_detail::time_series_arg_matches_pattern(
-                           context, 1, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS));
+                       time_series_arg_matches_pattern(
+                           context, 1, time_series_kind_pattern(TSTypeKind::TS));
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
+                if (output_bound(resolution)) { return; }
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr) { return; }
-                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list->element_type));
+                bind_output(resolution, TypeRegistry::instance().ts(list->element_type));
             }
 
             static void eval(In<"ts", TS<ScalarVar<"T">>> ts, In<"key", TS<Int>> key, Out<TsVar<"__out__">> out)
@@ -3020,9 +3022,9 @@ namespace hgraph::stdlib
 
             [[nodiscard]] static const ValueTypeMetaData *homogeneous_tuple(OperatorCallContext context)
             {
-                const auto *schema = operator_impl_detail::time_series_schema_at(context, 0);
-                if (!operator_impl_detail::time_series_schema_matches_pattern(
-                        schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS)) ||
+                const auto *schema = time_series_schema_at(context, 0);
+                if (!time_series_schema_matches_pattern(
+                        schema, time_series_kind_pattern(TSTypeKind::TS)) ||
                     schema->value_schema == nullptr ||
                     schema->value_schema->kind != ValueTypeKind::Tuple || schema->value_schema->field_count == 0)
                 {
@@ -3039,16 +3041,16 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
                 return homogeneous_tuple(context) != nullptr &&
-                       operator_impl_detail::time_series_arg_matches_pattern(
-                           context, 1, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS));
+                       time_series_arg_matches_pattern(
+                           context, 1, time_series_kind_pattern(TSTypeKind::TS));
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
+                if (output_bound(resolution)) { return; }
                 const auto *element = homogeneous_tuple(context);
                 if (element == nullptr) { return; }
-                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(element));
+                bind_output(resolution, TypeRegistry::instance().ts(element));
             }
 
             static void eval(In<"ts", TS<ScalarVar<"T">>> ts, In<"key", TS<Int>> key, Out<TsVar<"__out__">> out)
@@ -3101,10 +3103,10 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
-                const auto *tsl = operator_impl_detail::fixed_tsl_arg(context, 0);
+                if (output_bound(resolution)) { return; }
+                const auto *tsl = fixed_tsl_arg(context, 0);
                 if (tsl == nullptr) { return; }
-                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().dereference(tsl->element_ts()));
+                bind_output(resolution, TypeRegistry::instance().dereference(tsl->element_ts()));
             }
 
             static void eval(In<"tsl", TSL<TS<ScalarVar<"T">>, SIZE<"N">>> tsl, Out<TsVar<"__out__">> out)
@@ -3150,10 +3152,10 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
+                if (output_bound(resolution)) { return; }
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr) { return; }
-                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list));
+                bind_output(resolution, TypeRegistry::instance().ts(list));
             }
 
             static WiringPortRef compose(Wiring &w, VarIn<"tsl", TS<ScalarVar<"T">>> ts)
@@ -3187,10 +3189,10 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
+                if (output_bound(resolution)) { return; }
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr) { return; }
-                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list));
+                bind_output(resolution, TypeRegistry::instance().ts(list));
             }
 
             static void eval(In<"lhs", TS<ScalarVar<"T">>, InputValidity::Unchecked> lhs,
@@ -3225,18 +3227,18 @@ namespace hgraph::stdlib
             {
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr || ts_list_meta(context, 1) != nullptr) { return false; }
-                const auto *rhs = operator_impl_detail::time_series_schema_at(context, 1);
-                return operator_impl_detail::time_series_schema_matches_pattern(
-                           rhs, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS)) &&
+                const auto *rhs = time_series_schema_at(context, 1);
+                return time_series_schema_matches_pattern(
+                           rhs, time_series_kind_pattern(TSTypeKind::TS)) &&
                        rhs->value_schema == list->element_type;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
+                if (output_bound(resolution)) { return; }
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr) { return; }
-                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list));
+                bind_output(resolution, TypeRegistry::instance().ts(list));
             }
 
             static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"E">>> rhs,
@@ -3264,18 +3266,18 @@ namespace hgraph::stdlib
             {
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr || ts_list_meta(context, 1) != nullptr) { return false; }
-                const auto *rhs = operator_impl_detail::time_series_schema_at(context, 1);
-                return operator_impl_detail::time_series_schema_matches_pattern(
-                           rhs, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TS)) &&
+                const auto *rhs = time_series_schema_at(context, 1);
+                return time_series_schema_matches_pattern(
+                           rhs, time_series_kind_pattern(TSTypeKind::TS)) &&
                        rhs->value_schema == list->element_type;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
+                if (output_bound(resolution)) { return; }
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr) { return; }
-                operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(list));
+                bind_output(resolution, TypeRegistry::instance().ts(list));
             }
 
             static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"E">>> rhs,
@@ -3360,7 +3362,7 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
             {
-                const auto *out = operator_impl_detail::time_series_schema_at(context, 0);
+                const auto *out = time_series_schema_at(context, 0);
                 const auto *requested = resolution.find_ts("__out__");
                 if (out == nullptr || out->kind != TSTypeKind::TSB || requested == nullptr ||
                     requested->kind != TSTypeKind::TS)
@@ -3411,7 +3413,7 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
             {
                 const auto *requested = resolution.find_ts("__out__");
-                const auto *in        = operator_impl_detail::time_series_schema_at(context, 0);
+                const auto *in        = time_series_schema_at(context, 0);
                 return requested != nullptr && requested->kind == TSTypeKind::TSB && in != nullptr &&
                        in->kind == TSTypeKind::TS && in->value_schema != nullptr &&
                        in->value_schema->kind == ValueTypeKind::Bundle;
@@ -3430,9 +3432,9 @@ namespace hgraph::stdlib
         [[nodiscard]] inline const TSValueTypeMetaData *homogeneous_tsb(OperatorCallContext context,
                                                                         std::size_t index = 0)
         {
-            const auto *schema = operator_impl_detail::time_series_schema_at(context, index);
-            if (!operator_impl_detail::time_series_schema_matches_pattern(
-                    schema, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSB)) ||
+            const auto *schema = time_series_schema_at(context, index);
+            if (!time_series_schema_matches_pattern(
+                    schema, time_series_kind_pattern(TSTypeKind::TSB)) ||
                 schema->field_count() == 0)
             {
                 return nullptr;
@@ -3470,10 +3472,10 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
+                if (output_bound(resolution)) { return; }
                 const auto *schema = homogeneous_tsb(context);
                 if (schema == nullptr) { return; }
-                operator_impl_detail::bind_output(
+                bind_output(
                     resolution, TypeRegistry::instance().ts(schema->fields()[0].type->value_schema));
             }
 
@@ -3523,12 +3525,12 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
+                if (output_bound(resolution)) { return; }
                 if (!matches(context)) { return; }
                 auto &registry = TypeRegistry::instance();
                 const auto *element = Op == TsbAggregate::Sum ? scalar_descriptor<T>::value_meta()
                                                               : scalar_descriptor<Float>::value_meta();
-                operator_impl_detail::bind_output(resolution, registry.ts(element));
+                bind_output(resolution, registry.ts(element));
             }
 
             static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
@@ -3578,14 +3580,14 @@ namespace hgraph::stdlib
             {
                 auto &registry = TypeRegistry::instance();
                 const auto *str_meta = registry.value_type("str");
-                return operator_impl_detail::ts_value_schema_at(context, 0) == str_meta &&
-                       operator_impl_detail::ts_value_schema_at(context, 1) == str_meta;
+                return ts_value_schema_at(context, 0) == str_meta &&
+                       ts_value_schema_at(context, 1) == str_meta;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (operator_impl_detail::output_bound(resolution)) { return; }
-                operator_impl_detail::bind_output_like_arg(resolution, context, 0);
+                if (output_bound(resolution)) { return; }
+                bind_output_like_arg(resolution, context, 0);
             }
 
             static WiringPortRef compose(Wiring &, NamedPort<"lhs", TS<Str>>, NamedPort<"rhs", TS<Str>>)
@@ -3602,10 +3604,10 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return operator_impl_detail::time_series_arg_matches_pattern(
-                           context, 0, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSB)) &&
-                       operator_impl_detail::time_series_arg_matches_pattern(
-                           context, 1, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSB));
+                return time_series_arg_matches_pattern(
+                           context, 0, time_series_kind_pattern(TSTypeKind::TSB)) &&
+                       time_series_arg_matches_pattern(
+                           context, 1, time_series_kind_pattern(TSTypeKind::TSB));
             }
 
             static void eval(In<"lhs", TsVar<"L">> lhs, In<"rhs", TsVar<"R">> rhs, Out<TS<Bool>> out)
@@ -3639,9 +3641,9 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
-                if (operator_impl_detail::local_output_bound(resolution, "O")) { return; }
+                if (local_output_bound(resolution, "O")) { return; }
                 const auto *orig = resolution.find_ts("A");
-                operator_impl_detail::bind_local_output(resolution, orig, "O");
+                bind_local_output(resolution, orig, "O");
             }
 
             static Value merge(const ValueView &orig, const ValueView &delta)

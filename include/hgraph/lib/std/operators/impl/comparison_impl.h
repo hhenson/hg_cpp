@@ -20,6 +20,8 @@
 
 namespace hgraph::stdlib
 {
+    using namespace operator_type_resolution;
+
     /**
      * Implementations + registration for the comparison operators. The abstract markers
      * are in ``<hgraph/lib/std/operators/comparison.h>``; this file provides the concrete
@@ -71,7 +73,7 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return operator_impl_detail::same_fixed_tsl_size(context, 0, 1);
+                return same_fixed_tsl_size(context, 0, 1);
             }
 
             static Port<TS<Bool>> compose(Wiring &w,
@@ -89,7 +91,7 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return operator_impl_detail::same_fixed_tsl_size(context, 0, 1);
+                return same_fixed_tsl_size(context, 0, 1);
             }
 
             static Port<TS<Bool>> compose(Wiring &w,

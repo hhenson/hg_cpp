@@ -9,7 +9,7 @@
 #include <span>
 #include <vector>
 
-namespace hgraph::stdlib::operator_impl_detail
+namespace hgraph::stdlib::higher_order_impl_detail
 {
     /*
      * Shared wiring-time binary reduction layout, mirroring Python _reduce_tsl:
@@ -65,6 +65,6 @@ namespace hgraph::stdlib::operator_impl_detail
         }
         return over_run.has_value() ? combine(outs.front(), *over_run) : outs.front();
     }
-}  // namespace hgraph::stdlib::operator_impl_detail
+}  // namespace hgraph::stdlib::higher_order_impl_detail
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_IMPL_REDUCE_LAYOUT_H

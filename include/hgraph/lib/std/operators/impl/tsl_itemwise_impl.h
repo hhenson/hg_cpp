@@ -11,9 +11,11 @@
 
 namespace hgraph::stdlib::tsl_itemwise_impl_detail
 {
+    using namespace operator_type_resolution;
+
     inline void resolve_map_output_with_fn(ResolutionMap &resolution, OperatorCallContext context, WiredFn wired_fn)
     {
-        if (operator_impl_detail::output_bound(resolution)) { return; }
+        if (output_bound(resolution)) { return; }
 
         std::vector<WiringArg> args;
         args.reserve(context.args.size() + 1);
@@ -33,7 +35,7 @@ namespace hgraph::stdlib::tsl_itemwise_impl_detail
                                                      true);
             return ts_pattern_resolve(resolved.impl->output, resolved.map);
         });
-        operator_impl_detail::bind_output(resolution, output);
+        bind_output(resolution, output);
     }
 
     template <typename Op>
@@ -54,7 +56,7 @@ namespace hgraph::stdlib::tsl_itemwise_impl_detail
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return context.args.size() == 1 && operator_impl_detail::fixed_tsl_arg(context, 0) != nullptr;
+            return context.args.size() == 1 && fixed_tsl_arg(context, 0) != nullptr;
         }
 
         static auto compose(Wiring &w, NamedPort<"ts", TSL<TsVar<"S">>> ts)
@@ -75,7 +77,7 @@ namespace hgraph::stdlib::tsl_itemwise_impl_detail
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return context.args.size() == 2 && operator_impl_detail::same_fixed_tsl_size(context, 0, 1);
+            return context.args.size() == 2 && same_fixed_tsl_size(context, 0, 1);
         }
 
         static auto compose(Wiring &w,
@@ -98,7 +100,7 @@ namespace hgraph::stdlib::tsl_itemwise_impl_detail
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return context.args.size() == 2 && operator_impl_detail::same_fixed_tsl_size(context, 0, 1);
+            return context.args.size() == 2 && same_fixed_tsl_size(context, 0, 1);
         }
 
         static auto compose(Wiring &w,
@@ -122,9 +124,9 @@ namespace hgraph::stdlib::tsl_itemwise_impl_detail
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
             return context.args.size() == 2 &&
-                   operator_impl_detail::fixed_tsl_arg(context, 0) != nullptr &&
-                   !operator_impl_detail::time_series_arg_matches_pattern(
-                       context, 1, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSL));
+                   fixed_tsl_arg(context, 0) != nullptr &&
+                   !time_series_arg_matches_pattern(
+                       context, 1, time_series_kind_pattern(TSTypeKind::TSL));
         }
 
         static auto compose(Wiring &w, NamedPort<"lhs", TSL<TsVar<"L">>> lhs, NamedPort<"rhs", TsVar<"R">> rhs)
@@ -146,9 +148,9 @@ namespace hgraph::stdlib::tsl_itemwise_impl_detail
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
             return context.args.size() == 2 &&
-                   !operator_impl_detail::time_series_arg_matches_pattern(
-                       context, 0, operator_impl_detail::time_series_kind_pattern(TSTypeKind::TSL)) &&
-                   operator_impl_detail::fixed_tsl_arg(context, 1) != nullptr;
+                   !time_series_arg_matches_pattern(
+                       context, 0, time_series_kind_pattern(TSTypeKind::TSL)) &&
+                   fixed_tsl_arg(context, 1) != nullptr;
         }
 
         static auto compose(Wiring &w, NamedPort<"lhs", TsVar<"L">> lhs, NamedPort<"rhs", TSL<TsVar<"R">>> rhs)
