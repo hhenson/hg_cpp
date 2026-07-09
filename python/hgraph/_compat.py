@@ -39,7 +39,7 @@ _KNOWN_GAPS = (
     "json_encode", "json_decode",
     "to_window", "window", "batch", "filter_by",
     "convert", "collect", "emit",
-    "cast_", "downcast_", "downcast_ref",
+    "downcast_", "downcast_ref",
     "collapse_keys", "flip_keys", "uncollapse_keys", "values_",
     "assert_", "print_", "setattr_", "type_",
     "evaluation_time_in_range", "round_",

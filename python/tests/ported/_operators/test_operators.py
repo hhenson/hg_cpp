@@ -3,8 +3,6 @@ from dataclasses import dataclass
 from hgraph import take, cast_, graph, CompoundScalar, TS, setattr_
 from hgraph.test import eval_node
 
-import pytest as _pytest_mark
-pytestmark = _pytest_mark.mark.wip   # simple-ops burn-down; excluded from the gate
 
 
 

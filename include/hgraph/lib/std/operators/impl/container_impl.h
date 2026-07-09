@@ -482,6 +482,54 @@ namespace hgraph::stdlib
         }
     };
 
+    /** setattr_(ts, attr, value): a copy of the bundle with the named
+        field overridden by ``value`` (hgraph's CS field set). */
+    struct setattr_ts_bundle
+    {
+        static constexpr auto name = "setattr_ts_bundle";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *bundle = getattr_ts_bundle::bundle_meta(context);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            return bundle != nullptr && attr != nullptr &&
+                   getattr_ts_bundle::field_index(bundle, *attr).has_value();
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            operator_impl_detail::bind_output_like_arg(resolution, context, 0);
+        }
+
+        static void eval(In<"ts", TS<ScalarVar<"S">>> ts, Scalar<"attr", Str> attr,
+                         In<"value", TS<ScalarVar<"V">>> value, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto  source = ts.base().value();
+            const auto *meta   = source.schema();
+            auto        fields = source.as_indexed_view();
+            BundleBuilder builder{*ValuePlanFactory::instance().binding_for(meta)};
+            const auto  target = getattr_ts_bundle::field_index(meta, attr.value());
+            for (std::size_t index = 0; index < meta->field_count; ++index)
+            {
+                if (target.has_value() && index == *target)
+                {
+                    if (value.valid()) { builder.set(index, Value{value.base().value()}); }
+                }
+                else
+                {
+                    auto field = fields.at(index);
+                    if (field.valid()) { builder.set(index, Value{field}); }
+                }
+            }
+            Value result = builder.build();
+            if (erased.data_view().has_current_value() && erased.value().equals(result.view())) { return; }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(result)));
+        }
+    };
+
     /** getattr_ over NESTED TSDs: collapse -> project -> uncollapse
         (hgraph's tsd_get_bundle_item_2/_nested route). */
     struct getattr_tsd_nested

@@ -693,6 +693,14 @@ class _Emit:
 emit = _Emit()
 
 
+def cast_(tp, ts):
+    """hgraph's cast_: reinterpret/convert ``ts`` to type ``tp`` (a python
+    scalar type). Numeric casts route through the convert kernels."""
+    from ._types import TS
+
+    return convert(ts, to=TS[tp])
+
+
 class WiringError(RuntimeError):
     """A wiring-time error (hgraph parity)."""
 
