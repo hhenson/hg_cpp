@@ -43,13 +43,9 @@ namespace hgraph::stdlib
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (output_bound(resolution)) { return; }
-                const auto *schema = time_series_schema_at(context, 0);
+                const auto *schema = time_series_schema_at_as<AnyTS>(context, 0);
                 const Int  *period = context.scalar_as<Int>("period");
-                if (!time_series_schema_matches<AnyTS>(schema) ||
-                    period == nullptr)
-                {
-                    return;
-                }
+                if (schema == nullptr || period == nullptr) { return; }
                 const Int *min_period = context.scalar_as<Int>("min_window_period");
                 bind_output(
                     resolution, TypeRegistry::instance().tsw(schema->value_schema,
@@ -102,13 +98,9 @@ namespace hgraph::stdlib
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (output_bound(resolution)) { return; }
-                const auto *schema = time_series_schema_at(context, 0);
+                const auto *schema = time_series_schema_at_as<AnyTS>(context, 0);
                 const auto *period = context.scalar_as<TimeDelta>("period");
-                if (!time_series_schema_matches<AnyTS>(schema) ||
-                    period == nullptr)
-                {
-                    return;
-                }
+                if (schema == nullptr || period == nullptr) { return; }
                 const auto *min_period = context.scalar_as<TimeDelta>("min_window_period");
                 const TimeDelta min_range =
                     min_period != nullptr && *min_period > TimeDelta{0} ? *min_period : *period;
@@ -137,19 +129,16 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                const auto *schema = time_series_schema_at(context, 0);
-                return time_series_schema_matches<AnyTSW>(schema) &&
+                const auto *schema = time_series_schema_at_as<AnyTSW>(context, 0);
+                return schema != nullptr &&
                        schema->value_schema->element_type == scalar_descriptor<T>::value_meta();
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (output_bound(resolution)) { return; }
-                const auto *schema = time_series_schema_at(context, 0);
-                if (!time_series_schema_matches<AnyTSW>(schema))
-                {
-                    return;
-                }
+                const auto *schema = time_series_schema_at_as<AnyTSW>(context, 0);
+                if (schema == nullptr) { return; }
                 bind_output(resolution, schema);
             }
 
@@ -183,11 +172,8 @@ namespace hgraph::stdlib
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (output_bound(resolution)) { return; }
-                const auto *schema = time_series_schema_at(context, 0);
-                if (!time_series_schema_matches<AnyTSW>(schema))
-                {
-                    return;
-                }
+                const auto *schema = time_series_schema_at_as<AnyTSW>(context, 0);
+                if (schema == nullptr) { return; }
                 bind_output(
                     resolution, TypeRegistry::instance().ts(schema->value_schema->element_type));
             }
@@ -226,8 +212,8 @@ namespace hgraph::stdlib
 
             [[nodiscard]] static bool matches(OperatorCallContext context)
             {
-                const auto *schema = time_series_schema_at(context, 0);
-                return time_series_schema_matches<AnyTSW>(schema) &&
+                const auto *schema = time_series_schema_at_as<AnyTSW>(context, 0);
+                return schema != nullptr &&
                        schema->value_schema->element_type == scalar_descriptor<T>::value_meta();
             }
 
@@ -282,11 +268,8 @@ namespace hgraph::stdlib
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (output_bound(resolution)) { return; }
-                const auto *schema = time_series_schema_at(context, 0);
-                if (!time_series_schema_matches<AnyTSW>(schema))
-                {
-                    return;
-                }
+                const auto *schema = time_series_schema_at_as<AnyTSW>(context, 0);
+                if (schema == nullptr) { return; }
                 bind_output(
                     resolution, TypeRegistry::instance().ts(schema->value_schema->element_type));
             }

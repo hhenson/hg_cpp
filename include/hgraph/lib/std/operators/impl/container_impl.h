@@ -285,8 +285,7 @@ namespace hgraph::stdlib
         [[nodiscard]] static const TSValueTypeMetaData *element_bundle_schema(const TSValueTypeMetaData *tsd)
         {
             if (tsd == nullptr || tsd->kind != TSTypeKind::TSD) { return nullptr; }
-            const auto *element = TypeRegistry::instance().dereference(tsd->element_ts());
-            return element != nullptr && element->kind == TSTypeKind::TSB ? element : nullptr;
+            return time_series_schema_as<AnyTSB>(tsd->element_ts());
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
@@ -365,8 +364,8 @@ namespace hgraph::stdlib
 
         [[nodiscard]] static const ValueTypeMetaData *bundle_meta(OperatorCallContext context)
         {
-            const auto *schema = time_series_schema_at(context, 0);
-            if (!time_series_schema_matches<AnyTS>(schema) ||
+            const auto *schema = time_series_schema_at_as<AnyTS>(context, 0);
+            if (schema == nullptr ||
                 schema->value_schema == nullptr ||
                 schema->value_schema->kind != ValueTypeKind::Bundle)
             {
@@ -533,12 +532,12 @@ namespace hgraph::stdlib
             auto &registry = TypeRegistry::instance();
             const auto *current = registry.dereference(schema);
             depth = 0;
-            while (current != nullptr && current->kind == TSTypeKind::TSD)
+            while (const auto *tsd = time_series_schema_as<AnyTSD>(current))
             {
                 ++depth;
-                current = registry.dereference(current->element_ts());
+                current = registry.dereference(tsd->element_ts());
             }
-            return current != nullptr && current->kind == TSTypeKind::TSB ? current : nullptr;
+            return time_series_schema_as<AnyTSB>(current);
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
@@ -567,10 +566,10 @@ namespace hgraph::stdlib
                 field->kind == TSTypeKind::REF ? field : registry.ref(field);
             const auto *level = registry.dereference(context.args[0].port.schema);
             std::vector<const ValueTypeMetaData *> keys;
-            while (level != nullptr && level->kind == TSTypeKind::TSD)
+            while (const auto *tsd = time_series_schema_as<AnyTSD>(level))
             {
-                keys.push_back(level->key_type());
-                level = registry.dereference(level->element_ts());
+                keys.push_back(tsd->key_type());
+                level = registry.dereference(tsd->element_ts());
             }
             for (std::size_t i = keys.size(); i-- > 0;) { out = registry.tsd(keys[i], out); }
             resolution.bind_ts("__out__", out);

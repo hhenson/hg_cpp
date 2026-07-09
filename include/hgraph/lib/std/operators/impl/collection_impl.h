@@ -1076,10 +1076,10 @@ namespace hgraph::stdlib
         {
             auto &registry = TypeRegistry::instance();
             const auto *current = registry.dereference(schema);
-            while (current != nullptr && current->kind == TSTypeKind::TSD)
+            while (const auto *tsd = time_series_schema_as<AnyTSD>(current))
             {
-                keys.push_back(current->key_type());
-                current = registry.dereference(current->element_ts());
+                keys.push_back(tsd->key_type());
+                current = registry.dereference(tsd->element_ts());
             }
             leaf = current;
         }
@@ -2869,8 +2869,8 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline const ValueTypeMetaData *ts_list_meta(OperatorCallContext context, std::size_t index)
         {
-            const auto *schema = time_series_schema_at(context, index);
-            if (!time_series_schema_matches<AnyTS>(schema) ||
+            const auto *schema = time_series_schema_at_as<AnyTS>(context, index);
+            if (schema == nullptr ||
                 schema->value_schema == nullptr ||
                 schema->value_schema->kind != ValueTypeKind::List)
             {
@@ -2991,8 +2991,8 @@ namespace hgraph::stdlib
 
             [[nodiscard]] static const ValueTypeMetaData *homogeneous_tuple(OperatorCallContext context)
             {
-                const auto *schema = time_series_schema_at(context, 0);
-                if (!time_series_schema_matches<AnyTS>(schema) ||
+                const auto *schema = time_series_schema_at_as<AnyTS>(context, 0);
+                if (schema == nullptr ||
                     schema->value_schema == nullptr ||
                     schema->value_schema->kind != ValueTypeKind::Tuple || schema->value_schema->field_count == 0)
                 {
@@ -3073,7 +3073,9 @@ namespace hgraph::stdlib
                 if (output_bound(resolution)) { return; }
                 const auto *tsl = fixed_tsl_arg(context, 0);
                 if (tsl == nullptr) { return; }
-                bind_output(resolution, TypeRegistry::instance().dereference(tsl->element_ts()));
+                const auto *element = time_series_schema_as<AnyTS>(tsl->element_ts());
+                if (element == nullptr) { return; }
+                bind_output(resolution, element);
             }
 
             static void eval(In<"tsl", TSL<TS<ScalarVar<"T">>, SIZE<"N">>> tsl, Out<TsVar<"__out__">> out)
@@ -3194,9 +3196,8 @@ namespace hgraph::stdlib
             {
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr || ts_list_meta(context, 1) != nullptr) { return false; }
-                const auto *rhs = time_series_schema_at(context, 1);
-                return time_series_schema_matches<AnyTS>(rhs) &&
-                       rhs->value_schema == list->element_type;
+                const auto *rhs = time_series_schema_at_as<AnyTS>(context, 1);
+                return rhs != nullptr && rhs->value_schema == list->element_type;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -3232,9 +3233,8 @@ namespace hgraph::stdlib
             {
                 const auto *list = ts_list_meta(context, 0);
                 if (list == nullptr || ts_list_meta(context, 1) != nullptr) { return false; }
-                const auto *rhs = time_series_schema_at(context, 1);
-                return time_series_schema_matches<AnyTS>(rhs) &&
-                       rhs->value_schema == list->element_type;
+                const auto *rhs = time_series_schema_at_as<AnyTS>(context, 1);
+                return rhs != nullptr && rhs->value_schema == list->element_type;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -3330,7 +3330,6 @@ namespace hgraph::stdlib
                 const auto *out = time_series_schema_at_as<AnyTSB>(context, 0);
                 const auto *requested = resolution.find_ts("__out__");
                 if (out == nullptr || requested == nullptr ||
-                    !time_series_schema_matches<AnyTS>(requested) ||
                     requested->kind != TSTypeKind::TS)
                 {
                     return false;
@@ -3380,8 +3379,8 @@ namespace hgraph::stdlib
             {
                 const auto *requested = resolution.find_ts("__out__");
                 const auto *in        = time_series_schema_at_as<AnyTS>(context, 0);
-                return requested != nullptr && time_series_schema_matches<AnyTSB>(requested) &&
-                       requested->kind == TSTypeKind::TSB && in != nullptr && in->value_schema != nullptr &&
+                return requested != nullptr && requested->kind == TSTypeKind::TSB &&
+                       in != nullptr && in->value_schema != nullptr &&
                        in->value_schema->kind == ValueTypeKind::Bundle;
             }
 
@@ -3398,12 +3397,8 @@ namespace hgraph::stdlib
         [[nodiscard]] inline const TSValueTypeMetaData *homogeneous_tsb(OperatorCallContext context,
                                                                         std::size_t index = 0)
         {
-            const auto *schema = time_series_schema_at(context, index);
-            if (!time_series_schema_matches<AnyTSB>(schema) ||
-                schema->field_count() == 0)
-            {
-                return nullptr;
-            }
+            const auto *schema = time_series_schema_at_as<AnyTSB>(context, index);
+            if (schema == nullptr || schema->field_count() == 0) { return nullptr; }
             const auto *field = schema->fields()[0].type;
             if (field == nullptr || field->kind != TSTypeKind::TS) { return nullptr; }
             for (std::size_t i = 1; i < schema->field_count(); ++i)
