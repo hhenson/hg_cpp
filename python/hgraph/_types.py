@@ -19,6 +19,8 @@ _SCALAR_NAMES = {
 
 
 def _value_type(scalar):
+    if isinstance(scalar, _SeriesType) or scalar is Series:
+        return _hgraph.value_type("series")
     if isinstance(scalar, str):
         return _hgraph.value_type(scalar)
     if isinstance(scalar, _TypeVarSentinel):
@@ -291,6 +293,36 @@ class _TSDMeta(type):
 
 class TSD(metaclass=_TSDMeta):
     """TSD[key_scalar, TS[...]] — a keyed time-series dictionary."""
+
+
+class _SeriesMeta(type):
+    def __getitem__(cls, element):
+        # Series[T] - an arrow-backed single column. The C++ value kind is
+        # the single "series" scalar; the element type documents intent and
+        # rides the arrow array at runtime.
+        return _value_expr_series(element)
+
+
+def _value_expr_series(element):
+    # A ScalarExpr-like handle over the "series" value type; TS[Series[T]]
+    # wraps it as a time series.
+    return _SeriesType(element)
+
+
+class _SeriesType:
+    """Series[T]: resolves to the 'series' scalar value type."""
+
+    __slots__ = ("element",)
+
+    def __init__(self, element):
+        self.element = element
+
+    def __repr__(self):
+        return f"Series[{getattr(self.element, '__name__', self.element)!r}]"
+
+
+class Series(metaclass=_SeriesMeta):
+    """Series[T] - a first-class arrow-backed column scalar."""
 
 
 class _TSWMeta(type):

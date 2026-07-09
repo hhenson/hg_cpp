@@ -19,6 +19,7 @@ set(HGRAPH_RUNTIME_SOURCES
     hgraph/runtime/switch_node.cpp
     hgraph/runtime/try_except_node.cpp
     hgraph/types/frame.cpp
+    hgraph/types/series.cpp
     hgraph/types/metadata/ts_data_atomic_ops.cpp
     hgraph/types/metadata/ts_data_dynamic_list_ops.cpp
     hgraph/types/metadata/ts_data_fixed_structured_ops.cpp

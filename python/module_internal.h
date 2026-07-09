@@ -6,6 +6,7 @@
 #include <hgraph/python/bridge_state.h>
 #include <hgraph/python/chrono.h>
 #include <hgraph/types/frame.h>
+#include <hgraph/types/series.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_schema.h>
@@ -77,11 +78,21 @@ namespace hgraph::python_bridge
         [[nodiscard]] nb::object capsule() const;
     };
 
+    struct PySeriesArray
+    {
+        Series series;
+
+        /** Export as the arrow C Data Interface pair (schema, array). */
+        [[nodiscard]] nb::object arrow_c_array() const;
+    };
+
 
     [[nodiscard]] Value      py_to_value(nb::handle object);
     [[nodiscard]] nb::object value_to_py(const ValueView &view);
     [[nodiscard]] nb::object frame_to_py(const Frame &frame);
     [[nodiscard]] Value      py_arrow_to_frame(nb::handle object);
+    [[nodiscard]] nb::object series_to_py(const Series &series);
+    [[nodiscard]] Value      py_arrow_to_series(nb::handle object);
 
     [[nodiscard]] const ValueTypeBinding &delta_binding(const ValueTypeMetaData *meta);
     [[nodiscard]] Value                   py_to_value_as(nb::handle object, const ValueTypeMetaData *meta);

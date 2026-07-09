@@ -2,6 +2,8 @@
 
 #include <hgraph/lib/std/operators/arithmetic.h>
 
+#include <arrow/array.h>
+#include <arrow/c/abi.h>
 #include <arrow/c/bridge.h>
 #include <arrow/record_batch.h>
 #include <arrow/table.h>
@@ -222,6 +224,54 @@ namespace hgraph::python_bridge
         return Value{Frame{.table = std::move(*table)}};
     }
 
+    nb::object PySeriesArray::arrow_c_array() const
+    {
+        auto *c_array  = new ArrowArray{};
+        auto *c_schema = new ArrowSchema{};
+        const auto status = arrow::ExportArray(*series.array, c_array, c_schema);
+        if (!status.ok())
+        {
+            delete c_array;
+            delete c_schema;
+            throw std::runtime_error("arrow array export failed: " + status.ToString());
+        }
+        const auto array_release = [](PyObject *object) {
+            auto *raw = static_cast<ArrowArray *>(PyCapsule_GetPointer(object, "arrow_array"));
+            if (raw != nullptr) { if (raw->release != nullptr) { raw->release(raw); } delete raw; }
+        };
+        const auto schema_release = [](PyObject *object) {
+            auto *raw = static_cast<ArrowSchema *>(PyCapsule_GetPointer(object, "arrow_schema"));
+            if (raw != nullptr) { if (raw->release != nullptr) { raw->release(raw); } delete raw; }
+        };
+        nb::object schema_capsule = nb::steal(PyCapsule_New(c_schema, "arrow_schema", schema_release));
+        nb::object array_capsule  = nb::steal(PyCapsule_New(c_array, "arrow_array", array_release));
+        return nb::make_tuple(schema_capsule, array_capsule);
+    }
+
+    nb::object series_to_py(const Series &series)
+    {
+        if (!series.has_value()) { return nb::none(); }
+        nb::object holder = nb::cast(PySeriesArray{series});
+        return nb::module_::import_("pyarrow").attr("array")(holder);
+    }
+
+    Value py_arrow_to_series(nb::handle object)
+    {
+        nb::object pair = object.attr("__arrow_c_array__")();
+        nb::tuple  capsules = nb::cast<nb::tuple>(pair);
+        auto *c_schema = static_cast<ArrowSchema *>(
+            PyCapsule_GetPointer(capsules[0].ptr(), "arrow_schema"));
+        auto *c_array = static_cast<ArrowArray *>(
+            PyCapsule_GetPointer(capsules[1].ptr(), "arrow_array"));
+        if (c_schema == nullptr || c_array == nullptr)
+        {
+            throw nb::type_error("expected an (arrow_schema, arrow_array) capsule pair");
+        }
+        auto array = arrow::ImportArray(c_array, c_schema);
+        if (!array.ok()) { throw std::runtime_error("arrow array import failed: " + array.status().ToString()); }
+        return Value{Series{.array = std::move(*array)}};
+    }
+
     nb::object value_to_py(const ValueView &view)
     {
         if (!view.valid()) { return nb::none(); }
@@ -231,6 +281,10 @@ namespace hgraph::python_bridge
         if (view.schema() == scalar_descriptor<Frame>::value_meta())
         {
             return frame_to_py(view.checked_as<Frame>());
+        }
+        if (view.schema() == scalar_descriptor<Series>::value_meta())
+        {
+            return series_to_py(view.checked_as<Series>());
         }
         if (view.schema()->display_name != nullptr &&
             std::string_view{view.schema()->display_name} == "TimeSeriesReference")
@@ -253,6 +307,7 @@ namespace hgraph::python_bridge
         // BINDING's from_python (the type-erasure rule - target-directed
         // conversion lives with each kind's ops).
         if (meta == scalar_descriptor<Frame>::value_meta()) { return py_arrow_to_frame(object); }
+        if (meta == scalar_descriptor<Series>::value_meta()) { return py_arrow_to_series(object); }
         if (nb::isinstance<PyOpaqueRef>(object)) { return Value{nb::cast<PyOpaqueRef &>(object).value.view()}; }
         const auto *binding = ValuePlanFactory::instance().binding_for(meta);
         if (binding == nullptr) { throw nb::type_error("schema has no canonical binding"); }

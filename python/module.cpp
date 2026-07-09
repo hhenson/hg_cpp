@@ -1544,6 +1544,10 @@ NB_MODULE(_hgraph, m)
         .def("__arrow_c_stream__",
              [](const PyArrowStream &self, nb::handle) { return self.capsule(); },
              nb::arg("requested_schema") = nb::none());
+    nb::class_<PySeriesArray>(m, "ArrowSeriesArray")
+        .def("__arrow_c_array__",
+             [](const PySeriesArray &self, nb::handle) { return self.arrow_c_array(); },
+             nb::arg("requested_schema") = nb::none());
     // Wiring-time scalar values as one list-of-Any (part of node identity).
     m.def("any_list", [](nb::list values) {
         auto &registry = TypeRegistry::instance();
