@@ -1,5 +1,6 @@
 #include <hgraph/lib/std/operators/convert_target.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/operator_type_resolution.h>
 
 #include <fmt/format.h>
 
@@ -12,6 +13,8 @@ namespace hgraph::stdlib
 {
     namespace
     {
+        using hgraph::operator_type_resolution::ts_value_schema;
+
         [[nodiscard]] std::string schema_name(const TSValueTypeMetaData *schema)
         {
             return schema != nullptr && schema->display_name != nullptr ? std::string{schema->display_name}
@@ -21,12 +24,6 @@ namespace hgraph::stdlib
         [[nodiscard]] const TSValueTypeMetaData *deref(const TSValueTypeMetaData *schema)
         {
             return TypeRegistry::instance().dereference(schema);
-        }
-
-        [[nodiscard]] const ValueTypeMetaData *plain_ts_value(const TSValueTypeMetaData *schema)
-        {
-            schema = deref(schema);
-            return schema != nullptr && schema->kind == TSTypeKind::TS ? schema->value_schema : nullptr;
         }
 
         [[nodiscard]] const ValueTypeMetaData *homogeneous_tuple_element(const ValueTypeMetaData *value)
@@ -57,7 +54,7 @@ namespace hgraph::stdlib
 
         [[nodiscard]] const TSValueTypeMetaData *ts_element_value_as_ts(const TSValueTypeMetaData *schema)
         {
-            const ValueTypeMetaData *value = plain_ts_value(schema);
+            const ValueTypeMetaData *value = ts_value_schema(deref(schema));
             return value != nullptr && is_collection(value) ? TypeRegistry::instance().ts(value->element_type) : schema;
         }
 
@@ -73,16 +70,14 @@ namespace hgraph::stdlib
         {
             schema = deref(schema);
             if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return nullptr; }
-            const TSValueTypeMetaData *element = deref(schema->element_ts());
-            return element != nullptr && element->kind == TSTypeKind::TS ? element->value_schema : nullptr;
+            return ts_value_schema(deref(schema->element_ts()));
         }
 
         [[nodiscard]] const ValueTypeMetaData *tsl_element_scalar(const TSValueTypeMetaData *schema)
         {
             schema = deref(schema);
             if (schema == nullptr || schema->kind != TSTypeKind::TSL) { return nullptr; }
-            const TSValueTypeMetaData *element = deref(schema->element_ts());
-            return element != nullptr && element->kind == TSTypeKind::TS ? element->value_schema : nullptr;
+            return ts_value_schema(deref(schema->element_ts()));
         }
 
         [[nodiscard]] const ValueTypeMetaData *key_scalar_from_schema(const TSValueTypeMetaData *schema)
@@ -90,7 +85,7 @@ namespace hgraph::stdlib
             schema = deref(schema);
             if (schema == nullptr) { return nullptr; }
             if (schema->kind == TSTypeKind::TSS) { return tss_element(schema); }
-            return collection_element_or_self(plain_ts_value(schema));
+            return collection_element_or_self(ts_value_schema(schema));
         }
 
         [[nodiscard]] std::vector<std::size_t> selected_tsb_field_indices(
@@ -142,7 +137,8 @@ namespace hgraph::stdlib
             for (std::size_t index : indices)
             {
                 const TSValueTypeMetaData *field = schema->fields()[index].type;
-                if (field == nullptr || field->kind != TSTypeKind::TS)
+                const ValueTypeMetaData   *value = ts_value_schema(field);
+                if (value == nullptr)
                 {
                     throw std::invalid_argument("TSB conversion requires selected fields to be plain TS values");
                 }
@@ -151,7 +147,7 @@ namespace hgraph::stdlib
                     first = field;
                     continue;
                 }
-                if (first->value_schema != field->value_schema)
+                if (first->value_schema != value)
                 {
                     throw std::invalid_argument(
                         "TSB conversion requires all selected fields to have the same value type");
@@ -218,7 +214,7 @@ namespace hgraph::stdlib
                     fmt::format("cannot resolve type pattern {} against <null>", ts_pattern_to_string(pattern)));
             }
             ResolutionMap resolution;
-            if (!ts_pattern_match(pattern, candidate, resolution))
+            if (!output_ts_pattern_match(pattern, candidate, resolution))
             {
                 throw std::invalid_argument(
                     fmt::format("resolved target {} does not satisfy requested {}",
@@ -309,7 +305,7 @@ namespace hgraph::stdlib
             }
 
             const ValueTypeMetaData *key = key_scalar_from_schema(first);
-            const ValueTypeMetaData *value = plain_ts_value(deref(inputs[1]));
+            const ValueTypeMetaData *value = ts_value_schema(deref(inputs[1]));
             value = collection_element_or_self(value);
             if (key == nullptr || value == nullptr)
             {
@@ -388,7 +384,7 @@ namespace hgraph::stdlib
         {
             const TSValueTypeMetaData *input = require_one_input(inputs, "TSB");
             if (input->kind == TSTypeKind::TSB) { return input; }
-            const ValueTypeMetaData *value = plain_ts_value(input);
+            const ValueTypeMetaData *value = ts_value_schema(input);
             if (const TSValueTypeMetaData *bundle = tsb_for_bundle_value(value)) { return bundle; }
             throw std::invalid_argument(fmt::format("cannot infer TSB target from {}", schema_name(input)));
         }
