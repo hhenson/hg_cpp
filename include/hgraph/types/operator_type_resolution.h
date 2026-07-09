@@ -6,7 +6,6 @@
 
 #include <cstddef>
 #include <string_view>
-#include <utility>
 
 namespace hgraph::operator_type_resolution
 {
@@ -24,7 +23,7 @@ namespace hgraph::operator_type_resolution
      *
      * - ``time_series_schema_at`` extracts a TS argument schema, dereferencing
      *   REF by default.
-     * - ``time_series_schema_at`` plus ``time_series_schema_matches_pattern``
+     * - ``time_series_schema_at`` plus typed ``time_series_schema_matches<S>``
      *   answers recursive shape questions without a separate kind-specific API.
      * - ``fixed_tsl_arg`` extracts only a positive fixed-size TSL.
      * - ``ts_value_schema`` extracts ``T`` from ``TS<T>``.
@@ -136,66 +135,23 @@ namespace hgraph::operator_type_resolution
         return arg != nullptr ? time_series_schema(*arg, mode) : nullptr;
     }
 
-    /** Match a concrete input schema against a full recursive time-series pattern. */
-    [[nodiscard]] inline bool time_series_schema_matches_pattern(
-        const TSValueTypeMetaData *schema,
-        const TypePattern         &pattern)
-    {
-        if (schema == nullptr) { return false; }
-        ResolutionMap scratch;
-        return input_ts_pattern_match(pattern, schema, scratch);
-    }
-
-    /** Typed counterpart of ``time_series_schema_matches_pattern``. */
+    /** Match a concrete input schema against a static recursive time-series pattern. */
     template <typename Schema>
     [[nodiscard]] inline bool time_series_schema_matches(const TSValueTypeMetaData *schema)
     {
-        return time_series_schema_matches_pattern(schema, to_pattern<Schema>());
+        if (schema == nullptr) { return false; }
+        ResolutionMap scratch;
+        return input_ts_pattern_match(to_pattern<Schema>(), schema, scratch);
     }
 
-    /** Match argument ``index`` against a full recursive time-series pattern. */
-    [[nodiscard]] inline bool time_series_arg_matches_pattern(
-        OperatorCallContext context,
-        std::size_t         index,
-        const TypePattern  &pattern,
-        SchemaRefMode       mode = SchemaRefMode::Dereference)
-    {
-        return time_series_schema_matches_pattern(time_series_schema_at(context, index, mode), pattern);
-    }
-
-    /** Typed counterpart of ``time_series_arg_matches_pattern``. */
+    /** Match argument ``index`` against a static recursive time-series pattern. */
     template <typename Schema>
     [[nodiscard]] inline bool time_series_arg_matches(
         OperatorCallContext context,
         std::size_t         index,
         SchemaRefMode       mode = SchemaRefMode::Dereference)
     {
-        return time_series_arg_matches_pattern(context, index, to_pattern<Schema>(), mode);
-    }
-
-    /** Pattern form for a broad time-series kind check. */
-    [[nodiscard]] inline TypePattern time_series_kind_pattern(TSTypeKind kind)
-    {
-        switch (kind)
-        {
-            case TSTypeKind::TS:
-                return to_pattern<AnyTS>();
-            case TSTypeKind::TSS:
-                return to_pattern<AnyTSS>();
-            case TSTypeKind::TSL:
-                return to_pattern<AnyTSL>();
-            case TSTypeKind::TSD:
-                return to_pattern<AnyTSD>();
-            case TSTypeKind::TSB:
-                return to_pattern<AnyTSB>();
-            case TSTypeKind::REF:
-                return to_pattern<AnyREF>();
-            case TSTypeKind::SIGNAL:
-                return TypePattern::signal();
-            case TSTypeKind::TSW:
-                return to_pattern<AnyTSW>();
-        }
-        std::unreachable();
+        return time_series_schema_matches<Schema>(time_series_schema_at(context, index, mode));
     }
 
     /** Return a fixed-size TSL schema at ``index``. Dynamic TSL returns null. */
@@ -294,25 +250,16 @@ namespace hgraph::operator_type_resolution
         return mode == SchemaRefMode::Dereference ? TypeRegistry::instance().dereference(schema) : schema;
     }
 
-    /** Match the resolved graph output against a full recursive time-series pattern. */
-    [[nodiscard]] inline bool output_matches_pattern(
-        const ResolutionMap &resolution,
-        const TypePattern   &pattern,
-        SchemaRefMode        mode = SchemaRefMode::Direct)
-    {
-        const TSValueTypeMetaData *schema = output_schema(resolution, mode);
-        if (schema == nullptr) { return false; }
-        ResolutionMap scratch;
-        return output_ts_pattern_match(pattern, schema, scratch);
-    }
-
-    /** Typed counterpart of ``output_matches_pattern``. */
+    /** Match the resolved graph output against a static recursive time-series pattern. */
     template <typename Schema>
     [[nodiscard]] inline bool output_matches(
         const ResolutionMap &resolution,
         SchemaRefMode        mode = SchemaRefMode::Direct)
     {
-        return output_matches_pattern(resolution, to_pattern<Schema>(), mode);
+        const TSValueTypeMetaData *schema = output_schema(resolution, mode);
+        if (schema == nullptr) { return false; }
+        ResolutionMap scratch;
+        return output_ts_pattern_match(to_pattern<Schema>(), schema, scratch);
     }
 
     /** Return ``T`` when the resolved graph output is ``TS<T>``. */

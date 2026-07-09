@@ -483,37 +483,30 @@ TEST_CASE("operators: operator helpers match recursive time-series patterns")
     OperatorCallContext context{std::span<const WiringArg>{args}};
 
     CHECK(type_resolution::time_series_arg_matches<TSL<TS<ScalarVar<"T">>, SIZE<"N">>>(context, 0));
-    CHECK(type_resolution::time_series_arg_matches_pattern(
-        context, 0, type_resolution::time_series_kind_pattern(TSTypeKind::TSL)));
+    CHECK(type_resolution::time_series_arg_matches<type_resolution::AnyTSL>(context, 0));
     CHECK(type_resolution::fixed_tsl_arg(context, 0) == ts_type<TSL<TS<Int>, 2>>());
 
-    CHECK_FALSE(type_resolution::time_series_arg_matches_pattern(
-        context, 1, type_resolution::time_series_kind_pattern(TSTypeKind::TSL)));
+    CHECK_FALSE(type_resolution::time_series_arg_matches<type_resolution::AnyTSL>(context, 1));
     CHECK(type_resolution::time_series_arg_matches<TS<ScalarVar<"T">>>(context, 1));
 
     const auto *tss = type_resolution::time_series_schema_at(context, 2);
-    CHECK(type_resolution::time_series_schema_matches_pattern(
-        tss, type_resolution::time_series_kind_pattern(TSTypeKind::TSS)));
+    CHECK(type_resolution::time_series_schema_matches<type_resolution::AnyTSS>(tss));
     CHECK(tss == ts_type<TSS<Int>>());
 
     const auto *tsd = type_resolution::time_series_schema_at(context, 3);
-    CHECK(type_resolution::time_series_schema_matches_pattern(
-        tsd, type_resolution::time_series_kind_pattern(TSTypeKind::TSD)));
+    CHECK(type_resolution::time_series_schema_matches<type_resolution::AnyTSD>(tsd));
     CHECK(tsd == ts_type<TSD<Str, TS<Int>>>());
 
     const auto *tsb = type_resolution::time_series_schema_at(context, 4);
-    CHECK(type_resolution::time_series_schema_matches_pattern(
-        tsb, type_resolution::time_series_kind_pattern(TSTypeKind::TSB)));
+    CHECK(type_resolution::time_series_schema_matches<type_resolution::AnyTSB>(tsb));
     CHECK(tsb == ts_type<Bundle>());
 
     const auto *fixed_window = type_resolution::time_series_schema_at(context, 5);
-    CHECK(type_resolution::time_series_schema_matches_pattern(
-        fixed_window, type_resolution::time_series_kind_pattern(TSTypeKind::TSW)));
+    CHECK(type_resolution::time_series_schema_matches<type_resolution::AnyTSW>(fixed_window));
     CHECK(fixed_window == ts_type<TSW<Int, 3, 1>>());
 
     const auto *duration_window_arg = type_resolution::time_series_schema_at(context, 6);
-    CHECK(type_resolution::time_series_schema_matches_pattern(
-        duration_window_arg, type_resolution::time_series_kind_pattern(TSTypeKind::TSW)));
+    CHECK(type_resolution::time_series_schema_matches<type_resolution::AnyTSW>(duration_window_arg));
     CHECK(duration_window_arg == duration_window);
 }
 
@@ -529,7 +522,7 @@ TEST_CASE("operators: shared TypePattern input matcher mirrors wiring semantics"
 
     ResolutionMap input_signal;
     CHECK(input_ts_pattern_match(signal, ts_type<TS<Int>>(), input_signal));
-    CHECK(type_resolution::time_series_schema_matches_pattern(ts_type<TS<Int>>(), signal));
+    CHECK(type_resolution::time_series_schema_matches<SIGNAL>(ts_type<TS<Int>>()));
 
     const TypePattern generic_ref = to_pattern<REF<TS<ScalarVar<"T">>>>();
     ResolutionMap     ref_input;
