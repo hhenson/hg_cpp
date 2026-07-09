@@ -865,11 +865,16 @@ namespace hgraph::stdlib
             }
             else
             {
-                // Dynamic LIST: append the (all-valid, strict) elements.
+                // Dynamic LIST (variadic tuple): invalid children become
+                // HOLES via element validity (unknown-size nullability - the
+                // sul-style bitset on the compact list). Strict is all-valid
+                // gated, so it never holes.
                 ListBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
                 for (std::size_t index = 0; index < tsl.schema()->fixed_size(); ++index)
                 {
-                    builder.push_back_copy(tsl.indexed_child_at(index).value().data());
+                    auto child = tsl.indexed_child_at(index);
+                    if (child.valid()) { builder.push_back_copy(child.value().data()); }
+                    else { builder.push_back_unset(); }
                 }
                 publish(erased, builder.build());
             }

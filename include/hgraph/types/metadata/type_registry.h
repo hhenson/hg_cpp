@@ -125,6 +125,9 @@ namespace hgraph
          * interns separately, so the two never collide.
          */
         const ValueTypeMetaData *mutable_list(const ValueTypeMetaData *element_type);
+        /** A NULLABLE variadic tuple (element holes allowed via the sul-style
+            bitset) - the "nullable tuple" trait for the value factory. */
+        const ValueTypeMetaData *nullable_tuple(const ValueTypeMetaData *element_type);
         /** Intern a set value-schema for ``element_type``. */
         const ValueTypeMetaData *set(const ValueTypeMetaData *element_type);
         /**
@@ -500,6 +503,7 @@ namespace hgraph
         InternTable<ListKey, ValueTypeMetaData, ListKeyHash> list_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> set_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_list_cache_;
+        InternTable<const ValueTypeMetaData *, ValueTypeMetaData> nullable_tuple_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_set_cache_;
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> map_cache_;
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> mutable_map_cache_;

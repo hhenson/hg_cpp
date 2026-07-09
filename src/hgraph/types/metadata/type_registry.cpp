@@ -239,6 +239,7 @@ namespace hgraph
         list_cache_.clear();
         set_cache_.clear();
         mutable_list_cache_.clear();
+        nullable_tuple_cache_.clear();
         mutable_set_cache_.clear();
         map_cache_.clear();
         mutable_map_cache_.clear();
@@ -495,6 +496,18 @@ namespace hgraph
             ValueTypeMetaData m(ValueTypeKind::List,
                                 list_flags(element_type, /*fixed_size=*/0, /*variadic_tuple=*/false) |
                                     ValueTypeFlags::Mutable);
+            m.element_type = element_type;
+            return m;
+        });
+        return &meta;
+    }
+
+    const ValueTypeMetaData *TypeRegistry::nullable_tuple(const ValueTypeMetaData *element_type)
+    {
+        const ValueTypeMetaData &meta = nullable_tuple_cache_.intern(element_type, [&]() {
+            ValueTypeMetaData m(ValueTypeKind::List,
+                                list_flags(element_type, /*fixed_size=*/0, /*variadic_tuple=*/true) |
+                                    ValueTypeFlags::Nullable);
             m.element_type = element_type;
             return m;
         });

@@ -184,7 +184,26 @@ must be able to emit a partial tuple whose unfilled slot reads back as
 component as bundles. ``BundleBuilder`` marks tuple slots on ``set`` (it
 no longer short-circuits on non-bundle kinds); a sequence/dict fill
 marks every supplied slot; ``equals``/``compare``/``to_python`` honour
-the bits (unset tuple slot → ``None``). ``TSL`` carries the same
+the bits (unset tuple slot → ``None``).
+
+**Nullable tuples, two mechanisms by size** (ruling 2026-07-09): the
+nullable trait (``ValueTypeFlags::Nullable`` / ``is_nullable()``, the
+``registry.nullable_tuple(element)`` factory verb) yields a tuple that
+accepts holes.
+
+- KNOWN size (fixed tuple, ``TSL[..,Size[N]]`` → tuple): the
+  PRE-ALLOCATED trailing validity words above.
+- UNKNOWN size (variadic ``tuple[X, ...]`` = the dynamic ``List``
+  value): a ``sul``-style element-validity bitset ON THE COMPACT
+  ``ListStorage`` (``std::vector<bool>``, EMPTY means dense/all-set, so
+  non-nullable lists keep zero overhead). ``ListBuilder::push_back_
+  unset`` appends a hole; the compact-list ops
+  (``equals``/``compare``/``hash``/``to_string``/``to_python``) honour
+  ``element_set`` (unset element → ``None``; the buffer fast-path is
+  disabled when any hole exists). This is the same EMPTY-means-dense
+  convention the mutable list storage uses.
+
+``TSL`` carries the same
 CONTRACT: its delta (a sparse ``Map<index, delta>``) already expresses
 partial ticks; List VALUES carry the same treatment where needed:
 MUTABLE list storage now has element validity (a ``sul`` bitset with

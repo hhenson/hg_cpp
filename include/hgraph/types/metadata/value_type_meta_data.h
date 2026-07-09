@@ -78,6 +78,10 @@ namespace hgraph
         VariadicTuple = 1u << 7,
         /** Container schema backed by structurally-mutable (slot-store) storage. */
         Mutable = 1u << 8,
+        /** List/tuple whose elements may be UNSET (holes). Known-size uses a
+            pre-allocated bitset (like a fixed tuple / TSB); unknown-size uses
+            the sul-style bitset on the compact list. */
+        Nullable = 1u << 9,
     };
 
     /** Bitwise OR over ``ValueTypeFlags``. */
@@ -232,6 +236,7 @@ namespace hgraph
         }
         /** True when this container schema is backed by structurally-mutable storage. */
         [[nodiscard]] constexpr bool is_mutable() const noexcept { return has(ValueTypeFlags::Mutable); }
+        [[nodiscard]] constexpr bool is_nullable() const noexcept { return has(ValueTypeFlags::Nullable); }
     };
 
     namespace detail

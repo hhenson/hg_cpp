@@ -1265,6 +1265,10 @@ NB_MODULE(_hgraph, m)
         // A homogeneous variadic tuple (python's tuple[X, ...]).
         return PyValueType{TypeRegistry::instance().list(e.meta, 0, true)};
     });
+    m.def("nullable_tuple_vt", [](PyValueType e) {
+        // A NULLABLE variadic tuple (elements may be None holes).
+        return PyValueType{TypeRegistry::instance().nullable_tuple(e.meta)};
+    });
     m.def("fixed_tuple_vt", [](nb::list elements) {
         std::vector<const ValueTypeMetaData *> metas;
         metas.reserve(nb::len(elements));

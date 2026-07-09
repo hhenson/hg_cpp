@@ -280,6 +280,16 @@ namespace hgraph
         ListStorage() noexcept = default;
 
         ListStorage(const ValueTypeBinding &element_binding, const ElementSpan &source)
+            : ListStorage(element_binding, source, {})
+        {
+        }
+
+        /** Construct with an element-VALIDITY bitset (element validity,
+            core_concepts.rst: an EMPTY bitset means dense / all-set - the
+            unknown-size counterpart to the fixed-tuple pre-allocated words).
+            ``validity`` is one bool per element; empty leaves the list dense. */
+        ListStorage(const ValueTypeBinding &element_binding, const ElementSpan &source,
+                    std::vector<bool> validity)
             : size_{source.size}, element_binding_{&element_binding}
         {
             const auto &plan = element_binding.checked_plan();
@@ -289,6 +299,15 @@ namespace hgraph
             });
             compact_detail::copy_construct_elements(bytes_, source);
             rollback.release();
+            if (!validity.empty())
+            {
+                // Only retain the bitset if it actually carries a hole; a
+                // fully-set bitset stays dense (empty) for zero overhead.
+                for (std::size_t index = 0; index < validity.size(); ++index)
+                {
+                    if (!validity[index]) { validity_ = std::move(validity); break; }
+                }
+            }
         }
 
         ListStorage(const ListStorage &other) { copy_from(other); }
@@ -305,10 +324,12 @@ namespace hgraph
 
         ListStorage(ListStorage &&other) noexcept
             : bytes_{other.bytes_}, size_{other.size_}, element_binding_{other.element_binding_}
+            , validity_{std::move(other.validity_)}
         {
             other.bytes_           = nullptr;
             other.size_            = 0;
             other.element_binding_ = nullptr;
+            other.validity_.clear();
         }
 
         ListStorage &operator=(ListStorage &&other) noexcept
@@ -319,9 +340,11 @@ namespace hgraph
                 bytes_                 = other.bytes_;
                 size_                  = other.size_;
                 element_binding_       = other.element_binding_;
+                validity_              = std::move(other.validity_);
                 other.bytes_           = nullptr;
                 other.size_            = 0;
                 other.element_binding_ = nullptr;
+                other.validity_.clear();
             }
             return *this;
         }
@@ -348,6 +371,13 @@ namespace hgraph
                    index * element_binding_->checked_plan().layout.size;
         }
 
+        /** True when element ``index`` holds a live value (dense when the
+            validity bitset is empty). */
+        [[nodiscard]] bool element_set(std::size_t index) const noexcept
+        {
+            return validity_.empty() || (index < validity_.size() && validity_[index]);
+        }
+
       private:
         void clear() noexcept
         {
@@ -358,12 +388,14 @@ namespace hgraph
             bytes_           = nullptr;
             size_            = 0;
             element_binding_ = nullptr;
+            validity_.clear();
         }
 
         void copy_from(const ListStorage &other)
         {
             element_binding_ = other.element_binding_;
             size_            = other.size_;
+            validity_        = other.validity_;
             if (element_binding_ == nullptr) { return; }
             const auto &plan = element_binding_->checked_plan();
             bytes_           = compact_detail::allocate_element_buffer(plan, size_);
@@ -386,6 +418,7 @@ namespace hgraph
         void                    *bytes_{nullptr};
         std::size_t              size_{0};
         const ValueTypeBinding  *element_binding_{nullptr};
+        std::vector<bool>        validity_{};   // empty = dense (all-set)
     };
 
     // -----------------------------------------------------------------
@@ -431,6 +464,10 @@ namespace hgraph
             return storage_.element_at(physical_index(logical_index));
         }
 
+        /** Dense container: every element is live (holes are a
+            list-only concern - element validity). */
+        [[nodiscard]] bool element_set(std::size_t) const noexcept { return true; }
+
       private:
         ListStorage storage_{};
         std::size_t head_{0};
@@ -464,6 +501,10 @@ namespace hgraph
 
         [[nodiscard]] void       *element_at(std::size_t index) { return storage_.element_at(index); }
         [[nodiscard]] const void *element_at(std::size_t index) const { return storage_.element_at(index); }
+
+        /** Dense container: every element is live (holes are a
+            list-only concern - element validity). */
+        [[nodiscard]] bool element_set(std::size_t) const noexcept { return true; }
 
       private:
         ListStorage storage_{};

@@ -78,7 +78,10 @@ namespace hgraph
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
-                seed = combine_hash(seed, ops.hash(storage->element_at(i)));
+                // UNSET holes hash with a distinct marker (element validity).
+                seed = combine_hash(seed, storage->element_set(i)
+                                              ? ops.hash(storage->element_at(i))
+                                              : 0x9e3779b97f4a7c15ULL);
             }
             return seed;
         }
@@ -94,6 +97,9 @@ namespace hgraph
             const auto &ops = a->element_binding()->ops_ref();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
+                const bool a_set = a->element_set(i);
+                if (a_set != b->element_set(i)) { return false; }
+                if (!a_set) { continue; }   // UNSET == UNSET
                 if (!ops.equals(a->element_at(i), b->element_at(i))) { return false; }
             }
             return true;
@@ -114,6 +120,10 @@ namespace hgraph
             const auto  n   = std::min(a->size(), b->size());
             for (std::size_t i = 0; i < n; ++i)
             {
+                const bool a_set = a->element_set(i);
+                const bool b_set = b->element_set(i);
+                if (a_set != b_set) { return a_set ? std::partial_ordering::greater : std::partial_ordering::less; }
+                if (!a_set) { continue; }
                 const auto c = ops.compare(a->element_at(i), b->element_at(i));
                 if (c != 0) { return c; }
             }
@@ -128,7 +138,11 @@ namespace hgraph
             if (storage == nullptr || storage->element_binding() == nullptr) { return "[]"; }
             const auto &ops = storage->element_binding()->ops_ref();
             return format_delimited('[', ']', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
-                fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
+                if (storage->element_set(i))
+                {
+                    fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
+                }
+                else { fmt::format_to(std::back_inserter(out), "None"); }
             });
         }
 
@@ -165,27 +179,37 @@ namespace hgraph
             {
                 throw std::runtime_error("List to_python requires live storage with an element binding");
             }
-            if (nb::object buffer = sequence_to_python_buffer(*storage->element_binding(),
-                                                              ValueArraySource{
-                                                                  .owner      = storage,
-                                                                  .size       = storage->size(),
-                                                                  .element_at = &list_value_array_element_at,
-                                                                  .first      = compact_sequence_span(
-                                                                      *storage->element_binding(),
-                                                                      storage->size() == 0 ? nullptr
-                                                                                            : storage->element_at(0),
-                                                                      storage->size()),
-                                                              });
-                buffer.is_valid())
+            // Any hole disables the trivially-copyable buffer fast-path.
+            bool dense = true;
+            for (std::size_t i = 0; i < storage->size(); ++i)
             {
-                return buffer;
+                if (!storage->element_set(i)) { dense = false; break; }
+            }
+            if (dense)
+            {
+                if (nb::object buffer = sequence_to_python_buffer(*storage->element_binding(),
+                                                                  ValueArraySource{
+                                                                      .owner      = storage,
+                                                                      .size       = storage->size(),
+                                                                      .element_at = &list_value_array_element_at,
+                                                                      .first      = compact_sequence_span(
+                                                                          *storage->element_binding(),
+                                                                          storage->size() == 0 ? nullptr
+                                                                                                : storage->element_at(0),
+                                                                          storage->size()),
+                                                                  });
+                    buffer.is_valid())
+                {
+                    return buffer;
+                }
             }
 
             const auto &ops = storage->element_binding()->ops_ref();
             nb::list result;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
-                result.append(ops.to_python(storage->element_at(i)));
+                // UNSET holes read back as None.
+                result.append(storage->element_set(i) ? ops.to_python(storage->element_at(i)) : nb::none());
             }
             return result;
         }
@@ -215,7 +239,10 @@ namespace hgraph
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
-                seed = combine_hash(seed, ops.hash(storage->element_at(i)));
+                // UNSET holes hash with a distinct marker (element validity).
+                seed = combine_hash(seed, storage->element_set(i)
+                                              ? ops.hash(storage->element_at(i))
+                                              : 0x9e3779b97f4a7c15ULL);
             }
             return seed;
         }
@@ -231,6 +258,9 @@ namespace hgraph
             const auto &ops = a->element_binding()->ops_ref();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
+                const bool a_set = a->element_set(i);
+                if (a_set != b->element_set(i)) { return false; }
+                if (!a_set) { continue; }   // UNSET == UNSET
                 if (!ops.equals(a->element_at(i), b->element_at(i))) { return false; }
             }
             return true;
@@ -251,6 +281,10 @@ namespace hgraph
             const auto  n   = std::min(a->size(), b->size());
             for (std::size_t i = 0; i < n; ++i)
             {
+                const bool a_set = a->element_set(i);
+                const bool b_set = b->element_set(i);
+                if (a_set != b_set) { return a_set ? std::partial_ordering::greater : std::partial_ordering::less; }
+                if (!a_set) { continue; }
                 const auto c = ops.compare(a->element_at(i), b->element_at(i));
                 if (c != 0) { return c; }
             }
@@ -336,7 +370,10 @@ namespace hgraph
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
-                seed = combine_hash(seed, ops.hash(storage->element_at(i)));
+                // UNSET holes hash with a distinct marker (element validity).
+                seed = combine_hash(seed, storage->element_set(i)
+                                              ? ops.hash(storage->element_at(i))
+                                              : 0x9e3779b97f4a7c15ULL);
             }
             return seed;
         }
@@ -352,6 +389,9 @@ namespace hgraph
             const auto &ops = a->element_binding()->ops_ref();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
+                const bool a_set = a->element_set(i);
+                if (a_set != b->element_set(i)) { return false; }
+                if (!a_set) { continue; }   // UNSET == UNSET
                 if (!ops.equals(a->element_at(i), b->element_at(i))) { return false; }
             }
             return true;
@@ -372,6 +412,10 @@ namespace hgraph
             const auto  n   = std::min(a->size(), b->size());
             for (std::size_t i = 0; i < n; ++i)
             {
+                const bool a_set = a->element_set(i);
+                const bool b_set = b->element_set(i);
+                if (a_set != b_set) { return a_set ? std::partial_ordering::greater : std::partial_ordering::less; }
+                if (!a_set) { continue; }
                 const auto c = ops.compare(a->element_at(i), b->element_at(i));
                 if (c != 0) { return c; }
             }

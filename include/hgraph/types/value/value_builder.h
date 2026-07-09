@@ -58,10 +58,12 @@ namespace hgraph
 
             ElementAccumulator(ElementAccumulator &&other) noexcept
                 : plan_{other.plan_}, bytes_{other.bytes_}, capacity_{other.capacity_}, size_{other.size_}
+                , validity_{std::move(other.validity_)}
             {
                 other.bytes_    = nullptr;
                 other.capacity_ = 0;
                 other.size_     = 0;
+                other.validity_.clear();
             }
 
             ElementAccumulator &operator=(ElementAccumulator &&other) noexcept
@@ -73,9 +75,11 @@ namespace hgraph
                     bytes_          = other.bytes_;
                     capacity_       = other.capacity_;
                     size_           = other.size_;
+                    validity_       = std::move(other.validity_);
                     other.bytes_    = nullptr;
                     other.capacity_ = 0;
                     other.size_     = 0;
+                    other.validity_.clear();
                 }
                 return *this;
             }
@@ -86,8 +90,23 @@ namespace hgraph
             {
                 if (size_ == capacity_) { grow(std::max<std::size_t>(capacity_ * 2, 8)); }
                 plan_->copy_construct(slot_address(size_), src);
+                if (!validity_.empty()) { validity_.push_back(true); }
                 ++size_;
             }
+
+            /** Append a default-constructed HOLE (element validity): the slot
+                is live memory but reads report it unset. The first hole sizes
+                the (otherwise-empty, dense) validity bitset. */
+            void push_back_unset()
+            {
+                if (size_ == capacity_) { grow(std::max<std::size_t>(capacity_ * 2, 8)); }
+                plan_->default_construct(slot_address(size_));
+                if (validity_.empty()) { validity_.assign(size_, true); }
+                validity_.push_back(false);
+                ++size_;
+            }
+
+            [[nodiscard]] const std::vector<bool> &validity() const noexcept { return validity_; }
 
             void pop_back() noexcept
             {
@@ -114,6 +133,7 @@ namespace hgraph
 
             void clear() noexcept
             {
+                validity_.clear();
                 if (bytes_ == nullptr) { return; }
                 for (std::size_t i = size_; i > 0; --i) { plan_->destroy(slot_address(i - 1)); }
                 ::operator delete(bytes_, std::align_val_t{plan_->layout.alignment});
@@ -179,6 +199,7 @@ namespace hgraph
             void                           *bytes_{nullptr};
             std::size_t                     capacity_{0};
             std::size_t                     size_{0};
+            std::vector<bool>            validity_{};
         };
     }  // namespace builder_detail
 
@@ -204,6 +225,13 @@ namespace hgraph
             accumulator_.push_back_copy(src);
         }
 
+        /** Append an UNSET element (a hole) - element validity. */
+        void push_back_unset()
+        {
+            ensure_not_built();
+            accumulator_.push_back_unset();
+        }
+
         template <typename T>
         void push_back(const T &value)
         {
@@ -216,7 +244,7 @@ namespace hgraph
         [[nodiscard]] ListStorage build_storage()
         {
             ensure_not_built();
-            ListStorage storage{*element_binding_, accumulator_.as_span()};
+            ListStorage storage{*element_binding_, accumulator_.as_span(), accumulator_.validity()};
             accumulator_.clear();
             built_ = true;
             return storage;
