@@ -2066,7 +2066,7 @@ namespace hgraph::stdlib
             return {value->key_type, value->element_type};
         }
 
-        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
             return kv_of(context).first != nullptr;
         }

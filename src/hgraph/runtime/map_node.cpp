@@ -493,7 +493,6 @@ namespace hgraph
                     "an explicit __keys__)");
             }
             const auto *input_fields = meta.input_schema->fields();
-            const TSValueTypeMetaData *anchor_tsd = nullptr;
             std::vector<std::size_t> seen_mux_inputs;
             seen_mux_inputs.reserve(spec.multiplexed_inputs.size());
             for (const std::size_t mux_index : spec.multiplexed_inputs)
@@ -518,9 +517,7 @@ namespace hgraph
                     throw std::invalid_argument(
                         "map_node output key type must match every multiplexed input key type");
                 }
-                if (anchor_tsd == nullptr) { anchor_tsd = tsd_schema; }
             }
-            const auto *tsd_schema = anchor_tsd;
 
             if (!spec.keys_input_index.has_value())
             {
