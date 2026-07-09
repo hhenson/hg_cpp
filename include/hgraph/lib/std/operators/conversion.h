@@ -45,6 +45,12 @@ namespace hgraph::stdlib
     {
     };
 
+    /** Packed-TSL kernel behind combine[TSS](a, b, ...). */
+    struct combine_tss_from_tsl_marker
+        : Operator<"combine_tss_from_tsl", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    {
+    };
+
     /** ``collect`` — accumulate ``ts`` into a collection time-series (output type via ``OUT``). */
     struct collect : Operator<"collect", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {

@@ -349,13 +349,23 @@ def combine(*args, __output_type__=None, **kwargs):
     (the subscript names the target type) builds a structural bundle;
     plain values const-lift at the field types. The UNSUBSCRIPTED binary
     form merges two CompoundScalar time-series (delta over orig)."""
-    if __output_type__ is not None and (getattr(__output_type__, "__name__", "") == "TSD" or
-                                        repr(__output_type__).startswith("TSD")) and args and isinstance(
-                                            args[0], tuple):
-        # combine[TSD](("a", "b"), a, b): the keys tuple + element ports feed
-        # the combine_tsd kernel (non-strict when requested).
+    label0 = "" if __output_type__ is None else (
+        getattr(__output_type__, "label", None) or getattr(__output_type__, "__name__", None) or
+        repr(__output_type__)).replace("typing.", "")
+    if label0.startswith("TSD") and args and isinstance(args[0], tuple):
+        # combine[TSD](("a", "b"), a, b): keys tuple literal + element ports.
         strict = kwargs.pop("__strict__", True)
         return wire("combine_tsd", args[0], *args[1:], __strict__=strict, **kwargs)
+    if label0.startswith("TSD") and len(args) == 2 and all(isinstance(a, WiringPort) for a in args) \
+            and _unwrap(args[0]).ts_type.kind == 0:
+        # combine[TSD](k_tuple_ts, v_tuple_ts): zip two TS[tuple] -> TSD.
+        k = _hgraph.vt_element(_hgraph.ts_value_vt(_unwrap(args[0]).ts_type))
+        v = _hgraph.vt_element(_hgraph.ts_value_vt(_unwrap(args[1]).ts_type))
+        return wire("convert", *args, output_type=_TsExprFor(_hgraph.tsd(k, _hgraph.ts(v))))
+    if label0.startswith("TSS") and args and all(isinstance(a, WiringPort) for a in args):
+        # combine[TSS](a, b, ...): scalar ports -> TSS desired membership.
+        element = _hgraph.ts_value_vt(_unwrap(args[0]).ts_type)
+        return wire("combine", *args, output_type=_TsExprFor(_hgraph.tss(element)))
     label = "" if __output_type__ is None else (
         getattr(__output_type__, "label", None) or getattr(__output_type__, "__name__", None) or
         repr(__output_type__)).replace("typing.", "")
@@ -486,9 +496,12 @@ class _Convert:
             if in_kind == 1:
                 vt = _hgraph.vt_element(_hgraph.ts_value_vt(handle))
                 return wrap(_hgraph.ts(_hgraph.tuple_vt(vt)), "TS[tuple[inferred]]")
-            if in_kind == 3:   # TSL -> tuple of the element scalar
+            if in_kind == 3:   # TSL -> a FIXED tuple of the TSL's size (so
+                # a lenient/partial convert can hold None holes via tuple
+                # validity bits); a strict all-valid convert fills them all.
                 vt = _hgraph.ts_value_vt(_hgraph.tsl_element_ts(handle))
-                return wrap(_hgraph.ts(_hgraph.tuple_vt(vt)), "TS[tuple[inferred]]")
+                size = handle.fixed_size
+                return wrap(_hgraph.ts(_hgraph.fixed_tuple_vt([vt] * size)), "TS[tuple[inferred]]")
 
         if label.startswith("TS[Set") or label.startswith("TS[set"):
             if in_kind == 1:

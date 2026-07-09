@@ -816,34 +816,214 @@ namespace hgraph::stdlib
     /** convert[TS[tuple[V,...]]](tsl): the VALID children of a fixed TSL as
         an ordered tuple (all-valid gated so a partial TSL stays invalid,
         hgraph parity). */
+    template <bool Strict>
     struct convert_tsl_to_tuple_impl
     {
-        static constexpr auto name = "convert_tsl_to_tuple";
+        static constexpr auto name = Strict ? "convert_tsl_to_tuple" : "convert_tsl_to_tuple_lenient";
+        static constexpr InputValidity validity = Strict ? InputValidity::AllValid : InputValidity::Unchecked;
+
+        // The homogeneous element of a variadic LIST or a fixed TUPLE (all
+        // fields one type), or null when heterogeneous / not a collection.
+        [[nodiscard]] static const ValueTypeMetaData *element_of(const ValueTypeMetaData *out)
+        {
+            if (out == nullptr) { return nullptr; }
+            if (out->kind == ValueTypeKind::List) { return out->element_type; }
+            if (out->kind == ValueTypeKind::Tuple && out->field_count != 0)
+            {
+                const auto *first = out->fields[0].type;
+                for (std::size_t index = 1; index < out->field_count; ++index)
+                {
+                    if (out->fields[index].type != first) { return nullptr; }
+                }
+                return first;
+            }
+            return nullptr;
+        }
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *out = element_of(convert_detail::ts_value(convert_detail::requested_out(resolution)));
             const auto *in  = operator_impl_detail::fixed_tsl_arg(context, 0);
-            if (out == nullptr || out->kind != ValueTypeKind::List || in == nullptr) { return false; }
+            if (out == nullptr || in == nullptr) { return false; }
             const auto *element = TypeRegistry::instance().dereference(in->element_ts());
-            return element != nullptr && element->kind == TSTypeKind::TS &&
-                   element->value_schema == out->element_type;
+            return element != nullptr && element->kind == TSTypeKind::TS && element->value_schema == out;
         }
 
-        static void eval(In<"ts", TsVar<"S">, InputValidity::AllValid> ts, Out<TsVar<"__out__">> out)
+        static void eval_impl(const TSInputView &tsl, const TSOutputView &erased)
         {
-            const auto        &erased = static_cast<const TSOutputView &>(out);
-            const auto        *meta   = erased.schema()->value_schema;
-            const TSInputView &tsl    = ts;
-            ListBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
-            for (std::size_t index = 0; index < tsl.schema()->fixed_size(); ++index)
+            const auto *meta = erased.schema()->value_schema;
+            if (meta->kind == ValueTypeKind::Tuple)
             {
-                builder.push_back_copy(tsl.indexed_child_at(index).value().data());
+                // FIXED tuple: per-slot validity survives (lenient holes).
+                BundleBuilder builder{*ValuePlanFactory::instance().binding_for(meta)};
+                for (std::size_t index = 0; index < tsl.schema()->fixed_size(); ++index)
+                {
+                    auto child = tsl.indexed_child_at(index);
+                    if (child.valid()) { builder.set(index, Value{child.value()}); }
+                }
+                publish(erased, builder.build());
             }
-            Value tuple = builder.build();
+            else
+            {
+                // Dynamic LIST: append the (all-valid, strict) elements.
+                ListBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
+                for (std::size_t index = 0; index < tsl.schema()->fixed_size(); ++index)
+                {
+                    builder.push_back_copy(tsl.indexed_child_at(index).value().data());
+                }
+                publish(erased, builder.build());
+            }
+        }
+
+        static void publish(const TSOutputView &erased, Value &&tuple)
+        {
             if (erased.data_view().has_current_value() && erased.value().equals(tuple.view())) { return; }
             auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
             static_cast<void>(mutation.move_value_from(std::move(tuple)));
+        }
+
+        static void eval(In<"ts", TsVar<"S">, validity> ts, Out<TsVar<"__out__">> out)
+            requires Strict
+        {
+            eval_impl(ts, static_cast<const TSOutputView &>(out));
+        }
+
+        static void eval(In<"ts", TsVar<"S">, validity> ts, Scalar<"__strict__", Bool>,
+                         Out<TsVar<"__out__">> out)
+            requires (!Strict)
+        {
+            eval_impl(ts, static_cast<const TSOutputView &>(out));
+        }
+    };
+
+    /** combine[TSS](a, b, ...): a TSS whose membership is the set of the
+        CURRENT values of the valid scalar inputs (desired-membership
+        reconciliation - adds/removes fall out of the diff). */
+    struct combine_tss_scalars_impl
+    {
+        static constexpr auto name = "combine_tss_scalars";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            if (out == nullptr || out->kind != TSTypeKind::TSS || context.args.empty()) { return false; }
+            const auto *element = out->value_schema->element_type;
+            for (std::size_t index = 0; index < context.args.size(); ++index)
+            {
+                const auto *arg = operator_impl_detail::time_series_arg_of_kind(context, index, TSTypeKind::TS);
+                if (arg == nullptr || arg->value_schema != element) { return false; }
+            }
+            return true;
+        }
+
+        static WiringPortRef compose(Wiring &w, VarIn<"ts", TS<ScalarVar<"T">>> ts)
+        {
+            if (ts.empty()) { throw std::invalid_argument("combine[TSS] requires at least one input"); }
+            auto &registry = TypeRegistry::instance();
+            std::vector<WiringPortRef> children{ts.begin(), ts.end()};
+            WiringPortRef packed =
+                WiringPortRef::structural_source(registry.tsl(ts[0].schema, ts.size()), std::move(children));
+            std::array<WiringArg, 1> args{};
+            args[0].kind = WiringArg::Kind::TimeSeries;
+            args[0].port = packed;
+            auto result = wire_operator(w, "combine_tss_from_tsl", {args.data(), args.size()}, true);
+            return result.output.erased();
+        }
+    };
+
+    /** The packed-TSL kernel behind combine[TSS]: reconcile the desired
+        membership from the valid children each tick. */
+    struct combine_tss_from_tsl_impl
+    {
+        static constexpr auto name = "combine_tss_from_tsl";
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const auto *tsl = operator_impl_detail::fixed_tsl_arg(context, 0);
+            if (tsl == nullptr) { return; }
+            const auto *element = TypeRegistry::instance().dereference(tsl->element_ts());
+            operator_impl_detail::bind_output(resolution, TypeRegistry::instance().tss(element->value_schema));
+        }
+
+        static void eval(In<"ts", TSL<TS<ScalarVar<"T">>, SIZE<"N">>> tsl, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased  = static_cast<const TSOutputView &>(out);
+            auto        set     = erased.as_set();
+            auto        mutation = set.begin_mutation(erased.evaluation_time());
+
+            std::vector<Value> desired;
+            for (std::size_t index = 0; index < tsl.size(); ++index)
+            {
+                auto child = tsl[index];
+                if (child.valid()) { desired.emplace_back(child.base().value()); }
+            }
+            const auto wanted = [&](const ValueView &candidate) {
+                for (const Value &d : desired) { if (d.view().equals(candidate)) { return true; } }
+                return false;
+            };
+            std::vector<Value> stale;
+            for (const ValueView &element : mutation.view().values())
+            {
+                if (!wanted(element)) { stale.emplace_back(element); }
+            }
+            for (const Value &element : stale) { static_cast<void>(mutation.remove(element.view())); }
+            for (const Value &d : desired) { static_cast<void>(mutation.add(d.view())); }
+        }
+    };
+
+    /** convert[TSD](k_tuple_ts, v_tuple_ts): ZIP two TS[tuple] into a desired
+        dictionary each tick (previous keys drop). */
+    struct convert_zip_to_tsd_impl
+    {
+        static constexpr auto name = "convert_zip_to_tsd";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            if (out == nullptr || out->kind != TSTypeKind::TSD || k == nullptr || v == nullptr ||
+                k->kind != ValueTypeKind::List || v->kind != ValueTypeKind::List)
+            {
+                return false;
+            }
+            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
+            return out->key_type() == k->element_type && element != nullptr &&
+                   element->kind == TSTypeKind::TS && element->value_schema == v->element_type;
+        }
+
+        static void eval(In<"key", TsVar<"K">, InputValidity::Unchecked> key,
+                         In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Out<TsVar<"__out__">> out)
+        {
+            if (!key.modified() && !ts.modified()) { return; }
+            const auto &erased  = static_cast<const TSOutputView &>(out);
+            auto        dict    = erased.as_dict();
+            auto        mutation = dict.begin_mutation(erased.evaluation_time());
+            auto        keys    = key.valid() ? std::optional{key.base().value().as_indexed_view()} : std::nullopt;
+            auto        values  = ts.valid() ? std::optional{ts.base().value().as_indexed_view()} : std::nullopt;
+            const std::size_t count = (keys && values) ? std::min(keys->size(), values->size()) : 0;
+
+            const auto wanted = [&](const ValueView &candidate) {
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    if (keys->at(index).equals(candidate)) { return true; }
+                }
+                return false;
+            };
+            std::vector<Value> stale;
+            for (const ValueView &existing : mutation.view().keys())
+            {
+                if (!wanted(existing)) { stale.emplace_back(existing); }
+            }
+            for (const Value &existing : stale) { static_cast<void>(mutation.erase(existing.view())); }
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                auto element = mutation.at(keys->at(index));
+                if (element.has_current_value() && element.value().equals(values->at(index))) { continue; }
+                auto element_mutation = element.begin_mutation(erased.evaluation_time());
+                static_cast<void>(element_mutation.copy_value_from(values->at(index)));
+            }
         }
     };
 
@@ -1409,14 +1589,13 @@ namespace hgraph::stdlib
             const auto *surface = ts.base().schema();
             if (surface->kind == TSTypeKind::TSS)
             {
+                // A reset cleared the accumulator above; this cycle's own
+                // additions then seed the fresh set (hgraph parity - reset
+                // keeps only the current-cycle contribution, not the full
+                // input membership).
                 const TSSInputView in_set{ts.base().borrowed_ref()};
                 auto data = in_set.data_view();
                 for (const ValueView &element : data.added()) { static_cast<void>(mutation.add(element)); }
-                if (fresh)
-                {
-                    // A reset cycle re-seeds from the FULL membership.
-                    for (const ValueView &element : data.values()) { static_cast<void>(mutation.add(element)); }
-                }
                 return;
             }
             const auto value = ts.base().value();
