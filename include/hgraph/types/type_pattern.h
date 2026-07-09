@@ -153,6 +153,7 @@ namespace hgraph
         std::string                size_name{};      ///< ``TSL`` size variable name.
         std::vector<std::size_t>   size_constraints{}; ///< ``TSL`` size variable accepted concrete sizes.
         std::size_t                min_size{0};      ///< ``TSW`` min period.
+        bool                       any_window{false}; ///< ``TSW`` wildcard over tick/duration window shape.
         bool                       named_bundle{false}; ///< true for nominal ``TSB<Name,...>``.
         bool                       size_var{false};  ///< true when ``TSL`` size is a named variable.
         bool                       schema_var{false}; ///< true when ``TSB`` binds the whole schema to ``name``.
@@ -214,6 +215,14 @@ namespace hgraph
             p.scalar     = std::move(element);
             p.fixed_size = period;
             p.min_size   = min_period;
+            return p;
+        }
+        [[nodiscard]] static TypePattern tsw_any(ScalarPattern element)
+        {
+            TypePattern p;
+            p.kind       = Kind::TSW;
+            p.scalar     = std::move(element);
+            p.any_window = true;
             return p;
         }
         [[nodiscard]] static TypePattern tsd(ScalarPattern key, TypePattern value)

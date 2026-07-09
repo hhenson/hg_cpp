@@ -440,8 +440,20 @@ TEST_CASE("operators: TSL TypePattern supports named SIZE variables")
 TEST_CASE("operators: operator helpers match recursive time-series patterns")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");
+    (void)TypeRegistry::instance().register_scalar<Str>("str");
 
-    std::array<WiringArg, 2> args{ts_arg(ts_type<TSL<TS<Int>, 2>>()), ts_arg(ts_type<TS<Int>>())};
+    const auto *duration_window =
+        TypeRegistry::instance().tsw_duration(scalar_type<Int>(), TimeDelta{10}, TimeDelta{2});
+    using Bundle = UnNamedTSB<Field<"x", TS<Int>>>;
+    std::array<WiringArg, 7> args{
+        ts_arg(ts_type<TSL<TS<Int>, 2>>()),
+        ts_arg(ts_type<TS<Int>>()),
+        ts_arg(ts_type<TSS<Int>>()),
+        ts_arg(ts_type<TSD<Str, TS<Int>>>()),
+        ts_arg(ts_type<Bundle>()),
+        ts_arg(ts_type<TSW<Int, 3, 1>>()),
+        ts_arg(duration_window),
+    };
     OperatorCallContext context{std::span<const WiringArg>{args}};
 
     CHECK(stdlib::operator_impl_detail::time_series_arg_matches<TSL<TS<ScalarVar<"T">>, SIZE<"N">>>(context, 0));
@@ -450,6 +462,12 @@ TEST_CASE("operators: operator helpers match recursive time-series patterns")
 
     CHECK_FALSE(stdlib::operator_impl_detail::time_series_arg_is_tsl(context, 1));
     CHECK(stdlib::operator_impl_detail::time_series_arg_matches<TS<ScalarVar<"T">>>(context, 1));
+    CHECK(stdlib::operator_impl_detail::time_series_arg_of_kind(context, 2, TSTypeKind::TSS) == ts_type<TSS<Int>>());
+    CHECK(stdlib::operator_impl_detail::time_series_arg_of_kind(context, 3, TSTypeKind::TSD) ==
+          ts_type<TSD<Str, TS<Int>>>());
+    CHECK(stdlib::operator_impl_detail::time_series_arg_of_kind(context, 4, TSTypeKind::TSB) == ts_type<Bundle>());
+    CHECK(stdlib::operator_impl_detail::time_series_arg_of_kind(context, 5, TSTypeKind::TSW) == ts_type<TSW<Int, 3, 1>>());
+    CHECK(stdlib::operator_impl_detail::time_series_arg_of_kind(context, 6, TSTypeKind::TSW) == duration_window);
 }
 
 TEST_CASE("operators: TypePattern supports recursive scalar container patterns")
@@ -645,6 +663,8 @@ TEST_CASE("operators: scalar variable constraints reject unsupported scalar type
 
 TEST_CASE("operators: TypePattern matches generic TSW and TSB structures")
 {
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
     {
         const TypePattern pattern = to_pattern<TSW<ScalarVar<"T">, 3, 1>>();
         ResolutionMap map;
@@ -652,6 +672,25 @@ TEST_CASE("operators: TypePattern matches generic TSW and TSB structures")
         CHECK(map.find_scalar("T") == scalar_type<Int>());
         ResolutionMap other;
         CHECK_FALSE(ts_pattern_match(pattern, ts_type<TSW<Int, 4, 1>>(), other));
+    }
+
+    {
+        const auto *duration_window =
+            TypeRegistry::instance().tsw_duration(scalar_type<Int>(), TimeDelta{10}, TimeDelta{2});
+        const TypePattern any_window = TypePattern::tsw_any(ScalarPattern::var("T"));
+
+        ResolutionMap tick_map;
+        REQUIRE(ts_pattern_match(any_window, ts_type<TSW<Int, 3, 1>>(), tick_map));
+        CHECK(tick_map.find_scalar("T") == scalar_type<Int>());
+
+        ResolutionMap duration_map;
+        REQUIRE(ts_pattern_match(any_window, duration_window, duration_map));
+        CHECK(duration_map.find_scalar("T") == scalar_type<Int>());
+        CHECK(ts_pattern_resolve(any_window, duration_map) == nullptr);
+        CHECK(ts_pattern_to_string(any_window) == "TSW[~T, *]");
+
+        ResolutionMap concrete_window;
+        CHECK_FALSE(ts_pattern_match(to_pattern<TSW<ScalarVar<"T">, 3, 1>>(), duration_window, concrete_window));
     }
 
     {

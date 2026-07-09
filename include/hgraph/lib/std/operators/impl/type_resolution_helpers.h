@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <string_view>
+#include <utility>
 
 namespace hgraph::stdlib::operator_impl_detail
 {
@@ -148,13 +149,52 @@ namespace hgraph::stdlib::operator_impl_detail
         return time_series_arg_matches_pattern(context, index, to_pattern<Schema>(), mode);
     }
 
+    /** Pattern form for a broad time-series kind check. */
+    [[nodiscard]] inline TypePattern time_series_kind_pattern(TSTypeKind kind)
+    {
+        switch (kind)
+        {
+            case TSTypeKind::TS:
+                return TypePattern::ts(ScalarPattern::var("__value"));
+            case TSTypeKind::TSS:
+                return TypePattern::tss(ScalarPattern::var("__element"));
+            case TSTypeKind::TSL:
+                return TypePattern::tsl_var(TypePattern::var("__element"), "__size");
+            case TSTypeKind::TSD:
+                return TypePattern::tsd(ScalarPattern::var("__key"), TypePattern::var("__value"));
+            case TSTypeKind::TSB:
+                return TypePattern::tsb_var("__schema");
+            case TSTypeKind::REF:
+                return TypePattern::ref(TypePattern::var("__target"));
+            case TSTypeKind::SIGNAL:
+                return TypePattern::signal();
+            case TSTypeKind::TSW:
+                return TypePattern::tsw_any(ScalarPattern::var("__element"));
+        }
+        std::unreachable();
+    }
+
+    /** Match argument ``index`` against a broad time-series kind. */
+    [[nodiscard]] inline bool time_series_arg_matches_kind(
+        OperatorCallContext context,
+        std::size_t         index,
+        TSTypeKind          kind,
+        SchemaRefMode       mode = SchemaRefMode::Dereference)
+    {
+        const TSValueTypeMetaData *schema = time_series_schema_at(context, index, mode);
+        if (schema == nullptr) { return false; }
+
+        ResolutionMap scratch;
+        return ts_pattern_match(time_series_kind_pattern(kind), schema, scratch);
+    }
+
     /** True when the argument is any TSL shape, using the recursive pattern matcher. */
     [[nodiscard]] inline bool time_series_arg_is_tsl(
         OperatorCallContext context,
         std::size_t         index,
         SchemaRefMode       mode = SchemaRefMode::Dereference)
     {
-        return time_series_arg_matches<TSL<TsVar<"__element">, SIZE<"__size">>>(context, index, mode);
+        return time_series_arg_matches_kind(context, index, TSTypeKind::TSL, mode);
     }
 
     /** Return the time-series schema at ``index`` only when it has ``kind``. */
@@ -165,7 +205,7 @@ namespace hgraph::stdlib::operator_impl_detail
         SchemaRefMode       mode = SchemaRefMode::Dereference) noexcept
     {
         const TSValueTypeMetaData *schema = time_series_schema_at(context, index, mode);
-        return schema != nullptr && schema->kind == kind ? schema : nullptr;
+        return schema != nullptr && time_series_arg_matches_kind(context, index, kind, mode) ? schema : nullptr;
     }
 
     /** Return a fixed-size TSL schema at ``index``. Dynamic TSL returns null. */

@@ -211,9 +211,14 @@ namespace hgraph
                 return concrete->kind == TSTypeKind::TSD && scalar_pattern_match(pattern.scalar, concrete->key_type(), map) &&
                        ts_pattern_match(pattern.children[0], concrete->element_ts(), map);
             case TypePattern::Kind::TSW:
-                return concrete->kind == TSTypeKind::TSW && !concrete->is_duration_based() &&
-                       pattern.fixed_size == concrete->period() && pattern.min_size == concrete->min_period() &&
-                       scalar_pattern_match(pattern.scalar, concrete->value_type, map);
+                if (concrete->kind != TSTypeKind::TSW ||
+                    !scalar_pattern_match(pattern.scalar, concrete->value_type, map))
+                {
+                    return false;
+                }
+                return pattern.any_window ||
+                       (!concrete->is_duration_based() && pattern.fixed_size == concrete->period() &&
+                        pattern.min_size == concrete->min_period());
             case TypePattern::Kind::TSB:
                 if (concrete->kind != TSTypeKind::TSB) { return false; }
                 if (pattern.schema_var)
@@ -284,7 +289,7 @@ namespace hgraph
                 return 1 + ts_pattern_rank(pattern.children[0]) +
                        (pattern.size_var ? 5 : pattern.fixed_size == 0 ? 10 : 0);
             case TypePattern::Kind::TSD: return 1 + scalar_pattern_rank(pattern.scalar) + ts_pattern_rank(pattern.children[0]);
-            case TypePattern::Kind::TSW: return 1 + scalar_pattern_rank(pattern.scalar);
+            case TypePattern::Kind::TSW: return 1 + scalar_pattern_rank(pattern.scalar) + (pattern.any_window ? 10 : 0);
             case TypePattern::Kind::TSB:
             {
                 if (pattern.schema_var) { return LARGE_RANK / 2; }
@@ -378,7 +383,8 @@ namespace hgraph
             case TypePattern::Kind::TSW:
             {
                 const ValueTypeMetaData *element = scalar_pattern_resolve(pattern.scalar, map);
-                return element != nullptr ? registry.tsw(element, pattern.fixed_size, pattern.min_size) : nullptr;
+                return element != nullptr && !pattern.any_window ? registry.tsw(element, pattern.fixed_size, pattern.min_size)
+                                                                 : nullptr;
             }
             case TypePattern::Kind::TSB:
             {
@@ -463,6 +469,10 @@ namespace hgraph
                 return fmt::format("TSD[{}, {}]", scalar_pattern_to_string(pattern.scalar),
                                    ts_pattern_to_string(pattern.children[0]));
             case TypePattern::Kind::TSW:
+                if (pattern.any_window)
+                {
+                    return fmt::format("TSW[{}, *]", scalar_pattern_to_string(pattern.scalar));
+                }
                 return fmt::format("TSW[{}, {}, {}]", scalar_pattern_to_string(pattern.scalar),
                                    pattern.fixed_size, pattern.min_size);
             case TypePattern::Kind::TSB:
