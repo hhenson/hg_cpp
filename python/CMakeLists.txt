@@ -6,6 +6,10 @@ nanobind_add_module(_hgraph NB_STATIC NOSTRIP
 )
 target_link_libraries(_hgraph PRIVATE hgraph_core hgraph::options)
 hgraph_enable_private_pch(_hgraph)
+install(TARGETS _hgraph
+    LIBRARY DESTINATION .
+    RUNTIME DESTINATION .
+)
 
 foreach(_hgraph_py_test IN ITEMS test_bridge test_hgraph_api)
     add_test(

@@ -12,6 +12,7 @@
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
+#include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/type_resolution.h>
 #include <hgraph/types/wired_fn.h>
 #include <hgraph/util/date_time.h>
@@ -202,6 +203,20 @@ namespace hgraph::stdlib
         [[nodiscard]] inline const ValueTypeMetaData *ts_value(const TSValueTypeMetaData *schema)
         {
             return schema != nullptr && schema->kind == TSTypeKind::TS ? schema->value_schema : nullptr;
+        }
+
+        [[nodiscard]] inline const ValueTypeMetaData *homogeneous_tuple_element(const ValueTypeMetaData *schema)
+        {
+            if (schema == nullptr || schema->kind != ValueTypeKind::Tuple || schema->field_count == 0)
+            {
+                return nullptr;
+            }
+            const ValueTypeMetaData *first = schema->fields[0].type;
+            for (std::size_t index = 1; index < schema->field_count; ++index)
+            {
+                if (schema->fields[index].type != first) { return nullptr; }
+            }
+            return first;
         }
     }  // namespace convert_detail
 
@@ -997,6 +1012,71 @@ namespace hgraph::stdlib
         }
     };
 
+    /** convert[TSD](tsl): enumerate fixed TSL elements into a desired TSD.
+        This is a graph-level adapter over combine_tsd so the dictionary
+        reference/value semantics stay in one implementation. */
+    struct convert_tsl_to_tsd_impl
+    {
+        static constexpr auto name = "convert_tsl_to_tsd";
+
+        static auto defaults() { return std::tuple{arg<"__strict__">(Bool{false})}; }
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = convert_detail::requested_out(resolution);
+            const auto *in  = operator_impl_detail::fixed_tsl_arg(context, 0);
+            if (out == nullptr || out->kind != TSTypeKind::TSD || in == nullptr) { return false; }
+            auto &registry = TypeRegistry::instance();
+            if (out->key_type() != registry.value_type("int")) { return false; }
+            const auto *out_element = registry.dereference(out->element_ts());
+            const auto *in_element  = registry.dereference(in->element_ts());
+            return out_element != nullptr && out_element == in_element;
+        }
+
+        static WiringPortRef compose(Wiring &w, NamedPort<"ts", TsVar<"S">> ts,
+                                     Scalar<"__strict__", Bool> strict)
+        {
+            auto       &registry = TypeRegistry::instance();
+            const auto *schema   = registry.dereference(ts.erased().schema);
+            if (schema == nullptr || schema->kind != TSTypeKind::TSL || schema->fixed_size() == 0)
+            {
+                throw std::invalid_argument("convert[TSD](tsl) requires a fixed-size TSL input");
+            }
+
+            ListBuilder keys{*ValuePlanFactory::instance().binding_for(registry.value_type("int"))};
+            for (std::size_t index = 0; index < schema->fixed_size(); ++index)
+            {
+                keys.push_back(static_cast<Int>(index));
+            }
+
+            std::vector<WiringArg> args;
+            args.reserve(schema->fixed_size() + 2);
+            WiringArg keys_arg;
+            keys_arg.kind         = WiringArg::Kind::Scalar;
+            keys_arg.scalar_value = keys.build();
+            keys_arg.scalar_meta  = keys_arg.scalar_value.schema();
+            args.push_back(std::move(keys_arg));
+
+            for (std::size_t index = 0; index < schema->fixed_size(); ++index)
+            {
+                WiringArg value_arg;
+                value_arg.kind = WiringArg::Kind::TimeSeries;
+                value_arg.port = subgraph_wiring_detail::tsl_element_ref(ts.erased(), index, schema->element_ts());
+                args.push_back(std::move(value_arg));
+            }
+
+            WiringArg strict_arg;
+            strict_arg.kind         = WiringArg::Kind::Scalar;
+            strict_arg.scalar_value = Value{strict.value()};
+            strict_arg.scalar_meta  = strict_arg.scalar_value.schema();
+            strict_arg.name         = "__strict__";
+            args.push_back(std::move(strict_arg));
+
+            auto result = wire_operator(w, "combine_tsd", {args.data(), args.size()}, true);
+            return result.output.erased();
+        }
+    };
+
     /** convert[TSD](k_tuple_ts, v_tuple_ts): ZIP two TS[tuple] into a desired
         dictionary each tick (previous keys drop). */
     struct convert_zip_to_tsd_impl
@@ -1275,14 +1355,27 @@ namespace hgraph::stdlib
         {
             const auto *out = convert_detail::requested_out(resolution);
             const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            if (out == nullptr || out->kind != TSTypeKind::TSL || out->fixed_size() == 0 || in == nullptr ||
-                in->kind != ValueTypeKind::List)
+            if (out == nullptr || out->kind != TSTypeKind::TSL || out->fixed_size() == 0 || in == nullptr)
+            {
+                return false;
+            }
+            const ValueTypeMetaData *source_element = nullptr;
+            if (in->kind == ValueTypeKind::List)
+            {
+                source_element = in->element_type;
+            }
+            else if (in->kind == ValueTypeKind::Tuple)
+            {
+                if (in->field_count != out->fixed_size()) { return false; }
+                source_element = convert_detail::homogeneous_tuple_element(in);
+            }
+            else
             {
                 return false;
             }
             const auto *element = TypeRegistry::instance().dereference(out->element_ts());
             return element != nullptr && element->kind == TSTypeKind::TS &&
-                   element->value_schema == in->element_type;
+                   element->value_schema == source_element;
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)

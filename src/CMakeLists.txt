@@ -96,6 +96,7 @@ set(HGRAPH_STDLIB_SOURCES
     hgraph/lib/std/operators/string_impl.cpp
     hgraph/lib/std/operators/table_impl.cpp
     hgraph/lib/std/operators/temporal_impl.cpp
+    hgraph/lib/std/operators/type_request.cpp
 )
 
 add_library(hgraph_runtime ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_RUNTIME_SOURCES})

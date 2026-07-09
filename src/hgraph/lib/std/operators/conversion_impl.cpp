@@ -50,6 +50,7 @@ namespace hgraph::stdlib
         register_overload<collect, collect_map_zip_impl>();
         register_overload<convert, convert_tsl_to_tuple_impl<true>>();
         register_overload<convert, convert_tsl_to_tuple_impl<false>>();
+        register_graph_overload<convert, convert_tsl_to_tsd_impl>();
         register_overload<convert, convert_zip_to_tsd_impl>();
         register_graph_overload<combine, combine_tss_scalars_impl>();
         register_overload<combine_tss_from_tsl_marker, combine_tss_from_tsl_impl>();

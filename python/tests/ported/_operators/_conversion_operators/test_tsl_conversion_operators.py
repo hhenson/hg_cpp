@@ -38,6 +38,14 @@ def test_convert_tuple_to_tsl():
     assert eval_node(g, [(1, 2)]) == [{0: 1, 1: 2}]
 
 
+def test_convert_tuple_to_bare_tsl():
+    @graph
+    def g(a: TS[Tuple[int, int]]) -> TSL[TS[int], Size[2]]:
+        return convert[TSL](a)
+
+    assert eval_node(g, [(1, 2)]) == [{0: 1, 1: 2}]
+
+
 def test_emit_tsl():
     @graph
     def g(m: TSL[TS[int], Size[2]]) -> TS[int]:

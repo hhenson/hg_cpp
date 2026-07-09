@@ -45,6 +45,7 @@ python = [
     "nanobind>=2.12",
 ]
 test = [
+    "frozendict>=2.4",
     "pytest>=8",
 ]
 docs = [

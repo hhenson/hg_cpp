@@ -20,6 +20,7 @@
 #include <hgraph/types/service_runtime.h>
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
+#include <hgraph/lib/std/operators/type_request.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/push_source_node.h>
 #include <hgraph/runtime/runtime.h>
@@ -42,6 +43,7 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -63,6 +65,11 @@ namespace
     struct PyValueType
     {
         const ValueTypeMetaData *meta{nullptr};
+    };
+
+    struct PyTypeRequest
+    {
+        stdlib::TypeRequest request{};
     };
 
     struct PyWiredFn
@@ -1167,6 +1174,10 @@ NB_MODULE(_hgraph, m)
             return std::string{self.meta != nullptr && self.meta->display_name != nullptr ? self.meta->display_name
                                                                                           : "<ts?>"};
         });
+    nb::class_<PyTypeRequest>(m, "TypeRequest")
+        .def("__repr__", [](const PyTypeRequest &self) {
+            return stdlib::type_request_to_string(self.request);
+        });
     nb::class_<PyPort>(m, "Port")
         .def_prop_ro("ts_type", [](const PyPort &self) { return PyTsType{self.ref.schema}; })
         .def_prop_ro("is_structural", [](const PyPort &self) { return self.ref.is_structural_source(); })
@@ -1283,22 +1294,6 @@ NB_MODULE(_hgraph, m)
     m.def("tsd_key_vt", [](PyTsType t) { return PyValueType{t.meta->key_type()}; });
     m.def("tsb_value_vt", [](PyTsType t) { return PyValueType{t.meta->value_schema}; });
     m.def("tsl_element_ts", [](PyTsType t) { return PyTsType{t.meta->element_ts()}; });
-    m.def("int_vt", [] { return PyValueType{TypeRegistry::instance().value_type("int")}; });
-    m.def("str_vt", [] { return PyValueType{TypeRegistry::instance().value_type("str")}; });
-    m.def("tsb_for_bundle", [](PyValueType v) {
-        // The named TSB whose fields lift a BUNDLE value's fields to TS
-        // (CS -> TSB conversion targets).
-        auto &registry = TypeRegistry::instance();
-        std::vector<std::pair<std::string, const TSValueTypeMetaData *>> entries;
-        entries.reserve(v.meta->field_count);
-        for (std::size_t index = 0; index < v.meta->field_count; ++index)
-        {
-            entries.emplace_back(std::string{v.meta->fields[index].name},
-                                 registry.ts(v.meta->fields[index].type));
-        }
-        return PyTsType{registry.tsb(std::string{v.meta->name()}, entries)};
-    });
-    m.def("tsd_value_ts", [](PyTsType t) { return PyTsType{t.meta->element_ts()}; });
     m.def("tss", [](PyValueType v) { return PyTsType{TypeRegistry::instance().tss(v.meta)}; });
     m.def("tsd", [](PyValueType k, PyTsType v) { return PyTsType{TypeRegistry::instance().tsd(k.meta, v.meta)}; });
     m.def("tsw", [](PyValueType v, std::size_t period, std::size_t min_period) {
@@ -1316,6 +1311,67 @@ NB_MODULE(_hgraph, m)
         }
         return PyTsType{TypeRegistry::instance().tsb(name, entries)};
     });
+
+    m.def("type_request_tss", [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSS}}; });
+    m.def("type_request_tsd", [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSD}}; });
+    m.def("type_request_tsl", [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSL}}; });
+    m.def("type_request_tsb", [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSB}}; });
+    m.def("type_request_ts_tuple",
+          [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSTuple}}; });
+    m.def("type_request_ts_set",
+          [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSSet}}; });
+    m.def("type_request_ts_mapping",
+          [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSMapping}}; });
+    m.def("type_request_ts_compound_scalar",
+          [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSCompoundScalar}}; });
+
+    const auto request_input_schemas = [](nb::tuple inputs) {
+        std::vector<const TSValueTypeMetaData *> schemas;
+        schemas.reserve(nb::len(inputs));
+        for (nb::handle input : inputs)
+        {
+            if (nb::isinstance<PyPort>(input))
+            {
+                schemas.push_back(nb::cast<PyPort>(input).ref.schema);
+            }
+            else if (nb::isinstance<PyTsType>(input))
+            {
+                schemas.push_back(nb::cast<PyTsType>(input).meta);
+            }
+            else
+            {
+                throw nb::type_error("type target resolution inputs must be Port or TsType objects");
+            }
+        }
+        return schemas;
+    };
+
+    const auto selected_key_names = [](nb::object keys) {
+        std::vector<std::string> selected;
+        if (keys.is_none()) { return selected; }
+        for (nb::handle key : keys) { selected.push_back(nb::cast<std::string>(key)); }
+        return selected;
+    };
+
+    m.def("resolve_convert_target",
+          [request_input_schemas, selected_key_names](PyTypeRequest request, nb::tuple inputs, nb::object keys) {
+              std::vector<const TSValueTypeMetaData *> schemas = request_input_schemas(inputs);
+              std::vector<std::string> selected = selected_key_names(std::move(keys));
+              return PyTsType{stdlib::resolve_convert_target(
+                  request.request,
+                  std::span<const TSValueTypeMetaData *const>{schemas.data(), schemas.size()},
+                  std::span<const std::string>{selected.data(), selected.size()})};
+          },
+          nb::arg("request"), nb::arg("inputs"), nb::arg("keys") = nb::none());
+
+    m.def("resolve_collect_target",
+          [request_input_schemas](PyTypeRequest request, nb::tuple inputs) {
+              std::vector<const TSValueTypeMetaData *> schemas = request_input_schemas(inputs);
+              return PyTsType{stdlib::resolve_collect_target(
+                  request.request,
+                  std::span<const TSValueTypeMetaData *const>{schemas.data(), schemas.size()})};
+          },
+          nb::arg("request"), nb::arg("inputs"));
 
     // record/replay configuration (the model is explicit wiring-time config).
     m.def("set_record_replay_config", [](const std::string &model) {
