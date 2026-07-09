@@ -164,7 +164,7 @@ def _port_getitem(self, item):
     # getitem_.
     if isinstance(item, int) and not isinstance(item, bool):
         raw = _unwrap(self)
-        if raw.ts_type.kind == _TSL_KIND and raw.ts_type.fixed_size > 0:
+        if raw.ts_type.is_fixed_tsl:
             return WiringPort(_hgraph.tsl_element(raw, item))
     return wire("getitem_", self, item)
 
@@ -173,12 +173,9 @@ WiringPort.__getitem__ = _port_getitem
 WiringPort.__hash__ = object.__hash__  # __eq__ wires a node; identity hashing stands
 
 
-_TSL_KIND = 3   # TSTypeKind::TSL
-
-
 def _port_len(self):
     ts_type = self._port.ts_type
-    if ts_type.kind == _TSL_KIND and ts_type.fixed_size > 0:
+    if ts_type.is_fixed_tsl:
         return ts_type.fixed_size
     raise TypeError("len() is only defined for fixed-size TSL ports")
 
@@ -199,9 +196,8 @@ def _port_getattr(self, name):
         raise AttributeError(name)
     if name == "key_set":
         return wire("keys_", self)   # hgraph's TSD.key_set property
-    # JSON leaf coercions: j["a"].int / .float / .str / .bool
-    # (value kind 8 = Any; the JSON meta rides Any storage).
-    if name in ("int", "float", "str", "bool") and _unwrap(self).ts_type.value_kind == 8:
+    # JSON leaf coercions: j["a"].int / .float / .str / .bool.
+    if name in ("int", "float", "str", "bool") and _unwrap(self).ts_type.is_ts_json:
         return wire("json_as_" + name, self)
     try:
         return wire("getattr_", self, name)
@@ -253,8 +249,7 @@ def _wrap_graph_fn(gfn):
                 # as a REFERENCE output (hgraph's combine-of-refs shape -
                 # zero copy); plain fields copy through the canonical-delta
                 # identity node.
-                child_kinds = _hgraph.structural_child_kinds(raw)
-                if any(k == 6 for k in child_kinds):   # 6 = REF
+                if _hgraph.structural_has_ref_children(raw):
                     raw = _hgraph.ref_port(borrowed_wiring, raw)
                 else:
                     raw = _unwrap(wire("__materialize", out))
@@ -356,8 +351,8 @@ def combine(*args, __output_type__=None, **kwargs):
         # combine[TSD](("a", "b"), a, b): keys tuple literal + element ports.
         strict = kwargs.pop("__strict__", True)
         return wire("combine_tsd", args[0], *args[1:], __strict__=strict, **kwargs)
-    if label0.startswith("TSD") and len(args) == 2 and all(isinstance(a, WiringPort) for a in args) \
-            and _unwrap(args[0]).ts_type.kind == 0:
+    if (label0.startswith("TSD") and len(args) == 2 and all(isinstance(a, WiringPort) for a in args)
+            and _unwrap(args[0]).ts_type.is_ts):
         # combine[TSD](k_tuple_ts, v_tuple_ts): zip two TS[tuple] -> TSD.
         k = _hgraph.vt_element(_hgraph.ts_value_vt(_unwrap(args[0]).ts_type))
         v = _hgraph.vt_element(_hgraph.ts_value_vt(_unwrap(args[1]).ts_type))
@@ -385,8 +380,7 @@ def combine(*args, __output_type__=None, **kwargs):
         if args and all(isinstance(a, WiringPort) for a in args) and not kwargs:
             # UNSUBSCRIPTED positional: a structural TSL of the ports, UNLESS
             # it is the binary CS-merge (two bundle-valued TS -> delta merge).
-            if (len(args) == 2 and all(_unwrap(a).ts_type.kind == 0
-                                       and _unwrap(a).ts_type.value_kind == 2 for a in args)):
+            if len(args) == 2 and all(_unwrap(a).ts_type.is_ts_bundle for a in args):
                 return _combine_compound_scalars(*args)
             return WiringPort(_hgraph.tsl_port([_unwrap(a) for a in args]))
         if kwargs and not args and all(isinstance(v, WiringPort) for v in kwargs.values()):
@@ -433,7 +427,7 @@ def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
 
 
 def _type_pattern_for_target(target):
-    from ._types import _GenericTsExpr, TSD, TSB, TSL, TSS
+    from ._types import _GenericTsExpr, TSD, TSB, TSL, TSS, TSW
 
     if isinstance(target, _GenericTsExpr):
         if target.pattern is None:
@@ -447,6 +441,8 @@ def _type_pattern_for_target(target):
         return _hgraph.type_pattern_tsl()
     if target is TSB:
         return _hgraph.type_pattern_tsb()
+    if target is TSW:
+        return _hgraph.type_pattern_tsw()
     raise WiringError(f"unsupported generic target {target!r}")
 
 
@@ -545,7 +541,7 @@ class _Collect:
         target = self._infer(ports)
         if reset is None:
             reset = wire("nothing", output_type=TS[bool])
-        if ports and _unwrap(ports[0]).ts_type.kind == 2:
+        if ports and _unwrap(ports[0]).ts_type.is_tsd:
             # collect over a TSD: reset AND exclude inputs (nothing-filled).
             if exclude is None:
                 exclude = wire("nothing",
@@ -581,7 +577,7 @@ class _Emit:
         # Build the KeyValue output {key: TS[K], value: <value_ts>} from the
         # dict/mapping key type and the hinted value TS.
         handle = _unwrap(ts).ts_type
-        if handle.kind == 2:                       # TSD[K, ...]
+        if handle.is_tsd:
             key_vt = _hgraph.tsd_key_vt(handle)
         else:                                       # TS[Mapping[K, V]]
             key_vt = _hgraph.vt_key(_hgraph.ts_value_vt(handle))
@@ -753,7 +749,7 @@ class _PyNode:
                     actual = _unwrap(value).ts_type
                     inner = getattr(annotation, "inner", None)
                     if getattr(annotation, "is_ref", False) and inner is not None:
-                        if actual.kind == 6:   # already a REF: bind its target
+                        if actual.is_ref:
                             actual = _hgraph.ref_target(actual)
                         generic_bindings[repr(inner)] = actual
                     else:
@@ -1223,7 +1219,7 @@ class _GraphFn:
             # coerces to its annotated TSB output (a structural bundle when
             # the annotation is generic/absent).
             annotation = self.signature.return_annotation
-            if isinstance(annotation, _TsExpr) and getattr(annotation.handle, "kind", None) == 5:
+            if isinstance(annotation, _TsExpr) and annotation.handle.is_tsb:
                 fields = {k: _unwrap(v) for k, v in result.items()}
                 return WiringPort(_hgraph.tsb_port(annotation.handle, fields))
             fields = [(k, _unwrap(v).ts_type) for k, v in result.items()]
@@ -1503,18 +1499,17 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             return None
         # hgraph parity: a REF graph output records its DEREFERENCED values.
         # A TSB with REF fields records a STRUCTURAL bundle of per-field
-        # projections, each dereferenced (kind 5 = TSB, 6 = REF).
+        # projections, each dereferenced.
         raw = _unwrap(out)
         record_kwargs = {"sparse": True} if __elide__ else {}
         record_port = raw.dereferenced
-        if raw.ts_type.kind == 5 and any(t.kind == 6 for _, t in _hgraph.ts_field_types(raw.ts_type)):
+        if raw.ts_type.is_tsb and _hgraph.tsb_has_ref_fields(raw.ts_type):
             fields = {
                 name: _unwrap(wire("getitem_", WiringPort(raw), name)).dereferenced
                 for name, _ in _hgraph.ts_field_types(raw.ts_type)
             }
             record_port = _hgraph.tsb_port(record_port.ts_type, fields)
-        elif (raw.ts_type.kind == _TSL_KIND and raw.ts_type.fixed_size > 0
-              and _hgraph.tsl_element(raw, 0).ts_type.kind == 6):
+        elif raw.ts_type.is_fixed_tsl and _hgraph.tsl_element(raw, 0).ts_type.is_ref:
             # A TSL of REF elements: record a structural TSL of per-element
             # projections, each dereferenced.
             record_port = _hgraph.tsl_port(

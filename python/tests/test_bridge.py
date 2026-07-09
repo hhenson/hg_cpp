@@ -106,6 +106,24 @@ def test_type_construction():
     check(p is not None, "constructed type failed to wire")
 
 
+def test_type_predicates_and_patterns():
+    int_vt = hg.value_type("int")
+    str_vt = hg.value_type("str")
+    ts_int = hg.ts(int_vt)
+    tsd = hg.tsd(str_vt, ts_int)
+    tsl = hg.tsl(ts_int, 3)
+    json_ts = hg.ts(hg.value_type("JSON"))
+    mapping_ts = hg.ts(hg.map_vt(str_vt, int_vt))
+
+    check(ts_int.is_ts and not ts_int.is_tsd, "TS predicate failed")
+    check(tsd.is_tsd and not tsd.is_ts, "TSD predicate failed")
+    check(tsl.is_tsl and tsl.is_fixed_tsl and tsl.fixed_size == 3, "TSL predicate failed")
+    check(json_ts.is_ts_json, "JSON predicate failed")
+    check(mapping_ts.is_ts_mapping, "mapping predicate failed")
+    check(repr(hg.type_pattern_tsw(hg.scalar_pattern_var("T"))) == "TSW[~T, *]", "TSW pattern")
+    check(repr(hg.type_pattern_signal()) == "SIGNAL", "SIGNAL pattern")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

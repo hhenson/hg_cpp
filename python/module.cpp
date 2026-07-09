@@ -16,6 +16,7 @@
 #include <hgraph/lib/std/operators/arithmetic.h>
 #include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/lib/std/operators/control.h>
+#include <hgraph/lib/std/operators/json.h>
 #include <hgraph/types/context_wiring.h>
 #include <hgraph/types/service_runtime.h>
 #include <hgraph/lib/std/operators/higher_order.h>
@@ -1182,6 +1183,35 @@ NB_MODULE(_hgraph, m)
         .def_prop_ro("fixed_size", [](const PyTsType &self) {
             return self.meta->kind == TSTypeKind::TSL ? self.meta->fixed_size() : 0;
         })
+        .def_prop_ro("is_ts", [](const PyTsType &self) {
+            return self.meta != nullptr && self.meta->kind == TSTypeKind::TS;
+        })
+        .def_prop_ro("is_tsd", [](const PyTsType &self) {
+            return self.meta != nullptr && self.meta->kind == TSTypeKind::TSD;
+        })
+        .def_prop_ro("is_tsl", [](const PyTsType &self) {
+            return self.meta != nullptr && self.meta->kind == TSTypeKind::TSL;
+        })
+        .def_prop_ro("is_tsb", [](const PyTsType &self) {
+            return self.meta != nullptr && self.meta->kind == TSTypeKind::TSB;
+        })
+        .def_prop_ro("is_ref", [](const PyTsType &self) {
+            return self.meta != nullptr && self.meta->kind == TSTypeKind::REF;
+        })
+        .def_prop_ro("is_fixed_tsl", [](const PyTsType &self) {
+            return self.meta != nullptr && self.meta->kind == TSTypeKind::TSL && self.meta->fixed_size() > 0;
+        })
+        .def_prop_ro("is_ts_bundle", [](const PyTsType &self) {
+            return self.meta != nullptr && self.meta->kind == TSTypeKind::TS &&
+                   self.meta->value_schema != nullptr && self.meta->value_schema->kind == ValueTypeKind::Bundle;
+        })
+        .def_prop_ro("is_ts_mapping", [](const PyTsType &self) {
+            return self.meta != nullptr && self.meta->kind == TSTypeKind::TS &&
+                   self.meta->value_schema != nullptr && self.meta->value_schema->kind == ValueTypeKind::Map;
+        })
+        .def_prop_ro("is_ts_json", [](const PyTsType &self) {
+            return stdlib::json_tree::is_json_ts(self.meta);
+        })
         .def("__repr__", [](const PyTsType &self) {
             return std::string{self.meta != nullptr && self.meta->display_name != nullptr ? self.meta->display_name
                                                                                           : "<ts?>"};
@@ -1403,6 +1433,15 @@ NB_MODULE(_hgraph, m)
                                   : TypePattern::tsl(std::move(element.pattern), size.value);
         return PyTypePattern{std::move(pattern)};
     });
+    m.def("type_pattern_tsw", [] {
+        return PyTypePattern{TypePattern::tsw_any(ScalarPattern::var("T"))};
+    });
+    m.def("type_pattern_tsw", [](PyScalarPattern element) {
+        return PyTypePattern{TypePattern::tsw_any(std::move(element.pattern))};
+    });
+    m.def("type_pattern_tsw", [](PyScalarPattern element, std::size_t period, std::size_t min_period) {
+        return PyTypePattern{TypePattern::tsw(std::move(element.pattern), period, min_period)};
+    }, nb::arg("element"), nb::arg("period"), nb::arg("min_period") = 0);
     m.def("type_pattern_tsb", [] {
         return PyTypePattern{TypePattern::tsb_var("SCHEMA")};
     });
@@ -1411,6 +1450,9 @@ NB_MODULE(_hgraph, m)
     });
     m.def("type_pattern_ref", [](PyTypePattern target) {
         return PyTypePattern{TypePattern::ref(std::move(target.pattern))};
+    });
+    m.def("type_pattern_signal", [] {
+        return PyTypePattern{TypePattern::signal()};
     });
     const auto target_input_schemas = [](nb::tuple inputs) {
         std::vector<const TSValueTypeMetaData *> schemas;
@@ -1752,14 +1794,26 @@ NB_MODULE(_hgraph, m)
         return PyPort{WiringPortRef::structural_source(ts_type.meta, std::move(children))};
     });
 
-    m.def("structural_child_kinds", [](const PyPort &port) {
-        nb::list result;
-        if (!port.ref.is_structural_source()) { return result; }
+    m.def("structural_has_ref_children", [](const PyPort &port) {
+        if (!port.ref.is_structural_source()) { return false; }
         for (const WiringPortRef &child : port.ref.structural_children())
         {
-            result.append(child.schema != nullptr ? static_cast<int>(child.schema->kind) : -1);
+            if (child.schema != nullptr && child.schema->kind == TSTypeKind::REF) { return true; }
         }
-        return result;
+        return false;
+    });
+
+    m.def("tsb_has_ref_fields", [](PyTsType ts_type) {
+        if (ts_type.meta == nullptr || ts_type.meta->kind != TSTypeKind::TSB) { return false; }
+        for (std::size_t index = 0; index < ts_type.meta->field_count(); ++index)
+        {
+            if (ts_type.meta->fields()[index].type != nullptr &&
+                ts_type.meta->fields()[index].type->kind == TSTypeKind::REF)
+            {
+                return true;
+            }
+        }
+        return false;
     });
 
     m.def("ref_port", [](PyWiring &wiring, const PyPort &port) {

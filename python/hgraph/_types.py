@@ -159,7 +159,7 @@ class _TsExpr:
 
         from ._runtime import WiringPort, _unwrap, wire
 
-        if kwargs and not ports and getattr(self.handle, "kind", None) == 0 and not getattr(self, "_json", False):
+        if kwargs and not ports and getattr(self.handle, "is_ts", False) and not getattr(self, "_json", False):
             import datetime as _dt
 
             from ._runtime import wire as _wire
@@ -196,8 +196,7 @@ class _TsExpr:
                 return _wire("combine", output_type=self, **call)
 
         strict_cs = kwargs.pop("__strict__", True)
-        if (kwargs and not ports and getattr(self.handle, "kind", None) == 0
-                and self.handle.value_kind == 2 and not getattr(self, "_json", False)):
+        if (kwargs and not ports and self.handle.is_ts_bundle and not getattr(self, "_json", False)):
             # combine[TS[CompoundScalar]](field=...): a structural TSB of the
             # provided fields feeds the erased combine_cs node (CS IS a
             # Bundle value; missing fields stay UNSET). Plain values
@@ -251,11 +250,11 @@ class _TsExpr:
             return wire("combine_json", **lifted)
         if ports and not kwargs:
             # combine[TS[frozendict...]](keys, values) -> the combine_map
-            # operator; TS value-kind 5 == Map. The BARE frozendict form
+            # operator. The BARE frozendict form
             # resolves the key/value types from the inputs.
             if getattr(self, "_bare_map", False):   # slot may be unset
                 return wire("combine_map", *ports)
-            if self.handle.kind == 0 and self.handle.value_kind == 5:
+            if self.handle.is_ts_mapping:
                 return wire("combine_map", *ports, output_type=self)
             return WiringPort(_m.tsl_port([_unwrap(p) for p in ports]))
         field_ports = {}
@@ -440,7 +439,12 @@ class _TSWMeta(type):
             value, size = item[0], int(item[1])
         else:
             value, size = item, 0
-        return _TsExpr(_hgraph.tsw(_value_type(value), size), f"TSW[{item!r}]")
+        try:
+            return _TsExpr(_hgraph.tsw(_value_type(value), size), f"TSW[{item!r}]")
+        except _GenericType as e:
+            pattern = (_hgraph.type_pattern_tsw(e.pattern, size)
+                       if size > 0 else _hgraph.type_pattern_tsw(e.pattern))
+            return _GenericTsExpr(f"TSW[{item!r}]", pattern=pattern)
 
 
 class TSW(metaclass=_TSWMeta):
