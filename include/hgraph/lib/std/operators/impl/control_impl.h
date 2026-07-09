@@ -159,8 +159,8 @@ namespace hgraph::stdlib
                 const auto *tsl = fixed_tsl_arg(context, 0);
                 if (tsl == nullptr) { return; }
                 auto &registry = TypeRegistry::instance();
-                const auto *element = registry.dereference(tsl->element_ts());
-                if (element == nullptr || element->kind != TSTypeKind::TSD) { return; }
+                const auto *element = time_series_schema_as<AnyTSD>(tsl->element_ts());
+                if (element == nullptr) { return; }
                 bind_output(
                     resolution, registry.tsd(element->key_type(),
                                              registry.ref(registry.dereference(element->element_ts()))));
@@ -205,11 +205,7 @@ namespace hgraph::stdlib
             // time-series argument.
             for (std::size_t index = 0; index < context.args.size(); ++index)
             {
-                const auto *schema = time_series_schema_at(context, index);
-                if (time_series_schema_matches<AnyTSD>(schema))
-                {
-                    return schema;
-                }
+                if (const auto *schema = time_series_schema_at_as<AnyTSD>(context, index)) { return schema; }
             }
             return nullptr;
         }
@@ -259,8 +255,8 @@ namespace hgraph::stdlib
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
             if (output_bound(resolution)) { return; }
-            const TSValueTypeMetaData *schema = time_series_schema_at(context, 0);
-            if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return; }
+            const TSValueTypeMetaData *schema = time_series_schema_at_as<AnyTSD>(context, 0);
+            if (schema == nullptr) { return; }
             bind_output(resolution, schema);
         }
 
@@ -280,15 +276,14 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
             if (context.args.size() != 1) { return false; }
-            const TSValueTypeMetaData *schema = time_series_schema_at(context, 0);
-            return schema != nullptr && schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0;
+            return fixed_tsl_arg(context, 0) != nullptr;
         }
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
             if (output_bound(resolution)) { return; }
             const TSValueTypeMetaData *schema = fixed_tsl_arg(context, 0);
-            if (schema == nullptr || schema->kind != TSTypeKind::TSL) { return; }
+            if (schema == nullptr) { return; }
             bind_output(resolution, schema->element_ts());
         }
 
@@ -316,8 +311,9 @@ namespace hgraph::stdlib
             // TSL argument is the *tsl collection shape (merge_tsl_graph_impl).
             const TSValueTypeMetaData *schema = time_series_schema_at(context, 0);
             if (schema == nullptr) { return true; }
-            if (schema->kind == TSTypeKind::TSD) { return false; }
-            return !(context.args.size() == 1 && schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0);
+            if (time_series_schema_as<AnyTSD>(schema) != nullptr) { return false; }
+            const auto *tsl = time_series_schema_as<AnyTSL>(schema);
+            return !(context.args.size() == 1 && tsl != nullptr && tsl->fixed_size() > 0);
         }
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -532,9 +528,9 @@ namespace hgraph::stdlib
             auto &registry = TypeRegistry::instance();
             for (const WiringArg &arg : context.args)
             {
-                if (arg.kind != WiringArg::Kind::TimeSeries || arg.port.schema == nullptr) { continue; }
-                if (arg.port.schema->kind != TSTypeKind::TSD || arg.port.schema->element_ts() == nullptr) { continue; }
-                const auto *element = arg.port.schema->element_ts();
+                const auto *schema = time_series_schema_as<AnyTSD>(arg);
+                if (schema == nullptr || schema->element_ts() == nullptr) { continue; }
+                const auto *element = schema->element_ts();
                 const auto *out     = element->kind == TSTypeKind::REF ? element
                                                                        : registry.ref(registry.dereference(element));
                 higher_order_impl_detail::bind_graph_output(resolution, out, "O");
@@ -545,7 +541,7 @@ namespace hgraph::stdlib
         static WiringPortRef compose(Wiring &w, NamedPort<"tsd", TSD<ScalarVar<"K">, REF<TsVar<"S">>>> tsd)
         {
             const WiringPortRef source = tsd.erased();
-            if (source.schema == nullptr || source.schema->kind != TSTypeKind::TSD)
+            if (time_series_schema_as<AnyTSD>(source.schema) == nullptr)
             {
                 throw std::invalid_argument("reduce_tsd_with_race requires a TSD<K, REF<OUT>> input");
             }
