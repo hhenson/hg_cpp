@@ -4,6 +4,7 @@ requires = [
     "cmake>=3.25",
     "ninja",
     "nanobind>=2.12",
+    "pyarrow>=24",
 ]
 build-backend = "scikit_build_core.build"
 
@@ -38,6 +39,7 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=2.0",
+    "pyarrow>=24",
 ]
 
 [project.optional-dependencies]

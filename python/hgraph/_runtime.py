@@ -432,34 +432,34 @@ def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
     return wire("switch_", key, erased, *args, **kwargs)
 
 
-def _type_request_for_target(target):
+def _type_pattern_for_target(target):
     from ._types import _GenericTsExpr, TSD, TSB, TSL, TSS
 
     if isinstance(target, _GenericTsExpr):
-        if target.request is None:
-            raise WiringError(f"cannot resolve generic target {target!r}: no C++ type request is attached")
-        return target.request
+        if target.pattern is None:
+            raise WiringError(f"cannot resolve generic target {target!r}: no C++ type pattern is attached")
+        return target.pattern
     if target is TSS:
-        return _hgraph.type_request_tss()
+        return _hgraph.type_pattern_tss()
     if target is TSD:
-        return _hgraph.type_request_tsd()
+        return _hgraph.type_pattern_tsd()
     if target is TSL:
-        return _hgraph.type_request_tsl()
+        return _hgraph.type_pattern_tsl()
     if target is TSB:
-        return _hgraph.type_request_tsb()
+        return _hgraph.type_pattern_tsb()
     raise WiringError(f"unsupported generic target {target!r}")
 
 
 def _resolve_requested_target(op_name, target, inputs, keys=None):
     from ._types import _TsExpr
 
-    request = _type_request_for_target(target)
+    pattern = _type_pattern_for_target(target)
     unwrapped = tuple(_unwrap(p) for p in inputs)
     try:
         if op_name == "collect":
-            handle = _hgraph.resolve_collect_target(request, unwrapped)
+            handle = _hgraph.resolve_collect_target(pattern, unwrapped)
         else:
-            handle = _hgraph.resolve_convert_target(request, unwrapped, keys)
+            handle = _hgraph.resolve_convert_target(pattern, unwrapped, keys)
     except (RuntimeError, ValueError) as error:
         raise WiringError(str(error)) from error
     return _TsExpr(handle, "inferred")

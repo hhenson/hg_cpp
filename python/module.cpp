@@ -20,7 +20,7 @@
 #include <hgraph/types/service_runtime.h>
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
-#include <hgraph/lib/std/operators/type_request.h>
+#include <hgraph/lib/std/operators/convert_target.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/push_source_node.h>
 #include <hgraph/runtime/runtime.h>
@@ -67,19 +67,21 @@ namespace
         const ValueTypeMetaData *meta{nullptr};
     };
 
-    struct PyScalarRequest
+    struct PyScalarPattern
     {
-        stdlib::ScalarRequest request{};
+        ScalarPattern pattern{};
     };
 
-    struct PySizeRequest
+    struct PySizePattern
     {
-        stdlib::SizeRequest request{};
+        bool        variable{false};
+        std::string name{};
+        std::size_t value{0};
     };
 
-    struct PyTypeRequest
+    struct PyTypePattern
     {
-        stdlib::TypeRequest request{};
+        TypePattern pattern{};
     };
 
     struct PyWiredFn
@@ -1184,17 +1186,17 @@ NB_MODULE(_hgraph, m)
             return std::string{self.meta != nullptr && self.meta->display_name != nullptr ? self.meta->display_name
                                                                                           : "<ts?>"};
         });
-    nb::class_<PyScalarRequest>(m, "ScalarRequest")
-        .def("__repr__", [](const PyScalarRequest &self) {
-            return stdlib::scalar_request_to_string(self.request);
+    nb::class_<PyScalarPattern>(m, "ScalarPattern")
+        .def("__repr__", [](const PyScalarPattern &self) {
+            return scalar_pattern_to_string(self.pattern);
         });
-    nb::class_<PySizeRequest>(m, "SizeRequest")
-        .def("__repr__", [](const PySizeRequest &self) {
-            return stdlib::size_request_to_string(self.request);
+    nb::class_<PySizePattern>(m, "SizePattern")
+        .def("__repr__", [](const PySizePattern &self) {
+            return self.variable ? "~" + self.name : std::to_string(self.value);
         });
-    nb::class_<PyTypeRequest>(m, "TypeRequest")
-        .def("__repr__", [](const PyTypeRequest &self) {
-            return stdlib::type_request_to_string(self.request);
+    nb::class_<PyTypePattern>(m, "TypePattern")
+        .def("__repr__", [](const PyTypePattern &self) {
+            return ts_pattern_to_string(self.pattern);
         });
     nb::class_<PyPort>(m, "Port")
         .def_prop_ro("ts_type", [](const PyPort &self) { return PyTsType{self.ref.schema}; })
@@ -1330,87 +1332,87 @@ NB_MODULE(_hgraph, m)
         return PyTsType{TypeRegistry::instance().tsb(name, entries)};
     });
 
-    m.def("scalar_request_var", [](const std::string &name) {
-        return PyScalarRequest{stdlib::ScalarRequest::variable(name)};
+    m.def("scalar_pattern_var", [](const std::string &name) {
+        return PyScalarPattern{ScalarPattern::var(name)};
     });
-    m.def("scalar_request_value", [](PyValueType value) {
-        return PyScalarRequest{stdlib::ScalarRequest::concrete(value.meta)};
+    m.def("scalar_pattern_value", [](PyValueType value) {
+        return PyScalarPattern{ScalarPattern::concrete(value.meta)};
     });
-    m.def("scalar_request_unknown_tuple", [] {
-        return PyScalarRequest{stdlib::ScalarRequest::unknown_tuple()};
+    m.def("scalar_pattern_unknown_tuple", [] {
+        return PyScalarPattern{ScalarPattern::unknown_tuple()};
     });
-    m.def("scalar_request_unknown_tuple", [](PyScalarRequest element) {
-        return PyScalarRequest{stdlib::ScalarRequest::unknown_tuple(
-            std::make_shared<stdlib::ScalarRequest>(std::move(element.request)))};
+    m.def("scalar_pattern_unknown_tuple", [](PyScalarPattern element) {
+        return PyScalarPattern{ScalarPattern::unknown_tuple(std::move(element.pattern))};
     });
-    m.def("scalar_request_homogeneous_tuple", [](PyScalarRequest element) {
-        return PyScalarRequest{stdlib::ScalarRequest::homogeneous_tuple(std::move(element.request))};
+    m.def("scalar_pattern_homogeneous_tuple", [](PyScalarPattern element) {
+        return PyScalarPattern{ScalarPattern::homogeneous_tuple(std::move(element.pattern))};
     });
-    m.def("scalar_request_fixed_tuple", [](nb::list elements) {
-        std::vector<stdlib::ScalarRequest> requests;
-        requests.reserve(nb::len(elements));
-        for (nb::handle element : elements) { requests.push_back(nb::cast<PyScalarRequest>(element).request); }
-        return PyScalarRequest{stdlib::ScalarRequest::fixed_tuple(std::move(requests))};
+    m.def("scalar_pattern_fixed_tuple", [](nb::list elements) {
+        std::vector<ScalarPattern> patterns;
+        patterns.reserve(nb::len(elements));
+        for (nb::handle element : elements) { patterns.push_back(nb::cast<PyScalarPattern>(element).pattern); }
+        return PyScalarPattern{ScalarPattern::fixed_tuple(std::move(patterns))};
     });
-    m.def("scalar_request_set", [](PyScalarRequest element) {
-        return PyScalarRequest{stdlib::ScalarRequest::set(std::move(element.request))};
+    m.def("scalar_pattern_set", [](PyScalarPattern element) {
+        return PyScalarPattern{ScalarPattern::set(std::move(element.pattern))};
     });
-    m.def("scalar_request_map", [](PyScalarRequest key, PyScalarRequest value) {
-        return PyScalarRequest{stdlib::ScalarRequest::map(std::move(key.request), std::move(value.request))};
+    m.def("scalar_pattern_map", [](PyScalarPattern key, PyScalarPattern value) {
+        return PyScalarPattern{ScalarPattern::map(std::move(key.pattern), std::move(value.pattern))};
     });
-    m.def("scalar_request_bundle", [] {
-        return PyScalarRequest{stdlib::ScalarRequest::bundle()};
+    m.def("scalar_pattern_bundle", [] {
+        return PyScalarPattern{ScalarPattern::bundle()};
     });
-    m.def("scalar_request_bundle", [](const std::string &schema_variable) {
-        return PyScalarRequest{stdlib::ScalarRequest::bundle(schema_variable)};
-    });
-
-    m.def("size_request_var", [](const std::string &name) {
-        return PySizeRequest{stdlib::SizeRequest::variable(name)};
-    });
-    m.def("size_request_value", [](std::size_t value) {
-        return PySizeRequest{stdlib::SizeRequest::concrete(value)};
+    m.def("scalar_pattern_bundle", [](const std::string &schema_variable) {
+        return PyScalarPattern{ScalarPattern::bundle_var(schema_variable)};
     });
 
-    m.def("type_request_var", [](const std::string &name) {
-        return PyTypeRequest{stdlib::TypeRequest::variable(name)};
+    m.def("size_pattern_var", [](const std::string &name) {
+        return PySizePattern{true, name, 0};
     });
-    m.def("type_request_concrete", [](PyTsType type) {
-        return PyTypeRequest{stdlib::TypeRequest::concrete(type.meta)};
+    m.def("size_pattern_value", [](std::size_t value) {
+        return PySizePattern{false, {}, value};
     });
-    m.def("type_request_ts", [](PyScalarRequest value) {
-        return PyTypeRequest{stdlib::TypeRequest::ts(std::move(value.request))};
+
+    m.def("type_pattern_var", [](const std::string &name) {
+        return PyTypePattern{TypePattern::var(name)};
     });
-    m.def("type_request_tss", [] {
-        return PyTypeRequest{stdlib::TypeRequest::tss(stdlib::ScalarRequest::variable("T"))};
+    m.def("type_pattern_concrete", [](PyTsType type) {
+        return PyTypePattern{TypePattern::concrete(type.meta)};
     });
-    m.def("type_request_tss", [](PyScalarRequest element) {
-        return PyTypeRequest{stdlib::TypeRequest::tss(std::move(element.request))};
+    m.def("type_pattern_ts", [](PyScalarPattern value) {
+        return PyTypePattern{TypePattern::ts(std::move(value.pattern))};
     });
-    m.def("type_request_tsd", [] {
-        return PyTypeRequest{stdlib::TypeRequest::tsd(
-            stdlib::ScalarRequest::variable("K"), stdlib::TypeRequest::variable("V"))};
+    m.def("type_pattern_tss", [] {
+        return PyTypePattern{TypePattern::tss(ScalarPattern::var("T"))};
     });
-    m.def("type_request_tsd", [](PyScalarRequest key, PyTypeRequest value) {
-        return PyTypeRequest{stdlib::TypeRequest::tsd(std::move(key.request), std::move(value.request))};
+    m.def("type_pattern_tss", [](PyScalarPattern element) {
+        return PyTypePattern{TypePattern::tss(std::move(element.pattern))};
     });
-    m.def("type_request_tsl", [] {
-        return PyTypeRequest{stdlib::TypeRequest::tsl(
-            stdlib::TypeRequest::variable("V"), stdlib::SizeRequest::variable("SIZE"))};
+    m.def("type_pattern_tsd", [] {
+        return PyTypePattern{TypePattern::tsd(ScalarPattern::var("K"), TypePattern::var("V"))};
     });
-    m.def("type_request_tsl", [](PyTypeRequest element, PySizeRequest size) {
-        return PyTypeRequest{stdlib::TypeRequest::tsl(std::move(element.request), std::move(size.request))};
+    m.def("type_pattern_tsd", [](PyScalarPattern key, PyTypePattern value) {
+        return PyTypePattern{TypePattern::tsd(std::move(key.pattern), std::move(value.pattern))};
     });
-    m.def("type_request_tsb", [] {
-        return PyTypeRequest{stdlib::TypeRequest::tsb(std::string{"SCHEMA"})};
+    m.def("type_pattern_tsl", [] {
+        return PyTypePattern{TypePattern::tsl_var(TypePattern::var("V"), "SIZE")};
     });
-    m.def("type_request_tsb", [](const std::string &schema_variable) {
-        return PyTypeRequest{stdlib::TypeRequest::tsb(schema_variable)};
+    m.def("type_pattern_tsl", [](PyTypePattern element, PySizePattern size) {
+        TypePattern pattern = size.variable
+                                  ? TypePattern::tsl_var(std::move(element.pattern), size.name)
+                                  : TypePattern::tsl(std::move(element.pattern), size.value);
+        return PyTypePattern{std::move(pattern)};
     });
-    m.def("type_request_ref", [](PyTypeRequest target) {
-        return PyTypeRequest{stdlib::TypeRequest::ref(std::move(target.request))};
+    m.def("type_pattern_tsb", [] {
+        return PyTypePattern{TypePattern::tsb_var("SCHEMA")};
     });
-    const auto request_input_schemas = [](nb::tuple inputs) {
+    m.def("type_pattern_tsb", [](const std::string &schema_variable) {
+        return PyTypePattern{TypePattern::tsb_var(schema_variable)};
+    });
+    m.def("type_pattern_ref", [](PyTypePattern target) {
+        return PyTypePattern{TypePattern::ref(std::move(target.pattern))};
+    });
+    const auto target_input_schemas = [](nb::tuple inputs) {
         std::vector<const TSValueTypeMetaData *> schemas;
         schemas.reserve(nb::len(inputs));
         for (nb::handle input : inputs)
@@ -1439,24 +1441,24 @@ NB_MODULE(_hgraph, m)
     };
 
     m.def("resolve_convert_target",
-          [request_input_schemas, selected_key_names](PyTypeRequest request, nb::tuple inputs, nb::object keys) {
-              std::vector<const TSValueTypeMetaData *> schemas = request_input_schemas(inputs);
+          [target_input_schemas, selected_key_names](PyTypePattern pattern, nb::tuple inputs, nb::object keys) {
+              std::vector<const TSValueTypeMetaData *> schemas = target_input_schemas(inputs);
               std::vector<std::string> selected = selected_key_names(std::move(keys));
               return PyTsType{stdlib::resolve_convert_target(
-                  request.request,
+                  pattern.pattern,
                   std::span<const TSValueTypeMetaData *const>{schemas.data(), schemas.size()},
                   std::span<const std::string>{selected.data(), selected.size()})};
           },
-          nb::arg("request"), nb::arg("inputs"), nb::arg("keys") = nb::none());
+          nb::arg("pattern"), nb::arg("inputs"), nb::arg("keys") = nb::none());
 
     m.def("resolve_collect_target",
-          [request_input_schemas](PyTypeRequest request, nb::tuple inputs) {
-              std::vector<const TSValueTypeMetaData *> schemas = request_input_schemas(inputs);
+          [target_input_schemas](PyTypePattern pattern, nb::tuple inputs) {
+              std::vector<const TSValueTypeMetaData *> schemas = target_input_schemas(inputs);
               return PyTsType{stdlib::resolve_collect_target(
-                  request.request,
+                  pattern.pattern,
                   std::span<const TSValueTypeMetaData *const>{schemas.data(), schemas.size()})};
           },
-          nb::arg("request"), nb::arg("inputs"));
+          nb::arg("pattern"), nb::arg("inputs"));
 
     // record/replay configuration (the model is explicit wiring-time config).
     m.def("set_record_replay_config", [](const std::string &model) {

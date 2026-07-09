@@ -60,6 +60,12 @@ option(HGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS "Use local .venv Python/nanobind he
 option(HGRAPH_ENABLE_COMPILER_CACHE "Use sccache or ccache when available" ON)
 option(HGRAPH_ENABLE_PCH "Use private precompiled headers for repository targets" ON)
 
+set(_hgraph_default_use_pyarrow_arrow OFF)
+if(HGRAPH_BUILD_PYTHON_BINDINGS)
+    set(_hgraph_default_use_pyarrow_arrow ON)
+endif()
+option(HGRAPH_USE_PYARROW_ARROW "Use pyarrow's bundled Arrow libraries for Python bridge builds" "${_hgraph_default_use_pyarrow_arrow}")
+
 if(HGRAPH_ENABLE_COMPILER_CACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
     find_program(HGRAPH_COMPILER_CACHE_PROGRAM sccache)
     if(NOT HGRAPH_COMPILER_CACHE_PROGRAM)
@@ -152,11 +158,66 @@ target_link_libraries(hgraph_options INTERFACE fmt::fmt)
 
 # Apache Arrow is a FORMAL dependency (design record: record_replay_table.rst,
 # ruling 2026-07-04): the Frame value kind and the table serialization family
-# are Arrow-native. A system/package-manager install is expected
-# (`brew install apache-arrow` / `apt install libarrow-dev`); Arrow is too
-# heavy to FetchContent by default.
-find_package(Arrow CONFIG REQUIRED)
-find_package(ArrowCompute CONFIG REQUIRED)  # Arrow 24 splits compute into its own lib
+# are Arrow-native. A system/package-manager install is expected for normal
+# C++ builds (`brew install apache-arrow` / `apt install libarrow-dev`);
+# Arrow is too heavy to FetchContent by default. Python bridge builds may use
+# pyarrow's bundled Arrow dylibs instead so one Python process does not load
+# both system Arrow and wheel-bundled Arrow.
+set(HGRAPH_PYARROW_LIBRARY_DIR "" CACHE PATH "Directory containing pyarrow's bundled Arrow libraries")
+if(HGRAPH_USE_PYARROW_ARROW)
+    if(NOT (HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES))
+        message(FATAL_ERROR "HGRAPH_USE_PYARROW_ARROW requires Python support to be enabled")
+    endif()
+    if(DEFINED Python3_EXECUTABLE AND NOT DEFINED Python_EXECUTABLE)
+        set(Python_EXECUTABLE "${Python3_EXECUTABLE}")
+    endif()
+    find_package(Python 3.12 COMPONENTS Interpreter REQUIRED)
+    set(_hgraph_pyarrow_probe [=[
+import pathlib, pyarrow
+root = pathlib.Path(pyarrow.__file__).resolve().parent
+def pick(pattern):
+    matches = sorted(root.glob(pattern))
+    if not matches:
+        raise SystemExit(f"missing pyarrow library matching {pattern!r} under {root}")
+    return matches[0]
+print(root)
+print(root / "include")
+print(pick("libarrow.*"))
+print(pick("libarrow_compute.*"))
+]=])
+    execute_process(
+        COMMAND "${Python_EXECUTABLE}" -c "${_hgraph_pyarrow_probe}"
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        OUTPUT_VARIABLE _hgraph_pyarrow_info
+        RESULT_VARIABLE _hgraph_pyarrow_result
+    )
+    if(NOT _hgraph_pyarrow_result EQUAL 0)
+        message(FATAL_ERROR "HGRAPH_USE_PYARROW_ARROW=ON but Python cannot import pyarrow")
+    endif()
+    string(REPLACE "\n" ";" _hgraph_pyarrow_info "${_hgraph_pyarrow_info}")
+    list(GET _hgraph_pyarrow_info 0 _hgraph_pyarrow_dir)
+    list(GET _hgraph_pyarrow_info 1 _hgraph_pyarrow_include)
+    list(GET _hgraph_pyarrow_info 2 _hgraph_pyarrow_arrow_lib)
+    list(GET _hgraph_pyarrow_info 3 _hgraph_pyarrow_compute_lib)
+    if(NOT EXISTS "${_hgraph_pyarrow_include}/arrow/api.h")
+        message(FATAL_ERROR "pyarrow headers not found under ${_hgraph_pyarrow_include}")
+    endif()
+    add_library(Arrow::arrow_shared SHARED IMPORTED GLOBAL)
+    set_target_properties(Arrow::arrow_shared PROPERTIES
+        IMPORTED_LOCATION "${_hgraph_pyarrow_arrow_lib}"
+        INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
+    )
+    add_library(ArrowCompute::arrow_compute_shared SHARED IMPORTED GLOBAL)
+    set_target_properties(ArrowCompute::arrow_compute_shared PROPERTIES
+        IMPORTED_LOCATION "${_hgraph_pyarrow_compute_lib}"
+        INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
+    )
+    set(HGRAPH_PYARROW_LIBRARY_DIR "${_hgraph_pyarrow_dir}" CACHE PATH
+        "Directory containing pyarrow's bundled Arrow libraries" FORCE)
+else()
+    find_package(Arrow CONFIG REQUIRED)
+    find_package(ArrowCompute CONFIG REQUIRED)  # Arrow 24 splits compute into its own lib
+endif()
 target_link_libraries(hgraph_options INTERFACE Arrow::arrow_shared ArrowCompute::arrow_compute_shared)
 
 # spdlog backs the LOGGER injectable (ruling 2026-07-04), built in

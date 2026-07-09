@@ -196,6 +196,7 @@ namespace hgraph::python_bridge
             throw std::runtime_error("arrow export failed: " + status.ToString());
         }
         return nb::steal(PyCapsule_New(stream, "arrow_array_stream", [](PyObject *object) {
+            if (!PyCapsule_IsValid(object, "arrow_array_stream")) { return; }
             auto *raw = static_cast<ArrowArrayStream *>(PyCapsule_GetPointer(object, "arrow_array_stream"));
             if (raw != nullptr)
             {
@@ -236,10 +237,12 @@ namespace hgraph::python_bridge
             throw std::runtime_error("arrow array export failed: " + status.ToString());
         }
         const auto array_release = [](PyObject *object) {
+            if (!PyCapsule_IsValid(object, "arrow_array")) { return; }
             auto *raw = static_cast<ArrowArray *>(PyCapsule_GetPointer(object, "arrow_array"));
             if (raw != nullptr) { if (raw->release != nullptr) { raw->release(raw); } delete raw; }
         };
         const auto schema_release = [](PyObject *object) {
+            if (!PyCapsule_IsValid(object, "arrow_schema")) { return; }
             auto *raw = static_cast<ArrowSchema *>(PyCapsule_GetPointer(object, "arrow_schema"));
             if (raw != nullptr) { if (raw->release != nullptr) { raw->release(raw); } delete raw; }
         };

@@ -24,7 +24,7 @@ def _value_type(scalar):
     if isinstance(scalar, str):
         return _hgraph.value_type(scalar)
     if isinstance(scalar, _TypeVarSentinel):
-        raise _GenericType(request=_hgraph.scalar_request_var(scalar.name))
+        raise _GenericType(pattern=_hgraph.scalar_pattern_var(scalar.name))
     # typing generics: tuple[X, ...] / tuple[A, B] / frozenset[X] / dict[K, V]
     import enum as _enum
     import typing
@@ -40,18 +40,18 @@ def _value_type(scalar):
         )
         if not args:
             if origin is tuple:
-                raise _GenericType(repr(scalar), _hgraph.scalar_request_unknown_tuple())
+                raise _GenericType(repr(scalar), _hgraph.scalar_pattern_unknown_tuple())
             if origin in (frozenset, set):
                 raise _GenericType(
                     repr(scalar),
-                    _hgraph.scalar_request_set(_hgraph.scalar_request_var("T")),
+                    _hgraph.scalar_pattern_set(_hgraph.scalar_pattern_var("T")),
                 )
             if is_mapping_origin:
                 raise _GenericType(
                     repr(scalar),
-                    _hgraph.scalar_request_map(
-                        _hgraph.scalar_request_var("K"),
-                        _hgraph.scalar_request_var("V"),
+                    _hgraph.scalar_pattern_map(
+                        _hgraph.scalar_pattern_var("K"),
+                        _hgraph.scalar_pattern_var("V"),
                     ),
                 )
             raise _GenericType(repr(scalar))
@@ -62,23 +62,23 @@ def _value_type(scalar):
                 except _GenericType as e:
                     raise _GenericType(
                         repr(scalar),
-                        _hgraph.scalar_request_homogeneous_tuple(e.request),
+                        _hgraph.scalar_pattern_homogeneous_tuple(e.pattern),
                     ) from e
             values = []
-            requests = []
+            patterns = []
             generic = False
             for arg in args:
                 try:
                     value = _value_type(arg)
                     values.append(value)
-                    requests.append(_hgraph.scalar_request_value(value))
+                    patterns.append(_hgraph.scalar_pattern_value(value))
                 except _GenericType as e:
                     generic = True
-                    requests.append(e.request)
+                    patterns.append(e.pattern)
             if generic:
                 raise _GenericType(
                     repr(scalar),
-                    _hgraph.scalar_request_fixed_tuple(requests),
+                    _hgraph.scalar_pattern_fixed_tuple(patterns),
                 )
             return _hgraph.fixed_tuple_vt(values)
         if origin in (frozenset, set):
@@ -87,7 +87,7 @@ def _value_type(scalar):
             except _GenericType as e:
                 raise _GenericType(
                     repr(scalar),
-                    _hgraph.scalar_request_set(e.request),
+                    _hgraph.scalar_pattern_set(e.pattern),
                 ) from e
         if is_mapping_origin:
             try:
@@ -95,17 +95,17 @@ def _value_type(scalar):
             except _GenericType:
                 raise _GenericType(
                     repr(scalar),
-                    _hgraph.scalar_request_map(_scalar_request(args[0]), _scalar_request(args[1])),
+                    _hgraph.scalar_pattern_map(_scalar_pattern(args[0]), _scalar_pattern(args[1])),
                 )
         raise TypeError(f"unsupported generic scalar type for hgraph: {scalar!r}")
     if scalar is typing.Tuple:
-        raise _GenericType(repr(scalar), _hgraph.scalar_request_unknown_tuple())
+        raise _GenericType(repr(scalar), _hgraph.scalar_pattern_unknown_tuple())
     if scalar in (typing.Set, typing.FrozenSet):
-        raise _GenericType(repr(scalar), _hgraph.scalar_request_set(_hgraph.scalar_request_var("T")))
+        raise _GenericType(repr(scalar), _hgraph.scalar_pattern_set(_hgraph.scalar_pattern_var("T")))
     if scalar is typing.Mapping:
         raise _GenericType(
             repr(scalar),
-            _hgraph.scalar_request_map(_hgraph.scalar_request_var("K"), _hgraph.scalar_request_var("V")),
+            _hgraph.scalar_pattern_map(_hgraph.scalar_pattern_var("K"), _hgraph.scalar_pattern_var("V")),
         )
     from ._compat import JSON as _JSON
 
@@ -113,19 +113,19 @@ def _value_type(scalar):
         return _hgraph.value_type("JSON")
     name = _SCALAR_NAMES.get(scalar)
     if name is None and scalar is tuple:
-        raise _GenericType(scalar.__name__, _hgraph.scalar_request_unknown_tuple())
+        raise _GenericType(scalar.__name__, _hgraph.scalar_pattern_unknown_tuple())
     if name is None and scalar in (frozenset, set):
-        raise _GenericType(scalar.__name__, _hgraph.scalar_request_set(_hgraph.scalar_request_var("T")))
+        raise _GenericType(scalar.__name__, _hgraph.scalar_pattern_set(_hgraph.scalar_pattern_var("T")))
     if name is None and scalar is dict:
         raise _GenericType(
             scalar.__name__,
-            _hgraph.scalar_request_map(_hgraph.scalar_request_var("K"), _hgraph.scalar_request_var("V")),
+            _hgraph.scalar_pattern_map(_hgraph.scalar_pattern_var("K"), _hgraph.scalar_pattern_var("V")),
         )
     if name is None and isinstance(scalar, type):
         from ._compat import CompoundScalar
 
         if scalar is CompoundScalar:
-            raise _GenericType("CompoundScalar", _hgraph.scalar_request_bundle())
+            raise _GenericType("CompoundScalar", _hgraph.scalar_pattern_bundle())
         if issubclass(scalar, CompoundScalar) and scalar is not CompoundScalar:
             # C++-first ruling (2026-07-06): a CompoundScalar IS a C++
             # Bundle value - the schema maps to a named bundle schema.
@@ -297,37 +297,37 @@ def _resolve(ts):
 class _GenericType(Exception):
     """Raised internally when a type expression contains a type variable."""
 
-    def __init__(self, label=None, request=None):
+    def __init__(self, label=None, pattern=None):
         super().__init__(label)
         self.label = label
-        self.request = request
+        self.pattern = pattern
 
 
-def _scalar_request(scalar):
+def _scalar_pattern(scalar):
     try:
-        return _hgraph.scalar_request_value(_value_type(scalar))
+        return _hgraph.scalar_pattern_value(_value_type(scalar))
     except _GenericType as e:
-        if e.request is None:
-            raise TypeError(f"generic scalar {scalar!r} did not provide a C++ request") from e
-        return e.request
+        if e.pattern is None:
+            raise TypeError(f"generic scalar {scalar!r} did not provide a C++ pattern") from e
+        return e.pattern
 
 
-def _type_request(ts):
+def _type_pattern(ts):
     if isinstance(ts, _TypeVarSentinel):
-        return _hgraph.type_request_var(ts.name)
+        return _hgraph.type_pattern_var(ts.name)
     if isinstance(ts, _GenericTsExpr):
-        if ts.request is None:
-            raise TypeError(f"generic time-series {ts!r} did not provide a C++ request")
-        return ts.request
+        if ts.pattern is None:
+            raise TypeError(f"generic time-series {ts!r} did not provide a C++ pattern")
+        return ts.pattern
     if isinstance(ts, _TsExpr):
-        return _hgraph.type_request_concrete(ts.handle)
+        return _hgraph.type_pattern_concrete(ts.handle)
     raise TypeError(f"expected a time-series type (TS[...] etc.), got {ts!r}")
 
 
-def _size_request(size):
+def _size_pattern(size):
     if isinstance(size, _TypeVarSentinel):
-        return _hgraph.size_request_var(size.name)
-    return _hgraph.size_request_value(int(size))
+        return _hgraph.size_pattern_var(size.name)
+    return _hgraph.size_pattern_value(int(size))
 
 
 class _TSMeta(type):
@@ -335,7 +335,7 @@ class _TSMeta(type):
         try:
             expr = _TsExpr(_hgraph.ts(_value_type(scalar)), f"TS[{getattr(scalar, '__name__', scalar)}]")
         except _GenericType as e:
-            return _GenericTsExpr(f"TS[{scalar!r}]", request=_hgraph.type_request_ts(e.request))
+            return _GenericTsExpr(f"TS[{scalar!r}]", pattern=_hgraph.type_pattern_ts(e.pattern))
         from ._compat import CompoundScalar as _CS
 
         if isinstance(scalar, type) and issubclass(scalar, _CS):
@@ -364,7 +364,7 @@ class _TSSMeta(type):
         try:
             return _TsExpr(_hgraph.tss(_value_type(scalar)), f"TSS[{getattr(scalar, '__name__', scalar)}]")
         except _GenericType:
-            return _GenericTsExpr(f"TSS[{scalar!r}]", request=_hgraph.type_request_tss(_scalar_request(scalar)))
+            return _GenericTsExpr(f"TSS[{scalar!r}]", pattern=_hgraph.type_pattern_tss(_scalar_pattern(scalar)))
 
 
 class TSS(metaclass=_TSSMeta):
@@ -394,7 +394,7 @@ class _TSDMeta(type):
         except _GenericType:
             return _GenericTsExpr(
                 f"TSD[{key!r}, {value!r}]",
-                request=_hgraph.type_request_tsd(_scalar_request(key), _type_request(value)),
+                pattern=_hgraph.type_pattern_tsd(_scalar_pattern(key), _type_pattern(value)),
             )
 
 
@@ -473,7 +473,7 @@ class _TSLMeta(type):
         except _GenericType:
             return _GenericTsExpr(
                 f"TSL[{element!r}, {size!r}]",
-                request=_hgraph.type_request_tsl(_type_request(element), _size_request(size)),
+                pattern=_hgraph.type_pattern_tsl(_type_pattern(element), _size_pattern(size)),
             )
 
 
@@ -488,7 +488,7 @@ class TimeSeriesSchema:
 class _TSBMeta(type):
     def __getitem__(cls, schema):
         if isinstance(schema, _TypeVarSentinel):
-            return _GenericTsExpr(f"TSB[{schema!r}]", request=_hgraph.type_request_tsb(schema.name))
+            return _GenericTsExpr(f"TSB[{schema!r}]", pattern=_hgraph.type_pattern_tsb(schema.name))
         # hgraph parity: schema INHERITANCE - base-class fields first (MRO
         # reversed), subclass fields after; later duplicates override.
         annotations = {}
@@ -597,13 +597,13 @@ class _GenericTsExpr:
     sample values. ``is_ref``/``inner`` carry REF[TYPEVAR] structure so
     generic py nodes can resolve from actual arguments."""
 
-    __slots__ = ("label", "is_ref", "inner", "request")
+    __slots__ = ("label", "is_ref", "inner", "pattern")
 
-    def __init__(self, label, is_ref=False, inner=None, request=None):
+    def __init__(self, label, is_ref=False, inner=None, pattern=None):
         self.label = label
         self.is_ref = is_ref
         self.inner = inner
-        self.request = request
+        self.pattern = pattern
 
     def __repr__(self):
         return self.label
@@ -656,10 +656,10 @@ class _REFMeta(type):
 
         if isinstance(item, (_TypeVarSentinel, _GenericTsExpr)):
             # REF over a generic: resolved at call time from the actual arg.
-            request = _hgraph.type_request_ref(
-                _hgraph.type_request_var(item.name) if isinstance(item, _TypeVarSentinel) else _type_request(item)
+            pattern = _hgraph.type_pattern_ref(
+                _hgraph.type_pattern_var(item.name) if isinstance(item, _TypeVarSentinel) else _type_pattern(item)
             )
-            return _GenericTsExpr(f"REF[{item!r}]", is_ref=True, inner=item, request=request)
+            return _GenericTsExpr(f"REF[{item!r}]", is_ref=True, inner=item, pattern=pattern)
         expr = _TsExpr(_m.ref_ts(_resolve(item)), f"REF[{item!r}]")
         expr.is_ref = True
         return expr

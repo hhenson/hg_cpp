@@ -6,6 +6,21 @@ nanobind_add_module(_hgraph NB_STATIC NOSTRIP
 )
 target_link_libraries(_hgraph PRIVATE hgraph_core hgraph::options)
 hgraph_enable_private_pch(_hgraph)
+
+if(HGRAPH_USE_PYARROW_ARROW AND HGRAPH_PYARROW_LIBRARY_DIR)
+    if(APPLE)
+        set(_hgraph_pyarrow_rpath "@loader_path/pyarrow")
+    elseif(UNIX)
+        set(_hgraph_pyarrow_rpath "$ORIGIN/pyarrow")
+    else()
+        set(_hgraph_pyarrow_rpath "")
+    endif()
+    set_target_properties(_hgraph PROPERTIES
+        BUILD_RPATH "${HGRAPH_PYARROW_LIBRARY_DIR}"
+        INSTALL_RPATH "${_hgraph_pyarrow_rpath}"
+    )
+endif()
+
 install(TARGETS _hgraph
     LIBRARY DESTINATION .
     RUNTIME DESTINATION .
