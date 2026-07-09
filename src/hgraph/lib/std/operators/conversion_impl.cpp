@@ -28,6 +28,7 @@ namespace hgraph::stdlib
         register_overload<convert, convert_list_to_str_impl>();
         register_overload<convert, convert_list_to_bool_impl>();
         register_overload<convert, convert_date_to_datetime_impl>();
+        register_overload<convert, convert_datetime_to_date_impl>();
         register_overload<convert, convert_ts_to_tss_impl>();
         register_overload<convert, convert_ts_to_collection_impl>();
         register_overload<convert, convert_collection_to_collection_impl>();

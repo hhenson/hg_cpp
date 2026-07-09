@@ -339,6 +339,26 @@ namespace hgraph::stdlib
         }
     };
 
+    /** datetime -> date: the calendar-date component (the day floor). The
+        companion of convert_date_to_datetime. */
+    struct convert_datetime_to_date_impl
+    {
+        static constexpr auto name = "convert_datetime_to_date";
+
+        // Concrete Out<TS<Date>> is gated by the dispatcher's requested-
+        // output match; requires_ checks the INPUT only (the dispatch rule).
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0)) ==
+                   scalar_descriptor<DateTime>::value_meta();
+        }
+
+        static void eval(In<"ts", TS<DateTime>> ts, Out<TS<Date>> out)
+        {
+            out.set(Date{std::chrono::floor<std::chrono::days>(ts.value())});
+        }
+    };
+
     /** convert TS[T] -> TS[Set[T]] / TS[tuple[T,...]]: the SINGLETON
         collection value. */
     struct convert_ts_to_collection_impl
