@@ -67,6 +67,16 @@ namespace
         const ValueTypeMetaData *meta{nullptr};
     };
 
+    struct PyScalarRequest
+    {
+        stdlib::ScalarRequest request{};
+    };
+
+    struct PySizeRequest
+    {
+        stdlib::SizeRequest request{};
+    };
+
     struct PyTypeRequest
     {
         stdlib::TypeRequest request{};
@@ -1174,6 +1184,14 @@ NB_MODULE(_hgraph, m)
             return std::string{self.meta != nullptr && self.meta->display_name != nullptr ? self.meta->display_name
                                                                                           : "<ts?>"};
         });
+    nb::class_<PyScalarRequest>(m, "ScalarRequest")
+        .def("__repr__", [](const PyScalarRequest &self) {
+            return stdlib::scalar_request_to_string(self.request);
+        });
+    nb::class_<PySizeRequest>(m, "SizeRequest")
+        .def("__repr__", [](const PySizeRequest &self) {
+            return stdlib::size_request_to_string(self.request);
+        });
     nb::class_<PyTypeRequest>(m, "TypeRequest")
         .def("__repr__", [](const PyTypeRequest &self) {
             return stdlib::type_request_to_string(self.request);
@@ -1312,19 +1330,86 @@ NB_MODULE(_hgraph, m)
         return PyTsType{TypeRegistry::instance().tsb(name, entries)};
     });
 
-    m.def("type_request_tss", [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSS}}; });
-    m.def("type_request_tsd", [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSD}}; });
-    m.def("type_request_tsl", [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSL}}; });
-    m.def("type_request_tsb", [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSB}}; });
-    m.def("type_request_ts_tuple",
-          [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSTuple}}; });
-    m.def("type_request_ts_set",
-          [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSSet}}; });
-    m.def("type_request_ts_mapping",
-          [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSMapping}}; });
-    m.def("type_request_ts_compound_scalar",
-          [] { return PyTypeRequest{stdlib::TypeRequest{stdlib::TypeRequestKind::TSCompoundScalar}}; });
+    m.def("scalar_request_var", [](const std::string &name) {
+        return PyScalarRequest{stdlib::ScalarRequest::variable(name)};
+    });
+    m.def("scalar_request_value", [](PyValueType value) {
+        return PyScalarRequest{stdlib::ScalarRequest::concrete(value.meta)};
+    });
+    m.def("scalar_request_unknown_tuple", [] {
+        return PyScalarRequest{stdlib::ScalarRequest::unknown_tuple()};
+    });
+    m.def("scalar_request_unknown_tuple", [](PyScalarRequest element) {
+        return PyScalarRequest{stdlib::ScalarRequest::unknown_tuple(
+            std::make_shared<stdlib::ScalarRequest>(std::move(element.request)))};
+    });
+    m.def("scalar_request_homogeneous_tuple", [](PyScalarRequest element) {
+        return PyScalarRequest{stdlib::ScalarRequest::homogeneous_tuple(std::move(element.request))};
+    });
+    m.def("scalar_request_fixed_tuple", [](nb::list elements) {
+        std::vector<stdlib::ScalarRequest> requests;
+        requests.reserve(nb::len(elements));
+        for (nb::handle element : elements) { requests.push_back(nb::cast<PyScalarRequest>(element).request); }
+        return PyScalarRequest{stdlib::ScalarRequest::fixed_tuple(std::move(requests))};
+    });
+    m.def("scalar_request_set", [](PyScalarRequest element) {
+        return PyScalarRequest{stdlib::ScalarRequest::set(std::move(element.request))};
+    });
+    m.def("scalar_request_map", [](PyScalarRequest key, PyScalarRequest value) {
+        return PyScalarRequest{stdlib::ScalarRequest::map(std::move(key.request), std::move(value.request))};
+    });
+    m.def("scalar_request_bundle", [] {
+        return PyScalarRequest{stdlib::ScalarRequest::bundle()};
+    });
+    m.def("scalar_request_bundle", [](const std::string &schema_variable) {
+        return PyScalarRequest{stdlib::ScalarRequest::bundle(schema_variable)};
+    });
 
+    m.def("size_request_var", [](const std::string &name) {
+        return PySizeRequest{stdlib::SizeRequest::variable(name)};
+    });
+    m.def("size_request_value", [](std::size_t value) {
+        return PySizeRequest{stdlib::SizeRequest::concrete(value)};
+    });
+
+    m.def("type_request_var", [](const std::string &name) {
+        return PyTypeRequest{stdlib::TypeRequest::variable(name)};
+    });
+    m.def("type_request_concrete", [](PyTsType type) {
+        return PyTypeRequest{stdlib::TypeRequest::concrete(type.meta)};
+    });
+    m.def("type_request_ts", [](PyScalarRequest value) {
+        return PyTypeRequest{stdlib::TypeRequest::ts(std::move(value.request))};
+    });
+    m.def("type_request_tss", [] {
+        return PyTypeRequest{stdlib::TypeRequest::tss(stdlib::ScalarRequest::variable("T"))};
+    });
+    m.def("type_request_tss", [](PyScalarRequest element) {
+        return PyTypeRequest{stdlib::TypeRequest::tss(std::move(element.request))};
+    });
+    m.def("type_request_tsd", [] {
+        return PyTypeRequest{stdlib::TypeRequest::tsd(
+            stdlib::ScalarRequest::variable("K"), stdlib::TypeRequest::variable("V"))};
+    });
+    m.def("type_request_tsd", [](PyScalarRequest key, PyTypeRequest value) {
+        return PyTypeRequest{stdlib::TypeRequest::tsd(std::move(key.request), std::move(value.request))};
+    });
+    m.def("type_request_tsl", [] {
+        return PyTypeRequest{stdlib::TypeRequest::tsl(
+            stdlib::TypeRequest::variable("V"), stdlib::SizeRequest::variable("SIZE"))};
+    });
+    m.def("type_request_tsl", [](PyTypeRequest element, PySizeRequest size) {
+        return PyTypeRequest{stdlib::TypeRequest::tsl(std::move(element.request), std::move(size.request))};
+    });
+    m.def("type_request_tsb", [] {
+        return PyTypeRequest{stdlib::TypeRequest::tsb(std::string{"SCHEMA"})};
+    });
+    m.def("type_request_tsb", [](const std::string &schema_variable) {
+        return PyTypeRequest{stdlib::TypeRequest::tsb(schema_variable)};
+    });
+    m.def("type_request_ref", [](PyTypeRequest target) {
+        return PyTypeRequest{stdlib::TypeRequest::ref(std::move(target.request))};
+    });
     const auto request_input_schemas = [](nb::tuple inputs) {
         std::vector<const TSValueTypeMetaData *> schemas;
         schemas.reserve(nb::len(inputs));

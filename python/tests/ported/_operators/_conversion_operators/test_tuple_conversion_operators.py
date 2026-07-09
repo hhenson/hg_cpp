@@ -35,6 +35,14 @@ def test_convert_ts_to_tuple():
     assert eval_node(h, [None, 1, 2]) == [None, (1,), (2,)]
 
 
+def test_convert_unknown_tuple_preserves_existing_tuple():
+    @graph
+    def g(a: TS[Tuple[int, int]]) -> TIME_SERIES_TYPE:
+        return convert[TS[Tuple]](a)
+
+    assert eval_node(g, [(1, 2)]) == [(1, 2)]
+
+
 def test_convert_set_to_tuple():
     @graph
     def g(a: TS[Set[int]]) -> TIME_SERIES_TYPE:

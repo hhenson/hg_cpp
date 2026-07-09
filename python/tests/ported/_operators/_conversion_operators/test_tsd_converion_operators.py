@@ -1,7 +1,26 @@
 from typing import Mapping, Set, Tuple
 from frozendict import frozendict as fd
+import pytest
 
-from hgraph import TS, combine, TSD, graph, convert, REMOVE, Size, TSL, collect, TSS, Removed, TSB, emit, KeyValue
+from hgraph import (
+    TS,
+    TimeSeriesSchema,
+    V,
+    WiringError,
+    combine,
+    TSD,
+    graph,
+    convert,
+    REMOVE,
+    Size,
+    TSL,
+    collect,
+    TSS,
+    Removed,
+    TSB,
+    emit,
+    KeyValue,
+)
 from hgraph.test import eval_node
 
 
@@ -19,6 +38,28 @@ def test_convert_ts_to_tsd():
         return convert[TSD[str, TS[int]]](a, b)
 
     assert eval_node(g, ["a", "b"], [1, 2]) == [{"a": 1}, {"b": 2, "a": REMOVE}]
+
+
+def test_convert_tsd_partial_key_constraint_rejects_wrong_key_type():
+    @graph
+    def g(a: TS[int], b: TS[int]) -> TSD[str, TS[int]]:
+        return convert[TSD[str, TS[V]]](a, b)
+
+    with pytest.raises(WiringError):
+        eval_node(g, [1], [2])
+
+
+def test_convert_tsb_to_tsd_rejects_missing_selected_key():
+    class AB(TimeSeriesSchema):
+        a: TS[int]
+        b: TS[int]
+
+    @graph
+    def g(tsb: TSB[AB]) -> TSD[str, TS[int]]:
+        return convert[TSD[str, TS[int]]](tsb, keys=("missing",))
+
+    with pytest.raises(WiringError):
+        eval_node(g, [dict(a=1, b=2)])
 
 
 def test_convert_set_to_tsd():

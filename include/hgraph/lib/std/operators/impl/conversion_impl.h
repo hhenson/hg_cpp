@@ -1448,7 +1448,7 @@ namespace hgraph::stdlib
                 {
                     const auto  wanted = key_list.at(k).template checked_as<Str>();
                     const auto  index  = container_impl_detail_find(in, wanted);
-                    if (!index.has_value()) { continue; }
+                    if (!index.has_value()) { return false; }
                     const auto *field  = in->fields()[*index].type;
                     if (field == nullptr || field->kind != TSTypeKind::TS ||
                         field->value_schema != element->value_schema)
