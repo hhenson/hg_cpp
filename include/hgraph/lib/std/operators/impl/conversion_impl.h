@@ -437,9 +437,9 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out_element = collection_element_schema(output_ts_value_schema(resolution));
-            const auto *in          = time_series_schema_at(context, 0);
+            const auto *in          = time_series_schema_at_as<AnyTSS>(context, 0);
             return out_element != nullptr &&
-                   time_series_schema_matches<AnyTSS>(in) &&
+                   in != nullptr &&
                    out_element == in->value_schema->element_type;
         }
 
@@ -521,15 +521,15 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out = output_ts_value_schema(resolution);
-            const auto *in  = time_series_schema_at(context, 0);
+            const auto *in  = time_series_schema_at_as<AnyTSD>(context, 0);
             if (out == nullptr ||
-                !time_series_schema_matches<AnyTSD>(in) ||
+                in == nullptr ||
                 out->kind != ValueTypeKind::Map)
             {
                 return false;
             }
-            const auto *element = TypeRegistry::instance().dereference(in->element_ts());
-            return element != nullptr && element->kind == TSTypeKind::TS &&
+            const auto *element = time_series_schema_as<AnyTS>(in->element_ts());
+            return element != nullptr &&
                    out->key_type == in->key_type() && out->element_type == element->value_schema;
         }
 
@@ -564,8 +564,8 @@ namespace hgraph::stdlib
             {
                 return false;
             }
-            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
-            return element != nullptr && element->kind == TSTypeKind::TS &&
+            const auto *element = time_series_schema_as<AnyTS>(out->element_ts());
+            return element != nullptr &&
                    out->key_type() == in->key_type && element->value_schema == in->element_type;
         }
 
@@ -605,9 +605,9 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out = output_schema(resolution);
-            const auto *in  = time_series_schema_at(context, 0);
+            const auto *in  = time_series_schema_at_as<AnyTS>(context, 0);
             return output_matches<AnyTSS>(resolution) &&
-                   time_series_schema_matches<AnyTS>(in) &&
+                   in != nullptr &&
                    out->value_schema->element_type == in->value_schema;
         }
 
@@ -644,19 +644,20 @@ namespace hgraph::stdlib
             {
                 return false;
             }
-            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
-            if (element == nullptr || element->kind != TSTypeKind::TS || element->value_schema != v)
+            const auto *element = time_series_schema_as<AnyTS>(out->element_ts());
+            if (element == nullptr || element->value_schema != v)
             {
                 return false;
             }
             const auto *keys = time_series_schema_at(context, 0);
             if (keys == nullptr) { return false; }
-            if (keys->kind == TSTypeKind::TSS)
+            if (const auto *key_set = time_series_schema_as<AnyTSS>(keys))
             {
-                return keys->value_schema->element_type == out->key_type();
+                return key_set->value_schema->element_type == out->key_type();
             }
-            if (keys->kind != TSTypeKind::TS) { return false; }
-            const auto *key_value = keys->value_schema;
+            const auto *key_ts = time_series_schema_as<AnyTS>(keys);
+            if (key_ts == nullptr) { return false; }
+            const auto *key_value = key_ts->value_schema;
             if (key_value->kind == ValueTypeKind::Set) { return key_value->element_type == out->key_type(); }
             return key_value == out->key_type();
         }
@@ -842,8 +843,8 @@ namespace hgraph::stdlib
             const auto *out = tuple_element_schema(output_ts_value_schema(resolution));
             const auto *in  = fixed_tsl_arg(context, 0);
             if (out == nullptr || in == nullptr) { return false; }
-            const auto *element = TypeRegistry::instance().dereference(in->element_ts());
-            return element != nullptr && element->kind == TSTypeKind::TS && element->value_schema == out;
+            const auto *element = time_series_schema_as<AnyTS>(in->element_ts());
+            return element != nullptr && element->value_schema == out;
         }
 
         static void eval_impl(const TSInputView &tsl, const TSOutputView &erased)
@@ -916,12 +917,8 @@ namespace hgraph::stdlib
             const auto *element = out->value_schema->element_type;
             for (std::size_t index = 0; index < context.args.size(); ++index)
             {
-                const auto *arg = time_series_schema_at(context, index);
-                if (!time_series_schema_matches<AnyTS>(arg) ||
-                    arg->value_schema != element)
-                {
-                    return false;
-                }
+                const auto *arg = time_series_schema_at_as<AnyTS>(context, index);
+                if (arg == nullptr || arg->value_schema != element) { return false; }
             }
             return true;
         }
@@ -952,7 +949,8 @@ namespace hgraph::stdlib
             if (output_bound(resolution)) { return; }
             const auto *tsl = fixed_tsl_arg(context, 0);
             if (tsl == nullptr) { return; }
-            const auto *element = TypeRegistry::instance().dereference(tsl->element_ts());
+            const auto *element = time_series_schema_as<AnyTS>(tsl->element_ts());
+            if (element == nullptr) { return; }
             bind_output(resolution, TypeRegistry::instance().tss(element->value_schema));
         }
 
@@ -1002,8 +1000,8 @@ namespace hgraph::stdlib
             }
             auto &registry = TypeRegistry::instance();
             if (out->key_type() != registry.value_type("int")) { return false; }
-            const auto *out_element = registry.dereference(out->element_ts());
-            const auto *in_element  = registry.dereference(in->element_ts());
+            const auto *out_element = time_series_schema_as<AnyTS>(out->element_ts());
+            const auto *in_element  = time_series_schema_as<AnyTS>(in->element_ts());
             return out_element != nullptr && out_element == in_element;
         }
 
@@ -1011,8 +1009,8 @@ namespace hgraph::stdlib
                                      Scalar<"__strict__", Bool> strict)
         {
             auto       &registry = TypeRegistry::instance();
-            const auto *schema   = registry.dereference(ts.erased().schema);
-            if (schema == nullptr || schema->kind != TSTypeKind::TSL || schema->fixed_size() == 0)
+            const auto *schema   = time_series_schema_as<AnyTSL>(ts.erased().schema);
+            if (schema == nullptr || schema->fixed_size() == 0)
             {
                 throw std::invalid_argument("convert[TSD](tsl) requires a fixed-size TSL input");
             }
@@ -1068,9 +1066,9 @@ namespace hgraph::stdlib
             {
                 return false;
             }
-            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
+            const auto *element = time_series_schema_as<AnyTS>(out->element_ts());
             return out->key_type() == k->element_type && element != nullptr &&
-                   element->kind == TSTypeKind::TS && element->value_schema == v->element_type;
+                   element->value_schema == v->element_type;
         }
 
         static void eval(In<"key", TsVar<"K">, InputValidity::Unchecked> key,
@@ -1153,9 +1151,9 @@ namespace hgraph::stdlib
             const auto *in  = fixed_tsl_arg(context, 0);
             if (out == nullptr || out->kind != ValueTypeKind::Map || in == nullptr) { return false; }
             auto       &registry = TypeRegistry::instance();
-            const auto *element  = registry.dereference(in->element_ts());
+            const auto *element  = time_series_schema_as<AnyTS>(in->element_ts());
             return out->key_type == registry.value_type("int") && element != nullptr &&
-                   element->kind == TSTypeKind::TS && element->value_schema == out->element_type;
+                   element->value_schema == out->element_type;
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
@@ -1186,9 +1184,9 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out = output_ts_value_schema(resolution);
-            const auto *in  = time_series_schema_at(context, 0);
+            const auto *in  = time_series_schema_at_as<AnyTSB>(context, 0);
             if (out == nullptr || out->kind != ValueTypeKind::Map ||
-                !time_series_schema_matches<AnyTSB>(in) ||
+                in == nullptr ||
                 in->field_count() == 0)
             {
                 return false;
@@ -1197,9 +1195,8 @@ namespace hgraph::stdlib
             if (out->key_type != registry.value_type("str")) { return false; }
             for (std::size_t index = 0; index < in->field_count(); ++index)
             {
-                const auto *field = in->fields()[index].type;
-                if (field == nullptr || field->kind != TSTypeKind::TS ||
-                    field->value_schema != out->element_type)
+                const auto *field = time_series_schema_as<AnyTS>(in->fields()[index].type);
+                if (field == nullptr || field->value_schema != out->element_type)
                 {
                     return false;
                 }
@@ -1339,9 +1336,8 @@ namespace hgraph::stdlib
             if (in->kind == ValueTypeKind::Tuple && in->field_count != out->fixed_size()) { return false; }
             const ValueTypeMetaData *source_element = tuple_element_schema(in);
             if (source_element == nullptr) { return false; }
-            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
-            return element != nullptr && element->kind == TSTypeKind::TS &&
-                   element->value_schema == source_element;
+            const auto *element = time_series_schema_as<AnyTS>(out->element_ts());
+            return element != nullptr && element->value_schema == source_element;
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
@@ -1395,16 +1391,12 @@ namespace hgraph::stdlib
         [[nodiscard]] static bool shape_ok(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out = output_schema(resolution);
-            const auto *in  = time_series_schema_at(context, 0);
-            if (!output_matches<AnyTSD>(resolution) ||
-                !time_series_schema_matches<AnyTSB>(in))
-            {
-                return false;
-            }
+            const auto *in  = time_series_schema_at_as<AnyTSB>(context, 0);
+            if (!output_matches<AnyTSD>(resolution) || in == nullptr) { return false; }
             auto &registry = TypeRegistry::instance();
             if (out->key_type() != registry.value_type("str")) { return false; }
-            const auto *element = registry.dereference(out->element_ts());
-            if (element == nullptr || element->kind != TSTypeKind::TS) { return false; }
+            const auto *element = time_series_schema_as<AnyTS>(out->element_ts());
+            if (element == nullptr) { return false; }
             if constexpr (WithKeys)
             {
                 // Only the SELECTED keys' fields must match the value type;
@@ -1419,12 +1411,8 @@ namespace hgraph::stdlib
                     const auto  wanted = key_list.at(k).template checked_as<Str>();
                     const auto  index  = container_impl_detail_find(in, wanted);
                     if (!index.has_value()) { return false; }
-                    const auto *field  = in->fields()[*index].type;
-                    if (field == nullptr || field->kind != TSTypeKind::TS ||
-                        field->value_schema != element->value_schema)
-                    {
-                        return false;
-                    }
+                    const auto *field  = time_series_schema_as<AnyTS>(in->fields()[*index].type);
+                    if (field == nullptr || field->value_schema != element->value_schema) { return false; }
                 }
                 return true;
             }
@@ -1432,12 +1420,8 @@ namespace hgraph::stdlib
             {
                 for (std::size_t index = 0; index < in->field_count(); ++index)
                 {
-                    const auto *field = in->fields()[index].type;
-                    if (field == nullptr || field->kind != TSTypeKind::TS ||
-                        field->value_schema != element->value_schema)
-                    {
-                        return false;
-                    }
+                    const auto *field = time_series_schema_as<AnyTS>(in->fields()[index].type);
+                    if (field == nullptr || field->value_schema != element->value_schema) { return false; }
                 }
                 return true;
             }
@@ -1634,8 +1618,8 @@ namespace hgraph::stdlib
             {
                 return false;
             }
-            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
-            return out->key_type() == k && element != nullptr && element->kind == TSTypeKind::TS &&
+            const auto *element = time_series_schema_as<AnyTS>(out->element_ts());
+            return out->key_type() == k && element != nullptr &&
                    element->value_schema == v;
         }
 
@@ -1687,9 +1671,12 @@ namespace hgraph::stdlib
             const auto *element = out->value_schema->element_type;
             const auto *surface = time_series_schema_at(context, 0);
             if (surface == nullptr) { return false; }
-            if (surface->kind == TSTypeKind::TSS) { return surface->value_schema->element_type == element; }
-            if (surface->kind != TSTypeKind::TS) { return false; }
-            return collection_element_or_self_schema(surface->value_schema) == element;
+            if (const auto *tss = time_series_schema_as<AnyTSS>(surface))
+            {
+                return tss->value_schema->element_type == element;
+            }
+            const auto *ts = time_series_schema_as<AnyTS>(surface);
+            return ts != nullptr && collection_element_or_self_schema(ts->value_schema) == element;
         }
 
         static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
@@ -1749,9 +1736,9 @@ namespace hgraph::stdlib
                 return false;
             }
             auto       &registry = TypeRegistry::instance();
-            const auto *element  = registry.dereference(out->element_ts());
+            const auto *element  = time_series_schema_as<AnyTS>(out->element_ts());
             return out->key_type() == registry.value_type("int") && element != nullptr &&
-                   element->kind == TSTypeKind::TS && element->value_schema == in->element_type;
+                   element->value_schema == in->element_type;
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
@@ -1798,9 +1785,9 @@ namespace hgraph::stdlib
             {
                 return false;
             }
-            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
+            const auto *element = time_series_schema_as<AnyTS>(out->element_ts());
             return out->key_type() == k->element_type && element != nullptr &&
-                   element->kind == TSTypeKind::TS && element->value_schema == v->element_type;
+                   element->value_schema == v->element_type;
         }
 
         static void eval(In<"key", TsVar<"K">, InputValidity::Unchecked> key,
@@ -1864,9 +1851,9 @@ namespace hgraph::stdlib
             {
                 return false;
             }
-            const auto *element = TypeRegistry::instance().dereference(out->element_ts());
+            const auto *element = time_series_schema_as<AnyTS>(out->element_ts());
             return out->key_type() == in->key_type && element != nullptr &&
-                   element->kind == TSTypeKind::TS && element->value_schema == in->element_type;
+                   element->value_schema == in->element_type;
         }
 
         static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
@@ -1909,9 +1896,9 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out = output_schema(resolution);
-            const auto *in  = time_series_schema_at(context, 0);
+            const auto *in  = time_series_schema_at_as<AnyTSD>(context, 0);
             return output_matches<AnyTSD>(resolution) &&
-                   time_series_schema_matches<AnyTSD>(in) &&
+                   in != nullptr &&
                    in == out;
         }
 
@@ -2007,8 +1994,8 @@ namespace hgraph::stdlib
             if (output_bound(resolution)) { return; }
             const auto *tsl = fixed_tsl_arg(context, 0);
             if (tsl == nullptr) { return; }
-            const auto *element = TypeRegistry::instance().dereference(tsl->element_ts());
-            if (element == nullptr || element->kind != TSTypeKind::TS) { return; }
+            const auto *element = time_series_schema_as<AnyTS>(tsl->element_ts());
+            if (element == nullptr) { return; }
             bind_output(resolution, TypeRegistry::instance().ts(element->value_schema));
         }
 
@@ -2048,8 +2035,12 @@ namespace hgraph::stdlib
         {
             const auto *surface = time_series_schema_at(context, 0);
             if (surface == nullptr) { return nullptr; }
-            if (surface->kind == TSTypeKind::TSS) { return surface->value_schema->element_type; }
-            const auto *value = ts_value_schema(surface);
+            if (const auto *tss = time_series_schema_as<AnyTSS>(surface))
+            {
+                return tss->value_schema->element_type;
+            }
+            const auto *ts    = time_series_schema_as<AnyTS>(surface);
+            const auto *value = ts != nullptr ? ts->value_schema : nullptr;
             return collection_element_schema(value);
         }
 
@@ -2114,13 +2105,14 @@ namespace hgraph::stdlib
         {
             const auto *surface = time_series_schema_at(context, 0);
             if (surface == nullptr) { return {nullptr, nullptr}; }
-            if (surface->kind == TSTypeKind::TSD)
+            if (const auto *tsd = time_series_schema_as<AnyTSD>(surface))
             {
-                const auto *element = TypeRegistry::instance().dereference(surface->element_ts());
-                if (element == nullptr || element->kind != TSTypeKind::TS) { return {nullptr, nullptr}; }
-                return {surface->key_type(), element->value_schema};
+                const auto *element = time_series_schema_as<AnyTS>(tsd->element_ts());
+                if (element == nullptr) { return {nullptr, nullptr}; }
+                return {tsd->key_type(), element->value_schema};
             }
-            const auto *value = ts_value_schema(surface);
+            const auto *ts    = time_series_schema_as<AnyTS>(surface);
+            const auto *value = ts != nullptr ? ts->value_schema : nullptr;
             if (value == nullptr || value->kind != ValueTypeKind::Map) { return {nullptr, nullptr}; }
             return {value->key_type, value->element_type};
         }
