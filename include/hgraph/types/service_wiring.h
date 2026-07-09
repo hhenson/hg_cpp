@@ -220,7 +220,7 @@ namespace hgraph::service
         {
             if constexpr (!schema_descriptor<Schema>::is_concrete())
             {
-                if (concrete == nullptr || !ts_pattern_match(to_pattern<Schema>(), concrete, resolution))
+                if (concrete == nullptr || !input_ts_pattern_match(to_pattern<Schema>(), concrete, resolution))
                 {
                     throw std::invalid_argument(
                         std::string{context} + " does not match generic service schema " +
