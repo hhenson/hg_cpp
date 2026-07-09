@@ -193,18 +193,6 @@ namespace hgraph::stdlib
 
     namespace convert_detail
     {
-        /** The requested target: __out__ (bound from the explicit ``to`` /
-            subscript by the py bridge or wire<> caller). */
-        [[nodiscard]] inline const TSValueTypeMetaData *requested_out(const ResolutionMap &resolution)
-        {
-            return resolution.find_ts("__out__");
-        }
-
-        [[nodiscard]] inline const ValueTypeMetaData *ts_value(const TSValueTypeMetaData *schema)
-        {
-            return schema != nullptr && schema->kind == TSTypeKind::TS ? schema->value_schema : nullptr;
-        }
-
         [[nodiscard]] inline const ValueTypeMetaData *homogeneous_tuple_element(const ValueTypeMetaData *schema)
         {
             if (schema == nullptr || schema->kind != ValueTypeKind::Tuple || schema->field_count == 0)
@@ -227,7 +215,7 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
+            const auto *out = operator_impl_detail::output_schema(resolution);
             return out != nullptr &&
                    operator_impl_detail::time_series_schema_at(context, 0) == out;
         }
@@ -252,7 +240,7 @@ namespace hgraph::stdlib
         // output match; requires_ only checks the INPUT.
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0)) ==
+            return operator_impl_detail::ts_value_schema_at(context, 0) ==
                    scalar_descriptor<From>::value_meta();
         }
 
@@ -272,7 +260,7 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0)) ==
+            return operator_impl_detail::ts_value_schema_at(context, 0) ==
                    scalar_descriptor<From>::value_meta();
         }
 
@@ -301,7 +289,7 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            const auto *in = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *in = operator_impl_detail::ts_value_schema_at(context, 0);
             return in != nullptr && in->kind == ValueTypeKind::List;
         }
 
@@ -327,7 +315,7 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            const auto *in = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *in = operator_impl_detail::ts_value_schema_at(context, 0);
             return in != nullptr && in->kind == ValueTypeKind::List;
         }
 
@@ -344,7 +332,7 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0)) ==
+            return operator_impl_detail::ts_value_schema_at(context, 0) ==
                    scalar_descriptor<Date>::value_meta();
         }
 
@@ -364,7 +352,7 @@ namespace hgraph::stdlib
         // output match; requires_ checks the INPUT only (the dispatch rule).
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0)) ==
+            return operator_impl_detail::ts_value_schema_at(context, 0) ==
                    scalar_descriptor<DateTime>::value_meta();
         }
 
@@ -382,8 +370,8 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
-            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
+            const auto *in  = operator_impl_detail::ts_value_schema_at(context, 0);
             return out != nullptr && in != nullptr &&
                    (out->kind == ValueTypeKind::Set || out->kind == ValueTypeKind::List) &&
                    out->element_type == in;
@@ -419,8 +407,8 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
-            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
+            const auto *in  = operator_impl_detail::ts_value_schema_at(context, 0);
             return out != nullptr && in != nullptr && out != in &&
                    (out->kind == ValueTypeKind::Set || out->kind == ValueTypeKind::List) &&
                    (in->kind == ValueTypeKind::Set || in->kind == ValueTypeKind::List) &&
@@ -465,7 +453,7 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
             const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSS);
             return out != nullptr && in != nullptr &&
                    (out->kind == ValueTypeKind::Set || out->kind == ValueTypeKind::List) &&
@@ -507,9 +495,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
-            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            return out != nullptr && out->kind == TSTypeKind::TSS && in != nullptr &&
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSS);
+            const auto *in  = operator_impl_detail::ts_value_schema_at(context, 0);
+            return out != nullptr && in != nullptr &&
                    (in->kind == ValueTypeKind::Set || in->kind == ValueTypeKind::List) &&
                    out->value_schema->element_type == in->element_type;
         }
@@ -550,7 +538,7 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
             const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSD);
             if (out == nullptr || in == nullptr || out->kind != ValueTypeKind::Map) { return false; }
             const auto *element = TypeRegistry::instance().dereference(in->element_ts());
@@ -582,10 +570,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
-            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            if (out == nullptr || out->kind != TSTypeKind::TSD || in == nullptr ||
-                in->kind != ValueTypeKind::Map)
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSD);
+            const auto *in  = operator_impl_detail::ts_value_schema_at(context, 0);
+            if (out == nullptr || in == nullptr || in->kind != ValueTypeKind::Map)
             {
                 return false;
             }
@@ -629,9 +616,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSS);
             const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TS);
-            return out != nullptr && out->kind == TSTypeKind::TSS && in != nullptr &&
+            return out != nullptr && in != nullptr &&
                    out->value_schema->element_type == in->value_schema;
         }
 
@@ -661,9 +648,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
-            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
-            if (out == nullptr || out->kind != TSTypeKind::TSD || v == nullptr) { return false; }
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSD);
+            const auto *v   = operator_impl_detail::ts_value_schema_at(context, 1);
+            if (out == nullptr || v == nullptr) { return false; }
             const auto *element = TypeRegistry::instance().dereference(out->element_ts());
             if (element == nullptr || element->kind != TSTypeKind::TS || element->value_schema != v)
             {
@@ -829,9 +816,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
-            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
+            const auto *k   = operator_impl_detail::ts_value_schema_at(context, 0);
+            const auto *v   = operator_impl_detail::ts_value_schema_at(context, 1);
             return out != nullptr && out->kind == ValueTypeKind::Map && k != nullptr && v != nullptr &&
                    out->key_type == k && out->element_type == v;
         }
@@ -877,7 +864,7 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = element_of(convert_detail::ts_value(convert_detail::requested_out(resolution)));
+            const auto *out = element_of(operator_impl_detail::output_ts_value_schema(resolution));
             const auto *in  = operator_impl_detail::fixed_tsl_arg(context, 0);
             if (out == nullptr || in == nullptr) { return false; }
             const auto *element = TypeRegistry::instance().dereference(in->element_ts());
@@ -945,8 +932,8 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
-            if (out == nullptr || out->kind != TSTypeKind::TSS || context.args.empty()) { return false; }
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSS);
+            if (out == nullptr || context.args.empty()) { return false; }
             const auto *element = out->value_schema->element_type;
             for (std::size_t index = 0; index < context.args.size(); ++index)
             {
@@ -1023,9 +1010,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSD);
             const auto *in  = operator_impl_detail::fixed_tsl_arg(context, 0);
-            if (out == nullptr || out->kind != TSTypeKind::TSD || in == nullptr) { return false; }
+            if (out == nullptr || in == nullptr) { return false; }
             auto &registry = TypeRegistry::instance();
             if (out->key_type() != registry.value_type("int")) { return false; }
             const auto *out_element = registry.dereference(out->element_ts());
@@ -1085,11 +1072,11 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
-            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
-            if (out == nullptr || out->kind != TSTypeKind::TSD || k == nullptr || v == nullptr ||
-                k->kind != ValueTypeKind::List || v->kind != ValueTypeKind::List)
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSD);
+            const auto *k   = operator_impl_detail::ts_value_schema_at(context, 0);
+            const auto *v   = operator_impl_detail::ts_value_schema_at(context, 1);
+            if (out == nullptr || k == nullptr || v == nullptr || k->kind != ValueTypeKind::List ||
+                v->kind != ValueTypeKind::List)
             {
                 return false;
             }
@@ -1140,9 +1127,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
-            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
+            const auto *k   = operator_impl_detail::ts_value_schema_at(context, 0);
+            const auto *v   = operator_impl_detail::ts_value_schema_at(context, 1);
             return out != nullptr && out->kind == ValueTypeKind::Map && k != nullptr && v != nullptr &&
                    k->kind == ValueTypeKind::List && v->kind == ValueTypeKind::List &&
                    out->key_type == k->element_type && out->element_type == v->element_type;
@@ -1174,7 +1161,7 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
             const auto *in  = operator_impl_detail::fixed_tsl_arg(context, 0);
             if (out == nullptr || out->kind != ValueTypeKind::Map || in == nullptr) { return false; }
             auto       &registry = TypeRegistry::instance();
@@ -1210,7 +1197,7 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
             const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSB);
             if (out == nullptr || out->kind != ValueTypeKind::Map || in == nullptr ||
                 in->field_count() == 0)
@@ -1257,9 +1244,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
-            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
+            const auto *k   = operator_impl_detail::ts_value_schema_at(context, 0);
+            const auto *v   = operator_impl_detail::ts_value_schema_at(context, 1);
             return out != nullptr && out->kind == ValueTypeKind::Map && k != nullptr && v != nullptr &&
                    k->kind == ValueTypeKind::List && v->kind == ValueTypeKind::List &&
                    out->key_type == k->element_type && out->element_type == v->element_type;
@@ -1327,7 +1314,7 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
             return out != nullptr && out->kind == ValueTypeKind::Tuple;
         }
 
@@ -1353,9 +1340,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
-            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            if (out == nullptr || out->kind != TSTypeKind::TSL || out->fixed_size() == 0 || in == nullptr)
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSL);
+            const auto *in  = operator_impl_detail::ts_value_schema_at(context, 0);
+            if (out == nullptr || out->fixed_size() == 0 || in == nullptr)
             {
                 return false;
             }
@@ -1428,9 +1415,9 @@ namespace hgraph::stdlib
 
         [[nodiscard]] static bool shape_ok(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSD);
             const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSB);
-            if (out == nullptr || out->kind != TSTypeKind::TSD || in == nullptr) { return false; }
+            if (out == nullptr || in == nullptr) { return false; }
             auto &registry = TypeRegistry::instance();
             if (out->key_type() != registry.value_type("str")) { return false; }
             const auto *element = registry.dereference(out->element_ts());
@@ -1542,8 +1529,8 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
-            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
+            const auto *in  = operator_impl_detail::ts_value_schema_at(context, 0);
             if (out == nullptr || in == nullptr ||
                 (out->kind != ValueTypeKind::Set && out->kind != ValueTypeKind::List))
             {
@@ -1623,9 +1610,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::ts_value(convert_detail::requested_out(resolution));
-            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
+            const auto *out = operator_impl_detail::output_ts_value_schema(resolution);
+            const auto *k   = operator_impl_detail::ts_value_schema_at(context, 0);
+            const auto *v   = operator_impl_detail::ts_value_schema_at(context, 1);
             return out != nullptr && out->kind == ValueTypeKind::Map && k != nullptr && v != nullptr &&
                    out->key_type == k && out->element_type == v;
         }
@@ -1663,10 +1650,10 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
-            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
-            if (out == nullptr || out->kind != TSTypeKind::TSD || k == nullptr || v == nullptr) { return false; }
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSD);
+            const auto *k   = operator_impl_detail::ts_value_schema_at(context, 0);
+            const auto *v   = operator_impl_detail::ts_value_schema_at(context, 1);
+            if (out == nullptr || k == nullptr || v == nullptr) { return false; }
             const auto *element = TypeRegistry::instance().dereference(out->element_ts());
             return out->key_type() == k && element != nullptr && element->kind == TSTypeKind::TS &&
                    element->value_schema == v;
@@ -1712,8 +1699,8 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
-            if (out == nullptr || out->kind != TSTypeKind::TSS) { return false; }
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSS);
+            if (out == nullptr) { return false; }
             const auto *element = out->value_schema->element_type;
             const auto *surface = operator_impl_detail::time_series_schema_at(context, 0);
             if (surface == nullptr) { return false; }
@@ -1776,10 +1763,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
-            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            if (out == nullptr || out->kind != TSTypeKind::TSD || in == nullptr ||
-                in->kind != ValueTypeKind::List)
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSD);
+            const auto *in  = operator_impl_detail::ts_value_schema_at(context, 0);
+            if (out == nullptr || in == nullptr || in->kind != ValueTypeKind::List)
             {
                 return false;
             }
@@ -1824,11 +1810,11 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
-            const auto *k   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            const auto *v   = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 1));
-            if (out == nullptr || out->kind != TSTypeKind::TSD || k == nullptr || v == nullptr ||
-                k->kind != ValueTypeKind::List || v->kind != ValueTypeKind::List)
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSD);
+            const auto *k   = operator_impl_detail::ts_value_schema_at(context, 0);
+            const auto *v   = operator_impl_detail::ts_value_schema_at(context, 1);
+            if (out == nullptr || k == nullptr || v == nullptr || k->kind != ValueTypeKind::List ||
+                v->kind != ValueTypeKind::List)
             {
                 return false;
             }
@@ -1891,10 +1877,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
-            const auto *in  = convert_detail::ts_value(operator_impl_detail::time_series_schema_at(context, 0));
-            if (out == nullptr || out->kind != TSTypeKind::TSD || in == nullptr ||
-                in->kind != ValueTypeKind::Map)
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSD);
+            const auto *in  = operator_impl_detail::ts_value_schema_at(context, 0);
+            if (out == nullptr || in == nullptr || in->kind != ValueTypeKind::Map)
             {
                 return false;
             }
@@ -1942,9 +1927,9 @@ namespace hgraph::stdlib
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
-            const auto *out = convert_detail::requested_out(resolution);
+            const auto *out = operator_impl_detail::output_of_kind(resolution, TSTypeKind::TSD);
             const auto *in  = operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSD);
-            return out != nullptr && out->kind == TSTypeKind::TSD && in == out;
+            return out != nullptr && in == out;
         }
 
         static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
@@ -2079,7 +2064,7 @@ namespace hgraph::stdlib
             const auto *surface = operator_impl_detail::time_series_schema_at(context, 0);
             if (surface == nullptr) { return nullptr; }
             if (surface->kind == TSTypeKind::TSS) { return surface->value_schema->element_type; }
-            const auto *value = convert_detail::ts_value(surface);
+            const auto *value = operator_impl_detail::ts_value_schema(surface);
             if (value != nullptr && (value->kind == ValueTypeKind::Set || value->kind == ValueTypeKind::List))
             {
                 return value->element_type;
@@ -2154,7 +2139,7 @@ namespace hgraph::stdlib
                 if (element == nullptr || element->kind != TSTypeKind::TS) { return {nullptr, nullptr}; }
                 return {surface->key_type(), element->value_schema};
             }
-            const auto *value = convert_detail::ts_value(surface);
+            const auto *value = operator_impl_detail::ts_value_schema(surface);
             if (value == nullptr || value->kind != ValueTypeKind::Map) { return {nullptr, nullptr}; }
             return {value->key_type, value->element_type};
         }

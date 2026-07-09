@@ -266,10 +266,67 @@ namespace hgraph::stdlib::operator_impl_detail
         return value != nullptr && value->kind == ValueTypeKind::Map ? value : nullptr;
     }
 
+    /** Return the erased graph-output binding, or null when it is unresolved. */
+    [[nodiscard]] inline const TSValueTypeMetaData *output_schema(
+        const ResolutionMap &resolution,
+        SchemaRefMode        mode = SchemaRefMode::Direct) noexcept
+    {
+        const TSValueTypeMetaData *schema = resolution.find_ts("__out__");
+        return mode == SchemaRefMode::Dereference ? TypeRegistry::instance().dereference(schema) : schema;
+    }
+
+    /** Match the resolved graph output against a full recursive time-series pattern. */
+    [[nodiscard]] inline bool output_matches_pattern(
+        const ResolutionMap &resolution,
+        const TypePattern   &pattern,
+        SchemaRefMode        mode = SchemaRefMode::Direct)
+    {
+        const TSValueTypeMetaData *schema = output_schema(resolution, mode);
+        if (schema == nullptr) { return false; }
+        ResolutionMap scratch;
+        return output_ts_pattern_match(pattern, schema, scratch);
+    }
+
+    /** Typed counterpart of ``output_matches_pattern``. */
+    template <typename Schema>
+    [[nodiscard]] inline bool output_matches(
+        const ResolutionMap &resolution,
+        SchemaRefMode        mode = SchemaRefMode::Direct)
+    {
+        return output_matches_pattern(resolution, to_pattern<Schema>(), mode);
+    }
+
+    /** Match the resolved graph output against a broad time-series kind. */
+    [[nodiscard]] inline bool output_matches_kind(
+        const ResolutionMap &resolution,
+        TSTypeKind           kind,
+        SchemaRefMode        mode = SchemaRefMode::Direct)
+    {
+        return output_matches_pattern(resolution, time_series_kind_pattern(kind), mode);
+    }
+
+    /** Return the graph output schema only when it matches ``kind``. */
+    [[nodiscard]] inline const TSValueTypeMetaData *output_of_kind(
+        const ResolutionMap &resolution,
+        TSTypeKind           kind,
+        SchemaRefMode        mode = SchemaRefMode::Direct)
+    {
+        const TSValueTypeMetaData *schema = output_schema(resolution, mode);
+        return schema != nullptr && output_matches_kind(resolution, kind, mode) ? schema : nullptr;
+    }
+
+    /** Return ``T`` when the resolved graph output is ``TS<T>``. */
+    [[nodiscard]] inline const ValueTypeMetaData *output_ts_value_schema(
+        const ResolutionMap &resolution,
+        SchemaRefMode        mode = SchemaRefMode::Direct) noexcept
+    {
+        return ts_value_schema(output_schema(resolution, mode));
+    }
+
     /** True when ``resolution`` already carries the erased graph-output binding. */
     [[nodiscard]] inline bool output_bound(const ResolutionMap &resolution) noexcept
     {
-        return resolution.find_ts("__out__") != nullptr;
+        return output_schema(resolution) != nullptr;
     }
 
     /** True when a local output type variable such as ``O`` is already bound. */
