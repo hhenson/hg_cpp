@@ -123,7 +123,7 @@ namespace hgraph::stdlib::tsl_itemwise_impl_detail
         {
             return context.args.size() == 2 &&
                    operator_impl_detail::fixed_tsl_arg(context, 0) != nullptr &&
-                   operator_impl_detail::time_series_arg_of_kind(context, 1, TSTypeKind::TSL) == nullptr;
+                   !operator_impl_detail::time_series_arg_is_tsl(context, 1);
         }
 
         static auto compose(Wiring &w, NamedPort<"lhs", TSL<TsVar<"L">>> lhs, NamedPort<"rhs", TsVar<"R">> rhs)
@@ -145,7 +145,7 @@ namespace hgraph::stdlib::tsl_itemwise_impl_detail
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
             return context.args.size() == 2 &&
-                   operator_impl_detail::time_series_arg_of_kind(context, 0, TSTypeKind::TSL) == nullptr &&
+                   !operator_impl_detail::time_series_arg_is_tsl(context, 0) &&
                    operator_impl_detail::fixed_tsl_arg(context, 1) != nullptr;
         }
 

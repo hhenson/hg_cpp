@@ -6,6 +6,7 @@
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/record_replay.h>
+#include <hgraph/lib/std/operators/impl/type_resolution_helpers.h>
 #include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/std/operators/impl/conversion_impl.h>
@@ -434,6 +435,21 @@ TEST_CASE("operators: TSL TypePattern supports named SIZE variables")
                                             Field<"rhs", TSL<TS<Int>, 3>>>;
     ResolutionMap repeated;
     CHECK_FALSE(ts_pattern_match(to_pattern<PairPattern>(), ts_type<PairConcreteMismatch>(), repeated));
+}
+
+TEST_CASE("operators: operator helpers match recursive time-series patterns")
+{
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    std::array<WiringArg, 2> args{ts_arg(ts_type<TSL<TS<Int>, 2>>()), ts_arg(ts_type<TS<Int>>())};
+    OperatorCallContext context{std::span<const WiringArg>{args}};
+
+    CHECK(stdlib::operator_impl_detail::time_series_arg_matches<TSL<TS<ScalarVar<"T">>, SIZE<"N">>>(context, 0));
+    CHECK(stdlib::operator_impl_detail::time_series_arg_is_tsl(context, 0));
+    CHECK(stdlib::operator_impl_detail::fixed_tsl_arg(context, 0) == ts_type<TSL<TS<Int>, 2>>());
+
+    CHECK_FALSE(stdlib::operator_impl_detail::time_series_arg_is_tsl(context, 1));
+    CHECK(stdlib::operator_impl_detail::time_series_arg_matches<TS<ScalarVar<"T">>>(context, 1));
 }
 
 TEST_CASE("operators: TypePattern supports recursive scalar container patterns")

@@ -125,6 +125,38 @@ namespace hgraph::stdlib::operator_impl_detail
         return arg != nullptr ? time_series_schema(*arg, mode) : nullptr;
     }
 
+    /** Match argument ``index`` against a full recursive time-series pattern. */
+    [[nodiscard]] inline bool time_series_arg_matches_pattern(
+        OperatorCallContext context,
+        std::size_t         index,
+        const TypePattern  &pattern,
+        SchemaRefMode       mode = SchemaRefMode::Dereference)
+    {
+        const TSValueTypeMetaData *schema = time_series_schema_at(context, index, mode);
+        if (schema == nullptr) { return false; }
+        ResolutionMap scratch;
+        return ts_pattern_match(pattern, schema, scratch);
+    }
+
+    /** Typed counterpart of ``time_series_arg_matches_pattern``. */
+    template <typename Schema>
+    [[nodiscard]] inline bool time_series_arg_matches(
+        OperatorCallContext context,
+        std::size_t         index,
+        SchemaRefMode       mode = SchemaRefMode::Dereference)
+    {
+        return time_series_arg_matches_pattern(context, index, to_pattern<Schema>(), mode);
+    }
+
+    /** True when the argument is any TSL shape, using the recursive pattern matcher. */
+    [[nodiscard]] inline bool time_series_arg_is_tsl(
+        OperatorCallContext context,
+        std::size_t         index,
+        SchemaRefMode       mode = SchemaRefMode::Dereference)
+    {
+        return time_series_arg_matches<TSL<TsVar<"__element">, SIZE<"__size">>>(context, index, mode);
+    }
+
     /** Return the time-series schema at ``index`` only when it has ``kind``. */
     [[nodiscard]] inline const TSValueTypeMetaData *time_series_arg_of_kind(
         OperatorCallContext context,
@@ -140,9 +172,10 @@ namespace hgraph::stdlib::operator_impl_detail
     [[nodiscard]] inline const TSValueTypeMetaData *fixed_tsl_arg(
         OperatorCallContext context,
         std::size_t         index,
-        SchemaRefMode       mode = SchemaRefMode::Dereference) noexcept
+        SchemaRefMode       mode = SchemaRefMode::Dereference)
     {
-        const TSValueTypeMetaData *schema = time_series_arg_of_kind(context, index, TSTypeKind::TSL, mode);
+        if (!time_series_arg_is_tsl(context, index, mode)) { return nullptr; }
+        const TSValueTypeMetaData *schema = time_series_schema_at(context, index, mode);
         return schema != nullptr && schema->fixed_size() > 0 ? schema : nullptr;
     }
 
@@ -150,7 +183,7 @@ namespace hgraph::stdlib::operator_impl_detail
     [[nodiscard]] inline bool same_fixed_tsl_size(OperatorCallContext context,
                                                   std::size_t lhs_index,
                                                   std::size_t rhs_index,
-                                                  SchemaRefMode mode = SchemaRefMode::Dereference) noexcept
+                                                  SchemaRefMode mode = SchemaRefMode::Dereference)
     {
         const TSValueTypeMetaData *lhs = fixed_tsl_arg(context, lhs_index, mode);
         const TSValueTypeMetaData *rhs = fixed_tsl_arg(context, rhs_index, mode);
