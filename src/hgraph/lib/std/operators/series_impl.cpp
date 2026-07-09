@@ -19,6 +19,7 @@ namespace hgraph::stdlib
         register_overload<mul_, series_binary_impl<"multiply", false>>();
         register_overload<div_, series_binary_impl<"divide", true>>();
         register_overload<getitem_, series_getitem_impl>();
+        register_overload<getitem_, series_getitem_scalar_impl>();
         register_overload<contains_, series_contains_impl>();
     }
 }  // namespace hgraph::stdlib

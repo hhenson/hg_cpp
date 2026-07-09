@@ -1330,6 +1330,9 @@ NB_MODULE(_hgraph, m)
         // A NULLABLE variadic tuple (elements may be None holes).
         return PyValueType{TypeRegistry::instance().nullable_tuple(e.meta)};
     });
+    m.def("series_vt", [](PyValueType e) {
+        return PyValueType{TypeRegistry::instance().series(e.meta)};
+    });
     m.def("fixed_tuple_vt", [](nb::list elements) {
         std::vector<const ValueTypeMetaData *> metas;
         metas.reserve(nb::len(elements));

@@ -19,8 +19,10 @@ _SCALAR_NAMES = {
 
 
 def _value_type(scalar):
-    if isinstance(scalar, _SeriesType) or scalar is Series:
-        return _hgraph.value_type("series")
+    if isinstance(scalar, _SeriesType):
+        return _hgraph.series_vt(_value_type(scalar.element))
+    if scalar is Series:
+        return _hgraph.value_type("series")   # element-untyped base
     if isinstance(scalar, str):
         return _hgraph.value_type(scalar)
     if isinstance(scalar, _TypeVarSentinel):

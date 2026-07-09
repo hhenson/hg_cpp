@@ -128,6 +128,11 @@ namespace hgraph
         /** A NULLABLE variadic tuple (element holes allowed via the sul-style
             bitset) - the "nullable tuple" trait for the value factory. */
         const ValueTypeMetaData *nullable_tuple(const ValueTypeMetaData *element_type);
+        /** A Series parameterised by its element scalar (Series[T]); shares
+            the base ``series`` storage plan + ops, distinct meta carrying
+            ``element_type`` so operators can resolve the element type. A null
+            element returns the base (element-untyped) series scalar. */
+        const ValueTypeMetaData *series(const ValueTypeMetaData *element_type);
         /** Intern a set value-schema for ``element_type``. */
         const ValueTypeMetaData *set(const ValueTypeMetaData *element_type);
         /**
@@ -504,6 +509,7 @@ namespace hgraph
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> set_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_list_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> nullable_tuple_cache_;
+        InternTable<const ValueTypeMetaData *, ValueTypeMetaData> series_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_set_cache_;
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> map_cache_;
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> mutable_map_cache_;

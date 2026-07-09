@@ -23,7 +23,6 @@ def _series_eq(actual, expected):
 
 
 
-@_pytest_mark.mark.skip(reason='getitem needs an element-typed Series[T] (the C++ Series is element-untyped); arithmetic/contains work untyped')
 def test_get_item_series():
     s = pa.array([1, 2, 3])
 
@@ -37,7 +36,6 @@ def test_get_item_series():
         assert eval_node(g, [s], 4)
 
 
-@_pytest_mark.mark.skip(reason='getitem needs an element-typed Series[T] (the C++ Series is element-untyped); arithmetic/contains work untyped')
 def test_get_item_series_ts():
     s = pa.array([1, 2, 3])
 
