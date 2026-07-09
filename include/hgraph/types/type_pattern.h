@@ -283,6 +283,15 @@ namespace hgraph
                                                       ResolutionMap &map);
 
     /**
+     * INPUT-direction match: mirrors graph input binding. SIGNAL accepts any
+     * time-series source, REF wrappers adapt at the consumer, and concrete
+     * leaves use the same compatibility rule as ordinary wiring.
+     */
+    [[nodiscard]] HGRAPH_EXPORT bool input_ts_pattern_match(const TypePattern &pattern,
+                                                            const TSValueTypeMetaData *concrete,
+                                                            ResolutionMap &map);
+
+    /**
      * OUTPUT-direction match: REF transparency does NOT apply to a top-level
      * variable — a caller requesting ``REF[X]`` binds the variable to the
      * reference schema verbatim (the produced port must BE a reference;

@@ -127,14 +127,14 @@ namespace hgraph::operator_type_resolution
         return arg != nullptr ? time_series_schema(*arg, mode) : nullptr;
     }
 
-    /** Match a concrete schema against a full recursive time-series pattern. */
+    /** Match a concrete input schema against a full recursive time-series pattern. */
     [[nodiscard]] inline bool time_series_schema_matches_pattern(
         const TSValueTypeMetaData *schema,
         const TypePattern         &pattern)
     {
         if (schema == nullptr) { return false; }
         ResolutionMap scratch;
-        return ts_pattern_match(pattern, schema, scratch);
+        return input_ts_pattern_match(pattern, schema, scratch);
     }
 
     /** Match argument ``index`` against a full recursive time-series pattern. */

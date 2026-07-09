@@ -493,6 +493,37 @@ TEST_CASE("operators: operator helpers match recursive time-series patterns")
     CHECK(duration_window_arg == duration_window);
 }
 
+TEST_CASE("operators: shared TypePattern input matcher mirrors wiring semantics")
+{
+    namespace type_resolution = hgraph::operator_type_resolution;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    const TypePattern signal = TypePattern::signal();
+    ResolutionMap     strict_signal;
+    CHECK_FALSE(ts_pattern_match(signal, ts_type<TS<Int>>(), strict_signal));
+
+    ResolutionMap input_signal;
+    CHECK(input_ts_pattern_match(signal, ts_type<TS<Int>>(), input_signal));
+    CHECK(type_resolution::time_series_schema_matches_pattern(ts_type<TS<Int>>(), signal));
+
+    const TypePattern generic_ref = to_pattern<REF<TS<ScalarVar<"T">>>>();
+    ResolutionMap     ref_input;
+    REQUIRE(input_ts_pattern_match(generic_ref, ts_type<TS<Int>>(), ref_input));
+    CHECK(ref_input.find_scalar("T") == scalar_type<Int>());
+
+    ResolutionMap ref_output;
+    CHECK_FALSE(output_ts_pattern_match(generic_ref, ts_type<TS<Int>>(), ref_output));
+
+    const TypePattern nested_ref = to_pattern<TSL<REF<TS<ScalarVar<"U">>>, 2>>();
+    ResolutionMap     nested_input;
+    REQUIRE(input_ts_pattern_match(nested_ref, ts_type<TSL<TS<Int>, 2>>(), nested_input));
+    CHECK(nested_input.find_scalar("U") == scalar_type<Int>());
+
+    ResolutionMap nested_strict;
+    CHECK_FALSE(ts_pattern_match(nested_ref, ts_type<TSL<TS<Int>, 2>>(), nested_strict));
+}
+
 TEST_CASE("operators: TypePattern supports recursive scalar container patterns")
 {
     auto &registry = TypeRegistry::instance();
