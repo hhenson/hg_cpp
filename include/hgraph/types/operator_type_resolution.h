@@ -25,6 +25,8 @@ namespace hgraph::operator_type_resolution
      *   REF by default.
      * - ``time_series_schema_at`` plus typed ``time_series_schema_matches<S>``
      *   answers recursive shape questions without a separate kind-specific API.
+     * - ``time_series_schema_as<S>`` returns the extracted schema only when it
+     *   matches the recursive static shape.
      * - ``fixed_tsl_arg`` extracts only a positive fixed-size TSL.
      * - ``ts_value_schema`` extracts ``T`` from ``TS<T>``.
      * - ``ts_map_value_schema`` extracts the scalar map schema from
@@ -144,6 +146,36 @@ namespace hgraph::operator_type_resolution
         return input_ts_pattern_match(to_pattern<Schema>(), schema, scratch);
     }
 
+    /** Return ``schema`` when it matches a recursive static time-series pattern. */
+    template <typename Schema>
+    [[nodiscard]] inline const TSValueTypeMetaData *time_series_schema_as(
+        const TSValueTypeMetaData *schema,
+        SchemaRefMode             mode = SchemaRefMode::Dereference)
+    {
+        const TSValueTypeMetaData *resolved =
+            mode == SchemaRefMode::Dereference ? TypeRegistry::instance().dereference(schema) : schema;
+        return time_series_schema_matches<Schema>(resolved) ? resolved : nullptr;
+    }
+
+    /** Extract an argument schema and return it only when it matches ``Schema``. */
+    template <typename Schema>
+    [[nodiscard]] inline const TSValueTypeMetaData *time_series_schema_as(
+        const WiringArg &arg,
+        SchemaRefMode    mode = SchemaRefMode::Dereference)
+    {
+        return time_series_schema_as<Schema>(time_series_schema(arg, mode), SchemaRefMode::Direct);
+    }
+
+    /** Extract argument ``index`` and return it only when it matches ``Schema``. */
+    template <typename Schema>
+    [[nodiscard]] inline const TSValueTypeMetaData *time_series_schema_at_as(
+        OperatorCallContext context,
+        std::size_t         index,
+        SchemaRefMode       mode = SchemaRefMode::Dereference)
+    {
+        return time_series_schema_as<Schema>(time_series_schema_at(context, index, mode), SchemaRefMode::Direct);
+    }
+
     /** Match argument ``index`` against a static recursive time-series pattern. */
     template <typename Schema>
     [[nodiscard]] inline bool time_series_arg_matches(
@@ -151,7 +183,7 @@ namespace hgraph::operator_type_resolution
         std::size_t         index,
         SchemaRefMode       mode = SchemaRefMode::Dereference)
     {
-        return time_series_schema_matches<Schema>(time_series_schema_at(context, index, mode));
+        return time_series_schema_at_as<Schema>(context, index, mode) != nullptr;
     }
 
     /** Return a fixed-size TSL schema at ``index``. Dynamic TSL returns null. */
@@ -160,8 +192,7 @@ namespace hgraph::operator_type_resolution
         std::size_t         index,
         SchemaRefMode       mode = SchemaRefMode::Dereference)
     {
-        const TSValueTypeMetaData *schema = time_series_schema_at(context, index, mode);
-        if (!time_series_schema_matches<AnyTSL>(schema)) { return nullptr; }
+        const TSValueTypeMetaData *schema = time_series_schema_at_as<AnyTSL>(context, index, mode);
         return schema != nullptr && schema->fixed_size() > 0 ? schema : nullptr;
     }
 

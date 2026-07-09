@@ -60,18 +60,6 @@ namespace hgraph::stdlib
             return target != nullptr && target->kind == TSTypeKind::TSB ? target : nullptr;
         }
 
-        [[nodiscard]] inline const TSValueTypeMetaData *direct_tsl_schema(const WiringArg &arg) noexcept
-        {
-            const TSValueTypeMetaData *schema = time_series_schema(arg);
-            return schema != nullptr && schema->kind == TSTypeKind::TSL ? schema : nullptr;
-        }
-
-        [[nodiscard]] inline const TSValueTypeMetaData *direct_tsd_schema(const WiringArg &arg) noexcept
-        {
-            const TSValueTypeMetaData *schema = time_series_schema(arg);
-            return schema != nullptr && schema->kind == TSTypeKind::TSD ? schema : nullptr;
-        }
-
         [[nodiscard]] inline std::optional<std::size_t> find_tsb_field_index(const TSValueTypeMetaData &schema,
                                                                              std::string_view name) noexcept
         {
@@ -257,7 +245,7 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
             if (context.args.size() != 2) { return false; }
-            const TSValueTypeMetaData *schema = container_impl_detail::direct_tsl_schema(context.args[0]);
+            const TSValueTypeMetaData *schema = time_series_schema_as<AnyTSL>(context.args[0]);
             if (schema == nullptr) { return false; }
 
             // Fixed-size scalar indexing is a structural wiring projection
@@ -618,7 +606,7 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
             return context.args.size() == 2 &&
-                   container_impl_detail::direct_tsd_schema(context.args[0]) != nullptr;
+                   time_series_schema_as<AnyTSD>(context.args[0]) != nullptr;
         }
 
         static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
@@ -650,10 +638,9 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
             if (context.args.size() != 2 || context.args[1].kind != WiringArg::Kind::TimeSeries) { return false; }
-            const auto *tsd = container_impl_detail::direct_tsd_schema(context.args[0]);
-            auto &registry  = TypeRegistry::instance();
-            const auto *key = registry.dereference(context.args[1].port.schema);
-            return tsd != nullptr && key != nullptr && key->kind == TSTypeKind::TSS &&
+            const auto *tsd = time_series_schema_as<AnyTSD>(context.args[0]);
+            const auto *key = time_series_schema_as<AnyTSS>(context.args[1]);
+            return tsd != nullptr && key != nullptr &&
                    key->value_schema != nullptr && key->value_schema->element_type == tsd->key_type();
         }
 
@@ -661,7 +648,7 @@ namespace hgraph::stdlib
         {
             if (resolution.find_ts("__out__") != nullptr) { return; }
             if (context.args.size() != 2) { return; }
-            const auto *tsd = container_impl_detail::direct_tsd_schema(context.args[0]);
+            const auto *tsd = time_series_schema_as<AnyTSD>(context.args[0]);
             if (tsd == nullptr) { return; }
             auto &registry = TypeRegistry::instance();
             const auto *element = registry.dereference(tsd->element_ts());
