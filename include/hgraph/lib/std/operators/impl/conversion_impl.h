@@ -1869,6 +1869,55 @@ namespace hgraph::stdlib
 {
     /** emit(TS[Set/Tuple]): drain the collection ONE ELEMENT PER CYCLE
         (scheduler-driven; a new tick appends its elements). */
+    /** emit(TSL[TS[T], N]): drain the MODIFIED elements one per cycle (the
+        structural counterpart to emit over a scalar collection). */
+    struct emit_tsl_impl
+    {
+        static constexpr auto name = "emit_tsl";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return operator_impl_detail::fixed_tsl_arg(context, 0) != nullptr;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (operator_impl_detail::output_bound(resolution)) { return; }
+            const auto *tsl = operator_impl_detail::fixed_tsl_arg(context, 0);
+            if (tsl == nullptr) { return; }
+            const auto *element = TypeRegistry::instance().dereference(tsl->element_ts());
+            if (element == nullptr || element->kind != TSTypeKind::TS) { return; }
+            operator_impl_detail::bind_output(resolution, TypeRegistry::instance().ts(element->value_schema));
+        }
+
+        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         NodeScheduler scheduler,
+                         State<convert_detail::EmitQueueState> state,
+                         Out<TsVar<"__out__">> out)
+        {
+            auto current = state.get();
+            if (ts.modified())
+            {
+                const TSInputView &tsl = ts;
+                for (std::size_t index = 0; index < tsl.schema()->fixed_size(); ++index)
+                {
+                    auto child = tsl.indexed_child_at(index);
+                    if (child.modified() && child.valid()) { current.buffer.emplace_back(child.value()); }
+                }
+            }
+            if (!current.buffer.empty())
+            {
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                Value       next   = std::move(current.buffer.front());
+                current.buffer.pop_front();
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(std::move(next)));
+                if (!current.buffer.empty()) { scheduler.schedule(MIN_TD); }
+            }
+            state.set(std::move(current));
+        }
+    };
+
     struct emit_collection_impl
     {
         static constexpr auto name = "emit_collection";

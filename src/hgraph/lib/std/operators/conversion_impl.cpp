@@ -68,6 +68,7 @@ namespace hgraph::stdlib
         register_overload<collect, collect_tsd_from_map_impl>();
         register_overload<collect, collect_tsd_from_tsd_impl>();
         register_overload<emit, emit_collection_impl>();
+        register_overload<emit, emit_tsl_impl>();
         register_overload<emit, emit_map_impl>();
         register_overload<str_, str_tsl_impl>();
     }

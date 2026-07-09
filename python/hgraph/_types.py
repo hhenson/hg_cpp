@@ -197,6 +197,11 @@ class _TsExpr:
                 value = wire("const", value, output_type=field_types[name])
                 unwrapped = _unwrap(value)
             field_ports[name] = unwrapped
+        # hgraph parity: a PARTIAL named TSB fills unsupplied fields with a
+        # never-ticking source, so the bundle carries only the given fields.
+        for name, ftype in field_types.items():
+            if name not in field_ports:
+                field_ports[name] = _unwrap(wire("nothing", output_type=_TsExpr(ftype, repr(ftype))))
         return WiringPort(_m.tsb_port(self.handle, field_ports))
 
     """A resolved time-series type: wraps the C++ TsType handle."""
