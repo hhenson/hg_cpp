@@ -113,10 +113,6 @@ target_link_libraries(hgraph_wiring PUBLIC hgraph_runtime hgraph::options)
 target_link_libraries(hgraph_stdlib PUBLIC hgraph_wiring hgraph::options)
 target_link_libraries(hgraph_core INTERFACE hgraph_stdlib hgraph::options)
 
-if(HGRAPH_BUILD_PYTHON_BINDINGS)
-    set_target_properties(hgraph_runtime hgraph_wiring hgraph_stdlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
-endif()
-
 if(MSVC)
     target_compile_options(hgraph_runtime PRIVATE /bigobj)
     target_compile_options(hgraph_wiring PRIVATE /bigobj)

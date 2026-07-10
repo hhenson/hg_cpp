@@ -61,6 +61,12 @@ option(HGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS "Use local .venv Python/nanobind he
 option(HGRAPH_ENABLE_COMPILER_CACHE "Use sccache or ccache when available" ON)
 option(HGRAPH_ENABLE_PCH "Use private precompiled headers for repository targets" ON)
 
+if(HGRAPH_BUILD_PYTHON_BINDINGS)
+    # Every static library linked into the extension must provide PIC on ELF
+    # platforms, including dependencies created later through FetchContent.
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+
 set(_hgraph_default_use_pyarrow_arrow OFF)
 if(HGRAPH_BUILD_PYTHON_BINDINGS)
     set(_hgraph_default_use_pyarrow_arrow ON)
