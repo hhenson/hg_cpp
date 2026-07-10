@@ -30,7 +30,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: C++",
-    "Programming Language :: C++ :: 23",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -49,6 +48,7 @@ python = [
 test = [
     "frozendict>=2.4",
     "pytest>=8",
+    "trove-classifiers",
 ]
 docs = [
     "sphinx>=7.4",
@@ -66,6 +66,7 @@ dev = [
     "myst-parser>=2.0",
     "sphinxcontrib-mermaid>=1.0",
     "scikit-build-core>=0.12",
+    "trove-classifiers",
 ]
 
 [project.urls]

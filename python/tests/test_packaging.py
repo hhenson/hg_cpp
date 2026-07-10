@@ -4,6 +4,8 @@ from pathlib import Path
 import re
 import tomllib
 
+from trove_classifiers import classifiers as valid_classifiers
+
 
 ROOT = Path(__file__).resolve().parents[2]
 PYARROW_REQUIREMENT = "pyarrow>=24,<25"
@@ -33,6 +35,13 @@ def test_supported_python_versions_are_declared():
     assert "Programming Language :: Python :: 3.12" in project["classifiers"]
     assert "Programming Language :: Python :: 3.13" in project["classifiers"]
     assert "Programming Language :: Python :: 3.14" in project["classifiers"]
+
+
+def test_pypi_classifiers_are_valid():
+    declared_classifiers = set(load_project()["project"]["classifiers"])
+    invalid_classifiers = declared_classifiers - valid_classifiers
+
+    assert not invalid_classifiers, f"invalid PyPI classifiers: {sorted(invalid_classifiers)}"
 
 
 def test_release_metadata_is_consistent():
@@ -74,11 +83,13 @@ def test_release_workflow_targets_supported_platforms():
 def main():
     test_pyarrow_build_and_runtime_requirements_share_the_supported_abi()
     test_supported_python_versions_are_declared()
+    test_pypi_classifiers_are_valid()
     test_release_metadata_is_consistent()
     test_wheel_targets_the_python_312_stable_abi()
     test_release_workflow_targets_supported_platforms()
     print("PASS test_pyarrow_build_and_runtime_requirements_share_the_supported_abi")
     print("PASS test_supported_python_versions_are_declared")
+    print("PASS test_pypi_classifiers_are_valid")
     print("PASS test_release_metadata_is_consistent")
     print("PASS test_wheel_targets_the_python_312_stable_abi")
     print("PASS test_release_workflow_targets_supported_platforms")
