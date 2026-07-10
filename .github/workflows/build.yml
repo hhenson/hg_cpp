@@ -86,15 +86,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Configure current LLVM on macOS
+      - name: Configure current Clang on macOS
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          llvm_prefix="$(brew --prefix llvm)"
-          echo "CC=${llvm_prefix}/bin/clang" >> "$GITHUB_ENV"
-          echo "CXX=${llvm_prefix}/bin/clang++" >> "$GITHUB_ENV"
+          echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
+          echo "CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
           echo "MACOSX_DEPLOYMENT_TARGET=15.0" >> "$GITHUB_ENV"
-          "${llvm_prefix}/bin/clang++" --version
+          /usr/bin/clang++ --version
       - name: Install wheel build tools
         run: python -m pip install --upgrade build abi3audit
       - name: Build stable ABI wheel
