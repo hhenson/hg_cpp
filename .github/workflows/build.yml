@@ -83,6 +83,8 @@ jobs:
       - name: Install wheel build tools
         run: python -m pip install --upgrade build abi3audit
       - name: Build stable ABI wheel
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: "2"
         run: python -m build --wheel
       - name: Repair Linux wheel
         if: runner.os == 'Linux'
@@ -108,7 +110,7 @@ jobs:
           assert wheel.name.startswith("hg_cpp-"), wheel.name
           assert "-cp312-abi3-" in wheel.name, wheel.name
           subprocess.check_call(["abi3audit", "--strict", str(wheel)])
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: distribution-wheel-${{ matrix.os }}
           path: dist/*.whl
@@ -139,7 +141,7 @@ jobs:
           archives = list(Path("dist").glob("*.tar.gz"))
           assert len(archives) == 1, archives
           assert archives[0].name == f"hg_cpp-{version}.tar.gz", archives[0].name
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: distribution-sdist
           path: dist/*.tar.gz
@@ -168,7 +170,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: distribution-wheel-${{ matrix.os }}
           path: dist
@@ -203,7 +205,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           pattern: distribution-*
           path: dist
