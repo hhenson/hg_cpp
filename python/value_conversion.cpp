@@ -347,7 +347,7 @@ namespace hgraph::python_bridge
                         // plain set are REMOVALS (TS-schema shaping - this is
                         // exactly py_to_delta's job).
                         if (nb::hasattr(item, "item") &&
-                            nb::str(item.type().attr("__name__")).c_str() == std::string_view{"Removed"})
+                            nb::cast<std::string>(item.type().attr("__name__")) == "Removed")
                         {
                             (void)removed.insert_copy(py_to_value_as(item.attr("item"), elem).view().data());
                             continue;
