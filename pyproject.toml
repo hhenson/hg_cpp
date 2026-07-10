@@ -9,10 +9,10 @@ requires = [
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "hgraph"
-version = "0.1.0"
-description = "C++ first implementation of the hgraph runtime with Python wiring integration"
-readme = {text = "C++ first implementation of the hgraph runtime with Python wiring integration.", content-type = "text/markdown"}
+name = "hg_cpp"
+version = "0.3.0"
+description = "Preview distribution of the C++ first hgraph runtime and Python compatibility bridge"
+readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
@@ -69,8 +69,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/hhenson/hgraph"
-Repository = "https://github.com/hhenson/hgraph"
+Homepage = "https://github.com/hhenson/hg_cpp"
+Repository = "https://github.com/hhenson/hg_cpp.git"
 
 [tool.scikit-build]
 build.verbose = true

@@ -2355,8 +2355,8 @@ namespace hgraph
                                 {
                                     if constexpr (arg_index != call_args_detail::npos)
                                     {
-                                        using A0 =
-                                            std::remove_cvref_t<std::tuple_element_t<arg_index, decltype(arg_tuple)>>;
+                                        using A0 = std::remove_cvref_t<std::tuple_element_t<
+                                            arg_index, std::remove_reference_t<decltype(arg_tuple)>>>;
                                         using A = call_args_detail::payload_t<A0>;
                                         static_assert(graph_wiring_detail::is_port<A>::value ||
                                                           graph_wiring_detail::is_structural_source_arg<A>::value,
@@ -2413,8 +2413,8 @@ namespace hgraph
                                     call_args_detail::bound_arg_index<I, wire_params, decltype(arg_tuple)>();
                                 if constexpr (arg_index != call_args_detail::npos)
                                 {
-                                    using A0 =
-                                        std::remove_cvref_t<std::tuple_element_t<arg_index, decltype(arg_tuple)>>;
+                                    using A0 = std::remove_cvref_t<std::tuple_element_t<
+                                        arg_index, std::remove_reference_t<decltype(arg_tuple)>>>;
                                     using A = call_args_detail::payload_t<A0>;
                                     const auto *expected =
                                         ts_resolver<typename graph_wiring_detail::in_param_schema<P>::type>::resolve(map);
@@ -2535,8 +2535,8 @@ namespace hgraph
                                     call_args_detail::bound_arg_index<I, wire_params, decltype(arg_tuple)>();
                                 if constexpr (arg_index != call_args_detail::npos)
                                 {
-                                    using A0 =
-                                        std::remove_cvref_t<std::tuple_element_t<arg_index, decltype(arg_tuple)>>;
+                                    using A0 = std::remove_cvref_t<std::tuple_element_t<
+                                        arg_index, std::remove_reference_t<decltype(arg_tuple)>>>;
                                     using A = call_args_detail::payload_t<A0>;
                                     static_assert(graph_wiring_detail::is_port<A>::value ||
                                                       graph_wiring_detail::is_structural_source_arg<A>::value,

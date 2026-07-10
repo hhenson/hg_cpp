@@ -2,9 +2,9 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
     hgraph
-    VERSION 0.1.0
+    VERSION 0.3.0
     DESCRIPTION "C++ first implementation of the hgraph runtime"
-    HOMEPAGE_URL "https://github.com/hhenson/hgraph"
+    HOMEPAGE_URL "https://github.com/hhenson/hg_cpp"
     LANGUAGES CXX
 )
 

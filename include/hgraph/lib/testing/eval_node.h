@@ -680,7 +680,8 @@ namespace hgraph::testing
         // vector<optional<Value>> -> the next explicit schema, in order), pass scalar
         // values straight through, dispatch the operator, then record its output.
         auto wire_arg = [&]<std::size_t I>() {
-            using A0             = std::remove_cvref_t<std::tuple_element_t<I, decltype(all)>>;
+            using A0 = std::remove_cvref_t<
+                std::tuple_element_t<I, std::remove_reference_t<decltype(all)>>>;
             using A              = eval_node_detail::payload_t<A0>;
             constexpr bool named = eval_node_detail::is_named_arg_v<A0>;
             auto rewrap          = [&](auto port) {
@@ -719,7 +720,8 @@ namespace hgraph::testing
         [&]<std::size_t... I>(std::index_sequence<I...>) {
             (
                 [&] {
-                    using A0 = std::remove_cvref_t<std::tuple_element_t<I, decltype(all)>>;
+                    using A0 = std::remove_cvref_t<
+                        std::tuple_element_t<I, std::remove_reference_t<decltype(all)>>>;
                     using A  = eval_node_detail::payload_t<A0>;
                     if constexpr (eval_node_detail::is_value_sequence<A>::value)
                     {

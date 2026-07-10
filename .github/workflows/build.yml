@@ -1,0 +1,214 @@
+name: Build, test, and publish Python distributions
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v_*.*.*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-release:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Validate package metadata
+        run: python python/tests/test_packaging.py
+      - name: Validate release tag
+        if: github.ref_type == 'tag'
+        shell: python
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          from pathlib import Path
+          from urllib.error import HTTPError
+          from urllib.request import urlopen
+          import os
+          import re
+          import tomllib
+
+          tag = os.environ["RELEASE_TAG"]
+          match = re.fullmatch(r"v_(\d+\.\d+\.\d+)", tag)
+          if match is None:
+              raise SystemExit(f"release tag must match v_x.x.x, got {tag!r}")
+
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          version = match.group(1)
+          if project["version"] != version:
+              raise SystemExit(
+                  f"tag {tag!r} does not match project version {project['version']!r}"
+              )
+
+          try:
+              with urlopen(f"https://pypi.org/pypi/hg_cpp/{version}/json"):
+                  pass
+          except HTTPError as error:
+              if error.code != 404:
+                  raise
+          else:
+              raise SystemExit(f"hg_cpp {version} already exists on PyPI")
+
+          print(f"Validated new hg_cpp release {version}")
+
+  build-wheel:
+    name: Build ${{ matrix.os }} wheel
+    needs: validate-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-15
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install wheel build tools
+        run: python -m pip install --upgrade build abi3audit
+      - name: Build stable ABI wheel
+        run: python -m build --wheel
+      - name: Repair Linux wheel
+        if: runner.os == 'Linux'
+        run: |
+          python -m pip install --upgrade auditwheel
+          mkdir wheelhouse
+          auditwheel repair \
+            --exclude libarrow.so.2400 \
+            --exclude libarrow_compute.so.2400 \
+            --wheel-dir wheelhouse \
+            dist/*.whl
+          rm dist/*.whl
+          mv wheelhouse/*.whl dist/
+      - name: Verify wheel ABI
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+
+          wheels = list(Path("dist").glob("*.whl"))
+          assert len(wheels) == 1, wheels
+          wheel = wheels[0]
+          assert wheel.name.startswith("hg_cpp-"), wheel.name
+          assert "-cp312-abi3-" in wheel.name, wheel.name
+          subprocess.check_call(["abi3audit", "--strict", str(wheel)])
+      - uses: actions/upload-artifact@v5
+        with:
+          name: distribution-wheel-${{ matrix.os }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  build-sdist:
+    name: Build source distribution
+    needs: validate-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build source distribution
+        run: |
+          python -m pip install --upgrade build
+          python -m build --sdist
+      - name: Verify source distribution
+        shell: python
+        run: |
+          from pathlib import Path
+          import tomllib
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          archives = list(Path("dist").glob("*.tar.gz"))
+          assert len(archives) == 1, archives
+          assert archives[0].name == f"hg_cpp-{version}.tar.gz", archives[0].name
+      - uses: actions/upload-artifact@v5
+        with:
+          name: distribution-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  test-wheel:
+    name: Test ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    needs: build-wheel
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-15
+        python-version:
+          - "3.12"
+          - "3.13"
+          - "3.14"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v6
+        with:
+          name: distribution-wheel-${{ matrix.os }}
+          path: dist
+      - name: Install wheel and test dependencies
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          wheels = list(Path("dist").glob("*.whl"))
+          assert len(wheels) == 1, wheels
+          subprocess.check_call([
+              sys.executable, "-m", "pip", "install", "--upgrade",
+              str(wheels[0]), "pytest>=8", "frozendict>=2.4",
+          ])
+      - name: Confirm installed distribution
+        run: python -c "import importlib.metadata as m; import _hgraph; print(m.version('hg_cpp'), _hgraph.__file__)"
+      - name: Run Python compatibility suite
+        run: python -m pytest python/tests -q -m "not wip"
+
+  publish:
+    name: Publish hg_cpp to PyPI
+    if: startsWith(github.ref, 'refs/tags/v_')
+    needs:
+      - build-sdist
+      - test-wheel
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://pypi.org/p/hg_cpp
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: distribution-*
+          path: dist
+          merge-multiple: true
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

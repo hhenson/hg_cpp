@@ -1,11 +1,23 @@
 # hg_cpp
 
-A clean-slate, **C++-first** reimplementation of the [hgraph](https://github.com/hgraph-io/hgraph)
-functional-reactive time-series runtime. The C++ runtime is the source of truth;
-Python is a planned wiring/compat bridge, never the foundation. Graphs are
-authored, wired, tested, and executed entirely in C++ today — in simulation or
-real-time mode, including push sources, higher-order operators
-(`map_` / `switch_` / `reduce` / `mesh_`), services, and error handling.
+A clean-slate, **C++-first** implementation of the
+[hgraph](https://github.com/hgraph-io/hgraph) functional-reactive time-series
+runtime. The C++ runtime is the source of truth. Python provides wiring
+compatibility and supports Python-authored nodes running inside that runtime.
+
+## Python preview
+
+Preview builds are published under the `hg_cpp` distribution name:
+
+```sh
+python -m pip install hg_cpp
+```
+
+The distribution exposes the `hgraph` import package and the native `_hgraph`
+extension. Install it in an isolated environment rather than alongside the
+main `hgraph` distribution, since both provide the same Python import namespace.
+One platform wheel supports CPython 3.12 and later through the CPython stable
+ABI.
 
 ## Build & test
 
@@ -15,7 +27,7 @@ cmake --build build -j              # build hgraph_core + tests
 ctest --test-dir build --output-on-failure
 ```
 
-Requires a C++23 compiler and CMake ≥ 3.25. Python/nanobind are **not** needed
+Requires a C++23 compiler and CMake >= 3.25. Python/nanobind are **not** needed
 for the default build (bindings are opt-in via `-DHGRAPH_BUILD_PYTHON_BINDINGS=ON`).
 
 ## Documentation

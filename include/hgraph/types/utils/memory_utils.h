@@ -494,6 +494,12 @@ namespace hgraph
             }
         };
 
+        /** Process-wide default allocator (aligned ``new`` / ``delete``). */
+        [[nodiscard]] static const AllocatorOps &allocator() noexcept {
+            static const AllocatorOps allocator_ops{};
+            return allocator_ops;
+        }
+
         /**
          * Concept satisfied by binding types that expose a ``StoragePlan``
          * via ``plan()`` / ``checked_plan()``. Used by ``StorageHandle`` to
@@ -1184,12 +1190,6 @@ namespace hgraph
                 }
             }
         };
-
-        /** Process-wide default allocator (aligned ``new`` / ``delete``). */
-        [[nodiscard]] static const AllocatorOps &allocator() noexcept {
-            static const AllocatorOps allocator_ops{};
-            return allocator_ops;
-        }
 
         /** Begin building a positional tuple plan. */
         [[nodiscard]] static CompositePlanBuilder tuple() { return CompositePlanBuilder{CompositeKind::Tuple}; }

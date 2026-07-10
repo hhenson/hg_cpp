@@ -23,6 +23,22 @@ Version Header
 
 ``include/hgraph/version.h`` is generated from ``include/hgraph/version.h.in`` into the CMake build tree. The generated include directory appears before the source include directory so normal includes resolve to the configured header.
 
+Python Releases
+---------------
+
+The preview Python distribution is published to the existing ``hg_cpp`` PyPI
+project while it is validated independently of the main ``hgraph``
+distribution.  It installs the ``hgraph`` Python package and ``_hgraph`` native
+extension, so the two distributions should be tested in separate environments.
+
+``.github/workflows/build.yml`` builds one ``cp312-abi3`` wheel for Linux x86_64,
+Windows x86_64, and Apple Silicon macOS, then installs each platform wheel under
+CPython 3.12, 3.13, and 3.14.  A tag matching ``v_x.x.x`` publishes the tested
+wheels and source distribution through PyPI trusted publishing.  The tag version
+must exactly match the versions in ``pyproject.toml``, ``CMakeLists.txt``, and
+``docs/source/conf.py``.  The PyPI trusted publisher is bound to the ``build.yml``
+workflow and the GitHub ``release`` environment.
+
 Open Design Items
 -----------------
 

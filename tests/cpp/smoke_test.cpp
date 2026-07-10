@@ -9,7 +9,7 @@ int main() {
         return 1;
     }
 
-    if (hgraph::version_major != 0 || hgraph::version_minor != 1 || hgraph::version_patch != 0) {
+    if (hgraph::version_major != 0 || hgraph::version_minor != 3 || hgraph::version_patch != 0) {
         return 1;
     }
 

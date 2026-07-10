@@ -1,4 +1,7 @@
 /docs/build/
+/dist/
+/wheelhouse/
+/CMakeFiles/
 /.idea/
 /cmake-build*/
 /*build*/

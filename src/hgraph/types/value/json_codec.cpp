@@ -12,7 +12,9 @@
 
 #include <charconv>
 #include <chrono>
+#include <locale>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -264,8 +266,10 @@ namespace hgraph
         [[nodiscard]] double parse_float_token(std::string_view token, const Reader &reader)
         {
             double value{};
-            const auto [ptr, ec] = std::from_chars(token.data(), token.data() + token.size(), value);
-            if (ec != std::errc{} || ptr != token.data() + token.size())
+            std::istringstream stream{std::string{token}};
+            stream.imbue(std::locale::classic());
+            stream >> std::noskipws >> value;
+            if (!stream || !stream.eof())
             {
                 const_cast<Reader &>(reader).fail("bad number");
             }

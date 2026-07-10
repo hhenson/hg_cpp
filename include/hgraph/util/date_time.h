@@ -93,7 +93,7 @@ namespace hgraph {
     constexpr DateTime min_start_time() noexcept { return min_time() + smallest_time_increment(); }
 
     /** Latest end time accepted by the runtime (``max_time()`` minus one tick). */
-    constexpr DateTime max_end_time() noexcept { return max_time() - smallest_time_increment(); }
+    inline DateTime max_end_time() noexcept { return max_time() - smallest_time_increment(); }
 
     /** Sentinel for the never-modified time; equal to ``min_time()``. */
     inline auto static MIN_DT = min_time();
