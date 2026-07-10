@@ -488,6 +488,13 @@ namespace hgraph
         };
 
         template <typename T>
+        [[nodiscard]] consteval bool compose_is_noreturn()
+        {
+            if constexpr (requires { T::compose_noreturn; }) { return T::compose_noreturn; }
+            else { return false; }
+        }
+
+        template <typename T>
         concept has_resolve_default_types_with_context = requires(ResolutionMap &resolution, OperatorCallContext context) {
             T::resolve_default_types(resolution, context);
         };
@@ -1394,7 +1401,8 @@ namespace hgraph
         operator_dispatch_detail::apply_common_operator_hooks<Impl>(impl);
 
         impl.wire = [](Wiring &w, const ResolutionMap &map, std::span<const WiringArg> args,
-                       std::span<const std::pair<std::string, WiringPortRef>> kwargs) -> OperatorWireResult {
+                       [[maybe_unused]] std::span<const std::pair<std::string, WiringPortRef>> kwargs)
+            -> OperatorWireResult {
             using params_tuple = typename sig::param_types;
             using lay          = operator_dispatch_detail::graph_param_layout<Impl>;
 
@@ -1404,7 +1412,14 @@ namespace hgraph
             return [&]<std::size_t... I, std::size_t... J>(std::index_sequence<I...>,
                                                            std::index_sequence<J...>) -> OperatorWireResult {
                 auto invoke = [&](auto &&...rest) -> OperatorWireResult {
-                    if constexpr (std::is_void_v<output_type>)
+                    if constexpr (operator_dispatch_detail::compose_is_noreturn<Impl>())
+                    {
+                        Impl::compose(w,
+                                      operator_dispatch_detail::make_graph_arg<std::tuple_element_t<I, params_tuple>>(
+                                          w, map, args[I])...,
+                                      std::forward<decltype(rest)>(rest)...);
+                    }
+                    else if constexpr (std::is_void_v<output_type>)
                     {
                         Impl::compose(w,
                                       operator_dispatch_detail::make_graph_arg<std::tuple_element_t<I, params_tuple>>(

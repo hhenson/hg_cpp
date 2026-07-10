@@ -22,10 +22,10 @@ namespace hgraph::detail
         TSOutputHandle observed{};
         std::unordered_map<std::size_t, std::unique_ptr<TSInputTargetActiveNode>> children{};
 
-        [[nodiscard]] TSInputTargetActiveNode *child_at(std::size_t slot) const noexcept;
+        [[nodiscard]] TSInputTargetActiveNode *child_at(std::size_t slot_index) const noexcept;
         [[nodiscard]] bool has_any_active() const noexcept;
-        TSInputTargetActiveNode &ensure_child(std::size_t slot);
-        bool try_prune_child(std::size_t slot);
+        TSInputTargetActiveNode &ensure_child(std::size_t slot_index);
+        bool try_prune_child(std::size_t slot_index);
         void clear_observed() noexcept;
     };
 

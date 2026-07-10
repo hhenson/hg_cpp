@@ -2366,7 +2366,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctxd(context);
                 if constexpr (Surface == SlotMapSurface::Live) { return state->dict_layout.element_value_binding; }
-                return state->dict_layout.element_delta_binding;
+                else { return state->dict_layout.element_delta_binding; }
             }
 
             template <SlotMapSurface Surface>
@@ -2381,7 +2381,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     return child_ops.value_memory_impl(child_ops.context, child_memory);
                 }
-                return child_ops.delta_memory_impl(child_ops.context, child_memory);
+                else { return child_ops.delta_memory_impl(child_ops.context, child_memory); }
             }
 
             template <SlotMapSurface Surface>

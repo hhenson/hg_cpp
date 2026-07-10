@@ -764,7 +764,7 @@ namespace hgraph::stdlib
             {
                 return meta->element_type;
             }
-            return nullptr;
+            else { return nullptr; }
         }
 
         template <ValueTypeKind Kind>
@@ -798,12 +798,6 @@ namespace hgraph::stdlib
         {
             auto mutation = out_view.begin_mutation(out_view.evaluation_time());
             static_cast<void>(mutation.move_value_from(std::move(value)));
-        }
-
-        template <typename T>
-        inline void publish_scalar(const TSOutputView &out_view, T value)
-        {
-            publish_value(out_view, Value{value});
         }
 
         inline void publish_default_if_valid(const TSInputView *default_value, const TSOutputView &out_view)
@@ -941,29 +935,28 @@ namespace hgraph::stdlib
                 const auto stats = numeric_container_stats<Agg, Element, Kind>::collect(container);
                 if constexpr (Agg == ContainerAgg::Sum)
                 {
-                    publish_scalar(out_view, stats.sum);
-                    return;
+                    publish_value(out_view, Value{stats.sum});
                 }
-
-                if constexpr (Agg == ContainerAgg::Mean)
+                else if constexpr (Agg == ContainerAgg::Mean)
                 {
                     const Float out = stats.count == 0
                                           ? std::numeric_limits<Float>::quiet_NaN()
                                           : stats.mean_sum / static_cast<Float>(stats.count);
-                    publish_scalar(out_view, out);
-                    return;
+                    publish_value(out_view, Value{out});
                 }
-
-                Float variance = 0.0;
-                if (stats.count > 1)
+                else
                 {
-                    const Float count = static_cast<Float>(stats.count);
-                    variance = (stats.shifted_sum_sq - stats.shifted_sum * stats.shifted_sum / count) /
-                               static_cast<Float>(stats.count - 1);
-                    if (variance < 0.0) { variance = 0.0; }
+                    Float variance = 0.0;
+                    if (stats.count > 1)
+                    {
+                        const Float count = static_cast<Float>(stats.count);
+                        variance = (stats.shifted_sum_sq - stats.shifted_sum * stats.shifted_sum / count) /
+                                   static_cast<Float>(stats.count - 1);
+                        if (variance < 0.0) { variance = 0.0; }
+                    }
+                    const Float out = Agg == ContainerAgg::Std ? std::sqrt(variance) : variance;
+                    publish_value(out_view, Value{out});
                 }
-                const Float out = Agg == ContainerAgg::Std ? std::sqrt(variance) : variance;
-                publish_scalar(out_view, out);
             }
         };
 

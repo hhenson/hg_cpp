@@ -220,8 +220,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 return bundle_layout.fields[index].layout;
             }
             const auto *binding = element_binding(index);
-            const auto &ops     = binding->ops_ref();
-            return ops.layout_impl(ops.context);
+            const auto &binding_ops = binding->ops_ref();
+            return binding_ops.layout_impl(binding_ops.context);
         }
 
         [[nodiscard]] const ValueTypeBinding *element_value_binding(std::size_t index) const

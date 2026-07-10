@@ -3543,6 +3543,7 @@ namespace hgraph::stdlib
         struct sub_str_invalid
         {
             static constexpr auto name = "sub_str_invalid";
+            static constexpr bool compose_noreturn = true;
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
@@ -3558,7 +3559,7 @@ namespace hgraph::stdlib
                 bind_output_like_arg(resolution, context, 0);
             }
 
-            static WiringPortRef compose(Wiring &, NamedPort<"lhs", TS<Str>>, NamedPort<"rhs", TS<Str>>)
+            [[noreturn]] static WiringPortRef compose(Wiring &, NamedPort<"lhs", TS<Str>>, NamedPort<"rhs", TS<Str>>)
             {
                 throw std::invalid_argument("Cannot subtract one string from another");
             }

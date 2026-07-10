@@ -139,18 +139,18 @@ namespace hgraph::detail
                 }
             }
 
-            for (auto &[slot, child] : node.children)
+            for (auto &[slot_index, child] : node.children)
             {
                 if (!child) { continue; }
-                static_cast<void>(slot);
+                static_cast<void>(slot_index);
                 resubscribe_tree(link, schema, *child);
             }
         }
     }  // namespace
 
-    TSInputTargetActiveNode *TSInputTargetActiveNode::child_at(std::size_t slot) const noexcept
+    TSInputTargetActiveNode *TSInputTargetActiveNode::child_at(std::size_t slot_index) const noexcept
     {
-        if (const auto it = children.find(slot); it != children.end()) { return it->second.get(); }
+        if (const auto it = children.find(slot_index); it != children.end()) { return it->second.get(); }
         return nullptr;
     }
 
@@ -162,21 +162,21 @@ namespace hgraph::detail
         });
     }
 
-    TSInputTargetActiveNode &TSInputTargetActiveNode::ensure_child(std::size_t slot)
+    TSInputTargetActiveNode &TSInputTargetActiveNode::ensure_child(std::size_t slot_index)
     {
-        auto &child = children[slot];
+        auto &child = children[slot_index];
         if (!child)
         {
             child = std::make_unique<TSInputTargetActiveNode>();
             child->parent = this;
-            child->slot = slot;
+            child->slot = slot_index;
         }
         return *child;
     }
 
-    bool TSInputTargetActiveNode::try_prune_child(std::size_t slot)
+    bool TSInputTargetActiveNode::try_prune_child(std::size_t slot_index)
     {
-        const auto it = children.find(slot);
+        const auto it = children.find(slot_index);
         if (it == children.end()) { return false; }
         if (it->second && it->second->has_any_active()) { return false; }
         children.erase(it);
@@ -186,8 +186,9 @@ namespace hgraph::detail
     void TSInputTargetActiveNode::clear_observed() noexcept
     {
         observed.reset();
-        for (auto &[slot, child] : children)
+        for (auto &[slot_index, child] : children)
         {
+            static_cast<void>(slot_index);
             if (child) { child->clear_observed(); }
         }
     }

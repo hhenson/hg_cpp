@@ -1461,11 +1461,11 @@ namespace hgraph::stdlib
         }
 
         [[nodiscard]] static std::optional<std::size_t> container_impl_detail_find(
-            const TSValueTypeMetaData *bundle, const Str &name)
+            const TSValueTypeMetaData *bundle, const Str &field_name)
         {
             for (std::size_t index = 0; index < bundle->field_count(); ++index)
             {
-                if (bundle->fields()[index].name != nullptr && name == bundle->fields()[index].name)
+                if (bundle->fields()[index].name != nullptr && field_name == bundle->fields()[index].name)
                 {
                     return index;
                 }
@@ -1518,10 +1518,10 @@ namespace hgraph::stdlib
                          Out<TsVar<"__out__">> out)
         {
             auto key_list = keys.value().as_indexed_view();
-            eval_impl(ts, static_cast<const TSOutputView &>(out), [&](const char *name) {
+            eval_impl(ts, static_cast<const TSOutputView &>(out), [&](const char *field_name) {
                 for (std::size_t index = 0; index < key_list.size(); ++index)
                 {
-                    if (key_list.at(index).template checked_as<Str>() == name) { return true; }
+                    if (key_list.at(index).template checked_as<Str>() == field_name) { return true; }
                 }
                 return false;
             });

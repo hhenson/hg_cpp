@@ -1839,7 +1839,7 @@ namespace hgraph
                     using P = std::tuple_element_t<I, ParamsTuple>;
                     if constexpr (static_node_detail::is_input_selector<P>::value)
                     {
-                        constexpr node_collection_pack_kind kind = input_pack_kind<P>();
+                        [[maybe_unused]] constexpr node_collection_pack_kind kind = input_pack_kind<P>();
                         if constexpr (kind != node_collection_pack_kind::none)
                         {
                             if (found_count == 0) { found = I; }
@@ -1943,7 +1943,7 @@ namespace hgraph
                     using A0 = std::remove_cvref_t<std::tuple_element_t<I, ArgsTuple>>;
                     if constexpr (!call_args_detail::is_named_arg_v<A0>)
                     {
-                        constexpr std::size_t ordinal = positional_ordinal<I, ArgsTuple>();
+                        [[maybe_unused]] constexpr std::size_t ordinal = positional_ordinal<I, ArgsTuple>();
                         if constexpr (ordinal >= PackIndex)
                         {
                             using A = call_args_detail::payload_t<A0>;
@@ -2336,7 +2336,7 @@ namespace hgraph
                             using P = std::tuple_element_t<I, wire_params>;
                             constexpr std::size_t arg_index =
                                 call_args_detail::bound_arg_index<I, wire_params, decltype(arg_tuple)>();
-                            constexpr std::size_t default_index =
+                            [[maybe_unused]] constexpr std::size_t default_index =
                                 call_args_detail::default_arg_index<I, wire_params, decltype(default_args)>();
                             if constexpr (static_node_detail::is_input_selector<P>::value &&
                                           call_args_detail::auto_context_param_v<P> &&
@@ -2474,7 +2474,7 @@ namespace hgraph
                                 {
                                     constexpr std::size_t arg_index =
                                         call_args_detail::bound_arg_index<I, wire_params, decltype(arg_tuple)>();
-                                    constexpr std::size_t default_index =
+                                    [[maybe_unused]] constexpr std::size_t default_index =
                                         call_args_detail::default_arg_index<I, wire_params, decltype(default_args)>();
                                     if constexpr (arg_index != call_args_detail::npos)
                                     {
@@ -2608,7 +2608,7 @@ namespace hgraph
                                 {
                                     constexpr std::size_t arg_index =
                                         call_args_detail::bound_arg_index<I, wire_params, decltype(arg_tuple)>();
-                                    constexpr std::size_t default_index =
+                                    [[maybe_unused]] constexpr std::size_t default_index =
                                         call_args_detail::default_arg_index<I, wire_params, decltype(default_args)>();
                                     if constexpr (arg_index != call_args_detail::npos)
                                     {

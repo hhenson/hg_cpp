@@ -369,22 +369,25 @@ namespace hgraph
                 }
                 return wire_erased_operator(w, std::string_view{X::name}, args, X::has_output);
             }
-            if (args.size() != arity)
+            else
             {
-                throw std::invalid_argument("fn<X>: wired argument count does not match the function's inputs");
+                if (args.size() != arity)
+                {
+                    throw std::invalid_argument("fn<X>: wired argument count does not match the function's inputs");
+                }
+                return [&]<std::size_t... I>(std::index_sequence<I...>) -> WiringPortRef {
+                    if constexpr (has_output_of<X>())
+                    {
+                        auto out = wire<X>(w, Port<void>{w, args[I]}...);
+                        return out.erased();
+                    }
+                    else
+                    {
+                        wire<X>(w, Port<void>{w, args[I]}...);
+                        return {};
+                    }
+                }(std::make_index_sequence<arity>{});
             }
-            return [&]<std::size_t... I>(std::index_sequence<I...>) -> WiringPortRef {
-                if constexpr (has_output_of<X>())
-                {
-                    auto out = wire<X>(w, Port<void>{w, args[I]}...);
-                    return out.erased();
-                }
-                else
-                {
-                    wire<X>(w, Port<void>{w, args[I]}...);
-                    return {};
-                }
-            }(std::make_index_sequence<arity>{});
         }
 
         // Compile one application of X as a child graph: a fresh Wiring whose

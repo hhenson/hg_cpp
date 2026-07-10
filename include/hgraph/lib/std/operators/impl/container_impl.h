@@ -375,11 +375,11 @@ namespace hgraph::stdlib
         }
 
         [[nodiscard]] static std::optional<std::size_t> field_index(const ValueTypeMetaData *bundle,
-                                                                    std::string_view name)
+                                                                    std::string_view field_name)
         {
             for (std::size_t index = 0; index < bundle->field_count; ++index)
             {
-                if (bundle->fields[index].name != nullptr && bundle->fields[index].name == name) { return index; }
+                if (bundle->fields[index].name != nullptr && bundle->fields[index].name == field_name) { return index; }
             }
             return std::nullopt;
         }

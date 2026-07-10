@@ -430,9 +430,9 @@ namespace hgraph
             (
                 [&] {
                     using A0 = std::remove_cvref_t<std::tuple_element_t<I, ArgsTuple>>;
-                    const auto &argument = std::get<I>(args);
                     if constexpr (is_named_arg_v<A0>)
                     {
+                        const auto &argument = std::get<I>(args);
                         seen_named = true;
                         if constexpr (!is_static_named_arg_v<A0>)
                         {

@@ -39,14 +39,14 @@ namespace hgraph
 
         [[nodiscard]] TSDProxy &proxy_storage(void *memory)
         {
-            if (memory == nullptr) { throw std::logic_error("TSDProxy requires live storage"); }
-            return *static_cast<TSDProxy *>(memory);
+            if (memory != nullptr) { return *static_cast<TSDProxy *>(memory); }
+            throw std::logic_error("TSDProxy requires live storage");
         }
 
         [[nodiscard]] const TSDProxy &proxy_storage(const void *memory)
         {
-            if (memory == nullptr) { throw std::logic_error("TSDProxy requires live storage"); }
-            return *static_cast<const TSDProxy *>(memory);
+            if (memory != nullptr) { return *static_cast<const TSDProxy *>(memory); }
+            throw std::logic_error("TSDProxy requires live storage");
         }
 
         struct TSDProxyContextKey
@@ -528,8 +528,8 @@ namespace hgraph
             {
                 auto dict = source_dict(memory);
                 if constexpr (Surface == TSDProxySetSurface::Live) { return dict.slot_live(slot); }
-                if constexpr (Surface == TSDProxySetSurface::Added) { return dict.slot_added(slot); }
-                return dict.slot_removed(slot);
+                else if constexpr (Surface == TSDProxySetSurface::Added) { return dict.slot_added(slot); }
+                else { return dict.slot_removed(slot); }
             }
 
             [[nodiscard]] static bool slot_modified(const void *context, const void *memory, std::size_t slot)
@@ -579,13 +579,16 @@ namespace hgraph
             {
                 return fallback_on_exception<std::size_t>(0, [&] {
                     if constexpr (Surface == TSDProxySetSurface::Live) { return source_dict(memory).size(); }
-                    std::size_t count = 0;
-                    auto        dict  = source_dict(memory);
-                    for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                    else
                     {
-                        if (slot_in_set_surface<Surface>(context, memory, slot)) { ++count; }
+                        std::size_t count = 0;
+                        auto        dict  = source_dict(memory);
+                        for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                        {
+                            if (slot_in_set_surface<Surface>(context, memory, slot)) { ++count; }
+                        }
+                        return count;
                     }
-                    return count;
                 });
             }
 
@@ -655,15 +658,15 @@ namespace hgraph
                 {
                     return source_dict(memory).slot_live(slot);
                 }
-                if constexpr (Surface == TSDProxyMapSurface::Added)
+                else if constexpr (Surface == TSDProxyMapSurface::Added)
                 {
                     return source_dict(memory).slot_added(slot);
                 }
-                if constexpr (Surface == TSDProxyMapSurface::Removed)
+                else if constexpr (Surface == TSDProxyMapSurface::Removed)
                 {
                     return source_dict(memory).slot_removed(slot);
                 }
-                return slot_modified(context, memory, slot);
+                else { return slot_modified(context, memory, slot); }
             }
 
             template <TSDProxyMapSurface Surface>
@@ -671,13 +674,16 @@ namespace hgraph
             {
                 return fallback_on_exception<std::size_t>(0, [&] {
                     if constexpr (Surface == TSDProxyMapSurface::Live) { return source_dict(memory).size(); }
-                    std::size_t count = 0;
-                    auto        dict  = source_dict(memory);
-                    for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                    else
                     {
-                        if (map_slot_in_surface<Surface>(context, memory, slot)) { ++count; }
+                        std::size_t count = 0;
+                        auto        dict  = source_dict(memory);
+                        for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                        {
+                            if (map_slot_in_surface<Surface>(context, memory, slot)) { ++count; }
+                        }
+                        return count;
                     }
-                    return count;
                 });
             }
 
