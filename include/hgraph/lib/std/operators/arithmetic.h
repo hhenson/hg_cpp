@@ -92,6 +92,12 @@ namespace hgraph::stdlib
     {
     };
 
+    /** ``round_`` — round a float to ``n_digits`` decimal places (python's
+        correctly-rounded decimal semantics). */
+    struct round_ : Operator<"round_", In<"ts", TS<Float>>, In<"n_digits", TS<Int>>, Out<TS<Float>>>
+    {
+    };
+
     /** ``neg_`` — the unary ``-`` operator (``-ts -> O``). */
     struct neg_ : Operator<"neg_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {

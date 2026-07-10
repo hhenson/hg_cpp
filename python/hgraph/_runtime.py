@@ -55,6 +55,22 @@ def wire(name, *args, __output_type__=None, **kwargs):
         else:
             result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type)
     except (RuntimeError, ValueError) as error:
+        # AUTO-CONST retry for kwargs collectors: a plain-value keyword
+        # argument lifts to a const port (the **kwargs collector takes
+        # time-series only; declared SCALAR params matched by name already
+        # consumed theirs on the first attempt).
+        if "must be a time-series" in str(error) and any(
+                not isinstance(v, _hgraph.Port) for v in unwrapped_kw.values()):
+            lifted = {k: v if isinstance(v, _hgraph.Port) else _unwrap(operator_function("const")(v))
+                      for k, v in unwrapped_kw.items()}
+            try:
+                if sizes is not None:
+                    result = w.wire(name, unwrapped, lifted, output_type=out_type, sizes=sizes)
+                else:
+                    result = w.wire(name, unwrapped, lifted, output_type=out_type)
+                return WiringPort(result) if result is not None else None
+            except (RuntimeError, ValueError):
+                pass
         # std::invalid_argument surfaces as ValueError; both are wiring-time.
         raise WiringError(str(error)) from error
     return WiringPort(result) if result is not None else None
@@ -88,6 +104,10 @@ class _OperatorFunction:
             kwargs["output_type"] = self._output_type
         if self._sizes is not None:
             kwargs.setdefault("__sizes__", self._sizes)
+        # hgraph parity: a trailing ``None`` argument means "use the
+        # parameter's default" (upstream defaults optional scalars to None).
+        while args and args[-1] is None:
+            args = args[:-1]
         args, kwargs = self._normalise_type_arguments(args, kwargs)
         return wire(self.__name__, *args, **kwargs)
 
@@ -408,6 +428,35 @@ class _Combine:
 
     def __call__(self, *args, **kwargs):
         return combine(*args, **kwargs)
+
+
+class DebugContext:
+    """hgraph's wiring-scope debug printer: inside ``with DebugContext(
+    prefix=..., debug=True):``, ``DebugContext.print(label, ts)`` wires a
+    ``debug_print``; outside a context (or with ``debug=False``) it wires
+    nothing."""
+
+    _stack = []
+
+    def __init__(self, prefix="", debug=True):
+        self._prefix = prefix
+        self._debug = debug
+
+    def __enter__(self):
+        DebugContext._stack.append(self)
+        return self
+
+    def __exit__(self, *exc):
+        DebugContext._stack.pop()
+        return False
+
+    @classmethod
+    def print(cls, label, ts, **kwargs):
+        active = cls._stack[-1] if cls._stack else None
+        if active is None or not active._debug:
+            return
+        full = f"{active._prefix} {label}" if active._prefix else label
+        operator_function("debug_print")(full, ts, **kwargs)
 
 
 def filter_by(ts, expr, **kwargs):
@@ -804,6 +853,12 @@ class CLOCK:
     parameter with CLOCK."""
 
 
+class LOGGER:
+    """Injectable: a python logger for the node (the process 'hgraph'
+    logger). Resolved at WIRING time to a plain object scalar - loggers
+    are process-wide, so node identity stays stable."""
+
+
 _INJECTABLE_MARKERS = {STATE: "S", CLOCK: "c", SCHEDULER: "d", GlobalState: "g"}
 
 
@@ -907,6 +962,16 @@ class _PyNode:
                 if param.name in bound.arguments:
                     raise TypeError(f"{self.__name__}: injectable '{param.name}' cannot be supplied")
                 layout.append(marker)
+                continue
+            if param.annotation is LOGGER:
+                if param.name in bound.arguments:
+                    raise TypeError(f"{self.__name__}: injectable '{param.name}' cannot be supplied")
+                import logging
+
+                logger = logging.getLogger("hgraph")
+                layout.append("s")   # process-wide logger: a plain object scalar
+                scalars.append(logger)
+                scalar_values[param.name] = logger
                 continue
             if isinstance(param.annotation, _ContextExpr):
                 # Context-injected: resolved from the published stack by

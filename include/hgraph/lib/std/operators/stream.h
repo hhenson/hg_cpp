@@ -98,6 +98,14 @@ namespace hgraph::stdlib
     {
     };
 
+    /** ``rolling_average`` — the trailing average of ``ts`` by tick count or
+        duration (hgraph's window helper: ``(sum(ts) - sum(lag(ts, period)))``
+        over the covered tick count). */
+    struct rolling_average
+        : Operator<"rolling_average", In<"ts", TS<ScalarVar<"T">>>, Scalar<"period", Int>, Out<TS<Float>>>
+    {
+    };
+
     /** ``gate`` — queue ticks while ``condition`` is ``False``, releasing them once it is ``True``. */
     struct gate : Operator<"gate", In<"condition", TS<Bool>>, In<"ts", TsVar<"S">>, Scalar<"buffer_length", Int>,
                            Out<TsVar<"S">>>

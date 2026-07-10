@@ -17,6 +17,7 @@
 #include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/lib/std/operators/json.h>
+#include <hgraph/lib/std/operators/impl/io_impl.h>   // io_write_slot (sys.stdout routing)
 #include <hgraph/types/context_wiring.h>
 #include <hgraph/types/service_runtime.h>
 #include <hgraph/lib/std/operators/higher_order.h>
@@ -1422,6 +1423,25 @@ namespace
         }
     };
 
+    /** ``call(fn, ts)`` — hgraph's side-effect sink: invoke the python
+        callable with each ticked value. */
+    struct call_callable_node
+    {
+        static constexpr auto name = "call_callable";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return context.args.size() == 2 && context.scalar_as<PyObj>("fn") != nullptr &&
+                   context.args[1].kind == WiringArg::Kind::TimeSeries;
+        }
+
+        static void eval(Scalar<"fn", PyObj> fn, In<"ts", TsVar<"S">> ts)
+        {
+            nb::gil_scoped_acquire gil;
+            fn.value().get()(value_to_py(ts.value()));
+        }
+    };
+
     /** ``freeze(predicate, ts)`` with a callable: upstream's freeze_predicate
         — freeze once until_true(predicate, ts) fires. */
     struct freeze_callable_compose
@@ -1513,6 +1533,14 @@ NB_MODULE(_hgraph, m)
     stdlib::register_standard_operators();
     python_bridge::py_infer_value_slot() =
         reinterpret_cast<python_bridge::PyInferValueFn>(&python_bridge::py_to_value);
+    // Route the diagnostic sinks (debug_print / print_) through python's
+    // sys.stdout/sys.stderr so redirection and pytest capture behave like
+    // hgraph's python prints (the run loop releases the GIL - acquire).
+    stdlib::io_write_slot() = [](std::string_view line, bool to_stdout) {
+        nb::gil_scoped_acquire gil;
+        nb::object stream = nb::module_::import_("sys").attr(to_stdout ? "stdout" : "stderr");
+        stream.attr("write")(nb::str((std::string{line} + "\n").c_str()));
+    };
     (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar
     register_overload<op_materialize, materialize_node>();
     register_overload<op_py_compute, py_compute_node>();
@@ -1523,6 +1551,7 @@ NB_MODULE(_hgraph, m)
     register_overload<op_harness_record, harness_record>();
     register_overload<stdlib::until_true, until_true_callable_node>();
     register_graph_overload<stdlib::freeze, freeze_callable_compose>();
+    register_overload<stdlib::call_op, call_callable_node>();
 
     nb::class_<PyTsType>(m, "TsType")
         .def("__eq__", [](const PyTsType &self, nb::handle other) {
@@ -2522,5 +2551,6 @@ NB_MODULE(_hgraph, m)
     register_overload<op_harness_record, harness_record>();
     register_overload<stdlib::until_true, until_true_callable_node>();
     register_graph_overload<stdlib::freeze, freeze_callable_compose>();
+    register_overload<stdlib::call_op, call_callable_node>();
     });
 }

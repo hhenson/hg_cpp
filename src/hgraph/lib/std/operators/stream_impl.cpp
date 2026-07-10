@@ -53,6 +53,8 @@ namespace hgraph::stdlib
         register_overload<batch, batch_impl>();
         register_overload<window, window_tick_impl>();
         register_overload<window, window_time_impl>();
+        register_graph_overload<rolling_average, rolling_average_tick_compose>();
+        register_graph_overload<rolling_average, rolling_average_time_compose>();
         register_overload<diff, diff_int_impl>();
         register_overload<diff, diff_float_impl>();
         register_overload<clip, clip_float_impl>();

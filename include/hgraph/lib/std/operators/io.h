@@ -32,6 +32,13 @@ namespace hgraph::stdlib
     {
     };
 
+    /** ``call`` — invoke a callable with the ticked value (a side-effect
+        sink; hgraph's helper for e.g. ``call(print, ts)``). The callable
+        rides an erased scalar — the python bridge registers the PyObj form. */
+    struct call_op : Operator<"call", Scalar<"fn", ScalarVar<"F">>, In<"ts", TsVar<"S">>>
+    {
+    };
+
     /** ``print_`` — format and write the supplied values to std-out (a sink, variadic args). */
     struct print_ : Operator<"print_", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>>
     {
@@ -44,6 +51,19 @@ namespace hgraph::stdlib
 
     /** ``assert_`` — assert ``condition`` holds, raising ``error_msg`` otherwise (a sink). */
     struct assert_ : Operator<"assert_", In<"condition", TS<Bool>>, Scalar<"error_msg", Str>>
+    {
+    };
+
+    /** ``__print_sink`` — the runtime half of ``print_`` (internal; wired by
+        the print_ compose with the arguments packed into one bundle). */
+    struct print_sink_op
+        : Operator<"__print_sink", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>, Scalar<"to_stdout", Bool>>
+    {
+    };
+
+    /** ``__assert_fmt`` — the runtime half of the format-args ``assert_``. */
+    struct assert_fmt_op
+        : Operator<"__assert_fmt", In<"condition", TS<Bool>>, Scalar<"error_msg", Str>, In<"args", TsVar<"A">>>
     {
     };
 

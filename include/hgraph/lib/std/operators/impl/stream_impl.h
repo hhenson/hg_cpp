@@ -3,7 +3,11 @@
 
 #include <hgraph/lib/std/operators/stream.h>
 #include <hgraph/types/operator_type_resolution.h>
+#include <hgraph/lib/std/operators/arithmetic.h>    // sub_ / div_ (rolling_average)
 #include <hgraph/lib/std/operators/collection.h>
+#include <hgraph/lib/std/operators/comparison.h>    // min_ / eq_ (rolling_average)
+#include <hgraph/lib/std/operators/control.h>       // if_then_else (rolling_average)
+#include <hgraph/lib/std/operators/conversion.h>    // const_ / default_ / cast_ (rolling_average)
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
@@ -1413,6 +1417,99 @@ namespace hgraph::stdlib
             if (index < start.value()) { return; }
             if (stop.value() >= 0 && index >= stop.value()) { return; }
             if ((index - start.value()) % step_size.value() == 0) { out.apply(ts.value()); }
+        }
+    };
+
+    /** rolling_average(ts, period[, min_window_period]) — the TICK form
+        (hgraph's window helper): ``(sum(ts) - sum(lag(ts, period)))`` over
+        the full period, with partial-window denominators from
+        ``min_window_period`` onward. */
+    struct rolling_average_tick_compose
+    {
+        static constexpr auto name = "rolling_average_tick";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return context.scalar_as<Int>("period") != nullptr;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+        {
+            if (output_bound(resolution)) { return; }
+            bind_output(resolution, TypeRegistry::instance().ts(scalar_descriptor<Float>::value_meta()));
+        }
+
+        static auto compose(Wiring &w, NamedPort<"ts", TS<ScalarVar<"T">>> ts, Scalar<"period", Int> period,
+                            Scalar<"min_window_period", Int> min_window_period)
+        {
+            auto current = wire<sum_>(w, ts);
+            auto delayed = wire<sum_>(w, wire<lag>(w, ts, period.value()));
+            if (min_window_period.value() <= 0)
+            {
+                auto denom = wire<const_, TS<Float>>(w, Float(period.value()));
+                return wire<div_>(w, wire<sub_>(w, current, delayed), denom);
+            }
+            // The early window: ticks counted from min_window_period up to
+            // period cap the denominator, and the missing lagged sum is a
+            // sampled zero (upstream's if_then_else/count/take/drop shape).
+            auto counted = wire<drop>(w, wire<count>(w, wire<take>(w, ts, period.value())),
+                                      min_window_period.value() - 1);
+            auto capped  = wire<min_>(w, counted, wire<const_, TS<Int>>(w, Int{period.value()}));
+            const auto *element =
+                time_series_schema_as<AnyTS>(ts.erased().schema)->value_schema;
+            Value zero{*ValuePlanFactory::instance().binding_for(element)};
+            auto fallback     = wire<sample>(w, counted, wire<const_>(w, std::move(zero)));
+            auto safe_delayed = wire<default_>(w, delayed, fallback);
+            return wire<div_>(w, wire<sub_>(w, current, safe_delayed), capped);
+        }
+
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"min_window_period", Value{Int{0}}}};
+        }
+    };
+
+    /** rolling_average(ts, timedelta[, timedelta]) — the DURATION form:
+        the tick-count denominator is the covered window's tick delta, NaN
+        while empty. */
+    struct rolling_average_time_compose
+    {
+        static constexpr auto name = "rolling_average_time";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return context.scalar_as<TimeDelta>("period") != nullptr;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+        {
+            if (output_bound(resolution)) { return; }
+            bind_output(resolution, TypeRegistry::instance().ts(scalar_descriptor<Float>::value_meta()));
+        }
+
+        static auto compose(Wiring &w, NamedPort<"ts", TS<ScalarVar<"T">>> ts,
+                            Scalar<"period", TimeDelta> period,
+                            Scalar<"min_window_period", TimeDelta> min_window_period)
+        {
+            auto lagged        = wire<lag>(w, ts, period.value());
+            auto current       = wire<sum_>(w, ts);
+            auto delayed       = wire<sum_>(w, lagged);
+            auto delayed_count = wire<count>(w, lagged);
+            if (min_window_period.value() > TimeDelta{0})
+            {
+                delayed_count =
+                    wire<default_>(w, delayed_count, wire<const_, TS<Int>>(w, Int{0}, period.value()));
+            }
+            auto delta_ticks = wire<sub_>(w, wire<count>(w, ts), delayed_count);
+            auto empty       = wire<eq_>(w, delta_ticks, wire<const_, TS<Int>>(w, Int{0}));
+            auto nan   = wire<const_, TS<Float>>(w, std::numeric_limits<Float>::quiet_NaN());
+            auto denom = wire<if_then_else>(w, empty, nan, wire<convert, TS<Float>>(w, delta_ticks));
+            return wire<div_>(w, wire<convert, TS<Float>>(w, wire<sub_>(w, current, delayed)), denom);
+        }
+
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"min_window_period", Value{TimeDelta{0}}}};
         }
     };
 

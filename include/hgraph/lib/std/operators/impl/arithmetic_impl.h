@@ -17,8 +17,11 @@
 #include <hgraph/types/static_schema.h>
 #include <hgraph/util/date_time.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -57,6 +60,21 @@ namespace hgraph::stdlib
         static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Str>> rhs, Out<TS<Str>> out)
         {
             out.set(repeat_string_right::repeat_string(rhs.value(), lhs.value()));
+        }
+    };
+
+    /** ``round_(ts, n_digits)`` — round to decimal places with python's
+        correctly-rounded semantics (the printf round-trip renders the
+        correctly-rounded decimal, exactly what CPython's round does for
+        non-tie doubles). */
+    struct round_float_impl
+    {
+        static void eval(In<"ts", TS<Float>> ts, In<"n_digits", TS<Int>> n_digits, Out<TS<Float>> out)
+        {
+            char buffer[64];
+            const int digits = static_cast<int>(std::clamp<Int>(n_digits.value(), Int{0}, Int{40}));
+            std::snprintf(buffer, sizeof buffer, "%.*f", digits, ts.value());
+            out.set(std::strtod(buffer, nullptr));
         }
     };
 

@@ -149,6 +149,8 @@ namespace hgraph::stdlib
         register_graph_overload<pow_, tsl_lhs_broadcast_map<pow_>>();
         register_graph_overload<pow_, tsb_binary_map<pow_>>();
 
+        register_overload<round_, round_float_impl>();
+
         register_overload<neg_, lift<scalar_neg<Int>>>();
         register_overload<neg_, lift<scalar_neg<Float>>>();
         register_overload<neg_, lift<scalar_neg<TimeDelta>>>();

@@ -180,6 +180,15 @@ components:
 - ``lift(fn, inputs=..., output=...)`` wraps a plain scalar function as a
   compute node (scalar annotations become ``TS[...]``; time-series views
   unwrap to ``value if valid else None`` before the call);
+- the diagnostic sinks (``debug_print`` with ``sample=``, ``print_`` with
+  python-style ``{}``/``{name}`` formatting and ``__std_out__``, the
+  format-args ``assert_``) write through python's ``sys.stdout``/``stderr``
+  via the bridge's writer hook, so redirection and pytest capture behave as
+  in hgraph; ``DebugContext`` is wiring-scope sugar over ``debug_print``,
+  and the ``LOGGER`` injectable resolves to the process ``hgraph`` logger
+  as a wiring-time object scalar. Plain-value keyword arguments to
+  ``**kwargs``-collecting operators auto-lift to ``const`` ports on a
+  resolution retry;
 - ``@generator`` sources with captured scalar arguments, distinct state per
   wiring call, empty generators, exception propagation, and strictly increasing
   absolute output times;
