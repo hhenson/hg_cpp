@@ -44,6 +44,12 @@ namespace hgraph::stdlib
         register_overload<eq_, comparison_impl_detail::eq_any_impl>();
         register_overload<ne_, comparison_impl_detail::ne_any_impl>();
         register_overload<cmp_, comparison_impl_detail::cmp_any_impl>();
+        register_overload<min_, comparison_impl_detail::enum_extremum_impl<true>>();
+        register_overload<max_, comparison_impl_detail::enum_extremum_impl<false>>();
+        register_overload<lt_, comparison_impl_detail::enum_ordering_impl<0>>();
+        register_overload<le_, comparison_impl_detail::enum_ordering_impl<1>>();
+        register_overload<gt_, comparison_impl_detail::enum_ordering_impl<2>>();
+        register_overload<ge_, comparison_impl_detail::enum_ordering_impl<3>>();
         register_overload<min_, comparison_impl_detail::running_extremum_impl<true>>();
         register_overload<max_, comparison_impl_detail::running_extremum_impl<false>>();
         register_overload<min_, comparison_impl_detail::nonstrict_extremum_impl<true>>();

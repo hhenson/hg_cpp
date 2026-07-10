@@ -110,6 +110,20 @@ namespace hgraph
          * value kind sharing the name). Lookup-only — does not synthesise.
          */
         [[nodiscard]] const ValueTypeMetaData *named_bundle(std::string_view name) const;
+
+        /**
+         * Intern a NOMINAL enum scalar (design record: schemas/scalar.rst,
+         * *Atomic > Enums*): a named atomic whose payload is a member's
+         * ASSIGNED integer value; ``members`` is the ordered (name, value)
+         * table carried on ``fields``. Identity is by NAME - re-registering
+         * the same name requires an identical member table. Registration
+         * pairs the meta with the Int storage plan and enum-specific ops
+         * (member-name ``to_string``; python conversion via the enum hooks).
+         */
+        const ValueTypeMetaData *enum_type(std::string_view name,
+                                           const std::vector<std::pair<std::string, long long>> &members);
+        /** Lookup-only: the enum registered under ``name`` (nullptr otherwise). */
+        [[nodiscard]] const ValueTypeMetaData *named_enum(std::string_view name) const;
         /**
          * Intern a list value-schema. Pass ``fixed_size > 0`` for a static
          * list. ``variadic_tuple`` flags the metadata as a variadic-tuple
@@ -505,6 +519,7 @@ namespace hgraph
         InternTable<TupleKey, ValueTypeMetaData, TupleKeyHash> tuple_cache_;
         InternTable<BundleKey, ValueTypeMetaData, BundleKeyHash> bundle_cache_;
         InternTable<NamedBundleKey, ValueTypeMetaData, NamedBundleKeyHash> named_bundle_cache_;
+        InternTable<std::string, ValueTypeMetaData> named_enum_cache_;
         InternTable<ListKey, ValueTypeMetaData, ListKeyHash> list_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> set_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_list_cache_;

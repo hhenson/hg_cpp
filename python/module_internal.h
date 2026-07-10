@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <functional>
 #include <string_view>
+#include <unordered_map>
 
 namespace hgraph::python_bridge
 {
@@ -93,6 +94,10 @@ namespace hgraph::python_bridge
     [[nodiscard]] Value      py_arrow_to_frame(nb::handle object);
     [[nodiscard]] nb::object series_to_py(const Series &series);
     [[nodiscard]] Value      py_arrow_to_series(nb::handle object);
+
+    /** meta -> registered python Enum class (backs the core enum ops'
+        python conversion; cleared on registry reset). */
+    [[nodiscard]] std::unordered_map<const ValueTypeMetaData *, nb::object> &enum_class_registry();
 
     [[nodiscard]] const ValueTypeBinding &delta_binding(const ValueTypeMetaData *meta);
     [[nodiscard]] Value                   py_to_value_as(nb::handle object, const ValueTypeMetaData *meta);

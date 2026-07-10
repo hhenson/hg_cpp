@@ -639,6 +639,15 @@ namespace hgraph
         };
         return ops;
     }
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+    /** Python-enum conversion hooks: installed by the python module (which
+        owns the meta -> python-Enum-class registry); the core enum ops call
+        through these slots. */
+    using EnumToPythonFn   = nanobind::object (*)(const ValueTypeMetaData *meta, long long value);
+    using EnumFromPythonFn = long long (*)(const ValueTypeMetaData *meta, nanobind::handle source);
+    EnumToPythonFn &enum_to_python_slot() noexcept;
+    EnumFromPythonFn &enum_from_python_slot() noexcept;
+#endif
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_VALUE_OPS_H

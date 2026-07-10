@@ -13,7 +13,7 @@ from ._types import Series
 from ._types import (TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, CONTEXT, REQUIRED, SCALAR, SCALAR_1, TSW, KeyValue, AUTO_RESOLVE,
                      KEYABLE_SCALAR, TIME_SERIES_TYPE, TIME_SERIES_TYPE_1, TIME_SERIES_TYPE_2, OUT, SIZE,
                      DEFAULT, REF, K, V, SCHEMA, TS_SCHEMA,
-                     SIGNAL, WINDOW_SIZE, WINDOW_SIZE_MIN, WindowSize, Array, ts_schema)
+                     SIGNAL, WINDOW_SIZE, WINDOW_SIZE_MIN, WindowSize, Array, ts_schema, ENUM)
 from ._compat import (CmpResult, DivideByZero, exception_time_series, OperatorWiringNodeClass, BoolResult,
                       CompoundScalar, JSON, TimeSeriesReference,
                       NodeException, accumulate, average, center_of_mass_to_alpha, span_to_alpha)

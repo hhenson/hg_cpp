@@ -82,6 +82,10 @@ namespace hgraph
             pre-allocated bitset (like a fixed tuple / TSB); unknown-size uses
             the sul-style bitset on the compact list. */
         Nullable = 1u << 9,
+        /** A NAMED atomic whose payload is a member's assigned integer value;
+            the ordered member table rides ``fields`` (name + assigned value).
+            Nominal identity, like a named bundle. */
+        Enum = 1u << 10,
     };
 
     /** Bitwise OR over ``ValueTypeFlags``. */
@@ -129,6 +133,9 @@ namespace hgraph
         const char *name{nullptr};
         /** Field index in declaration order. */
         size_t index{0};
+        /** For ENUM members only: the member's ASSIGNED integer value (the
+            stored payload; comparison order). Zero for bundle/tuple fields. */
+        long long enum_value{0};
         /** Schema for this field. */
         const ValueTypeMetaData *type{nullptr};
     };
@@ -237,6 +244,8 @@ namespace hgraph
         /** True when this container schema is backed by structurally-mutable storage. */
         [[nodiscard]] constexpr bool is_mutable() const noexcept { return has(ValueTypeFlags::Mutable); }
         [[nodiscard]] constexpr bool is_nullable() const noexcept { return has(ValueTypeFlags::Nullable); }
+
+        [[nodiscard]] constexpr bool is_enum() const noexcept { return has(ValueTypeFlags::Enum); }
     };
 
     namespace detail

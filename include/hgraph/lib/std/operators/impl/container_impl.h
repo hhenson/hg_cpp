@@ -355,6 +355,52 @@ namespace hgraph::stdlib
         }
     };
 
+    /** getattr_(TS[Enum], attr): ``name`` renders the MEMBER NAME (the enum
+        ops' to_string), ``value`` the assigned integer. */
+    struct getattr_enum
+    {
+        static constexpr auto name = "getattr_enum";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *schema = time_series_schema_at_as<AnyTS>(context, 0);
+            if (schema == nullptr || schema->value_schema == nullptr || !schema->value_schema->is_enum())
+            {
+                return false;
+            }
+            const auto *attr = context.scalar_as<Str>("attr");
+            return attr != nullptr && (*attr == "name" || *attr == "value");
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (output_bound(resolution)) { return; }
+            const auto *attr = context.scalar_as<Str>("attr");
+            if (attr == nullptr) { return; }
+            auto &registry = TypeRegistry::instance();
+            bind_output(resolution, registry.ts(*attr == "name"
+                                                    ? scalar_descriptor<Str>::value_meta()
+                                                    : scalar_descriptor<Int>::value_meta()));
+        }
+
+        static void eval(In<"ts", TS<ScalarVar<"E">>> ts, Scalar<"attr", Str> attr, Out<TsVar<"__out__">> out)
+        {
+            const ValueView value = ts.base().value();
+            if (attr.value() == "name")
+            {
+                const auto &erased   = static_cast<const TSOutputView &>(out);
+                auto        mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.copy_value_from(Value{Str{value.to_string()}}.view()));
+            }
+            else
+            {
+                const auto &erased   = static_cast<const TSOutputView &>(out);
+                auto        mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.copy_value_from(Value{value.checked_as<Int>()}.view()));
+            }
+        }
+    };
+
     /** getattr_(TS[CompoundScalar], attr): the named FIELD of the bundle
         value (hgraph's getattr_cs; CS IS a Bundle value - the C++-first
         ruling). An UNSET field does not tick. */

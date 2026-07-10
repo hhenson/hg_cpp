@@ -29,6 +29,20 @@ A scalar schema has one of nine kinds, recorded on its
     A single scalar: integer, floating-point, boolean, string, or one of the
     date/time scalars.
 
+    **Enums** are named atomic scalars (ruling 2026-07-10: a first-class
+    value kind, never a python-object ride-along). An enum schema is
+    interned NOMINALLY by its type name — like a named bundle — and
+    carries its ordered member table on the schema's ``fields`` array
+    (member name plus the member's ASSIGNED integer value; the
+    ``ValueTypeFlags::Enum`` trait marks the meta). The stored payload is
+    the assigned integer value itself, so the generic comparison ops
+    order enums exactly as hgraph does (`.value` comparison) with no
+    enum-specific kernels; ``to_string`` renders the member NAME, and
+    the python conversion maps to the REGISTERED python ``Enum`` class
+    (the bridge registers each class against its interned meta — the
+    ``CmpResult``/``DivideByZero`` slot mechanism generalised).
+    Re-registering the same name requires an identical member table.
+
 ``Tuple``
     Fixed-arity ordered fields, accessed by index. Field types may differ.
 

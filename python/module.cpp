@@ -1533,6 +1533,20 @@ NB_MODULE(_hgraph, m)
     stdlib::register_standard_operators();
     python_bridge::py_infer_value_slot() =
         reinterpret_cast<python_bridge::PyInferValueFn>(&python_bridge::py_to_value);
+    // The meta -> python-Enum-class registry backing the core enum ops'
+    // python conversion (immortal map; cleared with the registries).
+    python_bridge::enum_class_registry();
+    enum_to_python_slot() = [](const ValueTypeMetaData *meta, long long value) -> nb::object {
+        auto &registry = python_bridge::enum_class_registry();
+        if (const auto it = registry.find(meta); it != registry.end()) { return it->second(value); }
+        throw std::logic_error(std::string{"enum '"} +
+                               (meta->display_name ? meta->display_name : "?") +
+                               "' has no registered python class");
+    };
+    enum_from_python_slot() = [](const ValueTypeMetaData *, nb::handle source) -> long long {
+        return nb::cast<long long>(source.attr("value"));
+    };
+
     // Route the diagnostic sinks (debug_print / print_) through python's
     // sys.stdout/sys.stderr so redirection and pytest capture behave like
     // hgraph's python prints (the run loop releases the GIL - acquire).
@@ -1740,6 +1754,18 @@ NB_MODULE(_hgraph, m)
     m.def("tsw", [](PyValueType v, std::size_t period, std::size_t min_period) {
         return PyTsType{TypeRegistry::instance().tsw(v.meta, period, min_period)};
     }, nb::arg("value"), nb::arg("period"), nb::arg("min_period") = 0);
+    m.def("enum_vt", [](const std::string &name, nb::list members, nb::object cls) {
+        std::vector<std::pair<std::string, long long>> table;
+        table.reserve(nb::len(members));
+        for (nb::handle item : members)
+        {
+            auto pair = nb::cast<nb::tuple>(item);
+            table.emplace_back(nb::cast<std::string>(pair[0]), nb::cast<long long>(pair[1]));
+        }
+        const auto *meta = TypeRegistry::instance().enum_type(name, table);
+        python_bridge::enum_class_registry()[meta] = std::move(cls);
+        return PyValueType{meta};
+    });
     m.def("tsw_duration", [](PyValueType v, TimeDelta time_range, TimeDelta min_time_range) {
         return PyTsType{TypeRegistry::instance().tsw_duration(v.meta, time_range, min_time_range)};
     }, nb::arg("value"), nb::arg("time_range"), nb::arg("min_time_range") = TimeDelta{0});
@@ -2539,6 +2565,7 @@ NB_MODULE(_hgraph, m)
         nb::arg("output_type") = nb::none());
 
     m.def("reset_registries", [] {
+        python_bridge::enum_class_registry().clear();   // meta pointers are re-interned
         reset_all_registries();
         stdlib::register_standard_operators();
     (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar

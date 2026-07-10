@@ -138,12 +138,26 @@ def _value_type(scalar):
             _hgraph.register_bundle_class(scalar.__name__, scalar)
             return meta
     if name is None and isinstance(scalar, type) and issubclass(scalar, _enum.Enum):
-        # C++-registered enums resolve by CLASS NAME (CmpResult,
-        # DivideByZero); unknown enums stay python objects.
+        # A python Enum is a FIRST-CLASS enum scalar (nominal identity by
+        # class name; the member table interns with the meta and the class
+        # registers for read-back). CmpResult/DivideByZero pre-registered by
+        # the bridge resolve to their existing metas by the same name path.
         try:
             return _hgraph.value_type(scalar.__name__)
         except Exception:
             pass
+        enum_name = scalar.__name__
+        qualname = getattr(scalar, "__qualname__", enum_name)
+        if "<locals>" in qualname:
+            enum_name = f"{scalar.__module__}.{qualname}"
+        members = []
+        for member in scalar:
+            if not isinstance(member.value, int):
+                raise TypeError(
+                    f"enum '{enum_name}' has a non-integer member value; only int-valued "
+                    "enums map onto the enum scalar")
+            members.append((member.name, member.value))
+        return _hgraph.enum_vt(enum_name, members, scalar)
     if name is None and isinstance(scalar, type):
         # Any python class is a first-class scalar (hgraph parity): it maps
         # onto the "object" value kind; type checking stays python-side.
@@ -624,6 +638,7 @@ SIZE = _TypeVarSentinel("SIZE")
 V = _TypeVarSentinel("V")
 K = _TypeVarSentinel("K")
 WINDOW_SIZE = _TypeVarSentinel("WINDOW_SIZE")
+ENUM = _TypeVarSentinel("ENUM")
 WINDOW_SIZE_MIN = _TypeVarSentinel("WINDOW_SIZE_MIN")
 
 

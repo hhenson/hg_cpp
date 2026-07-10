@@ -216,6 +216,59 @@ namespace hgraph::stdlib
             }
         };
 
+        /** STRICT binary extremum over ENUM scalars: ordering follows the
+            members' ASSIGNED values (the enum ops' compare — hgraph's
+            min_enum_binary; typed numeric kernels own the other scalars). */
+        template <bool Min>
+        struct enum_extremum_impl
+        {
+            static constexpr auto name = Min ? "min_enum" : "max_enum";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *meta = resolution.find_scalar("T");
+                return meta != nullptr && meta->is_enum();
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
+                             Out<TS<ScalarVar<"T">>> out)
+            {
+                const auto order    = lhs.base().value().compare(rhs.base().value());
+                const bool pick_lhs = Min ? order != std::partial_ordering::greater
+                                          : order != std::partial_ordering::less;
+                out.apply(pick_lhs ? lhs.base().value() : rhs.base().value());
+            }
+        };
+
+        /** Ordering comparisons over ENUM scalars (assigned-value order). */
+        template <int Op>   // 0 lt, 1 le, 2 gt, 3 ge
+        struct enum_ordering_impl
+        {
+            static constexpr auto name = Op == 0   ? "lt_enum"
+                                         : Op == 1 ? "le_enum"
+                                         : Op == 2 ? "gt_enum"
+                                                   : "ge_enum";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *meta = resolution.find_scalar("T");
+                return meta != nullptr && meta->is_enum();
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
+                             Out<TS<Bool>> out)
+            {
+                const auto order = lhs.base().value().compare(rhs.base().value());
+                switch (Op)
+                {
+                    case 0: out.set(order == std::partial_ordering::less); break;
+                    case 1: out.set(order != std::partial_ordering::greater); break;
+                    case 2: out.set(order == std::partial_ordering::greater); break;
+                    default: out.set(order != std::partial_ordering::less); break;
+                }
+            }
+        };
+
         /** NON-STRICT binary extremum: a single valid side passes through. */
         template <bool Min>
         struct nonstrict_extremum_impl

@@ -20,6 +20,12 @@
 
 namespace hgraph::python_bridge
 {
+    std::unordered_map<const ValueTypeMetaData *, nb::object> &enum_class_registry()
+    {
+        static auto *registry = new std::unordered_map<const ValueTypeMetaData *, nb::object>{};
+        return *registry;
+    }
+
     PyObj::PyObj(nb::object value) noexcept
         : object(value.release().ptr())
     {

@@ -5,7 +5,9 @@
 #include <hgraph/types/time_series_reference.h>
 
 #include <cstdint>
+#include <mutex>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
 namespace hgraph
@@ -222,6 +224,155 @@ namespace hgraph
         return (meta != nullptr && meta->is_named_bundle()) ? meta : nullptr;
     }
 
+    namespace
+    {
+        /** Per-enum ValueOps: Int ops with member-aware rendering and the
+            python conversion hooks; ``context`` = the enum meta. Cleared on
+            registry reset (metas are re-interned, pointers reuse). */
+        std::mutex &enum_ops_mutex()
+        {
+            static std::mutex m;
+            return m;
+        }
+
+        std::unordered_map<const ValueTypeMetaData *, ValueOps> &enum_ops_store()
+        {
+            static auto *store = new std::unordered_map<const ValueTypeMetaData *, ValueOps>{};
+            return *store;
+        }
+
+        std::string enum_to_string(const void *context, const void *memory)
+        {
+            const auto *meta  = static_cast<const ValueTypeMetaData *>(context);
+            const auto  value = *static_cast<const Int *>(memory);
+            for (size_t index = 0; index < meta->field_count; ++index)
+            {
+                if (meta->fields[index].enum_value == value) { return std::string{meta->fields[index].name}; }
+            }
+            return std::to_string(value);
+        }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        nanobind::object enum_to_python(const void *context, const void *memory)
+        {
+            const auto *meta = static_cast<const ValueTypeMetaData *>(context);
+            if (enum_to_python_slot() == nullptr)
+            {
+                throw std::logic_error("enum python conversion requires the python bridge");
+            }
+            return enum_to_python_slot()(meta, *static_cast<const Int *>(memory));
+        }
+
+        void enum_from_python(const void *context, const ValueTypeBinding &, void *memory, nanobind::handle source)
+        {
+            const auto *meta = static_cast<const ValueTypeMetaData *>(context);
+            if (enum_from_python_slot() == nullptr)
+            {
+                throw std::logic_error("enum python conversion requires the python bridge");
+            }
+            *static_cast<Int *>(memory) = enum_from_python_slot()(meta, source);
+        }
+#endif
+
+        const ValueOps &enum_ops_for(const ValueTypeMetaData *meta)
+        {
+            std::lock_guard<std::mutex> lock(enum_ops_mutex());
+            auto [it, fresh] = enum_ops_store().try_emplace(meta);
+            if (fresh)
+            {
+                ValueOps ops       = ops_for<Int>();
+                ops.context        = meta;
+                ops.to_string_impl = &enum_to_string;
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                ops.to_python_impl        = &enum_to_python;
+                ops.from_python_impl      = &enum_from_python;
+                ops.to_python_buffer_impl = nullptr;
+#endif
+                it->second = ops;
+            }
+            return it->second;
+        }
+
+        void clear_enum_ops() noexcept
+        {
+            std::lock_guard<std::mutex> lock(enum_ops_mutex());
+            enum_ops_store().clear();
+        }
+    }  // namespace
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+    EnumToPythonFn &enum_to_python_slot() noexcept
+    {
+        static EnumToPythonFn slot = nullptr;
+        return slot;
+    }
+
+    EnumFromPythonFn &enum_from_python_slot() noexcept
+    {
+        static EnumFromPythonFn slot = nullptr;
+        return slot;
+    }
+#endif
+
+    const ValueTypeMetaData *TypeRegistry::named_enum(std::string_view name) const
+    {
+        const ValueTypeMetaData *meta = value_type(name);
+        return (meta != nullptr && meta->is_enum()) ? meta : nullptr;
+    }
+
+    const ValueTypeMetaData *
+    TypeRegistry::enum_type(std::string_view name, const std::vector<std::pair<std::string, long long>> &members)
+    {
+        if (name.empty()) { throw std::invalid_argument("enum_type requires a non-empty name"); }
+        if (members.empty()) { throw std::invalid_argument("enum_type requires at least one member"); }
+
+        if (const ValueTypeMetaData *existing = named_enum(name); existing != nullptr)
+        {
+            bool same = existing->field_count == members.size();
+            for (size_t index = 0; same && index < members.size(); ++index)
+            {
+                same = members[index].first == existing->fields[index].name &&
+                       members[index].second == existing->fields[index].enum_value;
+            }
+            if (!same)
+            {
+                throw std::invalid_argument(std::string("enum '") + std::string(name) +
+                                            "' is already registered with a different member table");
+            }
+            return existing;
+        }
+
+        const ValueTypeMetaData &meta = named_enum_cache_.intern(std::string{name}, [&]() {
+            auto stored = std::make_unique<ValueFieldMetaData[]>(members.size());
+            for (size_t index = 0; index < members.size(); ++index)
+            {
+                stored[index].name       = store_name_interned(members[index].first);
+                stored[index].index      = index;
+                stored[index].enum_value = members[index].second;
+                stored[index].type       = nullptr;
+            }
+            ValueFieldMetaData *fields_ptr = store_value_fields(std::move(stored));
+
+            ValueTypeMetaData m(ValueTypeKind::Atomic,
+                                ValueTypeFlags::Enum | ValueTypeFlags::Hashable | ValueTypeFlags::Equatable |
+                                    ValueTypeFlags::Comparable | ValueTypeFlags::TriviallyConstructible |
+                                    ValueTypeFlags::TriviallyDestructible | ValueTypeFlags::TriviallyCopyable,
+                                store_name_interned(name));
+            m.fields      = fields_ptr;
+            m.field_count = members.size();
+            return m;
+        });
+        register_value_alias(name, &meta);
+
+        // Pair with the Int plan + this enum's ops so Value/TS machinery
+        // resolves uniformly (the register_scalar pattern for a nominal type).
+        const auto &plan = MemoryUtils::plan_for<Int>();
+        ValuePlanFactory::instance().register_atomic(&meta, &plan);
+        const ValueTypeBinding &binding = ValueTypeBinding::intern(meta, plan, enum_ops_for(&meta));
+        ValuePlanFactory::instance().register_binding(binding);
+        return &meta;
+    }
+
     const TSValueTypeMetaData *TypeRegistry::named_tsb(std::string_view name) const
     {
         const TSValueTypeMetaData *meta = time_series_type(name);
@@ -236,6 +387,8 @@ namespace hgraph
         tuple_cache_.clear();
         bundle_cache_.clear();
         named_bundle_cache_.clear();
+        named_enum_cache_.clear();
+        clear_enum_ops();
         list_cache_.clear();
         set_cache_.clear();
         mutable_list_cache_.clear();
