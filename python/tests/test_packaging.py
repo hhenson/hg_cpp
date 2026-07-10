@@ -73,11 +73,23 @@ def test_release_workflow_targets_supported_platforms():
     workflow = (ROOT / ".github/workflows/build.yml").read_text()
 
     assert "macos-15-intel" not in workflow
-    assert workflow.count("macos-26") == 2
+    assert "          - os: macos-26" in workflow
+    assert "          - macos-26" in workflow
     assert "CMAKE_OSX_DEPLOYMENT_TARGET=15.0" in workflow
     assert 'python-version: "3.12"' in workflow
     assert '- "3.13"' in workflow
     assert '- "3.14"' in workflow
+
+
+def test_release_workflow_reuses_tested_commit_artifacts():
+    workflow = (ROOT / ".github/workflows/build.yml").read_text()
+
+    assert "Find tested distributions for this commit" in workflow
+    assert "head_sha: context.sha" in workflow
+    assert "run.head_sha !== context.sha" in workflow
+    assert "github.rest.actions.listWorkflowRunArtifacts" in workflow
+    assert "needs.reuse-build.outputs.run-id == ''" in workflow
+    assert "needs.reuse-build.outputs.run-id || github.run_id" in workflow
 
 
 def main():
@@ -87,12 +99,14 @@ def main():
     test_release_metadata_is_consistent()
     test_wheel_targets_the_python_312_stable_abi()
     test_release_workflow_targets_supported_platforms()
+    test_release_workflow_reuses_tested_commit_artifacts()
     print("PASS test_pyarrow_build_and_runtime_requirements_share_the_supported_abi")
     print("PASS test_supported_python_versions_are_declared")
     print("PASS test_pypi_classifiers_are_valid")
     print("PASS test_release_metadata_is_consistent")
     print("PASS test_wheel_targets_the_python_312_stable_abi")
     print("PASS test_release_workflow_targets_supported_platforms")
+    print("PASS test_release_workflow_reuses_tested_commit_artifacts")
 
 
 if __name__ == "__main__":

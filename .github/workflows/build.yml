@@ -10,6 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -63,9 +64,73 @@ jobs:
 
           print(f"Validated new hg_cpp release {version}")
 
+  reuse-build:
+    name: Find tested distributions for this commit
+    needs: validate-release
+    runs-on: ubuntu-latest
+    outputs:
+      run-id: ${{ steps.find.outputs.run-id }}
+    steps:
+      - name: Find successful build by commit SHA
+        id: find
+        if: github.ref_type == 'tag'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const requiredArtifacts = new Set([
+              "distribution-sdist",
+              "distribution-wheel-macos-26",
+              "distribution-wheel-ubuntu-latest",
+              "distribution-wheel-windows-latest",
+            ]);
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "build.yml",
+                event: "push",
+                head_sha: context.sha,
+                status: "success",
+                per_page: 100,
+              },
+            );
+
+            for (const run of runs) {
+              if (run.head_sha !== context.sha || run.id === context.runId) {
+                continue;
+              }
+
+              const artifacts = await github.paginate(
+                github.rest.actions.listWorkflowRunArtifacts,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id,
+                  per_page: 100,
+                },
+              );
+              const availableArtifacts = new Set(
+                artifacts
+                  .filter((artifact) => !artifact.expired)
+                  .map((artifact) => artifact.name),
+              );
+              if ([...requiredArtifacts].every((name) => availableArtifacts.has(name))) {
+                core.notice(`Reusing tested distributions from workflow run ${run.id}`);
+                core.setOutput("run-id", String(run.id));
+                return;
+              }
+            }
+
+            core.notice(`No reusable distributions found for commit ${context.sha}`);
+            core.setOutput("run-id", "");
+
   build-wheel:
     name: Build ${{ matrix.os }} wheel
-    needs: validate-release
+    needs:
+      - validate-release
+      - reuse-build
+    if: needs.reuse-build.outputs.run-id == ''
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -142,7 +207,10 @@ jobs:
 
   build-sdist:
     name: Build source distribution
-    needs: validate-release
+    needs:
+      - validate-release
+      - reuse-build
+    if: needs.reuse-build.outputs.run-id == ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -173,7 +241,10 @@ jobs:
 
   test-wheel:
     name: Test ${{ matrix.os }} / Python ${{ matrix.python-version }}
-    needs: build-wheel
+    needs:
+      - reuse-build
+      - build-wheel
+    if: needs.reuse-build.outputs.run-id == ''
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -218,8 +289,18 @@ jobs:
 
   publish:
     name: Publish hg_cpp to PyPI
-    if: startsWith(github.ref, 'refs/tags/v_')
+    if: >-
+      always() &&
+      startsWith(github.ref, 'refs/tags/v_') &&
+      needs.validate-release.result == 'success' &&
+      needs.reuse-build.result == 'success' &&
+      (
+        needs.reuse-build.outputs.run-id != '' ||
+        (needs.build-sdist.result == 'success' && needs.test-wheel.result == 'success')
+      )
     needs:
+      - validate-release
+      - reuse-build
       - build-sdist
       - test-wheel
     runs-on: ubuntu-latest
@@ -227,6 +308,7 @@ jobs:
       name: release
       url: https://pypi.org/p/hg_cpp
     permissions:
+      actions: read
       id-token: write
     steps:
       - uses: actions/download-artifact@v7
@@ -234,6 +316,8 @@ jobs:
           pattern: distribution-*
           path: dist
           merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.reuse-build.outputs.run-id || github.run_id }}
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
