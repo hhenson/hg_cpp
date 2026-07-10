@@ -186,7 +186,7 @@ if(NOT fmt_FOUND)
 endif()
 if(HGRAPH_BUILD_PYTHON_BINDINGS)
     target_link_libraries(hgraph_options INTERFACE
-        $<BUILD_INTERFACE:fmt::fmt-header-only>
+        $<BUILD_INTERFACE:fmt::fmt>
     )
 else()
     target_link_libraries(hgraph_options INTERFACE fmt::fmt)
