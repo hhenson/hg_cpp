@@ -794,46 +794,6 @@ namespace hgraph::stdlib
                                  "unsupported container aggregate kind"); }
         }
 
-        /** Correctly-rounded double sqrt of the exact rational num/den
-            (python's statistics module computes with exact fractions - a
-            plain sqrt(double(num)/double(den)) can be off by one ulp). */
-        [[nodiscard]] inline Float sqrt_rational(Int num, Int den)
-        {
-#if defined(__SIZEOF_INT128__)
-            __extension__ using int128 = unsigned __int128;
-            if (num == 0) { return 0.0; }
-            // Normalize num/den by powers of 4 so the ratio lands in [1, 4):
-            // the scaled sqrt then has exactly 54 bits and one final rounding.
-            int e = 0;
-            int128 n = static_cast<int128>(num);
-            int128 d = static_cast<int128>(den);
-            while (n < d) { n <<= 2; e -= 1; }
-            while (n >= (d << 2)) { d <<= 2; e += 1; }
-            // q = floor(ratio * 2^108); sqrt gives a 55-BIT result - two
-            // guard bits over the 53-bit target, as python's
-            // _float_sqrt_of_frac uses (bit width 109). Round-to-odd at 55
-            // bits, then ONE float conversion rounds to nearest: with two
-            // guard bits round-to-odd provably avoids double rounding.
-            // (n << 108) would overflow 128 bits for large aggregates, so
-            // divide in two 54-bit steps: n/d * 2^108 = (q1 + r1/d) * 2^54.
-            const int128 q1  = (n << 54) / d;
-            const int128 r1  = (n << 54) % d;
-            const int128 q   = (q1 << 54) + (r1 << 54) / d;
-            const int128 rem = (r1 << 54) % d;
-            auto r = static_cast<int128>(std::sqrt(static_cast<double>(q)));
-            for (int i = 0; i < 4; ++i) { r = (r + q / r) >> 1; }
-            while (r * r > q) { --r; }
-            while ((r + 1) * (r + 1) <= q) { ++r; }
-            const bool exact = r * r == q && rem == 0;
-            if (!exact) { r |= 1; }
-            return std::ldexp(static_cast<Float>(r), e - 54);
-#else
-            // MSVC has no native 128-bit integer. Its double-precision result
-            // can differ from the exact-fraction path by one ulp.
-            return std::sqrt(static_cast<Float>(num) / static_cast<Float>(den));
-#endif
-        }
-
         inline void publish_value(const TSOutputView &out_view, Value value)
         {
             auto mutation = out_view.begin_mutation(out_view.evaluation_time());
@@ -873,26 +833,35 @@ namespace hgraph::stdlib
             return static_cast<Float>(value);
         }
 
-        template <typename Element, ValueTypeKind Kind>
+        template <ContainerAgg Agg, typename Element, ValueTypeKind Kind>
         struct numeric_container_stats
         {
             std::size_t count{0};
-            Float       sum{0.0};
-            Int         int_sum{0};
-            Int         int_sum_sq{0};
+            Element     sum{};
+            Float       mean_sum{0.0};
+            Float       origin{0.0};
+            Float       shifted_sum{0.0};
+            Float       shifted_sum_sq{0.0};
 
             static numeric_container_stats collect(const ValueView &container)
             {
                 numeric_container_stats stats;
                 for_each_container_element<Kind>(container, [&](const ValueView &item) {
                     const Element value = item.checked_as<Element>();
-                    ++stats.count;
-                    stats.sum += numeric_as_float(value);
-                    if constexpr (std::is_same_v<Element, Int>)
+                    if constexpr (Agg == ContainerAgg::Sum) { stats.sum += value; }
+                    else if constexpr (Agg == ContainerAgg::Mean)
                     {
-                        stats.int_sum += value;
-                        stats.int_sum_sq += value * value;
+                        stats.mean_sum += numeric_as_float(value);
                     }
+                    else
+                    {
+                        const Float x = numeric_as_float(value);
+                        if (stats.count == 0) { stats.origin = x; }
+                        const Float shifted = x - stats.origin;
+                        stats.shifted_sum += shifted;
+                        stats.shifted_sum_sq += shifted * shifted;
+                    }
+                    ++stats.count;
                 });
                 return stats;
             }
@@ -969,55 +938,31 @@ namespace hgraph::stdlib
 
             static void do_eval(const ValueView &container, const TSOutputView &out_view)
             {
-                const auto stats = numeric_container_stats<Element, Kind>::collect(container);
+                const auto stats = numeric_container_stats<Agg, Element, Kind>::collect(container);
                 if constexpr (Agg == ContainerAgg::Sum)
                 {
-                    if constexpr (std::is_same_v<Element, Int>)
-                    {
-                        publish_scalar(out_view, stats.int_sum);
-                    }
-                    else { publish_scalar(out_view, stats.sum); }
+                    publish_scalar(out_view, stats.sum);
                     return;
                 }
 
-                Float out = Agg == ContainerAgg::Mean && stats.count == 0
-                                ? std::numeric_limits<Float>::quiet_NaN()
-                                : 0.0;
-                if (stats.count > 0)
+                if constexpr (Agg == ContainerAgg::Mean)
                 {
-                    const Float mean_v = stats.sum / static_cast<Float>(stats.count);
-                    out = mean_v;
-                    if constexpr (Agg == ContainerAgg::Std || Agg == ContainerAgg::Var)
-                    {
-                        out = 0.0;   // singleton spread stays 0.0
-                        if (stats.count > 1)
-                        {
-                            Float variance = 0.0;
-                            if constexpr (std::is_same_v<Element, Int>)
-                            {
-                                const Int n   = static_cast<Int>(stats.count);
-                                const Int num = n * stats.int_sum_sq - stats.int_sum * stats.int_sum;
-                                const Int den = n * (n - 1);
-                                if constexpr (Agg == ContainerAgg::Std) { out = sqrt_rational(num, den); }
-                                else { variance = static_cast<Float>(num) / static_cast<Float>(den); }
-                            }
-                            else
-                            {
-                                Float squares = 0.0;
-                                for_each_container_element<Kind>(container, [&](const ValueView &item) {
-                                    const Float d = item.checked_as<Element>() - mean_v;
-                                    squares += d * d;
-                                });
-                                variance = squares / static_cast<Float>(stats.count - 1);
-                            }
-                            if constexpr (Agg == ContainerAgg::Std)
-                            {
-                                if constexpr (!std::is_same_v<Element, Int>) { out = std::sqrt(variance); }
-                            }
-                            else { out = variance; }
-                        }
-                    }
+                    const Float out = stats.count == 0
+                                          ? std::numeric_limits<Float>::quiet_NaN()
+                                          : stats.mean_sum / static_cast<Float>(stats.count);
+                    publish_scalar(out_view, out);
+                    return;
                 }
+
+                Float variance = 0.0;
+                if (stats.count > 1)
+                {
+                    const Float count = static_cast<Float>(stats.count);
+                    variance = (stats.shifted_sum_sq - stats.shifted_sum * stats.shifted_sum / count) /
+                               static_cast<Float>(stats.count - 1);
+                    if (variance < 0.0) { variance = 0.0; }
+                }
+                const Float out = Agg == ContainerAgg::Std ? std::sqrt(variance) : variance;
                 publish_scalar(out_view, out);
             }
         };

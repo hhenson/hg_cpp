@@ -168,6 +168,21 @@ def test_var_frozendict_unary():
     ) == pytest.approx([0.0, 0.0, 50.0, 33.333333333333336])
 
 
+def test_frozendict_spread_with_large_integer_offset():
+    @graph
+    def std_app(ts: TS[frozendict[int, int]]) -> TS[float]:
+        return std(ts)
+
+    @graph
+    def var_app(ts: TS[frozendict[int, int]]) -> TS[float]:
+        return var(ts)
+
+    base = 2**40
+    values = [frozendict({1: base, 2: base + 10, 3: base + 20})]
+    assert eval_node(std_app, values) == pytest.approx([10.0])
+    assert eval_node(var_app, values) == pytest.approx([100.0])
+
+
 def test_str_frozendict():
     @graph
     def app(ts: TS[frozendict[KEYABLE_SCALAR, SCALAR]]) -> TS[str]:
