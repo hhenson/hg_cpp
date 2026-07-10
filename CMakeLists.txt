@@ -93,6 +93,10 @@ endif()
 add_library(hgraph_options INTERFACE)
 add_library(hgraph::options ALIAS hgraph_options)
 
+if(NOT HGRAPH_BUILD_SHARED)
+    target_compile_definitions(hgraph_options INTERFACE HGRAPH_STATIC_DEFINE)
+endif()
+
 target_compile_features(hgraph_options INTERFACE cxx_std_23)
 target_include_directories(hgraph_options INTERFACE
     $<BUILD_INTERFACE:${HGRAPH_GENERATED_INCLUDE_DIR}>

@@ -702,7 +702,8 @@ namespace hgraph::detail
                     unbind_from_ref_data(target, endpoint, modified_time);
                     return;
                 }
-                const auto &reference = source_view.value().checked_as<TimeSeriesReference>();
+                const auto  source_value = source_view.value();
+                const auto &reference = source_value.checked_as<TimeSeriesReference>();
                 apply_reference_to_from_ref_data(target, endpoint, reference, modified_time);
                 return;
             }
@@ -1075,7 +1076,8 @@ namespace hgraph::detail
                 return;
             }
 
-            const auto &reference = source_view.value().checked_as<TimeSeriesReference>();
+            const auto  source_value = source_view.value();
+            const auto &reference = source_value.checked_as<TimeSeriesReference>();
             apply_reference_to_from_ref_data(target, endpoint_schema, reference, modified_time);
         }
     };

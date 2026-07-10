@@ -83,7 +83,8 @@ namespace hgraph
                 throw std::logic_error("shared output capture target node has no reference state");
             }
 
-            const auto &previous = source_node.state().checked_as<TimeSeriesReference>();
+            const auto  state = source_node.state();
+            const auto &previous = state.checked_as<TimeSeriesReference>();
             if (previous == reference) { return; }
 
             source_node.replace_state(Value{std::move(reference)});
@@ -134,7 +135,8 @@ namespace hgraph
 
         NodeCallbacks callbacks;
         callbacks.evaluate = [config](const NodeView &view, DateTime evaluation_time) {
-            const auto &reference = view.state().checked_as<TimeSeriesReference>();
+            const auto  state = view.state();
+            const auto &reference = state.checked_as<TimeSeriesReference>();
             if (reference.is_empty() && reference.target_schema() == nullptr)
             {
                 if (config->strict) { throw std::runtime_error("missing shared output: " + config->key); }

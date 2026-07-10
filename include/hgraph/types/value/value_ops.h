@@ -344,7 +344,13 @@ namespace hgraph
             }
             else
             {
-                return std::string{"<"} + typeid(T).name() + ">";
+                const char *type_name = typeid(T).name();
+                std::string result;
+                result.reserve(std::char_traits<char>::length(type_name) + 2);
+                result.push_back('<');
+                result.append(type_name);
+                result.push_back('>');
+                return result;
             }
         }
 

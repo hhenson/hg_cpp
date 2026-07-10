@@ -60,15 +60,28 @@ def test_wheel_targets_the_python_312_stable_abi():
     assert scikit_build["wheel"]["py-api"] == STABLE_ABI_TAG
 
 
+def test_release_workflow_targets_supported_platforms():
+    workflow = (ROOT / ".github/workflows/build.yml").read_text()
+
+    assert "macos-15-intel" not in workflow
+    assert workflow.count("macos-26") == 2
+    assert "CMAKE_OSX_DEPLOYMENT_TARGET=15.0" in workflow
+    assert 'python-version: "3.12"' in workflow
+    assert '- "3.13"' in workflow
+    assert '- "3.14"' in workflow
+
+
 def main():
     test_pyarrow_build_and_runtime_requirements_share_the_supported_abi()
     test_supported_python_versions_are_declared()
     test_release_metadata_is_consistent()
     test_wheel_targets_the_python_312_stable_abi()
+    test_release_workflow_targets_supported_platforms()
     print("PASS test_pyarrow_build_and_runtime_requirements_share_the_supported_abi")
     print("PASS test_supported_python_versions_are_declared")
     print("PASS test_release_metadata_is_consistent")
     print("PASS test_wheel_targets_the_python_312_stable_abi")
+    print("PASS test_release_workflow_targets_supported_platforms")
 
 
 if __name__ == "__main__":

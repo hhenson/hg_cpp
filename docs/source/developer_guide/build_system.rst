@@ -39,6 +39,9 @@ must exactly match the versions in ``pyproject.toml``, ``CMakeLists.txt``, and
 ``docs/source/conf.py``.  The PyPI trusted publisher is bound to the ``build.yml``
 workflow and the GitHub ``release`` environment.
 
+The macOS build uses the current unversioned Homebrew LLVM from the latest
+Apple Silicon runner image while retaining a macOS 15 deployment target.
+
 Open Design Items
 -----------------
 

@@ -799,6 +799,7 @@ namespace hgraph::stdlib
             plain sqrt(double(num)/double(den)) can be off by one ulp). */
         [[nodiscard]] inline Float sqrt_rational(Int num, Int den)
         {
+#if defined(__SIZEOF_INT128__)
             __extension__ using int128 = unsigned __int128;
             if (num == 0) { return 0.0; }
             // Normalize num/den by powers of 4 so the ratio lands in [1, 4):
@@ -826,6 +827,11 @@ namespace hgraph::stdlib
             const bool exact = r * r == q && rem == 0;
             if (!exact) { r |= 1; }
             return std::ldexp(static_cast<Float>(r), e - 54);
+#else
+            // MSVC has no native 128-bit integer. Its double-precision result
+            // can differ from the exact-fraction path by one ulp.
+            return std::sqrt(static_cast<Float>(num) / static_cast<Float>(den));
+#endif
         }
 
         inline void publish_value(const TSOutputView &out_view, Value value)

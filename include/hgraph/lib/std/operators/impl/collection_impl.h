@@ -3267,55 +3267,63 @@ namespace hgraph::stdlib
             the rest stay UNSET (CS IS a Bundle value; py from_ts wires a
             structural TSB into this node). */
         template <bool Strict>
-        struct combine_cs_from_fields
+        void combine_cs_from_fields_eval(const TSInputView &fields, const TSOutputView &erased)
         {
-            static constexpr auto name = Strict ? "combine_cs_from_fields" : "combine_cs_from_fields_lenient";
+            const auto *target = erased.schema()->value_schema;
+            BundleBuilder builder{*ValuePlanFactory::instance().binding_for(target)};
 
-            static void eval_impl(const TSInputView &fields, const TSOutputView &erased)
+            const auto *input_schema = fields.schema();
+            for (std::size_t index = 0; index < input_schema->field_count(); ++index)
             {
-                const auto *target = erased.schema()->value_schema;
-                BundleBuilder builder{*ValuePlanFactory::instance().binding_for(target)};
-
-                const auto *input_schema = fields.schema();
-                for (std::size_t index = 0; index < input_schema->field_count(); ++index)
+                const char *field_name = input_schema->fields()[index].name;
+                if (field_name == nullptr) { continue; }
+                auto child = fields.indexed_child_at(index);
+                if constexpr (Strict)
                 {
-                    const char *field_name = input_schema->fields()[index].name;
-                    if (field_name == nullptr) { continue; }
-                    auto child = fields.indexed_child_at(index);
-                    if constexpr (Strict)
+                    // hgraph default: EVERY supplied field must be valid.
+                    if (!child.valid()) { return; }
+                }
+                else if (!child.valid()) { continue; }
+                for (std::size_t target_index = 0; target_index < target->field_count; ++target_index)
+                {
+                    if (target->fields[target_index].name != nullptr &&
+                        std::string_view{target->fields[target_index].name} == field_name)
                     {
-                        // hgraph default: EVERY supplied field must be valid.
-                        if (!child.valid()) { return; }
-                    }
-                    else if (!child.valid()) { continue; }
-                    for (std::size_t target_index = 0; target_index < target->field_count; ++target_index)
-                    {
-                        if (target->fields[target_index].name != nullptr &&
-                            std::string_view{target->fields[target_index].name} == field_name)
-                        {
-                            builder.set(target_index, Value{child.value()});
-                            break;
-                        }
+                        builder.set(target_index, Value{child.value()});
+                        break;
                     }
                 }
-                Value bundle = builder.build();
-                if (erased.data_view().has_current_value() && erased.value().equals(bundle.view())) { return; }
-                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
-                static_cast<void>(mutation.move_value_from(std::move(bundle)));
             }
+            Value bundle = builder.build();
+            if (erased.data_view().has_current_value() && erased.value().equals(bundle.view())) { return; }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(bundle)));
+        }
+
+        template <bool Strict>
+        struct combine_cs_from_fields;
+
+        template <>
+        struct combine_cs_from_fields<true>
+        {
+            static constexpr auto name = "combine_cs_from_fields";
 
             static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Out<TsVar<"__out__">> out)
-                requires Strict
             {
-                eval_impl(ts, static_cast<const TSOutputView &>(out));
+                combine_cs_from_fields_eval<true>(ts, static_cast<const TSOutputView &>(out));
             }
+        };
+
+        template <>
+        struct combine_cs_from_fields<false>
+        {
+            static constexpr auto name = "combine_cs_from_fields_lenient";
 
             static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
                              Scalar<"__strict__", Bool>,
                              Out<TsVar<"__out__">> out)
-                requires (!Strict)
             {
-                eval_impl(ts, static_cast<const TSOutputView &>(out));
+                combine_cs_from_fields_eval<false>(ts, static_cast<const TSOutputView &>(out));
             }
         };
 
