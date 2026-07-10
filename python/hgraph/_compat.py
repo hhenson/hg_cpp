@@ -54,6 +54,53 @@ def _gap(name):
     return _raise
 
 
+# Node evaluation errors surface as RuntimeError through the C++ bridge;
+# hgraph's NodeException is an alias until richer error info is bridged.
+NodeException = RuntimeError
+
+
+def accumulate(*ts, **kwargs):
+    """hgraph parity (deprecated upstream): accumulate == running sum_."""
+    from . import sum_
+
+    return sum_(*ts, **kwargs)
+
+
+def average(*ts, **kwargs):
+    """hgraph parity (deprecated upstream): average == running mean."""
+    from . import mean
+
+    return mean(*ts, **kwargs)
+
+
+def center_of_mass_to_alpha(com: float) -> float:
+    if com <= 0:
+        raise ValueError(f"Center of mass must be positive, got {com}")
+    return 1.0 / (com + 1.0)
+
+
+def span_to_alpha(span: float) -> float:
+    if span <= 0:
+        raise ValueError(f"Span must be positive, got {span}")
+    return 2.0 / (span + 1.0)
+
+
+def _window_result():
+    """hgraph's window() result schema {buffer, index} (generic over the
+    element type; resolves when the window operator lands). Built lazily -
+    the annotations subscript TS[...] which needs this module initialized."""
+    import datetime
+    from typing import Tuple
+
+    from ._types import TS, SCALAR, TimeSeriesSchema
+
+    class WindowResult(TimeSeriesSchema):
+        buffer: TS[Tuple[SCALAR, ...]]
+        index: TS[Tuple[datetime.datetime, ...]]
+
+    return WindowResult
+
+
 class BoolResult:
     """hgraph's if_ result schema: {true: REF[T], false: REF[T]}."""
 

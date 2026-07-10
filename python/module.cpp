@@ -888,18 +888,78 @@ namespace
         {
             switch (kind)
             {
+                // Activity is REAL and runtime-mutable (make_active /
+                // make_passive from python) — consult the link, not the
+                // static layout marker.
                 case 't':
                 case 'u':
                 case 'C':
-                    if (bundle[ts_index++].modified()) { return true; }
-                    break;
                 case 'T':
                 case 'U':
-                case 'P': ++ts_index; break;
+                case 'P': {
+                    auto child = bundle[ts_index++];
+                    if (child.active() && child.modified()) { return true; }
+                    break;
+                }
                 default: break;
             }
         }
         return false;
+    }
+
+    /**
+     * Make python-node input activity REAL at the per-child link level.
+     *
+     * The framework activates the packed ``args`` port as ONE root
+     * subscription; runtime ``make_passive()``/``make_active()`` from user
+     * code operates on the CHILD links, which that root subscription would
+     * bypass (a passivated child still notified through the bundle root).
+     * At start we activate each child per its layout marker and drop the
+     * root subscription, so per-child activity — including runtime changes
+     * from python code — is the single subscription model.
+     */
+    void py_apply_input_activity(std::string_view layout, const TSInputView &args_view)
+    {
+        auto       &args     = const_cast<TSInputView &>(args_view);
+        auto        bundle   = args.as_bundle();
+        std::size_t ts_index = 0;
+        for (const char kind : layout)
+        {
+            switch (kind)
+            {
+                case 't':
+                case 'u':
+                case 'C': bundle[ts_index++].make_active(); break;
+                case 'T':
+                case 'U':
+                case 'P': bundle[ts_index++].make_passive(); break;
+                default: break;
+            }
+        }
+        args.make_passive();   // the framework's root subscription
+    }
+
+    /** The stop-side mirror: every child link goes passive (including any the
+        python code re-activated at runtime). */
+    void py_clear_input_activity(std::string_view layout, const TSInputView &args_view)
+    {
+        auto       &args     = const_cast<TSInputView &>(args_view);
+        auto        bundle   = args.as_bundle();
+        std::size_t ts_index = 0;
+        for (const char kind : layout)
+        {
+            switch (kind)
+            {
+                case 't':
+                case 'u':
+                case 'C':
+                case 'T':
+                case 'U':
+                case 'P': bundle[ts_index++].make_passive(); break;
+                default: break;
+            }
+        }
+        args.make_passive();
     }
 
     /** Assemble the python call args per the layout; false = a ts arg is not yet valid. */
@@ -1049,12 +1109,15 @@ namespace
     {
         static constexpr auto name = "__py_compute";
 
-        static void start(Scalar<"start_fn", PyNodeRef> fn, Scalar<"start_enabled", Bool> enabled,
+        static void start(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+                          Scalar<"config", Str> eval_config,
+                          Scalar<"start_fn", PyNodeRef> fn, Scalar<"start_enabled", Bool> enabled,
                           Scalar<"start_config", Str> config,
                           Scalar<"start_scalars", ScalarVar<"SSV">> scalars,
                           State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
                           GlobalStateView global_state)
         {
+            py_apply_input_activity(eval_config.value(), args.base());
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
                               global_state);
         }
@@ -1097,12 +1160,18 @@ namespace
             guard->alive = false;
         }
 
-        static void stop(Scalar<"stop_fn", PyNodeRef> fn, Scalar<"stop_enabled", Bool> enabled,
+        static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+                         Scalar<"config", Str> eval_config,
+                         Scalar<"stop_fn", PyNodeRef> fn, Scalar<"stop_enabled", Bool> enabled,
                          Scalar<"stop_config", Str> config,
                          Scalar<"stop_scalars", ScalarVar<"XSV">> scalars,
                          State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
                          GlobalStateView global_state)
         {
+            // Mirror the start hook: drop the per-child link subscriptions so a
+            // stopped node (e.g. a removed map_ child) can never be re-scheduled
+            // by a lingering active input.
+            py_clear_input_activity(eval_config.value(), args.base());
             auto release = UnwindCleanupGuard([&] { py_release_state(state); });
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
                               global_state);
@@ -1115,12 +1184,15 @@ namespace
     {
         static constexpr auto name = "__py_sink";
 
-        static void start(Scalar<"start_fn", PyNodeRef> fn, Scalar<"start_enabled", Bool> enabled,
+        static void start(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+                          Scalar<"config", Str> eval_config,
+                          Scalar<"start_fn", PyNodeRef> fn, Scalar<"start_enabled", Bool> enabled,
                           Scalar<"start_config", Str> config,
                           Scalar<"start_scalars", ScalarVar<"SSV">> scalars,
                           State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
                           GlobalStateView global_state)
         {
+            py_apply_input_activity(eval_config.value(), args.base());
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
                               global_state);
         }
@@ -1161,12 +1233,18 @@ namespace
             guard->alive = false;
         }
 
-        static void stop(Scalar<"stop_fn", PyNodeRef> fn, Scalar<"stop_enabled", Bool> enabled,
+        static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+                         Scalar<"config", Str> eval_config,
+                         Scalar<"stop_fn", PyNodeRef> fn, Scalar<"stop_enabled", Bool> enabled,
                          Scalar<"stop_config", Str> config,
                          Scalar<"stop_scalars", ScalarVar<"XSV">> scalars,
                          State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
                          GlobalStateView global_state)
         {
+            // Mirror the start hook: drop the per-child link subscriptions so a
+            // stopped node (e.g. a removed map_ child) can never be re-scheduled
+            // by a lingering active input.
+            py_clear_input_activity(eval_config.value(), args.base());
             auto release = UnwindCleanupGuard([&] { py_release_state(state); });
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
                               global_state);
@@ -1290,8 +1368,8 @@ namespace
             testing::record::start(std::move(key), std::move(sparse), std::move(gs));
         }
 
-        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse,
-                         GlobalStateView gs, DateTime now)
+        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Scalar<"key", std::string> key,
+                         Scalar<"sparse", Bool> sparse, GlobalStateView gs, DateTime now)
         {
             testing::record::eval(std::move(ts), std::move(key), std::move(sparse), std::move(gs), now);
         }
@@ -1318,6 +1396,57 @@ namespace
     };
 
     struct op_materialize : Operator<"__materialize", In<"ts", TsVar<"S">>, Out<TsVar<"S">>> {};
+
+    /** hgraph's ``until_true(predicate, ts)`` with a plain python callable:
+        the predicate rides a PyObj SCALAR and the kernel holds it, so
+        passivating ``ts`` also stops the calls (upstream's
+        until_true_default). Dispatch is the registry's — this overload is
+        selected by the object-scalar first argument. */
+    struct until_true_callable_node
+    {
+        static constexpr auto name = "until_true_callable";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return context.args.size() == 2 && context.scalar_as<PyObj>("predicate") != nullptr &&
+                   context.args[1].kind == WiringArg::Kind::TimeSeries;
+        }
+
+        static void eval(Scalar<"predicate", PyObj> predicate, In<"ts", TsVar<"S">> ts, Out<TS<Bool>> out)
+        {
+            nb::gil_scoped_acquire gil;
+            const bool stop =
+                nb::cast<bool>(nb::bool_(predicate.value().get()(value_to_py(ts.value()))));
+            out.set(stop);
+            if (stop) { ts.make_passive(); }
+        }
+    };
+
+    /** ``freeze(predicate, ts)`` with a callable: upstream's freeze_predicate
+        — freeze once until_true(predicate, ts) fires. */
+    struct freeze_callable_compose
+    {
+        static constexpr auto name = "freeze_callable";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return context.args.size() == 2 && context.scalar_as<PyObj>("predicate") != nullptr &&
+                   context.args[1].kind == WiringArg::Kind::TimeSeries;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (operator_type_resolution::output_bound(resolution)) { return; }
+            if (context.args.size() < 2 || context.args[1].kind != WiringArg::Kind::TimeSeries) { return; }
+            operator_type_resolution::bind_output(resolution, context.args[1].port.schema);
+        }
+
+        static auto compose(Wiring &w, Scalar<"predicate", PyObj> predicate, NamedPort<"ts", TsVar<"S">> ts)
+        {
+            auto flag = wire<stdlib::until_true>(w, predicate.value(), ts);
+            return wire<stdlib::freeze>(w, flag, ts);
+        }
+    };
 
     struct op_recover_pt
         : Operator<"__recovering_pass_through", In<"ts", TsVar<"S">>, Scalar<"fq_key", Str>, Out<TsVar<"S">>> {};
@@ -1392,6 +1521,8 @@ NB_MODULE(_hgraph, m)
     register_overload<op_recover_pt, stdlib::component_detail::recovering_pass_through>();
     register_overload<op_harness_replay, harness_replay>();
     register_overload<op_harness_record, harness_record>();
+    register_overload<stdlib::until_true, until_true_callable_node>();
+    register_graph_overload<stdlib::freeze, freeze_callable_compose>();
 
     nb::class_<PyTsType>(m, "TsType")
         .def("__eq__", [](const PyTsType &self, nb::handle other) {
@@ -1456,6 +1587,9 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyPort>(m, "Port")
         .def_prop_ro("ts_type", [](const PyPort &self) { return PyTsType{self.ref.schema}; })
         .def_prop_ro("is_structural", [](const PyPort &self) { return self.ref.is_structural_source(); })
+        // True for a CHILD projection of a node output (a non-empty peered
+        // path) - sub-graph terminals need whole node outputs.
+        .def_prop_ro("has_path", [](const PyPort &self) { return !self.ref.peered_path_or_empty().empty(); })
         .def_prop_ro("dereferenced", [](const PyPort &self) {
             // The descriptive-schema patch (the Port::as / reference-service
             // pattern): present a REF output as its value schema - input
@@ -1577,6 +1711,9 @@ NB_MODULE(_hgraph, m)
     m.def("tsw", [](PyValueType v, std::size_t period, std::size_t min_period) {
         return PyTsType{TypeRegistry::instance().tsw(v.meta, period, min_period)};
     }, nb::arg("value"), nb::arg("period"), nb::arg("min_period") = 0);
+    m.def("tsw_duration", [](PyValueType v, TimeDelta time_range, TimeDelta min_time_range) {
+        return PyTsType{TypeRegistry::instance().tsw_duration(v.meta, time_range, min_time_range)};
+    }, nb::arg("value"), nb::arg("time_range"), nb::arg("min_time_range") = TimeDelta{0});
     m.def("tsl", [](PyTsType e, std::size_t size) { return PyTsType{TypeRegistry::instance().tsl(e.meta, size)}; },
           nb::arg("element"), nb::arg("size") = 0);
     m.def("tsb", [](const std::string &name, nb::list fields) {
@@ -2009,10 +2146,41 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyTimeSeries>(m, "TimeSeries")
         .def_prop_ro("value", &PyTimeSeries::value)
         .def_prop_ro("_kind", [](const PyTimeSeries &self) { return static_cast<int>(self.kind()); })
+        // hgraph's runtime activity control: a node may passivate/reactivate
+        // its own input subscription (the C++ In views expose the same).
+        .def("make_passive",
+             [](PyTimeSeries &self) {
+                 self.checked();
+                 self.view.make_passive();
+             })
+        .def("make_active",
+             [](PyTimeSeries &self) {
+                 self.checked();
+                 self.view.make_active();
+             })
         .def_prop_ro("delta_value", &PyTimeSeries::delta_value)
         .def_prop_ro("modified", &PyTimeSeries::modified)
         .def_prop_ro("valid", &PyTimeSeries::valid)
         .def_prop_ro("all_valid", &PyTimeSeries::all_valid)
+        // TSW eviction surface (hgraph's removed_value pair).
+        .def_prop_ro("has_removed_value",
+                     [](const PyTimeSeries &self) {
+                         const auto &view = self.checked();
+                         if (view.schema()->kind != TSTypeKind::TSW)
+                         {
+                             throw nb::attribute_error("has_removed_value");
+                         }
+                         return view.as_window().has_removed_value();
+                     })
+        .def_prop_ro("removed_value",
+                     [](const PyTimeSeries &self) {
+                         const auto &view = self.checked();
+                         if (view.schema()->kind != TSTypeKind::TSW)
+                         {
+                             throw nb::attribute_error("removed_value");
+                         }
+                         return value_to_py(view.as_window().removed_value());
+                     })
         .def_prop_ro("last_modified_time", &PyTimeSeries::last_modified_time)
         .def("added", &PyTimeSeries::added)
         .def("removed", &PyTimeSeries::removed)
@@ -2345,11 +2513,14 @@ NB_MODULE(_hgraph, m)
         reset_all_registries();
         stdlib::register_standard_operators();
     (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar
+    register_overload<op_materialize, materialize_node>();
     register_overload<op_py_compute, py_compute_node>();
     register_overload<op_py_sink, py_sink_node>();
     register_overload<op_py_generator, py_generator_node>();
     register_overload<op_recover_pt, stdlib::component_detail::recovering_pass_through>();
     register_overload<op_harness_replay, harness_replay>();
     register_overload<op_harness_record, harness_record>();
+    register_overload<stdlib::until_true, until_true_callable_node>();
+    register_graph_overload<stdlib::freeze, freeze_callable_compose>();
     });
 }

@@ -10,10 +10,19 @@ namespace hgraph::stdlib
         register_overload<filter_, filter_impl>();
         register_overload<lag, lag_tick_impl>();
         register_overload<lag, lag_time_impl>();
+        register_overload<lag_proxy_node, lag_proxy_node_impl>();
+        register_graph_overload<lag, lag_proxy_compose>();
+        register_graph_overload<lag, lag_proxy_tsd_compose>();
+        register_graph_overload<lag, lag_proxy_tsl_compose>();
+        register_graph_overload<lag, lag_proxy_tsb_compose>();
         register_overload<schedule, schedule_impl>();
+        register_overload<schedule, schedule_ts_impl>();
+        register_overload<schedule, schedule_ts_start_impl>();
         register_overload<resample, resample_impl>();
         register_overload<until_true, until_true_bool_impl>();
+        register_graph_overload<until_true, until_true_fn_compose>();
         register_overload<freeze, freeze_impl>();
+        register_graph_overload<freeze, freeze_fn_compose>();
         register_overload<gate, gate_impl>();
         register_overload<to_window, stream_impl_detail::to_window_impl>();
         register_overload<to_window, stream_impl_detail::to_window_duration_impl>();
@@ -29,14 +38,25 @@ namespace hgraph::stdlib
         register_overload<max_, stream_impl_detail::tsw_extremum_default_impl<false>>();
         register_overload<throttle, throttle_impl>();
         register_overload<take, take_impl>();
+        register_overload<take, take_reset_impl>();
         register_overload<drop, drop_impl>();
+        register_overload<drop, drop_time_impl>();
         register_overload<step, step_impl>();
         register_overload<slice_, slice_impl>();
         register_overload<count, count_impl>();
+        register_overload<count, count_reset_impl>();
         register_overload<dedup, dedup_scalar_impl>();
+        register_overload<dedup, dedup_float_tol_impl>();
+        register_graph_overload<dedup, dedup_tsd_map>();
+        register_graph_overload<dedup, tsl_itemwise_impl_detail::tsl_unary_map<dedup>>();
+        register_overload<lag, lag_time_ts_impl>();
+        register_overload<batch, batch_impl>();
+        register_overload<window, window_tick_impl>();
+        register_overload<window, window_time_impl>();
         register_overload<diff, diff_int_impl>();
         register_overload<diff, diff_float_impl>();
         register_overload<clip, clip_float_impl>();
+        register_overload<clip, clip_int_impl>();
         register_overload<ewma, ewma_float_impl>();
     }
 }  // namespace hgraph::stdlib

@@ -188,6 +188,17 @@ TSData implementation families
     ops project directly over the window storage instead of
     materialising a compact immutable value-layer ``ListStorage``.
 
+    Validity is minimum-gated for BOTH models: a tick window is TS-valid
+    only once it holds ``min_period`` elements, and a duration window
+    only once its span reaches ``min_time_range`` (with the unset
+    minimum defaulting to the full period — hgraph's rule). The delta
+    stream flows pre-validity for tick windows (the harness records
+    those ticks); duration windows stay silent below their span. Each
+    push also stashes the element it evicts (a full tick window rolling,
+    or the span drop) with its eviction time — ``has_removed_value`` /
+    ``removed_value`` on the window views (and the Python ``TimeSeries``
+    surface) expose it for exactly the cycle it fell out.
+
 ``SlotTSDataStorage``
     Used for keyed or dynamically-sized collection time-series data
     such as ``TSS`` and ``TSD``. The data store is slot-oriented:

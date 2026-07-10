@@ -168,9 +168,18 @@ components:
 - ``@compute_node`` and ``@sink_node`` with any practical arity, positional or
   keyword binding, scalar defaults, validity and activity gating, optional
   inputs, collection deltas, ``STATE``/``CLOCK``/``SCHEDULER``/``GlobalState``
-  injectables, and Python ``start``/``stop`` lifecycle callbacks. ``active=``
-  gates Python callback invocation; scheduler events still wake nodes declared
-  with ``active=()``;
+  injectables, and Python ``start``/``stop`` lifecycle callbacks. Input
+  activity is REAL at the per-child link level: the node's start hook
+  activates each packed input child per its ``active=`` policy and drops the
+  framework's root subscription; the stop hook passivates every child (a
+  stopped ``map_`` child must never be re-woken by a lingering subscription);
+  and the evaluation guard consults the LIVE link activity. hgraph's runtime
+  ``ts.make_passive()`` / ``ts.make_active()`` therefore work from Python
+  node code (the ``until_true`` / ``freeze`` / ``take``-with-reset family).
+  Scheduler events still wake nodes declared with ``active=()``;
+- ``lift(fn, inputs=..., output=...)`` wraps a plain scalar function as a
+  compute node (scalar annotations become ``TS[...]``; time-series views
+  unwrap to ``value if valid else None`` before the call);
 - ``@generator`` sources with captured scalar arguments, distinct state per
   wiring call, empty generators, exception propagation, and strictly increasing
   absolute output times;

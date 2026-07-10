@@ -55,6 +55,12 @@ namespace hgraph
         [[nodiscard]] bool full() const;
         [[nodiscard]] bool all_valid() const;
 
+        /** hgraph's removed_value: the element the CURRENT cycle's push
+            evicted (a full tick window rolling, or a duration window's span
+            drop). ``has_removed_value`` is true only in that cycle. */
+        [[nodiscard]] bool has_removed_value() const;
+        [[nodiscard]] ValueView removed_value() const;
+
         /** Time associated with the oldest element, or ``MIN_DT`` when empty. */
         [[nodiscard]] DateTime first_modified_time() const;
 

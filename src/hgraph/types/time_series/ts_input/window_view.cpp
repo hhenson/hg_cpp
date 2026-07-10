@@ -42,6 +42,8 @@ namespace hgraph
     std::size_t TSWInputView::size() const { return data_view().size(); }
     bool TSWInputView::empty() const { return data_view().empty(); }
     bool TSWInputView::full() const { return data_view().full(); }
+    bool TSWInputView::has_removed_value() const { return data_view().has_removed_value(); }
+    ValueView TSWInputView::removed_value() const { return data_view().removed_value(); }
     DateTime TSWInputView::first_modified_time() const { return data_view().first_modified_time(); }
     DateTime TSWInputView::time_at(std::size_t index) const { return data_view().time_at(index); }
     ValueView TSWInputView::time_value_at(std::size_t index) const { return data_view().time_value_at(index); }

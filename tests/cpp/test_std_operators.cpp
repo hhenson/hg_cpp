@@ -1187,17 +1187,30 @@ TEST_CASE("std operators: stream operators cover sampling filtering slicing and 
     CHECK_OUTPUT(eval_node<stdlib::freeze>(values<Bool>(false, false, true, false),
                                            values<Int>(1, 2, 3, 4)),
                  values<Int>(1, 2, 3, none));
+
+    // The C++ PREDICATE forms (hgraph's callable predicate as a WiredFn):
+    // until_true(fn, ts) inlines the predicate; freeze(fn, ts) freezes once
+    // it fires.
+    CHECK_OUTPUT(eval_node<stdlib::until_true>(fn<stdlib::not_>(),
+                                               values<Bool>(true, true, false, true)),
+                 values<Bool>(false, false, true, none));
+    CHECK_OUTPUT(eval_node<stdlib::freeze>(fn<stdlib::not_>(),
+                                           values<Bool>(true, true, false, true)),
+                 values<Bool>(true, true, false, none));
     CHECK_OUTPUT(eval_node<stdlib::gate>(values<Bool>(false, false, true, true),
                                          values<Int>(1, 2, 3, none),
                                          Int{8}),
                  values<Int>(none, none, 1, 2, 3));
+    // hgraph semantics: a tick landing on the cycle the window releases
+    // MERGES into that release (upstream throttle accumulates before the
+    // scheduled drain), so t2 emits 3 (not the buffered 2) and t4 emits 5.
     CHECK_OUTPUT(eval_node<stdlib::throttle>(values<Int>(1, 2, 3, 4, 5),
                                              values<TimeDelta>(MIN_TD * 2,
                                                                none,
                                                                none,
                                                                none,
                                                                none)),
-                 values<Int>(1, none, 2, none, 4, none, 5));
+                 values<Int>(1, none, 3, none, 5));
 
     CHECK_OUTPUT(eval_node<stdlib::take>(values<Int>(1, 2, 3, 4, 5), Int{3}),
                  values<Int>(1, 2, 3, none, none));

@@ -47,7 +47,9 @@ namespace hgraph::ts_data_plan_factory_detail
 
             TSWindowStorageCore(const TSWindowStorageCore &other)
                 : time_binding_(other.time_binding_),
-                  element_binding_(other.element_binding_)
+                  element_binding_(other.element_binding_),
+                  evicted_(other.evicted_),
+                  evicted_time_(other.evicted_time_)
             {
                 copy_live_from(other);
             }
@@ -60,6 +62,8 @@ namespace hgraph::ts_data_plan_factory_detail
                     deallocate();
                     time_binding_    = other.time_binding_;
                     element_binding_ = other.element_binding_;
+                    evicted_         = other.evicted_;
+                    evicted_time_    = other.evicted_time_;
                     copy_live_from(other);
                 }
                 return *this;
@@ -72,7 +76,9 @@ namespace hgraph::ts_data_plan_factory_detail
                   value_bytes_(std::exchange(other.value_bytes_, nullptr)),
                   capacity_(std::exchange(other.capacity_, 0)),
                   size_(std::exchange(other.size_, 0)),
-                  head_(std::exchange(other.head_, 0))
+                  head_(std::exchange(other.head_, 0)),
+                  evicted_(std::move(other.evicted_)),
+                  evicted_time_(std::exchange(other.evicted_time_, MIN_DT))
             {
                 other.time_binding_    = nullptr;
                 other.element_binding_ = nullptr;
@@ -91,6 +97,8 @@ namespace hgraph::ts_data_plan_factory_detail
                     capacity_              = std::exchange(other.capacity_, 0);
                     size_                  = std::exchange(other.size_, 0);
                     head_                  = std::exchange(other.head_, 0);
+                    evicted_               = std::move(other.evicted_);
+                    evicted_time_          = std::exchange(other.evicted_time_, MIN_DT);
                     other.time_binding_    = nullptr;
                     other.element_binding_ = nullptr;
                 }
@@ -107,6 +115,11 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
             [[nodiscard]] const ValueTypeBinding &time_binding() const { return *time_binding_; }
             [[nodiscard]] const ValueTypeBinding &element_binding() const { return *element_binding_; }
+
+            /** The element most recently evicted by a push (hgraph's
+                removed_value) and the evaluation time it fell out. */
+            [[nodiscard]] const Value &evicted_element() const noexcept { return evicted_; }
+            [[nodiscard]] DateTime evicted_time() const noexcept { return evicted_time_; }
 
             [[nodiscard]] const void *element_at(std::size_t index) const
             {
@@ -175,9 +188,17 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (capacity_ == 0) { throw std::logic_error("TSW storage has no capacity"); }
 
                 const auto physical = head_;
+                record_evicted(value_slot(physical), modified_time);
                 copy_assign_value_slot(physical, source.data());
                 copy_assign_time_slot(physical, modified_time);
                 head_ = (head_ + 1) % capacity_;
+            }
+
+            /** Stash the element a push is about to drop (hgraph's removed_value). */
+            void record_evicted(const void *element_memory, DateTime modified_time)
+            {
+                evicted_      = Value{ValueView{element_binding_, const_cast<void *>(element_memory)}};
+                evicted_time_ = modified_time;
             }
 
             [[nodiscard]] static IndexedValueView checked_source_values(const ValueView &source)
@@ -430,6 +451,8 @@ namespace hgraph::ts_data_plan_factory_detail
             std::size_t             capacity_{0};
             std::size_t             size_{0};
             std::size_t             head_{0};
+            Value                   evicted_{};
+            DateTime                evicted_time_{MIN_DT};
         };
 
         class SizeTSWindowStorage final : public TSWindowStorageCore
@@ -527,7 +550,12 @@ namespace hgraph::ts_data_plan_factory_detail
 
             void push(const ValueView &source, DateTime modified_time)
             {
-                prune_before(modified_time - time_range_);
+                const DateTime cutoff = modified_time - time_range_;
+                // Stash the LAST element the span drop evicts (removed_value).
+                std::size_t dropped = 0;
+                while (dropped < size() && time_at(dropped) < cutoff) { ++dropped; }
+                if (dropped > 0) { record_evicted(element_at(dropped - 1), modified_time); }
+                prune_before(cutoff);
                 ensure_capacity(size() + 1);
                 append(source, modified_time);
             }
@@ -791,6 +819,19 @@ namespace hgraph::ts_data_plan_factory_detail
                 ops.capacity_impl    = nullptr;
                 ops.full_impl        = nullptr;
                 ops.push_impl        = &window_push;
+                ops.evicted_time_impl    = &window_evicted_time;
+                ops.evicted_element_impl = &window_evicted_element;
+            }
+
+            [[nodiscard]] static DateTime window_evicted_time(const void *context, const void *memory) noexcept
+            {
+                return storage<Storage>(window_value_memory(context, memory)).evicted_time();
+            }
+
+            [[nodiscard]] static const void *window_evicted_element(const void *context, const void *memory) noexcept
+            {
+                const auto &window = storage<Storage>(window_value_memory(context, memory));
+                return window.evicted_element().has_value() ? window.evicted_element().view().data() : nullptr;
             }
 
             void configure_value_ops()
@@ -1318,6 +1359,10 @@ namespace hgraph::ts_data_plan_factory_detail
                 ops.capacity_impl          = &time_capacity;
                 ops.full_impl              = &time_full;
                 ops.all_valid_impl         = &time_all_valid;
+                // A duration window is VALID only once its span reaches the
+                // minimum range (the tick-window min_period rule's time
+                // form); consumers below the span see an invalid input.
+                ops.has_current_value_impl = &time_has_current_value;
             }
 
           private:
@@ -1344,6 +1389,12 @@ namespace hgraph::ts_data_plan_factory_detail
                 const auto &layout = layout_for(context);
                 if (layout.min_time_range <= TimeDelta{0}) { return true; }
                 return window.time_at(window.size() - 1) - window.time_at(0) >= layout.min_time_range;
+            }
+
+            [[nodiscard]] static bool time_has_current_value(const void *context, const void *memory) noexcept
+            {
+                return window_tracking(context, memory)->last_modified_time != MIN_DT &&
+                       time_all_valid(context, memory);
             }
         };
 

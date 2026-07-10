@@ -521,7 +521,11 @@ namespace hgraph
         void apply_delta_atomic(const TSOutputView &out, const ValueView &delta)
         {
             auto mutation = out.begin_mutation(out.evaluation_time());
-            if (!mutation.copy_value_from(delta)) { throw std::logic_error("apply_delta: failed to copy scalar value"); }
+            // copy_value_from returns FIRST-FOR-TIME, not success (the
+            // move_value_from contract) — genuine failures throw inside the
+            // ops. A repeat apply in one cycle (e.g. a throttle release
+            // merging with a same-cycle tick) is a benign overwrite.
+            static_cast<void>(mutation.copy_value_from(delta));
         }
 
         void apply_delta_tsw(const TSOutputView &out, const ValueView &delta)

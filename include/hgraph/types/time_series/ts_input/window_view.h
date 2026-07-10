@@ -30,6 +30,8 @@ namespace hgraph
         [[nodiscard]] std::size_t size() const;
         [[nodiscard]] bool empty() const;
         [[nodiscard]] bool full() const;
+        [[nodiscard]] bool has_removed_value() const;
+        [[nodiscard]] ValueView removed_value() const;
         [[nodiscard]] DateTime first_modified_time() const;
         [[nodiscard]] DateTime time_at(std::size_t index) const;
         [[nodiscard]] ValueView time_value_at(std::size_t index) const;

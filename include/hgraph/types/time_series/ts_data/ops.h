@@ -301,6 +301,11 @@ namespace hgraph
         bool (*full_impl)(const void *context, const void *memory) = nullptr;
         void (*push_impl)(const void *context, void *memory, const ValueView &source,
                           DateTime modified_time) = nullptr;
+        // The element most recently EVICTED by a push (hgraph's
+        // removed_value): the time it fell out plus its value memory
+        // (nullptr when nothing has been evicted yet).
+        DateTime (*evicted_time_impl)(const void *context, const void *memory) = nullptr;
+        const void *(*evicted_element_impl)(const void *context, const void *memory) = nullptr;
     };
 }  // namespace hgraph
 

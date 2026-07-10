@@ -27,6 +27,15 @@ namespace hgraph::stdlib
     {
     };
 
+    /** ``__lag_proxy`` — the proxy-lag runtime node (internal; wired by the
+        ``lag(ts, period, proxy)`` overloads): each tick of ``ts`` is cached
+        under the live proxy count ``c`` and replayed when the LAGGED count
+        ``lag_c`` reaches it. */
+    struct lag_proxy_node
+        : Operator<"__lag_proxy", In<"ts", TsVar<"S">>, In<"c", TS<Int>>, In<"lag_c", TS<Int>>, Out<TsVar<"S">>>
+    {
+    };
+
     /** ``schedule`` — a source ticking ``True`` every ``delay``. */
     struct schedule : Operator<"schedule", Scalar<"delay", TimeDelta>, Out<TS<Bool>>>
     {

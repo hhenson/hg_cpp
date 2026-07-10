@@ -290,9 +290,21 @@ namespace hgraph::testing
             gs.erase(key.value());
         }
 
-        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse,
-                         GlobalStateView gs, DateTime now)
+        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Scalar<"key", std::string> key,
+                         Scalar<"sparse", Bool> sparse, GlobalStateView gs, DateTime now)
         {
+            // Record every TICK, plus TICK-window TSW pre-validity ticks: a
+            // window below its min period is invalid yet its delta stream
+            // already flows (hgraph records those). DURATION windows and all
+            // other kinds keep the validity gate - e.g. a duration window
+            // below its span, or a rerouted branch's unbind (modified with
+            // an EMPTY delta), must not record.
+            if (!ts.modified()) { return; }
+            if (!ts.valid())
+            {
+                const auto *schema = ts.base().schema();
+                if (schema->kind != TSTypeKind::TSW || schema->data.tsw.is_duration_based) { return; }
+            }
             // The canonical per-tick delta, rebuilt as an owned value-layer Value (the
             // runtime's transient delta storage omits copy hooks).
             Value delta = capture_delta(ts.base());

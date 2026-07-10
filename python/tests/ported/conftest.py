@@ -10,3 +10,5 @@ Conventions:
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "smoke: core operator compatibility coverage")
+    config.addinivalue_line(
+        "markers", "wip: newly ported file, excluded from the compatibility gate")

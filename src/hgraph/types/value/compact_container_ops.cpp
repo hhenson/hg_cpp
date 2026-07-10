@@ -42,7 +42,10 @@ namespace hgraph
             [[nodiscard]] bool is_sequence(nb::handle source)
             {
                 nb::object object = nb::borrow<nb::object>(source);
-                return nb::isinstance<nb::list>(object) || nb::isinstance<nb::tuple>(object);
+                if (nb::isinstance<nb::list>(object) || nb::isinstance<nb::tuple>(object)) { return true; }
+                // numpy arrays round-trip TSW values (a window's .value is an
+                // ndarray; array scalars are tuple values in this runtime).
+                return nb::hasattr(object, "__array_interface__");
             }
 
             template <typename Append>

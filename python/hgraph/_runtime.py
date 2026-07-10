@@ -8,7 +8,7 @@ import threading
 
 import _hgraph
 
-from ._types import _TsExpr, _ContextExpr, _Required, _GenericTsExpr
+from ._types import _TsExpr, _ContextExpr, _Required, _GenericTsExpr, _TypeVarSentinel
 
 _wiring_stack = []
 
@@ -254,6 +254,10 @@ def _wrap_graph_fn(gfn):
                     raw = _hgraph.ref_port(borrowed_wiring, raw)
                 else:
                     raw = _unwrap(wire("__materialize", out))
+            elif raw.has_path:
+                # A child PROJECTION of a node output (e.g. if_(...).true)
+                # is not a whole node output either - identity-copy it.
+                raw = _unwrap(wire("__materialize", out))
             return raw
         finally:
             _wiring_stack.pop()
@@ -832,7 +836,9 @@ class _PyNode:
         ts_names = {
             param.name
             for param in self._params
-            if isinstance(param.annotation, (_TsExpr, _ContextExpr))
+            # Generic annotations (TIME_SERIES_TYPE, TSS[SCALAR], ...) are
+            # time-series parameters too - they resolve from the wired ports.
+            if isinstance(param.annotation, (_TsExpr, _ContextExpr, _GenericTsExpr, _TypeVarSentinel))
         }
         for policy, names in (("active", self._active), ("valid", self._valid)):
             if names is None:
@@ -957,6 +963,10 @@ class _PyNode:
                         generic_bindings[repr(inner)] = actual
                     else:
                         generic_bindings[repr(annotation)] = actual
+                elif isinstance(annotation, _TypeVarSentinel):
+                    # A bare sentinel (ts: TIME_SERIES_TYPE) binds the whole
+                    # port type, so a same-sentinel return resolves.
+                    generic_bindings[repr(annotation)] = _unwrap(value).ts_type
             else:
                 layout.append("s")
                 scalars.append(value)
@@ -987,7 +997,7 @@ class _PyNode:
             node_kwargs[f"{phase}_scalars"] = _hgraph.any_list(lifecycle_scalars)
         if self.has_output:
             out_tp = self._out_tp
-            if isinstance(out_tp, _GenericTsExpr):
+            if isinstance(out_tp, (_GenericTsExpr, _TypeVarSentinel)):
                 inner = getattr(out_tp, "inner", None)
                 key = repr(inner) if inner is not None else repr(out_tp)
                 bound = generic_bindings.get(key)
@@ -1016,6 +1026,54 @@ def sink_node(fn=None, *, active=None, valid=None, **_ignored):
     if fn is None:
         return lambda f: _PyNode(f, has_output=False, active=active, valid=valid)
     return _PyNode(fn, has_output=False, active=active, valid=valid)
+
+
+def lift(fn, inputs=None, output=None, active=None, valid=None, all_valid=None,
+         dedup_output=False, defaults=None):
+    """hgraph's lift: wrap a plain scalar function as a compute node with a
+    TS-lifted signature (each scalar annotation becomes TS[...]; ``inputs``/
+    ``output`` override per name). Inputs cross into python nodes as plain
+    values in this bridge, so the wrapped callable is the function itself."""
+    if dedup_output:
+        raise NotImplementedError("gap: lift(dedup_output=True) is not implemented yet")
+    from ._types import TS
+
+    sig = inspect.signature(fn)
+
+    def _scalar(arg):
+        # python nodes receive live TimeSeries VIEWS; the lifted fn is a
+        # plain scalar function (upstream passes a.value if a.valid).
+        if isinstance(arg, _hgraph.TimeSeries):
+            return arg.value if arg.valid else None
+        return arg
+
+    def _lifted(*args, **kwargs):
+        return fn(*(_scalar(a) for a in args), **{k: _scalar(v) for k, v in kwargs.items()})
+
+    def _ts(tp):
+        return tp if isinstance(tp, (_TsExpr, _GenericTsExpr)) else TS[tp]
+
+    parameters, annotations = [], {}
+    for name, parameter in sig.parameters.items():
+        tp = (inputs or {}).get(name, parameter.annotation)
+        if tp is inspect.Parameter.empty:
+            raise WiringError(f"lift: parameter '{name}' needs an annotation or an inputs= entry")
+        ts_tp = _ts(tp)
+        annotations[name] = ts_tp
+        default = (defaults or {}).get(name, parameter.default)
+        parameters.append(parameter.replace(annotation=ts_tp, default=default))
+    return_annotation = output if output is not None else sig.return_annotation
+    if return_annotation in (inspect.Signature.empty, None):
+        raise WiringError(f"lift: '{getattr(fn, '__name__', fn)!r}' needs a return annotation or output=")
+    annotations["return"] = _ts(return_annotation)
+    _lifted.__name__ = getattr(fn, "__name__", "lifted")
+    _lifted.__qualname__ = _lifted.__name__
+    _lifted.__annotations__ = annotations
+    _lifted.__signature__ = sig.replace(parameters=parameters,
+                                        return_annotation=annotations["return"])
+    return _PyNode(_lifted, has_output=True, active=active, valid=valid)
+
+
 
 
 class _Generator:
@@ -1722,6 +1780,12 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                 if not isinstance(hints, list):
                     hints = [hints]
                 annotation = hints[i] if i < len(hints) else hints[-1]
+                from ._types import TS as _TS, _TsExpr as _TsE, _GenericTsExpr as _GTsE
+                if not isinstance(annotation, (_TsE, _GTsE)) and isinstance(series, (list, tuple)):
+                    # op[SCALAR: int] resolves the ELEMENT type - a LIST input
+                    # at this position is a TS[int] series (a non-list value
+                    # stays a scalar argument).
+                    annotation = _TS[annotation]
             if resolution_dict and i < len(params) and params[i].name in resolution_dict:
                 annotation = resolution_dict[params[i].name]
             elif resolution_dict and not params and len(resolution_dict) == len(inputs):

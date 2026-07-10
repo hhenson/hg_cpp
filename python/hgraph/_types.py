@@ -435,22 +435,44 @@ class Series(metaclass=_SeriesMeta):
 
 class _TSWMeta(type):
     def __getitem__(cls, item):
-        # TSW[int] / TSW[int, Size[3]] - tick windows; period supplied at
-        # to_window time, so the bare form carries period 0 (unresolved).
-        if isinstance(item, tuple):
-            value, size = item[0], int(item[1])
-        else:
-            value, size = item, 0
+        # TSW[T] / TSW[T, WindowSize[N]] / TSW[T, WindowSize[N], WindowSize[M]].
+        # Each subscript form maps DIRECTLY onto a C++ type expression:
+        # int sizes -> a tick window, timedelta sizes -> a duration window,
+        # a WINDOW_SIZE / WINDOW_SIZE_MIN sentinel anywhere -> the generic
+        # window pattern (sizes resolve from the wired port). The bare form
+        # carries period 0 (supplied at to_window time).
+        items = item if isinstance(item, tuple) else (item,)
+        value, sizes = items[0], items[1:]
+        label = f"TSW[{item!r}]"
+        if any(isinstance(size, _TypeVarSentinel) for size in sizes):
+            try:
+                element = _hgraph.scalar_pattern_value(_value_type(value))
+            except _GenericType as e:
+                element = e.pattern
+            return _GenericTsExpr(label, pattern=_hgraph.type_pattern_tsw(element))
         try:
-            return _TsExpr(_hgraph.tsw(_value_type(value), size), f"TSW[{item!r}]")
+            value_type = _value_type(value)
         except _GenericType as e:
-            pattern = (_hgraph.type_pattern_tsw(e.pattern, size)
-                       if size > 0 else _hgraph.type_pattern_tsw(e.pattern))
-            return _GenericTsExpr(f"TSW[{item!r}]", pattern=pattern)
+            period = int(sizes[0]) if sizes and isinstance(sizes[0], int) else 0
+            pattern = (_hgraph.type_pattern_tsw(e.pattern, period)
+                       if period > 0 else _hgraph.type_pattern_tsw(e.pattern))
+            return _GenericTsExpr(label, pattern=pattern)
+        if any(isinstance(size, datetime.timedelta) for size in sizes):
+            return _TsExpr(_hgraph.tsw_duration(value_type, *sizes), label)
+        return _TsExpr(_hgraph.tsw(value_type, *(sizes or (0,))), label)
 
 
 class TSW(metaclass=_TSWMeta):
     """TSW[T] — a tick-based window over TS[T]."""
+
+
+class WindowSize:
+    """WindowSize[N] — TSW size marker (N ticks, or a timedelta duration)."""
+
+    def __class_getitem__(cls, size):
+        if isinstance(size, datetime.timedelta):
+            return size
+        return int(size)
 
 
 class Size:
@@ -509,6 +531,12 @@ class _TSBMeta(type):
             # value side IS the CS bundle and reads back as the dataclass.
             _value_type(schema)
             annotations = {name: TS[tp] for name, tp in annotations.items()}
+        if any(isinstance(ts, (_GenericTsExpr, _TypeVarSentinel)) for ts in annotations.values()):
+            # A GENERIC schema (e.g. WindowResult[SCALAR]): resolve from the
+            # wired port by bundle NAME - the operator's own resolution
+            # produces the concrete same-named bundle.
+            return _GenericTsExpr(f"TSB[{schema.__name__}]",
+                                  pattern=_hgraph.type_pattern_tsb(schema.__name__))
         fields = [(name, _resolve(ts)) for name, ts in annotations.items()]
         # The registry's TSB namespace is GLOBAL; python classes are scoped
         # (tests re-define same-named local schemas freely). Qualify with the
@@ -595,6 +623,8 @@ K_1 = _TypeVarSentinel("K_1")
 SIZE = _TypeVarSentinel("SIZE")
 V = _TypeVarSentinel("V")
 K = _TypeVarSentinel("K")
+WINDOW_SIZE = _TypeVarSentinel("WINDOW_SIZE")
+WINDOW_SIZE_MIN = _TypeVarSentinel("WINDOW_SIZE_MIN")
 
 
 class _GenericTsExpr:
@@ -613,6 +643,33 @@ class _GenericTsExpr:
 
     def __repr__(self):
         return self.label
+
+
+# SIGNAL - an input consumed for its ticks only; any time-series type binds.
+SIGNAL = _GenericTsExpr("SIGNAL", pattern=_hgraph.type_pattern_signal())
+
+
+class Array:
+    """Array[T, Size[N]] — hgraph's numpy-array scalar annotation. This
+    runtime has no array value kind; arrays are variadic TUPLE values
+    (agreed deviation - numpy round-tripping is the Arrow workstream's)."""
+
+    def __class_getitem__(cls, item):
+        items = item if isinstance(item, tuple) else (item,)
+        return tuple[items[0], ...]
+
+
+def ts_schema(**kwargs):
+    """hgraph parity: build an un-named TimeSeriesSchema type from kwargs.
+    The type name is derived from the field spec so equal schemas intern to
+    the same TSB name and different ones never collide."""
+    import hashlib
+
+    label = "_".join(f"{name}_{ts!r}" for name, ts in kwargs.items())
+    digest = hashlib.md5(label.encode()).hexdigest()[:12]
+    schema = type(f"UnNamedTimeSeriesSchema_{digest}", (TimeSeriesSchema,), {})
+    schema.__annotations__ = dict(kwargs)
+    return schema
 
 
 class _DefaultMeta(type):

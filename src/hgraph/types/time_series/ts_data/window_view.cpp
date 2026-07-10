@@ -144,6 +144,24 @@ namespace hgraph
         return base().all_valid();
     }
 
+    bool TSWDataView::has_removed_value() const
+    {
+        const auto &ops = window_ops();
+        if (ops.evicted_element_impl == nullptr || ops.evicted_time_impl == nullptr) { return false; }
+        return ops.evicted_time_impl(ops.context, storage_.data()) == base().last_modified_time() &&
+               ops.evicted_element_impl(ops.context, storage_.data()) != nullptr;
+    }
+
+    ValueView TSWDataView::removed_value() const
+    {
+        if (!has_removed_value())
+        {
+            throw std::logic_error("TSWDataView::removed_value: nothing was evicted this cycle");
+        }
+        const auto &ops = window_ops();
+        return ValueView{layout().element_binding, ops.evicted_element_impl(ops.context, storage_.data())};
+    }
+
     DateTime TSWDataView::first_modified_time() const
     {
         return empty() ? MIN_DT : time_at(0);
