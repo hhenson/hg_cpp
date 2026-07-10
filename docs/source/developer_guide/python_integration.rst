@@ -249,11 +249,17 @@ Recorded divergences / gaps (the morning-summary list):
   (plus wiring-time scalars) once the graph runs; values convert
   schema-directed on the sending thread and cross the sanctioned C++
   boundary. Wiring the decorated function returns its port.
+- **Stable Python ABI**: Wheels target the CPython 3.12 stable ABI
+  (``cp312-abi3``), so one wheel per platform supports CPython 3.12 and
+  later. Stable bridge builds require CMake 3.26 or newer for
+  ``Development.SABIModule``; pure C++ builds retain the CMake 3.25 minimum.
 - **Frame ↔ pyarrow**: Frames cross the boundary as ``pyarrow.Table``\ s
   through the Arrow C stream protocol (``__arrow_c_stream__`` capsules —
   zero copy, version-independent): ``frame_store_read`` returns Tables,
   Tables convert back to Frame values, and ``to_table``/``from_table``
-  are fully usable from Python.
+  are fully usable from Python. The extension itself links against pyarrow's
+  versioned Arrow libraries, so wheel build and runtime dependencies are
+  constrained to the same supported ABI major (Arrow 24 for this release).
 - **Contexts** are surfaced BOTH ways (Howard: existing python code must
   keep working). The hgraph-compatible API: ``with port:`` publishes (the
   wiring port is a context manager; ``as name`` binds the context name via

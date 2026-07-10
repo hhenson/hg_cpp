@@ -1,6 +1,10 @@
 # The Python bridge module (roadmap P4). Opt-in only: the default build never
 # needs Python (HGRAPH_BUILD_PYTHON_BINDINGS=ON enables this subtree).
-nanobind_add_module(_hgraph NB_STATIC NOSTRIP
+set(_hgraph_nanobind_options NB_STATIC NOSTRIP)
+if(_hgraph_use_python_stable_abi)
+    list(APPEND _hgraph_nanobind_options STABLE_ABI)
+endif()
+nanobind_add_module(_hgraph ${_hgraph_nanobind_options}
     module.cpp
     value_conversion.cpp
 )
@@ -25,8 +29,18 @@ install(TARGETS _hgraph
     LIBRARY DESTINATION .
     RUNTIME DESTINATION .
 )
+if(WIN32 AND HGRAPH_USE_PYARROW_ARROW)
+    # Windows does not have an rpath equivalent. Keep the exact Arrow runtime
+    # DLLs used at link time beside the extension so `import _hgraph` works
+    # before pyarrow itself has been imported.
+    install(FILES
+        "${HGRAPH_PYARROW_ARROW_RUNTIME}"
+        "${HGRAPH_PYARROW_COMPUTE_RUNTIME}"
+        DESTINATION .
+    )
+endif()
 
-foreach(_hgraph_py_test IN ITEMS test_bridge test_hgraph_api test_python_authoring)
+foreach(_hgraph_py_test IN ITEMS test_bridge test_hgraph_api test_python_authoring test_packaging)
     add_test(
         NAME hgraph_python_${_hgraph_py_test}
         COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/${_hgraph_py_test}.py"

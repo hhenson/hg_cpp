@@ -1,10 +1,10 @@
 [build-system]
 requires = [
     "scikit-build-core>=0.12",
-    "cmake>=3.25",
+    "cmake>=3.26",
     "ninja",
     "nanobind>=2.12",
-    "pyarrow>=24",
+    "pyarrow>=24,<25",
 ]
 build-backend = "scikit_build_core.build"
 
@@ -39,7 +39,7 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=2.0",
-    "pyarrow>=24",
+    "pyarrow>=24,<25",
 ]
 
 [project.optional-dependencies]
@@ -57,7 +57,7 @@ docs = [
     "sphinxcontrib-mermaid>=1.0",
 ]
 dev = [
-    "cmake>=3.25",
+    "cmake>=3.26",
     "ninja",
     "nanobind>=2.12",
     "pytest>=8",
@@ -76,6 +76,7 @@ Repository = "https://github.com/hhenson/hgraph"
 build.verbose = true
 cmake.source-dir = "."
 minimum-version = "build-system.requires"
+wheel.py-api = "cp312"
 wheel.packages = ["python/hgraph"]
 
 [tool.scikit-build.cmake.define]

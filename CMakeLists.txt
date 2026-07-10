@@ -56,6 +56,7 @@ option(HGRAPH_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 option(HGRAPH_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(HGRAPH_BUILD_PYTHON_BINDINGS "Build the Python extension bridge" OFF)
 option(HGRAPH_ENABLE_PYTHON_USER_NODES "Enable C++ runtime support for Python user nodes" OFF)
+option(HGRAPH_PYTHON_STABLE_ABI "Build the Python bridge against the CPython 3.12 stable ABI" ON)
 option(HGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS "Use local .venv Python/nanobind headers for IDE code models when Python support is disabled" ON)
 option(HGRAPH_ENABLE_COMPILER_CACHE "Use sccache or ccache when available" ON)
 option(HGRAPH_ENABLE_PCH "Use private precompiled headers for repository targets" ON)
@@ -138,10 +139,29 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(hgraph_options INTERFACE Threads::Threads)
 
-find_package(simdjson CONFIG REQUIRED)
-target_link_libraries(hgraph_options INTERFACE simdjson::simdjson)
+if(HGRAPH_BUILD_PYTHON_BINDINGS)
+    # Wheels must not retain a dependency on a package-manager shared library.
+    # Build simdjson as a private static dependency of the extension instead.
+    FetchContent_Declare(
+        simdjson
+        GIT_REPOSITORY https://github.com/simdjson/simdjson.git
+        GIT_TAG        v4.6.4
+        GIT_SHALLOW    TRUE
+    )
+    set(SIMDJSON_INSTALL OFF CACHE BOOL "Generate simdjson install targets" FORCE)
+    set(SIMDJSON_DEVELOPER_MODE OFF CACHE BOOL "Build simdjson developer targets" FORCE)
+    FetchContent_MakeAvailable(simdjson)
+    target_link_libraries(hgraph_options INTERFACE
+        $<BUILD_INTERFACE:simdjson::simdjson>
+    )
+else()
+    find_package(simdjson CONFIG REQUIRED)
+    target_link_libraries(hgraph_options INTERFACE simdjson::simdjson)
+endif()
 
-find_package(fmt CONFIG QUIET)
+if(NOT HGRAPH_BUILD_PYTHON_BINDINGS)
+    find_package(fmt CONFIG QUIET)
+endif()
 if(NOT fmt_FOUND)
     FetchContent_Declare(
         fmt
@@ -154,7 +174,13 @@ if(NOT fmt_FOUND)
     set(FMT_TEST OFF CACHE BOOL "Build fmt tests" FORCE)
     FetchContent_MakeAvailable(fmt)
 endif()
-target_link_libraries(hgraph_options INTERFACE fmt::fmt)
+if(HGRAPH_BUILD_PYTHON_BINDINGS)
+    target_link_libraries(hgraph_options INTERFACE
+        $<BUILD_INTERFACE:fmt::fmt-header-only>
+    )
+else()
+    target_link_libraries(hgraph_options INTERFACE fmt::fmt)
+endif()
 
 # Apache Arrow is a FORMAL dependency (design record: record_replay_table.rst,
 # ruling 2026-07-04): the Frame value kind and the table serialization family
@@ -164,6 +190,7 @@ target_link_libraries(hgraph_options INTERFACE fmt::fmt)
 # pyarrow's bundled Arrow dylibs instead so one Python process does not load
 # both system Arrow and wheel-bundled Arrow.
 set(HGRAPH_PYARROW_LIBRARY_DIR "" CACHE PATH "Directory containing pyarrow's bundled Arrow libraries")
+set(HGRAPH_PYARROW_ABI_MAJOR "24" CACHE STRING "Required pyarrow/Arrow ABI major for Python bridge builds")
 if(HGRAPH_USE_PYARROW_ARROW)
     if(NOT (HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES))
         message(FATAL_ERROR "HGRAPH_USE_PYARROW_ARROW requires Python support to be enabled")
@@ -173,45 +200,80 @@ if(HGRAPH_USE_PYARROW_ARROW)
     endif()
     find_package(Python 3.12 COMPONENTS Interpreter REQUIRED)
     set(_hgraph_pyarrow_probe [=[
-import pathlib, pyarrow
+import pathlib, pyarrow, sys
+expected_major = int(sys.argv[1])
+actual_major = int(pyarrow.__version__.split(".", 1)[0])
+if actual_major != expected_major:
+    raise SystemExit(
+        f"pyarrow {pyarrow.__version__} provides Arrow ABI major {actual_major}; "
+        f"this build requires major {expected_major}"
+    )
 root = pathlib.Path(pyarrow.__file__).resolve().parent
 def pick(pattern):
     matches = sorted(root.glob(pattern))
     if not matches:
         raise SystemExit(f"missing pyarrow library matching {pattern!r} under {root}")
     return matches[0]
+if sys.platform == "win32":
+    arrow_link = pick("arrow.lib")
+    compute_link = pick("arrow_compute.lib")
+    arrow_runtime = pick("arrow.dll")
+    compute_runtime = pick("arrow_compute.dll")
+else:
+    arrow_link = arrow_runtime = pick("libarrow.*")
+    compute_link = compute_runtime = pick("libarrow_compute.*")
 print(root)
 print(root / "include")
-print(pick("libarrow.*"))
-print(pick("libarrow_compute.*"))
+print(arrow_link)
+print(compute_link)
+print(arrow_runtime)
+print(compute_runtime)
 ]=])
     execute_process(
-        COMMAND "${Python_EXECUTABLE}" -c "${_hgraph_pyarrow_probe}"
+        COMMAND "${Python_EXECUTABLE}" -c "${_hgraph_pyarrow_probe}" "${HGRAPH_PYARROW_ABI_MAJOR}"
         OUTPUT_STRIP_TRAILING_WHITESPACE
         OUTPUT_VARIABLE _hgraph_pyarrow_info
+        ERROR_VARIABLE _hgraph_pyarrow_error
         RESULT_VARIABLE _hgraph_pyarrow_result
     )
     if(NOT _hgraph_pyarrow_result EQUAL 0)
-        message(FATAL_ERROR "HGRAPH_USE_PYARROW_ARROW=ON but Python cannot import pyarrow")
+        message(FATAL_ERROR
+            "HGRAPH_USE_PYARROW_ARROW=ON requires a compatible pyarrow installation: "
+            "${_hgraph_pyarrow_error}")
     endif()
     string(REPLACE "\n" ";" _hgraph_pyarrow_info "${_hgraph_pyarrow_info}")
     list(GET _hgraph_pyarrow_info 0 _hgraph_pyarrow_dir)
     list(GET _hgraph_pyarrow_info 1 _hgraph_pyarrow_include)
     list(GET _hgraph_pyarrow_info 2 _hgraph_pyarrow_arrow_lib)
     list(GET _hgraph_pyarrow_info 3 _hgraph_pyarrow_compute_lib)
+    list(GET _hgraph_pyarrow_info 4 HGRAPH_PYARROW_ARROW_RUNTIME)
+    list(GET _hgraph_pyarrow_info 5 HGRAPH_PYARROW_COMPUTE_RUNTIME)
     if(NOT EXISTS "${_hgraph_pyarrow_include}/arrow/api.h")
         message(FATAL_ERROR "pyarrow headers not found under ${_hgraph_pyarrow_include}")
     endif()
     add_library(Arrow::arrow_shared SHARED IMPORTED GLOBAL)
-    set_target_properties(Arrow::arrow_shared PROPERTIES
-        IMPORTED_LOCATION "${_hgraph_pyarrow_arrow_lib}"
-        INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
-    )
     add_library(ArrowCompute::arrow_compute_shared SHARED IMPORTED GLOBAL)
-    set_target_properties(ArrowCompute::arrow_compute_shared PROPERTIES
-        IMPORTED_LOCATION "${_hgraph_pyarrow_compute_lib}"
-        INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
-    )
+    if(WIN32)
+        set_target_properties(Arrow::arrow_shared PROPERTIES
+            IMPORTED_IMPLIB "${_hgraph_pyarrow_arrow_lib}"
+            IMPORTED_LOCATION "${HGRAPH_PYARROW_ARROW_RUNTIME}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
+        )
+        set_target_properties(ArrowCompute::arrow_compute_shared PROPERTIES
+            IMPORTED_IMPLIB "${_hgraph_pyarrow_compute_lib}"
+            IMPORTED_LOCATION "${HGRAPH_PYARROW_COMPUTE_RUNTIME}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
+        )
+    else()
+        set_target_properties(Arrow::arrow_shared PROPERTIES
+            IMPORTED_LOCATION "${_hgraph_pyarrow_arrow_lib}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
+        )
+        set_target_properties(ArrowCompute::arrow_compute_shared PROPERTIES
+            IMPORTED_LOCATION "${_hgraph_pyarrow_compute_lib}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
+        )
+    endif()
     set(HGRAPH_PYARROW_LIBRARY_DIR "${_hgraph_pyarrow_dir}" CACHE PATH
         "Directory containing pyarrow's bundled Arrow libraries" FORCE)
 else()
@@ -292,13 +354,27 @@ else()
     target_link_libraries(hgraph_core PUBLIC hgraph::options)
 endif()
 
+set(_hgraph_use_python_stable_abi OFF)
+if(HGRAPH_BUILD_PYTHON_BINDINGS AND HGRAPH_PYTHON_STABLE_ABI)
+    if(CMAKE_VERSION VERSION_LESS 3.26)
+        message(FATAL_ERROR "HGRAPH_PYTHON_STABLE_ABI requires CMake 3.26 or newer")
+    endif()
+    set(_hgraph_use_python_stable_abi ON)
+endif()
+
 if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     if(DEFINED Python3_EXECUTABLE AND NOT DEFINED Python_EXECUTABLE)
         set(Python_EXECUTABLE "${Python3_EXECUTABLE}")
     endif()
 
-    set(_hgraph_python_components Interpreter Development.Module)
-    if(HGRAPH_ENABLE_PYTHON_USER_NODES)
+    if(_hgraph_use_python_stable_abi)
+        # nanobind's package config validates Python::Module even though the
+        # extension itself links only Python::SABIModule.
+        set(_hgraph_python_components Interpreter Development.Module Development.SABIModule)
+    else()
+        set(_hgraph_python_components Interpreter Development.Module)
+    endif()
+    if(HGRAPH_ENABLE_PYTHON_USER_NODES AND NOT _hgraph_use_python_stable_abi)
         list(APPEND _hgraph_python_components Development.Embed)
     endif()
 
@@ -324,18 +400,23 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     target_include_directories(hgraph_options INTERFACE
         $<BUILD_INTERFACE:${Python_INCLUDE_DIRS}>
     )
-    target_link_libraries(hgraph_options INTERFACE Python::Module)
-    if(HGRAPH_ENABLE_PYTHON_USER_NODES AND TARGET Python::Python)
+    if(_hgraph_use_python_stable_abi)
+        target_link_libraries(hgraph_options INTERFACE Python::SABIModule)
+        set(_hgraph_nanobind_library nanobind-static-abi3)
+    else()
+        target_link_libraries(hgraph_options INTERFACE Python::Module)
+        set(_hgraph_nanobind_library nanobind-static)
+    endif()
+    if(HGRAPH_ENABLE_PYTHON_USER_NODES AND NOT _hgraph_use_python_stable_abi AND TARGET Python::Python)
         target_link_libraries(hgraph_options INTERFACE Python::Python)
     endif()
     if(COMMAND nanobind_build_library)
-        nanobind_build_library(nanobind-static AS_SYSINCLUDE)
-        target_link_libraries(hgraph_options INTERFACE $<BUILD_INTERFACE:nanobind-static>)
+        nanobind_build_library(${_hgraph_nanobind_library} AS_SYSINCLUDE)
+        target_link_libraries(hgraph_options INTERFACE $<BUILD_INTERFACE:${_hgraph_nanobind_library}>)
     endif()
-    # The user-nodes code paths in hgraph_core reference the Python C API and
-    # need an embedding link (Python::Python). A BINDINGS-only build must NOT
-    # compile them: plain executables (the unit tests) would fail at load with
-    # unresolved Python symbols.
+    # Standalone user-node builds embed Python and link Python::Python. Stable
+    # bridge builds resolve their limited-API symbols from the importing Python
+    # process, keeping the extension independent of the interpreter minor.
     if(HGRAPH_ENABLE_PYTHON_USER_NODES)
         target_compile_definitions(hgraph_options INTERFACE HGRAPH_ENABLE_PYTHON_USER_NODES=1)
     else()
@@ -434,8 +515,12 @@ set(_hgraph_config_dependencies
     "find_dependency(spdlog CONFIG)\n"
 )
 if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
-    set(_hgraph_config_python_components "Interpreter Development.Module")
-    if(HGRAPH_ENABLE_PYTHON_USER_NODES)
+    if(_hgraph_use_python_stable_abi)
+        set(_hgraph_config_python_components "Interpreter Development.Module Development.SABIModule")
+    else()
+        set(_hgraph_config_python_components "Interpreter Development.Module")
+    endif()
+    if(HGRAPH_ENABLE_PYTHON_USER_NODES AND NOT _hgraph_use_python_stable_abi)
         set(_hgraph_config_python_components "Interpreter Development.Module Development.Embed")
     endif()
     string(APPEND _hgraph_config_dependencies
@@ -449,6 +534,13 @@ file(WRITE "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
     "${_hgraph_config_dependencies}"
     "include(\"\${CMAKE_CURRENT_LIST_DIR}/hgraphTargets.cmake\")\n"
 )
+if(HGRAPH_BUILD_PYTHON_BINDINGS)
+    file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
+        "if(TARGET hgraph::options)\n"
+        "  target_link_libraries(hgraph::options INTERFACE simdjson::simdjson fmt::fmt spdlog::spdlog)\n"
+        "endif()\n"
+    )
+endif()
 if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
         "if(TARGET hgraph::options AND DEFINED NB_DIR AND EXISTS \"\${NB_DIR}/include\")\n"
