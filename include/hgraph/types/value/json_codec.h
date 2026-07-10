@@ -85,6 +85,33 @@ namespace hgraph
     [[nodiscard]] HGRAPH_EXPORT Value from_json_string(const JsonConverter &converter, std::string_view text);
 
     /**
+     * Fragment cursor: lets TS-aware operators (the friendly JSON delta
+     * forms) drive object/array structure themselves while delegating leaf
+     * values to the meta-directed converters.
+     */
+    namespace json_fragment
+    {
+        struct Cursor
+        {
+            std::string_view text{};
+            std::size_t      offset{0};
+        };
+
+        /** True (and advances) when the next non-whitespace char is ``token``. */
+        HGRAPH_EXPORT bool consume(Cursor &cursor, char token);
+        /** True (and advances) on a ``null`` keyword. */
+        HGRAPH_EXPORT bool consume_null(Cursor &cursor);
+        /** Peek the next non-whitespace char (0 at end). */
+        HGRAPH_EXPORT char peek(Cursor &cursor);
+        /** Parse a JSON string token. */
+        HGRAPH_EXPORT std::string parse_string(Cursor &cursor);
+        /** Parse one meta-directed value at the cursor. */
+        HGRAPH_EXPORT Value parse_value(const JsonConverter &converter, Cursor &cursor);
+        /** Throw a parse error at the cursor position. */
+        [[noreturn]] HGRAPH_EXPORT void fail(Cursor &cursor, std::string_view message);
+    }  // namespace json_fragment
+
+    /**
      * Node-State payload carrying the converter resolved in ``start`` (the
      * lifecycle form of the builder pattern: compose once, read per tick).
      */

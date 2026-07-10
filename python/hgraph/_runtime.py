@@ -134,6 +134,11 @@ class _OperatorFunction:
                 continue
             if output_type is None:
                 output_type = i
+        if self.__name__ == "to_json" and output_type is not None:
+            # hgraph's to_json[tp] declares the INPUT series type (the
+            # output is always TS[str]); from_json[tp] keeps the output rule.
+            ts_hints.append(output_type)
+            output_type = None
         return _OperatorFunction(self.__name__, output_type=output_type, sizes=sizes or None,
                                  ts_hint=ts_hints or None)
 

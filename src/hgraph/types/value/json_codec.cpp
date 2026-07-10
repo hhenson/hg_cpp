@@ -331,6 +331,31 @@ namespace hgraph
         // Write thunks
         // ---------------------------------------------------------------
 
+        void write_enum(const JsonConverter &self, const ValueView &view, std::string &out)
+        {
+            static_cast<void>(self);
+            // The member NAME as a JSON string (the enum ops' to_string).
+            json_detail::append_escaped(view.to_string(), out);
+        }
+
+        Value read_enum(const JsonConverter &self, json_detail::Reader &reader)
+        {
+            const std::string name = reader.parse_string();
+            const auto       *meta = self.meta;
+            for (std::size_t index = 0; index < meta->field_count; ++index)
+            {
+                if (meta->fields[index].name != nullptr && name == meta->fields[index].name)
+                {
+                    Value out{*self.binding};
+                    // The enum payload IS the assigned integer (the Int plan).
+                    *static_cast<Int *>(const_cast<void *>(out.view().data())) = meta->fields[index].enum_value;
+                    return out;
+                }
+            }
+            reader.fail(fmt::format("unknown member '{}' for enum '{}'", name,
+                                    meta->display_name ? meta->display_name : "?"));
+        }
+
         void write_atomic(const JsonConverter &self, const ValueView &view, std::string &out)
         {
             switch (self.atomic_tag)
@@ -664,6 +689,12 @@ namespace hgraph
             switch (meta->kind)
             {
                 case ValueTypeKind::Atomic: {
+                    if (meta->is_enum())
+                    {
+                        raw->write_ = &write_enum;
+                        raw->read_  = &read_enum;
+                        break;
+                    }
                     raw->atomic_tag = atomic_tag_for(meta);
                     if (raw->atomic_tag == AtomicTag::None)
                     {
@@ -749,4 +780,63 @@ namespace hgraph
     {
         return from_json_string(json_converter(meta), text);
     }
+
+    namespace json_fragment
+    {
+        bool consume(Cursor &cursor, char token)
+        {
+            json_detail::Reader reader{cursor.text, cursor.offset};
+            reader.skip_ws();
+            if (reader.pos < cursor.text.size() && cursor.text[reader.pos] == token)
+            {
+                cursor.offset = reader.pos + 1;
+                return true;
+            }
+            cursor.offset = reader.pos;
+            return false;
+        }
+
+        bool consume_null(Cursor &cursor)
+        {
+            json_detail::Reader reader{cursor.text, cursor.offset};
+            reader.skip_ws();
+            if (cursor.text.substr(reader.pos, 4) == "null")
+            {
+                cursor.offset = reader.pos + 4;
+                return true;
+            }
+            cursor.offset = reader.pos;
+            return false;
+        }
+
+        char peek(Cursor &cursor)
+        {
+            json_detail::Reader reader{cursor.text, cursor.offset};
+            reader.skip_ws();
+            cursor.offset = reader.pos;
+            return reader.pos < cursor.text.size() ? cursor.text[reader.pos] : '\0';
+        }
+
+        std::string parse_string(Cursor &cursor)
+        {
+            json_detail::Reader reader{cursor.text, cursor.offset};
+            std::string         result = reader.parse_string();
+            cursor.offset              = reader.pos;
+            return result;
+        }
+
+        Value parse_value(const JsonConverter &converter, Cursor &cursor)
+        {
+            json_detail::Reader reader{cursor.text, cursor.offset};
+            Value               result = converter.read(reader);
+            cursor.offset              = reader.pos;
+            return result;
+        }
+
+        void fail(Cursor &cursor, std::string_view message)
+        {
+            json_detail::Reader reader{cursor.text, cursor.offset};
+            reader.fail(message);
+        }
+    }  // namespace json_fragment
 }  // namespace hgraph

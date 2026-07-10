@@ -85,6 +85,39 @@ def span_to_alpha(span: float) -> float:
     return 2.0 / (span + 1.0)
 
 
+def to_json_builder(tp):
+    """hgraph's scalar-level JSON serializer factory: returns a callable
+    rendering instances of ``tp`` as a JSON string (the C++ codec)."""
+    import _hgraph
+
+    from ._types import _value_type
+
+    meta = _value_type(tp)
+
+    def _write(value):
+        return _hgraph.value_to_json(meta, value)
+
+    return _write
+
+
+def from_json_builder(tp):
+    """The inverse: returns a callable parsing a JSON string (or an already
+    json.loads'd tree, which re-dumps first) into a ``tp`` instance."""
+    import json as _json
+
+    import _hgraph
+
+    from ._types import _value_type
+
+    meta = _value_type(tp)
+
+    def _read(payload):
+        text = payload if isinstance(payload, str) else _json.dumps(payload)
+        return _hgraph.value_from_json(meta, text)
+
+    return _read
+
+
 def _window_result():
     """hgraph's window() result schema {buffer, index} (generic over the
     element type; resolves when the window operator lands). Built lazily -

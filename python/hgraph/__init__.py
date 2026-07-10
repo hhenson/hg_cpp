@@ -16,7 +16,8 @@ from ._types import (TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, CONTEXT, RE
                      SIGNAL, WINDOW_SIZE, WINDOW_SIZE_MIN, WindowSize, Array, ts_schema, ENUM)
 from ._compat import (CmpResult, DivideByZero, exception_time_series, OperatorWiringNodeClass, BoolResult,
                       CompoundScalar, JSON, TimeSeriesReference,
-                      NodeException, accumulate, average, center_of_mass_to_alpha, span_to_alpha)
+                      NodeException, accumulate, average, center_of_mass_to_alpha, span_to_alpha,
+                      to_json_builder, from_json_builder)
 from ._runtime import filter_by
 from ._runtime import convert
 from ._runtime import collect

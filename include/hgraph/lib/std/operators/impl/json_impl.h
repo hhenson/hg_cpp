@@ -40,6 +40,19 @@ namespace hgraph::stdlib
      * value vs delta is resolved by OVERLOAD SELECTION (``requires_`` on the
      * flag) — no hot-path branches.
      */
+    namespace json_ts_detail
+    {
+        /** hgraph's FRIENDLY JSON delta form, recursively over the TS shape:
+            TSD = {key: child-delta | null}, TSS = {added/removed arrays,
+            empty sides omitted}, TSL = {index: child-delta}, TSB = modified
+            fields, leaves = the value. */
+        void write_ts_delta(const TSInputView &ts, std::string &out);
+
+        /** The inverse: parse ``cursor`` per the OUTPUT's TS shape and apply
+            (a leading '[' on TSS/TSL is a whole-value replacement). */
+        void apply_ts_json(const TSOutputView &out, json_fragment::Cursor &cursor);
+    }  // namespace json_ts_detail
+
     struct to_json_value_impl
     {
         static constexpr auto name = "to_json";
@@ -81,18 +94,11 @@ namespace hgraph::stdlib
             return delta != nullptr && *delta;
         }
 
-        static void start(In<"ts", TsVar<"S">> ts, State<JsonCodecState> codec)
-        {
-            codec.set(JsonCodecState{&json_converter(ts.base().schema()->delta_value_schema)});
-        }
-
-        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"delta", Bool> delta, State<JsonCodecState> codec,
-                         Out<TS<Str>> out)
+        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"delta", Bool> delta, Out<TS<Str>> out)
         {
             static_cast<void>(delta);   // resolved at wiring; always true here
-            const Value tick_delta = capture_delta(ts.base());
             std::string text;
-            codec.get().converter->write(tick_delta.view(), text);
+            json_ts_detail::write_ts_delta(ts.base(), text);
             out.set(std::move(text));
         }
     };
@@ -107,18 +113,11 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "from_json";
 
-        static void start(Out<TsVar<"O">> out, State<JsonCodecState> codec)
+        static void eval(In<"ts", TS<Str>> ts, Out<TsVar<"O">> out)
         {
-            // ``Out``'s ``schema`` type alias hides the inherited accessor;
-            // reach the runtime schema through the erased view.
-            const auto &erased = static_cast<const TSOutputView &>(out);
-            codec.set(JsonCodecState{&json_converter(erased.schema()->value_schema)});
-        }
-
-        static void eval(In<"ts", TS<Str>> ts, State<JsonCodecState> codec, Out<TsVar<"O">> out)
-        {
-            Value parsed = from_json_string(*codec.get().converter, ts.value());
-            apply_delta(out, parsed.view());
+            const Str &text = ts.value();
+            json_fragment::Cursor cursor{std::string_view{text}, 0};
+            json_ts_detail::apply_ts_json(static_cast<const TSOutputView &>(out), cursor);
         }
     };
 

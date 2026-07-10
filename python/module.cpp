@@ -18,6 +18,7 @@
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/lib/std/operators/json.h>
 #include <hgraph/lib/std/operators/impl/io_impl.h>   // io_write_slot (sys.stdout routing)
+#include <hgraph/types/value/json_codec.h>          // to_json_string / from_json_string (builders)
 #include <hgraph/types/context_wiring.h>
 #include <hgraph/types/service_runtime.h>
 #include <hgraph/lib/std/operators/higher_order.h>
@@ -1754,6 +1755,16 @@ NB_MODULE(_hgraph, m)
     m.def("tsw", [](PyValueType v, std::size_t period, std::size_t min_period) {
         return PyTsType{TypeRegistry::instance().tsw(v.meta, period, min_period)};
     }, nb::arg("value"), nb::arg("period"), nb::arg("min_period") = 0);
+    // The scalar-level JSON builders (hgraph's to_json_builder /
+    // from_json_builder): serialize/parse a plain value by its schema.
+    m.def("value_to_json", [](PyValueType meta, nb::handle value) {
+        const Value owned = python_bridge::py_to_value_as(value, meta.meta);
+        return to_json_string(owned.view());
+    });
+    m.def("value_from_json", [](PyValueType meta, const std::string &text) {
+        const Value parsed = from_json_string(meta.meta, text);
+        return python_bridge::value_to_py(parsed.view());
+    });
     m.def("enum_vt", [](const std::string &name, nb::list members, nb::object cls) {
         std::vector<std::pair<std::string, long long>> table;
         table.reserve(nb::len(members));

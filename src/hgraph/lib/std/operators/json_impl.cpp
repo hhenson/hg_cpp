@@ -631,6 +631,234 @@ std::size_t std::hash<hgraph::stdlib::json_tree::JsonValue>::operator()(
 
 namespace hgraph::stdlib
 {
+    namespace json_ts_detail
+    {
+        namespace
+        {
+            void write_json_key(const ValueView &key, std::string &out)
+            {
+                // Keys are STRINGIFIED (python json.dumps): a Str renders as
+                // its JSON string; other scalars render then quote.
+                std::string rendered = to_json_string(key);
+                if (!rendered.empty() && rendered.front() == '"') { out += rendered; }
+                else
+                {
+                    out.push_back('"');
+                    out += rendered;
+                    out.push_back('"');
+                }
+            }
+
+            void write_separator(bool &first, std::string &out)
+            {
+                if (!first) { out += ", "; }
+                first = false;
+            }
+        }  // namespace
+
+        void write_ts_delta(const TSInputView &ts, std::string &out)
+        {
+            const auto *schema = ts.schema();
+            switch (schema->kind)
+            {
+                case TSTypeKind::TSD: {
+                    auto dict  = const_cast<TSInputView &>(ts).as_dict();
+                    bool first = true;
+                    out.push_back('{');
+                    for (const ValueView key : dict.removed_keys())
+                    {
+                        write_separator(first, out);
+                        write_json_key(key, out);
+                        out += ": null";
+                    }
+                    for (auto &&[key, child] : dict.modified_items())
+                    {
+                        write_separator(first, out);
+                        write_json_key(key, out);
+                        out += ": ";
+                        write_ts_delta(child, out);
+                    }
+                    out.push_back('}');
+                    return;
+                }
+                case TSTypeKind::TSS: {
+                    auto        set     = const_cast<TSInputView &>(ts).as_set();
+                    const auto &element = json_converter(schema->value_schema->element_type);
+                    std::string added;
+                    std::string removed;
+                    bool        any_added   = false;
+                    bool        any_removed = false;
+                    for (const ValueView value : set.added())
+                    {
+                        if (any_added) { added += ", "; }
+                        any_added = true;
+                        element.write(value, added);
+                    }
+                    for (const ValueView value : set.removed())
+                    {
+                        if (any_removed) { removed += ", "; }
+                        any_removed = true;
+                        element.write(value, removed);
+                    }
+                    bool first = true;
+                    out.push_back('{');
+                    if (any_added)
+                    {
+                        write_separator(first, out);
+                        out += "\"added\": [";
+                        out += added;
+                        out.push_back(']');
+                    }
+                    if (any_removed)
+                    {
+                        write_separator(first, out);
+                        out += "\"removed\": [";
+                        out += removed;
+                        out.push_back(']');
+                    }
+                    out.push_back('}');
+                    return;
+                }
+                case TSTypeKind::TSL: {
+                    auto list  = const_cast<TSInputView &>(ts).as_list();
+                    bool first = true;
+                    out.push_back('{');
+                    for (std::size_t index = 0; index < list.size(); ++index)
+                    {
+                        auto child = list[index];
+                        if (!child.modified()) { continue; }
+                        write_separator(first, out);
+                        out += fmt::format("\"{}\": ", index);
+                        write_ts_delta(child, out);
+                    }
+                    out.push_back('}');
+                    return;
+                }
+                case TSTypeKind::TSB: {
+                    auto bundle = const_cast<TSInputView &>(ts).as_bundle();
+                    bool first  = true;
+                    out.push_back('{');
+                    for (std::size_t index = 0; index < bundle.size(); ++index)
+                    {
+                        auto child = bundle.at(index);
+                        if (!child.modified()) { continue; }
+                        write_separator(first, out);
+                        out += fmt::format("\"{}\": ", schema->fields()[index].name);
+                        write_ts_delta(child, out);
+                    }
+                    out.push_back('}');
+                    return;
+                }
+                default: {
+                    json_converter(schema->value_schema).write(ts.value(), out);
+                    return;
+                }
+            }
+        }
+
+        void apply_ts_json(const TSOutputView &out, json_fragment::Cursor &cursor)
+        {
+            const auto *schema = out.schema();
+            switch (schema->kind)
+            {
+                case TSTypeKind::TSD: {
+                    if (!json_fragment::consume(cursor, '{'))
+                    {
+                        json_fragment::fail(cursor, "expected '{' for a TSD");
+                    }
+                    auto dict     = out.as_dict();
+                    auto mutation = dict.begin_mutation(out.evaluation_time());
+                    if (json_fragment::consume(cursor, '}')) { return; }
+                    const auto *key_meta   = schema->key_type();
+                    const bool  string_key = key_meta == scalar_descriptor<Str>::value_meta();
+                    while (true)
+                    {
+                        const std::string key_text = json_fragment::parse_string(cursor);
+                        const Value       key =
+                            string_key ? Value{Str{key_text}} : from_json_string(key_meta, key_text);
+                        if (!json_fragment::consume(cursor, ':'))
+                        {
+                            json_fragment::fail(cursor, "expected ':' after a TSD key");
+                        }
+                        if (json_fragment::consume_null(cursor)) { static_cast<void>(mutation.erase(key.view())); }
+                        else
+                        {
+                            auto element = mutation.at(key.view());
+                            apply_ts_json(TSOutputView{out.output(), element, out.evaluation_time()}, cursor);
+                        }
+                        if (json_fragment::consume(cursor, ',')) { continue; }
+                        if (json_fragment::consume(cursor, '}')) { break; }
+                        json_fragment::fail(cursor, "expected ',' or '}' in a TSD object");
+                    }
+                    return;
+                }
+                case TSTypeKind::TSS: {
+                    if (json_fragment::peek(cursor) == '[')
+                    {
+                        // A bare array replaces the whole membership.
+                        const Value parsed =
+                            json_fragment::parse_value(json_converter(schema->value_schema), cursor);
+                        apply_current_value(out, parsed.view());
+                        return;
+                    }
+                    if (!json_fragment::consume(cursor, '{'))
+                    {
+                        json_fragment::fail(cursor, "expected '{' or '[' for a TSS");
+                    }
+                    auto        set      = out.as_set();
+                    auto        mutation = set.begin_mutation(out.evaluation_time());
+                    const auto &element  = json_converter(schema->value_schema->element_type);
+                    if (json_fragment::consume(cursor, '}')) { return; }
+                    while (true)
+                    {
+                        const std::string part = json_fragment::parse_string(cursor);
+                        if (!json_fragment::consume(cursor, ':') || !json_fragment::consume(cursor, '['))
+                        {
+                            json_fragment::fail(cursor, "expected an added/removed array");
+                        }
+                        if (!json_fragment::consume(cursor, ']'))
+                        {
+                            while (true)
+                            {
+                                const Value value = json_fragment::parse_value(element, cursor);
+                                if (part == "added") { static_cast<void>(mutation.add(value.view())); }
+                                else { static_cast<void>(mutation.remove(value.view())); }
+                                if (json_fragment::consume(cursor, ',')) { continue; }
+                                if (json_fragment::consume(cursor, ']')) { break; }
+                                json_fragment::fail(cursor, "expected ',' or ']' in a set delta");
+                            }
+                        }
+                        if (json_fragment::consume(cursor, ',')) { continue; }
+                        if (json_fragment::consume(cursor, '}')) { break; }
+                        json_fragment::fail(cursor, "expected ',' or '}' in a set delta");
+                    }
+                    return;
+                }
+                case TSTypeKind::TSL: {
+                    if (json_fragment::peek(cursor) == '[')
+                    {
+                        const Value parsed =
+                            json_fragment::parse_value(json_converter(schema->value_schema), cursor);
+                        apply_current_value(out, parsed.view());
+                        return;
+                    }
+                    // The index-object form IS the canonical TSL delta (an
+                    // index map); its converter reads quoted keys.
+                    const Value parsed =
+                        json_fragment::parse_value(json_converter(schema->delta_value_schema), cursor);
+                    apply_delta(out, parsed.view());
+                    return;
+                }
+                default: {
+                    const Value parsed =
+                        json_fragment::parse_value(json_converter(schema->value_schema), cursor);
+                    apply_current_value(out, parsed.view());
+                    return;
+                }
+            }
+        }
+    }  // namespace json_ts_detail
+
     void register_json_operators()
     {
         register_overload<json_object_, json_object_impl>();
