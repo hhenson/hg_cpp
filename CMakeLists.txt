@@ -232,12 +232,8 @@ if sys.platform == "win32":
 else:
     arrow_link = arrow_runtime = pick("libarrow.*")
     compute_link = compute_runtime = pick("libarrow_compute.*")
-print(root)
-print(root / "include")
-print(arrow_link)
-print(compute_link)
-print(arrow_runtime)
-print(compute_runtime)
+for path in (root, root / "include", arrow_link, compute_link, arrow_runtime, compute_runtime):
+    print(path.as_posix())
 ]=])
     execute_process(
         COMMAND "${Python_EXECUTABLE}" -c "${_hgraph_pyarrow_probe}" "${HGRAPH_PYARROW_ABI_MAJOR}"
