@@ -31,11 +31,16 @@ install(TARGETS _hgraph
 )
 if(WIN32 AND HGRAPH_USE_PYARROW_ARROW)
     # Windows does not have an rpath equivalent. Keep the exact Arrow runtime
-    # DLLs used at link time beside the extension so `import _hgraph` works
-    # before pyarrow itself has been imported.
+    # DLLs used at link time and PyArrow's hashed MSVC support DLLs beside the
+    # extension so `import _hgraph` works before pyarrow itself is imported.
+    file(GLOB _hgraph_pyarrow_support_dlls
+        LIST_DIRECTORIES false
+        "${HGRAPH_PYARROW_LIBRARY_DIR}/../pyarrow.libs/*.dll"
+    )
     install(FILES
         "${HGRAPH_PYARROW_ARROW_RUNTIME}"
         "${HGRAPH_PYARROW_COMPUTE_RUNTIME}"
+        ${_hgraph_pyarrow_support_dlls}
         DESTINATION .
     )
 endif()

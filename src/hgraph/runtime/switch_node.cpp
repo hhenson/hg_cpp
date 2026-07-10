@@ -1,6 +1,9 @@
 #include <hgraph/runtime/nested_bindings.h>
 #include <hgraph/runtime/switch_node.h>
+#include <hgraph/types/utils/stable_slot_storage.h>
+#include <hgraph/util/scope.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
@@ -17,26 +20,26 @@ namespace hgraph
 
         struct SwitchNodeStorage
         {
-            // The switch output may be re-homed by an enclosing map_/mesh_.
-            // This backing output is used only when the switch owns its target.
-            std::optional<TSOutput>          backing_output{};
-            // REF-shaped switch with VALUE branches (mixed-branch mode):
-            // value terminals forward into this value-schema'd backing and
-            // the switch output publishes a peered reference to it.
-            std::optional<TSOutput>          value_backing{};
-            GraphValue                       active{};
-            std::vector<GraphValue>          retired{};
+            // Raw graph storage must outlive the GraphValue handles that own
+            // the constructed payloads placed in its two slots.
+            StableSlotStorage                graph_memory{};
+            std::array<GraphValue, 2>         graphs{};
+            std::optional<std::size_t>        active_slot{};
+            std::optional<std::size_t>        previous_slot{};
             Value                            active_key{};
             const SingleNestedGraphNodeSpec *active_spec{nullptr};
-            // Last forwarding target installed by switch_ itself; any other
-            // current target is externally owned and must be preserved.
-            TSOutputHandle                   owned_output_target{};
+
+            [[nodiscard]] GraphValue *active_graph() noexcept
+            {
+                return active_slot.has_value() ? &graphs[*active_slot] : nullptr;
+            }
         };
 
         struct SwitchNodeContext
         {
             SwitchNodeSpec spec{};
             std::size_t    storage_offset{0};
+            MemoryUtils::StorageLayout graph_slot_layout{};
         };
 
         // Program-lifetime, intentionally-leaked context storage — same rationale
@@ -52,16 +55,26 @@ namespace hgraph
         [[nodiscard]] const SwitchNodeContext &register_switch_node_context(SwitchNodeSpec spec,
                                                                             std::size_t storage_offset)
         {
+            MemoryUtils::StorageLayout graph_slot_layout{.size = 1, .alignment = 1};
+            const auto include_layout = [&](const SingleNestedGraphNodeSpec &branch) {
+                const auto layout = branch.graph_builder.nested_storage_layout();
+                graph_slot_layout.size = std::max(graph_slot_layout.size, layout.size);
+                graph_slot_layout.alignment = std::max(graph_slot_layout.alignment, layout.alignment);
+            };
+            for (const SwitchBranch &branch : spec.branches) { include_layout(branch.spec); }
+            if (spec.default_branch.has_value()) { include_layout(*spec.default_branch); }
+
             auto context = std::make_unique<SwitchNodeContext>(SwitchNodeContext{
-                .spec           = std::move(spec),
-                .storage_offset = storage_offset,
+                .spec              = std::move(spec),
+                .storage_offset    = storage_offset,
+                .graph_slot_layout = graph_slot_layout,
             });
             const auto *result = context.get();
             switch_node_contexts().push_back(std::move(context));
             return *result;
         }
 
-        void bind_branch_inputs(const NodeView &view, const SingleNestedGraphNodeSpec &spec, GraphView child,
+        void bind_branch_inputs(const NodeView &view, const SingleNestedGraphNodeSpec &spec, const GraphView &child,
                                 DateTime evaluation_time)
         {
             if (spec.input_bindings.empty()) { return; }
@@ -75,124 +88,38 @@ namespace hgraph
             }
         }
 
-        void ensure_backing_output(SwitchNodeStorage &storage, const TSValueTypeMetaData *schema)
-        {
-            if (schema == nullptr) { return; }
-            if (!storage.backing_output.has_value()) { storage.backing_output.emplace(*schema); }
-        }
-
-        [[nodiscard]] TSOutputView backing_output_view(SwitchNodeStorage &storage,
-                                                       const NodeView &view,
-                                                       DateTime evaluation_time)
-        {
-            const NodeTypeMetaData *schema = view.schema();
-            ensure_backing_output(storage, schema != nullptr ? schema->output_schema : nullptr);
-            return storage.backing_output.has_value()
-                       ? storage.backing_output->view(evaluation_time)
-                       : TSOutputView{};
-        }
-
-        void clear_collection_output_if_valid(const TSOutputView &output, DateTime evaluation_time)
-        {
-            if (!output.bound() || output.forwarding() || !output.valid()) { return; }
-
-            static_cast<void>(output.data_view().clear_collection(evaluation_time));
-        }
-
-        [[nodiscard]] TSOutputView switch_output_forwarding_view(const NodeView &view,
-                                                                 const NestedGraphOutputBinding &binding,
-                                                                 DateTime evaluation_time)
-        {
-            auto output = walk_forwarding_target_path(view.output(evaluation_time), binding.target_path);
-            if (!output.forwarding())
-            {
-                throw std::logic_error("switch_ output must be a forwarding endpoint");
-            }
-            return output;
-        }
-
-        void bind_switch_output_to_source(const NodeView &view, SwitchNodeStorage &storage,
-                                          const NestedGraphOutputBinding &binding,
-                                          const TSOutputView &source, DateTime evaluation_time)
-        {
-            auto output = switch_output_forwarding_view(view, binding, evaluation_time);
-            bind_forwarding_output_to_source(output, source);
-            storage.owned_output_target = output.forwarding_target();
-        }
-
-        void bind_switch_output_to_backing(const NodeView &view, SwitchNodeStorage &storage,
-                                           const NestedGraphOutputBinding &binding,
-                                           DateTime evaluation_time)
-        {
-            auto output = switch_output_forwarding_view(view, binding, evaluation_time);
-            auto current = output.forwarding_target();
-            if (current.bound() && !current.same_as(storage.owned_output_target))
-            {
-                // An enclosing map_/mesh_ already bound this switch terminal to
-                // its element; branch terminals should resolve through it.
-                storage.owned_output_target.reset();
-                return;
-            }
-
-            auto backing = backing_output_view(storage, view, evaluation_time);
-            if (!backing.bound()) { return; }
-            bind_forwarding_output_to_source(output, backing);
-            storage.owned_output_target = output.forwarding_target();
-        }
-
-        void bind_branch_output(const NodeView &view, const SingleNestedGraphNodeSpec &spec, GraphView child,
+        void bind_branch_output(const NodeView &view, const SingleNestedGraphNodeSpec &spec, const GraphView &child,
                                 DateTime evaluation_time)
         {
             if (!spec.output_binding.has_value()) { return; }
 
-            auto &storage = *MemoryUtils::cast<SwitchNodeStorage>(
-                view.as<SwitchNodeView>().internal_storage());
-
             const NestedGraphOutputBinding &binding = *spec.output_binding;
 
-            if (binding.kind == NestedGraphOutputBinding::Kind::ParentInput)
+            if (binding.kind != NestedGraphOutputBinding::Kind::ChildOutput)
             {
-                auto root_input = view.input(evaluation_time);
-                auto source     = walk_source_to_output(root_input.borrowed_ref(), binding.parent_source_path);
-                bind_switch_output_to_source(view, storage, binding, source, evaluation_time);
-                return;
+                throw std::logic_error("switch_ branches must terminate at a child output");
             }
-
-            bind_switch_output_to_backing(view, storage, binding, evaluation_time);
-            auto switch_output = walk_ts_path(view.output(evaluation_time), binding.target_path);
 
             auto branch_terminal = walk_ts_path(child.node_at(binding.source.node).output(evaluation_time),
                                                 binding.source.path);
-            // A VALUE branch feeding a REFERENCE-shaped switch output (the
-            // branches differ only in REF-ness) publishes a peered REFERENCE
-            // to its terminal instead of forwarding - consumers dereference
-            // through the sampled-rebind contract.
-            const auto *out_schema      = switch_output.schema();
-            const auto *terminal_schema = branch_terminal.schema();
-            if (out_schema != nullptr && out_schema->kind == TSTypeKind::REF && terminal_schema != nullptr &&
-                terminal_schema->kind != TSTypeKind::REF)
-            {
-                // A VALUE branch under a REFERENCE-shaped switch output: the
-                // terminal is a forwarding output BY CONSTRUCTION, so it
-                // forwards into the switch's BACKING output (value-schema'd),
-                // and the switch output publishes a peered reference TO the
-                // backing. Branch swaps re-point the forwarding; the
-                // reference (and consumers' bindings) stay stable.
-                if (!storage.value_backing.has_value()) { storage.value_backing.emplace(*terminal_schema); }
-                auto backing = storage.value_backing->view(evaluation_time);
-                bind_forwarding_output_to_source(branch_terminal, backing);
+            auto switch_output = walk_ts_path(view.output(evaluation_time), binding.target_path);
 
-                Value reference{TimeSeriesReference::peered(backing)};
-                if (switch_output.data_view().has_current_value() &&
-                    switch_output.data_view().value().checked_as<TimeSeriesReference>() ==
-                        reference.view().checked_as<TimeSeriesReference>())
+            if (switch_output.schema() != nullptr && switch_output.schema()->kind == TSTypeKind::REF &&
+                branch_terminal.schema() != nullptr && branch_terminal.schema()->kind != TSTypeKind::REF)
+            {
+                const TimeSeriesReference reference = TimeSeriesReference::peered(branch_terminal);
+                if (switch_output.valid() &&
+                    switch_output.value().checked_as<TimeSeriesReference>() == reference)
                 {
-                    return;   // same-reference dedup
+                    return;
                 }
-                auto mutation = switch_output.begin_mutation(evaluation_time);
-                static_cast<void>(mutation.move_value_from(std::move(reference)));
+
+                Value value{reference};
+                static_cast<void>(
+                    switch_output.begin_mutation(evaluation_time).move_value_from(std::move(value)));
                 return;
             }
+
             bind_forwarding_output_to_source(branch_terminal, switch_output);
         }
 
@@ -202,25 +129,31 @@ namespace hgraph
             if (!spec.output_binding.has_value()) { return; }
 
             const NestedGraphOutputBinding &binding = *spec.output_binding;
+            if (binding.kind != NestedGraphOutputBinding::Kind::ChildOutput) { return; }
+
             auto switch_view = view.as<SwitchNodeView>();
             auto &storage = *MemoryUtils::cast<SwitchNodeStorage>(switch_view.internal_storage());
+            GraphValue *active = storage.active_graph();
+            if (active == nullptr || !active->has_value()) { return; }
 
-            if (binding.kind == NestedGraphOutputBinding::Kind::ChildOutput)
-            {
-                if (storage.active.has_value())
-                {
-                    auto branch_terminal = walk_ts_path(
-                        storage.active.view().node_at(binding.source.node).output(evaluation_time),
-                        binding.source.path);
-                    if (branch_terminal.forwarding_bound()) { branch_terminal.clear_forwarding_target(); }
-                }
-            }
+            auto terminal = walk_ts_path(active->view().node_at(binding.source.node).output(evaluation_time),
+                                         binding.source.path);
+            if (terminal.forwarding_bound()) { terminal.clear_forwarding_target(); }
+        }
 
-            if (storage.backing_output.has_value())
+        void reset_switch_output(const NodeView &view, DateTime evaluation_time)
+        {
+            auto output = view.output(evaluation_time);
+            if (!output.bound()) { return; }
+
+            if (output.schema() != nullptr && output.schema()->kind == TSTypeKind::REF)
             {
-                clear_collection_output_if_valid(storage.backing_output->view(evaluation_time),
-                                                 evaluation_time);
+                Value empty{TimeSeriesReference{}};
+                auto mutation = output.begin_mutation(evaluation_time);
+                static_cast<void>(mutation.move_value_from(std::move(empty)));
+                return;
             }
+            static_cast<void>(output.data_view().clear_collection(evaluation_time));
         }
 
         [[nodiscard]] const SingleNestedGraphNodeSpec *select_branch(const SwitchNodeContext &context,
@@ -236,31 +169,57 @@ namespace hgraph
 
         void switch_teardown(const NodeView &view, SwitchNodeStorage &storage, DateTime evaluation_time)
         {
-            if (!storage.active.has_value()) { return; }
-            // Mixed-branch REF mode: the branch is GONE, so consumers must
-            // observe the reset - publish the EMPTY reference (the
-            // synchronous notify unbinds from-REF consumers from the value
-            // backing) and destroy the stale backing; the next branch bind
-            // recreates it invalid.
-            if (storage.value_backing.has_value() && storage.active_spec != nullptr &&
-                storage.active_spec->output_binding.has_value())
-            {
-                auto switch_output = walk_ts_path(view.output(evaluation_time),
-                                                  storage.active_spec->output_binding->target_path);
-                if (switch_output.schema() != nullptr && switch_output.schema()->kind == TSTypeKind::REF)
-                {
-                    Value empty{TimeSeriesReference{}};
-                    auto  mutation = switch_output.begin_mutation(evaluation_time);
-                    static_cast<void>(mutation.move_value_from(std::move(empty)));
-                }
-                storage.value_backing.reset();
-            }
+            GraphValue *active = storage.active_graph();
+            if (active == nullptr || !active->has_value()) { return; }
             if (storage.active_spec != nullptr) { clear_branch_output(view, *storage.active_spec, evaluation_time); }
-            storage.active.view().stop();
-            storage.retired.push_back(std::move(storage.active));
-            storage.active      = GraphValue{};
+            active->view().stop();
+            reset_switch_output(view, evaluation_time);
+            storage.previous_slot = storage.active_slot;
+            storage.active_slot.reset();
             storage.active_key  = Value{};
             storage.active_spec = nullptr;
+        }
+
+        void activate_branch(const NodeView &view, const SwitchNodeContext &context,
+                             SwitchNodeStorage &storage, const SingleNestedGraphNodeSpec &spec,
+                             Value key, DateTime evaluation_time)
+        {
+            if (storage.graph_memory.slot_capacity() == 0)
+            {
+                storage.graph_memory.reserve_to(2, context.graph_slot_layout.size,
+                                                context.graph_slot_layout.alignment);
+            }
+
+            const std::size_t next_slot = storage.active_slot.has_value() ? 1U - *storage.active_slot : 0U;
+
+            // This slot contains the graph retired on the previous switch. Its
+            // stop phase has already completed, so it can now be destructed and
+            // the same fixed memory reused for the new branch.
+            if (storage.previous_slot.has_value() && *storage.previous_slot != next_slot)
+            {
+                throw std::logic_error("switch_ previous graph does not occupy the reusable slot");
+            }
+            storage.graphs[next_slot] = GraphValue{};
+            storage.previous_slot.reset();
+            storage.graphs[next_slot] = spec.graph_builder.make_nested_graph(
+                NodeStorageRef{view.binding(), view.data()},
+                storage.graph_memory.slot_data(next_slot),
+                context.graph_slot_layout);
+
+            auto next = storage.graphs[next_slot].view();
+            auto construction_rollback = UnwindCleanupGuard([&] {
+                storage.graphs[next_slot] = GraphValue{};
+            });
+            bind_branch_inputs(view, spec, next, evaluation_time);
+            construction_rollback.release();
+
+            switch_teardown(view, storage, evaluation_time);
+            storage.active_slot = next_slot;
+            storage.active_key  = std::move(key);
+            storage.active_spec = &spec;
+
+            bind_branch_output(view, spec, next, evaluation_time);
+            next.start(evaluation_time);
         }
 
         // Single active child: propagate its pause directly. On resume, re-binding is
@@ -273,23 +232,19 @@ namespace hgraph
             const auto &context = *static_cast<const SwitchNodeContext *>(switch_view.internal_context());
             auto       &storage = *MemoryUtils::cast<SwitchNodeStorage>(switch_view.internal_storage());
 
-            storage.retired.clear();
-
             auto root_input   = view.input(evaluation_time);
             auto root_bundle  = root_input.as_bundle();
             auto key_input    = root_bundle[0];
 
-            if (key_input.valid() && (key_input.modified() || !storage.active.has_value()))
+            if (key_input.valid() && (key_input.modified() || !storage.active_slot.has_value()))
             {
                 Value      key_value{key_input.value()};
                 const bool same_key =
-                    storage.active.has_value() && storage.active_key.has_value() &&
+                    storage.active_slot.has_value() && storage.active_key.has_value() &&
                     key_value.equals(storage.active_key);
 
-                if (!storage.active.has_value() || context.spec.reload_on_ticked || !same_key)
+                if (!storage.active_slot.has_value() || context.spec.reload_on_ticked || !same_key)
                 {
-                    switch_teardown(view, storage, evaluation_time);
-
                     const SingleNestedGraphNodeSpec *spec = select_branch(context, key_value);
                     if (spec == nullptr)
                     {
@@ -297,14 +252,7 @@ namespace hgraph
                             "switch_: no branch is registered for the key value (and no default branch)");
                     }
 
-                    storage.active = spec->graph_builder.make_nested_graph(
-                        NodeStorageRef{view.binding(), view.data()});
-                    storage.active_key  = std::move(key_value);
-                    storage.active_spec = spec;
-
-                    bind_branch_inputs(view, *spec, storage.active.view(), evaluation_time);
-                    bind_branch_output(view, *spec, storage.active.view(), evaluation_time);
-                    storage.active.view().start(evaluation_time);
+                    activate_branch(view, context, storage, *spec, std::move(key_value), evaluation_time);
 
                     // Sampled rebind (the sampled-runtime contract): binding an
                     // active child input to an already-valid source schedules the
@@ -312,15 +260,15 @@ namespace hgraph
                 }
             }
 
-            if (storage.active.has_value())
+            if (GraphValue *active = storage.active_graph(); active != nullptr && active->has_value())
             {
                 // Re-bind boundaries each cycle (cheap no-op when stable; absorbs
                 // upstream REF re-points). The nested graph evaluator propagates
                 // its cached next scheduled time back to this node before returning.
                 const SingleNestedGraphNodeSpec &spec = *storage.active_spec;
-                bind_branch_inputs(view, spec, storage.active.view(), evaluation_time);
-                bind_branch_output(view, spec, storage.active.view(), evaluation_time);
-                return storage.active.view().evaluate(evaluation_time);
+                bind_branch_inputs(view, spec, active->view(), evaluation_time);
+                bind_branch_output(view, spec, active->view(), evaluation_time);
+                return active->view().evaluate(evaluation_time);
             }
             return true;
         }
@@ -330,16 +278,11 @@ namespace hgraph
             return switch_evaluate(view, evaluation_time);
         }
 
-        void switch_node_stop(const NodeView &view, DateTime)
+        void switch_node_stop(const NodeView &view, DateTime evaluation_time)
         {
             auto  switch_view = view.as<SwitchNodeView>();
             auto &storage     = *MemoryUtils::cast<SwitchNodeStorage>(switch_view.internal_storage());
-            // The active branch terminal's forwarding link is intentionally
-            // left intact: the child lives in this node's storage, so the last
-            // value it wrote into the switch output remains observable after a
-            // run. Branch swaps clear the retired terminal link explicitly.
-            if (storage.active.has_value()) { storage.active.view().stop(); }
-            storage.retired.clear();
+            switch_teardown(view, storage, evaluation_time);
         }
     }  // namespace
 
@@ -361,12 +304,13 @@ namespace hgraph
 
     bool SwitchNodeView::has_active_branch() const noexcept
     {
-        return MemoryUtils::cast<SwitchNodeStorage>(storage_)->active.has_value();
+        return MemoryUtils::cast<SwitchNodeStorage>(storage_)->active_slot.has_value();
     }
 
     GraphValue &SwitchNodeView::active_graph_value() const noexcept
     {
-        return MemoryUtils::cast<SwitchNodeStorage>(storage_)->active;
+        auto &storage = *MemoryUtils::cast<SwitchNodeStorage>(storage_);
+        return storage.graphs[*storage.active_slot];
     }
 
     const Value &SwitchNodeView::active_key() const noexcept
@@ -405,7 +349,7 @@ namespace hgraph
         meta.node_kind = NodeKind::Nested;
         if (meta.output_schema != nullptr)
         {
-            meta.output_endpoint_schema = TSEndpointSchema::peered(meta.output_schema);
+            meta.output_endpoint_schema = TSEndpointSchema::owned(meta.output_schema);
         }
 
         NodeTypeDescriptor descriptor;
@@ -415,8 +359,6 @@ namespace hgraph
             .name = switch_storage_field_name,
             .plan = &MemoryUtils::plan_for<SwitchNodeStorage>(),
         }};
-        // The node output target-link may point into SwitchNodeStorage::backing_output,
-        // so the output must be destroyed before this storage field.
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
         descriptor.callbacks.stop            = &switch_node_stop;

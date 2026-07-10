@@ -130,9 +130,13 @@ void instantiate_plan_factory() {
     [[maybe_unused]] const auto *tuple_plan = factory.plan_for(tuple_meta);
     assert(tuple_plan != nullptr);
     assert(tuple_plan->is_tuple());
-    assert(tuple_plan->component_count() == 2);
+    assert(tuple_plan->component_count() == 3);
+    assert(tuple_plan->component(0).plan == int_plan);
+    assert(tuple_plan->component(1).plan == float_plan);
+    const auto *validity_plan = &MemoryUtils::array_plan<std::uint64_t>(1);
+    assert(tuple_plan->component(2).plan == validity_plan);
     // Composite plans are interned by MemoryUtils — same triple yields same pointer.
-    assert(tuple_plan == &MemoryUtils::tuple_plan({int_plan, float_plan}));
+    assert(tuple_plan == &MemoryUtils::tuple_plan({int_plan, float_plan, validity_plan}));
 
     // Caching: a second lookup returns the same pointer without re-synthesising.
     assert(factory.plan_for(tuple_meta) == tuple_plan);

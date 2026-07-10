@@ -57,8 +57,9 @@ namespace hgraph
                 destroy_entries_without_output_noexcept();
             }
 
-            // Slot ids mirror the current __keys__ source. ValueSlotStore keeps
-            // entry addresses stable across capacity growth.
+            // Slot ids and payload lifetime mirror the current __keys__ source:
+            // logical removal stops the graph, while the source's later erase
+            // callback destroys the entry in its stable slot.
             ValueSlotStore entries{};
             // Cached bound-output handles of the outer inputs (tsd + broadcast
             // sources). Entry input bindings are established at creation and
@@ -76,7 +77,18 @@ namespace hgraph
 
             [[nodiscard]] std::size_t active_count() const noexcept
             {
-                return entries.constructed.count();
+                std::size_t count = 0;
+                for (std::size_t slot = 0; slot < entries.slot_capacity(); ++slot)
+                {
+                    const auto *entry = entries.try_value<MapKeyEntry>(slot);
+                    if (entry != nullptr && entry->graph.has_value() && entry->graph.view().started()) { ++count; }
+                }
+                return count;
+            }
+
+            [[nodiscard]] MapKeyEntry *entry_at(std::size_t slot)
+            {
+                return entries.try_value<MapKeyEntry>(slot);
             }
 
             [[nodiscard]] bool observe_keys_source(TSOutputHandle source)
@@ -90,17 +102,8 @@ namespace hgraph
                     auto data = source.data_view();
                     auto set  = data.as_set();
                     entries.reserve_to(set.slot_capacity());
-                    try
-                    {
-                        set.subscribe_slot_observer(this);
-                        observing_keys = true;
-                    }
-                    catch (const std::logic_error &)
-                    {
-                        // Target-link projections can expose TSS slot access
-                        // without supporting direct slot observer hooks.
-                        observing_keys = false;
-                    }
+                    set.subscribe_slot_observer(this);
+                    observing_keys = true;
                 }
                 return true;
             }
@@ -123,7 +126,7 @@ namespace hgraph
             {
                 for (std::size_t slot = 0; slot < entries.slot_capacity(); ++slot)
                 {
-                    auto *entry = entries.try_value<MapKeyEntry>(slot);
+                    auto *entry = entry_at(slot);
                     if (entry == nullptr || !entry->graph.has_value()) { continue; }
                     static_cast<void>(fallback_on_exception(false, [&] {
                         entry->graph.view().stop();
@@ -141,8 +144,11 @@ namespace hgraph
 
             void on_insert(std::size_t) override {}
             void on_remove(std::size_t) override {}
-            void on_erase(std::size_t) override {}
-            void on_clear() override {}
+            void on_erase(std::size_t slot) override { entries.destroy_at(slot); }
+            void on_clear() override
+            {
+                destroy_entries_without_output_noexcept();
+            }
         };
 
         struct MapNodeContext
@@ -239,9 +245,8 @@ namespace hgraph
             if (entry == nullptr) { return; }
 
             clear_entry_output_binding(view, context, *entry, evaluation_time);
-            if (entry->graph.has_value()) { entry->graph.view().stop(); }
+            if (entry->graph.has_value() && entry->graph.view().started()) { entry->graph.view().stop(); }
             (void)output_mutation.erase(entry->key.view());
-            storage.entries.destroy_at(slot);
         }
 
         void remove_all_entries(const NodeView &view, const MapNodeContext &context,
@@ -258,20 +263,25 @@ namespace hgraph
                                   TSDDataMutationView &output_mutation, const TSSInputView &keys_set,
                                   std::size_t slot, DateTime evaluation_time)
         {
-            if (storage.entries.has_slot(slot)) { return; }
-
             const MapNodeSpec &spec     = context.spec;
             const ValueView    key_view = keys_set.at_slot(slot);
             storage.entries.reserve_to(std::max(storage.entries.slot_capacity(), slot + 1));
-            auto &entry = storage.entries.construct_at<MapKeyEntry>(slot, Value{key_view});
+            MapKeyEntry *existing = storage.entries.try_value<MapKeyEntry>(slot);
+            auto &entry = existing != nullptr
+                              ? *existing
+                              : storage.entries.construct_at<MapKeyEntry>(slot, Value{key_view});
+            if (entry.graph.has_value() && entry.graph.view().started()) { return; }
             auto rollback = UnwindCleanupGuard([&] {
                 clear_entry_output_binding(view, context, entry, evaluation_time);
                 if (entry.graph.has_value() && entry.graph.view().started()) { entry.graph.view().stop(); }
                 (void)output_mutation.erase(entry.key.view());
-                storage.entries.destroy_at(slot);
+                if (existing == nullptr) { storage.entries.destroy_at(slot); }
             });
 
-            entry.graph = spec.child.graph_builder.make_nested_graph(NodeStorageRef{view.binding(), view.data()});
+            if (!entry.graph.has_value())
+            {
+                entry.graph = spec.child.graph_builder.make_nested_graph(NodeStorageRef{view.binding(), view.data()});
+            }
             if (spec.key_output_schema != nullptr)
             {
                 entry.key_source.bind(*spec.key_output_schema, entry.key, evaluation_time);
@@ -342,6 +352,19 @@ namespace hgraph
             // entries through ``bindings_need_refresh`` above.
             auto keys_input = walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{keys_index});
             auto keys_source = keys_input.bound_output();
+            const bool keys_handle_changed = !keys_source.handle().same_as(storage.observed_keys_source);
+            const bool keys_source_replaced = keys_handle_changed || source_status.keys_repointed;
+            if (keys_source_replaced && storage.entries.constructed.any())
+            {
+                auto output          = view.output(evaluation_time);
+                auto output_dict     = output.as_dict();
+                auto output_mutation = output_dict.begin_mutation(evaluation_time);
+                remove_all_entries(view, context, storage, output_mutation, evaluation_time);
+                output_mutation.clear();
+                storage.unsubscribe_keys_noexcept();
+                storage.entries.destroy_all();
+                storage.primed = false;
+            }
             const bool keys_observer_changed = storage.observe_keys_source(keys_source.handle());
             if (!keys_input.valid())
             {
@@ -419,7 +442,7 @@ namespace hgraph
             const std::size_t start_slot = resuming ? storage.resume_slot : 0;
             for (std::size_t slot = start_slot; slot < storage.entries.slot_capacity(); ++slot)
             {
-                auto *entry = storage.entries.try_value<MapKeyEntry>(slot);
+                auto *entry = storage.entry_at(slot);
                 if (entry == nullptr || !entry->graph.has_value()) { continue; }
 
                 auto child = entry->graph.view();

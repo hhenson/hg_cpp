@@ -4,6 +4,7 @@
 #include <hgraph/lib/std/operators/conversion.h>  // nothing (placeholder for the mesh_subscribe value input)
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/std/operators/impl/reduce_layout.h>
+#include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/mesh_node.h>
@@ -638,13 +639,17 @@ namespace hgraph::stdlib
         [[nodiscard]] inline TSEndpointSchema switch_branch_output_endpoint_schema_for(
             const TSValueTypeMetaData *schema,
             const std::vector<std::size_t> &source_path,
+            bool peered_terminal,
             std::size_t depth = 0)
         {
             if (schema == nullptr)
             {
                 throw std::invalid_argument("switch_: branch output binding requires an output schema");
             }
-            if (depth == source_path.size()) { return TSEndpointSchema::peered(schema); }
+            if (depth == source_path.size())
+            {
+                return peered_terminal ? TSEndpointSchema::peered(schema) : TSEndpointSchema::owned(schema);
+            }
 
             const auto selected = source_path[depth];
             const auto count    = switch_branch_output_child_count(*schema);
@@ -659,10 +664,52 @@ namespace hgraph::stdlib
             {
                 const auto *child_schema = switch_branch_output_child_schema(*schema, index);
                 children.push_back(index == selected
-                                       ? switch_branch_output_endpoint_schema_for(child_schema, source_path, depth + 1)
+                                       ? switch_branch_output_endpoint_schema_for(
+                                             child_schema, source_path, peered_terminal, depth + 1)
                                        : TSEndpointSchema::owned(child_schema));
             }
             return TSEndpointSchema::non_peered(schema, std::move(children));
+        }
+
+        [[nodiscard]] inline const TSValueTypeMetaData *switch_branch_output_schema_at(
+            const TSValueTypeMetaData *schema,
+            const std::vector<std::size_t> &source_path)
+        {
+            if (schema == nullptr)
+            {
+                throw std::invalid_argument("switch_: branch output binding requires an output schema");
+            }
+            for (const std::size_t index : source_path)
+            {
+                schema = switch_branch_output_child_schema(*schema, index);
+            }
+            return schema;
+        }
+
+        inline void configure_switch_branch_output(SingleNestedGraphNodeSpec &spec,
+                                                   const TSValueTypeMetaData *switch_output_schema)
+        {
+            if (!spec.output_binding.has_value() ||
+                spec.output_binding->kind != NestedGraphOutputBinding::Kind::ChildOutput)
+            {
+                throw std::logic_error("switch_: every branch must terminate at a child output");
+            }
+
+            const NestedGraphEndpoint &source = spec.output_binding->source;
+            NodeBuilder &terminal = spec.graph_builder.node_at(source.node);
+            const NodeTypeMetaData *terminal_meta = terminal.binding().type_meta;
+            const auto *terminal_schema = terminal_meta != nullptr ? terminal_meta->output_schema : nullptr;
+            const auto *branch_output_schema = switch_branch_output_schema_at(terminal_schema, source.path);
+
+            // When a VALUE branch participates in a REF-shaped switch, its
+            // terminal must own the value inside the branch's A/B graph slot.
+            // The switch publishes a reference to that terminal. All other
+            // branches write directly into the fixed switch output.
+            const bool peered_terminal =
+                switch_output_schema == nullptr || switch_output_schema->kind != TSTypeKind::REF ||
+                branch_output_schema->kind == TSTypeKind::REF;
+            terminal.output_endpoint(
+                switch_branch_output_endpoint_schema_for(terminal_schema, source.path, peered_terminal));
         }
 
         /**
@@ -730,19 +777,6 @@ namespace hgraph::stdlib
             spec.graph_builder  = std::move(compiled.graph_builder);
             spec.input_bindings = std::move(compiled.input_bindings);
             spec.output_binding = compiled.output_binding;
-            if (spec.output_binding.has_value() &&
-                spec.output_binding->kind == NestedGraphOutputBinding::Kind::ChildOutput)
-            {
-                const NestedGraphEndpoint &source = spec.output_binding->source;
-                NodeBuilder &terminal = spec.graph_builder.node_at(source.node);
-                const NodeTypeMetaData *terminal_meta = terminal.binding().type_meta;
-                terminal.output_endpoint(
-                    switch_branch_output_endpoint_schema_for(terminal_meta != nullptr
-                                                                 ? terminal_meta->output_schema
-                                                                 : nullptr,
-                                                             source.path));
-            }
-
             // Re-target boundary ordinals onto the outer input root: ordinal 0
             // is the key when the branch consumes it; every other parameter
             // maps through its resolved outer slot (+1 past the key input).
@@ -772,6 +806,26 @@ namespace hgraph::stdlib
                 spec.output_binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
             {
                 retarget_boundary_path(spec.output_binding->parent_source_path);
+
+                // Direct boundary returns have no child terminal to re-home
+                // into the switch output. Materialise the identity as an
+                // ordinary child node so every branch uses the same terminal
+                // forwarding protocol.
+                ResolutionMap resolution;
+                resolution.bind_ts("S", compiled.output_schema);
+
+                NodeBuilder terminal;
+                terminal.implementation<pass_through_node>(resolution);
+
+                const std::size_t terminal_index = spec.graph_builder.node_count();
+                spec.graph_builder.add_node(std::move(terminal));
+                spec.input_bindings.push_back(NestedGraphInputBinding{
+                    .source_path = spec.output_binding->parent_source_path,
+                    .target = NestedGraphEndpoint{.node = terminal_index, .path = {0}},
+                });
+                spec.output_binding = NestedGraphOutputBinding{
+                    .source = NestedGraphEndpoint{.node = terminal_index},
+                };
             }
             return spec;
         }
@@ -822,6 +876,15 @@ namespace hgraph::stdlib
                                                             positional_count,
                                                             {named_slots.data(), named_slots.size()},
                                                             output_schema);
+            }
+
+            for (SwitchBranch &branch : spec.branches)
+            {
+                configure_switch_branch_output(branch.spec, output_schema);
+            }
+            if (spec.default_branch.has_value())
+            {
+                configure_switch_branch_output(*spec.default_branch, output_schema);
             }
 
             // Outer node inputs: [key, ts...].

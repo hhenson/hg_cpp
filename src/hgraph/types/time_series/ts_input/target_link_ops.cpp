@@ -481,14 +481,18 @@ namespace hgraph::detail
             ops.reserve_impl(ops.context, target.mutable_data(), capacity);
         }
 
-        void target_link_subscribe_slot_observer(const void *, void *, SlotObserver *)
+        void target_link_subscribe_slot_observer(const void *context, void *memory, SlotObserver *observer)
         {
-            throw std::logic_error("TSInput target-link slot observers are not supported");
+            auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
+            if (link == nullptr) { throw std::logic_error("Target-link slot observer requires live storage"); }
+            link->add_slot_observer(observer);
         }
 
-        void target_link_unsubscribe_slot_observer(const void *, void *, SlotObserver *)
+        void target_link_unsubscribe_slot_observer(const void *context, void *memory, SlotObserver *observer)
         {
-            throw std::logic_error("TSInput target-link slot observers are not supported");
+            auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
+            if (link == nullptr) { throw std::logic_error("Target-link slot observer requires live storage"); }
+            link->remove_slot_observer(observer);
         }
 
         [[nodiscard]] bool target_link_dict_slot_modified(const void *context,

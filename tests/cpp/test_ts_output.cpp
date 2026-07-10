@@ -3,6 +3,7 @@
 #include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/time_series_reference.h>
+#include <hgraph/types/utils/slot_observer.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/types/value/value_builder.h>
 #include <hgraph/util/date_time.h>
@@ -101,6 +102,21 @@ namespace
         {
             notified.push_back(modified_time);
         }
+    };
+
+    struct RecordingSlotObserver final : hgraph::SlotObserver
+    {
+        std::vector<std::string> events{};
+
+        void on_capacity(std::size_t old_capacity, std::size_t new_capacity) override
+        {
+            events.push_back("capacity:" + std::to_string(old_capacity) + "->" +
+                             std::to_string(new_capacity));
+        }
+        void on_insert(std::size_t slot) override { events.push_back("insert:" + std::to_string(slot)); }
+        void on_remove(std::size_t slot) override { events.push_back("remove:" + std::to_string(slot)); }
+        void on_erase(std::size_t slot) override { events.push_back("erase:" + std::to_string(slot)); }
+        void on_clear() override { events.push_back("clear"); }
     };
 
     struct SelfUnsubscribingNotifiable : RecordingNotifiable
@@ -633,12 +649,14 @@ TEST_CASE("TSOutput REF stores TimeSeriesReference as value and delta")
     REQUIRE(view.valid());
     REQUIRE(view.modified());
 
-    const auto &stored = view.value().checked_as<TimeSeriesReference>();
+    const auto  stored_value = view.value();
+    const auto &stored       = stored_value.checked_as<TimeSeriesReference>();
     REQUIRE(stored.has_output());
     REQUIRE(stored.target_schema() == ts_int);
     REQUIRE(stored == reference);
 
-    const auto &delta = view.delta_value().checked_as<TimeSeriesReference>();
+    const auto  delta_value = view.delta_value();
+    const auto &delta       = delta_value.checked_as<TimeSeriesReference>();
     REQUIRE(delta.has_output());
     REQUIRE(delta == reference);
 }
@@ -689,6 +707,70 @@ TEST_CASE("TSOutput slot deltas are reclaimed lazily on the next mutation")
     REQUIRE(output.view(t3).valid());
     REQUIRE(range_count(set.removed()) == 0);
     REQUIRE_THROWS_AS(output.begin_mutation(MIN_DT), std::invalid_argument);
+}
+
+TEST_CASE("forwarding TSS outputs preserve slot observer remove and erase protocol across rebinds")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *tss      = registry.tss(int_meta);
+
+    TSOutput first{*tss};
+    TSOutput second{*tss};
+    TSOutput forwarding{TSEndpointSchema::peered(tss)};
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
+    Value      one{1};
+    Value      two{2};
+
+    auto link = forwarding.view(t1);
+    link.bind_forwarding_target(first.view(t1));
+
+    RecordingSlotObserver observer;
+    auto link_data = link.data_view().borrowed_ref();
+    auto link_set = link_data.as_set();
+    link_set.subscribe_slot_observer(&observer);
+
+    {
+        auto first_data = first.data_view();
+        auto mutation = first_data.as_set().begin_mutation(t1);
+        REQUIRE(mutation.add(one.view()));
+    }
+    REQUIRE(std::ranges::find(observer.events, "insert:0") != observer.events.end());
+
+    {
+        auto first_data = first.data_view();
+        auto mutation = first_data.as_set().begin_mutation(t2);
+        REQUIRE(mutation.remove(one.view()));
+    }
+    REQUIRE(std::ranges::find(observer.events, "remove:0") != observer.events.end());
+
+    {
+        auto first_data = first.data_view();
+        auto mutation = first_data.as_set().begin_mutation(t3);
+        REQUIRE(mutation.add(two.view()));
+    }
+    REQUIRE(std::ranges::find(observer.events, "erase:0") != observer.events.end());
+
+    link = forwarding.view(t3);
+    link.bind_forwarding_target(second.view(t3));
+    REQUIRE(observer.events.back() == "clear");
+
+    observer.events.clear();
+    {
+        auto second_data = second.data_view();
+        auto mutation = second_data.as_set().begin_mutation(t3);
+        REQUIRE(mutation.add(one.view()));
+    }
+    REQUIRE(std::ranges::find(observer.events, "insert:0") != observer.events.end());
+
+    link_data = link.data_view().borrowed_ref();
+    link_set = link_data.as_set();
+    link_set.unsubscribe_slot_observer(&observer);
 }
 
 TEST_CASE("TSOutput root parent is reattached after copy and move")
@@ -1083,6 +1165,10 @@ TEST_CASE("TSOutput shape casts return endpoint views for slot collections")
     REQUIRE(child.value().checked_as<std::int32_t>() == 42);
     REQUIRE(range_count(current_dict.values()) == 1);
     REQUIRE(range_count(current_dict.items()) == 1);
+    auto data_values = current_dict.data_view().values();
+    auto data_items  = current_dict.data_view().items();
+    REQUIRE(range_count(data_values) == 1);
+    REQUIRE(range_count(data_items) == 1);
 }
 
 TEST_CASE("TSOutputView delegates window all_valid through TSData ops")
@@ -1119,4 +1205,12 @@ TEST_CASE("TSOutputView delegates window all_valid through TSData ops")
 
     REQUIRE(output.view(t2).valid());
     REQUIRE(output.view(t2).all_valid());
+    auto current_view   = output.view(t2);
+    auto current_window = current_view.as_window();
+    auto values         = current_window.data_view().values();
+    auto time_values    = current_window.data_view().time_values();
+    auto value_times    = current_window.data_view().value_times();
+    REQUIRE(range_count(values) == 2);
+    REQUIRE(range_count(time_values) == 2);
+    REQUIRE(range_count(value_times) == 2);
 }

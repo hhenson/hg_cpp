@@ -312,9 +312,15 @@ struct HGRAPH_EXPORT GraphEdge
         void schedule_node(std::size_t node_index, DateTime when);
 
       private:
+        GraphValue(const GraphBuilder &builder, NodeStorageRef parent_node,
+                   void *external_memory, MemoryUtils::StorageLayout available_layout);
+        void reset() noexcept;
         void attach_nodes();
 
         storage_type storage_{};
+        bool         external_payload_{false};
+
+        friend class GraphBuilder;
     };
 
     /** Reusable graph construction recipe. */
@@ -355,8 +361,14 @@ struct HGRAPH_EXPORT GraphEdge
         [[nodiscard]] NodeBuilder &node_at(std::size_t index);
         [[nodiscard]] const std::vector<GraphEdge> &edges() const noexcept;
         [[nodiscard]] const GraphTypeBinding &binding() const;
+        /** Storage required by one nested instance of this graph. */
+        [[nodiscard]] MemoryUtils::StorageLayout nested_storage_layout() const;
         [[nodiscard]] GraphValue make_root_graph(GraphExecutorStorageRef root_executor) const;
         [[nodiscard]] GraphValue make_nested_graph(NodeStorageRef parent_node) const;
+        /** Construct a nested graph in caller-owned, suitably aligned storage. */
+        [[nodiscard]] GraphValue make_nested_graph(NodeStorageRef parent_node,
+                                                   void *external_memory,
+                                                   MemoryUtils::StorageLayout available_layout) const;
 
       private:
         friend class GraphValue;

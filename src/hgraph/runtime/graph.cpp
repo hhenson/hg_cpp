@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <deque>
 #include <limits>
 #include <memory>
@@ -1386,7 +1387,46 @@ namespace hgraph
         attach_nodes();
     }
 
+    GraphValue::GraphValue(const GraphBuilder &builder, NodeStorageRef parent_node,
+                           void *external_memory, MemoryUtils::StorageLayout available_layout)
+    {
+        const auto &binding = builder.nested_binding();
+        const auto required = binding.checked_plan().layout;
+        if (external_memory == nullptr)
+        {
+            throw std::invalid_argument("Nested graph external storage requires live memory");
+        }
+        if (available_layout.size < required.size || available_layout.alignment < required.alignment ||
+            reinterpret_cast<std::uintptr_t>(external_memory) % required.alignment != 0)
+        {
+            throw std::invalid_argument("Nested graph external storage does not satisfy its graph layout");
+        }
+
+        construct_graph_storage<NestedGraphRuntimeStorage>(
+            binding,
+            builder,
+            external_memory,
+            [&](NestedGraphRuntimeStorage &state) {
+                state.traits = builder.traits_;
+                if (!parent_node.has_value())
+                {
+                    throw std::invalid_argument("Nested graph construction requires a live node parent");
+                }
+                state.parent_node_ref = parent_node;
+                state.lifecycle_observers =
+                    &NodeView{parent_node.binding(), parent_node.data()}.graph().lifecycle_observers();
+            });
+        storage_ = storage_type::reference(binding, external_memory);
+        external_payload_ = true;
+        attach_nodes();
+    }
+
     GraphValue::~GraphValue()
+    {
+        reset();
+    }
+
+    void GraphValue::reset() noexcept
     {
         // Lifecycle contract: subscriptions are torn down at stop, while every
         // producer's storage is alive; disposal must find no references. A
@@ -1403,10 +1443,17 @@ namespace hgraph
                 }));
             }
         }
+        if (external_payload_ && storage_.has_value())
+        {
+            storage_.binding()->destroy_at(storage_.data());
+        }
+        storage_.reset();
+        external_payload_ = false;
     }
 
     GraphValue::GraphValue(GraphValue &&other) noexcept
-        : storage_(std::move(other.storage_))
+        : storage_(std::move(other.storage_)),
+          external_payload_(std::exchange(other.external_payload_, false))
     {
         attach_nodes();
     }
@@ -1415,7 +1462,9 @@ namespace hgraph
     {
         if (this != &other)
         {
+            reset();
             storage_ = std::move(other.storage_);
+            external_payload_ = std::exchange(other.external_payload_, false);
             attach_nodes();
         }
         return *this;
@@ -1525,6 +1574,11 @@ namespace hgraph
         return root_binding();
     }
 
+    MemoryUtils::StorageLayout GraphBuilder::nested_storage_layout() const
+    {
+        return nested_binding().checked_plan().layout;
+    }
+
     const GraphTypeBinding &GraphBuilder::root_binding() const
     {
         return graph_runtime_registry().make_root_binding(*this);
@@ -1543,6 +1597,13 @@ namespace hgraph
     GraphValue GraphBuilder::make_nested_graph(NodeStorageRef parent_node) const
     {
         return GraphValue{*this, parent_node};
+    }
+
+    GraphValue GraphBuilder::make_nested_graph(NodeStorageRef parent_node,
+                                               void *external_memory,
+                                               MemoryUtils::StorageLayout available_layout) const
+    {
+        return GraphValue{*this, parent_node, external_memory, available_layout};
     }
 
 }  // namespace hgraph

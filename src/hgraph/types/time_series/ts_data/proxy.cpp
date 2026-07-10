@@ -988,7 +988,7 @@ namespace hgraph
 
     TSDProxy::~TSDProxy()
     {
-        unsubscribe_source();
+        unsubscribe_source(false);
     }
 
     void TSDProxy::bind(const TSDataBinding &self_binding,
@@ -1174,9 +1174,18 @@ namespace hgraph
         subscribed_ = true;
     }
 
-    void TSDProxy::unsubscribe_source() noexcept
+    void TSDProxy::unsubscribe_source(bool strict) noexcept
     {
         if (!subscribed_ || !source_storage_.valid()) { return; }
+        if (!strict)
+        {
+            auto source = source_view();
+            if (!source.valid() || !source.tracking().observers.contains(&source_sync_))
+            {
+                subscribed_ = false;
+                return;
+            }
+        }
         FirstExceptionRecorder cleanup_errors;
         cleanup_errors.capture([&] {
             source_view().unsubscribe(&source_sync_);

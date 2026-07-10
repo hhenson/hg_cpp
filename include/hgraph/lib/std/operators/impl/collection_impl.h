@@ -1294,20 +1294,20 @@ namespace hgraph::stdlib
                     const std::function<bool(TSDDataMutationView &)> prune =
                         [&](TSDDataMutationView &mutation) -> bool {
                         std::vector<Value> empty_keys;
+                        auto               mutation_view = mutation.view();
                         {
-                            for (const auto [key, child] : mutation.view().items())
+                            for (auto &&[key, child] : mutation_view.items())
                             {
                                 if (child.schema() != nullptr && child.schema()->kind == TSTypeKind::TSD)
                                 {
                                     auto child_dict = child.as_dict();
                                     auto child_mut  = child_dict.begin_mutation(evaluation_time);
-                                    (void)prune(child_mut);
-                                    if (child_dict.size() == 0) { empty_keys.emplace_back(key); }
+                                    if (prune(child_mut)) { empty_keys.emplace_back(key); }
                                 }
                             }
                         }
                         for (const Value &key : empty_keys) { (void)mutation.erase(key.view()); }
-                        return mutation.view().size() == 0;
+                        return mutation_view.size() == 0;
                     };
                     (void)prune(root_mutation);
                 }

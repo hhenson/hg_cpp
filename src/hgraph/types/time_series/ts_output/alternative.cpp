@@ -343,7 +343,7 @@ namespace hgraph::detail
             return {};
         }
 
-        void unbind_target_link_at(const TSDataView &target, DateTime)
+        void unbind_target_link_at(const TSDataView &target, DateTime, bool teardown)
         {
             auto *link = mutable_target_link_storage(target);
             if (link == nullptr)
@@ -354,7 +354,8 @@ namespace hgraph::detail
             // EMPTY reference detaches the input - it reads not-valid from
             // here on - but does NOT notify consumers. Only a rebind to a
             // live target samples.
-            link->unbind();
+            if (teardown) { link->unbind_noexcept(); }
+            else { link->unbind(); }
         }
 
         void bind_target_link_at(const TSDataView &target, const TSOutputView &output, DateTime modified_time)
@@ -397,7 +398,8 @@ namespace hgraph::detail
 
         void unbind_from_ref_data(const TSDataView &target,
                                   const TSEndpointSchema &endpoint_schema,
-                                  DateTime modified_time);
+                                  DateTime modified_time,
+                                  bool teardown = false);
 
         void apply_output_to_from_ref_data(const TSDataView &target,
                                            const TSEndpointSchema &endpoint_schema,
@@ -409,7 +411,7 @@ namespace hgraph::detail
                                               const TimeSeriesReference &reference,
                                               DateTime modified_time);
 
-        using FromRefUnbindFn = void (*)(const TSDataView &, const TSEndpointSchema &, DateTime);
+        using FromRefUnbindFn = void (*)(const TSDataView &, const TSEndpointSchema &, DateTime, bool);
         using FromRefOutputApplyFn = void (*)(
             const TSDataView &,
             const TSEndpointSchema &,
@@ -430,19 +432,21 @@ namespace hgraph::detail
 
         void unbind_from_ref_peered(const TSDataView &target,
                                     const TSEndpointSchema &,
-                                    DateTime modified_time)
+                                    DateTime modified_time,
+                                    bool teardown)
         {
-            unbind_target_link_at(target, modified_time);
+            unbind_target_link_at(target, modified_time, teardown);
         }
 
         void unbind_from_ref_non_peered(const TSDataView &target,
                                         const TSEndpointSchema &endpoint_schema,
-                                        DateTime modified_time)
+                                        DateTime modified_time,
+                                        bool teardown)
         {
             for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
             {
                 auto child = endpoint_child_view(target, index);
-                unbind_from_ref_data(child, endpoint_schema.child(index), modified_time);
+                unbind_from_ref_data(child, endpoint_schema.child(index), modified_time, teardown);
             }
         }
 
@@ -475,7 +479,7 @@ namespace hgraph::detail
             throw std::invalid_argument("TSOutput from-REF cannot apply a non-peered reference to a peered leaf");
         }
 
-        void unbind_from_ref_owned(const TSDataView &, const TSEndpointSchema &, DateTime)
+        void unbind_from_ref_owned(const TSDataView &, const TSEndpointSchema &, DateTime, bool)
         {
             throw std::invalid_argument("TSOutput from-REF cannot target an owned endpoint leaf");
         }
@@ -540,9 +544,10 @@ namespace hgraph::detail
 
         void unbind_from_ref_data(const TSDataView &target,
                                   const TSEndpointSchema &endpoint_schema,
-                                  DateTime modified_time)
+                                  DateTime modified_time,
+                                  bool teardown)
         {
-            from_ref_role_ops_for(endpoint_schema.role()).unbind(target, endpoint_schema, modified_time);
+            from_ref_role_ops_for(endpoint_schema.role()).unbind(target, endpoint_schema, modified_time, teardown);
         }
 
         void apply_output_to_from_ref_data(const TSDataView &target,
@@ -1040,11 +1045,11 @@ namespace hgraph::detail
          */
         void release_subscriptions(DateTime release_time) noexcept
         {
-            unsubscribe_source();
+            unsubscribe_source(false);
             source.reset();
             static_cast<void>(fallback_on_exception(false, [&] {
                 auto target = data.view();
-                unbind_from_ref_data(target, endpoint_schema, release_time);
+                unbind_from_ref_data(target, endpoint_schema, release_time, true);
                 return true;
             }));
         }
@@ -1055,11 +1060,15 @@ namespace hgraph::detail
             if (source.bound()) { source.data_view().subscribe(&notifier); }
         }
 
-        void unsubscribe_source() noexcept
+        void unsubscribe_source(bool strict = true) noexcept
         {
             if (!source.bound()) { return; }
             static_cast<void>(fallback_on_exception(false, [&] {
-                source.data_view().unsubscribe(&notifier);
+                auto view = source.data_view();
+                if (strict || (view.valid() && view.tracking().observers.contains(&notifier)))
+                {
+                    view.unsubscribe(&notifier);
+                }
                 return true;
             }));
         }
@@ -1166,7 +1175,7 @@ namespace hgraph::detail
 
         void release_subscriptions(DateTime release_time) noexcept
         {
-            unsubscribe_source();
+            unsubscribe_source(false);
             source.reset();
             build_context.output = nullptr;
             static_cast<void>(fallback_on_exception(false, [&] {
@@ -1189,11 +1198,11 @@ namespace hgraph::detail
                     if (!dict.slot_occupied(slot)) { continue; }
                     auto child = dict.at_slot(slot);
                     if (!child.valid() || child.schema() == nullptr) { continue; }
-                    unbind_from_ref_data(child, from_ref_endpoint_schema_for(child.schema()), release_time);
+                    unbind_from_ref_data(child, from_ref_endpoint_schema_for(child.schema()), release_time, true);
                 }
                 return;
             }
-            unbind_from_ref_data(target, from_ref_endpoint_schema_for(requested_schema), release_time);
+            unbind_from_ref_data(target, from_ref_endpoint_schema_for(requested_schema), release_time, true);
         }
 
         void subscribe_source()
@@ -1201,11 +1210,15 @@ namespace hgraph::detail
             if (source.bound()) { source.data_view().subscribe(&notifier); }
         }
 
-        void unsubscribe_source() noexcept
+        void unsubscribe_source(bool strict = true) noexcept
         {
-            if (!source.bound()) { return; }
+            if (proxy_backed() || !source.bound()) { return; }
             static_cast<void>(fallback_on_exception(false, [&] {
-                source.data_view().unsubscribe(&notifier);
+                auto view = source.data_view();
+                if (strict || (view.valid() && view.tracking().observers.contains(&notifier)))
+                {
+                    view.unsubscribe(&notifier);
+                }
                 return true;
             }));
         }

@@ -51,7 +51,11 @@ namespace hgraph
             ReduceNodeStorage(ReduceNodeStorage &&) noexcept        = default;
             ReduceNodeStorage &operator=(ReduceNodeStorage &&)      = default;
 
-            ~ReduceNodeStorage() { destroy_combiners(); }
+            ~ReduceNodeStorage()
+            {
+                destroy_combiners();
+                destroy_previous_generation();
+            }
 
             // Root-first (ascending heap index) teardown: a parent combiner's
             // inputs link into its children's outputs — the subscriber must
@@ -62,6 +66,21 @@ namespace hgraph
                 for (auto &combiner : combiners) { combiner.reset(); }
             }
 
+            void destroy_previous_generation() noexcept
+            {
+                for (auto &combiner : previous_generation) { combiner.reset(); }
+                previous_generation.clear();
+                previous_generation_time = MIN_DT;
+            }
+
+            void destroy_previous_generation_before(DateTime evaluation_time) noexcept
+            {
+                if (!previous_generation.empty() && previous_generation_time < evaluation_time)
+                {
+                    destroy_previous_generation();
+                }
+            }
+
             /** dense leaf -> key (the key↔leaf mappings; leaves are dense ``0..n-1``). */
             std::vector<Value> dense_to_key{};
             ankerl::unordered_dense::map<Value, std::size_t, ValueKeyHash, ValueKeyEqual> key_to_leaf{};
@@ -70,6 +89,9 @@ namespace hgraph
             std::size_t leaf_capacity{0};
             /** Heap-indexed internal combine points (size ``leaf_capacity - 1``); null = no live combiner. */
             std::vector<std::unique_ptr<CombinerEntry>> combiners{};
+            /** Stopped root-first combiner generation retained through its retirement engine cycle. */
+            std::vector<std::unique_ptr<CombinerEntry>> previous_generation{};
+            DateTime                                   previous_generation_time{MIN_DT};
 
             bool primed{false};
             bool published{false};
@@ -148,13 +170,10 @@ namespace hgraph
         void stop_combiner_noexcept(std::unique_ptr<CombinerEntry> &entry) noexcept
         {
             if (entry == nullptr || !entry->graph.has_value()) { return; }
-            try
-            {
+            static_cast<void>(fallback_on_exception(false, [&] {
                 entry->graph.view().stop();
-            }
-            catch (...)
-            {
-            }
+                return true;
+            }));
         }
 
         void reset_combiner_noexcept(std::unique_ptr<CombinerEntry> &entry) noexcept
@@ -381,17 +400,22 @@ namespace hgraph
             }
             storage.published = true;
 
-            // Phase 3 — retire root-first: every subscriber has moved off.
+            // Phase 3 — stop root-first, but keep the retired graph storage
+            // through this engine cycle. Dynamic target links may still read
+            // the old aggregate later in the same cycle.
+            storage.previous_generation.reserve(storage.previous_generation.size() + retired.size() +
+                                                retired_shape.size());
             for (auto it = retired.rbegin(); it != retired.rend(); ++it)
             {
-                if (it->second->graph.has_value()) { it->second->graph.view().stop(); }
-                it->second.reset();
+                stop_combiner_noexcept(it->second);
+                storage.previous_generation.push_back(std::move(it->second));
             }
             for (auto &entry : retired_shape)
             {
-                if (entry != nullptr && entry->graph.has_value()) { entry->graph.view().stop(); }
-                entry.reset();
+                stop_combiner_noexcept(entry);
+                if (entry != nullptr) { storage.previous_generation.push_back(std::move(entry)); }
             }
+            if (!storage.previous_generation.empty()) { storage.previous_generation_time = evaluation_time; }
             rollback.release();
         }
 
@@ -444,7 +468,11 @@ namespace hgraph
             auto       &storage     = *MemoryUtils::cast<ReduceNodeStorage>(reduce_view.internal_storage());
 
             const bool resuming = storage.resume_position_plus_one != 0;
-            if (!resuming) { reduce_reconcile(view, context, storage, evaluation_time); }
+            if (!resuming)
+            {
+                storage.destroy_previous_generation_before(evaluation_time);
+                reduce_reconcile(view, context, storage, evaluation_time);
+            }
 
             // Evaluate combiners deepest-first (descending heap index): a leaf tick notifies
             // its combiner directly; that combiner's output tick notifies its parent (lower

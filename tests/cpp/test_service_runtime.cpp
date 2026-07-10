@@ -46,12 +46,12 @@ namespace
             descriptor.name          = std::string{RuntimeBaseValue::name};
             descriptor.flavour       = ServiceFlavour::Reference;
             descriptor.output_schema = registry.ts(scalar_descriptor<Int>::value_meta());
-            const auto &interned     = intern_service_descriptor(std::move(descriptor));
+            const auto *interned     = &intern_service_descriptor(std::move(descriptor));
 
             // Register through the ERASED flow (a WiredFn impl - the python
             // shape) and consume through the TEMPLATE client on the same
             // path: identity must unify.
-            register_reference_service_impl(w, interned, "prices", fn<RuntimeConstGraph>());
+            register_reference_service_impl(w, *interned, "prices", fn<RuntimeConstGraph>());
             auto value = service::reference_service<RuntimeBaseValue>(w, service::path("prices"));
             return wire<stdlib::add_>(w, value, wire<stdlib::const_>(w, Int{1}).as<TS<Int>>()).as<TS<Int>>();
         }
@@ -70,14 +70,14 @@ TEST_CASE("service runtime: descriptor interning enforces schema match by name")
     first.name          = "intern_check";
     first.flavour       = ServiceFlavour::Reference;
     first.output_schema = TypeRegistry::instance().ts(scalar_descriptor<Int>::value_meta());
-    const auto &interned = intern_service_descriptor(first);
+    const auto *interned = &intern_service_descriptor(first);
 
     // Same name + schemas: the SAME record (python re-import tolerance).
-    CHECK(&intern_service_descriptor(first) == &interned);
+    CHECK(&intern_service_descriptor(first) == interned);
 
     RuntimeServiceDescriptor conflicting = first;
     conflicting.output_schema = TypeRegistry::instance().ts(scalar_descriptor<Float>::value_meta());
     CHECK_THROWS_AS((void)intern_service_descriptor(conflicting), std::invalid_argument);
 
-    CHECK(find_service_descriptor("intern_check") == &interned);
+    CHECK(find_service_descriptor("intern_check") == interned);
 }

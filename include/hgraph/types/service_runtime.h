@@ -52,8 +52,9 @@ namespace hgraph
     };
 
     /** Intern by name; schema-match enforced on re-registration. The returned
-        pointer is stable for the process lifetime. */
-    HGRAPH_EXPORT const RuntimeServiceDescriptor &intern_service_descriptor(RuntimeServiceDescriptor descriptor);
+        reference is stable for the process lifetime. */
+    [[nodiscard]] HGRAPH_EXPORT const RuntimeServiceDescriptor &intern_service_descriptor(
+        RuntimeServiceDescriptor descriptor);
 
     /** The interned descriptor for ``name``, or null. */
     [[nodiscard]] HGRAPH_EXPORT const RuntimeServiceDescriptor *find_service_descriptor(std::string_view name);

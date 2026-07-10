@@ -147,8 +147,10 @@ TEST_CASE("table operators: to_table emits one bitemporal row per tick")
     CHECK_FALSE(frames[1].has_value());
     REQUIRE(frames[2].has_value());
 
-    const Frame &first = frames[0]->view().checked_as<Frame>();
-    const Frame &last  = frames[2]->view().checked_as<Frame>();
+    const auto   first_value = frames[0]->view();
+    const auto   last_value  = frames[2]->view();
+    const Frame &first       = first_value.checked_as<Frame>();
+    const Frame &last        = last_value.checked_as<Frame>();
     CHECK(frame_rows(first) == 1);
     const auto &converter = table_converter(scalar_descriptor<Int>::value_meta());
     CHECK(read_row(converter, first, 0).view().checked_as<Int>() == Int{42});
@@ -179,7 +181,8 @@ TEST_CASE("table converters are isolated by seeded column configuration")
 
     auto frames = eval_node<stdlib::to_table>(values<Int>(1));
     REQUIRE(frames[0].has_value());
-    const Frame &frame = frames[0]->view().checked_as<Frame>();
+    const auto   frame_value = frames[0]->view();
+    const Frame &frame       = frame_value.checked_as<Frame>();
     CHECK(frame.table->GetColumnByName("event_time") != nullptr);
     CHECK(frame.table->GetColumnByName("observed_at") != nullptr);
     CHECK(frame.table->GetColumnByName("__date_time__") == nullptr);

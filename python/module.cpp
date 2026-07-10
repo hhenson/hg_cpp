@@ -764,14 +764,16 @@ namespace
         [[nodiscard]] nb::object added() const
         {
             nb::list items;
-            for (const ValueView &element : checked().as_set().added()) { items.append(value_to_py(element)); }
+            auto set = checked().as_set();
+            for (const ValueView &element : set.added()) { items.append(value_to_py(element)); }
             return nb::steal(PyFrozenSet_New(nb::list(items).ptr()));
         }
 
         [[nodiscard]] nb::object removed() const
         {
             nb::list items;
-            for (const ValueView &element : checked().as_set().removed()) { items.append(value_to_py(element)); }
+            auto set = checked().as_set();
+            for (const ValueView &element : set.removed()) { items.append(value_to_py(element)); }
             return nb::steal(PyFrozenSet_New(nb::list(items).ptr()));
         }
 
@@ -817,14 +819,16 @@ namespace
         [[nodiscard]] nb::list keys() const
         {
             nb::list result;
-            for (const ValueView &key : checked().as_dict().keys()) { result.append(value_to_py(key)); }
+            auto dict = checked().as_dict();
+            for (const ValueView &key : dict.keys()) { result.append(value_to_py(key)); }
             return result;
         }
 
         [[nodiscard]] nb::list modified_keys() const
         {
             nb::list result;
-            for (const auto &[key, child] : checked().as_dict().modified_items()) { result.append(value_to_py(key)); }
+            auto dict = checked().as_dict();
+            for (const auto &[key, child] : dict.modified_items()) { result.append(value_to_py(key)); }
             return result;
         }
 
@@ -842,7 +846,8 @@ namespace
         [[nodiscard]] nb::list removed_keys() const
         {
             nb::list result;
-            for (const ValueView &key : checked().as_dict().removed_keys()) { result.append(value_to_py(key)); }
+            auto dict = checked().as_dict();
+            for (const ValueView &key : dict.removed_keys()) { result.append(value_to_py(key)); }
             return result;
         }
 

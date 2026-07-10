@@ -3,6 +3,7 @@
 
 #include <hgraph/types/time_series/ts_data.h>
 #include <hgraph/types/time_series/ts_output/base_view.h>
+#include <hgraph/types/utils/slot_observer.h>
 
 #include <cstddef>
 #include <memory>
@@ -83,6 +84,8 @@ namespace hgraph::detail
                                                            const TSInputTargetActiveNode *node) const;
         void resubscribe_active_target(const TSValueTypeMetaData &schema);
         void unsubscribe_active_target() noexcept;
+        void add_slot_observer(SlotObserver *observer);
+        void remove_slot_observer(SlotObserver *observer);
 
         [[nodiscard]] TSDataView target_view() const noexcept;
         [[nodiscard]] const TSOutputHandle &target_output() const noexcept;
@@ -90,6 +93,13 @@ namespace hgraph::detail
 
         TSDataTracking tracking{};
         TSInputTargetLinkState state_;
+        SlotObserverList slot_observers_{};
+        bool slot_observers_subscribed_{false};
+
+      private:
+        void subscribe_slot_observers();
+        void unsubscribe_slot_observers();
+        void unsubscribe_slot_observers_noexcept() noexcept;
     };
 
     [[nodiscard]] const TSInputTargetLinkStorage *target_link_storage(const TSDataView &view) noexcept;

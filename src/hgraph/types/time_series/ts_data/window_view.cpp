@@ -190,8 +190,8 @@ namespace hgraph
     Range<ValueView> TSWDataView::values() const
     {
         return Range<ValueView>{
-            .context   = this,
-            .memory    = nullptr,
+            .context   = binding(),
+            .memory    = storage_.data(),
             .limit     = size(),
             .predicate = nullptr,
             .projector = &project_value,
@@ -201,8 +201,8 @@ namespace hgraph
     Range<ValueView> TSWDataView::time_values() const
     {
         return Range<ValueView>{
-            .context   = this,
-            .memory    = nullptr,
+            .context   = binding(),
+            .memory    = storage_.data(),
             .limit     = size(),
             .predicate = nullptr,
             .projector = &project_time_value,
@@ -212,8 +212,8 @@ namespace hgraph
     Range<DateTime> TSWDataView::value_times() const
     {
         return Range<DateTime>{
-            .context   = this,
-            .memory    = nullptr,
+            .context   = binding(),
+            .memory    = storage_.data(),
             .limit     = size(),
             .predicate = nullptr,
             .projector = &project_time,
@@ -240,19 +240,19 @@ namespace hgraph
         return storage_.ops();
     }
 
-    ValueView TSWDataView::project_value(const void *context, const void *, std::size_t index)
+    ValueView TSWDataView::project_value(const void *context, const void *memory, std::size_t index)
     {
-        return static_cast<const TSWDataView *>(context)->at(index);
+        return TSWDataView{TSDataView{static_cast<const TSDataBinding *>(context), memory}}.at(index);
     }
 
-    ValueView TSWDataView::project_time_value(const void *context, const void *, std::size_t index)
+    ValueView TSWDataView::project_time_value(const void *context, const void *memory, std::size_t index)
     {
-        return static_cast<const TSWDataView *>(context)->time_value_at(index);
+        return TSWDataView{TSDataView{static_cast<const TSDataBinding *>(context), memory}}.time_value_at(index);
     }
 
-    DateTime TSWDataView::project_time(const void *context, const void *, std::size_t index)
+    DateTime TSWDataView::project_time(const void *context, const void *memory, std::size_t index)
     {
-        return static_cast<const TSWDataView *>(context)->time_at(index);
+        return TSWDataView{TSDataView{static_cast<const TSDataBinding *>(context), memory}}.time_at(index);
     }
 
     TSWDataMutationView::TSWDataMutationView(TSDataView view, DateTime evaluation_time)

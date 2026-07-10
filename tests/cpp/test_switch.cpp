@@ -1,12 +1,13 @@
 // The ``switch_`` higher-order OPERATOR (lib/std/operators/higher_order.h).
 //
-// switch_ routes through ONE child graph at a time, selected by its key input:
-// on a key change the active branch is stopped and destroyed, the new branch is
-// compiled-in (built/bound/started) and the forwarding output re-points —
-// sampling the new branch at the switch time (the sampled-runtime contract; a
-// deliberate divergence from Python's value=None reset). Branches are WiredFn
-// values (graphs, nodes, or operators) and may take the key when their first
-// parameter is named "key". See the developer guide *Nested Graphs*.
+// switch_ routes through ONE active child graph at a time, selected by its key
+// input. Two fixed graph-storage slots alternate: on a key change the inactive
+// slot is reused for the new branch and the old active branch is stopped, then
+// retained until its slot is reused by the following switch. The output samples
+// the new branch at switch time (the sampled-runtime contract; a deliberate
+// divergence from Python's value=None reset). Branches are WiredFn values
+// (graphs, nodes, or operators) and may take the key when their first parameter
+// is named "key". See the developer guide *Nested Graphs*.
 
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/testing/check_output.h>
@@ -189,7 +190,7 @@ TEST_CASE("switch_: an unmatched key with no default branch is a runtime error")
                       std::runtime_error);
 }
 
-TEST_CASE("switch_: switching away destroys the branch; switching back rebuilds it fresh")
+TEST_CASE("switch_: switching back reuses the old slot with a fresh branch graph")
 {
     using namespace hgraph;
     stdlib::register_standard_operators();

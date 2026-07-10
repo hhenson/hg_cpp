@@ -58,14 +58,15 @@ namespace hgraph
     };
 
     /**
-     * Build a node owning **at most one** child graph, selected by its first
+     * Build a node with two fixed child-graph memory slots, selected by its first
      * (``key``) input per ``switch_`` semantics: on a key change (or any key
-     * tick with ``reload_on_ticked``) the active child is stopped and retired
-     * for at least one outer evaluation cycle, the branch for the new key
-     * (else the default branch, else a runtime error) is built, bound and
-     * started. Branch terminal outputs are forwarding endpoints bound into the
-     * switch output, so the active branch writes the switch-owned storage (or an
-     * enclosing map_/mesh_ element when the switch terminal is re-homed there).
+     * tick with ``reload_on_ticked``) the inactive slot is reused for the new
+     * branch and the old active child is stopped. That stopped child remains in
+     * the previous slot until the following switch, when its destructor runs
+     * before the slot is reused. The switch node owns one fixed output. Normal
+     * branches write into it directly; a VALUE branch under a REF-shaped switch
+     * owns its output in its graph slot and the switch publishes a reference to
+     * that terminal.
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder switch_node(NodeTypeMetaData meta, SwitchNodeSpec spec);
 }  // namespace hgraph

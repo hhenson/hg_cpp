@@ -242,7 +242,10 @@ namespace hgraph
 
     TSDataMutationView TSOutputView::begin_mutation(DateTime evaluation_time) const
     {
-        if (!data_.valid()) { throw std::logic_error("TSOutputView::begin_mutation requires a bound view"); }
+        if (!data_.valid())
+        {
+            throw std::logic_error("TSOutputView::begin_mutation requires a bound view");
+        }
         return data_.begin_mutation(evaluation_time);
     }
 

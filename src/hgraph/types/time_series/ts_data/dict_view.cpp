@@ -169,12 +169,14 @@ namespace hgraph
 
     Range<TSDataView> TSDDataView::values() const
     {
-        return ts_data_values_range(&slot_live_predicate);
+        const auto &ops = dict_ops();
+        return ops.make_ts_values_range_impl(ops.context, storage_.data());
     }
 
     KeyValueRange<ValueView, TSDataView> TSDDataView::items() const
     {
-        return ts_data_items_range(&slot_live_predicate);
+        const auto &ops = dict_ops();
+        return ops.make_ts_kv_range_impl(ops.context, storage_.data());
     }
 
     Range<ValueView> TSDDataView::valid_keys() const
@@ -185,12 +187,14 @@ namespace hgraph
 
     Range<TSDataView> TSDDataView::valid_values() const
     {
-        return ts_data_values_range(&slot_valid_predicate);
+        const auto &ops = dict_ops();
+        return ops.make_valid_ts_values_range_impl(ops.context, storage_.data());
     }
 
     KeyValueRange<ValueView, TSDataView> TSDDataView::valid_items() const
     {
-        return ts_data_items_range(&slot_valid_predicate);
+        const auto &ops = dict_ops();
+        return ops.make_valid_ts_kv_range_impl(ops.context, storage_.data());
     }
 
     Range<ValueView> TSDDataView::modified_keys(DateTime evaluation_time) const
@@ -203,13 +207,15 @@ namespace hgraph
     Range<TSDataView> TSDDataView::modified_values(DateTime evaluation_time) const
     {
         if (!modified(evaluation_time)) { return empty_ts_data_range(); }
-        return ts_data_values_range(&slot_modified_predicate);
+        const auto &ops = dict_ops();
+        return ops.make_modified_ts_values_range_impl(ops.context, storage_.data());
     }
 
     KeyValueRange<ValueView, TSDataView> TSDDataView::modified_items(DateTime evaluation_time) const
     {
         if (!modified(evaluation_time)) { return empty_ts_data_kv_range(); }
-        return ts_data_items_range(&slot_modified_predicate);
+        const auto &ops = dict_ops();
+        return ops.make_modified_ts_kv_range_impl(ops.context, storage_.data());
     }
 
     Range<ValueView> TSDDataView::added_keys() const
@@ -219,12 +225,14 @@ namespace hgraph
 
     Range<TSDataView> TSDDataView::added_values() const
     {
-        return ts_data_values_range(&slot_added_predicate);
+        const auto &ops = dict_ops();
+        return ops.make_added_ts_values_range_impl(ops.context, storage_.data());
     }
 
     KeyValueRange<ValueView, TSDataView> TSDDataView::added_items() const
     {
-        return ts_data_items_range(&slot_added_predicate);
+        const auto &ops = dict_ops();
+        return ops.make_added_ts_kv_range_impl(ops.context, storage_.data());
     }
 
     Range<ValueView> TSDDataView::removed_keys() const
@@ -234,12 +242,14 @@ namespace hgraph
 
     Range<TSDataView> TSDDataView::removed_values() const
     {
-        return ts_data_values_range(&slot_removed_predicate);
+        const auto &ops = dict_ops();
+        return ops.make_removed_ts_values_range_impl(ops.context, storage_.data());
     }
 
     KeyValueRange<ValueView, TSDataView> TSDDataView::removed_items() const
     {
-        return ts_data_items_range(&slot_removed_predicate);
+        const auto &ops = dict_ops();
+        return ops.make_removed_ts_kv_range_impl(ops.context, storage_.data());
     }
 
     TSSDataView TSDDataView::key_set() const
@@ -273,70 +283,6 @@ namespace hgraph
     {
         return KeyValueRange<ValueView, TSDataView>{.context = nullptr, .memory = nullptr, .limit = 0,
                                                     .predicate = nullptr, .projector = nullptr};
-    }
-
-    Range<TSDataView> TSDDataView::ts_data_values_range(Range<TSDataView>::predicate_fn predicate) const
-    {
-        return Range<TSDataView>{
-            .context   = this,
-            .memory    = nullptr,
-            .limit     = slot_capacity(),
-            .predicate = predicate,
-            .projector = &project_ts_value_at_slot,
-        };
-    }
-
-    KeyValueRange<ValueView, TSDataView> TSDDataView::ts_data_items_range(
-        KeyValueRange<ValueView, TSDataView>::predicate_fn predicate) const
-    {
-        return KeyValueRange<ValueView, TSDataView>{
-            .context   = this,
-            .memory    = nullptr,
-            .limit     = slot_capacity(),
-            .predicate = predicate,
-            .projector = &project_ts_item_at_slot,
-        };
-    }
-
-    bool TSDDataView::slot_live_predicate(const void *context, const void *, std::size_t slot)
-    {
-        return static_cast<const TSDDataView *>(context)->slot_live(slot);
-    }
-
-    bool TSDDataView::slot_valid_predicate(const void *context, const void *, std::size_t slot)
-    {
-        const auto *self = static_cast<const TSDDataView *>(context);
-        return self->slot_live(slot) && self->at_slot(slot).last_modified_time() != MIN_DT;
-    }
-
-    bool TSDDataView::slot_modified_predicate(const void *context, const void *, std::size_t slot)
-    {
-        const auto *self = static_cast<const TSDDataView *>(context);
-        return self->slot_live(slot) && self->slot_modified(slot);
-    }
-
-    bool TSDDataView::slot_added_predicate(const void *context, const void *, std::size_t slot)
-    {
-        const auto *self = static_cast<const TSDDataView *>(context);
-        return self->slot_occupied(slot) && self->slot_added(slot);
-    }
-
-    bool TSDDataView::slot_removed_predicate(const void *context, const void *, std::size_t slot)
-    {
-        const auto *self = static_cast<const TSDDataView *>(context);
-        return self->slot_occupied(slot) && self->slot_removed(slot);
-    }
-
-    TSDataView TSDDataView::project_ts_value_at_slot(const void *context, const void *, std::size_t slot)
-    {
-        return static_cast<const TSDDataView *>(context)->at_slot(slot);
-    }
-
-    std::pair<ValueView, TSDataView> TSDDataView::project_ts_item_at_slot(const void *context, const void *,
-                                                                          std::size_t slot)
-    {
-        const auto *self = static_cast<const TSDDataView *>(context);
-        return {self->key_at_slot(slot), self->at_slot(slot)};
     }
 
     const TSDDataOps &TSDDataView::dict_ops() const

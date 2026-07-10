@@ -320,7 +320,8 @@ TEST_CASE("TimeSeriesReference: target link negotiates output as REF alternative
     REQUIRE(ref_input.valid());
     REQUIRE(ref_input.modified());
 
-    const auto &reference = ref_input.value().checked_as<TimeSeriesReference>();
+    const auto  reference_value = ref_input.value();
+    const auto &reference       = reference_value.checked_as<TimeSeriesReference>();
     REQUIRE(reference.is_peered());
     REQUIRE(reference.target_schema() == ts_int);
     REQUIRE(reference == TimeSeriesReference{target.view(t1)});
@@ -466,8 +467,10 @@ TEST_CASE("TimeSeriesReference: to-REF alternative stores fixed list children th
 
     auto source_view = target.view(MIN_ST);
     auto source_output_list = source_view.as_list();
-    const auto &first = projected_list.at(0).value().checked_as<TimeSeriesReference>();
-    const auto &second = projected_list.at(1).value().checked_as<TimeSeriesReference>();
+    const auto  first_value  = projected_list.at(0).value();
+    const auto  second_value = projected_list.at(1).value();
+    const auto &first        = first_value.checked_as<TimeSeriesReference>();
+    const auto &second       = second_value.checked_as<TimeSeriesReference>();
     REQUIRE(first.target_schema() == ts_int);
     REQUIRE(second.target_schema() == ts_int);
     REQUIRE(first == TimeSeriesReference{source_output_list.at(0)});

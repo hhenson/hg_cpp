@@ -30,9 +30,12 @@ Three artifacts, one per phase:
   the C++ realisation of the RFC's *child-graph template*.
 - **Child graph instance** (runtime): a ``GraphValue`` created by
   ``GraphBuilder::make_nested_graph(NodeStorageRef)``, living in the owning
-  node's storage. ``nested_`` owns exactly one; ``switch_`` will own at most one
-  (the active branch); ``map_`` will own one per key. There is no separate
-  instance class — per-instance state is the operator's own storage struct.
+  node's storage. ``nested_`` owns exactly one; ``switch_`` owns two fixed
+  storage slots (one active and one stopped previous instance); ``map_`` owns
+  one per key. ``switch_`` uses the external-storage overload of
+  ``make_nested_graph`` so both slots are sized once to the largest branch.
+  There is no separate instance class — per-instance state is the operator's
+  own storage struct.
 
 
 Boundary compilation: placeholders, not stubs
@@ -283,6 +286,10 @@ target is still alive, then retire displaced combiners **root-first**
 (ascending heap index — a doomed parent unbinds from its still-alive doomed
 child; the same teardown-direction reasoning as the ``map_`` storage-plan
 ordering, and also the explicit ``ReduceNodeStorage`` destructor order).
+Retirement stops the displaced graphs but preserves one previous generation
+through the current engine cycle; a later-time reduce evaluation destroys that
+generation before reconciling again, after dynamic consumers have moved off the
+old root.
 The node's own output is a forwarding endpoint linking into field-held
 combiner outputs, so the reduce field uses the default *before-output* plan
 placement (the ``nested_``/``switch_`` direction).
@@ -357,21 +364,27 @@ ts…)``).
   compiled into a ``SingleNestedGraphNodeSpec`` via the function's **compile
   thunk** (``WiredFn::compile`` — the same value either inlines via ``wire``
   or compiles into a child graph; the caller chooses). All branches must
-  produce the same output schema.
+  produce the same output schema after dereferencing. If branches differ only
+  in root ``REF``-ness, the switch output takes the ``REF`` shape.
 - **The key is just a boundary input.** The outer switch node's inputs are
   ``[key, ts…]``. A branch consumes outer input ``0`` as the key only when its
   first parameter is named ``key``; non-key branch binding paths simply shift
   past that outer input. Source-style branches (arity 0) take no bindings at
   all.
 - **Runtime** (``runtime/switch_node.{h,cpp}``, on the shared
-  ``nested_bindings`` helpers): at most one live child in node storage. On a
-  key change (or any key tick with ``reload_on_ticked`` exposed as
-  ``switch_cases(...).reload()``) the active child is stopped and retired,
-  the new branch (else the default, else a runtime error) is built, bound and
-  started, and the forwarding output **re-points**. Retired branches are kept
-  alive for at least one outer evaluation cycle so downstream consumers that
-  were bound through the previous branch can unsubscribe in normal topological
-  order.
+  ``nested_bindings`` helpers): two caller-owned graph-memory slots are
+  allocated once, each sized and aligned for the largest branch. On a key
+  change (or any key tick with ``reload_on_ticked`` exposed as
+  ``switch_cases(...).reload()``), the inactive slot is reused for the new
+  branch (else the default, else a runtime error), the active branch is stopped,
+  and the new branch is bound and started. The stopped branch remains in the
+  previous slot until the following switch, when it is destroyed before that
+  slot is reused. At most one child is running.
+- **Output ownership**: the switch has one fixed node output. Ordinary branch
+  terminals are peered into it. For a VALUE branch under a ``REF``-shaped
+  switch, the branch terminal instead owns its value inside its A/B graph slot
+  and the switch publishes a reference to that terminal. No secondary backing
+  output is allocated.
 - **Sampled semantics** (the sampled-runtime contract; the recorded
   divergence from Python's ``value = None`` reset): the freshly selected
   branch evaluates with the *current* upstream values even when they did not
@@ -379,10 +392,12 @@ ts…)``).
   already-valid source schedules the child through the normal input
   notification path at the switch time. Pinned by test (a swap while the ts
   input holds emits the new branch's value immediately).
-- **Lifecycle**: switching away stops and retires the child ``GraphValue``;
-  switching back rebuilds a fresh instance (per-branch state resets — pinned
-  by test). The previous retired set is released on the next switch
-  evaluation, and on node stop. The output's resolver discovers the schema by
+- **Lifecycle**: switching away stops the child ``GraphValue`` but preserves
+  its storage as the previous instance. The next switch destroys that previous
+  instance and constructs the new branch in the same slot. Switching back
+  therefore creates fresh per-branch state (pinned by test) without allocating
+  another graph block. Node stop stops the active child; normal node-storage
+  disposal destroys both slots. The output resolver discovers the schema by
   compiling the first branch (``resolve_default_types`` on the overloads).
 - ``switch_(key, cases, *ts, **kwargs)`` takes any number of positional
   and **keyword** time-series arguments (see *Operators > Variadic operator
@@ -441,14 +456,14 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   (an upstream forwarding/REF retarget), detected with one handle compare per
   outer input per cycle. Output forwarding retargets mark the
   forwarding endpoint modified so active downstream consumers schedule for the
-  retarget cycle, including retargets to an invalid source. Removals destroy
-  the child (its link unbinds) and then ``erase`` the element (publishing the
-  removed delta). Wiring rejects ``OUT`` shapes that cannot embed as TSD
-  elements (``TSD`` / dynamic ``TSL``), reference-valued outputs, and
-  pass-through/sub-path outputs. On node stop, ``map_`` stops every child,
-  erases the owned TSD elements, and clears the output; this differs from
-  ``nested_`` / ``switch_`` forwarding aliases, where the last forwarded value
-  can remain observable after stop.
+  retarget cycle, including retargets to an invalid source. Logical removal
+  clears the output binding, stops the child, and erases the output element to
+  publish the removed delta, but leaves the ``MapKeyEntry`` constructed in its
+  stable slot. The key set's later ``on_erase`` callback runs the destructor;
+  insertion before that callback resurrects the same stopped graph and slot.
+  On node stop, ``map_`` stops every child, erases the owned TSD elements, and
+  clears the output, while entry destruction remains part of node-storage
+  disposal after graph-wide subscriptions have been released.
 - **Storage-plan ordering is load-bearing**: the map field is placed *after*
   ``output`` in the node storage plan (``node_storage_plan_for``'s
   ``extra_fields_after_output``) so reverse-order destruction tears the

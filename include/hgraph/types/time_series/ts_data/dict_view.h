@@ -96,18 +96,6 @@ namespace hgraph
         [[nodiscard]] static Range<ValueView> empty_value_range() noexcept;
         [[nodiscard]] static Range<TSDataView> empty_ts_data_range() noexcept;
         [[nodiscard]] static KeyValueRange<ValueView, TSDataView> empty_ts_data_kv_range() noexcept;
-        [[nodiscard]] Range<TSDataView> ts_data_values_range(Range<TSDataView>::predicate_fn predicate) const;
-        [[nodiscard]] KeyValueRange<ValueView, TSDataView> ts_data_items_range(
-            KeyValueRange<ValueView, TSDataView>::predicate_fn predicate) const;
-        [[nodiscard]] static bool slot_live_predicate(const void *context, const void *, std::size_t slot);
-        [[nodiscard]] static bool slot_valid_predicate(const void *context, const void *, std::size_t slot);
-        [[nodiscard]] static bool slot_modified_predicate(const void *context, const void *, std::size_t slot);
-        [[nodiscard]] static bool slot_added_predicate(const void *context, const void *, std::size_t slot);
-        [[nodiscard]] static bool slot_removed_predicate(const void *context, const void *, std::size_t slot);
-        [[nodiscard]] static TSDataView project_ts_value_at_slot(const void *context, const void *, std::size_t slot);
-        [[nodiscard]] static std::pair<ValueView, TSDataView> project_ts_item_at_slot(const void *context,
-                                                                                      const void *,
-                                                                                      std::size_t slot);
 
         TSDDataStorageRef storage_{};
     };

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace hgraph::detail
 {
@@ -77,6 +78,18 @@ namespace hgraph::detail
             {
                 if (child) { replace_tree_observers(*child, previous, replacement); }
             }
+        }
+
+        [[nodiscard]] TSSDataView target_slot_set(const TSInputTargetLinkStorage &link)
+        {
+            auto target = link.target_view();
+            if (!target.valid() || target.schema() == nullptr)
+            {
+                throw std::logic_error("Target-link slot observer requires a bound structural target");
+            }
+            if (target.schema()->kind == TSTypeKind::TSD) { return target.as_dict().key_set(); }
+            if (target.schema()->kind == TSTypeKind::TSS) { return target.as_set(); }
+            throw std::logic_error("Target-link slot observer requires a TSS or TSD target");
         }
 
         [[nodiscard]] bool project_target_path(TSDataView &current,
@@ -286,8 +299,11 @@ namespace hgraph::detail
 
     TSInputTargetLinkStorage::TSInputTargetLinkStorage(TSInputTargetLinkStorage &&other) noexcept
         : tracking(std::move(other.tracking)),
-          state_(*this)
+          state_(*this),
+          slot_observers_(std::move(other.slot_observers_)),
+          slot_observers_subscribed_(std::exchange(other.slot_observers_subscribed_, false))
     {
+        other.slot_observers_.clear();
         state_.move_from(other.state_);
     }
 
@@ -298,8 +314,24 @@ namespace hgraph::detail
             unbind_noexcept();
             state_.active_root_node.reset();
             state_.scheduling_notifier.set_target(nullptr);
+            // Published target links are stable and are not move-assigned.
+            // Preserve any observers of this destination identity; observers
+            // of the moved-from identity see that source disappear.
+            if (!other.slot_observers_.empty())
+            {
+                static_cast<void>(fallback_on_exception(false, [&] {
+                    other.slot_observers_.notify_clear();
+                    return true;
+                }));
+                other.unsubscribe_slot_observers_noexcept();
+                other.slot_observers_.clear();
+            }
             tracking = std::move(other.tracking);
             state_.move_from(other.state_);
+            static_cast<void>(fallback_on_exception(false, [&] {
+                subscribe_slot_observers();
+                return true;
+            }));
         }
         return *this;
     }
@@ -336,12 +368,18 @@ namespace hgraph::detail
         {
             record_target_modified(state.target.data_view().last_modified_time());
         }
+        subscribe_slot_observers();
         resubscribe_active_target(schema);
         rollback.release();
     }
 
     void TSInputTargetLinkStorage::unbind()
     {
+        if (state_.target.bound() && slot_observers_subscribed_)
+        {
+            slot_observers_.notify_clear();
+            unsubscribe_slot_observers();
+        }
         unsubscribe_active_target();
         if (state_.target.bound()) { state_.target.data_view().unsubscribe(&state_); }
         state_.target.reset();
@@ -349,8 +387,78 @@ namespace hgraph::detail
 
     void TSInputTargetLinkStorage::unbind_noexcept() noexcept
     {
+        if (state_.target.bound() && slot_observers_subscribed_)
+        {
+            static_cast<void>(fallback_on_exception(false, [&] {
+                slot_observers_.notify_clear();
+                return true;
+            }));
+            unsubscribe_slot_observers_noexcept();
+        }
         if (state_.active_root_node) { unsubscribe_tree_noexcept(*state_.active_root_node, state_.scheduling_notifier); }
         unsubscribe_handle_noexcept(state_.target, &state_);
+    }
+
+    void TSInputTargetLinkStorage::add_slot_observer(SlotObserver *observer)
+    {
+        slot_observers_.add(observer);
+        auto rollback = make_scope_exit<true>([&] { slot_observers_.remove(observer); });
+        if (bound())
+        {
+            target_slot_set(*this).subscribe_slot_observer(observer);
+        }
+        if (bound()) { slot_observers_subscribed_ = true; }
+        rollback.release();
+    }
+
+    void TSInputTargetLinkStorage::remove_slot_observer(SlotObserver *observer)
+    {
+        if (bound() && slot_observers_subscribed_)
+        {
+            target_slot_set(*this).unsubscribe_slot_observer(observer);
+        }
+        slot_observers_.remove(observer);
+        if (slot_observers_.empty()) { slot_observers_subscribed_ = false; }
+    }
+
+    void TSInputTargetLinkStorage::subscribe_slot_observers()
+    {
+        if (!bound() || slot_observers_.empty()) { return; }
+
+        auto set = target_slot_set(*this);
+        std::vector<SlotObserver *> subscribed;
+        subscribed.reserve(slot_observers_.entries().size());
+        auto rollback = make_scope_exit<true>([&] {
+            for (SlotObserver *observer : subscribed) { set.unsubscribe_slot_observer(observer); }
+        });
+        for (SlotObserver *observer : slot_observers_.entries())
+        {
+            if (observer == nullptr) { continue; }
+            set.subscribe_slot_observer(observer);
+            subscribed.push_back(observer);
+        }
+        slot_observers_subscribed_ = true;
+        rollback.release();
+    }
+
+    void TSInputTargetLinkStorage::unsubscribe_slot_observers()
+    {
+        if (!bound() || !slot_observers_subscribed_) { return; }
+        auto clear_subscribed = make_scope_exit([&] { slot_observers_subscribed_ = false; });
+        auto set = target_slot_set(*this);
+        for (SlotObserver *observer : slot_observers_.entries())
+        {
+            if (observer != nullptr) { set.unsubscribe_slot_observer(observer); }
+        }
+    }
+
+    void TSInputTargetLinkStorage::unsubscribe_slot_observers_noexcept() noexcept
+    {
+        if (!bound() || !slot_observers_subscribed_) { return; }
+        static_cast<void>(fallback_on_exception(false, [&] {
+            unsubscribe_slot_observers();
+            return true;
+        }));
     }
 
     void TSInputTargetLinkStorage::record_target_modified(DateTime modified_time)

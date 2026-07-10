@@ -127,7 +127,7 @@ namespace hgraph
         void on_source_modified(DateTime modified_time);
 
         void subscribe_source();
-        void unsubscribe_source() noexcept;
+        void unsubscribe_source(bool strict = true) noexcept;
         void sync_from_source(DateTime modified_time, bool force_modified);
         void construct_child_at_slot(std::size_t slot);
         void ensure_child_at_slot(std::size_t slot, DateTime modified_time);
