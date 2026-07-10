@@ -87,17 +87,19 @@ namespace hgraph::stdlib
             return {{"recordable_id", Value{Str{}}}};
         }
 
-        static bool requires_(const ResolutionMap &, OperatorCallContext)
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return record_replay::model_is(record_replay::DATA_FRAME);
+            return record_replay::model_is(context.global_state, record_replay::DATA_FRAME);
         }
 
         static void start(In<"ts", TsVar<"S">> ts, Scalar<"key", Str> key,
                           Scalar<"recordable_id", Str> recordable_id, TraitsView traits,
-                          State<FrameRecorderState> state)
+                          GlobalStateView gs, State<FrameRecorderState> state)
         {
             using record_replay_frame_detail::RecorderHandle;
-            const auto &converter = table_converter(ts.base().schema()->value_schema);
+            const auto  config = record_replay::config(gs);
+            const auto &converter =
+                table_converter(ts.base().schema()->value_schema, config.date_key, config.as_of_key);
             auto        handle    = std::make_unique<RecorderHandle>(RecorderHandle{
                 FrameRecorder{converter},
                 record_replay_frame_detail::frame_key(traits, recordable_id.value(), key.value())});
@@ -106,11 +108,11 @@ namespace hgraph::stdlib
 
         static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", Str> key,
                          Scalar<"recordable_id", Str> recordable_id, State<FrameRecorderState> state,
-                         DateTime now)
+                         GlobalStateView gs, DateTime now)
         {
             static_cast<void>(key);
             static_cast<void>(recordable_id);
-            const auto as_of = record_replay::config().as_of.value_or(now);
+            const auto as_of = record_replay::config(gs).as_of.value_or(now);
             state.get().handle->recorder.append(now, as_of, ts.value());
         }
 
@@ -133,13 +135,14 @@ namespace hgraph::stdlib
             return {{"recordable_id", Value{Str{}}}};
         }
 
-        static bool requires_(const ResolutionMap &, OperatorCallContext)
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return record_replay::model_is(record_replay::DATA_FRAME);
+            return record_replay::model_is(context.global_state, record_replay::DATA_FRAME);
         }
 
         static void start(Scalar<"key", Str> key, Scalar<"recordable_id", Str> recordable_id, TraitsView traits,
-                          State<FrameReplayState> state, SingleShotScheduler sched, Out<TsVar<"O">> out)
+                          GlobalStateView gs, State<FrameReplayState> state,
+                          SingleShotScheduler sched, Out<TsVar<"O">> out)
         {
             using record_replay_frame_detail::ReplayHandle;
             const auto  fq_key = record_replay_frame_detail::frame_key(traits, recordable_id.value(), key.value());
@@ -149,7 +152,9 @@ namespace hgraph::stdlib
                 throw std::runtime_error("replay: no recorded frame under '" + fq_key + "'");
             }
             const auto &erased    = static_cast<const TSOutputView &>(out);
-            const auto &converter = table_converter(erased.schema()->value_schema);
+            const auto  config = record_replay::config(gs);
+            const auto &converter =
+                table_converter(erased.schema()->value_schema, config.date_key, config.as_of_key);
             auto        handle    = std::make_unique<ReplayHandle>(ReplayHandle{&converter, std::move(frame), 0});
             if (frame_rows(handle->frame) > 0)
             {
@@ -201,10 +206,12 @@ namespace hgraph::stdlib
         }
 
         static void start(Scalar<"recordable_id", Str> recordable_id, TraitsView traits,
-                          State<FrameRecorderState> state)
+                          GlobalStateView gs, State<FrameRecorderState> state)
         {
             using record_replay_frame_detail::RecorderHandle;
-            const auto &converter = table_converter(scalar_descriptor<Bool>::value_meta());
+            const auto  config = record_replay::config(gs);
+            const auto &converter =
+                table_converter(scalar_descriptor<Bool>::value_meta(), config.date_key, config.as_of_key);
             auto        handle    = std::make_unique<RecorderHandle>(RecorderHandle{
                 FrameRecorder{converter},
                 record_replay::fq_recordable_id(traits, recordable_id.value()) + ".__compare__"});
@@ -214,13 +221,13 @@ namespace hgraph::stdlib
         static void eval(In<"lhs", TsVar<"S">, InputValidity::Unchecked> lhs,
                          In<"rhs", TsVar<"S">, InputValidity::Unchecked> rhs,
                          Scalar<"recordable_id", Str> recordable_id, State<FrameRecorderState> state,
-                         DateTime now)
+                         GlobalStateView gs, DateTime now)
         {
             static_cast<void>(recordable_id);
             // Activation means at least one side ticked: a one-sided value IS
             // a mismatch (one series produced where the other did not).
             const bool equal = lhs.valid() && rhs.valid() && lhs.value().equals(rhs.value());
-            const auto as_of = record_replay::config().as_of.value_or(now);
+            const auto as_of = record_replay::config(gs).as_of.value_or(now);
             state.get().handle->recorder.append(now, as_of, Value{Bool{equal}}.view());
         }
 
@@ -251,9 +258,9 @@ namespace hgraph::stdlib
             return {{"recordable_id", Value{Str{}}}, {"tm", Value{MAX_DT}}};
         }
 
-        static bool requires_(const ResolutionMap &, OperatorCallContext)
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return record_replay::model_is(record_replay::DATA_FRAME);
+            return record_replay::model_is(context.global_state, record_replay::DATA_FRAME);
         }
 
         static Value const_eval(const TSValueTypeMetaData *resolved_output, OperatorCallContext context)
@@ -266,21 +273,25 @@ namespace hgraph::stdlib
                 throw std::invalid_argument(
                     "replay_const: an explicit recordable_id is required for the eager (const) call");
             }
+            const auto config = record_replay::config(context.global_state);
             return record_replay::replay_const_value(
+                context.global_state,
                 *recordable_id + "." + (key != nullptr ? *key : Str{}), resolved_output->value_schema,
                 tm != nullptr ? *tm : MAX_DT,
-                record_replay::config().as_of.value_or(MAX_DT));
+                config.as_of.value_or(MAX_DT));
         }
 
         static void eval(Scalar<"key", Str> key, Scalar<"recordable_id", Str> recordable_id,
-                         Scalar<"tm", DateTime> tm, TraitsView traits, DateTime now, Out<TsVar<"O">> out)
+                         Scalar<"tm", DateTime> tm, TraitsView traits, GlobalStateView gs,
+                         DateTime now, Out<TsVar<"O">> out)
         {
             const auto &erased = static_cast<const TSOutputView &>(out);
             const auto  cutoff = tm.value() == MAX_DT ? now : tm.value();
             Value       value  = record_replay::replay_const_value(
+                gs,
                 record_replay::fq_recordable_id(traits, recordable_id.value()) + "." + key.value(),
                 erased.schema()->value_schema, cutoff,
-                record_replay::config().as_of.value_or(MAX_DT));
+                record_replay::config(gs).as_of.value_or(MAX_DT));
             if (value.has_value()) { out.apply(value.view()); }
         }
     };

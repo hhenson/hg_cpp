@@ -27,11 +27,12 @@ namespace hgraph::stdlib
         {
             static constexpr auto name = "recovering_pass_through";
 
-            static void start(Scalar<"fq_key", Str> fq_key, DateTime now, Out<TsVar<"S">> out)
+            static void start(Scalar<"fq_key", Str> fq_key, GlobalStateView gs, DateTime now,
+                              Out<TsVar<"S">> out)
             {
                 const auto &erased = static_cast<const TSOutputView &>(out);
                 Value recovered =
-                    record_replay::recorded_seed_resolver(fq_key.value(), erased.schema()->value_schema, now);
+                    record_replay::recorded_seed_resolver(gs, fq_key.value(), erased.schema()->value_schema, now);
                 if (recovered.has_value()) { out.apply(recovered.view()); }
             }
 

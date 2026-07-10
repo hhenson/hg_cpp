@@ -160,13 +160,29 @@ TEST_CASE("table operators: to_table emits one bitemporal row per tick")
 TEST_CASE("table operators: to_table honours the configured as_of override")
 {
     stdlib::register_standard_operators();
+    GlobalContext context;
     const DateTime fixed = MIN_ST + TimeDelta{123456};
-    record_replay::set_config(record_replay::Config{.as_of = fixed});
+    record_replay::set_config(context.state().view(), record_replay::Config{.as_of = fixed});
 
     auto frames = eval_node<stdlib::to_table>(values<Int>(1));
     REQUIRE(frames[0].has_value());
     CHECK(timestamp_at(frames[0]->view().checked_as<Frame>(), "__as_of__", 0) ==
           fixed.time_since_epoch().count());
+}
+
+TEST_CASE("table converters are isolated by seeded column configuration")
+{
+    stdlib::register_standard_operators();
+    GlobalContext context;
+    record_replay::set_config(context.state().view(),
+                              record_replay::Config{.date_key = "event_time", .as_of_key = "observed_at"});
+
+    auto frames = eval_node<stdlib::to_table>(values<Int>(1));
+    REQUIRE(frames[0].has_value());
+    const Frame &frame = frames[0]->view().checked_as<Frame>();
+    CHECK(frame.table->GetColumnByName("event_time") != nullptr);
+    CHECK(frame.table->GetColumnByName("observed_at") != nullptr);
+    CHECK(frame.table->GetColumnByName("__date_time__") == nullptr);
 }
 
 TEST_CASE("table operators: to_table -> from_table round-trips through a graph")

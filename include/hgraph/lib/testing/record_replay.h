@@ -234,9 +234,9 @@ namespace hgraph::testing
         static constexpr auto name = "replay";
 
         /** The in-memory backend: active only under the default model. */
-        static bool requires_(const ResolutionMap &, OperatorCallContext)
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return record_replay::model_is(record_replay::IN_MEMORY);
+            return record_replay::model_is(context.global_state, record_replay::IN_MEMORY);
         }
         // A source initiates itself at the start cycle (default = not scheduled);
         // per-cycle rescheduling below uses the full NodeScheduler.
@@ -274,18 +274,20 @@ namespace hgraph::testing
         static constexpr auto name = "record";
 
         /** The in-memory backend: active only under the default model. */
-        static bool requires_(const ResolutionMap &, OperatorCallContext)
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            return record_replay::model_is(record_replay::IN_MEMORY);
+            return record_replay::model_is(context.global_state, record_replay::IN_MEMORY);
         }
 
         static auto defaults() { return std::tuple{arg<"sparse">(Bool{false})}; }
 
-        static void start(Scalar<"key", std::string>, Scalar<"sparse", Bool>, GlobalStateView)
+        static void start(Scalar<"key", std::string> key, Scalar<"sparse", Bool>, GlobalStateView gs)
         {
             // Both buffer layouts are TYPED by the recorded delta schema,
             // which only eval sees - creation is lazy on the first tick (a
-            // never-ticking recording reads back empty either way).
+            // never-ticking recording reads back empty either way). A seeded
+            // state may contain the prior run's result under this key.
+            gs.erase(key.value());
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse,

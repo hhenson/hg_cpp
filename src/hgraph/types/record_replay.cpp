@@ -15,13 +15,15 @@ namespace hgraph::record_replay
 {
     namespace
     {
-        // Wiring-time global state (single-threaded build; no thread-locals).
-        // Reset through record_replay::reset(), chained from
-        // OperatorRegistry::reset() so registry reset stays the single reset
-        // point for all wiring-time global state.
-        Config                  g_config{};
-        std::vector<ScopeState> g_scopes{};
-        const ScopeState        g_no_scope{};
+        inline constexpr std::string_view CONFIG_KEY{"__hgraph.record_replay.config__"};
+
+        thread_local std::vector<ScopeState> g_scopes{};
+        const ScopeState                     g_no_scope{};
+
+        void ensure_config_type()
+        {
+            (void)TypeRegistry::instance().register_scalar<Config>("RecordReplayConfig");
+        }
 
         // ---- the default (in-memory) frame store ----
         std::unordered_map<std::string, Frame> g_default_store;
@@ -53,19 +55,26 @@ namespace hgraph::record_replay
         FrameStoreOps g_store = default_store_ops();
     }  // namespace
 
-    void set_config(Config config)
+    void set_config(GlobalStateView state, Config config)
     {
+        if (!state.valid()) { throw std::logic_error("record/replay configuration requires GlobalState"); }
         if (config.model.empty()) { throw std::invalid_argument("record/replay model must not be empty"); }
         if (config.date_key.empty() || config.as_of_key.empty())
         {
             throw std::invalid_argument("record/replay table keys must not be empty");
         }
-        g_config = std::move(config);
+        ensure_config_type();
+        state.set(CONFIG_KEY, Value{std::move(config)});
     }
 
-    const Config &config() { return g_config; }
+    Config config(GlobalStateView state)
+    {
+        if (!state.valid()) { return Config{}; }
+        const ValueView value = state.get(CONFIG_KEY);
+        return value.valid() ? value.checked_as<Config>() : Config{};
+    }
 
-    bool model_is(std::string_view model) noexcept { return g_config.model == model; }
+    bool model_is(GlobalStateView state, std::string_view model) { return config(state).model == model; }
 
     const ScopeState &current_scope() noexcept { return g_scopes.empty() ? g_no_scope : g_scopes.back(); }
 
@@ -96,11 +105,13 @@ namespace hgraph::record_replay
 
     bool store_contains(std::string_view key) { return g_store.contains(g_store.context, key); }
 
-    Value replay_const_value(std::string_view fq_key, const ValueTypeMetaData *meta, DateTime tm, DateTime as_of)
+    Value replay_const_value(GlobalStateView state, std::string_view fq_key, const ValueTypeMetaData *meta,
+                             DateTime tm, DateTime as_of)
     {
         const Frame frame = store_read(fq_key);
         if (!frame.has_value()) { return Value{}; }
-        const auto &converter = table_converter(meta);
+        const Config cfg = config(state);
+        const auto  &converter = table_converter(meta, cfg.date_key, cfg.as_of_key);
 
         const auto as_of_column = frame.table->GetColumnByName(converter.as_of_key);
         std::int64_t best = -1;
@@ -118,14 +129,16 @@ namespace hgraph::record_replay
         return best < 0 ? Value{} : read_row(converter, frame, best);
     }
 
-    ComparisonSummary comparison_summary(std::string_view fq_key)
+    ComparisonSummary comparison_summary(GlobalStateView state, std::string_view fq_key)
     {
         const Frame frame = store_read(fq_key);
         if (!frame.has_value())
         {
             throw std::runtime_error("no comparison recorded under '" + std::string{fq_key} + "'");
         }
-        const auto &converter = table_converter(scalar_descriptor<Bool>::value_meta());
+        const Config cfg = config(state);
+        const auto  &converter =
+            table_converter(scalar_descriptor<Bool>::value_meta(), cfg.date_key, cfg.as_of_key);
         ComparisonSummary summary;
         summary.compared = static_cast<std::size_t>(frame_rows(frame));
         for (std::int64_t row = 0; row < frame_rows(frame); ++row)
@@ -135,14 +148,14 @@ namespace hgraph::record_replay
         return summary;
     }
 
-    Value recorded_seed_resolver(std::string_view fq_key, const ValueTypeMetaData *meta, DateTime start_time)
+    Value recorded_seed_resolver(GlobalStateView state, std::string_view fq_key, const ValueTypeMetaData *meta,
+                                 DateTime start_time)
     {
-        return replay_const_value(fq_key, meta, start_time, g_config.as_of.value_or(MAX_DT));
+        return replay_const_value(state, fq_key, meta, start_time, config(state).as_of.value_or(MAX_DT));
     }
 
     void reset() noexcept
     {
-        g_config = Config{};
         g_scopes.clear();
         if (g_store.clear != nullptr) { g_store.clear(g_store.context); }
         g_store = default_store_ops();

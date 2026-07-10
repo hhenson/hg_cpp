@@ -2,7 +2,6 @@
 
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/primitive_types.h>
-#include <hgraph/types/record_replay.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/value/value_builder.h>
 
@@ -181,17 +180,38 @@ namespace hgraph
         // the only cross-thread entry, never touch converters.
         // ---------------------------------------------------------------
 
-        std::unordered_map<const ValueTypeMetaData *, std::unique_ptr<TableConverter>> g_converters;
+        struct ConverterKey
+        {
+            const ValueTypeMetaData *meta{nullptr};
+            std::string              date_key{};
+            std::string              as_of_key{};
 
-        [[nodiscard]] const TableConverter *build_converter(const ValueTypeMetaData *meta)
+            bool operator==(const ConverterKey &) const = default;
+        };
+
+        struct ConverterKeyHash
+        {
+            std::size_t operator()(const ConverterKey &key) const noexcept
+            {
+                std::size_t seed = std::hash<const ValueTypeMetaData *>{}(key.meta);
+                seed ^= std::hash<std::string>{}(key.date_key) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+                seed ^= std::hash<std::string>{}(key.as_of_key) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+                return seed;
+            }
+        };
+
+        std::unordered_map<ConverterKey, std::unique_ptr<TableConverter>, ConverterKeyHash> g_converters;
+
+        [[nodiscard]] const TableConverter *build_converter(const ValueTypeMetaData *meta,
+                                                            std::string_view date_key,
+                                                            std::string_view as_of_key)
         {
             if (meta == nullptr) { throw std::logic_error("table codec: null value schema"); }
 
             auto converter  = std::make_unique<TableConverter>();
             converter->meta = meta;
-            const auto &config     = record_replay::config();
-            converter->date_key    = config.date_key;
-            converter->as_of_key   = config.as_of_key;
+            converter->date_key = date_key;
+            converter->as_of_key = as_of_key;
 
             const auto add_leaf = [&](std::string name, const ValueTypeMetaData *leaf,
                                       std::vector<std::size_t> path) {
@@ -235,7 +255,8 @@ namespace hgraph
             converter->arrow_schema = arrow::schema(std::move(fields));
 
             const auto *raw = converter.get();
-            g_converters.emplace(meta, std::move(converter));
+            g_converters.emplace(ConverterKey{meta, std::string{date_key}, std::string{as_of_key}},
+                                 std::move(converter));
             return raw;
         }
 
@@ -324,13 +345,15 @@ namespace hgraph
         return DateTime{std::chrono::microseconds{array.Value(row)}};
     }
 
-    const TableConverter &table_converter(const ValueTypeMetaData *meta)
+    const TableConverter &table_converter(const ValueTypeMetaData *meta, std::string_view date_key,
+                                          std::string_view as_of_key)
     {
         // Composed + interned once per schema. Per-tick operator paths do NOT
         // call this: nodes resolve their converter in ``start`` and carry it
         // in node State (the lifecycle "compose once" contract).
-        if (const auto it = g_converters.find(meta); it != g_converters.end()) { return *it->second; }
-        return *build_converter(meta);
+        ConverterKey key{meta, std::string{date_key}, std::string{as_of_key}};
+        if (const auto it = g_converters.find(key); it != g_converters.end()) { return *it->second; }
+        return *build_converter(meta, date_key, as_of_key);
     }
 
     void clear_table_converters() noexcept { g_converters.clear(); }

@@ -11,6 +11,8 @@ namespace hgraph
 {
     namespace
     {
+        thread_local GlobalContext *active_global_context = nullptr;
+
         // Canonical binding for the GlobalState backing: a mutable Map<string, Any>.
         const ValueTypeBinding &global_state_binding()
         {
@@ -67,5 +69,41 @@ namespace hgraph
     {
         const Value key_value{std::string{key}};
         return map_->as_map().begin_mutation().remove(key_value.view());
+    }
+
+    void GlobalStateView::copy_from(const GlobalStateView &other) const
+    {
+        *map_ = other.as_value();
+    }
+
+    GlobalContext::GlobalContext()
+        : state_(&owned_state_)
+    {
+        activate();
+    }
+
+    GlobalContext::GlobalContext(GlobalState &state)
+        : state_(&state)
+    {
+        activate();
+    }
+
+    GlobalContext::~GlobalContext()
+    {
+        if (active_global_context == this) { active_global_context = nullptr; }
+    }
+
+    void GlobalContext::activate()
+    {
+        if (active_global_context != nullptr)
+        {
+            throw std::logic_error("GlobalContext does not support nested activation");
+        }
+        active_global_context = this;
+    }
+
+    GlobalState *GlobalContext::active_state() noexcept
+    {
+        return active_global_context != nullptr ? &active_global_context->state() : nullptr;
     }
 }  // namespace hgraph

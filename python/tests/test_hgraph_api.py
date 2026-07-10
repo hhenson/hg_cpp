@@ -18,6 +18,31 @@ def test_graph_with_operator_sugar():
     check(eval_node(calc, [1, None, 3], [10, 20, None]) == [22, 42, 46], "sugar")
 
 
+def test_global_state_copy_in_and_copy_back():
+    state = hg.GlobalState(seed=7)
+
+    @graph
+    def app() -> TS[int]:
+        return hg.const(3, tp=TS[int])
+
+    with hg.GlobalContext(state) as active:
+        check(active is state and hg.GlobalState.instance() is state, "selected state identity")
+        try:
+            with hg.GlobalContext():
+                pass
+            check(False, "expected nested GlobalContext to fail")
+        except RuntimeError:
+            pass
+
+        check(run_graph(app) == [(hg.MIN_ST, 3)], "contextualized run")
+        check(state["seed"] == 7, "seed copied into and back from the graph")
+        check("__run_graph__" in state, "final graph state copied back")
+
+    shorthand = hg.GlobalState(value=11)
+    with shorthand as active:
+        check(active is shorthand, "GlobalState context shorthand")
+
+
 def test_comparisons_and_unary():
     @graph
     def logic(a: TS[int], b: TS[int]) -> TS[bool]:

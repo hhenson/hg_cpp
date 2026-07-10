@@ -565,6 +565,12 @@ namespace hgraph
         bool operator==(const WiringNodeSchema &) const noexcept = default;
     };
 
+    enum class WiringKind : std::uint8_t
+    {
+        TopLevel,
+        SubGraph,
+    };
+
     /**
      * Shared runtime wiring core: accumulates interned ``WiringInstance``s and, on
      * ``finish``, topologically sorts + ranks them into a ``GraphBuilder``. (The
@@ -573,7 +579,7 @@ namespace hgraph
     class HGRAPH_EXPORT Wiring
     {
       public:
-        Wiring();
+        explicit Wiring(WiringKind kind = WiringKind::TopLevel);
         ~Wiring();
         Wiring(const Wiring &)            = delete;
         Wiring &operator=(const Wiring &) = delete;
@@ -726,6 +732,8 @@ namespace hgraph
          * ``GraphBuilder`` (and thence onto each graph it builds).
          */
         [[nodiscard]] GlobalStateView global_state() noexcept;
+        /** State visible to operator resolution; sub-graphs read the active root seed. */
+        [[nodiscard]] GlobalStateView operator_state() noexcept;
 
         /** Topologically sort + rank the wired nodes into a rank-ordered GraphBuilder. */
         [[nodiscard]] GraphBuilder finish() &&;

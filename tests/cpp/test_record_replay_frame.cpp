@@ -58,7 +58,9 @@ namespace
 TEST_CASE("frame backend: record writes a bitemporal frame to the store; replay re-emits it")
 {
     stdlib::register_standard_operators();
-    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+    GlobalContext context;
+    record_replay::set_config(context.state().view(),
+                              record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
 
     // Run 1: record (values at cycles 0, 2 and 3 - gaps preserved).
     (void)eval_node<RecordGraph>(values<Int>(10, none, 30, 40));
@@ -74,7 +76,9 @@ TEST_CASE("frame backend: record writes a bitemporal frame to the store; replay 
 TEST_CASE("frame backend: the recordable id resolves through graph traits at runtime")
 {
     stdlib::register_standard_operators();
-    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+    GlobalContext context;
+    record_replay::set_config(context.state().view(),
+                              record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
 
     (void)eval_node<TraitRecordGraph>(values<Int>(7));
     CHECK(record_replay::store_contains("desk.fx.orders"));
@@ -83,21 +87,24 @@ TEST_CASE("frame backend: the recordable id resolves through graph traits at run
 TEST_CASE("frame backend: replay_const_value reads the last row at or before tm")
 {
     stdlib::register_standard_operators();
-    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+    GlobalContext context;
+    const auto state = context.state().view();
+    record_replay::set_config(state,
+                              record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
 
     (void)eval_node<RecordGraph>(values<Int>(10, none, 30, 40));
 
     const auto *int_meta = scalar_descriptor<Int>::value_meta();
     // Everything <= MAX_DT: the last recorded value.
-    CHECK(record_replay::replay_const_value("book.prices", int_meta).view().checked_as<Int>() == Int{40});
+    CHECK(record_replay::replay_const_value(state, "book.prices", int_meta).view().checked_as<Int>() == Int{40});
     // Cut at the second recorded tick (cycle 2 = MIN_ST + 2).
-    CHECK(record_replay::replay_const_value("book.prices", int_meta, MIN_ST + TimeDelta{2})
+    CHECK(record_replay::replay_const_value(state, "book.prices", int_meta, MIN_ST + TimeDelta{2})
               .view()
               .checked_as<Int>() == Int{30});
     // Before the first tick: nothing qualifies.
-    CHECK_FALSE(record_replay::replay_const_value("book.prices", int_meta, MIN_ST - TimeDelta{1}).has_value());
+    CHECK_FALSE(record_replay::replay_const_value(state, "book.prices", int_meta, MIN_ST - TimeDelta{1}).has_value());
     // Unknown key: empty.
-    CHECK_FALSE(record_replay::replay_const_value("missing.key", int_meta).has_value());
+    CHECK_FALSE(record_replay::replay_const_value(state, "missing.key", int_meta).has_value());
 }
 
 TEST_CASE("frame backend: the in-memory model still resolves record/replay by default")
@@ -105,6 +112,6 @@ TEST_CASE("frame backend: the in-memory model still resolves record/replay by de
     stdlib::register_standard_operators();
     // Default config = IN_MEMORY: the frame backend must NOT be selected and
     // the testing (GlobalState) backend continues to serve the names.
-    CHECK(record_replay::model_is(record_replay::IN_MEMORY));
+    CHECK(record_replay::model_is({}, record_replay::IN_MEMORY));
     CHECK_OUTPUT(eval_node<stdlib::to_json>(values<Int>(1)), values<Str>(Str{"1"}));
 }

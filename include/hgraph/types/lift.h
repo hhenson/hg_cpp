@@ -419,7 +419,7 @@ namespace hgraph
                 throw std::invalid_argument("lift<F>: compiled input schema count does not match the function arity");
             }
 
-            Wiring w;
+            Wiring w{WiringKind::SubGraph};
             std::vector<WiringPortRef> args;
             args.reserve(input_schemas.size());
             std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};

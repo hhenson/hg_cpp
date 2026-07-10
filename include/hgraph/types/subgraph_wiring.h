@@ -138,7 +138,7 @@ namespace hgraph
             using sig    = StaticGraphSignature<G>;
             using params = typename sig::param_types;
 
-            Wiring w;
+            Wiring w{WiringKind::SubGraph};
 
             // Boundary arg schemas, in Port-parameter order.
             std::vector<const TSValueTypeMetaData *> input_schemas;

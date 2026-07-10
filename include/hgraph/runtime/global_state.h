@@ -24,7 +24,10 @@ namespace hgraph
     class HGRAPH_EXPORT GlobalStateView
     {
       public:
+        GlobalStateView() noexcept = default;
         explicit GlobalStateView(Value &map) noexcept : map_(&map) {}
+
+        [[nodiscard]] bool valid() const noexcept { return map_ != nullptr; }
 
         /** Number of keys currently stored. */
         [[nodiscard]] std::size_t size() const;
@@ -59,11 +62,14 @@ namespace hgraph
         /** Remove ``key``; returns whether a key was removed. */
         bool erase(std::string_view key) const;
 
+        /** Replace this store with a copy of ``other``. */
+        void copy_from(const GlobalStateView &other) const;
+
         /** The underlying ``Map<string, Any>`` value. */
         [[nodiscard]] const Value &as_value() const noexcept { return *map_; }
 
       private:
-        Value *map_;  // borrowed; owned by a GlobalState
+        Value *map_{nullptr};  // borrowed; owned by a GlobalState
     };
 
     /**
@@ -98,6 +104,33 @@ namespace hgraph
 
       private:
         Value map_;  // mutable Map<string, Any>
+    };
+
+    /**
+     * Selects a pre-wiring seed on the current thread. New top-level Wiring
+     * and GraphBuilder instances copy the selected state using normal
+     * GlobalState value semantics. The context is not retained by a graph.
+     */
+    class HGRAPH_EXPORT GlobalContext
+    {
+      public:
+        GlobalContext();
+        explicit GlobalContext(GlobalState &state);
+
+        GlobalContext(const GlobalContext &) = delete;
+        GlobalContext &operator=(const GlobalContext &) = delete;
+        GlobalContext(GlobalContext &&) = delete;
+        GlobalContext &operator=(GlobalContext &&) = delete;
+        ~GlobalContext();
+
+        [[nodiscard]] GlobalState &state() const noexcept { return *state_; }
+        [[nodiscard]] static GlobalState *active_state() noexcept;
+
+      private:
+        void activate();
+
+        GlobalState  owned_state_{};
+        GlobalState *state_{nullptr};
     };
 }  // namespace hgraph
 

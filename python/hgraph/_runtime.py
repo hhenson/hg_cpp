@@ -4,6 +4,7 @@ The API mirrors Python hgraph's: @graph composes, run_graph evaluates,
 eval_node drives a node/graph from vectors of values. Wiring state is a
 module-level stack (the runtime is single-threaded by design)."""
 import inspect
+import threading
 
 import _hgraph
 
@@ -587,6 +588,135 @@ class _Emit:
 
 
 emit = _Emit()
+
+
+_global_state_local = threading.local()
+_GLOBAL_MISSING = object()
+
+
+class GlobalState:
+    """Python seed/result owner for the C++ graph GlobalState copy lifecycle."""
+
+    def __init__(self, **values):
+        self._impl = _hgraph._GlobalState()
+        self._compat_context = None
+        for key, value in values.items():
+            self[key] = value
+
+    def __len__(self):
+        return len(self._impl)
+
+    def __contains__(self, key):
+        return key in self._impl
+
+    def __getitem__(self, key):
+        return self._impl[key]
+
+    def __setitem__(self, key, value):
+        self._impl[key] = value
+
+    def __delitem__(self, key):
+        del self._impl[key]
+
+    def get(self, key, default=None):
+        return self._impl.get(key, default)
+
+    def keys(self):
+        return self._impl.keys()
+
+    def __iter__(self):
+        return iter(self.keys())
+
+    def __bool__(self):
+        return bool(len(self))
+
+    def setdefault(self, key, default=None):
+        if key in self:
+            return self[key]
+        self[key] = default
+        return default
+
+    def pop(self, key, default=_GLOBAL_MISSING):
+        if key in self:
+            value = self[key]
+            del self[key]
+            return value
+        if default is _GLOBAL_MISSING:
+            raise KeyError(key)
+        return default
+
+    @staticmethod
+    def has_instance():
+        return getattr(_global_state_local, "state", None) is not None
+
+    @staticmethod
+    def instance():
+        state = getattr(_global_state_local, "state", None)
+        if state is None:
+            state = GlobalState()
+            _global_state_local.state = state
+        return state
+
+    def __enter__(self):
+        if self._compat_context is not None:
+            raise RuntimeError("GlobalState is already active")
+        self._compat_context = GlobalContext(self)
+        return self._compat_context.__enter__()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        context, self._compat_context = self._compat_context, None
+        return context.__exit__(exc_type, exc_value, traceback)
+
+
+class GlobalContext:
+    """Select one Python GlobalState seed for wiring and result copy-back."""
+
+    def __init__(self, state=None):
+        self.state = state if state is not None else GlobalState.instance()
+        if not isinstance(self.state, GlobalState):
+            raise TypeError("GlobalContext state must be a GlobalState")
+        self._previous = None
+        self._entered = False
+
+    def __enter__(self):
+        if self._entered or getattr(_global_state_local, "context_active", False):
+            raise RuntimeError("GlobalContext does not support nested activation")
+        self._previous = getattr(_global_state_local, "state", None)
+        _global_state_local.state = self.state
+        _global_state_local.context_active = True
+        self._entered = True
+        return self.state
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self._entered:
+            _global_state_local.context_active = False
+            if self._previous is None:
+                del _global_state_local.state
+            else:
+                _global_state_local.state = self._previous
+            self._previous = None
+            self._entered = False
+        return False
+
+
+def set_record_replay_config(model):
+    _hgraph._set_record_replay_config(GlobalState.instance()._impl, model)
+
+
+def set_as_of(value):
+    _hgraph._set_as_of(GlobalState.instance()._impl, value)
+
+
+def set_table_schema_date_key(key):
+    _hgraph._set_table_schema_date_key(GlobalState.instance()._impl, key)
+
+
+def set_table_schema_as_of_key(key):
+    _hgraph._set_table_schema_as_of_key(GlobalState.instance()._impl, key)
+
+
+def evaluate_const(name, args=(), kwargs=None, output_type=None):
+    return _hgraph._evaluate_const(GlobalState.instance()._impl, name, args, kwargs or {}, output_type)
 
 
 def cast_(tp, ts):
@@ -1179,7 +1309,7 @@ def component(fn=None, *, recordable_id=None):
 
 def comparison_summary(fq_key):
     """(compared, mismatches) from a Compare run's ``fq.__compare__``."""
-    return _hgraph.comparison_summary(fq_key)
+    return _hgraph._comparison_summary(GlobalState.instance()._impl, fq_key)
 
 
 class _GraphFn:
@@ -1336,7 +1466,7 @@ def run_graph(graph_fn, *args, start_time=None, end_time=None,
     self-perpetuating graphs, e.g. bound feedback loops). NOTE
     (divergence): the simulation clock is cycle-aligned from MIN_ST in
     MIN_TD steps."""
-    w = _hgraph.Wiring()
+    w = _hgraph.Wiring(GlobalState.instance()._impl)
     _wiring_stack.append(w)
     try:
         out = graph_fn(*args, **kwargs)
@@ -1395,7 +1525,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         params = []
     params = [p for p in params
               if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
-    w = _hgraph.Wiring()
+    w = _hgraph.Wiring(GlobalState.instance()._impl)
     _wiring_stack.append(w)
     try:
         ports = []

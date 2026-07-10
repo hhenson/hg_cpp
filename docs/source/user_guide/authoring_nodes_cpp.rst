@@ -670,9 +670,9 @@ clock. It exposes ``evaluation_time()``, ``now()``, ``cycle_time()`` and
 injectable for ``clock.evaluation_time()``.
 
 ``GlobalStateView`` is a borrowing **view** over the graph's shared, mutable
-``string -> value`` store — the owning ``GlobalState`` lives on the graph (created
-at wiring time, carried onto the graph, the same instance seen at run time). A
-node that declares it can read and write the store during evaluation:
+``string -> value`` store. The root graph owns the run-time state, initialized by
+copying the builder's wiring-time seed. A node that declares the view can read and
+write that graph-owned copy during evaluation:
 
 .. code-block:: cpp
 
@@ -690,6 +690,11 @@ The store is seeded at wiring time through ``GraphBuilder::global_state()`` /
 ``GraphView::global_state()``); see *Wiring Graphs in C++*. Values are
 heterogeneous — each key may hold a differently-typed value (it is a mutable
 ``Map<string, Any>`` under the hood).
+
+``GlobalContext`` can begin the seed lifetime before top-level wiring is created.
+It selects one caller-owned seed on the current thread; a new ``Wiring`` or direct
+``GraphBuilder`` copies it and the graph then follows the same ownership and copy
+rules described above. Contexts do not nest and are not retained by the graph.
 
 ``NodeScheduler`` re-arms the **current** node for a future cycle. It mirrors the
 Python ``SCHEDULER`` interface and is, like ``GlobalStateView``, a **value/view

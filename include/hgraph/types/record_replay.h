@@ -74,14 +74,14 @@ namespace hgraph::record_replay
         std::optional<DateTime> as_of{};
     };
 
-    /** Set the configuration (before wiring; a registry reset restores the default). */
-    HGRAPH_EXPORT void set_config(Config config);
+    /** Set the configuration in ``state`` before wiring. */
+    HGRAPH_EXPORT void set_config(GlobalStateView state, Config config);
 
-    /** The active configuration. */
-    [[nodiscard]] HGRAPH_EXPORT const Config &config();
+    /** The configuration in ``state`` (the default when no entry is present). */
+    [[nodiscard]] HGRAPH_EXPORT Config config(GlobalStateView state);
 
-    /** ``requires_``-friendly backend guard: true when the active model is ``model``. */
-    [[nodiscard]] HGRAPH_EXPORT bool model_is(std::string_view model) noexcept;
+    /** ``requires_``-friendly backend guard over a wiring state's model. */
+    [[nodiscard]] HGRAPH_EXPORT bool model_is(GlobalStateView state, std::string_view model);
 
     /**
      * The mode scope: a wiring-time stack of ``(mode, recordable_id)``
@@ -139,7 +139,7 @@ namespace hgraph::record_replay
     [[nodiscard]] HGRAPH_EXPORT Frame store_read(std::string_view key);
     [[nodiscard]] HGRAPH_EXPORT bool store_contains(std::string_view key);
 
-    /** Reset config + scopes + the store to defaults (wired into ``reset_all_registries``). */
+    /** Reset transient scopes and the registered content store to defaults. */
     HGRAPH_EXPORT void reset() noexcept;
 }  // namespace hgraph::record_replay
 
@@ -179,7 +179,8 @@ namespace hgraph
          * const_fn ruling — wiring code calls it directly (wrap with
          * ``const_`` for a source); the bridge exposes it eagerly.
          */
-        [[nodiscard]] HGRAPH_EXPORT Value replay_const_value(std::string_view fq_key,
+        [[nodiscard]] HGRAPH_EXPORT Value replay_const_value(GlobalStateView state,
+                                                             std::string_view fq_key,
                                                              const ValueTypeMetaData *meta,
                                                              DateTime tm    = MAX_DT,
                                                              DateTime as_of = MAX_DT);
@@ -190,7 +191,8 @@ namespace hgraph
          * honouring the configured as-of override. Registered on seeds by
          * ``component<G>`` under ``Mode::Recover``.
          */
-        [[nodiscard]] HGRAPH_EXPORT Value recorded_seed_resolver(std::string_view fq_key,
+        [[nodiscard]] HGRAPH_EXPORT Value recorded_seed_resolver(GlobalStateView state,
+                                                                 std::string_view fq_key,
                                                                  const ValueTypeMetaData *meta,
                                                                  DateTime start_time);
 
@@ -206,7 +208,8 @@ namespace hgraph
             std::size_t mismatches{0};
         };
 
-        [[nodiscard]] HGRAPH_EXPORT ComparisonSummary comparison_summary(std::string_view fq_key);
+        [[nodiscard]] HGRAPH_EXPORT ComparisonSummary comparison_summary(GlobalStateView state,
+                                                                         std::string_view fq_key);
     }  // namespace record_replay
 }  // namespace hgraph
 

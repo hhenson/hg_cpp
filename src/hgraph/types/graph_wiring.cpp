@@ -570,6 +570,15 @@ namespace hgraph
 
     struct Wiring::Impl
     {
+        explicit Impl(WiringKind wiring_kind)
+            : kind(wiring_kind)
+        {
+            if (kind == WiringKind::TopLevel)
+            {
+                if (const GlobalState *state = GlobalContext::active_state()) { global_state = *state; }
+            }
+        }
+
         struct ServiceImplementationScopeState
         {
             std::string                          description{};
@@ -603,9 +612,10 @@ namespace hgraph
         GlobalState                                                         traits{};   // value-layer Map<string, Any>
         std::vector<ServiceImplementationScopeState>                       implementation_scopes{};
         GlobalState                                                        global_state{};
+        WiringKind                                                         kind{WiringKind::TopLevel};
     };
 
-    Wiring::Wiring() : impl_(std::make_unique<Impl>()) {}
+    Wiring::Wiring(WiringKind kind) : impl_(std::make_unique<Impl>(kind)) {}
     Wiring::~Wiring()                              = default;
     Wiring::Wiring(Wiring &&) noexcept             = default;
     Wiring &Wiring::operator=(Wiring &&) noexcept  = default;
@@ -1014,6 +1024,15 @@ namespace hgraph
     }
 
     GlobalStateView Wiring::global_state() noexcept { return impl_->global_state.view(); }
+
+    GlobalStateView Wiring::operator_state() noexcept
+    {
+        if (impl_->kind == WiringKind::SubGraph)
+        {
+            if (GlobalState *state = GlobalContext::active_state()) { return state->view(); }
+        }
+        return impl_->global_state.view();
+    }
 
     void Wiring::apply_service_rank_dependencies()
     {

@@ -39,25 +39,27 @@ namespace
     };
 }  // namespace
 
-TEST_CASE("record/replay config: explicit wiring-time configuration with reset restoring defaults")
+TEST_CASE("record/replay config: configuration belongs to the seeded GlobalState")
 {
     using namespace hgraph::record_replay;
+    hgraph::GlobalContext context;
+    const auto            state = context.state().view();
 
-    CHECK(config().model == std::string{IN_MEMORY});
-    CHECK(config().date_key == "__date_time__");
-    CHECK(model_is(IN_MEMORY));
+    CHECK(config(state).model == std::string{IN_MEMORY});
+    CHECK(config(state).date_key == "__date_time__");
+    CHECK(model_is(state, IN_MEMORY));
 
-    set_config(Config{.model = "Arrow", .date_key = "dt", .as_of_key = "asof", .as_of = MIN_ST});
-    CHECK(config().model == "Arrow");
-    CHECK(model_is("Arrow"));
-    CHECK_FALSE(model_is(IN_MEMORY));
-    CHECK(config().as_of == MIN_ST);
+    set_config(state, Config{.model = "Arrow", .date_key = "dt", .as_of_key = "asof", .as_of = MIN_ST});
+    CHECK(config(state).model == "Arrow");
+    CHECK(model_is(state, "Arrow"));
+    CHECK_FALSE(model_is(state, IN_MEMORY));
+    CHECK(config(state).as_of == MIN_ST);
 
-    CHECK_THROWS_AS(set_config(Config{.model = ""}), std::invalid_argument);
+    CHECK_THROWS_AS(set_config(state, Config{.model = ""}), std::invalid_argument);
 
-    reset_all_registries();
-    CHECK(config().model == std::string{IN_MEMORY});
-    CHECK_FALSE(config().as_of.has_value());
+    hgraph::GlobalState other;
+    CHECK(config(other.view()).model == std::string{IN_MEMORY});
+    CHECK_FALSE(config(other.view()).as_of.has_value());
 }
 
 TEST_CASE("record/replay mode scope: nesting shadows, nearest wins, pops restore")

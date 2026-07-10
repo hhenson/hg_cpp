@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace arrow
@@ -32,8 +33,7 @@ namespace hgraph
      * no per-tick row tuples.
      *
      * The row shape is bitemporal: ``[date_key, as_of_key, *value columns]``
-     * with the key names taken from ``record_replay::config()`` at synthesis
-     * (the config is fixed before wiring, per the P2 ruling). Bundles flatten
+     * with the key names supplied at synthesis. Bundles flatten
      * to dotted column names. v1 covers atomic leaves and depth-1 bundles;
      * TSD partition keys land with the record/replay backend (step 4).
      */
@@ -60,8 +60,11 @@ namespace hgraph
         std::vector<Column>             columns{};        ///< the value columns (date/as_of excluded)
     };
 
-    /** The interned converter for ``meta`` (synthesized on first use). */
-    [[nodiscard]] HGRAPH_EXPORT const TableConverter &table_converter(const ValueTypeMetaData *meta);
+    /** The converter interned by value schema and bitemporal column names. */
+    [[nodiscard]] HGRAPH_EXPORT const TableConverter &table_converter(
+        const ValueTypeMetaData *meta,
+        std::string_view date_key = "__date_time__",
+        std::string_view as_of_key = "__as_of__");
 
     /** Clear the interned converters (registry reset). */
     HGRAPH_EXPORT void clear_table_converters() noexcept;

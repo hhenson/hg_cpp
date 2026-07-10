@@ -236,6 +236,14 @@ Recorded divergences / gaps (the morning-summary list):
   ``object`` value kind (a GIL-safe refcounted ``PyObj`` scalar; value ops
   acquire the GIL around refcount changes since the run loop releases it),
   and ``const`` infers it without ``tp=``.
+
+- **Global run state** preserves the C++ ownership model.  Python keeps one
+  ``GlobalState`` seed per thread.  ``GlobalContext`` selects that seed for an
+  outer wiring/run scope and rejects nesting; ``with GlobalState()`` is
+  compatibility shorthand.  A top-level Python ``Wiring`` copies from the
+  selected seed, the C++ builder and root graph then use their normal owned-copy
+  lifecycle, and the bridge replaces the Python seed with the root graph's final
+  state after execution.  The C++ graph never borrows Python storage.
 - **Services** are surfaced per the runtime-identity rulings
   (services.rst *Runtime service identity*): ``@reference_service`` /
   ``@subscription_service`` / ``@request_reply_service`` decorate

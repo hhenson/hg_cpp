@@ -165,7 +165,9 @@ namespace
 TEST_CASE("component: Record mode records the named inputs and __out__ while passing values through")
 {
     stdlib::register_standard_operators();
-    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+    GlobalContext context;
+    record_replay::set_config(context.state().view(),
+                              record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
 
     CHECK_OUTPUT(eval_node<RecordingHarness>(values<Int>(1, none, 3), values<Int>(10, 20, none)),
                  values<Int>(11, 21, 23));
@@ -180,7 +182,9 @@ TEST_CASE("component: Record mode records the named inputs and __out__ while pas
 TEST_CASE("component: Replay mode replaces live inputs with the recordings")
 {
     stdlib::register_standard_operators();
-    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+    GlobalContext context;
+    record_replay::set_config(context.state().view(),
+                              record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
 
     (void)eval_node<RecordingHarness>(values<Int>(1, none, 3), values<Int>(10, 20, none));
 
@@ -192,7 +196,9 @@ TEST_CASE("component: Replay mode replaces live inputs with the recordings")
 TEST_CASE("component: ReplayOutput mode replays the recorded output directly")
 {
     stdlib::register_standard_operators();
-    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+    GlobalContext context;
+    record_replay::set_config(context.state().view(),
+                              record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
 
     (void)eval_node<RecordingHarness>(values<Int>(1, none, 3), values<Int>(10, 20, none));
 
@@ -203,7 +209,9 @@ TEST_CASE("component: ReplayOutput mode replays the recorded output directly")
 TEST_CASE("component: nested components chain fully-qualified ids through the scope")
 {
     stdlib::register_standard_operators();
-    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+    GlobalContext context;
+    record_replay::set_config(context.state().view(),
+                              record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
 
     CHECK_OUTPUT(eval_node<NestedHarness>(values<Int>(5)), values<Int>(10));
     CHECK(record_replay::store_contains("outer.ts"));
@@ -223,7 +231,9 @@ TEST_CASE("component: no ambient mode wires plainly; active mode without an id t
 TEST_CASE("component: Recover seeds inputs at start from the recordings; live ticks override")
 {
     stdlib::register_standard_operators();
-    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+    GlobalContext context;
+    record_replay::set_config(context.state().view(),
+                              record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
 
     // Record: lhs ticks 1 @t0 and 3 @t2; rhs ticks 10 @t0 and 20 @t1.
     (void)eval_node<RecordingHarness>(values<Int>(1, none, 3), values<Int>(10, 20, none));
@@ -238,36 +248,41 @@ TEST_CASE("component: Recover seeds inputs at start from the recordings; live ti
 TEST_CASE("component: Compare recomputes from recorded inputs and records per-tick equality")
 {
     stdlib::register_standard_operators();
-    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+    GlobalContext context;
+    record_replay::set_config(context.state().view(),
+                              record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
 
     (void)eval_node<RecordingHarness>(values<Int>(1, none, 3), values<Int>(10, 20, none));
 
     // Same computation: every recomputed tick matches the recording.
     (void)eval_node<CompareHarness<SumGraph>>(values<Int>(100), values<Int>(100));
-    auto matched = record_replay::comparison_summary("calc.__compare__");
+    auto matched = record_replay::comparison_summary(context.state().view(), "calc.__compare__");
     CHECK(matched.compared == 3);
     CHECK(matched.mismatches == 0);
 
     // A regressed computation (product instead of sum) mismatches every tick.
     (void)eval_node<CompareHarness<ProductGraph>>(values<Int>(100), values<Int>(100));
-    auto regressed = record_replay::comparison_summary("calc.__compare__");
+    auto regressed = record_replay::comparison_summary(context.state().view(), "calc.__compare__");
     CHECK(regressed.compared == 3);
     CHECK(regressed.mismatches == 3);
 
     // No comparison recorded under an unknown key.
-    CHECK_THROWS_AS((void)record_replay::comparison_summary("nowhere.__compare__"), std::runtime_error);
+    CHECK_THROWS_AS((void)record_replay::comparison_summary(context.state().view(), "nowhere.__compare__"),
+                    std::runtime_error);
 }
 
 TEST_CASE("compare: a one-sided value is recorded as a mismatch")
 {
     stdlib::register_standard_operators();
-    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+    GlobalContext context;
+    record_replay::set_config(context.state().view(),
+                              record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
 
     // cycle 0: lhs=1, rhs invalid -> mismatch. cycle 1: rhs=1 arrives and
     // lhs still holds 1 -> equal. cycle 2: lhs=5 vs rhs=1 -> mismatch.
     (void)eval_node<DirectCompareGraph>(values<Int>(1, none, 5), values<Int>(none, 1, none));
 
-    auto summary = record_replay::comparison_summary("sided.__compare__");
+    auto summary = record_replay::comparison_summary(context.state().view(), "sided.__compare__");
     CHECK(summary.compared == 3);
     CHECK(summary.mismatches == 2);
 }

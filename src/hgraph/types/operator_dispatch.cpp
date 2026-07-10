@@ -295,7 +295,8 @@ namespace hgraph
                        const TSValueTypeMetaData *expected_output,
                        ResolutionMap &map,
                        int &rank_adjustment,
-                       std::string &why)
+                       std::string &why,
+                       GlobalStateView global_state)
         {
             if (output_required.has_value() && impl.has_output != *output_required)
             {
@@ -429,7 +430,7 @@ namespace hgraph
                 }
             }
 
-            OperatorCallContext context{args, impl.params, kwargs};
+            OperatorCallContext context{args, impl.params, kwargs, global_state};
             if (impl.default_resolver)
             {
                 const bool resolved = fallback_on_exception(
@@ -484,9 +485,10 @@ namespace hgraph
     }
 
     Value OperatorRegistry::evaluate_const(std::string_view name, std::span<const WiringArg> args,
-                                           const TSValueTypeMetaData *expected_output) const
+                                           const TSValueTypeMetaData *expected_output,
+                                           GlobalStateView global_state) const
     {
-        ResolvedOperatorCall resolved = resolve(name, args, std::nullopt, expected_output);
+        ResolvedOperatorCall resolved = resolve(name, args, std::nullopt, expected_output, {}, global_state);
         if (!resolved.impl->const_kernel)
         {
             throw OperatorResolutionError(fmt::format(
@@ -497,7 +499,8 @@ namespace hgraph
         return resolved.impl->const_kernel(
             resolved_output,
             OperatorCallContext{resolved.args, resolved.impl->params,
-                                std::span<const std::pair<std::string, WiringPortRef>>{resolved.kwargs}});
+                                std::span<const std::pair<std::string, WiringPortRef>>{resolved.kwargs},
+                                global_state});
     }
 
     std::vector<std::string> OperatorRegistry::registered_names() const
@@ -590,7 +593,8 @@ namespace hgraph
         std::span<const WiringArg> args,
         std::optional<bool> output_required,
         const TSValueTypeMetaData *expected_output,
-        std::span<const std::size_t> size_hints) const
+        std::span<const std::size_t> size_hints,
+        GlobalStateView global_state) const
     {
         auto it = overloads_.find(std::string{name});
         if (it == overloads_.end() || it->second.empty())
@@ -637,7 +641,8 @@ namespace hgraph
             // Each default an overload falls back on makes it a little less
             // specific than one whose parameters were all supplied.
             int rank_adjustment = call.defaults_used;
-            if (try_match(impl, call.args, call.kwargs, output_required, expected_output, map, rank_adjustment, why))
+            if (try_match(impl, call.args, call.kwargs, output_required, expected_output, map, rank_adjustment, why,
+                          global_state))
             {
                 survivors.push_back({&impl, std::move(map), std::move(call), impl.rank + rank_adjustment});
             }

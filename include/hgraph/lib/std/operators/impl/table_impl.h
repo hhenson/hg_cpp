@@ -28,16 +28,18 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "to_table";
 
-        static void start(In<"ts", TsVar<"S">> ts, State<TableCodecState> codec)
+        static void start(In<"ts", TsVar<"S">> ts, GlobalStateView gs, State<TableCodecState> codec)
         {
-            codec.set(TableCodecState{&table_converter(ts.base().schema()->value_schema)});
+            const auto config = record_replay::config(gs);
+            codec.set(TableCodecState{
+                &table_converter(ts.base().schema()->value_schema, config.date_key, config.as_of_key)});
         }
 
-        static void eval(In<"ts", TsVar<"S">> ts, State<TableCodecState> codec, DateTime now,
+        static void eval(In<"ts", TsVar<"S">> ts, GlobalStateView gs, State<TableCodecState> codec, DateTime now,
                          Out<TS<Frame>> out)
         {
             const TableConverter &converter = *codec.get().converter;
-            const auto            as_of     = record_replay::config().as_of.value_or(now);
+            const auto            as_of     = record_replay::config(gs).as_of.value_or(now);
             out.set(single_row_frame(converter, now, as_of, ts.value()));
         }
     };
@@ -52,10 +54,12 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "from_table";
 
-        static void start(Out<TsVar<"O">> out, State<TableCodecState> codec)
+        static void start(Out<TsVar<"O">> out, GlobalStateView gs, State<TableCodecState> codec)
         {
             const auto &erased = static_cast<const TSOutputView &>(out);
-            codec.set(TableCodecState{&table_converter(erased.schema()->value_schema)});
+            const auto  config = record_replay::config(gs);
+            codec.set(TableCodecState{
+                &table_converter(erased.schema()->value_schema, config.date_key, config.as_of_key)});
         }
 
         static void eval(In<"ts", TS<Frame>> ts, State<TableCodecState> codec, Out<TsVar<"O">> out)
@@ -84,16 +88,20 @@ namespace hgraph::stdlib
         {
             const auto *frame = context.scalar_as<Frame>("value");
             if (frame == nullptr || !frame->has_value() || frame_rows(*frame) == 0) { return Value{}; }
-            const auto &converter = table_converter(resolved_output->value_schema);
+            const auto  config = record_replay::config(context.global_state);
+            const auto &converter =
+                table_converter(resolved_output->value_schema, config.date_key, config.as_of_key);
             return read_row(converter, *frame, frame_rows(*frame) - 1);
         }
 
-        static void eval(Scalar<"value", Frame> value, Out<TsVar<"O">> out)
+        static void eval(Scalar<"value", Frame> value, GlobalStateView gs, Out<TsVar<"O">> out)
         {
             const auto &erased = static_cast<const TSOutputView &>(out);
             const auto &frame  = value.value();
             if (!frame.has_value() || frame_rows(frame) == 0) { return; }
-            const auto &converter = table_converter(erased.schema()->value_schema);
+            const auto  config = record_replay::config(gs);
+            const auto &converter =
+                table_converter(erased.schema()->value_schema, config.date_key, config.as_of_key);
             Value       row       = read_row(converter, frame, frame_rows(frame) - 1);
             out.apply(row.view());
         }

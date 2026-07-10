@@ -289,11 +289,24 @@ namespace
         // Owned by default; a BORROWED PyWiring (python graph callables run
         // against a Wiring the C++ side owns - e.g. a sub-graph compile)
         // aliases without ownership and cannot be run/finished.
-        std::unique_ptr<Wiring> owned{std::make_unique<Wiring>()};
-        Wiring                 *raw{owned.get()};
-        bool                    finished{false};
+        std::unique_ptr<GlobalContext> seed_context{};
+        std::unique_ptr<Wiring>        owned{};
+        Wiring                        *raw{nullptr};
+        GlobalState                   *python_state{nullptr};
+        bool                           finished{false};
 
-        PyWiring() = default;
+        PyWiring()
+            : owned(std::make_unique<Wiring>()), raw(owned.get())
+        {
+        }
+
+        explicit PyWiring(GlobalState &state)
+            : seed_context(std::make_unique<GlobalContext>(state)),
+              owned(std::make_unique<Wiring>()),
+              raw(owned.get()),
+              python_state(&state)
+        {
+        }
 
         [[nodiscard]] static PyWiring borrow(Wiring &target)
         {
@@ -338,7 +351,8 @@ namespace
             ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
                 name, std::span<const WiringArg>{wiring_args.data(), wiring_args.size()}, std::nullopt,
                 output_type.has_value() ? output_type->meta : nullptr,
-                std::span<const std::size_t>{size_hints.data(), size_hints.size()});
+                std::span<const std::size_t>{size_hints.data(), size_hints.size()},
+                wiring_ref().operator_state());
             OperatorWireResult result =
                 resolved.impl->wire(wiring_ref(), resolved.map, resolved.args, resolved.kwargs);
             if (!result.has_output) { return nb::none(); }
@@ -378,6 +392,10 @@ namespace
                 // loop; python user nodes re-acquire it per call.
                 nb::gil_scoped_release release;
                 run->executor.view().run();
+            }
+            if (python_state != nullptr)
+            {
+                python_state->view().copy_from(run->executor.view().graph().global_state());
             }
             return run;
         }
@@ -474,7 +492,7 @@ namespace
         {
             throw std::invalid_argument("python graph fn: compiled input schema count does not match its inputs");
         }
-        Wiring child;
+        Wiring child{WiringKind::SubGraph};
         std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
         std::vector<WiringPortRef> boundary;
         boundary.reserve(input_schemas.size());
@@ -1505,9 +1523,60 @@ NB_MODULE(_hgraph, m)
           },
           nb::arg("pattern"), nb::arg("inputs"));
 
-    // record/replay configuration (the model is explicit wiring-time config).
-    m.def("set_record_replay_config", [](const std::string &model) {
-        record_replay::set_config(record_replay::Config{.model = model});
+    nb::class_<GlobalState>(m, "_GlobalState")
+        .def(nb::init<>())
+        .def("__len__", [](GlobalState &self) { return self.view().size(); })
+        .def("__contains__", [](GlobalState &self, const std::string &key) { return self.view().contains(key); })
+        .def("__getitem__",
+             [](GlobalState &self, const std::string &key) -> nb::object {
+                 const GlobalStateView state = self.view();
+                 if (!state.contains(key)) { throw nb::key_error(key.c_str()); }
+                 return value_to_py(state.get(key));
+             })
+        .def("get",
+             [](GlobalState &self, const std::string &key, nb::object fallback) -> nb::object {
+                 const GlobalStateView state = self.view();
+                 return state.contains(key) ? value_to_py(state.get(key)) : fallback;
+             },
+             nb::arg("key"), nb::arg("default") = nb::none())
+        .def("__setitem__",
+             [](GlobalState &self, const std::string &key, nb::handle value) {
+                 self.view().set(key, py_to_value(value));
+             })
+        .def("__delitem__",
+             [](GlobalState &self, const std::string &key) {
+                 if (!self.view().erase(key)) { throw nb::key_error(key.c_str()); }
+             })
+        .def("keys", [](GlobalState &self) {
+            nb::list result;
+            for (const ValueView key : self.view().as_value().view().as_map().keys())
+            {
+                result.append(value_to_py(key));
+            }
+            return result;
+        });
+
+    // Record/replay configuration is copied with the Python thread's seed.
+    m.def("_set_record_replay_config", [](GlobalState &state, const std::string &model) {
+        auto config = record_replay::config(state.view());
+        config.model = model;
+        record_replay::set_config(state.view(), std::move(config));
+    });
+    m.def("_set_as_of", [](GlobalState &state, nb::object value) {
+        auto config = record_replay::config(state.view());
+        config.as_of = value.is_none() ? std::optional<DateTime>{}
+                                        : std::optional<DateTime>{nb::cast<DateTime>(value)};
+        record_replay::set_config(state.view(), std::move(config));
+    }, nb::arg("state"), nb::arg("value").none());
+    m.def("_set_table_schema_date_key", [](GlobalState &state, const std::string &key) {
+        auto config = record_replay::config(state.view());
+        config.date_key = key;
+        record_replay::set_config(state.view(), std::move(config));
+    });
+    m.def("_set_table_schema_as_of_key", [](GlobalState &state, const std::string &key) {
+        auto config = record_replay::config(state.view());
+        config.as_of_key = key;
+        record_replay::set_config(state.view(), std::move(config));
     });
     m.attr("MODE_NONE")          = static_cast<unsigned>(record_replay::Mode::None);
     m.attr("MODE_RECORD")        = static_cast<unsigned>(record_replay::Mode::Record);
@@ -1524,8 +1593,8 @@ NB_MODULE(_hgraph, m)
         const auto &state = record_replay::current_scope();
         return nb::make_tuple(static_cast<unsigned>(state.mode), state.recordable_id);
     });
-    m.def("comparison_summary", [](const std::string &fq_key) {
-        const auto summary = record_replay::comparison_summary(fq_key);
+    m.def("_comparison_summary", [](GlobalState &state, const std::string &fq_key) {
+        const auto summary = record_replay::comparison_summary(state.view(), fq_key);
         return nb::make_tuple(summary.compared, summary.mismatches);
     });
     m.def("frame_store_contains", [](const std::string &key) { return record_replay::store_contains(key); });
@@ -2009,6 +2078,7 @@ NB_MODULE(_hgraph, m)
 
     nb::class_<PyWiring>(m, "Wiring")
         .def(nb::init<>())
+        .def(nb::init<GlobalState &>(), nb::arg("state"))
         .def("wire", &PyWiring::wire, nb::arg("name"), nb::arg("args") = nb::tuple(),
              nb::arg("kwargs") = nb::dict(), nb::arg("output_type") = nb::none(),
              nb::arg("sizes") = nb::none())
@@ -2022,15 +2092,16 @@ NB_MODULE(_hgraph, m)
              nb::arg("on_start") = nb::none());
 
     m.def(
-        "evaluate_const",
-        [](const std::string &name, nb::tuple args, nb::dict kwargs, std::optional<PyTsType> output_type) {
+        "_evaluate_const",
+        [](GlobalState &state, const std::string &name, nb::tuple args, nb::dict kwargs,
+           std::optional<PyTsType> output_type) {
             const auto wiring_args = build_args(args, kwargs);
             Value      value       = OperatorRegistry::instance().evaluate_const(
                 name, std::span<const WiringArg>{wiring_args.data(), wiring_args.size()},
-                output_type.has_value() ? output_type->meta : nullptr);
+                output_type.has_value() ? output_type->meta : nullptr, state.view());
             return value.has_value() ? value_to_py(value.view()) : nb::none();
         },
-        nb::arg("name"), nb::arg("args") = nb::tuple(), nb::arg("kwargs") = nb::dict(),
+        nb::arg("state"), nb::arg("name"), nb::arg("args") = nb::tuple(), nb::arg("kwargs") = nb::dict(),
         nb::arg("output_type") = nb::none());
 
     m.def("reset_registries", [] {

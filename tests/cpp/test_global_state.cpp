@@ -281,3 +281,35 @@ TEST_CASE("global state: a stored immutable value stays read-only")
     // the store itself is mutable.
     CHECK_THROWS(gs.view().get("frozen").as_list().begin_mutation());
 }
+
+TEST_CASE("global context: seeds builders by copy and does not nest")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<std::int32_t>("int32");
+
+    GlobalState seed;
+    seed.view().set("seed", Value{std::int32_t{7}});
+
+    GraphBuilder builder;
+    {
+        GlobalContext context{seed};
+        CHECK(GlobalContext::active_state() == &seed);
+        CHECK_THROWS_AS(GlobalContext{}, std::logic_error);
+
+        builder = build_graph<CounterGraph>();
+        builder.global_state().set("builder_only", Value{std::int32_t{9}});
+        CHECK_FALSE(seed.view().contains("builder_only"));
+    }
+    CHECK(GlobalContext::active_state() == nullptr);
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2});
+    GraphExecutorValue executor = executor_builder.make_executor();
+    executor.view().run();
+
+    CHECK(executor.view().graph().global_state().get_as<std::int32_t>("counter") == 101);
+    CHECK_FALSE(seed.view().contains("counter"));
+}

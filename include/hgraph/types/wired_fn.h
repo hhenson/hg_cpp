@@ -425,7 +425,7 @@ namespace hgraph
                 throw std::invalid_argument("fn<X>: compiled input schema count does not match the function's inputs");
             }
 
-            Wiring w;
+            Wiring w{WiringKind::SubGraph};
             std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
             return [&]<std::size_t... I>(std::index_sequence<I...>) -> CompiledSubGraph {
                 if constexpr (has_output_of<X>())

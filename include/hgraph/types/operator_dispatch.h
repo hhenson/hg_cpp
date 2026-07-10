@@ -186,6 +186,8 @@ namespace hgraph
         std::span<const ParamPattern>  params{};
         /** Collected ``**kwargs`` (named time-series matching no parameter). */
         std::span<const std::pair<std::string, WiringPortRef>> kwargs{};
+        /** The top-level wiring state used for state-dependent resolution. */
+        GlobalStateView global_state{};
 
         [[nodiscard]] const WiringArg *scalar(std::string_view name) const noexcept
         {
@@ -297,7 +299,8 @@ namespace hgraph
             std::span<const WiringArg> args,
             std::optional<bool> output_required = std::nullopt,
             const TSValueTypeMetaData *expected_output = nullptr,
-            std::span<const std::size_t> size_hints = {}) const;
+            std::span<const std::size_t> size_hints = {},
+            GlobalStateView global_state = {}) const;
 
         /**
          * Resolve and EAGERLY evaluate a const-evaluable overload (the
@@ -309,7 +312,8 @@ namespace hgraph
          */
         [[nodiscard]] Value evaluate_const(std::string_view name,
                                            std::span<const WiringArg> args,
-                                           const TSValueTypeMetaData *expected_output = nullptr) const;
+                                           const TSValueTypeMetaData *expected_output = nullptr,
+                                           GlobalStateView global_state = {}) const;
 
         /** Every registered operator name (sorted) — discovery for the Python bridge. */
         [[nodiscard]] std::vector<std::string> registered_names() const;
@@ -1496,7 +1500,7 @@ namespace hgraph
                                                           const TSValueTypeMetaData *expected_output = nullptr)
     {
         ResolvedOperatorCall resolved =
-            OperatorRegistry::instance().resolve(name, args, output_required, expected_output);
+            OperatorRegistry::instance().resolve(name, args, output_required, expected_output, {}, w.operator_state());
         return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs);
     }
 
@@ -1531,7 +1535,8 @@ namespace hgraph
             if constexpr (!std::is_void_v<OutSchema>) { expected_output = ts_type<OutSchema>(); }
 
             ResolvedOperatorCall resolved =
-                OperatorRegistry::instance().resolve(X::name, wiring_args, X::has_output, expected_output);
+                OperatorRegistry::instance().resolve(X::name, wiring_args, X::has_output, expected_output, {},
+                                                     w.operator_state());
             return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs);
         }
     }  // namespace operator_dispatch_detail

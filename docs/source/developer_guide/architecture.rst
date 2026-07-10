@@ -11,6 +11,28 @@ The C++ runtime should be organized around stable ownership boundaries:
 - lifecycle hooks,
 - optional Python integration.
 
+Global State Lifecycle
+----------------------
+
+``GlobalState`` remains an owning value with ordinary copy semantics.  A caller
+may create and configure a state before wiring, then seed a ``Wiring`` or
+``GraphBuilder`` from it.  Wiring owns its copy, a builder owns the completed
+wiring seed, and each root graph instance receives its own copy exactly as it
+does on the unseeded path.  Nested graphs continue to resolve the root graph's
+state and never own a separate copy.
+
+``GlobalContext`` is optional pre-wiring shorthand.  It selects one seed per
+thread and rejects nesting; new top-level wiring/builders copy that seed, while
+the context itself is not retained by the graph or runner.  C++ callers read the
+completed owned copy from the executor's root ``GraphView`` as before; automatic
+copy-back is a language-bridge concern.
+
+Language bridges may begin that lifecycle earlier without changing the C++
+model.  The Python bridge keeps a seed in thread-local Python state, copies it
+into each top-level ``Wiring``, and copies the root graph's final state back only
+after the runner finishes.  The graph never borrows the Python seed and there is
+no alternate external-state path in ``GraphBuilder`` or the runtime.
+
 Clock And Execution Mode
 ------------------------
 

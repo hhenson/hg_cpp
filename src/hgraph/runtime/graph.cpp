@@ -1450,7 +1450,10 @@ namespace hgraph
         table.attach_nodes_impl(table.context, storage_.data(), this);
     }
 
-    GraphBuilder::GraphBuilder() = default;
+    GraphBuilder::GraphBuilder()
+    {
+        if (const GlobalState *state = GlobalContext::active_state()) { global_state_ = *state; }
+    }
 
     GraphBuilder &GraphBuilder::label(std::string label)
     {

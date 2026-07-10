@@ -137,14 +137,14 @@ function; a const source is ``const_``. For the two roles that remain:
   const-evaluable operators — Python's dual-mode behaviour reproduced
   without a node class.
 
-**P2 — explicit configuration over ambient globals.** The record/replay
-model, date/as-of keys, and as-of override become a **RecordReplayConfig**
-value seeded at wiring (``Wiring::global_state()`` already exists for
-runtime; the *model choice* should be an explicit wiring argument or
-build-time configuration, not a mid-wiring mutable). Backend selection uses
-the existing ``requires_predicate`` machinery reading that explicit config —
-reproducible and interning-safe. Parity with Python's imperative setters is
-a bridge-level shim.
+**P2 — configuration in graph GlobalState.** The record/replay model,
+date/as-of keys, and as-of override are one typed **RecordReplayConfig** value
+in the top-level graph's ``GlobalState``.  Operator resolution receives the
+wiring state's copy, while runtime nodes receive the root graph's normal copy.
+Configuration is installed before wiring and must not change between wiring
+and execution.  Python's imperative setters update its thread-local seed; the
+normal bridge copy-in/copy-out lifecycle carries that configuration without a
+second process-global store.
 
 **P3 — modes via the context machinery, folded into identity.** The
 ``RecordReplayContext`` maps onto the landed wiring-scope machinery (a
@@ -247,15 +247,16 @@ Step 2 — landed
 
 ``types/record_replay.h`` + graph traits (implements P2, P3, P5):
 
-- **``record_replay::Config``** (P2) — the explicit wiring-time
+- **``record_replay::Config``** (P2) — the typed graph/run
   configuration: ``model`` (default ``IN_MEMORY``), the bitemporal
   ``date_key``/``as_of_key`` column names, and the optional ``as_of``
-  override. ``set_config`` before wiring; backends guard overloads with
-  ordinary ``requires_`` predicates via ``record_replay::model_is``.
+  override. ``set_config(GlobalStateView, Config)`` runs before wiring;
+  backends guard overloads with ordinary ``requires_`` predicates via
+  ``record_replay::model_is`` over the state carried by operator resolution.
   Python's imperative setters (``set_record_replay_model``,
   ``set_table_schema_date_key``, ``set_as_of``…) become bridge shims over
-  this. State resets through ``OperatorRegistry::reset()`` (the single reset
-  point for wiring-time global state).
+  the Python thread's seed.  Registry reset clears transient wiring scopes but
+  does not own graph/run configuration.
 - **``record_replay::scope``** (P3) — the RAII mode scope
   (``Mode`` flag set mirroring ``RecordReplayEnum``, plus a recordable id);
   ``current_scope()`` reads the innermost entry. Consumers that consult it
@@ -303,10 +304,9 @@ heavy to FetchContent by default). What landed:
   shared handle is an opaque third-party resource (like ``Str``'s heap
   buffer) — the no-shared-ptr rule governs runtime graph structure, not
   foreign value payloads.
-- **``TableConverter``** (``types/value/table_codec.h``) — the interned
-  per-schema serializer ops for tables: flattened column layout
-  (``[date_key, as_of_key, *columns]``, names from
-  ``record_replay::config()`` at synthesis) with per-column append/read
+- **``TableConverter``** (``types/value/table_codec.h``) — serializer ops
+  interned by value schema and configured date/as-of names: flattened column
+  layout (``[date_key, as_of_key, *columns]``) with per-column append/read
   fn-ptrs writing **directly into Arrow array builders** and reading from
   Arrow arrays — no per-tick row tuples. Leaf coverage: all standard atomics
   (bool/int/float/str/date/datetime/timedelta/time). v1 value coverage:
