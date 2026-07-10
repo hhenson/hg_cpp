@@ -1234,23 +1234,40 @@ namespace hgraph
             return array_registry().intern(element_plan, count);
         }
 
+        /**
+         * Intern an uninitialised byte-storage plan for ``layout``.
+         *
+         * Raw plans participate in composite node/graph layouts but own no
+         * object lifecycle. Default construction is therefore a no-op; the
+         * runtime owner explicitly constructs and destroys any payload placed
+         * in the region. This is used for caller-owned nested-graph storage.
+         */
+        [[nodiscard]] static const StoragePlan &raw_storage_plan(StorageLayout layout) {
+            if (!layout.valid() || layout.size == 0) {
+                throw std::logic_error("MemoryUtils::raw_storage_plan requires a non-empty valid layout");
+            }
+            return raw_plan_registry().intern(layout);
+        }
+
         /** Typed convenience: intern ``array_plan(plan_for<T>(), count)``. */
         template <typename T> [[nodiscard]] static const StoragePlan &array_plan(size_t count) {
             return array_plan(plan_for<T>(), count);
         }
 
         /**
-         * Clear the synthesised composite (tuple/bundle) and array plan registries.
-         * Both intern by child/element-plan **pointer**, so they hold dangling keys
-         * once the underlying plans are torn down. Any reset path that frees plans
-         * (e.g. a registry reset between tests) must call this, or a later plan that
-         * reuses a freed address will get a stale composite/array plan — producing a
-         * wrong layout (overlapping fields) and memory corruption. Plans are
-         * program-lifetime in normal use, so this is only exercised on reset.
+         * Clear the synthesised composite, array, and raw-storage plan registries.
+         * Composite and array plans intern by child/element-plan **pointer**, so
+         * they hold dangling keys once the underlying plans are torn down. Any
+         * reset path that frees plans (e.g. a registry reset between tests) must
+         * call this, or a later plan that reuses a freed address will get a stale
+         * composite/array plan — producing a wrong layout (overlapping fields)
+         * and memory corruption. Plans are program-lifetime in normal use, so
+         * this is only exercised on reset.
          */
         static void clear_synthesised_plans() noexcept {
             composite_registry().clear();
             array_registry().clear();
+            raw_plan_registry().clear();
         }
 
         /**
@@ -1552,6 +1569,54 @@ namespace hgraph
             static ArrayRegistry registry;
             return registry;
         }
+
+        struct RawPlanRegistry
+        {
+            struct Key
+            {
+                size_t size{0};
+                size_t alignment{1};
+
+                [[nodiscard]] bool operator==(const Key &) const noexcept = default;
+            };
+
+            struct KeyHash
+            {
+                [[nodiscard]] size_t operator()(const Key &key) const noexcept {
+                    size_t seed = std::hash<size_t>{}(key.size);
+                    const size_t alignment_hash = std::hash<size_t>{}(key.alignment);
+                    seed ^= alignment_hash + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+                    return seed;
+                }
+            };
+
+            [[nodiscard]] const StoragePlan &intern(StorageLayout layout) {
+                const Key key{.size = layout.size, .alignment = layout.alignment};
+                return m_table.intern(key, [&] {
+                    return StoragePlan{
+                        .layout = layout,
+                        .lifecycle = {.construct = &MemoryUtils::raw_default_construct},
+                        .lifecycle_context = nullptr,
+                        .composite_kind_tag = CompositeKind::None,
+                        .trivially_destructible = true,
+                        .trivially_copyable = false,
+                        .trivially_move_constructible = false,
+                    };
+                });
+            }
+
+            void clear() noexcept { m_table.clear(); }
+
+          private:
+            InternTable<Key, StoragePlan, KeyHash> m_table{};
+        };
+
+        [[nodiscard]] static RawPlanRegistry &raw_plan_registry() {
+            static RawPlanRegistry registry;
+            return registry;
+        }
+
+        static void raw_default_construct(void *, const void *) noexcept {}
 
         [[nodiscard]] static constexpr size_t align_to(size_t offset, size_t alignment) noexcept {
             if (alignment <= 1) { return offset; }

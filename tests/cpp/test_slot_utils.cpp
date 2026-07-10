@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <hgraph/runtime/nested_graph_storage.h>
 #include <hgraph/types/utils/key_slot_store.h>
 #include <hgraph/types/utils/value_slot_store.h>
 
@@ -132,6 +133,16 @@ namespace
             destroyed   = 0;
         }
     };
+
+    struct InPlaceEntry
+    {
+        static inline int destroyed{0};
+
+        int value{0};
+
+        explicit InPlaceEntry(int value_) : value(value_) {}
+        ~InPlaceEntry() { ++destroyed; }
+    };
 }  // namespace
 
 TEST_CASE("stable slot storage preserves existing slot addresses across chained growth", "[v2 slot utils]") {
@@ -193,6 +204,67 @@ TEST_CASE("stable slot storage allocates blocks through allocator ops", "[v2 slo
           AllocationProbe::allocated_layouts[0].size + AllocationProbe::allocated_layouts[1].size);
     CHECK(AllocationProbe::deallocated_layouts[0].alignment == alignof(std::uint32_t));
     CHECK(AllocationProbe::deallocated_layouts[1].alignment == alignof(std::uint32_t));
+}
+
+TEST_CASE("in-place graph slots co-locate stable entries and aligned graph payloads", "[v2 slot utils]") {
+    AllocationProbe::reset();
+    InPlaceEntry::destroyed = 0;
+
+    const MemoryUtils::AllocatorOps allocator{
+        .allocate   = &tracked_allocate,
+        .deallocate = &tracked_deallocate,
+    };
+    constexpr MemoryUtils::StorageLayout graph_layout{.size = 193, .alignment = 64};
+
+    {
+        InPlaceGraphSlotStore<InPlaceEntry> store(graph_layout, allocator);
+        store.reserve_to(2);
+        auto &first  = store.construct_at(0, 11);
+        auto &second = store.construct_at(1, 22);
+
+        REQUIRE(store.block_count() == 1);
+        REQUIRE(AllocationProbe::allocations == 1);
+        CHECK(store.entry_at(0) == &first);
+        CHECK(store.entry_at(1) == &second);
+        CHECK(first.value == 11);
+        CHECK(second.value == 22);
+        CHECK(store.graph_offset() >= sizeof(InPlaceEntry));
+        CHECK(reinterpret_cast<std::uintptr_t>(store.graph_memory(0)) % graph_layout.alignment == 0U);
+        CHECK(reinterpret_cast<std::uintptr_t>(store.graph_memory(1)) % graph_layout.alignment == 0U);
+
+        InPlaceEntry *first_address = &first;
+        void *first_graph_address = store.graph_memory(0);
+        store.reserve_to(5);
+
+        CHECK(store.block_count() == 2);
+        CHECK(AllocationProbe::allocations == 2);
+        CHECK(store.entry_at(0) == first_address);
+        CHECK(store.graph_memory(0) == first_graph_address);
+        CHECK(store.slot_capacity() == 5);
+
+        store.reserve_to(1);
+        CHECK(store.slot_capacity() == 5);
+        CHECK(store.entry_at(0) == first_address);
+        CHECK(store.entry_at(1) == &second);
+
+        store.destroy_at(0);
+        CHECK(InPlaceEntry::destroyed == 1);
+        CHECK(store.entry_at(0) == nullptr);
+        CHECK(store.entry_at(1) == &second);
+    }
+
+    CHECK(InPlaceEntry::destroyed == 2);
+    CHECK(AllocationProbe::deallocations == 2);
+}
+
+TEST_CASE("in-place graph slots reject layout changes and occupied construction", "[v2 slot utils]") {
+    InPlaceGraphSlotStore<InPlaceEntry> store({.size = 32, .alignment = 16});
+    store.reserve_to(1);
+    store.construct_at(0, 7);
+
+    REQUIRE_THROWS_AS(store.bind_graph_layout({.size = 64, .alignment = 16}), std::logic_error);
+    REQUIRE_THROWS_AS(store.construct_at(0, 8), std::logic_error);
+    REQUIRE_THROWS_AS(store.construct_at(1, 9), std::out_of_range);
 }
 
 TEST_CASE("value slot store tracks updates and notifies observers", "[v2 slot utils]") {

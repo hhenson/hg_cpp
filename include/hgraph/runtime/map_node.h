@@ -74,6 +74,10 @@ namespace hgraph
 
         [[nodiscard]] const NodeView &node() const noexcept;
         [[nodiscard]] std::size_t     active_count() const noexcept;
+        /** Number of constructed per-key child graphs, including stopped entries pending erase. */
+        [[nodiscard]] std::size_t     child_graph_count() const noexcept;
+        /** True when every constructed child graph resides in its stable entry slot. */
+        [[nodiscard]] bool            child_graphs_use_in_place_storage() const noexcept;
 
         /** Internal (map_node implementation) — the registered context / storage. */
         [[nodiscard]] const void *internal_context() const noexcept { return context_; }
@@ -94,8 +98,9 @@ namespace hgraph
      * key instantiates a real element in the owned TSD output and builds,
      * binds and starts a fresh child instance whose terminal **forwarding
      * output is bound onto that element** — the child writes the parent's
-     * storage directly (no copy). A missing key stops and destroys the child,
-     * then removes the element (see *Nested Graphs*).
+     * storage directly (no copy). A missing key stops the child and removes the
+     * element; the source slot's later erase destroys the child in place (see
+     * *Nested Graphs*).
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder map_node(NodeTypeMetaData meta, MapNodeSpec spec);
 }  // namespace hgraph

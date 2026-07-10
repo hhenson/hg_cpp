@@ -1,7 +1,10 @@
 #include <hgraph/runtime/mesh_node.h>
 
 #include <hgraph/runtime/nested_bindings.h>
+#include <hgraph/runtime/nested_graph_storage.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/utils/key_slot_store.h>
 #include <hgraph/util/date_time.h>
 #include <hgraph/util/scope.h>
 
@@ -46,6 +49,29 @@ namespace hgraph
 
         using ValueSet = ankerl::unordered_dense::set<Value, ValueKeyHash, ValueKeyEqual>;
 
+        [[nodiscard]] std::size_t mesh_key_hash(const void *key, const void *context)
+        {
+            const auto *binding = static_cast<const ValueTypeBinding *>(context);
+            if (binding == nullptr) { throw std::logic_error("mesh_ key hash requires a key binding"); }
+            return binding->ops_ref().hash(key);
+        }
+
+        [[nodiscard]] bool mesh_key_equal(const void *lhs, const void *rhs, const void *context)
+        {
+            const auto *binding = static_cast<const ValueTypeBinding *>(context);
+            if (binding == nullptr) { throw std::logic_error("mesh_ key equality requires a key binding"); }
+            return binding->ops_ref().equals(lhs, rhs);
+        }
+
+        [[nodiscard]] KeySlotStoreOps mesh_key_store_ops(const ValueTypeBinding &binding) noexcept
+        {
+            return KeySlotStoreOps{
+                .hash = &mesh_key_hash,
+                .equal = &mesh_key_equal,
+                .context = &binding,
+            };
+        }
+
         // One mesh instance. Declaration order is load-bearing (reverse
         // destruction): the child graph (a subscriber to key_source) tears down
         // before the key source it observes.
@@ -62,19 +88,46 @@ namespace hgraph
             DateTime                       settled_time{MIN_DT};// completed (no pause) at this evaluation time
         };
 
-        struct MeshNodeStorage
+        struct MeshNodeStorage final : SlotObserver
         {
-            MeshNodeStorage()                                   = default;
+            struct RequestedKeysObserver final : SlotObserver
+            {
+                explicit RequestedKeysObserver(MeshNodeStorage &owner_) noexcept : owner(owner_) {}
+
+                void on_capacity(std::size_t, std::size_t new_capacity) override
+                {
+                    if (owner.instance_keys.has_value()) { owner.instance_keys->reserve_to(new_capacity); }
+                }
+
+                void on_insert(std::size_t) override {}
+                void on_remove(std::size_t) override {}
+                void on_erase(std::size_t) override {}
+                void on_clear() override { owner.requested_keys_source_cleared = true; }
+
+                MeshNodeStorage &owner;
+            };
+
+            MeshNodeStorage() : requested_keys_observer(*this) {}
             MeshNodeStorage(const MeshNodeStorage &)            = delete;
             MeshNodeStorage &operator=(const MeshNodeStorage &) = delete;
             MeshNodeStorage(MeshNodeStorage &&)                 = delete;
             MeshNodeStorage &operator=(MeshNodeStorage &&)      = delete;
 
-            ~MeshNodeStorage() { stop_all_noexcept(); }
+            ~MeshNodeStorage() override
+            {
+                unsubscribe_requested_keys_noexcept();
+                if (instance_keys.has_value()) { instance_keys->remove_slot_observer(this); }
+                stop_all_noexcept();
+            }
 
-            // Value-keyed, pointer-stable instances (a superset of __keys__: it
-            // also holds on-demand instances created from inside other instances).
-            ankerl::unordered_dense::map<Value, std::unique_ptr<MeshEntry>, ValueKeyHash, ValueKeyEqual> instances{};
+            // Authoritative instance keys are a superset of __keys__: on-demand
+            // dependency keys use the same delayed-remove slot protocol.
+            std::optional<KeySlotStore> instance_keys{};
+            InPlaceGraphSlotStore<MeshEntry> entries{};
+            RequestedKeysObserver             requested_keys_observer;
+            TSOutputHandle                    observed_requested_keys_source{};
+            bool                              observing_requested_keys{false};
+            bool                              requested_keys_source_cleared{false};
             // depends_on -> set of keys that depend on it (reverse edges).
             ankerl::unordered_dense::map<Value, ValueSet, ValueKeyHash, ValueKeyEqual> dependents{};
 
@@ -84,41 +137,143 @@ namespace hgraph
             // The instance whose child graph is currently being evaluated; a
             // mesh_subscribe inside it reads this as its "my_key" (the requester).
             Value                       current_eval_key{};
+            DateTime                    retirement_time{MIN_DT};
+
+            void initialise(const ValueTypeBinding &key_binding, MemoryUtils::StorageLayout graph_layout)
+            {
+                entries.bind_graph_layout(graph_layout);
+                if (instance_keys.has_value()) { return; }
+                instance_keys.emplace(key_binding.checked_plan(), mesh_key_store_ops(key_binding));
+                instance_keys->add_slot_observer(this);
+            }
+
+            [[nodiscard]] bool observe_requested_keys_source(TSOutputHandle source)
+            {
+                if (source.same_as(observed_requested_keys_source) && !requested_keys_source_cleared) {
+                    return false;
+                }
+
+                unsubscribe_requested_keys_noexcept();
+                observed_requested_keys_source = source;
+                requested_keys_source_cleared = false;
+                if (source.bound())
+                {
+                    auto data = source.data_view();
+                    auto set  = data.as_set();
+                    instance_keys->reserve_to(set.slot_capacity());
+                    set.subscribe_slot_observer(&requested_keys_observer);
+                    observing_requested_keys = true;
+                }
+                return true;
+            }
+
+            void unsubscribe_requested_keys_noexcept() noexcept
+            {
+                if (observing_requested_keys)
+                {
+                    static_cast<void>(fallback_on_exception(false, [&] {
+                        auto data = observed_requested_keys_source.data_view();
+                        if (data.valid()) { data.as_set().unsubscribe_slot_observer(&requested_keys_observer); }
+                        return true;
+                    }));
+                }
+                observed_requested_keys_source.reset();
+                observing_requested_keys = false;
+            }
 
             void stop_all_noexcept() noexcept
             {
-                for (auto &[key, entry] : instances)
+                for (std::size_t slot = 0; slot < entries.slot_capacity(); ++slot)
                 {
-                    if (entry && entry->graph.has_value())
+                    MeshEntry *entry = entries.entry_at(slot);
+                    if (entry != nullptr && entry->graph.has_value())
                     {
                         static_cast<void>(fallback_on_exception(false, [&] {
-                            entry->graph.view().stop();
+                            if (entry->graph.view().started()) { entry->graph.view().stop(); }
                             return true;
                         }));
                     }
                 }
-                instances.clear();
+                entries.destroy_all();
                 dependents.clear();
                 graphs_to_remove.clear();
                 max_rank = 0;
                 primed = false;
                 current_eval_key = Value{};
+                retirement_time = MIN_DT;
+                requested_keys_source_cleared = false;
             }
 
-            [[nodiscard]] std::size_t active_count() const noexcept { return instances.size(); }
+            [[nodiscard]] std::size_t active_count() const noexcept
+            {
+                return instance_keys.has_value() ? instance_keys->size() : 0;
+            }
+
+            [[nodiscard]] std::size_t find_slot(const ValueView &key) const
+            {
+                if (!instance_keys.has_value() || !key.has_value()) { return KeySlotStore::npos; }
+                return instance_keys->find_slot(key.data());
+            }
 
             [[nodiscard]] MeshEntry *find(const ValueView &key) noexcept
             {
-                auto it = instances.find(key);
-                return it == instances.end() ? nullptr : it->second.get();
+                const std::size_t slot = find_slot(key);
+                return slot == KeySlotStore::npos ? nullptr : entries.entry_at(slot);
             }
+
+            void retire_slot(std::size_t slot, DateTime evaluation_time)
+            {
+                if (!instance_keys.has_value() || !instance_keys->slot_live(slot)) { return; }
+                retirement_time = evaluation_time;
+                static_cast<void>(instance_keys->remove_slot(slot));
+            }
+
+            void erase_retired_before(DateTime evaluation_time) noexcept
+            {
+                if (!instance_keys.has_value() || !instance_keys->has_pending_erase() ||
+                    retirement_time == MIN_DT || retirement_time >= evaluation_time) {
+                    return;
+                }
+                instance_keys->erase_pending();
+                retirement_time = MIN_DT;
+            }
+
+            void on_capacity(std::size_t, std::size_t new_capacity) override
+            {
+                entries.reserve_to(new_capacity);
+            }
+
+            void on_insert(std::size_t) override {}
+
+            void on_remove(std::size_t slot) override
+            {
+                MeshEntry *entry = entries.entry_at(slot);
+                if (entry != nullptr && entry->graph.has_value() && entry->graph.view().started())
+                {
+                    static_cast<void>(fallback_on_exception(false, [&] {
+                        entry->graph.view().stop();
+                        return true;
+                    }));
+                }
+            }
+
+            void on_erase(std::size_t slot) override { entries.destroy_at(slot); }
+            void on_clear() override { entries.destroy_all(); }
         };
 
         struct MeshNodeContext
         {
             MeshNodeSpec spec{};
             std::size_t  storage_offset{0};
+            const ValueTypeBinding *key_binding{nullptr};
+            MemoryUtils::StorageLayout graph_layout{};
         };
+
+        void initialise_mesh_storage(MeshNodeStorage &storage, const MeshNodeContext &context)
+        {
+            if (context.key_binding == nullptr) { throw std::logic_error("mesh_ has no resolved key binding"); }
+            storage.initialise(*context.key_binding, context.graph_layout);
+        }
 
         struct MeshSubscribeStorage
         {
@@ -150,11 +305,16 @@ namespace hgraph
             return *contexts;
         }
 
-        [[nodiscard]] const MeshNodeContext &register_mesh_node_context(MeshNodeSpec spec, std::size_t storage_offset)
+        [[nodiscard]] const MeshNodeContext &register_mesh_node_context(MeshNodeSpec spec,
+                                                                        std::size_t storage_offset,
+                                                                        const ValueTypeBinding &key_binding,
+                                                                        MemoryUtils::StorageLayout graph_layout)
         {
             auto context = std::make_unique<MeshNodeContext>(MeshNodeContext{
                 .spec           = std::move(spec),
                 .storage_offset = storage_offset,
+                .key_binding    = &key_binding,
+                .graph_layout   = graph_layout,
             });
             const auto *result = context.get();
             mesh_node_contexts().push_back(std::move(context));
@@ -196,6 +356,21 @@ namespace hgraph
         MeshNodeStorage &storage_of(const NodeView &view, const MeshNodeContext &context)
         {
             return *MemoryUtils::cast<MeshNodeStorage>(MemoryUtils::advance(view.data(), context.storage_offset));
+        }
+
+        [[nodiscard]] TSOutputHandle effective_output_handle(TSOutputView source)
+        {
+            if (!source.bound()) { return {}; }
+
+            TSOutputHandle current = source.handle();
+            while (source.forwarding())
+            {
+                TSOutputHandle target = source.forwarding_target();
+                if (!target.bound() || target.same_as(current)) { break; }
+                current = target;
+                source = target.view(source.evaluation_time());
+            }
+            return current;
         }
 
         const MeshSubscribeContext &mesh_subscribe_context_of(const NodeView &view)
@@ -298,22 +473,25 @@ namespace hgraph
         void stop_and_clear_all_instances(const NodeView &view, const MeshNodeContext &context,
                                           MeshNodeStorage &storage, DateTime evaluation_time) noexcept
         {
-            for (auto &[key, entry] : storage.instances)
+            if (storage.instance_keys.has_value())
             {
-                if (!entry) { continue; }
-                static_cast<void>(fallback_on_exception(false, [&] {
-                    clear_instance_output_binding(view, context, *entry, evaluation_time);
-                    return true;
-                }));
-                if (entry->graph.has_value())
+                for (std::size_t slot = 0; slot < storage.instance_keys->slot_capacity(); ++slot)
                 {
+                    if (!storage.instance_keys->slot_live(slot)) { continue; }
+                    MeshEntry *entry = storage.entries.entry_at(slot);
+                    if (entry != nullptr)
+                    {
+                        static_cast<void>(fallback_on_exception(false, [&] {
+                            clear_instance_output_binding(view, context, *entry, evaluation_time);
+                            return true;
+                        }));
+                    }
                     static_cast<void>(fallback_on_exception(false, [&] {
-                        entry->graph.view().stop();
+                        storage.retire_slot(slot, evaluation_time);
                         return true;
                     }));
                 }
             }
-            storage.instances.clear();
             storage.dependents.clear();
             storage.graphs_to_remove.clear();
             storage.max_rank = 0;
@@ -325,11 +503,24 @@ namespace hgraph
                                    const ValueView &key_view, int rank, DateTime evaluation_time)
         {
             const MeshNodeSpec &spec = context.spec;
+            initialise_mesh_storage(storage, context);
 
-            auto  owned  = std::make_unique<MeshEntry>(Value{key_view});
-            auto &entry  = *owned;
-            entry.rank   = rank;
-            entry.paused = true;  // force a first evaluation this cycle (settle loop)
+            const auto inserted = storage.instance_keys->insert(key_view.data());
+            const std::size_t slot = inserted.slot;
+            MeshEntry *existing = storage.entries.entry_at(slot);
+            if (!inserted.inserted)
+            {
+                if (existing == nullptr) { throw std::logic_error("mesh_ live key has no instance entry"); }
+                return *existing;
+            }
+
+            auto key_rollback = UnwindCleanupGuard([&] { storage.retire_slot(slot, evaluation_time); });
+            auto &entry = existing != nullptr
+                              ? *existing
+                              : storage.entries.construct_at(slot, Value{key_view});
+            entry.rank = rank;
+            entry.paused = true;
+            entry.settled_time = MIN_DT;
 
             auto output          = view.output(evaluation_time);
             auto output_dict     = output.as_dict();
@@ -339,9 +530,17 @@ namespace hgraph
                 clear_instance_output_binding(view, context, entry, evaluation_time);
                 if (entry.graph.has_value() && entry.graph.view().started()) { entry.graph.view().stop(); }
                 (void)output_mutation.erase(entry.key.view());
+                storage.retire_slot(slot, evaluation_time);
             });
+            key_rollback.release();
 
-            entry.graph = spec.child.graph_builder.make_nested_graph(NodeStorageRef{view.binding(), view.data()});
+            if (!entry.graph.has_value())
+            {
+                entry.graph = spec.child.graph_builder.make_nested_graph(
+                    NodeStorageRef{view.binding(), view.data()},
+                    storage.entries.graph_memory(slot),
+                    context.graph_layout);
+            }
             if (spec.key_output_schema != nullptr)
             {
                 entry.key_source.bind(*spec.key_output_schema, entry.key, evaluation_time);
@@ -355,19 +554,18 @@ namespace hgraph
             rollback.release();
 
             storage.max_rank = std::max(storage.max_rank, rank);
-            auto [it, inserted] = storage.instances.emplace(Value{key_view}, std::move(owned));
-            (void)inserted;
-            return *it->second;
+            return entry;
         }
 
         void remove_instance(const NodeView &view, const MeshNodeContext &context, MeshNodeStorage &storage,
                              const ValueView &key_view, DateTime evaluation_time)
         {
-            auto it = storage.instances.find(key_view);
-            if (it == storage.instances.end()) { return; }
+            const std::size_t slot = storage.find_slot(key_view);
+            if (slot == KeySlotStore::npos) { return; }
+            MeshEntry *entry = storage.entries.entry_at(slot);
+            if (entry == nullptr) { throw std::logic_error("mesh_ live key has no instance entry"); }
 
-            clear_instance_output_binding(view, context, *it->second, evaluation_time);
-            if (it->second->graph.has_value()) { it->second->graph.view().stop(); }
+            clear_instance_output_binding(view, context, *entry, evaluation_time);
 
             auto output          = view.output(evaluation_time);
             auto output_dict     = output.as_dict();
@@ -380,7 +578,7 @@ namespace hgraph
             {
                 storage.dependents.erase(dep_it);
             }
-            storage.instances.erase(it);
+            storage.retire_slot(slot, evaluation_time);
         }
 
         // ---- ranking ----
@@ -410,6 +608,38 @@ namespace hgraph
                     remove_instance(view, context, storage, k.view(), evaluation_time);
                 }
             }
+        }
+
+        void reconcile_requested_keys(const NodeView &view, const MeshNodeContext &context,
+                                      MeshNodeStorage &storage, const TSSInputView &key_set,
+                                      DateTime evaluation_time)
+        {
+            std::vector<Value> removed;
+            removed.reserve(storage.active_count());
+            for (std::size_t slot = 0; slot < storage.instance_keys->slot_capacity(); ++slot)
+            {
+                if (!storage.instance_keys->slot_live(slot)) { continue; }
+                MeshEntry *entry = storage.entries.entry_at(slot);
+                if (entry == nullptr) { throw std::logic_error("mesh_ live key has no instance entry"); }
+                if (key_set.contains(entry->key.view())) { continue; }
+
+                auto it = storage.dependents.find(entry->key);
+                const bool has_dependents = it != storage.dependents.end() && !it->second.empty();
+                if (!has_dependents) { removed.push_back(entry->key); }
+            }
+            for (const Value &key : removed)
+            {
+                remove_instance(view, context, storage, key.view(), evaluation_time);
+            }
+
+            for (const ValueView &key : key_set.values())
+            {
+                if (storage.find(key) == nullptr)
+                {
+                    create_instance(view, context, storage, key, storage.max_rank, evaluation_time);
+                }
+            }
+            storage.primed = true;
         }
 
         void re_rank(MeshNodeStorage &storage, const ValueView &key, const ValueView &depends_on,
@@ -453,6 +683,8 @@ namespace hgraph
             const auto &context   = *static_cast<const MeshNodeContext *>(mesh_view.internal_context());
             auto       &storage   = storage_of(view, context);
             const auto &spec      = context.spec;
+            initialise_mesh_storage(storage, context);
+            storage.erase_retired_before(evaluation_time);
 
             auto root_input  = view.input(evaluation_time);
             auto keys_input  = walk_ts_path(root_input.borrowed_ref(),
@@ -461,6 +693,7 @@ namespace hgraph
             // 1. __keys__ key-set membership drives instance create/remove.
             if (!keys_input.valid())
             {
+                storage.unsubscribe_requested_keys_noexcept();
                 auto output          = view.output(evaluation_time);
                 auto output_dict     = output.as_dict();
                 auto output_mutation = output_dict.begin_mutation(evaluation_time);
@@ -471,16 +704,12 @@ namespace hgraph
 
             {
                 auto key_set = keys_input.as_set();
-                if (!storage.primed)
+                const TSOutputHandle requested_keys_source = effective_output_handle(keys_input.bound_output());
+                const bool source_changed =
+                    storage.observe_requested_keys_source(requested_keys_source);
+                if (!storage.primed || source_changed)
                 {
-                    for (const ValueView &k : key_set.values())
-                    {
-                        if (storage.find(k) == nullptr)
-                        {
-                            create_instance(view, context, storage, k, storage.max_rank, evaluation_time);
-                        }
-                    }
-                    storage.primed = true;
+                    reconcile_requested_keys(view, context, storage, key_set, evaluation_time);
                 }
                 else if (keys_input.modified())
                 {
@@ -515,20 +744,23 @@ namespace hgraph
             {
                 progress = false;
 
-                // Snapshot keys by rank: add_dependency can create instances mid-pass,
-                // so we must not hold an iterator into instances across an evaluate().
-                std::vector<std::pair<int, Value>> order;
-                order.reserve(storage.instances.size());
-                for (auto &[k, entry] : storage.instances)
+                // Snapshot stable slots by rank: add_dependency can create
+                // instances mid-pass, but existing slot addresses never move.
+                std::vector<std::pair<int, std::size_t>> order;
+                order.reserve(storage.active_count());
+                for (std::size_t slot = 0; slot < storage.instance_keys->slot_capacity(); ++slot)
                 {
-                    if (entry) { order.emplace_back(entry->rank, k); }
+                    if (!storage.instance_keys->slot_live(slot)) { continue; }
+                    MeshEntry *entry = storage.entries.entry_at(slot);
+                    if (entry != nullptr) { order.emplace_back(entry->rank, slot); }
                 }
                 std::sort(order.begin(), order.end(),
                           [](const auto &a, const auto &b) { return a.first < b.first; });
 
                 for (const auto &ranked : order)
                 {
-                    MeshEntry *entry = storage.find(ranked.second.view());
+                    MeshEntry *entry = storage.entries.entry_at(ranked.second);
+                    if (!storage.instance_keys->slot_live(ranked.second)) { continue; }
                     if (entry == nullptr || !entry->graph.has_value()) { continue; }
                     if (entry->settled_time == evaluation_time) { continue; }  // already done this cycle
 
@@ -557,7 +789,7 @@ namespace hgraph
                     }
                 }
 
-                if (++guard > storage.instances.size() + 64)
+                if (++guard > storage.active_count() + 64)
                 {
                     throw std::runtime_error("mesh_ failed to settle within the cycle");
                 }
@@ -860,6 +1092,29 @@ namespace hgraph
         return MemoryUtils::cast<MeshNodeStorage>(storage_)->active_count();
     }
 
+    std::size_t MeshNodeView::child_graph_count() const noexcept
+    {
+        const auto &storage = *MemoryUtils::cast<MeshNodeStorage>(storage_);
+        std::size_t count = 0;
+        for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
+        {
+            const auto *entry = storage.entries.entry_at(slot);
+            if (entry != nullptr && entry->graph.has_value()) { ++count; }
+        }
+        return count;
+    }
+
+    bool MeshNodeView::child_graphs_use_in_place_storage() const noexcept
+    {
+        const auto &storage = *MemoryUtils::cast<MeshNodeStorage>(storage_);
+        for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
+        {
+            const auto *entry = storage.entries.entry_at(slot);
+            if (entry != nullptr && entry->graph.has_value() && !entry->graph.uses_external_storage()) { return false; }
+        }
+        return true;
+    }
+
     Value MeshNodeView::current_key() const
     {
         return MemoryUtils::cast<MeshNodeStorage>(storage_)->current_eval_key;
@@ -926,6 +1181,10 @@ namespace hgraph
     {
         meta.node_kind    = NodeKind::Nested;
         meta.valid_inputs = std::vector<std::size_t>{};
+        if (meta.output_schema == nullptr || meta.output_schema->kind != TSTypeKind::TSD)
+        {
+            throw std::invalid_argument("mesh_node requires a TSD output schema");
+        }
         if (spec.output_binding_mode != MapOutputBindingMode::ChildTerminalWritesElement)
         {
             if (meta.output_schema == nullptr || meta.output_schema->kind != TSTypeKind::TSD ||
@@ -937,6 +1196,10 @@ namespace hgraph
                 meta.output_schema,
                 TSEndpointSchema::peered(meta.output_schema->element_ts()));
         }
+
+        const auto *key_binding = ValuePlanFactory::instance().binding_for(meta.output_schema->key_type());
+        if (key_binding == nullptr) { throw std::logic_error("mesh_node could not resolve its key binding"); }
+        const MemoryUtils::StorageLayout graph_layout = spec.child.graph_builder.nested_storage_layout();
 
         NodeTypeDescriptor descriptor;
         descriptor.schema = std::move(meta);
@@ -953,7 +1216,10 @@ namespace hgraph
         descriptor.ops.evaluate_impl         = &mesh_evaluate_impl;
         descriptor.ops.extended_view_type_id = MeshNodeView::node_view_type_id();
         descriptor.ops.extended_view_context = &register_mesh_node_context(
-            std::move(spec), descriptor.storage_plan->component(mesh_storage_field_name).offset);
+            std::move(spec),
+            descriptor.storage_plan->component(mesh_storage_field_name).offset,
+            *key_binding,
+            graph_layout);
 
         return NodeBuilder::from_descriptor(std::move(descriptor));
     }

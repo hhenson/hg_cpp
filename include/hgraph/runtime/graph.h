@@ -303,6 +303,8 @@ struct HGRAPH_EXPORT GraphEdge
         GraphValue &operator=(GraphValue &&other) noexcept;
 
         [[nodiscard]] bool has_value() const noexcept;
+        /** True when the graph payload is constructed in caller-owned storage. */
+        [[nodiscard]] bool uses_external_storage() const noexcept;
         [[nodiscard]] const GraphTypeBinding *binding() const noexcept;
         [[nodiscard]] const GraphTypeMetaData *schema() const noexcept;
 

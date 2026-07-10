@@ -13,6 +13,7 @@ namespace hgraph
     namespace
     {
         constexpr std::string_view child_graph_field_name{"single_nested_graph"};
+        constexpr std::string_view child_graph_memory_field_name{"single_nested_graph_memory"};
 
         struct SingleNestedGraphNodeStorage
         {
@@ -35,11 +36,15 @@ namespace hgraph
         [[nodiscard]] const SingleNestedGraphNodeContext &register_single_nested_graph_context(
             SingleNestedGraphNodeSpec spec,
             SingleNestedGraphNodeOptions options,
-            std::size_t graph_storage_offset)
+            std::size_t graph_storage_offset,
+            std::size_t graph_memory_offset,
+            MemoryUtils::StorageLayout graph_memory_layout)
         {
             auto context = std::make_unique<SingleNestedGraphNodeContext>(SingleNestedGraphNodeContext{
                 .spec = std::move(spec),
                 .graph_storage_offset = graph_storage_offset,
+                .graph_memory_offset = graph_memory_offset,
+                .graph_memory_layout = graph_memory_layout,
                 .options = options,
             });
             const auto *result = context.get();
@@ -180,7 +185,9 @@ namespace hgraph
         if (!child_graph_->has_value())
         {
             *child_graph_ = context_->spec.graph_builder.make_nested_graph(
-                NodeStorageRef{view_.binding(), view_.data()});
+                NodeStorageRef{view_.binding(), view_.data()},
+                MemoryUtils::advance(view_.data(), context_->graph_memory_offset),
+                context_->graph_memory_layout);
         }
     }
 
@@ -212,10 +219,18 @@ namespace hgraph
         NodeTypeDescriptor descriptor;
         descriptor.schema = std::move(meta);
 
-        const std::array fields{NodeStorageField{
-            .name = child_graph_field_name,
-            .plan = &MemoryUtils::plan_for<SingleNestedGraphNodeStorage>(),
-        }};
+        const MemoryUtils::StorageLayout child_graph_layout = spec.graph_builder.nested_storage_layout();
+        const auto &child_graph_memory_plan = MemoryUtils::raw_storage_plan(child_graph_layout);
+        const std::array fields{
+            NodeStorageField{
+                .name = child_graph_memory_field_name,
+                .plan = &child_graph_memory_plan,
+            },
+            NodeStorageField{
+                .name = child_graph_field_name,
+                .plan = &MemoryUtils::plan_for<SingleNestedGraphNodeStorage>(),
+            },
+        };
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
         descriptor.callbacks.start = &single_nested_graph_start;
@@ -225,7 +240,9 @@ namespace hgraph
         descriptor.ops.extended_view_context = &register_single_nested_graph_context(
             std::move(spec),
             options,
-            descriptor.storage_plan->component(child_graph_field_name).offset);
+            descriptor.storage_plan->component(child_graph_field_name).offset,
+            descriptor.storage_plan->component(child_graph_memory_field_name).offset,
+            child_graph_layout);
 
         return descriptor;
     }

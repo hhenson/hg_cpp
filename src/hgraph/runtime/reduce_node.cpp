@@ -1,4 +1,5 @@
 #include <hgraph/runtime/nested_bindings.h>
+#include <hgraph/runtime/nested_graph_storage.h>
 #include <hgraph/runtime/reduce_node.h>
 #include <hgraph/util/scope.h>
 
@@ -48,13 +49,22 @@ namespace hgraph
             ReduceNodeStorage()                                     = default;
             ReduceNodeStorage(const ReduceNodeStorage &)            = delete;
             ReduceNodeStorage &operator=(const ReduceNodeStorage &) = delete;
-            ReduceNodeStorage(ReduceNodeStorage &&) noexcept        = default;
-            ReduceNodeStorage &operator=(ReduceNodeStorage &&)      = default;
+            ReduceNodeStorage(ReduceNodeStorage &&)                 = delete;
+            ReduceNodeStorage &operator=(ReduceNodeStorage &&)      = delete;
 
             ~ReduceNodeStorage()
             {
-                destroy_combiners();
+                // A stopped retired parent may still retain a target handle to
+                // a surviving current combiner output. Destroy retired
+                // subscribers before current producers; each generation is
+                // still destroyed root-first internally.
                 destroy_previous_generation();
+                destroy_combiners();
+            }
+
+            void initialise(MemoryUtils::StorageLayout graph_layout)
+            {
+                for (auto &bank : combiner_banks) { bank.bind_graph_layout(graph_layout); }
             }
 
             // Root-first (ascending heap index) teardown: a parent combiner's
@@ -63,12 +73,21 @@ namespace hgraph
             // destroy back-to-front: children first. See *Nested Graphs*.)
             void destroy_combiners() noexcept
             {
-                for (auto &combiner : combiners) { combiner.reset(); }
+                auto &bank = combiner_banks[current_bank];
+                for (std::size_t position = 0; position < combiners.size(); ++position)
+                {
+                    if (combiners[position] == nullptr) { continue; }
+                    bank.destroy_at(position);
+                    combiners[position] = nullptr;
+                }
             }
 
             void destroy_previous_generation() noexcept
             {
-                for (auto &combiner : previous_generation) { combiner.reset(); }
+                for (const auto &combiner : previous_generation)
+                {
+                    combiner_banks[combiner.bank].destroy_at(combiner.position);
+                }
                 previous_generation.clear();
                 previous_generation_time = MIN_DT;
             }
@@ -88,10 +107,20 @@ namespace hgraph
             /** Power-of-two tree width (monotonic; 0 until the first key). */
             std::size_t leaf_capacity{0};
             /** Heap-indexed internal combine points (size ``leaf_capacity - 1``); null = no live combiner. */
-            std::vector<std::unique_ptr<CombinerEntry>> combiners{};
-            /** Stopped root-first combiner generation retained through its retirement engine cycle. */
-            std::vector<std::unique_ptr<CombinerEntry>> previous_generation{};
-            DateTime                                   previous_generation_time{MIN_DT};
+            std::vector<CombinerEntry *> combiners{};
+
+            struct RetiredCombiner
+            {
+                std::size_t bank{0};
+                std::size_t position{0};
+            };
+
+            // Capacity growth reshapes the entire tree. Build into the other
+            // bank while retaining the stopped old bank through this cycle.
+            std::array<InPlaceGraphSlotStore<CombinerEntry>, 2> combiner_banks{};
+            std::size_t                                         current_bank{0};
+            std::vector<RetiredCombiner>                        previous_generation{};
+            DateTime                                            previous_generation_time{MIN_DT};
 
             bool primed{false};
             bool published{false};
@@ -107,6 +136,7 @@ namespace hgraph
         {
             ReduceNodeSpec spec{};
             std::size_t    storage_offset{0};
+            MemoryUtils::StorageLayout graph_layout{};
         };
 
         // Program-lifetime, intentionally-leaked context storage — same rationale
@@ -117,12 +147,13 @@ namespace hgraph
             return *contexts;
         }
 
-        [[nodiscard]] const ReduceNodeContext &register_reduce_node_context(ReduceNodeSpec spec,
-                                                                            std::size_t storage_offset)
+        [[nodiscard]] const ReduceNodeContext &register_reduce_node_context(
+            ReduceNodeSpec spec, std::size_t storage_offset, MemoryUtils::StorageLayout graph_layout)
         {
             auto context = std::make_unique<ReduceNodeContext>(ReduceNodeContext{
                 .spec           = std::move(spec),
                 .storage_offset = storage_offset,
+                .graph_layout   = graph_layout,
             });
             const auto *result = context.get();
             reduce_node_contexts().push_back(std::move(context));
@@ -167,7 +198,7 @@ namespace hgraph
             return resolve_aggregate(storage, 0);
         }
 
-        void stop_combiner_noexcept(std::unique_ptr<CombinerEntry> &entry) noexcept
+        void stop_combiner_noexcept(CombinerEntry *entry) noexcept
         {
             if (entry == nullptr || !entry->graph.has_value()) { return; }
             static_cast<void>(fallback_on_exception(false, [&] {
@@ -176,10 +207,12 @@ namespace hgraph
             }));
         }
 
-        void reset_combiner_noexcept(std::unique_ptr<CombinerEntry> &entry) noexcept
+        void reset_combiner_noexcept(InPlaceGraphSlotStore<CombinerEntry> &bank,
+                                     std::size_t position) noexcept
         {
+            CombinerEntry *entry = bank.entry_at(position);
             stop_combiner_noexcept(entry);
-            entry.reset();
+            bank.destroy_at(position);
         }
 
         /** Resolve an aggregate to the output it aliases. */
@@ -202,7 +235,7 @@ namespace hgraph
                 }
                 case Aggregate::Kind::Node:
                 {
-                    const auto &entry = storage.combiners[aggregate.index];
+                    const auto *entry = storage.combiners[aggregate.index];
                     if (entry == nullptr || !entry->graph.has_value()) { return TSOutputView{}; }
                     const auto &output_binding = context.spec.child.output_binding;
                     return walk_ts_path(
@@ -305,8 +338,9 @@ namespace hgraph
             std::size_t       capacity = storage.leaf_capacity;
             if (live > 0) { capacity = std::max({capacity, std::size_t{1}, std::bit_ceil(live)}); }
 
-            std::vector<std::unique_ptr<CombinerEntry>>                 retired_shape{};
-            std::vector<std::pair<std::size_t, std::unique_ptr<CombinerEntry>>> retired{};
+            const std::size_t old_bank = storage.current_bank;
+            std::vector<CombinerEntry *> retired_shape{};
+            std::vector<std::pair<std::size_t, CombinerEntry *>> retired{};
             std::vector<std::size_t> created{};
             if (capacity != storage.leaf_capacity)
             {
@@ -314,23 +348,46 @@ namespace hgraph
                 // combiner retires and the needed set is rebuilt (the recorded
                 // v1 simplification; capacity is monotonic, shrink is a
                 // refinement).
+                const std::size_t next_bank = 1U - storage.current_bank;
+                auto &new_bank = storage.combiner_banks[next_bank];
+                if (new_bank.has_entries())
+                {
+                    throw std::logic_error("reduce_ inactive combiner bank is still occupied");
+                }
+                const std::size_t next_combiner_count = capacity > 1 ? capacity - 1 : 0;
+                new_bank.reserve_to(next_combiner_count);
+                std::vector<CombinerEntry *> next_combiners(next_combiner_count, nullptr);
+
                 retired_shape = std::move(storage.combiners);
-                storage.combiners.clear();
-                storage.combiners.resize(capacity > 1 ? capacity - 1 : 0);
+                storage.combiners = std::move(next_combiners);
+                storage.current_bank = next_bank;
                 storage.leaf_capacity = capacity;
             }
+            else
+            {
+                storage.combiner_banks[storage.current_bank].reserve_to(storage.combiners.size());
+            }
             auto rollback = UnwindCleanupGuard([&] {
+                auto &current_bank = storage.combiner_banks[storage.current_bank];
                 if (storage.leaf_capacity != old_capacity)
                 {
-                    for (auto &entry : storage.combiners) { reset_combiner_noexcept(entry); }
+                    for (const std::size_t position : created)
+                    {
+                        reset_combiner_noexcept(current_bank, position);
+                    }
                     storage.combiners    = std::move(retired_shape);
                     storage.leaf_capacity = old_capacity;
+                    storage.current_bank = old_bank;
                     return;
                 }
 
                 for (const std::size_t position : created)
                 {
-                    if (position < storage.combiners.size()) { reset_combiner_noexcept(storage.combiners[position]); }
+                    if (position < storage.combiners.size())
+                    {
+                        reset_combiner_noexcept(current_bank, position);
+                        storage.combiners[position] = nullptr;
+                    }
                 }
                 for (auto &entry : retired)
                 {
@@ -352,14 +409,16 @@ namespace hgraph
 
                 if (needed && entry == nullptr)
                 {
-                    entry        = std::make_unique<CombinerEntry>();
-                    entry->graph = context.spec.child.graph_builder.make_nested_graph(
-                        NodeStorageRef{view.binding(), view.data()});
+                    auto &bank = storage.combiner_banks[storage.current_bank];
+                    entry = &bank.construct_at(position);
                     created.push_back(position);
+                    entry->graph = context.spec.child.graph_builder.make_nested_graph(
+                        NodeStorageRef{view.binding(), view.data()},
+                        bank.graph_memory(position), context.graph_layout);
                 }
                 else if (!needed && entry != nullptr)
                 {
-                    retired.emplace_back(position, std::move(entry));
+                    retired.emplace_back(position, std::exchange(entry, nullptr));
                 }
             }
 
@@ -403,17 +462,21 @@ namespace hgraph
             // Phase 3 — stop root-first, but keep the retired graph storage
             // through this engine cycle. Dynamic target links may still read
             // the old aggregate later in the same cycle.
+            const std::size_t retired_shape_count = static_cast<std::size_t>(
+                std::count_if(retired_shape.begin(), retired_shape.end(),
+                              [](const CombinerEntry *entry) { return entry != nullptr; }));
             storage.previous_generation.reserve(storage.previous_generation.size() + retired.size() +
-                                                retired_shape.size());
+                                                retired_shape_count);
             for (auto it = retired.rbegin(); it != retired.rend(); ++it)
             {
                 stop_combiner_noexcept(it->second);
-                storage.previous_generation.push_back(std::move(it->second));
+                storage.previous_generation.push_back({storage.current_bank, it->first});
             }
-            for (auto &entry : retired_shape)
+            for (std::size_t position = 0; position < retired_shape.size(); ++position)
             {
+                CombinerEntry *entry = retired_shape[position];
                 stop_combiner_noexcept(entry);
-                if (entry != nullptr) { storage.previous_generation.push_back(std::move(entry)); }
+                if (entry != nullptr) { storage.previous_generation.push_back({old_bank, position}); }
             }
             if (!storage.previous_generation.empty()) { storage.previous_generation_time = evaluation_time; }
             rollback.release();
@@ -466,6 +529,7 @@ namespace hgraph
             auto        reduce_view = view.as<ReduceNodeView>();
             const auto &context     = *static_cast<const ReduceNodeContext *>(reduce_view.internal_context());
             auto       &storage     = *MemoryUtils::cast<ReduceNodeStorage>(reduce_view.internal_storage());
+            storage.initialise(context.graph_layout);
 
             const bool resuming = storage.resume_position_plus_one != 0;
             if (!resuming)
@@ -503,7 +567,7 @@ namespace hgraph
         {
             auto  reduce_view = view.as<ReduceNodeView>();
             auto &storage     = *MemoryUtils::cast<ReduceNodeStorage>(reduce_view.internal_storage());
-            for (const auto &entry : storage.combiners)
+            for (const auto *entry : storage.combiners)
             {
                 if (entry != nullptr && entry->graph.has_value()) { entry->graph.view().stop(); }
             }
@@ -585,11 +649,21 @@ namespace hgraph
     {
         const auto &combiners = MemoryUtils::cast<ReduceNodeStorage>(storage_)->combiners;
         std::size_t count     = 0;
-        for (const auto &entry : combiners)
+        for (const auto *entry : combiners)
         {
             if (entry != nullptr) { ++count; }
         }
         return count;
+    }
+
+    bool ReduceNodeView::child_graphs_use_in_place_storage() const noexcept
+    {
+        const auto &combiners = MemoryUtils::cast<ReduceNodeStorage>(storage_)->combiners;
+        for (const auto *entry : combiners)
+        {
+            if (entry != nullptr && entry->graph.has_value() && !entry->graph.uses_external_storage()) { return false; }
+        }
+        return true;
     }
 
     ReduceNodeView::ReduceNodeView(NodeView view, const void *context, void *storage) noexcept
@@ -619,11 +693,14 @@ namespace hgraph
         // destroy before the field (the nested_/switch_ direction).
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
+        const MemoryUtils::StorageLayout graph_layout = spec.child.graph_builder.nested_storage_layout();
+
         descriptor.callbacks.stop            = &reduce_node_stop;
         descriptor.ops.evaluate_impl         = &reduce_evaluate_impl;
         descriptor.ops.extended_view_type_id = ReduceNodeView::node_view_type_id();
         descriptor.ops.extended_view_context = &register_reduce_node_context(
-            std::move(spec), descriptor.storage_plan->component(reduce_storage_field_name).offset);
+            std::move(spec), descriptor.storage_plan->component(reduce_storage_field_name).offset,
+            graph_layout);
 
         return NodeBuilder::from_descriptor(std::move(descriptor));
     }

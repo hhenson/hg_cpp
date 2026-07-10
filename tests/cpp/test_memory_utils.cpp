@@ -177,6 +177,32 @@ TEST_CASE("memory utils caches typed plans for the process lifetime", "[memory u
     REQUIRE_FALSE(lhs.template requires_deallocate<>());
 }
 
+TEST_CASE("memory utils interns raw caller-owned storage plans", "[memory utils]") {
+    constexpr MemoryUtils::StorageLayout layout{.size = 257, .alignment = 64};
+
+    const auto &lhs = MemoryUtils::raw_storage_plan(layout);
+    const auto &rhs = MemoryUtils::raw_storage_plan(layout);
+
+    REQUIRE(&lhs == &rhs);
+    REQUIRE(lhs.valid());
+    CHECK(lhs.layout.size == layout.size);
+    CHECK(lhs.layout.alignment == layout.alignment);
+    CHECK(lhs.can_default_construct());
+    CHECK_FALSE(lhs.requires_destroy());
+    CHECK_FALSE(lhs.can_copy_construct());
+    CHECK_FALSE(lhs.can_move_construct());
+
+    void *memory = ::operator new(layout.size, std::align_val_t{layout.alignment});
+    lhs.default_construct(memory);
+    lhs.destroy(memory);
+    ::operator delete(memory, std::align_val_t{layout.alignment});
+}
+
+TEST_CASE("memory utils rejects empty or invalid raw storage layouts", "[memory utils]") {
+    REQUIRE_THROWS_AS(MemoryUtils::raw_storage_plan({.size = 0, .alignment = 1}), std::logic_error);
+    REQUIRE_THROWS_AS(MemoryUtils::raw_storage_plan({.size = 8, .alignment = 3}), std::logic_error);
+}
+
 TEST_CASE("memory utils packs storage handle state into pointer-sized storage", "[memory utils]") {
     REQUIRE(sizeof(MemoryUtils::StorageHandle<>) == sizeof(void *) * 3);
 }

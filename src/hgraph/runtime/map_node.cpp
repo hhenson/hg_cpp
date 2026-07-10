@@ -1,7 +1,7 @@
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/nested_bindings.h>
+#include <hgraph/runtime/nested_graph_storage.h>
 #include <hgraph/types/metadata/type_registry.h>
-#include <hgraph/types/utils/value_slot_store.h>
 #include <hgraph/util/scope.h>
 
 #include "mapped_child_bindings.h"
@@ -41,10 +41,7 @@ namespace hgraph
 
         struct MapNodeStorage final : SlotObserver
         {
-            MapNodeStorage()
-                : entries(MemoryUtils::plan_for<MapKeyEntry>())
-            {
-            }
+            MapNodeStorage() = default;
 
             MapNodeStorage(const MapNodeStorage &)            = delete;
             MapNodeStorage &operator=(const MapNodeStorage &) = delete;
@@ -60,7 +57,7 @@ namespace hgraph
             // Slot ids and payload lifetime mirror the current __keys__ source:
             // logical removal stops the graph, while the source's later erase
             // callback destroys the entry in its stable slot.
-            ValueSlotStore entries{};
+            InPlaceGraphSlotStore<MapKeyEntry> entries{};
             // Cached bound-output handles of the outer inputs (tsd + broadcast
             // sources). Entry input bindings are established at creation and
             // refreshed only when an upstream source re-points.
@@ -80,7 +77,7 @@ namespace hgraph
                 std::size_t count = 0;
                 for (std::size_t slot = 0; slot < entries.slot_capacity(); ++slot)
                 {
-                    const auto *entry = entries.try_value<MapKeyEntry>(slot);
+                    const auto *entry = entries.entry_at(slot);
                     if (entry != nullptr && entry->graph.has_value() && entry->graph.view().started()) { ++count; }
                 }
                 return count;
@@ -88,7 +85,7 @@ namespace hgraph
 
             [[nodiscard]] MapKeyEntry *entry_at(std::size_t slot)
             {
-                return entries.try_value<MapKeyEntry>(slot);
+                return entries.entry_at(slot);
             }
 
             [[nodiscard]] bool observe_keys_source(TSOutputHandle source)
@@ -143,6 +140,10 @@ namespace hgraph
             }
 
             void on_insert(std::size_t) override {}
+            // The scheduled reconciliation performs logical delete/stop while
+            // the current source identity and output binding are available.
+            // A forwarding source can repoint during its mutation, so acting on
+            // this slot callback alone could stop an unrelated replacement key.
             void on_remove(std::size_t) override {}
             void on_erase(std::size_t slot) override { entries.destroy_at(slot); }
             void on_clear() override
@@ -155,6 +156,7 @@ namespace hgraph
         {
             MapNodeSpec spec{};
             std::size_t storage_offset{0};
+            MemoryUtils::StorageLayout graph_layout{};
         };
 
         struct SourceRepointStatus
@@ -172,11 +174,14 @@ namespace hgraph
             return *contexts;
         }
 
-        [[nodiscard]] const MapNodeContext &register_map_node_context(MapNodeSpec spec, std::size_t storage_offset)
+        [[nodiscard]] const MapNodeContext &register_map_node_context(MapNodeSpec spec,
+                                                                      std::size_t storage_offset,
+                                                                      MemoryUtils::StorageLayout graph_layout)
         {
             auto context = std::make_unique<MapNodeContext>(MapNodeContext{
                 .spec           = std::move(spec),
                 .storage_offset = storage_offset,
+                .graph_layout   = graph_layout,
             });
             const auto *result = context.get();
             map_node_contexts().push_back(std::move(context));
@@ -241,7 +246,7 @@ namespace hgraph
                                   MapNodeStorage &storage, TSDDataMutationView &output_mutation,
                                   std::size_t slot, DateTime evaluation_time)
         {
-            auto *entry = storage.entries.try_value<MapKeyEntry>(slot);
+            auto *entry = storage.entries.entry_at(slot);
             if (entry == nullptr) { return; }
 
             clear_entry_output_binding(view, context, *entry, evaluation_time);
@@ -266,10 +271,10 @@ namespace hgraph
             const MapNodeSpec &spec     = context.spec;
             const ValueView    key_view = keys_set.at_slot(slot);
             storage.entries.reserve_to(std::max(storage.entries.slot_capacity(), slot + 1));
-            MapKeyEntry *existing = storage.entries.try_value<MapKeyEntry>(slot);
+            MapKeyEntry *existing = storage.entries.entry_at(slot);
             auto &entry = existing != nullptr
                               ? *existing
-                              : storage.entries.construct_at<MapKeyEntry>(slot, Value{key_view});
+                              : storage.entries.construct_at(slot, Value{key_view});
             if (entry.graph.has_value() && entry.graph.view().started()) { return; }
             auto rollback = UnwindCleanupGuard([&] {
                 clear_entry_output_binding(view, context, entry, evaluation_time);
@@ -280,7 +285,10 @@ namespace hgraph
 
             if (!entry.graph.has_value())
             {
-                entry.graph = spec.child.graph_builder.make_nested_graph(NodeStorageRef{view.binding(), view.data()});
+                entry.graph = spec.child.graph_builder.make_nested_graph(
+                    NodeStorageRef{view.binding(), view.data()},
+                    storage.entries.graph_memory(slot),
+                    context.graph_layout);
             }
             if (spec.key_output_schema != nullptr)
             {
@@ -328,6 +336,7 @@ namespace hgraph
         {
             const auto &spec       = context.spec;
             const auto  keys_index = *spec.keys_input_index;
+            storage.entries.bind_graph_layout(context.graph_layout);
 
             auto root_input = view.input(evaluation_time);
             SourceRepointStatus source_status =
@@ -354,7 +363,7 @@ namespace hgraph
             auto keys_source = keys_input.bound_output();
             const bool keys_handle_changed = !keys_source.handle().same_as(storage.observed_keys_source);
             const bool keys_source_replaced = keys_handle_changed || source_status.keys_repointed;
-            if (keys_source_replaced && storage.entries.constructed.any())
+            if (keys_source_replaced && storage.entries.has_entries())
             {
                 auto output          = view.output(evaluation_time);
                 auto output_dict     = output.as_dict();
@@ -446,6 +455,10 @@ namespace hgraph
                 if (entry == nullptr || !entry->graph.has_value()) { continue; }
 
                 auto child = entry->graph.view();
+                // A removed key's child is stopped but its entry (and any
+                // schedule enqueued before the stop) lingers this cycle —
+                // stopped children never evaluate.
+                if (!child.started()) { continue; }
                 if (bindings_need_refresh)
                 {
                     const TSOutputView key_source = entry->key_source.bound()
@@ -698,6 +711,29 @@ namespace hgraph
         return MemoryUtils::cast<MapNodeStorage>(storage_)->active_count();
     }
 
+    std::size_t MapNodeView::child_graph_count() const noexcept
+    {
+        const auto &storage = *MemoryUtils::cast<MapNodeStorage>(storage_);
+        std::size_t count = 0;
+        for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
+        {
+            const auto *entry = storage.entries.entry_at(slot);
+            if (entry != nullptr && entry->graph.has_value()) { ++count; }
+        }
+        return count;
+    }
+
+    bool MapNodeView::child_graphs_use_in_place_storage() const noexcept
+    {
+        const auto &storage = *MemoryUtils::cast<MapNodeStorage>(storage_);
+        for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
+        {
+            const auto *entry = storage.entries.entry_at(slot);
+            if (entry != nullptr && entry->graph.has_value() && !entry->graph.uses_external_storage()) { return false; }
+        }
+        return true;
+    }
+
     MapNodeView::MapNodeView(NodeView view, const void *context, void *storage) noexcept
         : view_(std::move(view)),
           context_(context),
@@ -737,8 +773,11 @@ namespace hgraph
         descriptor.callbacks.stop            = &map_node_stop;
         descriptor.ops.evaluate_impl         = &map_evaluate_impl;
         descriptor.ops.extended_view_type_id = MapNodeView::node_view_type_id();
+        const MemoryUtils::StorageLayout graph_layout = spec.child.graph_builder.nested_storage_layout();
         descriptor.ops.extended_view_context = &register_map_node_context(
-            std::move(spec), descriptor.storage_plan->component(map_storage_field_name).offset);
+            std::move(spec),
+            descriptor.storage_plan->component(map_storage_field_name).offset,
+            graph_layout);
 
         return NodeBuilder::from_descriptor(std::move(descriptor));
     }

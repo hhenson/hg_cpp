@@ -7,10 +7,15 @@
 // ``record`` testing nodes; the child bodies use the lib/std operators.
 
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/lib/testing/runtime_support.h>
+#include <hgraph/runtime/map_node.h>
+#include <hgraph/runtime/mesh_node.h>
+#include <hgraph/runtime/reduce_node.h>
+#include <hgraph/runtime/switch_node.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
@@ -195,6 +200,29 @@ namespace
         }
     };
 
+    struct NestedAllocationGraph
+    {
+        static constexpr auto name = "nested_allocation_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto scalar = wire<stdlib::const_, TS<Int>>(w, Int{3});
+            static_cast<void>(nested_<AddOneSubGraph>(w, scalar));
+
+            auto dict = wire<stdlib::const_, TSD<Str, TS<Int>>>(
+                w, stdlib::make_map<Str, Int>({{Str{"a"}, Int{1}}, {Str{"b"}, Int{2}}, {Str{"c"}, Int{3}}}));
+            static_cast<void>(wire<stdlib::map_>(w, fn<AddOneSubGraph>(), dict));
+            static_cast<void>(wire<stdlib::mesh_>(w, fn<AddOneSubGraph>(), dict));
+            static_cast<void>(wire<stdlib::reduce_>(w, fn<stdlib::add_>(), dict));
+
+            auto key = wire<stdlib::const_, TS<Str>>(w, Str{"double"});
+            static_cast<void>(wire<stdlib::switch_>(
+                w, key,
+                stdlib::switch_cases({{Value{Str{"double"}}, fn<AddOneSubGraph>()}}),
+                scalar));
+        }
+    };
+
     template <typename Graph, typename Seed>
     GraphExecutorValue run_seeded(Seed seed)
     {
@@ -210,6 +238,66 @@ TEST_CASE("nested wiring: nested_<G> binds an outer input into the child graph a
     stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<NestedAddOneGraph>(values<Int>(1, 2, 3)), values<Int>(2, 3, 4));
+}
+
+TEST_CASE("nested wiring: every dynamic child graph uses planned or stable in-place storage")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphExecutorValue executor = run_graph(build_graph<NestedAllocationGraph>());
+    auto graph = executor.view().graph();
+
+    bool saw_nested = false;
+    bool saw_map    = false;
+    bool saw_mesh   = false;
+    bool saw_reduce = false;
+    bool saw_switch = false;
+    for (std::size_t index = 0; index < graph.node_count(); ++index)
+    {
+        auto node = graph.node_at(index);
+        if (node.is<SingleNestedGraphNodeView>())
+        {
+            auto nested = node.as<SingleNestedGraphNodeView>();
+            REQUIRE(nested.child_graph_value().has_value());
+            CHECK(nested.child_graph_value().uses_external_storage());
+            saw_nested = true;
+        }
+        else if (node.is<MapNodeView>())
+        {
+            auto map = node.as<MapNodeView>();
+            REQUIRE(map.child_graph_count() > 0);
+            CHECK(map.child_graphs_use_in_place_storage());
+            saw_map = true;
+        }
+        else if (node.is<MeshNodeView>())
+        {
+            auto mesh = node.as<MeshNodeView>();
+            REQUIRE(mesh.child_graph_count() > 0);
+            CHECK(mesh.child_graphs_use_in_place_storage());
+            saw_mesh = true;
+        }
+        else if (node.is<ReduceNodeView>())
+        {
+            auto reduce = node.as<ReduceNodeView>();
+            REQUIRE(reduce.combiner_count() > 0);
+            CHECK(reduce.child_graphs_use_in_place_storage());
+            saw_reduce = true;
+        }
+        else if (node.is<SwitchNodeView>())
+        {
+            auto switch_view = node.as<SwitchNodeView>();
+            REQUIRE(switch_view.stored_graph_count() > 0);
+            CHECK(switch_view.child_graphs_use_in_place_storage());
+            saw_switch = true;
+        }
+    }
+
+    CHECK(saw_nested);
+    CHECK(saw_map);
+    CHECK(saw_mesh);
+    CHECK(saw_reduce);
+    CHECK(saw_switch);
 }
 
 TEST_CASE("nested wiring: a sub-graph with multiple boundary inputs binds each arg")

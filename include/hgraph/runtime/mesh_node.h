@@ -55,6 +55,10 @@ namespace hgraph
 
         [[nodiscard]] const NodeView &node() const noexcept;
         [[nodiscard]] std::size_t     active_count() const noexcept;
+        /** Number of constructed instance graphs, including stopped entries pending erase. */
+        [[nodiscard]] std::size_t     child_graph_count() const noexcept;
+        /** True when every constructed instance graph resides in its stable key slot. */
+        [[nodiscard]] bool            child_graphs_use_in_place_storage() const noexcept;
 
         /**
          * The key of the instance whose child graph is currently being evaluated.

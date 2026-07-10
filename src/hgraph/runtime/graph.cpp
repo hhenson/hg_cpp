@@ -1416,9 +1416,11 @@ namespace hgraph
                 state.lifecycle_observers =
                     &NodeView{parent_node.binding(), parent_node.data()}.graph().lifecycle_observers();
             });
+        auto rollback = make_scope_exit([&]() noexcept { binding.destroy_at(external_memory); });
         storage_ = storage_type::reference(binding, external_memory);
         external_payload_ = true;
         attach_nodes();
+        rollback.release();
     }
 
     GraphValue::~GraphValue()
@@ -1471,6 +1473,7 @@ namespace hgraph
     }
 
     bool GraphValue::has_value() const noexcept { return storage_.has_value(); }
+    bool GraphValue::uses_external_storage() const noexcept { return external_payload_; }
     const GraphTypeBinding *GraphValue::binding() const noexcept { return storage_.binding(); }
     const GraphTypeMetaData *GraphValue::schema() const noexcept
     {

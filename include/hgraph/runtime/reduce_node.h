@@ -29,6 +29,8 @@ namespace hgraph
         [[nodiscard]] std::size_t leaf_count() const noexcept;
         /** Live internal combiner child-graph count (at most ``leaf_count - 1``). */
         [[nodiscard]] std::size_t combiner_count() const noexcept;
+        /** True when every live combiner graph resides in one of the two stable banks. */
+        [[nodiscard]] bool        child_graphs_use_in_place_storage() const noexcept;
 
         /** Internal (reduce_node implementation) — the registered context / storage. */
         [[nodiscard]] const void *internal_context() const noexcept { return context_; }

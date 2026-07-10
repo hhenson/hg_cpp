@@ -52,6 +52,16 @@ namespace
         static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts) { return ts; }
     };
 
+    struct CounterNode
+    {
+        static constexpr auto name = "mesh_tick_counter";
+        static void eval(In<"ts", TS<Int>>, State<Int> count, Out<TS<Int>> out)
+        {
+            count.set(count.get() + 1);
+            out.set(count.get());
+        }
+    };
+
     struct ContainsNamedMeshKeysG
     {
         static constexpr auto name = "mesh_contains_named_keys_g";
@@ -69,6 +79,16 @@ namespace
         {
             return wire<stdlib::const_, TSS<Str>>(w,
                                                   stdlib::make_set<Str>({Str{"a"}, Str{"b"}}));
+        }
+    };
+
+    struct ConstBCKeys
+    {
+        static constexpr auto name = "mesh_const_bc_keys";
+        static Port<TSS<Str>> compose(Wiring &w)
+        {
+            return wire<stdlib::const_, TSS<Str>>(w,
+                                                  stdlib::make_set<Str>({Str{"b"}, Str{"c"}}));
         }
     };
 
@@ -93,6 +113,7 @@ namespace
             auto keys = wire<stdlib::switch_>(
                             w, select,
                             stdlib::switch_cases({{Value{Str{"ab"}}, fn<ConstABKeys>()},
+                                                   {Value{Str{"bc"}}, fn<ConstBCKeys>()},
                                                    {Value{Str{"none"}}, fn<NoKeys>()}}))
                             .as<TSS<Str>>();
             return wire<stdlib::mesh_>(w, fn<AddOneG>(), source, arg<"__keys__">(keys))
@@ -262,6 +283,35 @@ TEST_CASE("mesh_: invalid explicit keys clear children and output")
                      values<Str>(Str{"ab"}, Str{"none"}))),
                  values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}, {"b"s, 3}}),
                                dict_delta<Str, TS<Int>>({}, {"a"s, "b"s})));
+}
+
+TEST_CASE("mesh_: replacing the explicit key-set source reconciles full membership")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MeshInvalidKeysGraph>(
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}, {"c"s, 3}}), none),
+                     values<Str>(Str{"ab"}, Str{"bc"}))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}, {"b"s, 3}}),
+                               dict_delta<Str, TS<Int>>({{"c"s, 4}}, {"a"s})));
+}
+
+TEST_CASE("mesh_: a removed key re-added later gets a fresh child instance")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Str, TS<Int>>>(
+                     fn<CounterNode>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 2}}),
+                                   dict_delta<Str, TS<Int>>({}, {"a"s}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 3}})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}}),
+                               dict_delta<Str, TS<Int>>({{"a"s, 2}}),
+                               dict_delta<Str, TS<Int>>({}, {"a"s}),
+                               dict_delta<Str, TS<Int>>({{"a"s, 1}})));
 }
 
 TEST_CASE("mesh_: named key-set access forwards the mesh output key set")

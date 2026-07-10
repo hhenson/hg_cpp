@@ -1,6 +1,5 @@
 #include <hgraph/runtime/nested_bindings.h>
 #include <hgraph/runtime/switch_node.h>
-#include <hgraph/types/utils/stable_slot_storage.h>
 #include <hgraph/util/scope.h>
 
 #include <algorithm>
@@ -17,12 +16,10 @@ namespace hgraph
     namespace
     {
         constexpr std::string_view switch_storage_field_name{"switch"};
+        constexpr std::string_view switch_graph_memory_field_name{"switch_graph_memory"};
 
         struct SwitchNodeStorage
         {
-            // Raw graph storage must outlive the GraphValue handles that own
-            // the constructed payloads placed in its two slots.
-            StableSlotStorage                graph_memory{};
             std::array<GraphValue, 2>         graphs{};
             std::optional<std::size_t>        active_slot{};
             std::optional<std::size_t>        previous_slot{};
@@ -39,8 +36,23 @@ namespace hgraph
         {
             SwitchNodeSpec spec{};
             std::size_t    storage_offset{0};
+            std::size_t    graph_memory_offset{0};
+            std::size_t    graph_slot_stride{0};
             MemoryUtils::StorageLayout graph_slot_layout{};
         };
+
+        [[nodiscard]] MemoryUtils::StorageLayout switch_graph_slot_layout(const SwitchNodeSpec &spec)
+        {
+            MemoryUtils::StorageLayout layout{.size = 1, .alignment = 1};
+            const auto include_layout = [&](const SingleNestedGraphNodeSpec &branch) {
+                const auto branch_layout = branch.graph_builder.nested_storage_layout();
+                layout.size = std::max(layout.size, branch_layout.size);
+                layout.alignment = std::max(layout.alignment, branch_layout.alignment);
+            };
+            for (const SwitchBranch &branch : spec.branches) { include_layout(branch.spec); }
+            if (spec.default_branch.has_value()) { include_layout(*spec.default_branch); }
+            return layout;
+        }
 
         // Program-lifetime, intentionally-leaked context storage — same rationale
         // as single_nested_graph_contexts (see nested_graph_node.cpp): contexts
@@ -53,25 +65,29 @@ namespace hgraph
         }
 
         [[nodiscard]] const SwitchNodeContext &register_switch_node_context(SwitchNodeSpec spec,
-                                                                            std::size_t storage_offset)
+                                                                            std::size_t storage_offset,
+                                                                            std::size_t graph_memory_offset,
+                                                                            std::size_t graph_slot_stride,
+                                                                            MemoryUtils::StorageLayout graph_slot_layout)
         {
-            MemoryUtils::StorageLayout graph_slot_layout{.size = 1, .alignment = 1};
-            const auto include_layout = [&](const SingleNestedGraphNodeSpec &branch) {
-                const auto layout = branch.graph_builder.nested_storage_layout();
-                graph_slot_layout.size = std::max(graph_slot_layout.size, layout.size);
-                graph_slot_layout.alignment = std::max(graph_slot_layout.alignment, layout.alignment);
-            };
-            for (const SwitchBranch &branch : spec.branches) { include_layout(branch.spec); }
-            if (spec.default_branch.has_value()) { include_layout(*spec.default_branch); }
-
             auto context = std::make_unique<SwitchNodeContext>(SwitchNodeContext{
                 .spec              = std::move(spec),
                 .storage_offset    = storage_offset,
+                .graph_memory_offset = graph_memory_offset,
+                .graph_slot_stride = graph_slot_stride,
                 .graph_slot_layout = graph_slot_layout,
             });
             const auto *result = context.get();
             switch_node_contexts().push_back(std::move(context));
             return *result;
+        }
+
+        [[nodiscard]] void *switch_graph_memory(const NodeView &view,
+                                                const SwitchNodeContext &context,
+                                                std::size_t slot) noexcept
+        {
+            return MemoryUtils::advance(
+                view.data(), context.graph_memory_offset + slot * context.graph_slot_stride);
         }
 
         void bind_branch_inputs(const NodeView &view, const SingleNestedGraphNodeSpec &spec, const GraphView &child,
@@ -184,12 +200,6 @@ namespace hgraph
                              SwitchNodeStorage &storage, const SingleNestedGraphNodeSpec &spec,
                              Value key, DateTime evaluation_time)
         {
-            if (storage.graph_memory.slot_capacity() == 0)
-            {
-                storage.graph_memory.reserve_to(2, context.graph_slot_layout.size,
-                                                context.graph_slot_layout.alignment);
-            }
-
             const std::size_t next_slot = storage.active_slot.has_value() ? 1U - *storage.active_slot : 0U;
 
             // This slot contains the graph retired on the previous switch. Its
@@ -203,7 +213,7 @@ namespace hgraph
             storage.previous_slot.reset();
             storage.graphs[next_slot] = spec.graph_builder.make_nested_graph(
                 NodeStorageRef{view.binding(), view.data()},
-                storage.graph_memory.slot_data(next_slot),
+                switch_graph_memory(view, context, next_slot),
                 context.graph_slot_layout);
 
             auto next = storage.graphs[next_slot].view();
@@ -318,6 +328,23 @@ namespace hgraph
         return MemoryUtils::cast<SwitchNodeStorage>(storage_)->active_key;
     }
 
+    std::size_t SwitchNodeView::stored_graph_count() const noexcept
+    {
+        const auto &storage = *MemoryUtils::cast<SwitchNodeStorage>(storage_);
+        return static_cast<std::size_t>(storage.graphs[0].has_value()) +
+               static_cast<std::size_t>(storage.graphs[1].has_value());
+    }
+
+    bool SwitchNodeView::child_graphs_use_in_place_storage() const noexcept
+    {
+        const auto &storage = *MemoryUtils::cast<SwitchNodeStorage>(storage_);
+        for (const GraphValue &graph : storage.graphs)
+        {
+            if (graph.has_value() && !graph.uses_external_storage()) { return false; }
+        }
+        return true;
+    }
+
     SwitchNodeView::SwitchNodeView(NodeView view, const void *context, void *storage) noexcept
         : view_(std::move(view)),
           context_(context),
@@ -355,17 +382,30 @@ namespace hgraph
         NodeTypeDescriptor descriptor;
         descriptor.schema = std::move(meta);
 
-        const std::array fields{NodeStorageField{
-            .name = switch_storage_field_name,
-            .plan = &MemoryUtils::plan_for<SwitchNodeStorage>(),
-        }};
+        const MemoryUtils::StorageLayout graph_slot_layout = switch_graph_slot_layout(spec);
+        const auto &graph_slot_plan = MemoryUtils::raw_storage_plan(graph_slot_layout);
+        const auto &graph_memory_plan = MemoryUtils::array_plan(graph_slot_plan, 2);
+        const std::array fields{
+            NodeStorageField{
+                .name = switch_graph_memory_field_name,
+                .plan = &graph_memory_plan,
+            },
+            NodeStorageField{
+                .name = switch_storage_field_name,
+                .plan = &MemoryUtils::plan_for<SwitchNodeStorage>(),
+            },
+        };
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
         descriptor.callbacks.stop            = &switch_node_stop;
         descriptor.ops.evaluate_impl         = &switch_evaluate_impl;
         descriptor.ops.extended_view_type_id = SwitchNodeView::node_view_type_id();
         descriptor.ops.extended_view_context = &register_switch_node_context(
-            std::move(spec), descriptor.storage_plan->component(switch_storage_field_name).offset);
+            std::move(spec),
+            descriptor.storage_plan->component(switch_storage_field_name).offset,
+            descriptor.storage_plan->component(switch_graph_memory_field_name).offset,
+            graph_memory_plan.array_stride(),
+            graph_slot_layout);
 
         return NodeBuilder::from_descriptor(std::move(descriptor));
     }

@@ -82,6 +82,8 @@ namespace hgraph
     {
         SingleNestedGraphNodeSpec    spec{};
         std::size_t                  graph_storage_offset{0};
+        std::size_t                  graph_memory_offset{0};
+        MemoryUtils::StorageLayout   graph_memory_layout{};
         SingleNestedGraphNodeOptions options{};
     };
 

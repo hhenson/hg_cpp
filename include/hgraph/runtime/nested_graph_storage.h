@@ -1,0 +1,178 @@
+#ifndef HGRAPH_RUNTIME_NESTED_GRAPH_STORAGE_H
+#define HGRAPH_RUNTIME_NESTED_GRAPH_STORAGE_H
+
+#include <hgraph/types/utils/stable_slot_storage.h>
+
+#include <sul/dynamic_bitset.hpp>
+
+#include <algorithm>
+#include <bit>
+#include <cstddef>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <utility>
+
+namespace hgraph
+{
+    /**
+     * Stable slots containing an entry header and caller-owned nested-graph
+     * payload in one allocation block.
+     *
+     * Capacity growth appends blocks, so both the entry and graph addresses for
+     * existing slots remain stable. Entry destruction owns the GraphValue
+     * handle and therefore destroys the externally-placed graph before the raw
+     * slot memory is released.
+     */
+    template <typename Entry>
+    class InPlaceGraphSlotStore
+    {
+      public:
+        InPlaceGraphSlotStore() noexcept = default;
+
+        explicit InPlaceGraphSlotStore(
+            MemoryUtils::StorageLayout graph_layout,
+            const MemoryUtils::AllocatorOps &allocator = MemoryUtils::allocator())
+            : storage_(allocator)
+        {
+            bind_graph_layout(graph_layout);
+        }
+
+        InPlaceGraphSlotStore(const InPlaceGraphSlotStore &) = delete;
+        InPlaceGraphSlotStore &operator=(const InPlaceGraphSlotStore &) = delete;
+        InPlaceGraphSlotStore(InPlaceGraphSlotStore &&) = delete;
+        InPlaceGraphSlotStore &operator=(InPlaceGraphSlotStore &&) = delete;
+
+        ~InPlaceGraphSlotStore() { destroy_all(); }
+
+        void bind_graph_layout(MemoryUtils::StorageLayout graph_layout)
+        {
+            if (!graph_layout.valid() || graph_layout.size == 0) {
+                throw std::logic_error("InPlaceGraphSlotStore requires a non-empty graph layout");
+            }
+            if (bound_) {
+                if (graph_layout.size != graph_layout_.size ||
+                    graph_layout.alignment != graph_layout_.alignment) {
+                    throw std::logic_error("InPlaceGraphSlotStore graph layout must remain constant");
+                }
+                return;
+            }
+
+            graph_layout_ = graph_layout;
+            slot_layout_.alignment = std::max(alignof(Entry), graph_layout.alignment);
+            if (!std::has_single_bit(slot_layout_.alignment)) {
+                throw std::logic_error("InPlaceGraphSlotStore requires power-of-two alignment");
+            }
+
+            graph_offset_ = checked_align_to(sizeof(Entry), graph_layout.alignment);
+            if (graph_layout.size > std::numeric_limits<size_t>::max() - graph_offset_) {
+                throw std::overflow_error("InPlaceGraphSlotStore slot size overflow");
+            }
+            slot_layout_.size = checked_align_to(graph_offset_ + graph_layout.size, slot_layout_.alignment);
+            bound_ = true;
+        }
+
+        [[nodiscard]] bool bound() const noexcept { return bound_; }
+        [[nodiscard]] size_t slot_capacity() const noexcept { return storage_.slot_capacity(); }
+        [[nodiscard]] size_t block_count() const noexcept { return storage_.blocks.size(); }
+        [[nodiscard]] MemoryUtils::StorageLayout graph_layout() const noexcept { return graph_layout_; }
+        [[nodiscard]] MemoryUtils::StorageLayout slot_layout() const noexcept { return slot_layout_; }
+        [[nodiscard]] size_t graph_offset() const noexcept { return graph_offset_; }
+        [[nodiscard]] bool has_entries() const noexcept { return constructed_.any(); }
+
+        void reserve_to(size_t capacity)
+        {
+            require_bound();
+            if (capacity <= storage_.slot_capacity()) { return; }
+            storage_.reserve_to(capacity, slot_layout_.size, slot_layout_.alignment);
+            constructed_.resize(storage_.slot_capacity());
+        }
+
+        [[nodiscard]] bool has_entry(size_t slot) const noexcept
+        {
+            return slot < constructed_.size() && constructed_.test(slot);
+        }
+
+        [[nodiscard]] Entry *entry_at(size_t slot) noexcept
+        {
+            return has_entry(slot) ? MemoryUtils::cast<Entry>(storage_.slot_data(slot)) : nullptr;
+        }
+
+        [[nodiscard]] const Entry *entry_at(size_t slot) const noexcept
+        {
+            return has_entry(slot) ? MemoryUtils::cast<Entry>(storage_.slot_data(slot)) : nullptr;
+        }
+
+        template <typename... Args>
+        Entry &construct_at(size_t slot, Args &&...args)
+        {
+            require_available_slot(slot);
+            Entry *entry = MemoryUtils::cast<Entry>(storage_.slot_data(slot));
+            std::construct_at(entry, std::forward<Args>(args)...);
+            constructed_.set(slot);
+            return *entry;
+        }
+
+        void destroy_at(size_t slot) noexcept
+        {
+            Entry *entry = entry_at(slot);
+            if (entry == nullptr) { return; }
+            std::destroy_at(entry);
+            constructed_.reset(slot);
+        }
+
+        void destroy_all() noexcept
+        {
+            for (size_t slot = 0; slot < constructed_.size(); ++slot) { destroy_at(slot); }
+        }
+
+        [[nodiscard]] void *graph_memory(size_t slot)
+        {
+            require_slot(slot);
+            return MemoryUtils::advance(storage_.slot_data(slot), graph_offset_);
+        }
+
+        [[nodiscard]] const void *graph_memory(size_t slot) const
+        {
+            require_slot(slot);
+            return MemoryUtils::advance(storage_.slot_data(slot), graph_offset_);
+        }
+
+      private:
+        StableSlotStorage             storage_{};
+        sul::dynamic_bitset<>         constructed_{};
+        MemoryUtils::StorageLayout    graph_layout_{};
+        MemoryUtils::StorageLayout    slot_layout_{};
+        size_t                        graph_offset_{0};
+        bool                          bound_{false};
+
+        [[nodiscard]] static size_t checked_align_to(size_t offset, size_t alignment)
+        {
+            if (alignment <= 1) { return offset; }
+            const size_t mask = alignment - 1;
+            if (offset > std::numeric_limits<size_t>::max() - mask) {
+                throw std::overflow_error("InPlaceGraphSlotStore aligned size overflow");
+            }
+            return (offset + mask) & ~mask;
+        }
+
+        void require_bound() const
+        {
+            if (!bound_) { throw std::logic_error("InPlaceGraphSlotStore has no graph layout"); }
+        }
+
+        void require_slot(size_t slot) const
+        {
+            require_bound();
+            if (slot >= slot_capacity()) { throw std::out_of_range("InPlaceGraphSlotStore slot out of range"); }
+        }
+
+        void require_available_slot(size_t slot) const
+        {
+            require_slot(slot);
+            if (has_entry(slot)) { throw std::logic_error("InPlaceGraphSlotStore slot is already constructed"); }
+        }
+    };
+}  // namespace hgraph
+
+#endif  // HGRAPH_RUNTIME_NESTED_GRAPH_STORAGE_H

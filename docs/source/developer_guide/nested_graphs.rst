@@ -28,14 +28,47 @@ Three artifacts, one per phase:
   ``NestedGraphOutputBinding``) and boundary schemas. Produced once at wiring
   time; owned by the nested node's (interned, program-lifetime) context. This is
   the C++ realisation of the RFC's *child-graph template*.
-- **Child graph instance** (runtime): a ``GraphValue`` created by
-  ``GraphBuilder::make_nested_graph(NodeStorageRef)``, living in the owning
-  node's storage. ``nested_`` owns exactly one; ``switch_`` owns two fixed
-  storage slots (one active and one stopped previous instance); ``map_`` owns
-  one per key. ``switch_`` uses the external-storage overload of
-  ``make_nested_graph`` so both slots are sized once to the largest branch.
-  There is no separate instance class — per-instance state is the operator's
-  own storage struct.
+- **Child graph instance** (runtime): a ``GraphValue`` created in caller-owned
+  memory by the external-storage overload of ``make_nested_graph``. ``nested_``
+  owns exactly one planned region; ``switch_`` owns two fixed regions (one
+  active and one stopped previous instance); keyed operators own stable dynamic
+  slots. There is no separate instance class — per-instance state is the
+  operator's own storage struct.
+
+
+Storage sizing and lifetime
+---------------------------
+
+``GraphBuilder::nested_storage_layout()`` returns the exact size and alignment
+of one child graph, including its runtime header, nodes, node state, inputs and
+outputs. Nested operators use that layout rather than allowing ``GraphValue``
+to allocate its payload independently:
+
+- ``nested_`` adds one raw child region to the node's ``StoragePlan``;
+- ``switch_`` adds an array of two raw regions, each using the maximum size and
+  alignment of all possible branches;
+- ``map_`` and ``mesh_`` compute one stable slot layout containing the entry
+  header followed by an aligned child region. Capacity growth appends blocks,
+  preserving every existing entry and graph address;
+- dynamic ``reduce`` uses two such positional banks. Capacity growth builds the
+  reshaped tree in the inactive bank while the stopped old bank remains alive
+  through the engine cycle.
+
+The fixed cases therefore contribute their full child memory to the parent
+graph's up-front static storage plan. A keyed operator cannot know its eventual
+key count at wiring time, but it knows the exact cost of each instance and
+allocates capacity in blocks rather than once per entry and once per graph.
+Vectors and hash indexes still grow dynamically; the pre-allocation guarantee
+covers graph/node payloads and stable key slots, not an unbounded key set's
+bookkeeping.
+
+Logical removal and physical erase are deliberately separate. Logical removal
+clears forwarding/output bindings and stops the child while all producers are
+alive. The slot remains constructed for the rest of the engine cycle. A later
+slot ``erase`` invokes the entry destructor, whose ``GraphValue`` destroys the
+in-place child before the raw slot can be reused. ``switch_`` expresses the
+same rule with its active/previous A/B slots; ``reduce`` expresses it with its
+active/previous banks.
 
 
 Boundary compilation: placeholders, not stubs
@@ -225,13 +258,11 @@ the current substrate; where the two differ, this section is authoritative.
 the ``WiredFn``, two boundary args ``(lhs, rhs)``) / ``GraphValue`` via
 ``make_nested_graph``; ``OutputLink`` root publication → the node's
 **forwarding output** + ``bind_forwarding_output_to_source``;
-``StablePayloadStore`` + per-graph slabs → ``unique_ptr`` combiner entries
-(pointer-stable; the slab store remains the recorded refinement, as for
-``map_``); ``MapViewDispatch`` slot observers → **current-key
+``StablePayloadStore`` + per-graph slabs → two stable in-place combiner banks;
+``MapViewDispatch`` slot observers → **current-key
 reconciliation** when the TSD input modifies, re-points, becomes invalid, or
-is first observed (the same lifecycle lesson as ``map_``; observer-driven
-mirroring is the recorded refinement, settling the 2603 doc's open question 1
-for v1).
+is first observed. Dense leaf positions intentionally do not mirror source key
+slots: compacting the leaves is what keeps the live combiner count at ``n-1``.
 
 **Core decisions kept from 2603** (the load-bearing ones):
 
@@ -289,7 +320,12 @@ ordering, and also the explicit ``ReduceNodeStorage`` destructor order).
 Retirement stops the displaced graphs but preserves one previous generation
 through the current engine cycle; a later-time reduce evaluation destroys that
 generation before reconciling again, after dynamic consumers have moved off the
-old root.
+old root. Capacity growth alternates between two stable banks, so both the new
+tree and the stopped previous tree have fixed addresses without per-combiner
+heap allocations. At final node disposal the previous generation is destroyed
+before the active generation: a stopped retired parent can still retain a target
+handle to a surviving current child output, so the retired subscriber must die
+before that producer.
 The node's own output is a forwarding endpoint linking into field-held
 combiner outputs, so the reduce field uses the default *before-output* plan
 placement (the ``nested_``/``switch_`` direction).
@@ -425,10 +461,12 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   ``slot_removed``. Multiplexed TSD membership only affects element binding,
   not child existence. An invalid or unbound ``__keys__`` source stops all
   children and clears the owned output.
-- **Per-key state** lives in node storage as a ``ValueSlotStore`` indexed by
-  the current ``__keys__`` slot id. Each constructed slot owns the key
-  ``Value``, an optional per-key ``TS<K>`` source output that reads that
-  owned key directly, and the child ``GraphValue``. The owned key is used for
+- **Per-key state** lives in an ``InPlaceGraphSlotStore`` indexed by the
+  current ``__keys__`` slot id. Each stable slot contains the entry header and
+  the aligned child graph payload; the entry owns the key ``Value``, an
+  optional per-key ``TS<K>`` source output that reads that owned key directly,
+  and the child ``GraphValue`` handle. Capacity callbacks reserve matching
+  payload blocks before new source slots are used. The owned key is used for
   output erasure across removals and re-points. Entry member order is
   load-bearing: the child graph (subscriber) tears down before the key source
   it observes.
@@ -560,6 +598,15 @@ another instance requested it.
   ``TSD<K, OUT>`` output; child terminals are forwarding outputs bound to
   real elements in that owned TSD, so branch/map/switch terminals inside the
   instance write through to the mesh element rather than copying values.
+- **One internal key-slot store is authoritative.** Mesh instance membership
+  is a superset of ``__keys__`` because dependency reads may create keys on
+  demand. A mesh therefore cannot mirror only the external set's slot ids.
+  Its own ``KeySlotStore`` assigns stable slots to both requested and on-demand
+  keys and drives an ``InPlaceGraphSlotStore`` observer: ``on_remove`` stops
+  the child, and the later ``on_erase`` destroys the entry and in-place graph.
+  A separate observer on the external ``__keys__`` source pre-reserves capacity;
+  source replacement performs a full membership reconciliation so shared keys
+  survive even when the replacement uses a different slot layout.
 - **Cross-instance reads are runtime forwarding nodes.** ``mesh_ref`` wires a
   ``mesh_subscribe`` node in the child graph. At evaluation time it resolves
   the enclosing mesh, registers ``requester -> dependency``, binds its hidden
@@ -618,11 +665,12 @@ current code wins:
   through active input bind/rebind notification, not by bypassing normal graph
   scheduling or forcing eval directly. We deliberately diverge from Python's
   ``value = None`` reset.
-- **No slab payload stores yet.** ``map_`` uses a key-slot-aligned
-  ``ValueSlotStore`` for pointer-stable per-key state; ``mesh_`` uses an
-  ``unordered_dense::map<Value, std::unique_ptr<MeshEntry>>`` because
-  on-demand keys are not limited to the current ``__keys__`` slot layout.
-  The RFC's ``StablePayloadStore`` remains a recorded refinement.
+- **Stable payload storage is implemented.** Fixed nested graphs are part of
+  the parent node's storage plan. ``map_`` mirrors ``__keys__`` slots into
+  stable entry-plus-graph blocks; ``mesh_`` uses its own observed key-slot
+  store for the requested/on-demand superset; dynamic ``reduce`` alternates
+  two stable positional banks. In every case stop precedes destruction and a
+  graph payload is destroyed before its slot is reused.
 
 
 Roadmap (this milestone)

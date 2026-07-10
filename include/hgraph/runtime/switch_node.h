@@ -5,6 +5,7 @@
 #include <hgraph/runtime/nested_graph_node.h>   // SingleNestedGraphNodeSpec (per-branch spec shape)
 #include <hgraph/types/value/value.h>
 
+#include <cstddef>
 #include <optional>
 #include <vector>
 
@@ -44,6 +45,10 @@ namespace hgraph
         [[nodiscard]] bool            has_active_branch() const noexcept;
         [[nodiscard]] GraphValue     &active_graph_value() const noexcept;
         [[nodiscard]] const Value    &active_key() const noexcept;
+        /** Number of constructed active/previous branch graphs in the two fixed slots. */
+        [[nodiscard]] std::size_t     stored_graph_count() const noexcept;
+        /** True when every constructed branch graph resides in its fixed node-storage slot. */
+        [[nodiscard]] bool            child_graphs_use_in_place_storage() const noexcept;
 
         /** Internal (switch_node implementation) — the registered context / storage. */
         [[nodiscard]] const void *internal_context() const noexcept { return context_; }
