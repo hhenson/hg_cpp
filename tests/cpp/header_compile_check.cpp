@@ -133,7 +133,7 @@ void instantiate_plan_factory() {
     assert(tuple_plan->component_count() == 3);
     assert(tuple_plan->component(0).plan == int_plan);
     assert(tuple_plan->component(1).plan == float_plan);
-    const auto *validity_plan = &MemoryUtils::array_plan<std::uint64_t>(1);
+    [[maybe_unused]] const auto *validity_plan = &MemoryUtils::array_plan<std::uint64_t>(1);
     assert(tuple_plan->component(2).plan == validity_plan);
     // Composite plans are interned by MemoryUtils — same triple yields same pointer.
     assert(tuple_plan == &MemoryUtils::tuple_plan({int_plan, float_plan, validity_plan}));
