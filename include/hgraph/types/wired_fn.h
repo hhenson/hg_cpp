@@ -402,7 +402,7 @@ namespace hgraph
                     throw std::invalid_argument(
                         "fn<X>: compiled input schema count does not match the function's inputs");
                 }
-                Wiring                                   w;
+                Wiring                                   w{WiringKind::SubGraph};
                 std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
                 std::vector<WiringPortRef>               ports;
                 ports.reserve(input_schemas.size());

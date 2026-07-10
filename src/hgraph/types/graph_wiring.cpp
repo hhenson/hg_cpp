@@ -1111,6 +1111,10 @@ namespace hgraph
         }
         compiled.captured_inputs = std::move(captures.captured);
         validate_same_cycle_pairs(build.index_of);
+        // GraphBuilder's default construction honours an active top-level
+        // GlobalContext. A compiled child must instead share its root graph's
+        // runtime state, so discard that constructor-time seed here.
+        build.graph_builder.global_state(GlobalState{});
         for (const auto [key, boxed] : impl_->traits.as_value().view().as_map())
         {
             build.graph_builder.trait(key.checked_as<Str>(), boxed.as_any().get());

@@ -460,6 +460,23 @@ TEST_CASE("merge over TSDs is per-key (map_ with a lifted variadic operator)")
                                dict_delta<Str, TS<Int>>({{"a"s, 9}})));   // leftmost MODIFIED wins
 }
 
+TEST_CASE("variadic WiredFn compilation does not copy an active global-state seed")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GlobalState seed;
+    seed.view().set("configured", Value{Bool{true}});
+    GlobalContext context{seed};
+
+    const auto *element = schema_descriptor<TS<Int>>::ts_meta();
+    std::array<const TSValueTypeMetaData *, 2> inputs{element, element};
+    CompiledSubGraph compiled = fn<stdlib::merge>().compile(inputs);
+
+    CHECK(compiled.output_schema == element);
+    CHECK(compiled.graph_builder.global_state().size() == 0);
+}
+
 TEST_CASE("merge over NESTED TSDs recurses per key (embedding)")
 {
     using namespace hgraph;
