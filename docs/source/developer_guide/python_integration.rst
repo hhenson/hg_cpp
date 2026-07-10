@@ -166,9 +166,11 @@ components:
 - ``@graph`` composition with positional/keyword scalars, nested Python graphs,
   C++ operators, and Python runtime nodes in either direction;
 - ``@compute_node`` and ``@sink_node`` with any practical arity, positional or
-  keyword binding, scalar defaults, validity gating, optional inputs, collection
-  deltas, ``STATE``/``CLOCK``/``SCHEDULER``/``GlobalState`` injectables, and
-  Python ``start``/``stop`` lifecycle callbacks;
+  keyword binding, scalar defaults, validity and activity gating, optional
+  inputs, collection deltas, ``STATE``/``CLOCK``/``SCHEDULER``/``GlobalState``
+  injectables, and Python ``start``/``stop`` lifecycle callbacks. ``active=``
+  gates Python callback invocation; scheduler events still wake nodes declared
+  with ``active=()``;
 - ``@generator`` sources with captured scalar arguments, distinct state per
   wiring call, empty generators, exception propagation, and strictly increasing
   absolute output times;

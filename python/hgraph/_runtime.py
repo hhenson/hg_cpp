@@ -814,10 +814,11 @@ class _PyNode:
     compute node's return value ticks its output (None = no tick). It must
     have no side effects beyond its output."""
 
-    def __init__(self, fn, has_output, valid=None):
+    def __init__(self, fn, has_output, active=None, valid=None):
         self.fn = fn
         self.has_output = has_output
-        self._valid = valid
+        self._active = self._policy_names("active", active)
+        self._valid = self._policy_names("valid", valid)
         self._start_fn = None
         self._stop_fn = None
         self.__name__ = fn.__name__
@@ -828,6 +829,18 @@ class _PyNode:
         self.__signature__ = sig
         self._out_tp = sig.return_annotation if has_output else None
         self._params = list(sig.parameters.values())
+        ts_names = {
+            param.name
+            for param in self._params
+            if isinstance(param.annotation, (_TsExpr, _ContextExpr))
+        }
+        for policy, names in (("active", self._active), ("valid", self._valid)):
+            if names is None:
+                continue
+            unknown = names - ts_names
+            if unknown:
+                rendered = ", ".join(sorted(unknown))
+                raise TypeError(f"{self.__name__}: {policy}= contains non-time-series input(s): {rendered}")
         # Injectable parameters MUST default to None (hgraph convention):
         # the default guarantees user code in a graph never supplies them.
         for param in self._params:
@@ -835,6 +848,20 @@ class _PyNode:
                 raise TypeError(
                     f"injectable parameter '{param.name}' of '{self.__name__}' must default to None"
                 )
+
+    @staticmethod
+    def _policy_names(policy, names):
+        if names is None:
+            return None
+        if isinstance(names, str):
+            raise TypeError(f"{policy}= must be an iterable of input names, not a string")
+        try:
+            result = frozenset(names)
+        except TypeError as error:
+            raise TypeError(f"{policy}= must be an iterable of input names") from error
+        if any(not isinstance(name, str) for name in result):
+            raise TypeError(f"{policy}= must contain only input names")
+        return result
 
     def _set_lifecycle(self, phase, fn):
         for param in inspect.signature(fn).parameters.values():
@@ -892,7 +919,8 @@ class _PyNode:
                         raise WiringError(
                             f"no context published for '{param.name}'{where} of '{self.__name__}'")
                     continue   # optional and absent: the fn sees its None default
-                layout.append("C")
+                is_active = self._active is None or param.name in self._active
+                layout.append("C" if is_active else "P")
                 ports.append(_unwrap(resolved))
                 keep_ref.append(False)
                 continue
@@ -912,7 +940,9 @@ class _PyNode:
                     value = wire("nothing", output_type=param.annotation)
             if isinstance(value, WiringPort):
                 required = self._valid is None or param.name in self._valid
-                layout.append("t" if required else "u")
+                is_active = self._active is None or param.name in self._active
+                layout.append({(True, True): "t", (True, False): "u",
+                               (False, True): "T", (False, False): "U"}[(is_active, required)])
                 ports.append(_unwrap(value))
                 keep_ref.append(getattr(param.annotation, "is_ref", False))
                 annotation = param.annotation
@@ -970,19 +1000,22 @@ class _PyNode:
         return wire("__py_sink", packed, **node_kwargs)
 
 
-def compute_node(fn=None, *, valid=None, **_ignored):
-    """@compute_node[(valid=("orig",))] - hgraph parity: ``valid`` names the
-    inputs REQUIRED to be valid; unlisted time-series inputs are UNCHECKED
-    (the fn guards itself)."""
+def compute_node(fn=None, *, active=None, valid=None, **_ignored):
+    """Python runtime compute node.
+
+    ``active`` names the inputs that drive invocation; ``valid`` names the
+    inputs required to be valid. Unlisted inputs remain readable by the
+    function but do not participate in that policy.
+    """
     if fn is None:
-        return lambda f: _PyNode(f, has_output=True, valid=valid)
-    return _PyNode(fn, has_output=True, valid=valid)
+        return lambda f: _PyNode(f, has_output=True, active=active, valid=valid)
+    return _PyNode(fn, has_output=True, active=active, valid=valid)
 
 
-def sink_node(fn=None, *, valid=None, **_ignored):
+def sink_node(fn=None, *, active=None, valid=None, **_ignored):
     if fn is None:
-        return lambda f: _PyNode(f, has_output=False, valid=valid)
-    return _PyNode(fn, has_output=False, valid=valid)
+        return lambda f: _PyNode(f, has_output=False, active=active, valid=valid)
+    return _PyNode(fn, has_output=False, active=active, valid=valid)
 
 
 class _Generator:

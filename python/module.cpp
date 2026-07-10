@@ -867,6 +867,36 @@ namespace
         }
     };
 
+    /**
+     * Python inputs share one packed structural port, so per-child activity is
+     * applied before acquiring the GIL and invoking user code. Uppercase TS
+     * layout markers are passive. Runtime scheduler events remain independent
+     * of input activity, including for ``active=()`` nodes.
+     */
+    [[nodiscard]] bool py_node_should_evaluate(std::string_view layout, const TSInputView &args,
+                                               const NodeScheduler &scheduler)
+    {
+        if (scheduler.is_scheduled_now()) { return true; }
+        auto        bundle   = args.as_bundle();
+        std::size_t ts_index = 0;
+        for (const char kind : layout)
+        {
+            switch (kind)
+            {
+                case 't':
+                case 'u':
+                case 'C':
+                    if (bundle[ts_index++].modified()) { return true; }
+                    break;
+                case 'T':
+                case 'U':
+                case 'P': ++ts_index; break;
+                default: break;
+            }
+        }
+        return false;
+    }
+
     /** Assemble the python call args per the layout; false = a ts arg is not yet valid. */
     [[nodiscard]] bool py_assemble_args(std::string_view layout, const TSInputView &args, const ValueView &scalars,
                                         State<PyStateRef> &state, NodeScheduler scheduler, DateTime now,
@@ -885,17 +915,20 @@ namespace
             {
                 case 't':
                 case 'u':
-                case 'C': {
+                case 'C':
+                case 'T':
+                case 'U':
+                case 'P': {
                     auto child = bundle[ts_index++];
-                    // 'u' = UNCHECKED (hgraph's valid=(...) opt-out): the
+                    // 'u'/'U' = UNCHECKED (hgraph's valid=(...) opt-out): the
                     // python fn sees the view and guards itself.
-                    if (kind != 'u' && !child.valid()) { return false; }
+                    if (kind != 'u' && kind != 'U' && !child.valid()) { return false; }
                     // The LAZY C++ TimeSeries view: nothing converts unless
                     // the python code touches it. Guard-invalidated after
                     // the call (a view must not outlive its evaluation).
                     nb::object ts_obj = nb::cast(PyTimeSeries{std::move(child), guard});
                     call_args.append(ts_obj);
-                    if (kind == 'C')
+                    if (kind == 'C' || kind == 'P')
                     {
                         // A context input is ALSO entered (python
                         // context-manager protocol) around the call - the
@@ -1040,6 +1073,7 @@ namespace
             static_cast<void>(stop_enabled);
             static_cast<void>(stop_config);
             static_cast<void>(stop_scalars);
+            if (!py_node_should_evaluate(config.value(), args.base(), scheduler)) { return; }
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
@@ -1105,6 +1139,7 @@ namespace
             static_cast<void>(stop_enabled);
             static_cast<void>(stop_config);
             static_cast<void>(stop_scalars);
+            if (!py_node_should_evaluate(config.value(), args.base(), scheduler)) { return; }
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;

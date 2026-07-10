@@ -56,6 +56,56 @@ def test_compute_validity_optional_inputs_and_no_tick():
     check(eval_node(absent, [2]) == [2], "optional unwired input")
 
 
+def test_compute_and_sink_active_inputs_and_scheduler_wakeup():
+    compute_calls = []
+    sink_calls = []
+
+    @hg.compute_node(active=("trigger",), valid=("trigger",))
+    def sample(trigger: TS[int], observed: TS[int]) -> TS[int]:
+        compute_calls.append((trigger.value, observed.value))
+        return observed.value
+
+    @hg.sink_node(active=("trigger",), valid=("trigger",))
+    def collect(trigger: TS[int], observed: TS[int]):
+        sink_calls.append((trigger.value, observed.value))
+
+    @graph
+    def app(trigger: TS[int], observed: TS[int]) -> TS[int]:
+        collect(trigger, observed)
+        return sample(trigger, observed)
+
+    check(eval_node(app, [1, None, 2], [10, 20, 30]) == [10, None, 30], "active input output")
+    expected = [(1, 10), (2, 30)]
+    check(compute_calls == expected, f"compute active calls: {compute_calls}")
+    check(sink_calls == expected, f"sink active calls: {sink_calls}")
+
+    @hg.compute_node(active=(), valid=("value",))
+    def scheduled(value: TS[int]) -> TS[int]:
+        return value.value
+
+    @scheduled.start
+    def scheduled_start(scheduler: hg.SCHEDULER = None):
+        scheduler.schedule_delta(hg.MIN_TD)
+
+    check(eval_node(scheduled, [7]) == [None, 7], "scheduler wakes an input-passive node")
+
+
+def test_compute_input_policies_reject_non_time_series_names():
+    def decorate_active():
+        @hg.compute_node(active=("label",))
+        def invalid(value: TS[int], label: str) -> TS[int]:
+            return value.value
+
+    expect_raises(TypeError, decorate_active, "non-time-series input(s): label")
+
+    def decorate_valid():
+        @hg.sink_node(valid=("missing",))
+        def invalid(value: TS[int]):
+            pass
+
+    expect_raises(TypeError, decorate_valid, "non-time-series input(s): missing")
+
+
 def test_compute_state_clock_scheduler_and_output_view():
     @hg.compute_node
     def delayed_delta(
