@@ -737,7 +737,7 @@ namespace hgraph::stdlib
         STRICT is the default validity (all supplied inputs valid); the
         lenient variant treats not-yet-valid components as zero. */
     template <bool Strict>
-    struct combine_timedelta_impl
+    struct combine_timedelta_impl_base
     {
         static constexpr auto name = Strict ? "combine_timedelta" : "combine_timedelta_lenient";
         static constexpr InputValidity validity = Strict ? InputValidity::Valid : InputValidity::Unchecked;
@@ -760,9 +760,16 @@ namespace hgraph::stdlib
                               value_or_zero(microseconds)});
         }
 
-        // The LENIENT variant carries the __strict__ scalar so dispatch can
-        // tell the otherwise-identical signatures apart (py sends the kwarg
-        // only for __strict__=False).
+    };
+
+    template <bool Strict>
+    struct combine_timedelta_impl;
+
+    template <>
+    struct combine_timedelta_impl<true> : combine_timedelta_impl_base<true>
+    {
+        using base = combine_timedelta_impl_base<true>;
+
         static void eval(In<"weeks", TS<Int>, validity> weeks,
                          In<"days", TS<Int>, validity> days,
                          In<"hours", TS<Int>, validity> hours,
@@ -771,11 +778,18 @@ namespace hgraph::stdlib
                          In<"milliseconds", TS<Int>, validity> milliseconds,
                          In<"microseconds", TS<Int>, validity> microseconds,
                          Out<TS<TimeDelta>> out)
-            requires Strict
         {
-            compute(weeks, days, hours, minutes, seconds, milliseconds, microseconds, out);
+            base::compute(weeks, days, hours, minutes, seconds, milliseconds, microseconds, out);
         }
+    };
 
+    template <>
+    struct combine_timedelta_impl<false> : combine_timedelta_impl_base<false>
+    {
+        using base = combine_timedelta_impl_base<false>;
+
+        // The lenient variant carries the __strict__ scalar so dispatch can
+        // tell the otherwise-identical signatures apart.
         static void eval(In<"weeks", TS<Int>, validity> weeks,
                          In<"days", TS<Int>, validity> days,
                          In<"hours", TS<Int>, validity> hours,
@@ -785,9 +799,8 @@ namespace hgraph::stdlib
                          In<"microseconds", TS<Int>, validity> microseconds,
                          Scalar<"__strict__", Bool>,
                          Out<TS<TimeDelta>> out)
-            requires (!Strict)
         {
-            compute(weeks, days, hours, minutes, seconds, milliseconds, microseconds, out);
+            base::compute(weeks, days, hours, minutes, seconds, milliseconds, microseconds, out);
         }
     };
 
@@ -833,7 +846,7 @@ namespace hgraph::stdlib
         an ordered tuple (all-valid gated so a partial TSL stays invalid,
         hgraph parity). */
     template <bool Strict>
-    struct convert_tsl_to_tuple_impl
+    struct convert_tsl_to_tuple_impl_base
     {
         static constexpr auto name = Strict ? "convert_tsl_to_tuple" : "convert_tsl_to_tuple_lenient";
         static constexpr InputValidity validity = Strict ? InputValidity::AllValid : InputValidity::Unchecked;
@@ -885,15 +898,25 @@ namespace hgraph::stdlib
             static_cast<void>(mutation.move_value_from(std::move(tuple)));
         }
 
+    };
+
+    template <bool Strict>
+    struct convert_tsl_to_tuple_impl;
+
+    template <>
+    struct convert_tsl_to_tuple_impl<true> : convert_tsl_to_tuple_impl_base<true>
+    {
         static void eval(In<"ts", TsVar<"S">, validity> ts, Out<TsVar<"__out__">> out)
-            requires Strict
         {
             eval_impl(ts, static_cast<const TSOutputView &>(out));
         }
+    };
 
+    template <>
+    struct convert_tsl_to_tuple_impl<false> : convert_tsl_to_tuple_impl_base<false>
+    {
         static void eval(In<"ts", TsVar<"S">, validity> ts, Scalar<"__strict__", Bool>,
                          Out<TsVar<"__out__">> out)
-            requires (!Strict)
         {
             eval_impl(ts, static_cast<const TSOutputView &>(out));
         }
@@ -1274,7 +1297,7 @@ namespace hgraph::stdlib
         (hgraph relaxed = emit with whatever is valid; fixed tuples cannot
         hold holes, so lenient requires ALL-valid too but re-emits per tick). */
     template <bool Strict>
-    struct combine_tuple_impl
+    struct combine_tuple_impl_base
     {
         static constexpr auto name = Strict ? "combine_tuple" : "combine_tuple_lenient";
 
@@ -1304,15 +1327,25 @@ namespace hgraph::stdlib
             return out != nullptr && out->kind == ValueTypeKind::Tuple;
         }
 
+    };
+
+    template <bool Strict>
+    struct combine_tuple_impl;
+
+    template <>
+    struct combine_tuple_impl<true> : combine_tuple_impl_base<true>
+    {
         static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Out<TsVar<"__out__">> out)
-            requires Strict
         {
             eval_impl(ts, static_cast<const TSOutputView &>(out));
         }
+    };
 
+    template <>
+    struct combine_tuple_impl<false> : combine_tuple_impl_base<false>
+    {
         static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Scalar<"__strict__", Bool>,
                          Out<TsVar<"__out__">> out)
-            requires (!Strict)
         {
             eval_impl(ts, static_cast<const TSOutputView &>(out));
         }
@@ -1384,7 +1417,7 @@ namespace hgraph::stdlib
     /** convert[TSD[str, TS[V]]](tsb[, keys=...]): the bundle's VALID fields
         as a string-keyed dictionary (an optional keys tuple restricts). */
     template <bool WithKeys>
-    struct convert_tsb_to_tsd_impl
+    struct convert_tsb_to_tsd_impl_base
     {
         static constexpr auto name = WithKeys ? "convert_tsb_to_tsd_keys" : "convert_tsb_to_tsd";
 
@@ -1464,15 +1497,25 @@ namespace hgraph::stdlib
             }
         }
 
+    };
+
+    template <bool WithKeys>
+    struct convert_tsb_to_tsd_impl;
+
+    template <>
+    struct convert_tsb_to_tsd_impl<false> : convert_tsb_to_tsd_impl_base<false>
+    {
         static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
-            requires (!WithKeys)
         {
             eval_impl(ts, static_cast<const TSOutputView &>(out), [](const char *) { return true; });
         }
+    };
 
+    template <>
+    struct convert_tsb_to_tsd_impl<true> : convert_tsb_to_tsd_impl_base<true>
+    {
         static void eval(In<"ts", TsVar<"S">> ts, Scalar<"keys", ScalarVar<"KS">> keys,
                          Out<TsVar<"__out__">> out)
-            requires WithKeys
         {
             auto key_list = keys.value().as_indexed_view();
             eval_impl(ts, static_cast<const TSOutputView &>(out), [&](const char *name) {
