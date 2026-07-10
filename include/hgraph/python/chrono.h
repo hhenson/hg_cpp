@@ -179,11 +179,14 @@ public:
         std::chrono::hh_mm_ss hms{time_of_day};
 
         // 4. Extract time components
-        long long hour = hms.hours().count();
-        long long minute = hms.minutes().count();
-        long long second = hms.seconds().count();
-        auto subseconds = hms.subseconds(); // This is a duration
-        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(subseconds).count();
+        // Python's datetime constructor accepts int components. floor<days>
+        // keeps these counts within one day, so the narrowing is intentional.
+        const int hour = static_cast<int>(hms.hours().count());
+        const int minute = static_cast<int>(hms.minutes().count());
+        const int second = static_cast<int>(hms.seconds().count());
+        const auto subseconds = hms.subseconds(); // This is a duration
+        const int microseconds = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::microseconds>(subseconds).count());
 
         return pack_datetime(year,
                              month,
