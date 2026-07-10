@@ -26,11 +26,6 @@ from hgraph import (
 from hgraph.arrow import eval_, assert_, arrow
 from hgraph.test import eval_node
 
-import pytest as _pytest_mark
-pytestmark = _pytest_mark.mark.wip   # batch-3 burn-down; excluded from the gate
-
-
-
 def test_mul_tuples():
     assert eval_node(mul_, [(1, 2, 3)], [2]) == [(1, 2, 3, 1, 2, 3)]
 

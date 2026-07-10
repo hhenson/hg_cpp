@@ -20,23 +20,30 @@ class _Assert:
 
 
 class _Chain:
-    def __init__(self, fns, check=None):
+    def __init__(self, fns, check=None, cmp=None):
         self.fns = fns
         self.check = check
+        self.cmp = cmp
+
+    def __call__(self, *, cmp=None, **kwargs):
+        if kwargs:
+            names = ", ".join(sorted(kwargs))
+            raise TypeError(f"arrow: unsupported option(s): {names}")
+        return _Chain(self.fns, self.check, cmp if cmp is not None else self.cmp)
 
     def __rshift__(self, other):
         if isinstance(other, _Assert):
-            return _Chain(self.fns, other)
+            return _Chain(self.fns, other, self.cmp)
         if isinstance(other, _Chain):
-            return _Chain(self.fns + other.fns, other.check)
+            return _Chain(self.fns + other.fns, other.check, other.cmp or self.cmp)
         return NotImplemented
 
     def __or__(self, other):
         return self.__rshift__(other)
 
 
-def arrow(fn=None, *_, **__):
-    return _Chain([fn])
+def arrow(fn=None, *_, cmp=None, **kwargs):
+    return _Chain([fn], cmp=cmp)(**kwargs)
 
 
 def assert_(*expected, message=None):
@@ -108,5 +115,10 @@ class _EvalArrowInput:
         expected = list(chain.check.expected) if chain.check is not None else None
         if expected is not None:
             suffix = f" ({chain.check.message})" if chain.check.message else ""
-            assert actual == expected, f"arrow: expected {expected} but got {actual}{suffix}"
+            matches = actual == expected
+            if chain.cmp is not None:
+                matches = len(actual) == len(expected) and all(
+                    chain.cmp(value, wanted) for value, wanted in zip(actual, expected)
+                )
+            assert matches, f"arrow: expected {expected} but got {actual}{suffix}"
         return actual

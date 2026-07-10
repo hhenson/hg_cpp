@@ -1473,20 +1473,34 @@ class _GraphFn:
     def __getitem__(self, item):
         # g[str] pins the graph's typevar-defaulted params (hgraph's
         # DEFAULT[SCALAR_1] pattern): params whose default is a typevar
-        # sentinel receive the subscript items in declaration order.
+        # sentinel receive the subscript items in declaration order. Slice
+        # syntax (g[TIME_SERIES_TYPE: TS[int]]) resolves annotated typevars.
         from ._types import _TypeVarSentinel
 
         items = item if isinstance(item, tuple) else (item,)
+        resolved_types = {
+            value.start: value.stop
+            for value in items
+            if isinstance(value, slice) and isinstance(value.start, _TypeVarSentinel)
+        }
+        scalar_items = [value for value in items if not isinstance(value, slice)]
         pinned, index = {}, 0
         for name, param in self.signature.parameters.items():
-            if isinstance(param.default, _TypeVarSentinel) and index < len(items):
-                pinned[name] = items[index]
+            if isinstance(param.default, _TypeVarSentinel) and index < len(scalar_items):
+                pinned[name] = scalar_items[index]
                 index += 1
         import functools
 
         wrapper = functools.partial(self, **pinned)
         wrapper.__name__ = self.__name__
-        wrapper.__signature__ = self.signature
+        parameters = [
+            param.replace(annotation=resolved_types.get(param.annotation, param.annotation))
+            for param in self.signature.parameters.values()
+        ]
+        return_annotation = resolved_types.get(self.signature.return_annotation,
+                                               self.signature.return_annotation)
+        wrapper.__signature__ = self.signature.replace(parameters=parameters,
+                                                       return_annotation=return_annotation)
         return wrapper
 
     def __call__(self, *args, **kwargs):
@@ -1717,6 +1731,10 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                 # SHORTER dict types a variadic collection - inference per
                 # input applies then.
                 annotation = list(resolution_dict.values())[i]
+            from ._types import _GenericTsExpr
+            if isinstance(annotation, _GenericTsExpr):
+                samples = series if isinstance(series, (list, tuple)) else [series]
+                annotation = _infer_ts_type(samples)
             import types as _pytypes
             import typing as _typing
             scalar_annotation = (

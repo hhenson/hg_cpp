@@ -9,4 +9,4 @@ Conventions:
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "wip: ported file whose burn-down is in progress (excluded from the gate)")
+    config.addinivalue_line("markers", "smoke: core operator compatibility coverage")
