@@ -26,7 +26,7 @@ install(TARGETS _hgraph
     RUNTIME DESTINATION .
 )
 
-foreach(_hgraph_py_test IN ITEMS test_bridge test_hgraph_api)
+foreach(_hgraph_py_test IN ITEMS test_bridge test_hgraph_api test_python_authoring)
     add_test(
         NAME hgraph_python_${_hgraph_py_test}
         COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/${_hgraph_py_test}.py"

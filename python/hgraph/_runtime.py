@@ -651,6 +651,9 @@ class GlobalState:
 
     @staticmethod
     def instance():
+        runtime_state = getattr(_global_state_local, "runtime_state", None)
+        if runtime_state is not None:
+            return runtime_state
         state = getattr(_global_state_local, "state", None)
         if state is None:
             state = GlobalState()
@@ -697,6 +700,17 @@ class GlobalContext:
             self._previous = None
             self._entered = False
         return False
+
+
+def _push_runtime_global_state(state):
+    if getattr(_global_state_local, "runtime_state", None) is not None:
+        raise RuntimeError("a runtime GlobalState is already active on this thread")
+    _global_state_local.runtime_state = state
+
+
+def _pop_runtime_global_state():
+    if getattr(_global_state_local, "runtime_state", None) is not None:
+        del _global_state_local.runtime_state
 
 
 def set_record_replay_config(model):
@@ -786,7 +800,7 @@ class CLOCK:
     parameter with CLOCK."""
 
 
-_INJECTABLE_MARKERS = {STATE: "S", CLOCK: "c", SCHEDULER: "d"}
+_INJECTABLE_MARKERS = {STATE: "S", CLOCK: "c", SCHEDULER: "d", GlobalState: "g"}
 
 
 _MISSING = object()
@@ -804,8 +818,11 @@ class _PyNode:
         self.fn = fn
         self.has_output = has_output
         self._valid = valid
+        self._start_fn = None
+        self._stop_fn = None
         self.__name__ = fn.__name__
         sig = inspect.signature(fn)
+        self._signature = sig
         # Callers introspecting the NODE (eval_node's input typing) must see
         # the user function's signature, not _PyNode.__call__'s.
         self.__signature__ = sig
@@ -819,6 +836,27 @@ class _PyNode:
                     f"injectable parameter '{param.name}' of '{self.__name__}' must default to None"
                 )
 
+    def _set_lifecycle(self, phase, fn):
+        for param in inspect.signature(fn).parameters.values():
+            if param.annotation in _INJECTABLE_MARKERS:
+                if param.default is not None:
+                    raise TypeError(
+                        f"injectable parameter '{param.name}' of '{fn.__name__}' must default to None"
+                    )
+                continue
+            if isinstance(param.annotation, (_TsExpr, _ContextExpr)) or param.name == "_output":
+                raise TypeError(
+                    f"@{self.__name__}.{phase} supports wiring-time scalars and injectables only"
+                )
+        setattr(self, f"_{phase}_fn", fn)
+        return fn
+
+    def start(self, fn):
+        return self._set_lifecycle("start", fn)
+
+    def stop(self, fn):
+        return self._set_lifecycle("stop", fn)
+
     def __getitem__(self, item):
         # hgraph's node[TYPEVAR: TYPE] pre-resolution subscripts: types
         # resolve from the wired inputs here - accept and ignore.
@@ -828,16 +866,19 @@ class _PyNode:
         ref = _hgraph.node_ref(self.fn)
         layout, ports, scalars, keep_ref = [], [], [], []
         generic_bindings = {}   # typevar label -> resolved ts_type handle
-        supplied = iter(args)
+        bound = self._signature.bind_partial(*args, **kwargs)
+        scalar_values = {}
         for param in self._params:
             marker = _INJECTABLE_MARKERS.get(param.annotation)
             if marker is not None:
+                if param.name in bound.arguments:
+                    raise TypeError(f"{self.__name__}: injectable '{param.name}' cannot be supplied")
                 layout.append(marker)
                 continue
             if isinstance(param.annotation, _ContextExpr):
                 # Context-injected: resolved from the published stack by
                 # type (and name); never supplied positionally.
-                requirement = kwargs.pop(param.name, param.default)
+                requirement = bound.arguments.get(param.name, param.default)
                 name = None
                 required = False
                 if isinstance(requirement, _Required):
@@ -857,9 +898,11 @@ class _PyNode:
                 continue
             if param.name == "_output":
                 # hgraph's _output injection: the node's own output view.
+                if param.name in bound.arguments:
+                    raise TypeError(f"{self.__name__}: _output cannot be supplied")
                 layout.append("o")
                 continue
-            value = next(supplied, _MISSING)
+            value = bound.arguments.get(param.name, _MISSING)
             if value is _MISSING:
                 if param.default is inspect.Parameter.empty:
                     raise TypeError(f"{self.__name__}: missing argument '{param.name}'")
@@ -887,8 +930,31 @@ class _PyNode:
             else:
                 layout.append("s")
                 scalars.append(value)
+                scalar_values[param.name] = value
         packed = WiringPort(_hgraph.bundle_port(ports, keep_ref))
-        kwargs = {"fn": ref, "config": "".join(layout), "scalars": _hgraph.any_list(scalars)}
+        node_kwargs = {"fn": ref, "config": "".join(layout), "scalars": _hgraph.any_list(scalars)}
+        for phase in ("start", "stop"):
+            lifecycle_fn = getattr(self, f"_{phase}_fn")
+            lifecycle_layout, lifecycle_scalars = [], []
+            if lifecycle_fn is not None:
+                for param in inspect.signature(lifecycle_fn).parameters.values():
+                    marker = _INJECTABLE_MARKERS.get(param.annotation)
+                    if marker is not None:
+                        lifecycle_layout.append(marker)
+                        continue
+                    value = scalar_values.get(param.name, _MISSING)
+                    if value is _MISSING:
+                        if param.default is inspect.Parameter.empty:
+                            raise TypeError(
+                                f"{self.__name__}.{phase}: scalar '{param.name}' is not supplied by the node call"
+                            )
+                        value = param.default
+                    lifecycle_layout.append("s")
+                    lifecycle_scalars.append(value)
+            node_kwargs[f"{phase}_fn"] = _hgraph.node_ref(lifecycle_fn or self.fn)
+            node_kwargs[f"{phase}_enabled"] = lifecycle_fn is not None
+            node_kwargs[f"{phase}_config"] = "".join(lifecycle_layout)
+            node_kwargs[f"{phase}_scalars"] = _hgraph.any_list(lifecycle_scalars)
         if self.has_output:
             out_tp = self._out_tp
             if isinstance(out_tp, _GenericTsExpr):
@@ -900,8 +966,8 @@ class _PyNode:
                     out_tp = _TsExpr(handle, f"resolved[{out_tp!r}]")
             if not isinstance(out_tp, _TsExpr):
                 raise TypeError(f"@compute_node '{self.__name__}' needs a TS[...] return annotation")
-            return wire("__py_compute", packed, output_type=out_tp, **kwargs)
-        return wire("__py_sink", packed, **kwargs)
+            return wire("__py_compute", packed, output_type=out_tp, **node_kwargs)
+        return wire("__py_sink", packed, **node_kwargs)
 
 
 def compute_node(fn=None, *, valid=None, **_ignored):
@@ -913,8 +979,10 @@ def compute_node(fn=None, *, valid=None, **_ignored):
     return _PyNode(fn, has_output=True, valid=valid)
 
 
-def sink_node(fn):
-    return _PyNode(fn, has_output=False)
+def sink_node(fn=None, *, valid=None, **_ignored):
+    if fn is None:
+        return lambda f: _PyNode(f, has_output=False, valid=valid)
+    return _PyNode(fn, has_output=False, valid=valid)
 
 
 class _Generator:
@@ -1071,14 +1139,15 @@ def to_graph(stub, out, path=""):
     _hgraph.adaptor_to_graph(_current_wiring(), stub.descriptor, path, out=_unwrap(out))
 
 
-def register_adaptor(path, implementation):
+def register_adaptor(path, implementation, **kwargs):
     """Bind an @adaptor_impl to ``path`` (hgraph's shape)."""
     if not isinstance(implementation, _ServiceImpl):
         raise WiringError("register_adaptor requires an @adaptor_impl-decorated implementation")
     if len(implementation.interfaces) > 1:
         raise WiringError("multi-interface adaptor implementations are not supported from Python yet")
     stub = implementation.interfaces[0]
-    _hgraph.register_adaptor_impl(_current_wiring(), stub.descriptor, path, _wrap_graph_fn(implementation.fn))
+    impl_fn = _bind_registered_impl(implementation, path, kwargs)
+    _hgraph.register_adaptor_impl(_current_wiring(), stub.descriptor, path, _wrap_graph_fn(impl_fn))
 
 
 def adaptor_impl(fn=None, *, interfaces=None):
@@ -1167,6 +1236,63 @@ class _ServiceInputs:
         self.ts = ts
 
 
+def _bind_registered_impl(implementation, path, config):
+    """Bind path/config while leaving only native service ports in the signature."""
+    impl_fn = implementation.fn
+    target = getattr(impl_fn, "fn", impl_fn)
+    signature = inspect.signature(target)
+    parameters = list(signature.parameters.values())
+    expected_ports = 0 if len(implementation.interfaces) > 1 else _FLAVOUR_TS_ARITY[
+        implementation.interfaces[0].flavour
+    ]
+    port_parameters = [
+        param for param in parameters
+        if param.name != "path"
+        and (isinstance(param.annotation, _TsExpr) or param.annotation is inspect.Signature.empty)
+    ]
+    if len(port_parameters) != expected_ports:
+        raise WiringError(
+            f"implementation '{implementation.__name__}' requires {expected_ports} native service input(s)"
+        )
+    port_names = {param.name for param in port_parameters}
+    scalar_parameters = [
+        param for param in parameters if param.name != "path" and param.name not in port_names
+    ]
+    scalar_names = {param.name for param in scalar_parameters}
+    unknown = set(config) - scalar_names
+    if unknown:
+        raise WiringError(
+            f"implementation '{implementation.__name__}' has no scalar configuration {sorted(unknown)!r}"
+        )
+    for param in scalar_parameters:
+        if param.name not in config and param.default is inspect.Parameter.empty:
+            raise WiringError(
+                f"implementation '{implementation.__name__}' requires scalar configuration '{param.name}'"
+            )
+
+    def bound(*ports):
+        if len(ports) != len(port_parameters):
+            raise WiringError(
+                f"implementation '{implementation.__name__}' received {len(ports)} native service inputs"
+            )
+        arguments = dict(zip((param.name for param in port_parameters), ports))
+        if any(param.name == "path" for param in parameters):
+            arguments["path"] = path
+        for param in scalar_parameters:
+            arguments[param.name] = config.get(param.name, param.default)
+        return impl_fn(**arguments)
+
+    bound.__name__ = implementation.__name__
+    bound.__signature__ = inspect.Signature(
+        parameters=[
+            param.replace(kind=inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            for param in port_parameters
+        ],
+        return_annotation=signature.return_annotation,
+    )
+    return bound
+
+
 def get_service_inputs(path, stub):
     """hgraph parity: the interface's inputs inside a service impl."""
     return _ServiceInputs(impl_input(stub, path))
@@ -1196,19 +1322,7 @@ def register_service(path, implementation, **kwargs):
     takes no wired inputs and uses impl_input/impl_output per interface."""
     if not isinstance(implementation, _ServiceImpl):
         raise WiringError("register_service requires an @service_impl-decorated implementation")
-    if kwargs:
-        raise WiringError("implementation kwargs are not supported yet")
-    impl_fn = implementation.fn
-    target = getattr(impl_fn, "fn", impl_fn)
-    params = list(inspect.signature(target).parameters.values())
-    if params and params[0].name == "path":
-        # hgraph parity: the registered path is INJECTED into the impl.
-        bound_fn, bound_path = impl_fn, path
-
-        def bound():
-            return bound_fn(bound_path)
-
-        impl_fn = bound   # a fresh object per registration: unique identity per path
+    impl_fn = _bind_registered_impl(implementation, path, kwargs)
     if len(implementation.interfaces) > 1:
         _hgraph.register_multi_service_impl(
             _current_wiring(), [stub.descriptor for stub in implementation.interfaces], path,
@@ -1343,7 +1457,11 @@ class _GraphFn:
         return wrapper
 
     def __call__(self, *args, **kwargs):
-        result = self.fn(*args, **kwargs)
+        bound = self.signature.bind_partial(*args, **kwargs)
+        for param in self.signature.parameters.values():
+            if param.annotation is GlobalState and param.name not in bound.arguments:
+                bound.arguments[param.name] = GlobalState.instance()
+        result = self.fn(*bound.args, **bound.kwargs)
         if isinstance(result, dict) and result and all(isinstance(v, WiringPort) for v in result.values()):
             # hgraph parity: a dict literal of ports returned from a @graph
             # coerces to its annotated TSB output (a structural bundle when
@@ -1475,6 +1593,7 @@ def run_graph(graph_fn, *args, start_time=None, end_time=None,
         run = w.run(start_time=start_time, end_time=end_time,
                     realtime=run_mode == EvaluationMode.REAL_TIME)
     finally:
+        w._release_seed_context()
         _wiring_stack.pop()
     if out is None:
         return None
@@ -1525,6 +1644,24 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         params = []
     params = [p for p in params
               if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
+    param_names = {p.name for p in params}
+    named_series = {k: v for k, v in kwargs.items() if k in param_names and isinstance(v, (list, tuple))}
+    for k in named_series:
+        kwargs.pop(k)
+    if named_series:
+        by_name = {p.name: i for i, p in enumerate(params)}
+        extended = list(inputs) + [None] * (max(by_name[k] for k in named_series) + 1 - len(inputs))
+        for k, series in named_series.items():
+            extended[by_name[k]] = series
+        # Scalar-supplied kwargs whose position got padded move into the
+        # positional slot; otherwise None would be wired over the kwarg.
+        for k in list(kwargs):
+            index = by_name.get(k)
+            if index is not None and index < len(extended) and extended[index] is None:
+                extended[index] = kwargs.pop(k)
+        return eval_node(fn, *extended, output_type=output_type, resolution_dict=resolution_dict,
+                         __start_time__=__start_time__, __end_time__=__end_time__,
+                         __scalars__=__scalars__, __elide__=__elide__, **kwargs)
     w = _hgraph.Wiring(GlobalState.instance()._impl)
     _wiring_stack.append(w)
     try:
@@ -1579,7 +1716,6 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         # hgraph parity: keyword arguments naming the function's parameters
         # are INPUT SERIES (eval_node(g, a=[...], b=[...])); the rest flow to
         # the node as scalars.
-        param_names = {p.name for p in params}
         if not params:
             # OPERATOR functions have no python signature: named list kwargs
             # are input series wired as keyword ports.
@@ -1599,23 +1735,6 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                 named_ports[k] = WiringPort(src)
                 inputs = (*inputs, series)   # count toward the run length
             kwargs.update(named_ports)
-        named_series = {k: v for k, v in kwargs.items() if k in param_names and isinstance(v, (list, tuple))}
-        for k in named_series: kwargs.pop(k)
-        if named_series:
-            by_name = {p.name: i for i, p in enumerate(params)}
-            extended = list(inputs) + [None] * (max(by_name[k] for k in named_series) + 1 - len(inputs))
-            for k, series in named_series.items():
-                extended[by_name[k]] = series
-            # Scalar-supplied kwargs whose position got padded move INTO the
-            # positional slot (a plain value const-lifts there); otherwise the
-            # None padding would wire a const None over the kwarg.
-            for k in list(kwargs):
-                index = by_name.get(k)
-                if index is not None and index < len(extended) and extended[index] is None:
-                    extended[index] = kwargs.pop(k)
-            return eval_node(fn, *extended, output_type=output_type, resolution_dict=resolution_dict,
-                             __start_time__=__start_time__, __end_time__=__end_time__,
-                             __scalars__=__scalars__, __elide__=__elide__, **kwargs)
         scalars.update(kwargs)   # hgraph parity: extra kwargs flow to the node
         out = fn(*ports, **scalars)
         # Replay values convert AFTER wiring: hgraph surfaces wiring errors
@@ -1648,6 +1767,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         w.wire("__harness_record", (record_port, "eval_node::out"), record_kwargs)
         run = w.run(start_time=__start_time__, end_time=__end_time__)
     finally:
+        w._release_seed_context()
         _wiring_stack.pop()
     if __elide__:
         # hgraph parity: elide keeps only the ticked cycles, in order (the

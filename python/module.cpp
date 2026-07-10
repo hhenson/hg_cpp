@@ -465,6 +465,8 @@ namespace
             fb.bound = true;
         }
 
+        void release_seed_context() noexcept { seed_context.reset(); }
+
       private:
         void ensure_open() const
         {
@@ -633,6 +635,21 @@ namespace
     struct PyTsGuard
     {
         bool alive{true};
+    };
+
+    struct PyRuntimeGlobalState
+    {
+        GlobalStateView            state;
+        std::shared_ptr<PyTsGuard> guard;
+
+        [[nodiscard]] GlobalStateView checked() const
+        {
+            if (guard == nullptr || !guard->alive)
+            {
+                throw std::logic_error("a GlobalState view was accessed outside its node's evaluation");
+            }
+            return state;
+        }
     };
 
     /**
@@ -855,6 +872,7 @@ namespace
                                         State<PyStateRef> &state, NodeScheduler scheduler, DateTime now,
                                         nb::list &call_args, nb::list &context_values,
                                         const std::shared_ptr<PyTsGuard> &guard,
+                                        const nb::object &runtime_global_state,
                                         const TSOutputView *output = nullptr)   // borrowed for the call only
     {
         auto        bundle       = args.as_bundle();
@@ -902,16 +920,46 @@ namespace
                 }
                 case 'c': call_args.append(nb::cast(PyEvalClock{now})); break;
                 case 'd': call_args.append(nb::cast(PyScheduler{scheduler})); break;
+                case 'g': call_args.append(runtime_global_state); break;
                 default: throw std::logic_error("python node: unknown layout marker");
             }
         }
         return true;
     }
 
+    void py_assemble_lifecycle_args(std::string_view layout, const ValueView &scalars,
+                                    State<PyStateRef> &state, NodeScheduler scheduler, DateTime now,
+                                    const nb::object &runtime_global_state, nb::list &call_args)
+    {
+        std::size_t scalar_index = 0;
+        auto scalar_list = scalars.valid() ? std::optional{scalars.as_list()} : std::nullopt;
+        for (const char kind : layout)
+        {
+            switch (kind)
+            {
+                case 's':
+                    if (!scalar_list.has_value())
+                    {
+                        throw std::logic_error("python lifecycle callback: missing scalars value");
+                    }
+                    call_args.append(value_to_py((*scalar_list)[scalar_index++].as_any().get()));
+                    break;
+                case 'S': call_args.append(py_state_namespace(state)); break;
+                case 'c': call_args.append(nb::cast(PyEvalClock{now})); break;
+                case 'd': call_args.append(nb::cast(PyScheduler{scheduler})); break;
+                case 'g': call_args.append(runtime_global_state); break;
+                default: throw std::logic_error("python lifecycle callback: unsupported layout marker");
+            }
+        }
+    }
+
     /** Enter context-manager values (hgraph's context semantics), call, exit in reverse. */
     [[nodiscard]] nb::object py_call_with_contexts(const nb::object &fn, nb::list &call_args,
-                                                   nb::list &context_values)
+                                                   nb::list &context_values,
+                                                   const nb::object &runtime_global_state)
     {
+        nb::object runtime = nb::module_::import_("hgraph._runtime");
+        runtime.attr("_push_runtime_global_state")(runtime_global_state);
         std::vector<nb::object> entered;
         entered.reserve(nb::len(context_values));
         auto unwind = UnwindCleanupGuard([&] {
@@ -919,6 +967,7 @@ namespace
             {
                 (*it).attr("__exit__")(nb::none(), nb::none(), nb::none());
             }
+            runtime.attr("_pop_runtime_global_state")();
         });
         for (nb::handle value : context_values)
         {
@@ -930,65 +979,160 @@ namespace
             }
         }
         nb::object result = fn(*nb::tuple(call_args));
-        unwind.release();
-        for (auto it = entered.rbegin(); it != entered.rend(); ++it)
+        while (!entered.empty())
         {
-            (*it).attr("__exit__")(nb::none(), nb::none(), nb::none());
+            nb::object holder = std::move(entered.back());
+            entered.pop_back();
+            holder.attr("__exit__")(nb::none(), nb::none(), nb::none());
         }
+        runtime.attr("_pop_runtime_global_state")();
+        unwind.release();
         return result;
+    }
+
+    void py_call_lifecycle(const PyNodeRef &fn, bool enabled, std::string_view config, const ValueView &scalars,
+                           State<PyStateRef> &state, NodeScheduler scheduler, DateTime now,
+                           GlobalStateView global_state)
+    {
+        if (!enabled) { return; }
+        nb::gil_scoped_acquire gil;
+        nb::list call_args;
+        nb::list context_values;
+        auto guard = std::make_shared<PyTsGuard>();
+        auto invalid = UnwindCleanupGuard([&] { guard->alive = false; });
+        nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
+        py_assemble_lifecycle_args(config, scalars, state, scheduler, now, runtime_state, call_args);
+        (void)py_call_with_contexts(fn.record->fn, call_args, context_values, runtime_state);
+        invalid.release();
+        guard->alive = false;
     }
 
     struct py_compute_node
     {
         static constexpr auto name = "__py_compute";
 
+        static void start(Scalar<"start_fn", PyNodeRef> fn, Scalar<"start_enabled", Bool> enabled,
+                          Scalar<"start_config", Str> config,
+                          Scalar<"start_scalars", ScalarVar<"SSV">> scalars,
+                          State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
+                          GlobalStateView global_state)
+        {
+            py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
+                              global_state);
+        }
+
         static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked> args, Scalar<"fn", PyNodeRef> fn,
                          Scalar<"config", Str> config, Scalar<"scalars", ScalarVar<"SV">> scalars,
-                         State<PyStateRef> state, NodeScheduler scheduler, DateTime now, Out<TsVar<"O">> out)
+                         Scalar<"start_fn", PyNodeRef> start_fn, Scalar<"start_enabled", Bool> start_enabled,
+                         Scalar<"start_config", Str> start_config,
+                         Scalar<"start_scalars", ScalarVar<"SSV">> start_scalars,
+                         Scalar<"stop_fn", PyNodeRef> stop_fn, Scalar<"stop_enabled", Bool> stop_enabled,
+                         Scalar<"stop_config", Str> stop_config,
+                         Scalar<"stop_scalars", ScalarVar<"XSV">> stop_scalars,
+                         State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
+                         GlobalStateView global_state, Out<TsVar<"O">> out)
         {
+            static_cast<void>(start_fn);
+            static_cast<void>(start_enabled);
+            static_cast<void>(start_config);
+            static_cast<void>(start_scalars);
+            static_cast<void>(stop_fn);
+            static_cast<void>(stop_enabled);
+            static_cast<void>(stop_config);
+            static_cast<void>(stop_scalars);
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
             auto     guard   = std::make_shared<PyTsGuard>();
             auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
             const auto &out_view = static_cast<const TSOutputView &>(out);
+            nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
             if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args,
-                                  context_values, guard, &out_view))
+                                  context_values, guard, runtime_state, &out_view))
             {
                 return;
             }
-            apply_py_result(py_call_with_contexts(fn.value().record->fn, call_args, context_values), out);
+            apply_py_result(
+                py_call_with_contexts(fn.value().record->fn, call_args, context_values, runtime_state), out);
             invalid.release();
             guard->alive = false;
         }
 
-        static void stop(State<PyStateRef> state) { py_release_state(state); }
+        static void stop(Scalar<"stop_fn", PyNodeRef> fn, Scalar<"stop_enabled", Bool> enabled,
+                         Scalar<"stop_config", Str> config,
+                         Scalar<"stop_scalars", ScalarVar<"XSV">> scalars,
+                         State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
+                         GlobalStateView global_state)
+        {
+            auto release = UnwindCleanupGuard([&] { py_release_state(state); });
+            py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
+                              global_state);
+            release.release();
+            py_release_state(state);
+        }
     };
 
     struct py_sink_node
     {
         static constexpr auto name = "__py_sink";
 
+        static void start(Scalar<"start_fn", PyNodeRef> fn, Scalar<"start_enabled", Bool> enabled,
+                          Scalar<"start_config", Str> config,
+                          Scalar<"start_scalars", ScalarVar<"SSV">> scalars,
+                          State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
+                          GlobalStateView global_state)
+        {
+            py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
+                              global_state);
+        }
+
         static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked> args, Scalar<"fn", PyNodeRef> fn,
                          Scalar<"config", Str> config, Scalar<"scalars", ScalarVar<"SV">> scalars,
-                         State<PyStateRef> state, NodeScheduler scheduler, DateTime now)
+                         Scalar<"start_fn", PyNodeRef> start_fn, Scalar<"start_enabled", Bool> start_enabled,
+                         Scalar<"start_config", Str> start_config,
+                         Scalar<"start_scalars", ScalarVar<"SSV">> start_scalars,
+                         Scalar<"stop_fn", PyNodeRef> stop_fn, Scalar<"stop_enabled", Bool> stop_enabled,
+                         Scalar<"stop_config", Str> stop_config,
+                         Scalar<"stop_scalars", ScalarVar<"XSV">> stop_scalars,
+                         State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
+                         GlobalStateView global_state)
         {
+            static_cast<void>(start_fn);
+            static_cast<void>(start_enabled);
+            static_cast<void>(start_config);
+            static_cast<void>(start_scalars);
+            static_cast<void>(stop_fn);
+            static_cast<void>(stop_enabled);
+            static_cast<void>(stop_config);
+            static_cast<void>(stop_scalars);
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
             auto     guard   = std::make_shared<PyTsGuard>();
             auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
+            nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
             if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args,
-                                  context_values, guard))
+                                  context_values, guard, runtime_state))
             {
                 return;
             }
-            (void)py_call_with_contexts(fn.value().record->fn, call_args, context_values);
+            (void)py_call_with_contexts(fn.value().record->fn, call_args, context_values, runtime_state);
             invalid.release();
             guard->alive = false;
         }
 
-        static void stop(State<PyStateRef> state) { py_release_state(state); }
+        static void stop(Scalar<"stop_fn", PyNodeRef> fn, Scalar<"stop_enabled", Bool> enabled,
+                         Scalar<"stop_config", Str> config,
+                         Scalar<"stop_scalars", ScalarVar<"XSV">> scalars,
+                         State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
+                         GlobalStateView global_state)
+        {
+            auto release = UnwindCleanupGuard([&] { py_release_state(state); });
+            py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
+                              global_state);
+            release.release();
+            py_release_state(state);
+        }
     };
 
     /** Heap iterator state (pointer-in-State, the frame-backend pattern). */
@@ -996,6 +1140,7 @@ namespace
     {
         nb::object iterator;
         nb::object pending;      ///< the value yielded for the SCHEDULED time
+        std::optional<DateTime> last_time{};
         bool       exhausted{false};
     };
 
@@ -1018,8 +1163,18 @@ namespace
             return;
         }
         auto pair = nb::cast<nb::tuple>(next);
+        if (nb::len(pair) != 2)
+        {
+            throw nb::value_error("a Python generator must yield (datetime, value) pairs");
+        }
+        const DateTime when = nb::cast<DateTime>(pair[0]);
+        if (handle.last_time.has_value() && when <= *handle.last_time)
+        {
+            throw std::invalid_argument("Python generator output times must be strictly increasing");
+        }
+        handle.last_time = when;
         handle.pending = nb::object(pair[1]);
-        sched.schedule(nb::cast<DateTime>(pair[0]));
+        sched.schedule(when);
     }
 
     struct py_generator_node
@@ -1056,9 +1211,21 @@ namespace
     };
 
     struct op_py_compute : Operator<"__py_compute", In<"args", TsVar<"A">>, Scalar<"fn", PyNodeRef>,
-                                     Scalar<"config", Str>, Scalar<"scalars", ScalarVar<"SV">>, Out<TsVar<"O">>> {};
+                                     Scalar<"config", Str>, Scalar<"scalars", ScalarVar<"SV">>,
+                                     Scalar<"start_fn", PyNodeRef>, Scalar<"start_enabled", Bool>,
+                                     Scalar<"start_config", Str>,
+                                     Scalar<"start_scalars", ScalarVar<"SSV">>,
+                                     Scalar<"stop_fn", PyNodeRef>, Scalar<"stop_enabled", Bool>,
+                                     Scalar<"stop_config", Str>,
+                                     Scalar<"stop_scalars", ScalarVar<"XSV">>, Out<TsVar<"O">>> {};
     struct op_py_sink : Operator<"__py_sink", In<"args", TsVar<"A">>, Scalar<"fn", PyNodeRef>,
-                                 Scalar<"config", Str>, Scalar<"scalars", ScalarVar<"SV">>> {};
+                                 Scalar<"config", Str>, Scalar<"scalars", ScalarVar<"SV">>,
+                                 Scalar<"start_fn", PyNodeRef>, Scalar<"start_enabled", Bool>,
+                                 Scalar<"start_config", Str>,
+                                 Scalar<"start_scalars", ScalarVar<"SSV">>,
+                                 Scalar<"stop_fn", PyNodeRef>, Scalar<"stop_enabled", Bool>,
+                                 Scalar<"stop_config", Str>,
+                                 Scalar<"stop_scalars", ScalarVar<"XSV">>> {};
     struct op_py_generator : Operator<"__py_generator", Scalar<"fn", PyNodeRef>, Out<TsVar<"O">>> {};
     struct harness_replay
     {
@@ -1770,6 +1937,35 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyOutput>(m, "OutputView")
         .def_prop_ro("valid", &PyOutput::valid)
         .def_prop_ro("value", &PyOutput::value);
+    nb::class_<PyRuntimeGlobalState>(m, "RuntimeGlobalState")
+        .def("__len__", [](const PyRuntimeGlobalState &self) { return self.checked().size(); })
+        .def("__contains__", [](const PyRuntimeGlobalState &self, const std::string &key) {
+            return self.checked().contains(key);
+        })
+        .def("__getitem__", [](const PyRuntimeGlobalState &self, const std::string &key) -> nb::object {
+            const GlobalStateView state = self.checked();
+            if (!state.contains(key)) { throw nb::key_error(key.c_str()); }
+            return value_to_py(state.get(key));
+        })
+        .def("get", [](const PyRuntimeGlobalState &self, const std::string &key,
+                       nb::object fallback) -> nb::object {
+            const GlobalStateView state = self.checked();
+            return state.contains(key) ? value_to_py(state.get(key)) : fallback;
+        }, nb::arg("key"), nb::arg("default") = nb::none())
+        .def("__setitem__", [](const PyRuntimeGlobalState &self, const std::string &key, nb::handle value) {
+            self.checked().set(key, py_to_value(value));
+        })
+        .def("__delitem__", [](const PyRuntimeGlobalState &self, const std::string &key) {
+            if (!self.checked().erase(key)) { throw nb::key_error(key.c_str()); }
+        })
+        .def("keys", [](const PyRuntimeGlobalState &self) {
+            nb::list result;
+            for (const ValueView key : self.checked().as_value().view().as_map().keys())
+            {
+                result.append(value_to_py(key));
+            }
+            return result;
+        });
     nb::class_<PyTimeSeries>(m, "TimeSeries")
         .def_prop_ro("value", &PyTimeSeries::value)
         .def_prop_ro("_kind", [](const PyTimeSeries &self) { return static_cast<int>(self.kind()); })
@@ -2086,6 +2282,7 @@ NB_MODULE(_hgraph, m)
              nb::arg("ts_type") = nb::none())
         .def("feedback", &PyWiring::feedback, nb::arg("ts_type"), nb::arg("initial") = nb::none())
         .def("feedback_bind", &PyWiring::feedback_bind, nb::arg("feedback"), nb::arg("port"))
+        .def("_release_seed_context", &PyWiring::release_seed_context)
         .def("run", &PyWiring::run, nb::arg("start_time") = nb::none(), nb::arg("end_time") = nb::none(),
              nb::arg("realtime") = false)
         .def("push_source", &PyWiring::push_source, nb::arg("ts_type"), nb::arg("conflate") = false,

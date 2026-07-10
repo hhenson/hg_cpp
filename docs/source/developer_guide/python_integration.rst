@@ -156,6 +156,36 @@ the ``_hgraph`` bridge module (built from ``python/module.cpp``):
 - **Value conversion**: all atoms (incl. date/time/bytes) + recursive
   containers both ways; ``evaluate_const`` exposes the P1 kernel.
 
+Python Authoring Compatibility Contract
+---------------------------------------
+
+Python remains a supported authoring language over the C++ runtime.  The bridge
+must keep these common workflows interoperable with native operators and graph
+components:
+
+- ``@graph`` composition with positional/keyword scalars, nested Python graphs,
+  C++ operators, and Python runtime nodes in either direction;
+- ``@compute_node`` and ``@sink_node`` with any practical arity, positional or
+  keyword binding, scalar defaults, validity gating, optional inputs, collection
+  deltas, ``STATE``/``CLOCK``/``SCHEDULER``/``GlobalState`` injectables, and
+  Python ``start``/``stop`` lifecycle callbacks;
+- ``@generator`` sources with captured scalar arguments, distinct state per
+  wiring call, empty generators, exception propagation, and strictly increasing
+  absolute output times;
+- reference, subscription, and request/reply services implemented in Python,
+  including path injection, scalar implementation configuration, and the
+  existing multi-interface input/output API;
+- Python adaptors and push sources on the sanctioned graph-thread/cross-thread
+  boundaries.
+
+The compatibility gate intentionally does not recreate every Python-only
+runtime mechanism.  ``REF`` remains an opaque value without ``.output``;
+Python lifecycle callbacks are limited to wiring-time scalars and injectables;
+service interfaces use one time-series request/subscription argument; and
+advanced generic service resolution, custom engine control, or specialized
+threading policies should be implemented in C++ and exposed through the bridge.
+These are deliberate restrictions, not silent fallbacks.
+
 Recorded divergences / gaps (the morning-summary list):
 
 - REF is **value-only** (Howard's ruling 2026-07-05): references are

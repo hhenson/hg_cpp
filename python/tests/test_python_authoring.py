@@ -1,0 +1,374 @@
+"""Compatibility gate for Python-authored graphs over the C++ runtime."""
+
+import datetime
+import threading
+import time
+
+import hgraph as hg
+from hgraph import TS, TSD, TSS, graph, eval_node, run_graph
+
+
+def check(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def expect_raises(exc_type, fn, message=None):
+    try:
+        fn()
+    except exc_type as exc:
+        if message is not None:
+            check(message in str(exc), f"expected {message!r} in {exc!r}")
+        return exc
+    raise AssertionError(f"expected {exc_type.__name__}")
+
+
+def test_compute_nodes_mix_with_cpp_and_bind_keywords():
+    @hg.compute_node
+    def notional(price: TS[float], quantity: TS[int], scale: float = 1.0) -> TS[float]:
+        return price.value * quantity.value * scale
+
+    @graph
+    def app(price: TS[float], quantity: TS[int]) -> TS[float]:
+        python_value = notional(quantity=quantity, price=price, scale=2.0)
+        return python_value + hg.const(1.0, tp=TS[float])
+
+    check(eval_node(app, [2.5, 4.0], [10, 3]) == [51.0, 25.0], "mixed compute pipeline")
+
+
+def test_compute_validity_optional_inputs_and_no_tick():
+    @hg.compute_node(valid=("trigger",))
+    def sample(trigger: TS[int], optional: TS[int] = None) -> TS[int]:
+        if trigger.value < 0:
+            return None
+        return trigger.value + (optional.value if optional.valid else 0)
+
+    @graph
+    def app(trigger: TS[int], optional: TS[int]) -> TS[int]:
+        return sample(trigger, optional)
+
+    check(eval_node(app, [1, -1, 3], [None, 10, None]) == [1, None, 13], "validity gating")
+
+    @graph
+    def absent(trigger: TS[int]) -> TS[int]:
+        return sample(trigger)
+
+    check(eval_node(absent, [2]) == [2], "optional unwired input")
+
+
+def test_compute_state_clock_scheduler_and_output_view():
+    @hg.compute_node
+    def delayed_delta(
+        value: TS[int],
+        state: hg.STATE = None,
+        clock: hg.CLOCK = None,
+        scheduler: hg.SCHEDULER = None,
+        _output=None,
+    ) -> TS[int]:
+        if getattr(state, "pending", None) is not None:
+            pending, state.pending = state.pending, None
+            return pending
+        prior = _output.value if _output.valid else 0
+        state.pending = value.value - prior
+        state.started_at = getattr(state, "started_at", clock.evaluation_time)
+        scheduler.schedule_delta(hg.MIN_TD)
+        return value.value
+
+    check(eval_node(delayed_delta, [4]) == [4, 4], "state/scheduler/output injection")
+
+
+def test_compute_and_sink_lifecycle_callbacks():
+    events = []
+
+    @hg.compute_node
+    def tracked(value: TS[int], label: str, state: hg.STATE = None) -> TS[int]:
+        events.append(("eval", label, value.value, state.bias))
+        return value.value + state.bias
+
+    @tracked.start
+    def tracked_start(label: str, state: hg.STATE = None, clock: hg.CLOCK = None):
+        state.bias = 10
+        events.append(("start", label, clock.evaluation_time))
+
+    @tracked.stop
+    def tracked_stop(label: str, state: hg.STATE = None):
+        events.append(("stop", label, state.bias))
+
+    seen = []
+    sink_events = []
+
+    @hg.sink_node
+    def collect(value: TS[int], label: str):
+        seen.append((label, value.value))
+
+    @collect.start
+    def collect_start(label: str):
+        sink_events.append(("start", label))
+
+    @collect.stop
+    def collect_stop(label: str):
+        sink_events.append(("stop", label))
+
+    @graph
+    def app(value: TS[int]) -> TS[int]:
+        out = tracked(value, "node")
+        collect(out, label="sink")
+        return out
+
+    check(eval_node(app, [1, 2]) == [11, 12], "lifecycle output")
+    check(seen == [("sink", 11), ("sink", 12)], f"sink calls: {seen}")
+    check(sink_events == [("start", "sink"), ("stop", "sink")], f"sink lifecycle: {sink_events}")
+    check(events[0][0] == "start" and events[-1][0] == "stop", f"lifecycle order: {events}")
+
+
+def test_zero_argument_lifecycle_callbacks():
+    events = []
+
+    @hg.compute_node
+    def passthrough(value: TS[int]) -> TS[int]:
+        return value.value
+
+    @passthrough.start
+    def start():
+        events.append("start")
+
+    @passthrough.stop
+    def stop():
+        events.append("stop")
+
+    check(eval_node(passthrough, [1]) == [1], "zero-argument lifecycle output")
+    check(events == ["start", "stop"], f"zero-argument lifecycle: {events}")
+
+
+def test_runtime_global_state_and_graph_seed_injection():
+    state = hg.GlobalState(offset=5)
+
+    @hg.compute_node
+    def apply_offset(value: TS[int], global_state: hg.GlobalState = None) -> TS[int]:
+        check(global_state is hg.GlobalState.instance(), "runtime state identity")
+        global_state["calls"] = global_state.get("calls", 0) + 1
+        return value.value + global_state["offset"]
+
+    @graph
+    def app(value: TS[int], global_state: hg.GlobalState = None) -> TS[int]:
+        check(global_state["offset"] == 5, "graph sees seed")
+        return apply_offset(value)
+
+    with hg.GlobalContext(state):
+        check(eval_node(app, [1, 2]) == [6, 7], "runtime global state")
+    check(state["calls"] == 2, "runtime state copied back")
+
+
+def test_wiring_failure_releases_global_context():
+    @graph
+    def invalid(lhs: TS[str], rhs: TS[str]) -> TS[str]:
+        return lhs - rhs
+
+    expect_raises(hg.WiringError, lambda: eval_node(invalid, ["a"], ["b"]))
+
+    @graph
+    def valid(value: TS[int]) -> TS[int]:
+        return value + 1
+
+    check(eval_node(valid, [1]) == [2], "wiring context released after failure")
+
+
+def test_collection_views_and_deltas_cross_both_directions():
+    @hg.compute_node(valid=("values",))
+    def increment_modified(values: TSD[str, TS[int]]) -> TSD[str, TS[int]]:
+        return {key: child.value + 1 for key, child in values.modified_items()}
+
+    @graph
+    def app(values: TSD[str, TS[int]]) -> TSD[str, TS[int]]:
+        return hg.map_("add_", increment_modified(values), hg.const(10, tp=TS[int]))
+
+    out = eval_node(app, [{"a": 1}, {"b": 2}, {"a": 4}])
+    check(out == [{"a": 12}, {"b": 13}, {"a": 15}], f"collection deltas: {out}")
+
+
+def test_sink_only_graph_returns_none():
+    seen = []
+
+    @hg.sink_node
+    def collect(value: TS[int], prefix: str = "v"):
+        seen.append(f"{prefix}:{value.value}")
+
+    @graph
+    def app(value: TS[int]) -> None:
+        collect(value=value, prefix="item")
+
+    check(eval_node(app, [1, 2]) is None, "sink graph result")
+    check(seen == ["item:1", "item:2"], f"sink graph: {seen}")
+
+
+def test_generators_capture_arguments_are_distinct_and_cleanup():
+    cleaned = []
+
+    @hg.generator
+    def sequence(start: int, *, count: int) -> TS[int]:
+        try:
+            for index in range(count):
+                yield hg.MIN_ST + index * hg.MIN_TD, start + index
+        finally:
+            cleaned.append(start)
+
+    @graph
+    def app() -> TS[int]:
+        return sequence(10, count=2) + sequence(100, count=2)
+
+    check([value for _, value in run_graph(app)] == [110, 112], "distinct generators")
+    check(cleaned == [10, 100], f"generator cleanup: {cleaned}")
+
+    @hg.generator
+    def empty() -> TS[int]:
+        if False:
+            yield hg.MIN_ST, 1
+
+    check(run_graph(empty) == [], "empty generator")
+
+
+def test_generator_rejects_duplicate_or_retrograde_times():
+    @hg.generator
+    def duplicate() -> TS[int]:
+        yield hg.MIN_ST, 1
+        yield hg.MIN_ST, 2
+
+    expect_raises(RuntimeError, lambda: run_graph(duplicate))
+
+    @hg.generator
+    def retrograde() -> TS[int]:
+        yield hg.MIN_ST + hg.MIN_TD, 1
+        yield hg.MIN_ST, 2
+
+    expect_raises(RuntimeError, lambda: run_graph(retrograde))
+
+    @hg.generator
+    def broken() -> TS[int]:
+        yield hg.MIN_ST, 1
+        raise ValueError("generator failed")
+
+    expect_raises(RuntimeError, lambda: run_graph(broken), "generator failed")
+
+
+def test_python_graphs_work_as_native_higher_order_functions():
+    @graph
+    def transform(value: TS[int]) -> TS[int]:
+        return value * 2 + 1
+
+    @graph
+    def app(values: TSD[str, TS[int]]) -> TSD[str, TS[int]]:
+        return hg.map_(transform, values)
+
+    check(eval_node(app, [{"a": 2}, {"b": 3}]) == [{"a": 5}, {"b": 7}], "Python WiredFn")
+
+
+def test_reference_service_path_and_scalar_configuration():
+    @hg.reference_service
+    def configured_value() -> TS[int]: ...
+
+    @hg.service_impl(interfaces=configured_value)
+    def configured_value_impl(path: str, base: int) -> TS[int]:
+        return hg.const(base + len(path), tp=TS[int])
+
+    @graph
+    def app(value: TS[int]) -> TS[int]:
+        hg.register_service("desk", configured_value_impl, base=40)
+        return value + hg.passive(configured_value(path="desk"))
+
+    check(eval_node(app, [1]) == [45], "configured reference service")
+
+
+def test_request_reply_service_path_and_scalar_configuration():
+    @hg.request_reply_service
+    def adjust(request: TS[int]) -> TS[int]: ...
+
+    @hg.service_impl(interfaces=adjust)
+    def adjust_impl(path: str, requests, increment: int) -> TSD[int, TS[int]]:
+        return hg.map_(lambda value: value + increment + len(path), requests)
+
+    @graph
+    def app(value: TS[int]) -> TS[int]:
+        hg.register_service("rr", adjust_impl, increment=3)
+        return adjust(value, path="rr")
+
+    out = eval_node(app, [5], __end_time__=hg.MIN_ST + 4 * hg.MIN_TD)
+    check(out == [None, 10], f"configured request/reply: {out}")
+
+
+def test_subscription_service_can_use_a_python_compute_node():
+    @hg.subscription_service
+    def quote(symbol: TS[str]) -> TS[int]: ...
+
+    @hg.compute_node
+    def quote_values(symbols: TSS[str]) -> TSD[str, TS[int]]:
+        return {symbol: len(symbol) for symbol in symbols.added()}
+
+    implementation = hg.service_impl(quote_values, interfaces=quote)
+
+    @graph
+    def app(symbol: TS[str]) -> TS[int]:
+        hg.register_service("quotes", implementation)
+        return quote(symbol, path="quotes")
+
+    out = eval_node(app, ["EURUSD"], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD)
+    check(out == [None, 6], f"subscription compute implementation: {out}")
+
+
+def test_adaptor_path_and_scalar_configuration():
+    @hg.adaptor
+    def loopback(value: TS[int]) -> TS[int]: ...
+
+    @hg.adaptor_impl(interfaces=loopback)
+    def loopback_impl(path: str, factor: int):
+        incoming = hg.from_graph(loopback, path=path)
+        hg.to_graph(loopback, incoming * factor, path=path)
+
+    @graph
+    def app(value: TS[int]) -> TS[int]:
+        hg.register_adaptor("io", loopback_impl, factor=3)
+        return loopback(value, path="io")
+
+    check(eval_node(app, [2, 4]) == [6, 12], "configured adaptor")
+
+
+def test_realtime_push_source_and_python_sink():
+    seen = []
+    threads = []
+
+    @hg.push_queue(TS[int])
+    def source(sender, values: tuple):
+        def feed():
+            time.sleep(0.05)
+            for value in values:
+                sender(value)
+                time.sleep(0.01)
+
+        thread = threading.Thread(target=feed)
+        threads.append(thread)
+        thread.start()
+
+    @hg.sink_node
+    def collect(value: TS[int]):
+        seen.append(value.value)
+
+    @graph
+    def app() -> None:
+        collect(source(values=(1, 2, 3)) + 1)
+
+    end = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) + datetime.timedelta(seconds=1)
+    run_graph(app, end_time=end, run_mode=hg.EvaluationMode.REAL_TIME)
+    for thread in threads:
+        thread.join()
+    check(seen == [2, 3, 4], f"push source: {seen}")
+
+
+def main():
+    tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
+    for test in tests:
+        test()
+        print(f"PASS {test.__name__}")
+    print(f"{len(tests)} Python authoring tests passed")
+
+
+if __name__ == "__main__":
+    main()
