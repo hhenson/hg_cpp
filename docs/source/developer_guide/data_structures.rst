@@ -17,6 +17,10 @@ The chapters below split the description by responsibility:
 - *Allocation, Plans and Ops* describes how those types are laid out in
   memory and what behaviour their ops vtables expose, separately for
   scalars and time-series.
+- *Unified Type Erasure* proposes a common, self-describing type record
+  and compact pointer model for all erased runtime families.
+- *Unified Type Erasure Implementation Plan* divides that proposal into
+  measured, independently reviewable migrations.
 - *Linking Strategies* covers the three flavours of binding,
   unbinding, and rebinding that connect time-series instances at
   runtime.
@@ -29,5 +33,7 @@ The chapters below split the description by responsibility:
    data_structures/overview/index
    data_structures/schemas/index
    data_structures/plans_and_ops/index
+   data_structures/unified_type_erasure
+   data_structures/unified_type_erasure_implementation_plan
    data_structures/linking_strategies
    data_structures/refinements
