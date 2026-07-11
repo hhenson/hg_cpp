@@ -111,8 +111,6 @@ def test_to_json_delta(tp: TIME_SERIES_TYPE, value: Any, expected: str):
     assert eval_node(from_json[tp], expected) == value
 
 
-@pytest.mark.skip(reason="gap: nullable Map VALUES (None-valued mapping entries; the "
-                         "nullable-container mechanisms cover tuples/lists only)")
 def test_to_json_builder_serializes_none_mapping_value_as_null():
     expected = MyNullableMappingCS(data={"Key": None})
 

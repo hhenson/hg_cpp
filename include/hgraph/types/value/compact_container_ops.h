@@ -571,8 +571,12 @@ namespace hgraph
             std::size_t result    = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
-                const std::size_t key_hash   = key_ops.hash(storage->key_at(i));
-                const std::size_t value_hash = value_ops.hash(storage->value_at_index(i));
+                const std::size_t key_hash = key_ops.hash(storage->key_at(i));
+                // UNSET values (None-valued entries) hash with a distinct
+                // marker (element validity).
+                const std::size_t value_hash =
+                    storage->value_set(i) ? value_ops.hash(storage->value_at_index(i))
+                                          : 0x9e3779b97f4a7c15ULL;
                 result ^= combine_hash(key_hash, value_hash);
             }
             return result;
@@ -594,12 +598,21 @@ namespace hgraph
                 return false;
             }
             const auto &val_ops = a->value_binding()->ops_ref();
+            const auto *a_const = static_cast<const MapStorage *>(lhs);
             for (std::size_t i = 0; i < a->size(); ++i)
             {
-                const void *a_key   = a->key_at(i);
-                const void *b_value = b->value_at(a_key);
-                if (b_value == nullptr) { return false; }
-                if (!val_ops.equals(a->value_at_index(i), b_value)) { return false; }
+                const void *a_key  = a->key_at(i);
+                const auto  b_slot = b->find_slot(a_key);
+                if (b_slot == -1) { return false; }
+                const bool a_set = a_const->value_set(i);
+                const bool b_set = b->value_set(static_cast<std::size_t>(b_slot));
+                if (a_set != b_set) { return false; }
+                if (!a_set) { continue; }   // UNSET == UNSET
+                if (!val_ops.equals(a_const->value_at_index(i),
+                                    b->value_at_index(static_cast<std::size_t>(b_slot))))
+                {
+                    return false;
+                }
             }
             return true;
         }
@@ -637,7 +650,8 @@ namespace hgraph
                 fmt::format_to(std::back_inserter(out),
                                "{}: {}",
                                key_ops.to_string(storage->key_at(i)),
-                               value_ops.to_string(storage->value_at_index(i)));
+                               storage->value_set(i) ? value_ops.to_string(storage->value_at_index(i))
+                                                     : std::string{"None"});
             });
         }
 
@@ -654,7 +668,9 @@ namespace hgraph
             nb::dict result;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
-                result[key_ops.to_python(storage->key_at(i))] = value_ops.to_python(storage->value_at_index(i));
+                // UNSET values (None-valued entries) read back as None.
+                result[key_ops.to_python(storage->key_at(i))] =
+                    storage->value_set(i) ? value_ops.to_python(storage->value_at_index(i)) : nb::none();
             }
             return result;
         }

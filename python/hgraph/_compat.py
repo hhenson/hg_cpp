@@ -21,8 +21,11 @@ class DivideByZero(Enum):
 
 
 def exception_time_series(ts):
-    raise NotImplementedError(
-        "gap: exception_time_series is not bridged yet (C++ error capture exists)")
+    """Activate error capture on ``ts``'s producing node; returns the
+    TS[NodeError] error output (the C++ error-capture machinery)."""
+    from ._runtime import WiringPort, _current_wiring, _unwrap
+
+    return WiringPort(_current_wiring().exception_time_series(_unwrap(ts)))
 
 
 # The type of a module-level operator function (hgraph exposes the wiring

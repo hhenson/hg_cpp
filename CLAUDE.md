@@ -196,6 +196,22 @@ dynamic-TSL multiplexing/reduce, non-associative reduce, sink maps/switches.
 **C++ only for
 now** — keep Python out of the configure/build/run path.
 
+**Python operator-test port — DONE (2026-07-11).** All **48** upstream
+`hgraph_unit_tests/_operators` files are ported into `python/tests/ported`
+(ctest gate `hgraph_python_ported_suite`, ~790 tests green). En route the
+runtime gained: real py-node input activity, first-class **enums**, the
+**TABLE tuple-row protocol** + data-frame operators (`record_replay_table.rst`
+step 6), `exception_time_series` bridged, `type_`, TSW `std`, tuple-of-CS
+`getattr_`, strict unnamed-TSB combine, and **map value holes** (None-valued
+entries; scalar.rst). Calling conventions are REGISTRY-driven (scalar kwargs
+lift to const in call normalisation; subscript meaning via
+`operator_output_is_selective`; generic targets via
+`resolve_convert/collect/combine_target` — never label/name tests in the
+bridge). Standing residue (marked precisely in the tests, see
+`parity_matrix.rst`): 3 accepted gaps (TSS rebind removals, sparse TSB
+deltas, `hgraph.stream` generics) + recorded deviations. Follow-on tiers
+(not planned): upstream `ts_tests/` (215), `_wiring/` (244).
+
 **Mesh, services & shared outputs — DONE** (design records:
 `docs/source/developer_guide/mesh.rst` and `docs/source/developer_guide/services.rst`,
 authoritative). `mesh_` over TSD executes (on-demand instances via

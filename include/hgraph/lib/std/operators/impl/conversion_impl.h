@@ -1247,6 +1247,45 @@ namespace hgraph::stdlib
     };
 
     /** collect[TS[Mapping]](k_tuple, v_tuple, reset=...): zip-accumulate. */
+    /** ``combine(a=..., b=..., __strict__=True)``: the structural bundle
+        GATED until every field is valid - the first emission is the full
+        snapshot, deltas follow (hgraph's strict unnamed-TSB combine). */
+    struct combine_tsb_strict_impl
+    {
+        static constexpr auto name = "combine_tsb_strict";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *in     = time_series_schema_at(context, 0);
+            const auto *strict = context.scalar_as<Bool>("__strict__");
+            return in != nullptr && in->kind == TSTypeKind::TSB && strict != nullptr && *strict;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (output_bound(resolution)) { return; }
+            const auto *in = time_series_schema_at(context, 0);
+            if (in != nullptr) { bind_output(resolution, in); }
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"__strict__", Bool> strict,
+                         Out<TsVar<"__out__">> out)
+        {
+            static_cast<void>(strict);
+            if (!ts.base().all_valid()) { return; }
+            const auto &erased     = static_cast<const TSOutputView &>(out);
+            const bool  first_emit = !erased.valid();
+            auto        bundle_in  = const_cast<TSInputView &>(ts.base()).as_bundle();
+            auto        bundle_out = erased.as_bundle();
+            for (std::size_t index = 0; index < bundle_in.size(); ++index)
+            {
+                auto child = bundle_in.at(index);
+                if (!first_emit && !child.modified()) { continue; }
+                apply_current_value(bundle_out.at(index), child.value());
+            }
+        }
+    };
+
     struct collect_map_zip_impl
     {
         static constexpr auto name = "collect_map_zip";

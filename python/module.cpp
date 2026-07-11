@@ -19,6 +19,7 @@
 #include <hgraph/lib/std/operators/json.h>
 #include <hgraph/lib/std/operators/impl/io_impl.h>   // io_write_slot (sys.stdout routing)
 #include <hgraph/lib/std/operators/impl/table_impl.h>   // ts_table_layout (table_schema_info)
+#include <hgraph/runtime/node_error.h>   // node_error_ts_meta (exception_time_series)
 #include <hgraph/types/value/json_codec.h>          // to_json_string / from_json_string (builders)
 #include <hgraph/types/context_wiring.h>
 #include <hgraph/types/service_runtime.h>
@@ -360,6 +361,17 @@ namespace
                 resolved.impl->wire(wiring_ref(), resolved.map, resolved.args, resolved.kwargs);
             if (!result.has_output) { return nb::none(); }
             return nb::cast(PyPort{result.output.erased()});
+        }
+
+        /** hgraph's exception_time_series(port): activate error capture on
+            the producing node and return its TS[NodeError] error output. */
+        [[nodiscard]] nb::object exception_time_series(PyPort port)
+        {
+            ensure_open();
+            wiring_ref().activate_error_capture(port.ref.peered_node(), node_error_ts_meta());
+            WiringPortRef error = graph_wiring_detail::special_output_source(
+                port.ref, GraphEdgeSourceKind::ErrorOutput, "error_output");
+            return nb::cast(PyPort{error});
         }
 
         void set_replay(const std::string &key, nb::list values, std::optional<PyTsType> ts_type)
@@ -2675,6 +2687,7 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyWiring>(m, "Wiring")
         .def(nb::init<>())
         .def(nb::init<GlobalState &>(), nb::arg("state"))
+        .def("exception_time_series", &PyWiring::exception_time_series, nb::arg("port"))
         .def("wire", &PyWiring::wire, nb::arg("name"), nb::arg("args") = nb::tuple(),
              nb::arg("kwargs") = nb::dict(), nb::arg("output_type") = nb::none(),
              nb::arg("sizes") = nb::none())

@@ -49,7 +49,9 @@ def test_convert_ts(from_, from_tp, to_tp, expected):
     assert eval_node(convert, from_, to_tp, resolution_dict=dict(ts=from_tp)) == expected
 
 
-@pytest.mark.skip(reason="gap: object-valued TS cannot dispatch conversion from its runtime payload type")
+@pytest.mark.skip(reason="deviation: convert from TS[object] dispatches on the WIRING-time schema; "
+                         "upstream converts per-tick from the runtime python payload type (a "
+                         "py-object dynamic-dispatch semantic hg_cpp deliberately does not adopt)")
 def test_convert_date_as_object_to_datetime():
     @graph
     def g(dt: TS[object]) -> TS[datetime]:

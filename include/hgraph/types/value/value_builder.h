@@ -634,10 +634,31 @@ namespace hgraph
 
         [[nodiscard]] std::size_t size() const noexcept { return key_acc_.size(); }
 
+        /** Record ``key`` with an UNSET value - a None-valued mapping entry
+            (value holes; element validity). Duplicate keys are rejected
+            (dict/JSON sources never produce them for the unset form). */
+        void set_item_unset(const void *key)
+        {
+            ensure_not_built();
+            if (find_slot(key).has_value())
+            {
+                throw std::logic_error("MapBuilder::set_item_unset cannot replace an existing entry");
+            }
+            const auto slot = key_acc_.size();
+            key_acc_.push_back_copy(key);
+            auto key_rollback = make_scope_exit([&]() noexcept { key_acc_.pop_back(); });
+            value_acc_.push_back_unset();
+            auto value_rollback = make_scope_exit([&]() noexcept { value_acc_.pop_back(); });
+            if (!index_.insert(slot)) { throw std::logic_error("MapBuilder index rejected a unique key"); }
+            value_rollback.release();
+            key_rollback.release();
+        }
+
         [[nodiscard]] MapStorage build_storage()
         {
             ensure_not_built();
-            MapStorage storage{*key_binding_, *value_binding_, key_acc_.as_span(), value_acc_.as_span()};
+            MapStorage storage{*key_binding_, *value_binding_, key_acc_.as_span(), value_acc_.as_span(),
+                               value_acc_.validity()};
             key_acc_.clear();
             value_acc_.clear();
             index_.clear();

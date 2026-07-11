@@ -375,7 +375,7 @@ def combine(*args, __output_type__=None, **kwargs):
         strict = kwargs.pop("__strict__", True)
         return wire("combine_tsd", args[0], *args[1:], __strict__=strict, **kwargs)
     if __output_type__ is None:
-        kwargs.pop("__strict__", None)   # structural composites need no gate
+        strict = kwargs.pop("__strict__", None)
         if args and all(isinstance(a, WiringPort) for a in args) and not kwargs:
             # UNSUBSCRIPTED positional: a structural TSL of the ports, UNLESS
             # it is the binary CS-merge (two bundle-valued TS -> delta merge).
@@ -383,10 +383,16 @@ def combine(*args, __output_type__=None, **kwargs):
                 return _combine_compound_scalars(*args)
             return WiringPort(_hgraph.tsl_port([_unwrap(a) for a in args]))
         if kwargs and not args and all(isinstance(v, WiringPort) for v in kwargs.values()):
-            # hgraph's un-subscripted kwargs form: a structural un-named TSB.
+            # hgraph's un-subscripted kwargs form: a structural un-named TSB;
+            # __strict__=True gates it behind all-fields-valid (the erased
+            # combine_tsb_strict kernel).
             fields = [(k, _unwrap(v).ts_type) for k, v in kwargs.items()]
             tsb_type = _hgraph.un_named_tsb_type(fields)
-            return WiringPort(_hgraph.tsb_port(tsb_type, {k: _unwrap(v) for k, v in kwargs.items()}))
+            structural = WiringPort(
+                _hgraph.tsb_port(tsb_type, {k: _unwrap(v) for k, v in kwargs.items()}))
+            if strict:
+                return wire("combine", structural, __strict__=True)
+            return structural
         raise TypeError("combine requires a subscripted type: combine[TSB[Schema]](...)")
     target = __output_type__
     ports = [a for a in args if isinstance(a, WiringPort)] or [

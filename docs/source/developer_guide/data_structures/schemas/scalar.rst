@@ -117,7 +117,10 @@ A scalar schema has one of nine kinds, recorded on its
     A mutable ``Map<string, Any>`` is the backing for the runtime
     ``GlobalState`` injectable; an **immutable** ``Map<int, T>`` (built once
     via ``MapBuilder``) is the delta value of a ``TSL`` time-series in the
-    testing toolkit.
+    testing toolkit. Map **values** support element validity: an entry may
+    carry an UNSET value (``MapBuilder::set_item_unset``) — Python's
+    ``None``-valued mapping entry, JSON ``null`` — read back as an absent
+    value view / ``None``; keys are never nullable.
 
 ``CyclicBuffer``
     Fixed-capacity ring buffer of one element type.

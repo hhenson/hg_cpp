@@ -45,6 +45,7 @@ namespace hgraph::stdlib
         register_overload<combine, combine_timedelta_impl<true>>();
         register_overload<combine, combine_timedelta_impl<false>>();
         register_overload<combine, combine_datetime_impl>();
+        register_overload<combine, combine_tsb_strict_impl>();
         register_overload<collect, collect_collection_impl>();
         register_overload<collect, collect_map_impl>();
         register_overload<collect, collect_map_zip_impl>();

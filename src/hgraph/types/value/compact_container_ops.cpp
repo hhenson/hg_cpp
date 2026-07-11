@@ -179,11 +179,19 @@ namespace hgraph
                 nb::tuple pair = nb::cast<nb::tuple>(*it);
                 if (pair.size() != 2) { throw std::invalid_argument("Map items() must yield key/value pairs"); }
                 if (pair[0].is_none()) { throw std::invalid_argument("Map value does not allow None keys"); }
-                if (pair[1].is_none()) { throw std::invalid_argument("Map value does not allow None values"); }
 
-                Value key   = value_from_python(key_binding, nb::borrow<nb::object>(pair[0]));
-                Value value = value_from_python(value_binding, nb::borrow<nb::object>(pair[1]));
-                builder.set_item_copy(key.view().data(), value.view().data());
+                Value key = value_from_python(key_binding, nb::borrow<nb::object>(pair[0]));
+                if (pair[1].is_none())
+                {
+                    // A None VALUE is an unset entry (value holes; element
+                    // validity) - it reads back as None.
+                    builder.set_item_unset(key.view().data());
+                }
+                else
+                {
+                    Value value = value_from_python(value_binding, nb::borrow<nb::object>(pair[1]));
+                    builder.set_item_copy(key.view().data(), value.view().data());
+                }
                 ++it;
             }
 

@@ -6,7 +6,7 @@ Python ``hgraph`` surface (the ``ext/main`` reference tree) offers, what the
 C++ runtime provides today, and precisely what is missing — so "done" for the
 Python bridge is measurable rather than discovered.
 
-**Snapshot: 2026-07-04.** Regenerate the operator section by scanning
+**Snapshot: 2026-07-11.** Regenerate the operator section by scanning
 ``ext/main/hgraph/_operators/*.py`` for public ``def`` names and comparing
 against ``lib/std``'s ``Operator<"name">`` markers and ``register_*``
 call sites (three states below). Update this page in the same change as any
@@ -26,43 +26,36 @@ Operator catalogue
 ------------------
 
 Of the **165** public operator definitions in ``hgraph/_operators``:
-**110 registered**, **20 declared-only**, **22 missing** — 13 further names are covered by equivalent C++ APIs (snapshot updated 2026-07-04: json + record/replay config/traits + Arrow ``Frame``/``to_table``/``from_table`` landed).
+**132 registered**, **2 declared-only**, **7 missing** — **24** further names
+are covered by equivalent C++/bridge APIs (snapshot regenerated 2026-07-11 at
+the close of the operator-test port; the counts come from comparing
+``operator_names()`` and the catalogue markers against the upstream scan).
 
 .. list-table::
    :header-rows: 1
-   :widths: 28 10 10 10 42
+   :widths: 28 8 8 8 48
 
    * - Python module (``hgraph/_operators``)
      - Reg.
      - Decl.
      - Miss.
-     - Gaps (declared-only *italic*, missing **bold**)
+     - Gaps (declared-only *italic*, missing **bold**, equiv-API plain)
    * - Analytical (``analytical_operators``)
      - 4
      - 0
-     - 2
-     - **center_of_mass_to_alpha**, **span_to_alpha**
+     - 0
+     - equiv-API: center_of_mass_to_alpha, span_to_alpha
    * - Apply / call (``apply``)
-     - 0
-     - 0
-     - 2
-     - **apply**, **call**
-   * - Conversion (``time_series_conversion``)
      - 1
-     - 4
      - 0
-     - *collect*, *combine*, *convert*, *emit*
-   * - Core operators (``operators``)
-     - 47
-     - 2
-     - 2
-     - *setattr_*, *type_* · **accumulate**, **average**
+     - 1
+     - **apply**
    * - Date & time (``date_operators``)
      - 4
      - 0
      - 0
      - —
-   * - Debug tools (``debug_tools``)
+   * - ``debug_tools``
      - 1
      - 0
      - 0
@@ -77,145 +70,118 @@ Of the **165** public operator definitions in ``hgraph/_operators``:
      - 0
      - 0
      - —
-   * - Graph operators (``graph_operators``)
-     - 4
-     - 2
-     - 2
-     - *assert_*, *print_* · **pass_through_node**, **stop_engine**.
-       ``log_`` is registered over the LOGGER injectable
-   * - JSON scalars (``json``)
-     - 0
-     - 0
-     - 2
-     - **json_decode**, **json_encode**
-   * - JSON serialization (``to_json``)
-     - 2
-     - 0
-     - 2
-     - **from_json_builder**, **to_json_builder** (wiring-time builder
-       helpers — the C++ counterpart is the interned ``json_converter``)
-   * - Lifted operators (``lift_operators``)
-     - 0
+   * - Graph (``graph_operators``)
+     - 6
      - 0
      - 1
-     - **round_**
-   * - Record / replay (``record_replay``)
-     - 4
-     - 0
+     - **stop_engine** · equiv-API: pass_through_node
+   * - ``json``
      - 2
-     - **from_data_frame**, **to_data_frame**. ``compare`` (the P6-store
-       comparison sink) and ``replay_const`` (const-evaluable, P1) are
-       registered.
-       The six config/traits functions are covered by the C++ API
-       (``record_replay::set_config``/``config``/``model_is``/
-       ``fq_recordable_id``/``has_recordable_id`` + ``Wiring::set_trait`` —
-       step 2 of :doc:`record_replay_table`)
-   * - Stream (``stream``)
-     - 14
-     - 4
      - 0
-     - *batch*, *filter_by*, *to_window*, *window*
-   * - String (``string``)
+     - 0
+     - —
+   * - ``lift_operators``
+     - 1
+     - 0
+     - 0
+     - —
+   * - Core operators (``operators``)
+     - 49
+     - 0
+     - 0
+     - equiv-API: accumulate, average
+   * - Record / replay (``record_replay``)
+     - 6
+     - 0
+     - 0
+     - equiv-API: set_record_replay_model, record_replay_model, has_recordable_id_trait, get_fq_recordable_id, set_parent_recordable_id, record_replay_model_restriction
+   * - Stream (``stream``)
+     - 17
+     - 0
+     - 0
+     - equiv-API: filter_by
+   * - ``string``
      - 7
      - 0
      - 0
      - —
-   * - TS properties (``time_series_properties``)
-     - 5
-     - 1
-     - 0
-     - *evaluation_time_in_range*
-   * - TSD & mapping (``tsd_and_mapping``)
-     - 5
-     - 4
-     - 0
-     - *collapse_keys*, *flip_keys*, *uncollapse_keys*, *values_*
-   * - TSS operators (``tss_operators``)
-     - 0
-     - 0
-     - 1
-     - **compute_set_delta**
-   * - Table serialization (``to_table``)
-     - 3
-     - 0
-     - 4
-     - **make_table_schema**, **shape_of_table_type**,
-       **table_shape**, **table_shape_from_schema**. ``from_table_const``
-       is registered (const-evaluable, P1). ``to_table``/
-       ``from_table`` are registered (Arrow ``Frame``, step 3 of
-       :doc:`record_replay_table`); ``table_schema`` maps onto the
-       ``TableConverter``; the six as-of / column-key config functions are
-       covered by ``record_replay::Config``
    * - Throttle (``throttle``)
      - 0
      - 0
      - 1
      - **collect_builder**
-   * - Type operators (``type_operators``)
+   * - Conversion (``time_series_conversion``)
+     - 5
      - 0
+     - 0
+     - —
+   * - ``time_series_properties``
+     - 6
+     - 0
+     - 0
+     - —
+   * - JSON (``to_json``)
+     - 2
+     - 0
+     - 0
+     - equiv-API: to_json_builder, from_json_builder
+   * - Table (``to_table``)
      - 3
      - 0
-     - *cast_*, *downcast_*, *downcast_ref*
-   * - **Total (165 public defs)**
-     - **106**
-     - **23**
-     - **23** (+13 API-covered)
-     - 
+     - 3
+     - **table_shape**, **table_shape_from_schema**, **shape_of_table_type** · equiv-API: set_as_of, get_as_of, get_table_schema_date_key, get_table_schema_as_of_key, set_table_schema_as_of_key, set_table_schema_date_key, make_table_schema, table_schema
+   * - ``tsd_and_mapping``
+     - 9
+     - 0
+     - 0
+     - —
+   * - TSS (``tss_operators``)
+     - 0
+     - 0
+     - 0
+     - equiv-API: compute_set_delta
+   * - Type ops (``type_operators``)
+     - 0
+     - 2
+     - 0
+     - *downcast_*, *downcast_ref* · equiv-API: cast_
 
+Notes on the residue:
 
-Notes on the gap clusters (deliberate ordering per :doc:`roadmap` P3):
+- ``dedup_builder`` / ``collect_builder`` are Python implementation-injection
+  hooks, not user operators — the C++ overload registry covers the need
+  natively. ``apply`` (arbitrary-callable node lifting; ``call`` IS
+  registered) and ``stop_engine`` (engine-control surface) await design
+  decisions. The ``table_shape`` helper trio is upstream sugar over
+  ``table_schema`` (add on demand).
+- *downcast_* / *downcast_ref* remain declared-only.
+- The equiv-API names live in ``hgraph._table`` (bitemporal config +
+  ``TableSchema``), the record/replay config/traits shims, the JSON builders,
+  and small python helpers (``accumulate``/``average``,
+  ``center_of_mass_to_alpha``/``span_to_alpha``, ``filter_by``, ``cast_``,
+  ``compute_set_delta``).
 
-- **Serialization families** — ``to_json``/``from_json`` are **registered**
-  (the interned ``JsonConverter``, step 1 of :doc:`record_replay_table`).
-  The ``to_table`` schema ecosystem, ``from_data_frame``/``to_data_frame``
-  and ``json_encode``/``json_decode`` remain blocked on the table / DataFrame
-  / JSON **value kinds** (Arrow ``Frame`` design approved).
+Ported operator-test suite (the behaviour yardstick)
+----------------------------------------------------
 
-  **C++-first API ruling (2026-07-06).** Anything exposed to Python must
-  be C++-clean as the *primary* API — no Python-only value kinds or
-  operators; Python is sugar over the erased registry. Two consequences
-  recorded here:
+**All 48** upstream ``hgraph_unit_tests/_operators`` files are ported into
+``python/tests/ported`` (the ctest gate ``hgraph_python_ported_suite``).
+Standing residue, each marked precisely in the test file:
 
-  - **CompoundScalar IS a C++ Bundle value** (ruled explicitly): the
-    Python dataclass schema maps to a *named bundle schema*
-    (``bundle_vt`` from the dataclass fields; the class registers for
-    read-back reconstruction, UNSET fields → ``None``). ``None`` field
-    values convert as UNSET (Bundle field validity), and the
-    ``combine(orig, delta)`` merge is the **erased C++**
-    ``combine_bundles`` overload — a recursive right-over-left merge
-    honouring field validity (delta's UNSET fields keep the original).
-    This replaced a short-lived Python-object + Python-node
-    implementation the ruling struck down.
-  - **Dynamic JSON** (``TS[JSON]``: ``combine`` over keyword values,
-    ``json_encode``/``json_decode``, path access ``j["a"]``, leaf
-    coercions ``.int``/``.str``/``.float``) is specified as a **C++
-    value tree**: a registry-interned ``JSON`` meta over the existing
-    ``Any`` storage — one of ``Bool | Int | Float | Str | List<JSON> |
-    Map<Str, JSON> | null`` (empty ``Any`` = null) — with erased
-    registered operators (``combine_json``, ``json_encode``,
-    ``json_decode``, ``getitem_`` by key/index, ``json_as_*``).
-    Python's ``combine[TS[JSON]]`` and ``port["a"].int`` are pure sugar
-    over the registered names. The schema-directed ``to_json`` /
-    ``from_json`` codec is unchanged — the tree is for payloads whose
-    shape is *data*, not schema. Not yet implemented.
-- **Record/replay ecosystem** — ``record``/``replay`` are registered
-  (in-memory GlobalState backend), and the config/traits layer landed in
-  step 2 of :doc:`record_replay_table` (``record_replay::Config`` + mode
-  scope + graph traits with ``fq_recordable_id``). Remaining: the Arrow
-  backend (``from_data_frame``/``to_data_frame``, step 4) and
-  ``@component`` (step 5).
-- **Conversion/type operators** (*convert*, *combine*, *collect*, *emit*,
-  *cast_*, *downcast_*…) — declared-only: the markers record the intended
-  API; implementations are P3 catalogue work.
-- **Window tail** (*window*, *to_window*, *batch*, *filter_by*) —
-  declared-only; duration-based ``TSW`` needs its compile-time marker first
-  (see *Types* below).
-- ``pass_through_node`` exists as a plain C++ node (``std_nodes.h``) but is
-  not registry-resolvable; ``dedup_builder`` / ``collect_builder`` /
-  ``*_builder`` names are Python implementation-injection hooks rather than
-  user operators — the C++ overload registry covers the same need natively.
-- ``apply`` / ``call`` (arbitrary-callable lifting) and ``stop_engine``
-  need design decisions (callable representation; engine-control surface).
+- **3 accepted gaps** — TSS rebind-to-nothing removal deltas (REF-rebind
+  semantics; ``linking_strategies`` doc-first), sparse TSB deltas (the
+  canonical bundle delta is dense), and the ``hgraph.stream`` status library
+  (``Base[COMPOUND_SCALAR]`` python generics).
+- **Recorded deviations** — naive-datetime handling (4 xfails), the TSD key
+  type resolved from a frame column, python wiring-node signature
+  introspection, map children over EMPTY-REF projections, CompoundScalar
+  string representation, ``convert`` from ``TS[object]`` dispatching on the
+  wiring-time schema, and ``test_to_table_dispatch`` (upstream ``_impl``
+  internals; behaviour covered through the public surface).
+
+Follow-on tiers (recorded, not planned): upstream ``ts_tests/`` (215) and
+``_wiring/`` (244).
+
 
 Types and scalars
 -----------------

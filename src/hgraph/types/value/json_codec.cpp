@@ -466,7 +466,9 @@ namespace hgraph
                 if (!key_text.empty() && key_text.front() == '"') { out += key_text; }
                 else { json_detail::append_escaped(key_text, out); }
                 out += ": ";
-                self.children[1]->write(value, out);
+                // An UNSET entry (a None-valued mapping value) is JSON null.
+                if (!value.has_value()) { out += "null"; }
+                else { self.children[1]->write(value, out); }
             }
             out.push_back('}');
         }
@@ -634,8 +636,17 @@ namespace hgraph
                         else { key = self.children[0]->read(key_reader); }
                     }
                     reader.expect(':');
-                    Value value = self.children[1]->read(reader);
-                    builder.set_item_copy(key.view().data(), value.view().data());
+                    if (reader.consume_keyword("null"))
+                    {
+                        // JSON null = an unset entry (a None-valued mapping
+                        // value; element validity).
+                        builder.set_item_unset(key.view().data());
+                    }
+                    else
+                    {
+                        Value value = self.children[1]->read(reader);
+                        builder.set_item_copy(key.view().data(), value.view().data());
+                    }
                     if (!reader.consume_if(',')) { break; }
                 }
                 reader.expect('}');

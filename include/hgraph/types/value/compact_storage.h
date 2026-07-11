@@ -655,11 +655,12 @@ namespace hgraph
         MapStorage() noexcept = default;
 
         MapStorage(const ValueTypeBinding &key_binding, const ValueTypeBinding &value_binding,
-                   const ElementSpan &keys_source, const ElementSpan &values_source)
+                   const ElementSpan &keys_source, const ElementSpan &values_source,
+                   std::vector<bool> value_validity = {})
             : key_binding_{&key_binding}
             , value_binding_{&value_binding}
             , keys_{key_binding, keys_source}
-            , values_{value_binding, values_source}
+            , values_{value_binding, values_source, std::move(value_validity)}
         {
             if (keys_source.size != values_source.size)
             {
@@ -716,8 +717,14 @@ namespace hgraph
         [[nodiscard]] const ValueTypeBinding *value_binding() const noexcept { return value_binding_; }
 
         [[nodiscard]] const void *key_at(std::size_t slot) const { return keys_.element_at(slot); }
-        [[nodiscard]] void       *value_at_index(std::size_t slot) { return values_.element_at(slot); }
-        [[nodiscard]] const void *value_at_index(std::size_t slot) const { return values_.element_at(slot); }
+        /** True when the entry at ``slot`` carries a value (value HOLES are
+            None-valued mapping entries; element validity). */
+        [[nodiscard]] bool value_set(std::size_t slot) const noexcept { return values_.element_set(slot); }
+        [[nodiscard]] void *value_at_index(std::size_t slot) { return values_.element_at(slot); }
+        [[nodiscard]] const void *value_at_index(std::size_t slot) const
+        {
+            return values_.element_set(slot) ? values_.element_at(slot) : nullptr;
+        }
 
         [[nodiscard]] std::int32_t find_slot(const void *key) const
         {
@@ -730,7 +737,8 @@ namespace hgraph
         [[nodiscard]] const void *value_at(const void *key) const
         {
             const auto slot = find_slot(key);
-            return slot == -1 ? nullptr : values_.element_at(static_cast<std::size_t>(slot));
+            if (slot == -1) { return nullptr; }
+            return value_at_index(static_cast<std::size_t>(slot));
         }
         [[nodiscard]] void *value_at(const void *key)
         {
@@ -769,11 +777,18 @@ namespace hgraph
                                             .size   = other.keys_.size(),
                                             .stride = kp.layout.size,
                                             .plan   = &kp}};
+            std::vector<bool> value_validity;
+            value_validity.reserve(other.values_.size());
+            for (std::size_t slot = 0; slot < other.values_.size(); ++slot)
+            {
+                value_validity.push_back(other.values_.element_set(slot));
+            }
             values_        = ListStorage{*value_binding_,
                                   ElementSpan{.bytes = other.values_.size() == 0 ? nullptr : other.values_.element_at(0),
                                               .size   = other.values_.size(),
                                               .stride = vp.layout.size,
-                                              .plan   = &vp}};
+                                              .plan   = &vp},
+                                  std::move(value_validity)};
             build_index();
         }
 
