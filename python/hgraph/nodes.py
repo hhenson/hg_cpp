@@ -93,3 +93,34 @@ def tsl_to_tsd(tsl, keys: tuple = None):
     from ._runtime import wire
 
     return wire("combine_tsd", tuple(keys), *[tsl[i] for i in range(len(keys))], __strict__=False)
+
+
+from ._runtime import compute_node as _compute_node
+from ._types import TIME_SERIES_TYPE as _TST
+
+
+@_compute_node
+def pass_through_node(ts: _TST) -> _TST:
+    """hgraph's pass_through_node: forward each tick unchanged."""
+    return ts.delta_value
+
+
+class _FlattenTslValues:
+    """hgraph's flatten_tsl_values: a TSL as a TS of tuples - rides the
+    tuple-combine kernel (strict = all_valid; non-strict leaves None holes).
+    Subscription (``flatten_tsl_values[SCALAR: int]``) is accepted for
+    upstream parity; the C++ registry infers the tuple type from the wired
+    TSL, so the pin carries no extra information."""
+
+    def __getitem__(self, _item):
+        return self
+
+    def __call__(self, tsl, all_valid: bool = False):
+        from . import combine
+        from ._types import TS
+        from typing import Tuple
+
+        return combine[TS[Tuple]](*tsl, __strict__=bool(all_valid))
+
+
+flatten_tsl_values = _FlattenTslValues()

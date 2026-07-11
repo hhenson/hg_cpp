@@ -267,6 +267,31 @@ Recorded divergences / gaps (the morning-summary list):
   ``__recovering_pass_through``. The eval_node/run_graph harness wires
   ungated ``__harness_record``/``__harness_replay`` aliases so the active
   record/replay MODEL never captures the test harness itself.
+- **Python DSL frontier (end-game phase A1)**: the authoring surface now
+  covers hgraph's ``_wiring`` test tier. Wiring-time input VALIDATION on
+  python nodes rides the bridged C++ pattern matcher (``ResolutionScope``
+  over ``ResolutionMap``/``ts_pattern_resolve`` — the single currency for
+  py-side typevar resolution; ``IncorrectTypeBinding``/``ParseError``/
+  ``RequirementsNotMetWiringError`` are ``WiringError`` subclasses), with
+  three widening rules: ``TS[object]`` accepts any payload (and ``convert``
+  gains a bridge-registered box-to-py-object kernel), ``tuple[E, ...]``
+  re-matches fixed tuples through the C++ homogeneous-tuple pattern, and
+  TSW strictness is deferred until the duration/tick marker lands. Plain
+  values on TS params auto-lift to ``const`` (numeric scalars are
+  PYTHONIC-strict: strings never coerce; a const of the DELTA shape
+  applies as the initial tick). ``AUTO_RESOLVE`` materialises resolved
+  typevars/SIZE; ``valid=``/``active=`` accept wiring-time callables;
+  ``resolvers={...}`` binds typevars from scalars. TSS returns follow
+  upstream exactly: an exact ``frozenset`` REPLACES the whole set, a
+  ``set_delta``/``Removed``-marked set applies as a delta, and a net
+  no-change on a valid output does NOT tick (``contains_`` re-publishes
+  on item ticks only). TSB sugar: ``.as_schema`` (both wiring and runtime
+  views), ``keys()``/``dict(**tsb)``, inline ``TSB["a": TS[int], ...]``
+  schemas, ``TSL.from_ts(iterable | *ports, tp=...)``. The signature
+  introspection surface (``WiringNodeSignature``/``extract_signature``/
+  ``extract_kwargs`` + the node-class aliases) is PUBLIC hgraph exports —
+  ``HgTypeMetaData`` is NOT part of the public API (raw annotations carry
+  type info); ``const_fn`` is NOT ported (record_replay_table.rst P1).
 - **Real-time + push sources** are surfaced with hgraph's shapes:
   ``run_graph(..., run_mode=EvaluationMode.REAL_TIME)`` runs the
   wall-clock executor (the GIL is released for the whole run), and

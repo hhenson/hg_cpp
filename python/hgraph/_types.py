@@ -359,6 +359,16 @@ class _TsExpr:
         self._label = label
         self.is_ref = False
 
+    def __eq__(self, other):
+        # Schema identity is the interned C++ handle (pointer identity in
+        # the registry); the label is presentation only.
+        if isinstance(other, _TsExpr):
+            return self.handle == other.handle
+        return NotImplemented
+
+    def __hash__(self):
+        return hash(repr(self.handle))
+
     def __repr__(self):
         return self._label
 
@@ -397,6 +407,21 @@ def _type_pattern(ts):
     if isinstance(ts, _TsExpr):
         return _hgraph.type_pattern_concrete(ts.handle)
     raise TypeError(f"expected a time-series type (TS[...] etc.), got {ts!r}")
+
+
+def _pattern_of(annotation):
+    """The C++ TypePattern for ANY time-series annotation - concrete
+    (_TsExpr), generic (_GenericTsExpr carries its pattern) or a bare
+    sentinel. The single currency of wiring-time resolution."""
+    if isinstance(annotation, _TsExpr):
+        return _hgraph.type_pattern_concrete(annotation.handle)
+    if isinstance(annotation, _GenericTsExpr):
+        if annotation.pattern is None:
+            raise TypeError(f"generic annotation {annotation!r} carries no C++ pattern")
+        return annotation.pattern
+    if isinstance(annotation, _TypeVarSentinel):
+        return _hgraph.type_pattern_var(annotation.name)
+    raise TypeError(f"not a time-series annotation: {annotation!r}")
 
 
 def _size_pattern(size):
@@ -589,12 +614,22 @@ class Size:
 
 class _TSLMeta(type):
     @staticmethod
-    def from_ts(*ports):
-        """hgraph parity: build a TSL from individual TS ports."""
+    def from_ts(*ports, tp=None):
+        """hgraph parity: build a TSL from individual TS ports. A single
+        iterable argument expands; ``tp=`` forces the element type (ports of
+        a narrower type convert to it)."""
+        import types
         import _hgraph as _m
 
-        from ._runtime import WiringPort, _unwrap
+        from ._runtime import WiringPort, _unwrap, wire
 
+        if len(ports) == 1 and isinstance(ports[0], (types.GeneratorType, list, tuple)):
+            ports = tuple(ports[0])
+        if tp is not None and isinstance(tp, _TsExpr):
+            ports = tuple(
+                p if isinstance(p, WiringPort) and _unwrap(p).ts_type == tp.handle
+                else wire("convert", p, output_type=tp)
+                for p in ports)
         return WiringPort(_m.tsl_port([_unwrap(p) for p in ports]))
 
     def __getitem__(cls, item):
@@ -622,6 +657,14 @@ class _TSBMeta(type):
     def __getitem__(cls, schema):
         if isinstance(schema, _TypeVarSentinel):
             return _GenericTsExpr(f"TSB[{schema!r}]", pattern=_hgraph.type_pattern_tsb(schema.name))
+        # hgraph's INLINE schema: TSB["lhs": TS[int], "rhs": TS[int]] - an
+        # un-named structural bundle with the given fields.
+        if isinstance(schema, slice):
+            schema = (schema,)
+        if isinstance(schema, tuple) and schema and all(isinstance(s, slice) for s in schema):
+            fields = [(s.start, _resolve(s.stop)) for s in schema]
+            label = ", ".join(f"{n}: {t!r}" for n, t in fields)
+            return _TsExpr(_hgraph.un_named_tsb_type(fields), f"TSB[{label}]")
         # hgraph parity: schema INHERITANCE - base-class fields first (MRO
         # reversed), subclass fields after; later duplicates override.
         annotations = {}

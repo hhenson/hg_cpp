@@ -341,6 +341,16 @@ namespace hgraph::python_bridge
                 if (nb::isinstance<nb::dict>(object))
                 {
                     auto spec = nb::cast<nb::dict>(object);
+                    for (auto [key, item] : spec)
+                    {
+                        // Only the delta spec shape is a dict; anything else
+                        // (e.g. {0: 1}) is not a set delta.
+                        if (!nb::isinstance<nb::str>(key) ||
+                            (nb::cast<std::string>(key) != "added" && nb::cast<std::string>(key) != "removed"))
+                        {
+                            throw nb::type_error("a TSS delta dict may only carry 'added'/'removed'");
+                        }
+                    }
                     add_from    = spec.contains("added") ? spec["added"] : nb::handle{};
                     remove_from = spec.contains("removed") ? spec["removed"] : nb::handle{};
                 }

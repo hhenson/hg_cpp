@@ -34,6 +34,22 @@ namespace hgraph::python_bridge
         return *slot;
     }
 
+    /** hgraph's Removed(item) marker class (TSS delta shaping). */
+    [[nodiscard]] inline nb::object &removed_class_slot()
+    {
+        static auto *slot = new nb::object{};
+        return *slot;
+    }
+
+    /** hgraph's SetDelta class (a frozenset subclass): TSS delta_value
+        results are built as this type so returning them to a TSS output
+        applies as a DELTA (a plain frozenset applies as the full value). */
+    [[nodiscard]] inline nb::object &set_delta_class_slot()
+    {
+        static auto *slot = new nb::object{};
+        return *slot;
+    }
+
     /** The module-installed python->Value INFERENCE hook (schema-free
         conversion is inherently a dispatch on PYTHON types, so it lives in
         the module; core ops that need it - e.g. Any's from_python - call

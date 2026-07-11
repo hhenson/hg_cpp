@@ -471,6 +471,16 @@ namespace hgraph
         {
             if constexpr (python_scalar_castable<T>)
             {
+                if constexpr (std::is_arithmetic_v<T>)
+                {
+                    // Pythonic strictness: numeric scalars never convert from
+                    // strings (PyNumber coercion would accept "1"); numeric
+                    // cross-conversions stay permitted.
+                    if (nb::isinstance<nb::str>(source) || nb::isinstance<nb::bytes>(source))
+                    {
+                        throw nb::type_error("cannot convert a python string to a numeric scalar");
+                    }
+                }
                 *static_cast<T *>(memory) = nb::cast<T>(source);
             }
             else if constexpr (has_python_conversion_traits<T>)

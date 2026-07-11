@@ -175,7 +175,12 @@ namespace hgraph::stdlib
         static void eval(In<"ts", TSS<ScalarVar<"K">>, InputValidity::Unchecked> ts,
                          In<"item", TS<ScalarVar<"K">>> item, Out<TS<Bool>> out)
         {
-            container_impl_detail::set_if_changed(out, ts.valid() && ts.base().as_set().contains(item.base().value()));
+            const Bool value = ts.valid() && ts.base().as_set().contains(item.base().value());
+            // hgraph parity: an ITEM tick always re-publishes (upstream
+            // re-samples the per-item contains output on rebind); a SET tick
+            // only publishes a membership change.
+            if (item.modified()) { out.set(value); }
+            else { container_impl_detail::set_if_changed(out, value); }
         }
     };
 
@@ -226,7 +231,12 @@ namespace hgraph::stdlib
         static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
                          In<"item", TS<ScalarVar<"K">>> item, Out<TS<Bool>> out)
         {
-            container_impl_detail::set_if_changed(out, ts.valid() && ts.base().as_dict().contains(item.base().value()));
+            const Bool value = ts.valid() && ts.base().as_dict().contains(item.base().value());
+            // hgraph parity: an ITEM tick always re-publishes (upstream
+            // re-samples the per-key contains output on rebind); a DICT tick
+            // only publishes a membership change.
+            if (item.modified()) { out.set(value); }
+            else { container_impl_detail::set_if_changed(out, value); }
         }
     };
 

@@ -340,15 +340,23 @@ namespace
                 output_type->meta->value_schema != nullptr && nb::len(args) >= 1 &&
                 !wiring_args.empty() && wiring_args[0].kind == WiringArg::Kind::Scalar)
             {
-                try
+                // Whole value first, then the DELTA form (a partial value -
+                // dict over a TSL/TSD, set delta, ...) at the canonical delta
+                // schema; if both fail, keep the generic conversion
+                // (resolution reports mismatches).
+                auto converted = fallback_on_exception(std::optional<Value>{}, [&] {
+                    return std::optional<Value>{py_to_value_as(args[0], output_type->meta->value_schema)};
+                });
+                if (!converted.has_value())
                 {
-                    Value converted = py_to_value_as(args[0], output_type->meta->value_schema);
-                    wiring_args[0].scalar_value = std::move(converted);
-                    wiring_args[0].scalar_meta  = wiring_args[0].scalar_value.schema();
+                    converted = fallback_on_exception(std::optional<Value>{}, [&] {
+                        return std::optional<Value>{py_to_delta(args[0], output_type->meta)};
+                    });
                 }
-                catch (const std::exception &)
+                if (converted.has_value())
                 {
-                    // keep the generic conversion; resolution reports mismatches
+                    wiring_args[0].scalar_value = std::move(*converted);
+                    wiring_args[0].scalar_meta  = wiring_args[0].scalar_value.schema();
                 }
             }
             const std::vector<std::size_t> size_hints = sizes.value_or(std::vector<std::size_t>{});
@@ -592,7 +600,46 @@ namespace
             }
             return;
         }
-        Value delta = py_to_delta(result, erased.schema());
+        nb::object shaped    = nb::borrow(result);
+        const bool tss       = erased.schema()->kind == TSTypeKind::TSS;
+        const bool has_value = tss && erased.data_view().has_current_value();
+        nb::object current   = tss && has_value ? value_to_py(erased.data_view().value())
+                                                : nb::steal(PyFrozenSet_New(nullptr));
+        if (tss && PyFrozenSet_CheckExact(result.ptr()))
+        {
+            // hgraph parity (PythonTimeSeriesSetOutput.value setter): an
+            // exact frozenset return REPLACES the whole set - removals are
+            // computed against the current value. Any other shape (set with
+            // Removed markers, set_delta, dict) stays a delta.
+            nb::dict spec;
+            spec["added"]   = result.attr("difference")(current);
+            spec["removed"] = current.attr("difference")(result);
+            shaped = spec;
+        }
+        Value delta = py_to_delta(shaped, erased.schema());
+        if (tss && has_value)
+        {
+            // hgraph parity (_post_modify): a delta that nets to no change
+            // on a valid output does not tick. Membership is checked on the
+            // PYTHON values (delta and value plans bind differently).
+            BundleView bundle{delta.view()};
+            const auto in_current = [&](const ValueView &element) {
+                return PySequence_Contains(current.ptr(), value_to_py(element).ptr()) == 1;
+            };
+            bool net_empty = true;
+            for (const ValueView &element : SetView{bundle.at("added")})
+            {
+                if (!in_current(element)) { net_empty = false; break; }
+            }
+            if (net_empty)
+            {
+                for (const ValueView &element : SetView{bundle.at("removed")})
+                {
+                    if (in_current(element)) { net_empty = false; break; }
+                }
+            }
+            if (net_empty) { return; }
+        }
         // The python return is a CANONICAL DELTA (py_to_delta) - apply it as
         // one (atomic TS deltas coincide with values; compound kinds do not).
         apply_delta(out, delta.view());
@@ -729,6 +776,20 @@ namespace
         [[nodiscard]] nb::object value() const
         {
             const auto &v = checked();
+            if (!v.valid()) { return nb::none(); }   // hgraph: invalid reads as None
+            if (v.schema() != nullptr && v.schema()->kind == TSTypeKind::TSL)
+            {
+                // hgraph parity: a TSL's value is a tuple of child values
+                // (invalid children read as None).
+                auto list = const_cast<TSInputView &>(v).as_list();
+                nb::list out;
+                for (auto &&[index, child] : list.items())
+                {
+                    static_cast<void>(index);
+                    out.append(child.valid() ? value_to_py(child.value()) : nb::none());
+                }
+                return nb::tuple(out);
+            }
             if (v.schema() != nullptr && v.schema()->kind == TSTypeKind::REF)
             {
                 // A REF input's value is the REFERENCE - TSInputView::
@@ -736,7 +797,14 @@ namespace
                 // (peered at the true upstream output).
                 return nb::cast(python_bridge::PyOpaqueRef{Value{v.reference()}});
             }
-            return value_to_py(v.value());
+            nb::object result = value_to_py(v.value());
+            if (v.schema() != nullptr && v.schema()->kind == TSTypeKind::TS && PySet_CheckExact(result.ptr()))
+            {
+                // hgraph parity: a scalar set is a FROZENSET (TSS values stay
+                // mutable sets) - returning it to a TSS output means replace.
+                return nb::steal(PyFrozenSet_New(result.ptr()));
+            }
+            return result;
         }
 
         [[nodiscard]] nb::object delta_value() const
@@ -744,7 +812,15 @@ namespace
             const auto &ts = checked();
             switch (ts.schema()->kind)
             {
-                case TSTypeKind::TS: return value_to_py(ts.value());
+                case TSTypeKind::TS: {
+                    nb::object result = value_to_py(ts.value());
+                    if (PySet_CheckExact(result.ptr()))
+                    {
+                        // hgraph parity: scalar sets are frozensets.
+                        return nb::steal(PyFrozenSet_New(result.ptr()));
+                    }
+                    return result;
+                }
                 case TSTypeKind::TSD: {
                     // hgraph's friendly shape: {key: child delta, removed: REMOVED}
                     nb::dict result;
@@ -757,17 +833,22 @@ namespace
                     return result;
                 }
                 case TSTypeKind::TSS: {
+                    // hgraph's SetDelta shape: added items plain, removals
+                    // wrapped in Removed(...). Built as the registered
+                    // SetDelta class so a node returning it applies as a
+                    // DELTA (a plain frozenset return replaces the value).
                     auto     set = ts.as_set();
-                    nb::list added_items;
-                    for (const ValueView &element : set.added()) { added_items.append(value_to_py(element)); }
-                    nb::object added = nb::steal(PyFrozenSet_New(nb::list(added_items).ptr()));
-                    nb::list removed_items;
-                    for (const ValueView &element : set.removed()) { removed_items.append(value_to_py(element)); }
-                    if (nb::len(removed_items) == 0) { return added; }
-                    nb::dict result;
-                    result["added"]   = added;
-                    result["removed"] = nb::steal(PyFrozenSet_New(nb::list(removed_items).ptr()));
-                    return result;
+                    nb::list items;
+                    for (const ValueView &element : set.added()) { items.append(value_to_py(element)); }
+                    nb::object &removed_cls = python_bridge::removed_class_slot();
+                    for (const ValueView &element : set.removed())
+                    {
+                        items.append(removed_cls.is_valid() ? removed_cls(value_to_py(element))
+                                                            : value_to_py(element));
+                    }
+                    nb::object result = nb::steal(PyFrozenSet_New(nb::list(items).ptr()));
+                    nb::object &set_delta_cls = python_bridge::set_delta_class_slot();
+                    return set_delta_cls.is_valid() ? set_delta_cls(result) : result;
                 }
                 default: {
                     Value delta = capture_delta(ts);
@@ -860,6 +941,18 @@ namespace
             for (auto &&[key, child] : dict.modified_items())
             {
                 result.append(nb::make_tuple(value_to_py(key), PyTimeSeries{std::move(child), guard}));
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::list modified_values() const
+        {
+            nb::list result;
+            auto dict = checked().as_dict();
+            for (auto &&[key, child] : dict.modified_items())
+            {
+                static_cast<void>(key);
+                result.append(PyTimeSeries{std::move(child), guard});
             }
             return result;
         }
@@ -1457,6 +1550,29 @@ namespace
         }
     };
 
+    /** ``convert[TS[object]](ts)`` — box any TS payload into the python-
+        object scalar (py parity: TS[object] widens over any value). */
+    struct convert_to_py_object_node
+    {
+        static constexpr auto name = "convert_to_py_object";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            using namespace hgraph::operator_type_resolution;
+            // The concrete TS[object] output is gated by the dispatcher's
+            // requested-output match; already-object inputs use identity.
+            const auto *in = time_series_schema_at(context, 0);
+            return in != nullptr && in->kind == TSTypeKind::TS &&
+                   in->value_schema != TypeRegistry::instance().value_type("object");
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TS<PyObj>> out)
+        {
+            nb::gil_scoped_acquire gil;
+            out.set(PyObj{value_to_py(ts.base().value())});
+        }
+    };
+
     /** ``getattr_(TS[type], "name" | "__name__")`` — the type's __name__
         (upstream's getattr_type_name). */
     struct getattr_type_name_node
@@ -1624,6 +1740,7 @@ NB_MODULE(_hgraph, m)
     register_overload<op_harness_record, harness_record>();
     register_overload<stdlib::until_true, until_true_callable_node>();
     register_overload<stdlib::type_, type_py_node>();
+    register_overload<stdlib::convert, convert_to_py_object_node>();
     register_overload<stdlib::getattr_, getattr_type_name_node>();
     register_graph_overload<stdlib::freeze, freeze_callable_compose>();
     register_overload<stdlib::call_op, call_callable_node>();
@@ -1783,7 +1900,13 @@ NB_MODULE(_hgraph, m)
 
     // --- time-series type CONSTRUCTION (the Python type layer builds
     // TS[...]/TSS[...]/TSD[...]/TSL[...]/TSB[...] through these) ---
-    nb::class_<PyValueType>(m, "ValueType");
+    nb::class_<PyValueType>(m, "ValueType")
+        .def("__eq__",
+             [](const PyValueType &self, nb::handle other) {
+                 if (!nb::isinstance<PyValueType>(other)) { return false; }
+                 return self.meta == nb::cast<PyValueType &>(other).meta;   // metas are interned
+             })
+        .def("__hash__", [](const PyValueType &self) { return std::hash<const void *>{}(self.meta); });
     m.def("value_type", [](const std::string &name) {
         const auto *meta = TypeRegistry::instance().value_type(name);
         if (meta == nullptr) { throw nb::value_error(("unknown value type: " + name).c_str()); }
@@ -1945,6 +2068,80 @@ NB_MODULE(_hgraph, m)
     m.def("size_pattern_value", [](std::size_t value) {
         return PySizePattern{false, {}, value};
     });
+
+    // ------------------------------------------------------------------
+    // ResolutionScope: the python DSL's wiring-time resolution window onto
+    // the C++ type/pattern machinery (type_resolution.h). Input patterns
+    // match against wired port schemas accumulating type-variable bindings;
+    // outputs resolve from the same map. Python adds NO parallel classifier
+    // (ruling 2026-07-11: identify the intent, serve it from the C++ type
+    // system).
+    // ------------------------------------------------------------------
+    {
+        struct PyResolutionScope
+        {
+            ResolutionMap map{};
+        };
+
+        nb::class_<PyResolutionScope>(m, "ResolutionScope")
+            .def(nb::init<>())
+            .def("match",
+                 [](PyResolutionScope &self, PyTypePattern pattern, PyTsType actual) {
+                     return input_ts_pattern_match(pattern.pattern, actual.meta, self.map);
+                 },
+                 nb::arg("pattern"), nb::arg("actual"))
+            .def("resolve_ts",
+                 [](PyResolutionScope &self, PyTypePattern pattern) -> std::optional<PyTsType> {
+                     try
+                     {
+                         const auto *meta = ts_pattern_resolve(pattern.pattern, self.map);
+                         if (meta == nullptr) { return std::nullopt; }
+                         return PyTsType{meta};
+                     }
+                     catch (const std::exception &)
+                     {
+                         return std::nullopt;   // unresolved variables remain
+                     }
+                 },
+                 nb::arg("pattern"))
+            .def("bind_ts", [](PyResolutionScope &self, const std::string &name, PyTsType meta) {
+                self.map.bind_ts(name, meta.meta);
+            })
+            .def("bind_scalar", [](PyResolutionScope &self, const std::string &name, PyValueType meta) {
+                self.map.bind_scalar(name, meta.meta);
+            })
+            .def("bind_size", [](PyResolutionScope &self, const std::string &name, std::size_t size) {
+                self.map.bind_size(name, size);
+            })
+            .def("find_ts",
+                 [](const PyResolutionScope &self, const std::string &name) -> std::optional<PyTsType> {
+                     const auto *meta = self.map.find_ts(name);
+                     if (meta == nullptr) { return std::nullopt; }
+                     return PyTsType{meta};
+                 })
+            .def("find_scalar",
+                 [](const PyResolutionScope &self, const std::string &name) -> std::optional<PyValueType> {
+                     const auto *meta = self.map.find_scalar(name);
+                     if (meta == nullptr) { return std::nullopt; }
+                     return PyValueType{meta};
+                 })
+            .def("find_size",
+                 [](const PyResolutionScope &self, const std::string &name) -> std::optional<std::size_t> {
+                     return self.map.find_size(name);
+                 })
+            .def_prop_ro("bindings", [](const PyResolutionScope &self) {
+                // The resolver-lambda ``mapping`` argument: every bound
+                // variable by name (ts handles, scalar metas, sizes).
+                nb::dict out;
+                for (const auto &[name, meta] : self.map.ts_vars) { out[nb::str(name.c_str())] = PyTsType{meta}; }
+                for (const auto &[name, meta] : self.map.scalar_vars)
+                {
+                    out[nb::str(name.c_str())] = PyValueType{meta};
+                }
+                for (const auto &[name, size] : self.map.size_vars) { out[nb::str(name.c_str())] = size; }
+                return out;
+            });
+    }
 
     m.def("type_pattern_var", [](const std::string &name) {
         return PyTypePattern{TypePattern::var(name)};
@@ -2310,6 +2507,13 @@ NB_MODULE(_hgraph, m)
     m.def("passive", [](const PyPort &port) {
         return PyPort{port.ref.with_arg_tag(WiringPortRef::ArgTag::Passive)};
     });
+    // map_'s multiplex markers (hgraph's pass_through/no_key wrappers).
+    m.def("pass_through_tag", [](const PyPort &port) {
+        return PyPort{port.ref.with_arg_tag(WiringPortRef::ArgTag::PassThrough)};
+    });
+    m.def("no_key_tag", [](const PyPort &port) {
+        return PyPort{port.ref.with_arg_tag(WiringPortRef::ArgTag::NoKey)};
+    });
 
     nb::class_<PyWiredFn>(m, "WiredFn");
     nb::class_<PyNodeHandle>(m, "NodeRef");
@@ -2391,11 +2595,15 @@ NB_MODULE(_hgraph, m)
         .def("keys", &PyTimeSeries::keys)
         .def("modified_keys", &PyTimeSeries::modified_keys)
         .def("modified_items", &PyTimeSeries::modified_items)
+        .def("modified_values", &PyTimeSeries::modified_values)
         .def("removed_keys", &PyTimeSeries::removed_keys)
         .def("__getitem__", &PyTimeSeries::child_at)
-        .def("__getattr__", [](const PyTimeSeries &self, const std::string &name) {
+        .def("__getattr__", [](nb::object self_obj, const std::string &name) -> nb::object {
+            auto &self = nb::cast<PyTimeSeries &>(self_obj);
             if (self.kind() != TSTypeKind::TSB) { throw nb::attribute_error(name.c_str()); }
-            return self.child_at(nb::cast(name));
+            // hgraph's TSB.as_schema: typed field access (the same view).
+            if (name == "as_schema") { return self_obj; }
+            return nb::cast(self.child_at(nb::cast(name)));
         })
         .def("__contains__", &PyTimeSeries::contains)
         .def("__len__", &PyTimeSeries::size)
@@ -2405,6 +2613,8 @@ NB_MODULE(_hgraph, m)
     m.def("_set_divide_by_zero_enum",
           [](nb::object enum_class) { divide_by_zero_enum_slot() = std::move(enum_class); });
     m.def("_set_removed_sentinel", [](nb::object sentinel) { PyTimeSeries::removed_slot() = std::move(sentinel); });
+    m.def("_set_removed_class", [](nb::object cls) { python_bridge::removed_class_slot() = std::move(cls); });
+    m.def("_set_set_delta_class", [](nb::object cls) { python_bridge::set_delta_class_slot() = std::move(cls); });
     nb::class_<PyArrowStream>(m, "ArrowStream")
         .def("__arrow_c_stream__",
              [](const PyArrowStream &self, nb::handle) { return self.capsule(); },
@@ -2494,6 +2704,16 @@ NB_MODULE(_hgraph, m)
             }
         }
         return false;
+    });
+
+    m.def("tsb_field_names", [](PyTsType ts_type) {
+        nb::list names;
+        if (ts_type.meta == nullptr || ts_type.meta->kind != TSTypeKind::TSB) { return names; }
+        for (std::size_t index = 0; index < ts_type.meta->field_count(); ++index)
+        {
+            names.append(nb::str(std::string{ts_type.meta->fields()[index].name}.c_str()));
+        }
+        return names;
     });
 
     m.def("ref_port", [](PyWiring &wiring, const PyPort &port) {
@@ -2728,6 +2948,7 @@ NB_MODULE(_hgraph, m)
     register_overload<op_harness_record, harness_record>();
     register_overload<stdlib::until_true, until_true_callable_node>();
     register_overload<stdlib::type_, type_py_node>();
+    register_overload<stdlib::convert, convert_to_py_object_node>();
     register_overload<stdlib::getattr_, getattr_type_name_node>();
     register_graph_overload<stdlib::freeze, freeze_callable_compose>();
     register_overload<stdlib::call_op, call_callable_node>();

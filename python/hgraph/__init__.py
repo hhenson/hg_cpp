@@ -23,6 +23,15 @@ from ._runtime import convert
 from ._runtime import collect
 from ._runtime import emit
 from ._runtime import cast_
+from ._runtime import ParseError, IncorrectTypeBinding, RequirementsNotMetWiringError
+from ._runtime import evaluate_graph, GraphConfiguration, TSB_OUT, operator
+from .nodes import pass_through_node
+from ._runtime import pass_through, no_key
+from ._signature import (WiringNodeType, WiringNodeSignature, extract_signature,
+                         extract_kwargs)
+from ._runtime import _PyNode as PythonWiringNodeClass
+from ._runtime import _GraphFn as GraphWiringNodeClass
+from ._runtime import _Generator as PythonGeneratorWiringNodeClass
 from ._runtime import GlobalContext, GlobalState, set_record_replay_config, set_as_of, set_table_schema_date_key, set_table_schema_as_of_key, evaluate_const
 from ._runtime import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, mesh_, mesh_ref, REMOVED, feedback, switch_, passive, compute_node, sink_node, generator, lift, STATE, SCHEDULER, CLOCK, LOGGER, DebugContext, component, record_replay_scope, RecordReplayEnum, comparison_summary, push_queue, EvaluationMode, context, WiringError, reference_service, subscription_service, request_reply_service, register_service, service_impl, adaptor, adaptor_impl, register_adaptor, from_graph, to_graph, impl_input, impl_output, get_service_inputs, set_service_output
 
@@ -36,6 +45,9 @@ frame_store_read = _hgraph.frame_store_read
 
 TimeSeries = _hgraph.TimeSeries
 _hgraph._set_removed_sentinel(REMOVED)
+from ._runtime import Removed as _Removed, _SetDelta
+_hgraph._set_removed_class(_Removed)
+_hgraph._set_set_delta_class(_SetDelta)
 _hgraph._set_cmp_result_enum(CmpResult)
 _hgraph._set_divide_by_zero_enum(DivideByZero)
 
@@ -79,6 +91,11 @@ __all__ = [
     "set_record_replay_config", "frame_store_contains", "frame_store_read", "evaluate_const",
     "Frame", "TABLE", "COMPOUND_SCALAR", "ToTableMode", "TableSchema", "make_table_schema", "table_schema",
     "get_table_schema_date_key", "get_table_schema_as_of_key",
+    "ParseError", "IncorrectTypeBinding", "RequirementsNotMetWiringError",
+    "WiringNodeType", "WiringNodeSignature", "extract_signature", "extract_kwargs",
+    "PythonWiringNodeClass", "GraphWiringNodeClass", "PythonGeneratorWiringNodeClass",
+    "evaluate_graph", "GraphConfiguration", "TSB_OUT", "operator",
+    "pass_through_node", "pass_through", "no_key",
 ]
 
 from ._runtime import set_delta, compute_set_delta

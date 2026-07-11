@@ -210,6 +210,8 @@ WiringPort.__iter__ = _port_iter
 def _port_getattr(self, name):
     if name.startswith("_"):
         raise AttributeError(name)
+    if name == "as_schema":
+        return self   # hgraph's TSB.as_schema: typed field access (same port)
     if name == "key_set":
         return wire("keys_", self)   # hgraph's TSD.key_set property
     # JSON leaf coercions: j["a"].int / .float / .str / .bool.
@@ -231,7 +233,14 @@ def _port_reduce(self, fn, zero=None):
     return reduce(fn, self)
 
 
+def _port_keys(self):
+    """hgraph's TSB mapping protocol: field names (dict(**tsb) works)."""
+    tp = _unwrap(self).ts_type
+    return tuple(_hgraph.tsb_field_names(tp))
+
+
 WiringPort.reduce = _port_reduce
+WiringPort.keys = _port_keys
 WiringPort.__getattr__ = _port_getattr
 
 
@@ -352,6 +361,16 @@ def passive(port):
     still read normally). Returns a marked copy - the original port is
     unaffected."""
     return WiringPort(_hgraph.passive(_unwrap(port)))
+
+
+def pass_through(ts):
+    """map_'s pass-through marker: do NOT demultiplex this argument."""
+    return WiringPort(_hgraph.pass_through_tag(_unwrap(ts)))
+
+
+def no_key(ts):
+    """map_'s no-key marker: demultiplex, but exclude from key inference."""
+    return WiringPort(_hgraph.no_key_tag(_unwrap(ts)))
 
 
 def feedback(tp, initial=None):
@@ -782,6 +801,73 @@ class WiringError(RuntimeError):
     """A wiring-time error (hgraph parity)."""
 
 
+class _ResolvedSize:
+    """The object an AUTO_RESOLVE'd type[SIZE] parameter receives: hgraph's
+    Size-like carrier with the concrete ``.SIZE``."""
+
+    __slots__ = ("SIZE",)
+
+    def __init__(self, size):
+        self.SIZE = size
+
+    def __repr__(self):
+        return f"Size[{self.SIZE}]"
+
+
+def _graph_auto_resolve(signature, arguments):
+    """Fill ``x: type[SENTINEL] = AUTO_RESOLVE`` graph parameters: match
+    every time-series parameter's TYPE PATTERN against its wired port in a
+    C++ resolution scope, then read each sentinel's binding from it."""
+    import typing
+
+    from ._types import _TsExpr, _GenericTsExpr, _TypeVarSentinel, _pattern_of
+
+    scope = _hgraph.ResolutionScope()
+    for name, param in signature.parameters.items():
+        value = arguments.get(name)
+        if isinstance(value, WiringPort) and isinstance(
+                param.annotation, (_GenericTsExpr, _TypeVarSentinel)):
+            try:
+                scope.match(_pattern_of(param.annotation), _unwrap(value).ts_type)
+            except (RuntimeError, ValueError, TypeError):
+                pass   # inconsistent bindings surface at the consuming node
+
+    resolved = {}
+    for name, param in signature.parameters.items():
+        from ._types import AUTO_RESOLVE
+
+        if param.default is not AUTO_RESOLVE or name in arguments:
+            continue
+        args = typing.get_args(param.annotation)
+        sentinel = args[0] if args else None
+        if not isinstance(sentinel, _TypeVarSentinel):
+            raise WiringError(
+                f"AUTO_RESOLVE parameter '{name}' needs a type[TYPEVAR] annotation")
+        size = scope.find_size(sentinel.name)
+        if size is not None:
+            resolved[name] = _ResolvedSize(size)
+            continue
+        ts = scope.find_ts(sentinel.name)
+        if ts is not None:
+            resolved[name] = _TsExpr(ts, f"resolved[{sentinel!r}]")
+            continue
+        raise WiringError(
+            f"AUTO_RESOLVE could not resolve '{name}' ({sentinel!r}) from the wired arguments")
+    return resolved
+
+
+class ParseError(WiringError):
+    """A wiring function's declaration is malformed (hgraph parity)."""
+
+
+class IncorrectTypeBinding(WiringError):
+    """A port's type does not match the parameter it is wired to."""
+
+
+class RequirementsNotMetWiringError(WiringError):
+    """An overload's requires= predicate rejected the call."""
+
+
 _published_contexts = []   # [(port, ts_type_handle, frame)] most recent last
 
 
@@ -849,6 +935,35 @@ _INJECTABLE_MARKERS = {STATE: "S", CLOCK: "c", SCHEDULER: "d", GlobalState: "g"}
 _MISSING = object()
 
 
+def _is_object_vt(vt):
+    try:
+        return vt == _hgraph.value_type("object")
+    except TypeError:
+        return False
+
+
+def _unbounded_tuple_kind():
+    global _UNBOUNDED_TUPLE_KIND
+    if _UNBOUNDED_TUPLE_KIND is None:
+        _UNBOUNDED_TUPLE_KIND = _hgraph.vt_kind(_hgraph.tuple_vt(_hgraph.value_type("int")))
+    return _UNBOUNDED_TUPLE_KIND
+
+
+_UNBOUNDED_TUPLE_KIND = None
+
+
+def _tsw_kind():
+    global _TSW_KIND
+    if _TSW_KIND is None:
+        from ._types import TSW, WindowSize
+
+        _TSW_KIND = TSW[int, WindowSize[1]].handle.kind
+    return _TSW_KIND
+
+
+_TSW_KIND = None
+
+
 class _PyNode:
     """@compute_node / @sink_node: a Python function as a runtime node. The
     function runs on the graph thread (both modes) under the GIL, receives
@@ -857,11 +972,19 @@ class _PyNode:
     compute node's return value ticks its output (None = no tick). It must
     have no side effects beyond its output."""
 
-    def __init__(self, fn, has_output, active=None, valid=None):
+    def __init__(self, fn, has_output, active=None, valid=None, resolvers=None,
+                 node_type=None):
         self.fn = fn
         self.has_output = has_output
-        self._active = self._policy_names("active", active)
-        self._valid = self._policy_names("valid", valid)
+        # active=/valid= accept name iterables OR wiring-time callables
+        # (m, **scalars) evaluated once the call's scalars are known.
+        self._active_fn = active if callable(active) else None
+        self._valid_fn = valid if callable(valid) else None
+        self._active = None if callable(active) else self._policy_names("active", active)
+        self._valid = None if callable(valid) else self._policy_names("valid", valid)
+        self._resolvers = dict(resolvers) if resolvers else None
+        self._pins = {}
+        self._node_type = node_type
         self._start_fn = None
         self._stop_fn = None
         self.__name__ = fn.__name__
@@ -929,17 +1052,152 @@ class _PyNode:
     def stop(self, fn):
         return self._set_lifecycle("stop", fn)
 
+    @property
+    def signature(self):
+        from ._signature import WiringNodeType, extract_signature
+
+        node_type = self._node_type or (
+            WiringNodeType.COMPUTE_NODE if self.has_output else WiringNodeType.SINK_NODE)
+        return extract_signature(self.fn, node_type)
+
     def __getitem__(self, item):
-        # hgraph's node[TYPEVAR: TYPE] pre-resolution subscripts: types
-        # resolve from the wired inputs here - accept and ignore.
-        return self
+        # node[TYPEVAR: TYPE] pre-resolution: the pins seed the call's
+        # ResolutionScope (the C++ type-variable map) - a copied node so the
+        # shared decorator object is never mutated.
+        from ._types import _TypeVarSentinel, _TsExpr
+
+        import copy
+
+        pinned = copy.copy(self)
+        pinned._pins = dict(self._pins)
+        items = item if isinstance(item, tuple) else (item,)
+        for entry in items:
+            if isinstance(entry, slice) and isinstance(entry.start, _TypeVarSentinel):
+                pinned._pins[entry.start.name] = entry.stop
+        return pinned
+
+    @staticmethod
+    def _bind_resolved(scope, name, resolved):
+        """Seed a pinned/resolved type variable into the C++ scope: a ts
+        expression binds the ts var; a python scalar type binds the scalar
+        var of the same name."""
+        from ._types import _TsExpr, _value_type
+
+        if isinstance(resolved, _TsExpr):
+            scope.bind_ts(name, resolved.handle)
+        else:
+            scope.bind_scalar(name, _value_type(resolved))
+
+    @staticmethod
+    def _eval_policy(policy, fn, scope, scalar_values):
+        """Evaluate a wiring-time active=/valid= callable: (m, **scalars) ->
+        None (all inputs) / iterable of input names."""
+        params = list(inspect.signature(fn).parameters)
+        call = {name: scalar_values.get(name) for name in params[1:]}
+        result = fn(scope.bindings, **call)
+        if result is None:
+            return None
+        return frozenset(result)
+
+    def _check_binding(self, scope, param, value):
+        """Match the wired port against the parameter's TYPE PATTERN,
+        binding type variables into the scope. A mismatch on a concrete
+        CompoundScalar annotation accepts SUBCLASS ports (python's
+        inheritance is a py-frontend concept); anything else raises."""
+        from ._types import TS, _pattern_of
+
+        annotation = param.annotation
+        if isinstance(annotation, _ContextExpr):
+            return
+        import typing
+
+        if typing.get_origin(annotation) is typing.Union:
+            members = typing.get_args(annotation)
+            port_tp = _unwrap(value).ts_type
+            for member in members:
+                if isinstance(member, _TsExpr) and member.handle == port_tp:
+                    return
+            raise IncorrectTypeBinding(
+                f"{self.__name__}: '{param.name}' expects one of {members!r}")
+        if isinstance(annotation, _TsExpr):
+            handle = annotation.handle
+            # TS[object] widens over any payload (the py-any input rule).
+            if handle.is_ts and _is_object_vt(_hgraph.ts_value_vt(handle)):
+                return
+            # TSW strictness is deferred until the duration/tick marker
+            # normalisation lands (min-period defaults are applied at
+            # wiring, so handle equality over-rejects).
+            if handle.kind == _tsw_kind():
+                return
+        try:
+            pattern = _pattern_of(annotation)
+        except TypeError:
+            return   # non-ts annotation reached with a port: leave to the runtime
+        port_tp = _unwrap(value).ts_type
+        if scope.match(pattern, port_tp):
+            return
+        if isinstance(annotation, _TsExpr) and annotation.handle.is_ts:
+            # tuple[E, ...] widens over fixed tuples of E: re-match with the
+            # C++ homogeneous-tuple pattern (the matcher owns that rule).
+            vt = _hgraph.ts_value_vt(annotation.handle)
+            if _hgraph.vt_kind(vt) == _unbounded_tuple_kind():
+                homogeneous = _hgraph.type_pattern_ts(
+                    _hgraph.scalar_pattern_homogeneous_tuple(
+                        _hgraph.scalar_pattern_value(_hgraph.vt_element(vt))))
+                if scope.match(homogeneous, port_tp):
+                    return
+        cs_class = getattr(annotation, "_cs_class", None)
+        if cs_class is not None:
+            stack = list(cs_class.__subclasses__())
+            while stack:
+                candidate = stack.pop()
+                stack.extend(candidate.__subclasses__())
+                if TS[candidate].handle == port_tp:
+                    return   # subtype binding (auto-cast)
+        raise IncorrectTypeBinding(
+            f"{self.__name__}: '{param.name}' expects {annotation!r}, got {port_tp!r}")
+
+    def _apply_resolvers(self, scope, scalar_values):
+        """resolvers={TYPEVAR: lambda mapping, <scalars...>: type}: bind the
+        computed types into the scope (mapping = the scope's bindings)."""
+        for sentinel, resolver in self._resolvers.items():
+            params = list(inspect.signature(resolver).parameters)
+            call = {name: scalar_values.get(name) for name in params[1:]}
+            resolved = resolver(scope.bindings, **call)
+            name = getattr(sentinel, "name", str(sentinel))
+            self._bind_resolved(scope, name, resolved)
 
     def __call__(self, *args, **kwargs):
+        from ._types import _pattern_of
+
         ref = _hgraph.node_ref(self.fn)
         layout, ports, scalars, keep_ref = [], [], [], []
-        generic_bindings = {}   # typevar label -> resolved ts_type handle
+        # The wiring-time RESOLUTION SCOPE: the C++ type-variable map. Every
+        # generic input pattern matches into it; outputs/resolvers/pins read
+        # and write the same map - no python-side type classification.
+        scope = _hgraph.ResolutionScope()
+        for name, resolved in self._pins.items():
+            self._bind_resolved(scope, name, resolved)
         bound = self._signature.bind_partial(*args, **kwargs)
         scalar_values = {}
+        # Pre-collect scalar values so callable active=/valid= policies can
+        # evaluate before layout letters are chosen.
+        for param in self._params:
+            if isinstance(param.annotation, (_TsExpr, _ContextExpr, _GenericTsExpr, _TypeVarSentinel)):
+                continue
+            if param.annotation in _INJECTABLE_MARKERS or param.annotation is LOGGER:
+                continue
+            value = bound.arguments.get(param.name, _MISSING)
+            if value is _MISSING and param.default is not inspect.Parameter.empty:
+                value = param.default
+            if value is not _MISSING and not isinstance(value, WiringPort):
+                scalar_values[param.name] = value
+        active_policy = self._active
+        valid_policy = self._valid
+        if self._active_fn is not None:
+            active_policy = self._eval_policy("active", self._active_fn, scope, scalar_values)
+        if self._valid_fn is not None:
+            valid_policy = self._eval_policy("valid", self._valid_fn, scope, scalar_values)
         for param in self._params:
             marker = _INJECTABLE_MARKERS.get(param.annotation)
             if marker is not None:
@@ -974,7 +1232,7 @@ class _PyNode:
                         raise WiringError(
                             f"no context published for '{param.name}'{where} of '{self.__name__}'")
                     continue   # optional and absent: the fn sees its None default
-                is_active = self._active is None or param.name in self._active
+                is_active = active_policy is None or param.name in active_policy
                 layout.append("C" if is_active else "P")
                 ports.append(_unwrap(resolved))
                 keep_ref.append(False)
@@ -993,29 +1251,22 @@ class _PyNode:
                 if value is None and isinstance(param.annotation, (_TsExpr,)):
                     # unwired optional ts input: a never-ticking source
                     value = wire("nothing", output_type=param.annotation)
+            if not isinstance(value, WiringPort) and isinstance(
+                    param.annotation, (_TsExpr, _GenericTsExpr)) and value is not None \
+                    and not (value is _MISSING):
+                # A plain VALUE on a time-series parameter lifts to const at
+                # the declared type (hgraph's auto-const rule); conversion
+                # errors surface as wiring errors.
+                if isinstance(param.annotation, _TsExpr):
+                    value = wire("const", value, output_type=param.annotation)
             if isinstance(value, WiringPort):
-                required = self._valid is None or param.name in self._valid
-                is_active = self._active is None or param.name in self._active
+                self._check_binding(scope, param, value)
+                required = valid_policy is None or param.name in valid_policy
+                is_active = active_policy is None or param.name in active_policy
                 layout.append({(True, True): "t", (True, False): "u",
                                (False, True): "T", (False, False): "U"}[(is_active, required)])
                 ports.append(_unwrap(value))
                 keep_ref.append(getattr(param.annotation, "is_ref", False))
-                annotation = param.annotation
-                if isinstance(annotation, _GenericTsExpr):
-                    # Resolve the typevar from the ACTUAL port so a generic
-                    # return annotation (e.g. REF[TIME_SERIES_TYPE]) can bind.
-                    actual = _unwrap(value).ts_type
-                    inner = getattr(annotation, "inner", None)
-                    if getattr(annotation, "is_ref", False) and inner is not None:
-                        if actual.is_ref:
-                            actual = _hgraph.ref_target(actual)
-                        generic_bindings[repr(inner)] = actual
-                    else:
-                        generic_bindings[repr(annotation)] = actual
-                elif isinstance(annotation, _TypeVarSentinel):
-                    # A bare sentinel (ts: TIME_SERIES_TYPE) binds the whole
-                    # port type, so a same-sentinel return resolves.
-                    generic_bindings[repr(annotation)] = _unwrap(value).ts_type
             else:
                 layout.append("s")
                 scalars.append(value)
@@ -1046,35 +1297,75 @@ class _PyNode:
             node_kwargs[f"{phase}_scalars"] = _hgraph.any_list(lifecycle_scalars)
         if self.has_output:
             out_tp = self._out_tp
+            if self._resolvers:
+                self._apply_resolvers(scope, scalar_values)
             if isinstance(out_tp, (_GenericTsExpr, _TypeVarSentinel)):
-                inner = getattr(out_tp, "inner", None)
-                key = repr(inner) if inner is not None else repr(out_tp)
-                bound = generic_bindings.get(key)
-                if bound is not None:
-                    handle = _hgraph.ref_ts(bound) if getattr(out_tp, "is_ref", False) else bound
-                    out_tp = _TsExpr(handle, f"resolved[{out_tp!r}]")
+                resolved = scope.resolve_ts(_pattern_of(out_tp))
+                if resolved is not None:
+                    out_tp = _TsExpr(resolved, f"resolved[{out_tp!r}]")
             if not isinstance(out_tp, _TsExpr):
                 raise TypeError(f"@compute_node '{self.__name__}' needs a TS[...] return annotation")
             return wire("__py_compute", packed, output_type=out_tp, **node_kwargs)
         return wire("__py_sink", packed, **node_kwargs)
 
 
-def compute_node(fn=None, *, active=None, valid=None, **_ignored):
+def compute_node(fn=None, *, active=None, valid=None, resolvers=None, **_ignored):
     """Python runtime compute node.
 
     ``active`` names the inputs that drive invocation; ``valid`` names the
-    inputs required to be valid. Unlisted inputs remain readable by the
-    function but do not participate in that policy.
+    inputs required to be valid (either accepts a wiring-time callable
+    ``(m, **scalars)``). ``resolvers`` maps type variables to wiring-time
+    resolver callables. (``overloads=`` lands with the @operator phase and
+    is currently ignored.)
     """
     if fn is None:
-        return lambda f: _PyNode(f, has_output=True, active=active, valid=valid)
-    return _PyNode(fn, has_output=True, active=active, valid=valid)
+        return lambda f: _PyNode(f, has_output=True, active=active, valid=valid,
+                                 resolvers=resolvers)
+    return _PyNode(fn, has_output=True, active=active, valid=valid, resolvers=resolvers)
 
 
-def sink_node(fn=None, *, active=None, valid=None, **_ignored):
+def sink_node(fn=None, *, active=None, valid=None, resolvers=None, **_ignored):
     if fn is None:
-        return lambda f: _PyNode(f, has_output=False, active=active, valid=valid)
-    return _PyNode(fn, has_output=False, active=active, valid=valid)
+        return lambda f: _PyNode(f, has_output=False, active=active, valid=valid,
+                                 resolvers=resolvers)
+    return _PyNode(fn, has_output=False, active=active, valid=valid, resolvers=resolvers)
+
+
+class GraphConfiguration:
+    """hgraph's run configuration (start/end times + observers). Only the
+    fields the C++ executor consumes are carried."""
+
+    def __init__(self, start_time=None, end_time=None, life_cycle_observers=(), **_ignored):
+        self.start_time = start_time
+        self.end_time = end_time
+        self.life_cycle_observers = tuple(life_cycle_observers)
+
+
+def evaluate_graph(fn, config=None, *args, **kwargs):
+    """hgraph's evaluate_graph: run ``fn`` under a GraphConfiguration
+    (a thin shim over run_graph)."""
+    config = config or GraphConfiguration()
+    return run_graph(fn, *args, start_time=config.start_time, end_time=config.end_time, **kwargs)
+
+
+class TSB_OUT:
+    """_output annotation sugar (TSB_OUT[Schema]); injection keys on the
+    parameter NAME (_output), the subscript documents the shape."""
+
+    def __class_getitem__(cls, item):
+        return cls
+
+
+def operator(fn):
+    """hgraph's @operator: overload family root. Lands with the
+    overload/dispatch increment - importable now, raises at use."""
+
+    def _not_yet(*args, **kwargs):
+        raise NotImplementedError("gap: @operator overload families land in the next increment")
+
+    _not_yet.__name__ = getattr(fn, "__name__", "operator")
+    _not_yet.overloads = _not_yet
+    return _not_yet
 
 
 def lift(fn, inputs=None, output=None, active=None, valid=None, all_valid=None,
@@ -1134,6 +1425,12 @@ class _Generator:
         self.fn = fn
         self.__name__ = fn.__name__
         self._out_tp = inspect.signature(fn).return_annotation
+
+    @property
+    def signature(self):
+        from ._signature import WiringNodeType, extract_signature
+
+        return extract_signature(self.fn, WiringNodeType.PULL_SOURCE_NODE)
 
     def __call__(self, *args, **kwargs):
         if not isinstance(self._out_tp, _TsExpr):
@@ -1573,9 +1870,25 @@ class _GraphFn:
 
     def __init__(self, fn):
         self.fn = fn
-        self.signature = inspect.signature(fn)
+        self._signature = inspect.signature(fn)
         self.__name__ = fn.__name__
         self.__doc__ = fn.__doc__
+        out = self._signature.return_annotation
+        if isinstance(out, type):
+            from ._types import TimeSeriesSchema
+
+            if issubclass(out, TimeSeriesSchema):
+                # hgraph parity: a bare schema class is not a time-series
+                # type - the return must be TSB[Schema].
+                raise ParseError(
+                    f"@graph '{self.__name__}': return type {out.__name__} is a schema class - "
+                    f"use TSB[{out.__name__}]")
+
+    @property
+    def signature(self):
+        from ._signature import WiringNodeType, extract_signature
+
+        return extract_signature(self.fn, WiringNodeType.GRAPH)
 
     def __getitem__(self, item):
         # g[str] pins the graph's typevar-defaulted params (hgraph's
@@ -1592,7 +1905,7 @@ class _GraphFn:
         }
         scalar_items = [value for value in items if not isinstance(value, slice)]
         pinned, index = {}, 0
-        for name, param in self.signature.parameters.items():
+        for name, param in self._signature.parameters.items():
             if isinstance(param.default, _TypeVarSentinel) and index < len(scalar_items):
                 pinned[name] = scalar_items[index]
                 index += 1
@@ -1602,25 +1915,26 @@ class _GraphFn:
         wrapper.__name__ = self.__name__
         parameters = [
             param.replace(annotation=resolved_types.get(param.annotation, param.annotation))
-            for param in self.signature.parameters.values()
+            for param in self._signature.parameters.values()
         ]
-        return_annotation = resolved_types.get(self.signature.return_annotation,
-                                               self.signature.return_annotation)
-        wrapper.__signature__ = self.signature.replace(parameters=parameters,
+        return_annotation = resolved_types.get(self._signature.return_annotation,
+                                               self._signature.return_annotation)
+        wrapper.__signature__ = self._signature.replace(parameters=parameters,
                                                        return_annotation=return_annotation)
         return wrapper
 
     def __call__(self, *args, **kwargs):
-        bound = self.signature.bind_partial(*args, **kwargs)
-        for param in self.signature.parameters.values():
+        bound = self._signature.bind_partial(*args, **kwargs)
+        for param in self._signature.parameters.values():
             if param.annotation is GlobalState and param.name not in bound.arguments:
                 bound.arguments[param.name] = GlobalState.instance()
+        bound.arguments.update(_graph_auto_resolve(self._signature, bound.arguments))
         result = self.fn(*bound.args, **bound.kwargs)
         if isinstance(result, dict) and result and all(isinstance(v, WiringPort) for v in result.values()):
             # hgraph parity: a dict literal of ports returned from a @graph
             # coerces to its annotated TSB output (a structural bundle when
             # the annotation is generic/absent).
-            annotation = self.signature.return_annotation
+            annotation = self._signature.return_annotation
             if isinstance(annotation, _TsExpr) and annotation.handle.is_tsb:
                 fields = {k: _unwrap(v) for k, v in result.items()}
                 return WiringPort(_hgraph.tsb_port(annotation.handle, fields))
@@ -1990,12 +2304,37 @@ def _combine_compound_scalars(orig, delta):
     return wire("combine", orig, delta)
 
 
+class _SetDelta(frozenset):
+    """hgraph's SetDelta: a frozenset of added items + Removed(...) markers.
+    A frozenset SUBCLASS so equality/iteration/conversion behave like the
+    friendly shape, while staying distinguishable from a plain frozenset
+    (which a TSS node return applies as the FULL VALUE, upstream parity)."""
+
+    __slots__ = ()
+
+    @property
+    def added(self):
+        return frozenset(e for e in self if type(e) is not Removed)
+
+    @property
+    def removed(self):
+        return frozenset(e.item for e in self if type(e) is Removed)
+
+    def __add__(self, other):
+        other_added = frozenset(e for e in other if type(e) is not Removed)
+        other_removed = frozenset(e.item for e in other if type(e) is Removed)
+        # upstream PythonSetDelta.__add__ composition rules
+        added = (self.added - other_removed) | other_added
+        removed = (other_removed - self.added) | (self.removed - other_added)
+        return _SetDelta(added | {Removed(r) for r in removed})
+
+
 def set_delta(added=None, removed=None, tp=None):
     """hgraph's set-delta literal: the friendly TSS delta shape - added
     items plain, removals wrapped in Removed."""
     added = frozenset(added) if added else frozenset()
     removed = frozenset(removed) if removed else frozenset()
-    return added | {Removed(r) for r in removed}
+    return _SetDelta(added | {Removed(r) for r in removed})
 
 
 def compute_set_delta(value, out):

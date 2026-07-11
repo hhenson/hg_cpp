@@ -48,10 +48,30 @@ namespace hgraph::stdlib
             resolution.bind_ts("S", TypeRegistry::instance().ts(value_schema));
             return;
         }
-        if (value_schema == nullptr || !current_value_schema_compatible(*output_schema, *value_schema))
+        // The configured value may be the output's current-value shape OR its
+        // canonical DELTA shape (partial initialisation - python's const of
+        // a partial dict over a TSL/TSD); out.apply handles both.
+        if (value_schema == nullptr ||
+            (!current_value_schema_compatible(*output_schema, *value_schema) &&
+             value_schema != output_schema->delta_value_schema))
         {
             throw std::logic_error("const: configured value schema does not match the resolved output value schema");
         }
+    }
+
+    /** Apply a configured const value: the current-value shape copies in
+        whole; the canonical DELTA shape (partial initialisation) applies as
+        the initial tick. */
+    inline void const_apply(const ValueView &value, const TSOutputView &out)
+    {
+        const auto *schema = out.schema();
+        if (schema != nullptr && value.schema() == schema->delta_value_schema &&
+            schema->delta_value_schema != schema->value_schema)
+        {
+            apply_delta(out, value);
+            return;
+        }
+        apply_current_value(out, value);
     }
 
     /**
@@ -67,7 +87,7 @@ namespace hgraph::stdlib
 
         static void eval(Scalar<"value", ScalarVar<"T">> value, Out<TsVar<"S">> out)
         {
-            out.apply(value.value());  // erased copy of the configured value
+            const_apply(value.value(), out);  // erased copy of the configured value
         }
     };
 
@@ -91,7 +111,7 @@ namespace hgraph::stdlib
                          Out<TsVar<"S">> out)
         {
             static_cast<void>(delay);   // delay drives the start schedule; eval just applies the value
-            out.apply(value.value());
+            const_apply(value.value(), out);
         }
     };
 
