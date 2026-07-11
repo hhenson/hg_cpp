@@ -697,12 +697,18 @@ namespace
         TSInputView                view;
         std::shared_ptr<PyTsGuard> guard;
 
-        [[nodiscard]] const TSInputView &checked() const
+        /** Throws when the view outlived its node's evaluation. */
+        void require_alive() const
         {
             if (guard == nullptr || !guard->alive)
             {
                 throw std::logic_error("a TimeSeries view was accessed outside its node's evaluation");
             }
+        }
+
+        [[nodiscard]] const TSInputView &checked() const
+        {
+            require_alive();
             return view;
         }
 
@@ -1535,9 +1541,9 @@ NB_MODULE(_hgraph, m)
     stdlib::register_standard_operators();
     python_bridge::py_infer_value_slot() =
         reinterpret_cast<python_bridge::PyInferValueFn>(&python_bridge::py_to_value);
-    // The meta -> python-Enum-class registry backing the core enum ops'
-    // python conversion (immortal map; cleared with the registries).
-    python_bridge::enum_class_registry();
+    // The enum slots read the meta -> python-Enum-class registry (an
+    // immortal map; lazily constructed by its accessor, cleared with the
+    // registries).
     enum_to_python_slot() = [](const ValueTypeMetaData *meta, long long value) -> nb::object {
         auto &registry = python_bridge::enum_class_registry();
         if (const auto it = registry.find(meta); it != registry.end()) { return it->second(value); }
@@ -2294,12 +2300,12 @@ NB_MODULE(_hgraph, m)
         // its own input subscription (the C++ In views expose the same).
         .def("make_passive",
              [](PyTimeSeries &self) {
-                 self.checked();
+                 self.require_alive();
                  self.view.make_passive();
              })
         .def("make_active",
              [](PyTimeSeries &self) {
-                 self.checked();
+                 self.require_alive();
                  self.view.make_active();
              })
         .def_prop_ro("delta_value", &PyTimeSeries::delta_value)
