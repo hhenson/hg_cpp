@@ -17,6 +17,17 @@ namespace hgraph::stdlib
     [[nodiscard]] HGRAPH_EXPORT const TSValueTypeMetaData *resolve_collect_target(
         const TypePattern &pattern,
         std::span<const TSValueTypeMetaData *const> inputs);
+
+    /**
+     * Resolve a (possibly generic) ``combine`` target from the input ports:
+     * ``TSS`` = the common element of N scalar time-series; tuple-shaped
+     * ``TS`` = a fixed tuple of the N port elements; ``TSL`` = a fixed list
+     * of N same-typed ports; ``TSD`` = the (keys, values) zip pair. Other
+     * patterns fall through to the convert inference.
+     */
+    [[nodiscard]] HGRAPH_EXPORT const TSValueTypeMetaData *resolve_combine_target(
+        const TypePattern &pattern,
+        std::span<const TSValueTypeMetaData *const> inputs);
 }  // namespace hgraph::stdlib
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_CONVERT_TARGET_H

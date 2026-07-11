@@ -514,6 +514,123 @@ namespace hgraph::stdlib
         return match_pattern_target(pattern, candidate);
     }
 
+    const TSValueTypeMetaData *resolve_combine_target(const TypePattern &pattern,
+                                                      std::span<const TSValueTypeMetaData *const> inputs)
+    {
+        auto &registry = TypeRegistry::instance();
+        switch (pattern.kind)
+        {
+            case TypePattern::Kind::Concrete:
+            {
+                const auto *meta = pattern.meta;
+                if (inputs.size() > 1 && meta != nullptr && meta->kind == TSTypeKind::TS &&
+                    meta->value_schema != nullptr &&
+                    meta->value_schema->kind == ValueTypeKind::List &&
+                    meta->value_schema->has(ValueTypeFlags::VariadicTuple))
+                {
+                    // combine[TS[Tuple[T, ...]]](a, b, ...): hgraph emits the
+                    // CONCRETE fixed row built from the ports (the same rule
+                    // as the generic tuple pattern below).
+                    std::vector<const ValueTypeMetaData *> fields;
+                    fields.reserve(inputs.size());
+                    for (const auto *raw : inputs)
+                    {
+                        const auto *ts = time_series_schema_as<AnyTS>(raw);
+                        if (ts == nullptr) { return meta; }
+                        fields.push_back(ts->value_schema);
+                    }
+                    return registry.ts(registry.tuple(fields));
+                }
+                return meta;
+            }
+            case TypePattern::Kind::TSS:
+            {
+                // combine[TSS](a, b, ...): the union set of N same-element
+                // scalar time-series.
+                if (inputs.empty())
+                {
+                    throw std::invalid_argument("combine[TSS] requires at least one input");
+                }
+                const ValueTypeMetaData *element = nullptr;
+                for (const auto *raw : inputs)
+                {
+                    const auto *ts = time_series_schema_as<AnyTS>(raw);
+                    if (ts == nullptr)
+                    {
+                        throw std::invalid_argument(
+                            fmt::format("cannot infer combine[TSS] target from {}", schema_name(raw)));
+                    }
+                    if (element == nullptr) { element = ts->value_schema; }
+                    else if (element != ts->value_schema)
+                    {
+                        throw std::invalid_argument("combine[TSS]: inputs have mixed element types");
+                    }
+                }
+                return registry.tss(element);
+            }
+            case TypePattern::Kind::TSD:
+            {
+                if (inputs.size() == 2)
+                {
+                    // combine[TSD](keys, values) with ticking TSL pairs.
+                    const auto *first  = time_series_schema_as<AnyTSL>(deref(inputs[0]));
+                    const auto *second = time_series_schema_as<AnyTSL>(deref(inputs[1]));
+                    if (first != nullptr && second != nullptr)
+                    {
+                        const auto *key   = tsl_element_scalar(first);
+                        const auto *value = deref(second->element_ts());
+                        if (key != nullptr && value != nullptr) { return registry.tsd(key, value); }
+                    }
+                }
+                // The TS[tuple] (keys, values) zip pair (the convert k/v rule).
+                return match_pattern_target(pattern, infer_tsd_candidate(inputs, {}));
+            }
+            case TypePattern::Kind::TSL:
+            {
+                // combine[TSL](a, b, ...): a fixed list of N same-typed ports.
+                if (inputs.empty())
+                {
+                    throw std::invalid_argument("combine[TSL] requires at least one input");
+                }
+                const TSValueTypeMetaData *element = deref(inputs.front());
+                for (const auto *raw : inputs)
+                {
+                    if (deref(raw) != element)
+                    {
+                        throw std::invalid_argument("combine[TSL]: inputs have mixed element types");
+                    }
+                }
+                return registry.tsl(element, inputs.size());
+            }
+            case TypePattern::Kind::TS:
+                if (inputs.size() > 1 &&
+                    (pattern.scalar.kind == ScalarPattern::Kind::UnknownTuple ||
+                     pattern.scalar.kind == ScalarPattern::Kind::HomogeneousTuple ||
+                     pattern.scalar.kind == ScalarPattern::Kind::FixedTuple))
+                {
+                    // combine[TS[Tuple...]](a, b, ...): a fixed tuple of the
+                    // port elements (hgraph parity: the concrete row shape
+                    // built from the ports wins over the pattern's spelling).
+                    std::vector<const ValueTypeMetaData *> fields;
+                    fields.reserve(inputs.size());
+                    for (const auto *raw : inputs)
+                    {
+                        const auto *ts = time_series_schema_as<AnyTS>(raw);
+                        if (ts == nullptr)
+                        {
+                            throw std::invalid_argument(fmt::format(
+                                "cannot infer combine tuple target from {}", schema_name(raw)));
+                        }
+                        fields.push_back(ts->value_schema);
+                    }
+                    return registry.ts(registry.tuple(fields));
+                }
+                break;
+            default: break;
+        }
+        return resolve_convert_target(pattern, inputs, {});
+    }
+
     const TSValueTypeMetaData *resolve_collect_target(const TypePattern &pattern,
                                                       std::span<const TSValueTypeMetaData *const> inputs)
     {

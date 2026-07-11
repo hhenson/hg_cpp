@@ -303,13 +303,35 @@ class _TsExpr:
                 return wire("combine", structural, __strict__=False, output_type=self)
             return wire("combine", structural, output_type=self)
         if ports and not kwargs:
-            # combine[TS[frozendict...]](keys, values) -> the combine_map
-            # operator. The BARE frozendict form
-            # resolves the key/value types from the inputs.
+            # POSITIONAL forms dispatch on the RESOLVED target handle (the
+            # C++ type properties; generic targets were completed by
+            # resolve_combine_target before reaching here).
             if getattr(self, "_bare_map", False):   # slot may be unset
+                # combine[TS[frozendict...]](keys, values) -> combine_map;
+                # the BARE form resolves key/value types from the inputs.
                 return wire("combine_map", *ports)
             if self.handle.is_ts_mapping:
                 return wire("combine_map", *ports, output_type=self)
+            if self.handle.is_tss:
+                # combine[TSS](a, b, ...): the desired-membership union.
+                return wire("combine", *ports, output_type=self)
+            if self.handle.is_tsd:
+                if all(_unwrap(p).ts_type.is_tsl for p in ports):
+                    # combine[TSD](tsl_keys, tsl_values): ticking key set -
+                    # the combine_tsd kernel binds its own REF-valued output.
+                    return wire("combine_tsd", *ports, __strict__=strict_cs)
+                # combine[TSD](keys_ts, values_ts): the TS[tuple] zip kernel.
+                return wire("convert", *ports, output_type=self)
+            if self.handle.is_ts_sequence:
+                # combine[TS[Tuple...]](a, b, ...): pack a structural TSB;
+                # the erased tuple-combine kernel fills the row.
+                fields = [(f"_{i}", _unwrap(p).ts_type) for i, p in enumerate(ports)]
+                tsb_type = _m.un_named_tsb_type(fields)
+                structural = WiringPort(
+                    _m.tsb_port(tsb_type, {f"_{i}": _unwrap(p) for i, p in enumerate(ports)}))
+                if strict_cs is False:
+                    return wire("combine", structural, __strict__=False, output_type=self)
+                return wire("combine", structural, output_type=self)
             return WiringPort(_m.tsl_port([_unwrap(p) for p in ports]))
         field_ports = {}
         field_types = dict(_m.ts_field_types(self.handle))

@@ -556,6 +556,30 @@ call site:
 Calling ``wire<stdlib::split>(w, s, Str{","})`` is intentionally unresolved for the
 fixed-``TSL`` overload: there is no input-side fact from which to derive ``N``.
 
+**Generic target resolution** (``convert_target.h``). A caller may request a
+*generic* output — a bare ``TSD``/``TSS``/``TSB``, an unparameterised
+``TS[Tuple]``/``TS[Set]``/``TS[Mapping]`` — as a **type pattern**. The
+pattern-matching layer completes it from the input port schemas before
+overload selection, so the registry always sees a bound ``__out__``:
+
+- ``resolve_convert_target(pattern, inputs[, keys])`` — the ``convert`` rules
+  (single-input element/key/value derivation; the ``(keys, values)`` TSD zip
+  pair).
+- ``resolve_collect_target(pattern, inputs)`` — the accumulating shapes
+  (element streams grow collections; ``(key, value)`` pairs grow a TSD).
+- ``resolve_combine_target(pattern, inputs)`` — the compositional shapes:
+  ``TSS`` = the common element of N scalar series; tuple-shaped ``TS`` (and
+  concrete *homogeneous* tuple targets — hgraph emits the concrete row) = a
+  fixed tuple of the N port elements; ``TSL`` = a fixed list of N same-typed
+  ports; ``TSD`` = the ``(keys, values)`` zip pair (TS-of-tuple or ticking
+  TSL forms). Other patterns fall through to the convert rules.
+
+These resolvers are the ONLY place generic targets become concrete types —
+the Python bridge routes every ``convert[TO]``/``collect[TO]``/``combine[TO]``
+subscript through them (``_resolve_requested_target``) and never inspects
+type names or labels; the wiring shape then follows from the RESOLVED
+handle's properties (``_TsExpr.from_ts``).
+
 **Implementations** are a parallel tree under ``include/hgraph/lib/std/operators/impl/``:
 each definition file ``<family>.h`` has a matching ``impl/<family>_impl.h`` holding the
 concrete overloads and a ``register_<family>_operators()`` function, and

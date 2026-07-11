@@ -370,41 +370,20 @@ def feedback(tp, initial=None):
 
 
 def combine(*args, __output_type__=None, **kwargs):
-    """hgraph's combine: build a composite port. ``combine[TSB[S]](a=..., b=...)``
-    (the subscript names the target type) builds a structural bundle;
-    plain values const-lift at the field types. The UNSUBSCRIPTED binary
-    form merges two CompoundScalar time-series (delta over orig)."""
-    label0 = "" if __output_type__ is None else (
-        getattr(__output_type__, "label", None) or getattr(__output_type__, "__name__", None) or
-        repr(__output_type__)).replace("typing.", "")
-    if label0.startswith("TSD") and args and isinstance(args[0], tuple):
-        # combine[TSD](("a", "b"), a, b): keys tuple literal + element ports.
+    """hgraph's combine: build a composite port. The packing form comes from
+    the ARGUMENT SHAPE alone (kwargs -> structural bundle, ports ->
+    structural list, a leading keys tuple -> the keyed-TSD kernel); a
+    generic target (bare TSD/TSS/TS[Tuple]/...) resolves through the C++
+    type-pattern machinery (resolve_combine_target) and the RESOLVED type's
+    ``from_ts`` picks the wiring - no type-name inspection anywhere."""
+    from ._types import _TsExpr
+
+    if args and isinstance(args[0], tuple) and len(args) > 1 and all(
+            isinstance(a, WiringPort) for a in args[1:]):
+        # The keys-literal shape: combine[TSD](("a", "b"), a, b). The C++
+        # kernel resolves its own output from the keys + element ports.
         strict = kwargs.pop("__strict__", True)
         return wire("combine_tsd", args[0], *args[1:], __strict__=strict, **kwargs)
-    if (label0.startswith("TSD") and len(args) == 2 and all(isinstance(a, WiringPort) for a in args)
-            and _unwrap(args[0]).ts_type.is_ts):
-        # combine[TSD](k_tuple_ts, v_tuple_ts): zip two TS[tuple] -> TSD.
-        k = _hgraph.vt_element(_hgraph.ts_value_vt(_unwrap(args[0]).ts_type))
-        v = _hgraph.vt_element(_hgraph.ts_value_vt(_unwrap(args[1]).ts_type))
-        return wire("convert", *args, output_type=_TsExprFor(_hgraph.tsd(k, _hgraph.ts(v))))
-    if label0.startswith("TSS") and args and all(isinstance(a, WiringPort) for a in args):
-        # combine[TSS](a, b, ...): scalar ports -> TSS desired membership.
-        element = _hgraph.ts_value_vt(_unwrap(args[0]).ts_type)
-        return wire("combine", *args, output_type=_TsExprFor(_hgraph.tss(element)))
-    label = "" if __output_type__ is None else (
-        getattr(__output_type__, "label", None) or getattr(__output_type__, "__name__", None) or
-        repr(__output_type__)).replace("typing.", "")
-    if label.startswith("TS[Tuple") and args and all(isinstance(a, WiringPort) for a in args):
-        # combine[TS[Tuple]](a, b, ...): a fixed tuple of the packed ports.
-        strict = kwargs.pop("__strict__", True)
-        fields = [(f"_{i}", _unwrap(a).ts_type) for i, a in enumerate(args)]
-        tsb_type = _hgraph.un_named_tsb_type(fields)
-        structural = WiringPort(_hgraph.tsb_port(tsb_type, {f"_{i}": _unwrap(a) for i, a in enumerate(args)}))
-        vts = [_hgraph.ts_value_vt(_unwrap(a).ts_type) for a in args]
-        target = _TsExprFor(_hgraph.ts(_hgraph.fixed_tuple_vt(vts)))
-        if strict is False:
-            return wire("combine", structural, __strict__=False, output_type=target)
-        return wire("combine", structural, output_type=target)
     if __output_type__ is None:
         kwargs.pop("__strict__", None)   # structural composites need no gate
         if args and all(isinstance(a, WiringPort) for a in args) and not kwargs:
@@ -419,7 +398,19 @@ def combine(*args, __output_type__=None, **kwargs):
             tsb_type = _hgraph.un_named_tsb_type(fields)
             return WiringPort(_hgraph.tsb_port(tsb_type, {k: _unwrap(v) for k, v in kwargs.items()}))
         raise TypeError("combine requires a subscripted type: combine[TSB[Schema]](...)")
-    return __output_type__.from_ts(*args, **kwargs)
+    target = __output_type__
+    ports = [a for a in args if isinstance(a, WiringPort)] or [
+        v for v in kwargs.values() if isinstance(v, WiringPort)]
+    if ports or not isinstance(target, _TsExpr):
+        # Every target - generic or concrete - resolves through the C++
+        # pattern machinery (resolve_combine_target); concrete targets pass
+        # through except where hgraph's rules rewrite them (tuple rows). The
+        # ORIGINAL expr is kept when the handle is unchanged (it carries
+        # target annotations like the CS class for dataclass defaults).
+        resolved = _resolve_requested_target("combine", target, ports)
+        if not (isinstance(target, _TsExpr) and resolved.handle == target.handle):
+            target = resolved
+    return target.from_ts(*args, **kwargs)
 
 
 class _Combine:
@@ -486,8 +477,10 @@ def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
 
 
 def _type_pattern_for_target(target):
-    from ._types import _GenericTsExpr, TSD, TSB, TSL, TSS, TSW
+    from ._types import _GenericTsExpr, _TsExpr, TSD, TSB, TSL, TSS, TSW
 
+    if isinstance(target, _TsExpr):
+        return _hgraph.type_pattern_concrete(target.handle)
     if isinstance(target, _GenericTsExpr):
         if target.pattern is None:
             raise WiringError(f"cannot resolve generic target {target!r}: no C++ type pattern is attached")
@@ -513,6 +506,8 @@ def _resolve_requested_target(op_name, target, inputs, keys=None):
     try:
         if op_name == "collect":
             handle = _hgraph.resolve_collect_target(pattern, unwrapped)
+        elif op_name == "combine":
+            handle = _hgraph.resolve_combine_target(pattern, unwrapped)
         else:
             handle = _hgraph.resolve_convert_target(pattern, unwrapped, keys)
     except (RuntimeError, ValueError) as error:

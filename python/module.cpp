@@ -1610,6 +1610,15 @@ NB_MODULE(_hgraph, m)
             return self.meta != nullptr && self.meta->kind == TSTypeKind::TS &&
                    self.meta->value_schema != nullptr && self.meta->value_schema->kind == ValueTypeKind::Map;
         })
+        .def_prop_ro("is_tss", [](const PyTsType &self) {
+            return self.meta != nullptr && self.meta->kind == TSTypeKind::TSS;
+        })
+        .def_prop_ro("is_ts_sequence", [](const PyTsType &self) {
+            return self.meta != nullptr && self.meta->kind == TSTypeKind::TS &&
+                   self.meta->value_schema != nullptr &&
+                   (self.meta->value_schema->kind == ValueTypeKind::Tuple ||
+                    self.meta->value_schema->kind == ValueTypeKind::List);
+        })
         .def_prop_ro("is_ts_json", [](const PyTsType &self) {
             return stdlib::json_tree::is_json_ts(self.meta);
         })
@@ -1971,6 +1980,15 @@ NB_MODULE(_hgraph, m)
           [target_input_schemas](PyTypePattern pattern, nb::tuple inputs) {
               std::vector<const TSValueTypeMetaData *> schemas = target_input_schemas(inputs);
               return PyTsType{stdlib::resolve_collect_target(
+                  pattern.pattern,
+                  std::span<const TSValueTypeMetaData *const>{schemas.data(), schemas.size()})};
+          },
+          nb::arg("pattern"), nb::arg("inputs"));
+
+    m.def("resolve_combine_target",
+          [target_input_schemas](PyTypePattern pattern, nb::tuple inputs) {
+              std::vector<const TSValueTypeMetaData *> schemas = target_input_schemas(inputs);
+              return PyTsType{stdlib::resolve_combine_target(
                   pattern.pattern,
                   std::span<const TSValueTypeMetaData *const>{schemas.data(), schemas.size()})};
           },
