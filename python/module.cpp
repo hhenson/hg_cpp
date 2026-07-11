@@ -1478,7 +1478,7 @@ namespace
             static_cast<void>(attr);
             nb::gil_scoped_acquire gil;
             nb::handle value{ts.value().get()};
-            out.set(Str{nb::cast<std::string>(nb::str(value.attr("__name__")))});
+            out.set(Str{nb::cast<std::string>(value.attr("__name__"))});
         }
     };
 
