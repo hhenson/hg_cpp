@@ -278,6 +278,15 @@ namespace hgraph
         using std::runtime_error::runtime_error;
     };
 
+    /** No overload matched AND at least one otherwise-matching candidate was
+        rejected by its requires predicate (python surfaces this as
+        RequirementsNotMetWiringError). */
+    class HGRAPH_EXPORT OperatorRequirementsError : public OperatorResolutionError
+    {
+      public:
+        using OperatorResolutionError::OperatorResolutionError;
+    };
+
     /**
      * Process-wide registry of operator overloads (singleton). Wiring is
      * single-threaded, so this registry itself takes no locks; build-time
@@ -956,13 +965,17 @@ namespace hgraph
             }
         }
 
-        inline void collect_ts_rank(const TypePattern &pattern, RankAccumulator &acc)
+        inline void collect_ts_rank(const TypePattern &pattern, RankAccumulator &acc, int var_rank = 10000)
         {
+            // ``var_rank`` decays under structure: ``TSL[~T, ~N]`` is MORE
+            // specific than a bare ``~T`` (the container kind is already
+            // pinned), so nested type variables cost half.
+            const int nested = std::max(1, var_rank / 2);
             switch (pattern.kind)
             {
                 case TypePattern::Kind::Var:
                     acc.add_var("ts:" + pattern.name,
-                                pattern.constraints.empty() ? 10000 : 5000);
+                                pattern.constraints.empty() ? var_rank : std::max(1, var_rank / 2));
                     break;
                 case TypePattern::Kind::Concrete:
                 case TypePattern::Kind::Signal:
@@ -975,25 +988,25 @@ namespace hgraph
                     break;
                 case TypePattern::Kind::TSL:
                     acc.structural += 1;
-                    collect_ts_rank(pattern.children[0], acc);
+                    collect_ts_rank(pattern.children[0], acc, nested);
                     break;
                 case TypePattern::Kind::TSD:
                     acc.structural += 1;
                     collect_scalar_rank(pattern.scalar, acc, 100);
-                    collect_ts_rank(pattern.children[0], acc);
+                    collect_ts_rank(pattern.children[0], acc, nested);
                     break;
                 case TypePattern::Kind::TSB:
                     if (pattern.schema_var)
                     {
                         acc.structural += 1;
-                        acc.add_var("ts:" + pattern.name, 5000);
+                        acc.add_var("ts:" + pattern.name, nested);
                         break;
                     }
                     acc.structural += 1;
-                    for (const TypePattern &child : pattern.children) { collect_ts_rank(child, acc); }
+                    for (const TypePattern &child : pattern.children) { collect_ts_rank(child, acc, nested); }
                     break;
                 case TypePattern::Kind::REF:
-                    collect_ts_rank(pattern.children[0], acc);
+                    collect_ts_rank(pattern.children[0], acc, var_rank);
                     break;
             }
         }

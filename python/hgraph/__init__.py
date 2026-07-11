@@ -10,7 +10,7 @@ docs/source/developer_guide/parity_matrix.rst (e.g. REF is value-only)."""
 import _hgraph
 
 from ._types import Series
-from ._types import (TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, CONTEXT, REQUIRED, SCALAR, SCALAR_1, TSW, KeyValue, AUTO_RESOLVE,
+from ._types import (TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, CONTEXT, REQUIRED, SCALAR, SCALAR_1, SCALAR_2, TSW, KeyValue, AUTO_RESOLVE, with_signature,
                      KEYABLE_SCALAR, TIME_SERIES_TYPE, TIME_SERIES_TYPE_1, TIME_SERIES_TYPE_2, OUT, SIZE,
                      DEFAULT, REF, K, V, SCHEMA, TS_SCHEMA,
                      SIGNAL, WINDOW_SIZE, WINDOW_SIZE_MIN, WindowSize, Array, ts_schema, ENUM)
@@ -24,7 +24,7 @@ from ._runtime import collect
 from ._runtime import emit
 from ._runtime import cast_
 from ._runtime import ParseError, IncorrectTypeBinding, RequirementsNotMetWiringError
-from ._runtime import evaluate_graph, GraphConfiguration, TSB_OUT, operator
+from ._runtime import evaluate_graph, GraphConfiguration, TSB_OUT, operator, dispatch, dispatch_
 from .nodes import pass_through_node
 from ._runtime import pass_through, no_key
 from ._signature import (WiringNodeType, WiringNodeSignature, extract_signature,
@@ -45,6 +45,7 @@ frame_store_read = _hgraph.frame_store_read
 
 TimeSeries = _hgraph.TimeSeries
 _hgraph._set_removed_sentinel(REMOVED)
+_hgraph._set_requirements_error(RequirementsNotMetWiringError)
 from ._runtime import Removed as _Removed, _SetDelta
 _hgraph._set_removed_class(_Removed)
 _hgraph._set_set_delta_class(_SetDelta)

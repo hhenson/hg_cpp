@@ -226,6 +226,29 @@ namespace hgraph::stdlib
         }
     };
 
+    /** ``item in ts`` over a SET-VALUED scalar TS (frozenset payloads). */
+    struct contains_set_scalar
+    {
+        static constexpr auto name = "contains_set_scalar";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+        {
+            const auto *subject = resolution.find_ts("S");
+            return subject != nullptr && subject->kind == TSTypeKind::TS &&
+                   subject->value_schema != nullptr &&
+                   subject->value_schema->try_value_kind() == ValueTypeKind::Set;
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, In<"item", TsVar<"I">> item, Out<TS<Bool>> out)
+        {
+            const Bool value = ts.base().value().as_set().contains(item.base().value());
+            // hgraph parity: an ITEM tick always re-publishes; a subject
+            // tick only publishes a membership change.
+            if (item.base().modified()) { out.set(value); }
+            else { container_impl_detail::set_if_changed(out, value); }
+        }
+    };
+
     struct contains_tsd_key
     {
         static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,

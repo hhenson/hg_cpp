@@ -59,6 +59,8 @@ def wire(name, *args, __output_type__=None, **kwargs):
             result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type)
     except (RuntimeError, ValueError) as error:
         # std::invalid_argument surfaces as ValueError; both are wiring-time.
+        # (RequirementsNotMetWiringError arrives ALREADY typed - the C++
+        # resolver throws OperatorRequirementsError, translated directly.)
         raise WiringError(str(error)) from error
     return WiringPort(result) if result is not None else None
 
@@ -267,6 +269,10 @@ def _wrap_graph_fn(gfn):
             out = user_fn(*(WiringPort(p) for p in ports))
             if out is None:
                 return None
+            if not isinstance(out, WiringPort):
+                # a plain value returned from a @graph lifts to const
+                # (hgraph parity - dispatch branches `return "woof"`).
+                out = wire("const", out)
             raw = _unwrap(out)
             if raw.is_structural:
                 # Child sub-graph outputs must be real NODE outputs. A
@@ -952,6 +958,16 @@ def _unbounded_tuple_kind():
 _UNBOUNDED_TUPLE_KIND = None
 
 
+def _annotation_ts_kind(annotation):
+    """The TS KIND an annotation describes, via the C++ pattern machinery
+    (-1 / None when unconstrained). Never classify by rendered labels."""
+    if isinstance(annotation, _TsExpr):
+        return annotation.handle.kind
+    if isinstance(annotation, _GenericTsExpr) and annotation.pattern is not None:
+        return annotation.pattern.ts_kind
+    return None
+
+
 def _tsw_kind():
     global _TSW_KIND
     if _TSW_KIND is None:
@@ -974,6 +990,30 @@ class _PyNode:
 
     def __init__(self, fn, has_output, active=None, valid=None, resolvers=None,
                  node_type=None):
+        self._wiring_signature = inspect.signature(fn)
+        var_params = [p for p in self._wiring_signature.parameters.values()
+                      if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
+        if var_params:
+            # hgraph parity (upstream PythonWiringNodeClass): star params
+            # receive ONE packed time-series (a TSL/TSB view), so the code
+            # object is rewritten to make every parameter keyword-only.
+            import types
+
+            co = fn.__code__
+            kw_only_code = co.replace(
+                co_flags=co.co_flags & ~(inspect.CO_VARARGS | inspect.CO_VARKEYWORDS),
+                co_argcount=0,
+                co_posonlyargcount=0,
+                co_kwonlyargcount=len(self._wiring_signature.parameters),
+            )
+            rewritten = types.FunctionType(kw_only_code, fn.__globals__, name=fn.__name__,
+                                           argdefs=fn.__defaults__, closure=fn.__closure__)
+            # an EMPTY group must still bind: () / {} defaults.
+            kw_defaults = dict(fn.__kwdefaults__ or {})
+            for p in var_params:
+                kw_defaults[p.name] = () if p.kind is inspect.Parameter.VAR_POSITIONAL else {}
+            rewritten.__kwdefaults__ = kw_defaults
+            fn = rewritten
         self.fn = fn
         self.has_output = has_output
         # active=/valid= accept name iterables OR wiring-time callables
@@ -983,12 +1023,13 @@ class _PyNode:
         self._active = None if callable(active) else self._policy_names("active", active)
         self._valid = None if callable(valid) else self._policy_names("valid", valid)
         self._resolvers = dict(resolvers) if resolvers else None
+        self._requires = None
         self._pins = {}
         self._node_type = node_type
         self._start_fn = None
         self._stop_fn = None
         self.__name__ = fn.__name__
-        sig = inspect.signature(fn)
+        sig = self._wiring_signature
         self._signature = sig
         # Callers introspecting the NODE (eval_node's input typing) must see
         # the user function's signature, not _PyNode.__call__'s.
@@ -1198,12 +1239,67 @@ class _PyNode:
             active_policy = self._eval_policy("active", self._active_fn, scope, scalar_values)
         if self._valid_fn is not None:
             valid_policy = self._eval_policy("valid", self._valid_fn, scope, scalar_values)
+        # Var-args parity (upstream model): the *args group packs into ONE
+        # TSL (or structural TSB when so annotated), **kwargs into ONE named
+        # TSB (or TSD); the rewritten fn receives every parameter BY NAME.
+        has_var_group = any(p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+                            for p in self._params)
+        by_name = has_var_group
+        layout_names, layout_by_name = [], []   # parallel to ``layout``
+
+        def _note(name):
+            layout_names.append(name)
+            layout_by_name.append(by_name)
+
+        def _lift(entry):
+            """A plain value in a variadic group lifts to an inferred const."""
+            if isinstance(entry, WiringPort):
+                return entry
+            return wire("const", entry)
+
+        def _group_layout(param):
+            required = valid_policy is None or param.name in valid_policy
+            is_active = active_policy is None or param.name in active_policy
+            return {(True, True): "t", (True, False): "u",
+                    (False, True): "T", (False, False): "U"}[(is_active, required)]
+
         for param in self._params:
+            if param.kind is inspect.Parameter.VAR_POSITIONAL:
+                entries = [_unwrap(_lift(entry)) for entry in bound.arguments.get(param.name, ())]
+                if entries:
+                    if _annotation_ts_kind(param.annotation) == _hgraph.TS_KIND_TSB:
+                        packed_group = _hgraph.bundle_port(entries, [False] * len(entries))
+                    else:
+                        packed_group = _hgraph.tsl_port(entries)
+                    layout.append(_group_layout(param))
+                    _note(param.name)
+                    ports.append(packed_group)
+                    keep_ref.append(False)
+                continue
+            if param.kind is inspect.Parameter.VAR_KEYWORD:
+                extras = {k: _unwrap(_lift(v)) for k, v in bound.arguments.get(param.name, {}).items()}
+                if extras:
+                    if _annotation_ts_kind(param.annotation) == _hgraph.TS_KIND_TSD:
+                        packed_group = _unwrap(wire(
+                            "combine_tsd", tuple(extras.keys()),
+                            *(WiringPort(v) for v in extras.values()), __strict__=False))
+                    else:
+                        tsb_type = _hgraph.un_named_tsb_type(
+                            [(k, v.ts_type) for k, v in extras.items()])
+                        packed_group = _hgraph.tsb_port(tsb_type, extras)
+                    layout.append(_group_layout(param))
+                    _note(param.name)
+                    ports.append(packed_group)
+                    keep_ref.append(False)
+                continue
+            if param.kind is inspect.Parameter.KEYWORD_ONLY:
+                by_name = True
             marker = _INJECTABLE_MARKERS.get(param.annotation)
             if marker is not None:
                 if param.name in bound.arguments:
                     raise TypeError(f"{self.__name__}: injectable '{param.name}' cannot be supplied")
                 layout.append(marker)
+                _note(param.name)
                 continue
             if param.annotation is LOGGER:
                 if param.name in bound.arguments:
@@ -1212,6 +1308,7 @@ class _PyNode:
 
                 logger = logging.getLogger("hgraph")
                 layout.append("s")   # process-wide logger: a plain object scalar
+                _note(param.name)
                 scalars.append(logger)
                 scalar_values[param.name] = logger
                 continue
@@ -1234,6 +1331,7 @@ class _PyNode:
                     continue   # optional and absent: the fn sees its None default
                 is_active = active_policy is None or param.name in active_policy
                 layout.append("C" if is_active else "P")
+                _note(param.name)
                 ports.append(_unwrap(resolved))
                 keep_ref.append(False)
                 continue
@@ -1242,6 +1340,7 @@ class _PyNode:
                 if param.name in bound.arguments:
                     raise TypeError(f"{self.__name__}: _output cannot be supplied")
                 layout.append("o")
+                _note(param.name)
                 continue
             value = bound.arguments.get(param.name, _MISSING)
             if value is _MISSING:
@@ -1265,14 +1364,32 @@ class _PyNode:
                 is_active = active_policy is None or param.name in active_policy
                 layout.append({(True, True): "t", (True, False): "u",
                                (False, True): "T", (False, False): "U"}[(is_active, required)])
+                _note(param.name)
                 ports.append(_unwrap(value))
                 keep_ref.append(getattr(param.annotation, "is_ref", False))
             else:
                 layout.append("s")
+                _note(param.name)
                 scalars.append(value)
                 scalar_values[param.name] = value
+        if self._requires is not None:
+            try:
+                verdict = _run_requires(self._requires, scope.bindings, scalar_values)
+            except KeyError as error:
+                raise RequirementsNotMetWiringError(
+                    f"{self.__name__}: requires= references an unresolved type variable {error}") from error
+            if verdict is not True:
+                reason = verdict if isinstance(verdict, str) else "requirements not met"
+                raise RequirementsNotMetWiringError(f"{self.__name__}: {reason}")
         packed = WiringPort(_hgraph.bundle_port(ports, keep_ref))
-        node_kwargs = {"fn": ref, "config": "".join(layout), "scalars": _hgraph.any_list(scalars)}
+        config = "".join(layout)
+        kw_names = [n for n, named in zip(layout_names, layout_by_name) if named]
+        if kw_names:
+            # ``layout|name,...``: the trailing entries fill BY NAME (all of
+            # them when a star group rewrote the fn to keyword-only params,
+            # else the keyword-only tail).
+            config += "|" + ",".join(kw_names)
+        node_kwargs = {"fn": ref, "config": config, "scalars": _hgraph.any_list(scalars)}
         for phase in ("start", "stop"):
             lifecycle_fn = getattr(self, f"_{phase}_fn")
             lifecycle_layout, lifecycle_scalars = [], []
@@ -1309,26 +1426,43 @@ class _PyNode:
         return wire("__py_sink", packed, **node_kwargs)
 
 
-def compute_node(fn=None, *, active=None, valid=None, resolvers=None, **_ignored):
+def _make_py_node(fn, *, has_output, active, valid, resolvers, overloads, requires):
+    node = _PyNode(fn, has_output=has_output, active=active, valid=valid, resolvers=resolvers)
+    if overloads is not None:
+        _register_overload(overloads, node, requires)
+    elif requires is not None:
+        # a plain node checks its own requires= at wiring (upstream raises
+        # RequirementsNotMetWiringError on rejection).
+        node._requires = requires
+    return node
+
+
+def compute_node(fn=None, *, active=None, valid=None, resolvers=None, overloads=None,
+                 requires=None, label=None):
     """Python runtime compute node.
 
     ``active`` names the inputs that drive invocation; ``valid`` names the
     inputs required to be valid (either accepts a wiring-time callable
     ``(m, **scalars)``). ``resolvers`` maps type variables to wiring-time
-    resolver callables. (``overloads=`` lands with the @operator phase and
-    is currently ignored.)
-    """
+    resolver callables. ``overloads=`` registers this node as a candidate
+    of an @operator (or built-in operator) family; ``requires=`` guards its
+    selection. ``label`` is accepted for hgraph parity (diagnostics)."""
+    del label   # parity only: node naming rides the function identity
     if fn is None:
-        return lambda f: _PyNode(f, has_output=True, active=active, valid=valid,
-                                 resolvers=resolvers)
-    return _PyNode(fn, has_output=True, active=active, valid=valid, resolvers=resolvers)
+        return lambda f: _make_py_node(f, has_output=True, active=active, valid=valid,
+                                       resolvers=resolvers, overloads=overloads, requires=requires)
+    return _make_py_node(fn, has_output=True, active=active, valid=valid,
+                         resolvers=resolvers, overloads=overloads, requires=requires)
 
 
-def sink_node(fn=None, *, active=None, valid=None, resolvers=None, **_ignored):
+def sink_node(fn=None, *, active=None, valid=None, resolvers=None, overloads=None,
+              requires=None, label=None):
+    del label
     if fn is None:
-        return lambda f: _PyNode(f, has_output=False, active=active, valid=valid,
-                                 resolvers=resolvers)
-    return _PyNode(fn, has_output=False, active=active, valid=valid, resolvers=resolvers)
+        return lambda f: _make_py_node(f, has_output=False, active=active, valid=valid,
+                                       resolvers=resolvers, overloads=overloads, requires=requires)
+    return _make_py_node(fn, has_output=False, active=active, valid=valid,
+                         resolvers=resolvers, overloads=overloads, requires=requires)
 
 
 class GraphConfiguration:
@@ -1356,16 +1490,333 @@ class TSB_OUT:
         return cls
 
 
-def operator(fn):
-    """hgraph's @operator: overload family root. Lands with the
-    overload/dispatch increment - importable now, raises at use."""
+class _Operator:
+    """hgraph's @operator: an overloadable signature root. Implementations
+    attach via ``@compute_node(overloads=op)`` / ``@graph(overloads=op)``;
+    a call dispatches through the C++ registry (the standing ruling: the
+    registry's pattern matching owns ALL dispatch). The registry name is
+    unique per operator OBJECT - tests re-declare same-named operators
+    freely against the process-global registry."""
 
-    def _not_yet(*args, **kwargs):
-        raise NotImplementedError("gap: @operator overload families land in the next increment")
+    def __init__(self, fn):
+        self.fn = fn
+        self.__name__ = fn.__name__
+        self.__qualname__ = getattr(fn, "__qualname__", fn.__name__)
+        self.__doc__ = fn.__doc__
+        self._registry_name = f"__pyop__{self.__qualname__}_{id(self):x}"
+        self._delegate = _OperatorFunction(self._registry_name)
+        self._overloads = []   # (impl, wiring signature) - dispatch_ reads these
 
-    _not_yet.__name__ = getattr(fn, "__name__", "operator")
-    _not_yet.overloads = _not_yet
-    return _not_yet
+    @property
+    def signature(self):
+        from ._signature import WiringNodeType, extract_signature
+
+        return extract_signature(self.fn, WiringNodeType.OPERATOR)
+
+    def __call__(self, *args, **kwargs):
+        return self._delegate(*args, **kwargs)
+
+    def __getitem__(self, item):
+        return self._delegate[item]
+
+
+def operator(fn=None):
+    """hgraph's @operator decorator."""
+    if fn is None:
+        return _Operator
+    return _Operator(fn)
+
+
+def _overload_registry_name(target):
+    """The C++ registry name an ``overloads=`` target dispatches under."""
+    if isinstance(target, _Operator):
+        return target._registry_name
+    if isinstance(target, str):
+        return target
+    name = getattr(target, "__name__", None)
+    if name is not None and name in _hgraph.operator_names():
+        return name   # overloading a BUILT-IN operator family
+    raise TypeError(f"overloads= target {target!r} is not an @operator or a registered operator")
+
+
+class _BindingsMap:
+    """The ``m`` argument of hgraph's ``requires=``/resolver lambdas: the
+    resolution scope's bindings, keyed by TYPE VARIABLE (or its name)."""
+
+    __slots__ = ("_bindings",)
+
+    def __init__(self, bindings):
+        self._bindings = bindings
+
+    def __getitem__(self, key):
+        return self._bindings[getattr(key, "name", key)]
+
+    def __contains__(self, key):
+        return getattr(key, "name", key) in self._bindings
+
+    def get(self, key, default=None):
+        return self._bindings.get(getattr(key, "name", key), default)
+
+    def keys(self):
+        return self._bindings.keys()
+
+
+def _run_requires(user_requires, bindings, scalar_values):
+    """Evaluate a ``requires=lambda m[, <scalar names...>]`` predicate.
+    Returns True to accept; False or an explanation string rejects."""
+    names = list(inspect.signature(user_requires).parameters)[1:]
+    return user_requires(_BindingsMap(bindings),
+                         **{name: scalar_values.get(name) for name in names})
+
+
+def _requires_bridge(user_requires):
+    """Bridge hgraph's ``requires=`` onto the C++ requires_predicate.
+    Exceptions and non-True results reject the candidate."""
+    if user_requires is None:
+        return None
+
+    def _check(scope, scalars):
+        try:
+            return _run_requires(user_requires, scope.bindings, dict(scalars)) is True
+        except Exception:
+            return False
+
+    return _check
+
+
+def _overload_wire_trampoline(impl):
+    """The C++ wire closure calls this with the borrowed Wiring and the
+    NORMALISED call (ports/scalars in declared order, defaults
+    materialised); it re-enters the python wiring function."""
+
+    def _wire(borrowed_wiring, args, kwargs):
+        _wiring_stack.append(borrowed_wiring)
+        try:
+            wrap = lambda a: WiringPort(a) if isinstance(a, _hgraph.Port) else a
+            out = impl(*(wrap(a) for a in args), **{k: wrap(v) for k, v in kwargs.items()})
+            if out is None:
+                return None
+            return _unwrap(out)
+        finally:
+            _wiring_stack.pop()
+
+    return _wire
+
+
+def _register_overload(target, impl, requires=None):
+    """Register a python node/graph as an operator overload candidate: the
+    parameter/output PATTERNS come from its annotations through the same
+    bridged constructors the rest of the DSL uses."""
+    from ._types import _pattern_of, _scalar_pattern, _TypeVarSentinel as _TVS
+
+    name = _overload_registry_name(target)
+    if isinstance(target, _Operator):
+        target._overloads.append(
+            (impl, getattr(impl, "_wiring_signature", None) or inspect.signature(impl.fn)))
+    fn = impl.fn
+    # the ORIGINAL wiring signature: star-group nodes rewrite fn's code
+    # object to keyword-only params (upstream parity), so fn's live
+    # signature no longer shows *args/**kwargs.
+    sig = getattr(impl, "_wiring_signature", None) or inspect.signature(fn)
+    params, variadic, has_kwargs = [], False, False
+    positional = None
+    for parameter in sig.parameters.values():
+        annotation = parameter.annotation
+        if annotation in _INJECTABLE_MARKERS or isinstance(annotation, _ContextExpr):
+            continue
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            has_kwargs = True
+            continue
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY and positional is None:
+            positional = len(params)
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            variadic = True
+            if positional is None:
+                positional = len(params)
+            # The C++ variadic convention matches the declared pattern
+            # PER TAIL ARGUMENT (in a throwaway scope), while the python
+            # annotation describes the PACK (TSL[E, SIZE] / TSB[SCHEMA]).
+            # Match each tail arg as an unconstrained ts for now (element
+            # strictness deferred with the pack-shape work).
+            params.append((parameter.name, _hgraph.type_pattern_var(f"__{parameter.name}__")))
+            continue
+        try:
+            pattern = _pattern_of(annotation)
+        except TypeError:
+            pattern = _scalar_pattern(annotation if annotation is not inspect.Parameter.empty else object)
+        if parameter.default is inspect.Parameter.empty:
+            params.append((parameter.name, pattern))
+        else:
+            params.append((parameter.name, pattern, parameter.default))
+    output = None
+    out_tp = sig.return_annotation
+    if out_tp not in (inspect.Signature.empty, None):
+        output = _pattern_of(out_tp)
+    _hgraph.register_python_overload(
+        name, params, output, _overload_wire_trampoline(impl), _requires_bridge(requires),
+        variadic, has_kwargs, positional)
+
+
+# ---------------------------------------------------------------------------
+# dispatch: runtime type dispatch = a small KEY UTILITY feeding switch_
+# (Howard's ruling). ``type_(arg)`` reads each dispatch argument's dynamic
+# python type per tick; the key node maps it (isinstance/MRO specificity)
+# onto the enumerated overload keys; switch_ instantiates the winner.
+# Works today for python-class scalars (the object value kind keeps the
+# dynamic type). CompoundScalar hierarchies flatten compositionally into
+# the base-named bundle at conversion, so the concrete class does not yet
+# survive into the runtime value - the bundle-lineage design closes that.
+# ---------------------------------------------------------------------------
+
+def _dispatch_specificity(cls):
+    return len(cls.__mro__)
+
+
+def _dispatch_key_node():
+    global _DISPATCH_KEY_NODE
+    if _DISPATCH_KEY_NODE is None:
+        from ._types import TS
+
+        @compute_node
+        def _adjust_dispatch_key(key: TS[object], available_keys: tuple) -> TS[object]:
+            value = key.value
+            if value in available_keys:
+                return value
+            candidates = [(a_key, _dispatch_specificity(a_key))
+                          for a_key in available_keys if issubclass(value, a_key)]
+            if not candidates:
+                raise RuntimeError(f"No suitable overload found for {value}")
+            candidates.sort(key=lambda entry: entry[1], reverse=True)
+            if len(candidates) > 1 and candidates[0][1] == candidates[1][1]:
+                raise RuntimeError(f"Ambiguous dispatch for {value}")
+            return candidates[0][0]
+
+        _DISPATCH_KEY_NODE = _adjust_dispatch_key
+    return _DISPATCH_KEY_NODE
+
+
+def _dispatch_keys_node():
+    global _DISPATCH_KEYS_NODE
+    if _DISPATCH_KEYS_NODE is None:
+        from ._types import TS
+
+        import typing
+
+        @compute_node
+        def _adjust_dispatch_keys(key: TS[typing.Tuple[object, ...]],
+                                  available_keys: tuple) -> TS[typing.Tuple[object, ...]]:
+            value = tuple(key.value)
+            if value in available_keys:
+                return value
+            candidates = []
+            for a_keys in available_keys:
+                if len(a_keys) == len(value) and all(
+                        issubclass(k, a_key) for a_key, k in zip(a_keys, value)):
+                    candidates.append((a_keys, sum(_dispatch_specificity(a) for a in a_keys)))
+            if not candidates:
+                raise RuntimeError(f"No suitable overload found for {value}")
+            candidates.sort(key=lambda entry: entry[1], reverse=True)
+            if len(candidates) > 1 and candidates[0][1] == candidates[1][1]:
+                raise RuntimeError(f"Ambiguous dispatch for {value}")
+            return candidates[0][0]
+
+        _DISPATCH_KEYS_NODE = _adjust_dispatch_keys
+    return _DISPATCH_KEYS_NODE
+
+
+_DISPATCH_KEY_NODE = None
+_DISPATCH_KEYS_NODE = None
+
+
+def _declared_dispatch_class(annotation):
+    """The DECLARED python class of a dispatchABLE ``TS[cls]`` annotation:
+    a CompoundScalar or an object-kind class scalar (structural - the
+    expression carries the class AND the value schema decides the kind;
+    atomic scalars like TS[int] are not dispatch subjects)."""
+    cls = getattr(annotation, "_py_class", None)
+    if cls is None:
+        return None
+    if getattr(annotation, "_cs_class", None) is not None:
+        return cls
+    handle = getattr(annotation, "handle", None)
+    if handle is not None and handle.is_ts and _is_object_vt(_hgraph.ts_value_vt(handle)):
+        return cls
+    return None
+
+
+def dispatch_(op, *args, __on__=None, **kwargs):
+    """Dispatch to the overload matching the RUNTIME types of the dispatch
+    arguments: key utility + enumerated switch_ (the recorded design)."""
+    if not isinstance(op, _Operator):
+        raise WiringError(f"dispatch_ needs an @operator/@dispatch target, got {op!r}")
+    if not op._overloads:
+        raise WiringError(f"{op.__name__} has no overloads to dispatch to")
+    sig = inspect.signature(op.fn)
+    bound = sig.bind(*args, **kwargs)
+    call_kwargs = dict(bound.arguments)
+
+    dispatch_params = {}
+    for name, param in sig.parameters.items():
+        if __on__ is not None and name not in __on__:
+            continue
+        cls = _declared_dispatch_class(param.annotation)
+        if cls is not None:
+            dispatch_params[name] = cls
+    if __on__ is not None and set(__on__) != set(dispatch_params):
+        missing = set(__on__) - set(dispatch_params)
+        raise WiringError(f"cannot dispatch on non-class parameter(s): {sorted(missing)}")
+    if not dispatch_params:
+        raise WiringError(f"{op.__name__} has no dispatchable (TS[class]) parameters")
+
+    dispatch_map = {}
+    for impl, impl_sig in op._overloads:
+        classes = []
+        for name in dispatch_params:
+            impl_param = impl_sig.parameters.get(name)
+            cls = _declared_dispatch_class(impl_param.annotation) if impl_param is not None else None
+            if cls is None:
+                classes = None
+                break
+            classes.append(cls)
+        if classes is None:
+            continue
+        key = tuple(classes) if len(classes) > 1 else classes[0]
+        dispatch_map[key] = impl
+    if not dispatch_map:
+        raise WiringError(f"no dispatchable overloads found for {op.__name__}")
+
+    names = list(dispatch_params)
+    if len(names) == 1:
+        key = _dispatch_key_node()(wire("type_", call_kwargs[names[0]]),
+                                   tuple(dispatch_map.keys()))
+    else:
+        from ._types import TSL
+        from .nodes import flatten_tsl_values
+
+        types_tsl = TSL.from_ts(*(wire("type_", call_kwargs[name]) for name in names))
+        key = _dispatch_keys_node()(flatten_tsl_values(types_tsl, all_valid=True),
+                                    tuple(dispatch_map.keys()))
+    return switch_(key, dispatch_map, **call_kwargs)
+
+
+class _Dispatch(_Operator):
+    """@dispatch: an @operator whose CALL dispatches on runtime types; the
+    decorated body registers as the most-generic overload (the fallback)."""
+
+    def __init__(self, fn, on=None):
+        super().__init__(fn)
+        self._dispatch_on = tuple(on) if on else None
+        _register_overload(self, _GraphFn(fn))
+
+    def __call__(self, *args, **kwargs):
+        return dispatch_(self, *args, __on__=self._dispatch_on, **kwargs)
+
+
+def dispatch(fn=None, *, on=None):
+    """hgraph's @dispatch decorator (single/multiple runtime dispatch)."""
+    if fn is None:
+        return lambda f: dispatch(f, on=on)
+    return _Dispatch(fn, on=on)
 
 
 def lift(fn, inputs=None, output=None, active=None, valid=None, all_valid=None,
@@ -1444,8 +1895,16 @@ class _Generator:
         return wire("__py_generator", fn=ref, output_type=self._out_tp)
 
 
-def generator(fn):
-    return _Generator(fn)
+def generator(fn=None, *, overloads=None, requires=None):
+    def _make(f):
+        wrapped = _Generator(f)
+        if overloads is not None:
+            _register_overload(overloads, wrapped, requires)
+        return wrapped
+
+    if fn is None:
+        return _make
+    return _make(fn)
 
 
 class context:
@@ -1944,8 +2403,16 @@ class _GraphFn:
         return result
 
 
-def graph(fn):
-    return _GraphFn(fn)
+def graph(fn=None, *, overloads=None, requires=None):
+    def _make(f):
+        wrapped = _GraphFn(f)
+        if overloads is not None:
+            _register_overload(overloads, wrapped, requires)
+        return wrapped
+
+    if fn is None:
+        return _make
+    return _make(fn)
 
 
 class _Removed:
@@ -2113,7 +2580,23 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     params = [p for p in params
               if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
     param_names = {p.name for p in params}
-    named_series = {k: v for k, v in kwargs.items() if k in param_names and isinstance(v, (list, tuple))}
+    annotations_by_name = {p.name: p.annotation for p in params}
+
+    def _named_series_value(k, v):
+        """A list/tuple kwarg is a per-cycle SERIES only on a time-series
+        parameter: SCALAR-kind type variables (upstream's HgScalarTypeVar)
+        and plain scalar annotations take the value as-is."""
+        if k not in param_names or not isinstance(v, (list, tuple)):
+            return False
+        annotation = annotations_by_name.get(k)
+        if isinstance(annotation, _TypeVarSentinel) and annotation.is_scalar:
+            return False
+        if isinstance(v, tuple) and not isinstance(
+                annotation, (_TsExpr, _GenericTsExpr, _TypeVarSentinel)):
+            return False   # a tuple on a scalar-annotated param is a value
+        return True
+
+    named_series = {k: v for k, v in kwargs.items() if _named_series_value(k, v)}
     for k in named_series:
         kwargs.pop(k)
     if not named_series and kwargs and params:

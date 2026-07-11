@@ -360,9 +360,13 @@ namespace hgraph::python_bridge
                     {
                         // hgraph's set-delta literal: Removed(x) members of a
                         // plain set are REMOVALS (TS-schema shaping - this is
-                        // exactly py_to_delta's job).
-                        if (nb::hasattr(item, "item") &&
-                            nb::cast<std::string>(item.type().attr("__name__")) == "Removed")
+                        // exactly py_to_delta's job). The registered Removed
+                        // class decides; the name check only covers the
+                        // pre-registration import window.
+                        if (removed_class_slot().is_valid()
+                                ? nb::isinstance(item, removed_class_slot())
+                                : (nb::hasattr(item, "item") &&
+                                   nb::cast<std::string>(item.type().attr("__name__")) == "Removed"))
                         {
                             (void)removed.insert_copy(py_to_value_as(item.attr("item"), elem).view().data());
                             continue;

@@ -19,6 +19,7 @@ namespace hgraph::stdlib
         register_overload<contains_, contains_tss_item>();
         register_overload<contains_, contains_tss_subset>();
         register_overload<contains_, contains_tsd_key>();
+        register_overload<contains_, contains_set_scalar>();
 
         register_overload<getitem_, getitem_tsl_by_index>();
         register_overload<getitem_, getitem_tsd_by_key>();

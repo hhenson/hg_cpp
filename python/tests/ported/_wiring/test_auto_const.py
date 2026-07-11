@@ -41,7 +41,6 @@ def test_auto_const(ts_tp, value, should_work):
             eval_node(g)
 
 
-@pytest.mark.skip(reason="gap: overloads= lands with the A2 dispatch core")
 def test_auto_cons_with_overload():
 
     @operator

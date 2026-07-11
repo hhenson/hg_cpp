@@ -352,7 +352,7 @@ class _TsExpr:
 
     """A resolved time-series type: wraps the C++ TsType handle."""
 
-    __slots__ = ("handle", "_label", "is_ref", "_bare_map", "_json", "_cs_class")
+    __slots__ = ("handle", "_label", "is_ref", "_bare_map", "_json", "_cs_class", "_py_class")
 
     def __init__(self, handle, label):
         self.handle = handle
@@ -440,6 +440,8 @@ class _TSMeta(type):
 
         if isinstance(scalar, type) and issubclass(scalar, _CS):
             expr._cs_class = scalar   # combine fills dataclass defaults at wiring
+        if isinstance(scalar, type):
+            expr._py_class = scalar   # dispatch reads the DECLARED class
         # BARE frozendict (combine[TS[frozendict]](...)): the key/value
         # types resolve from the wired inputs.
         from ._compat import JSON as _JSON2
@@ -749,35 +751,104 @@ REQUIRED = _Required()
 class _TypeVarSentinel:
     """hgraph's generic type variables (SCALAR / TIME_SERIES_TYPE / ...):
     usable as annotations - resolution happens from the wired arguments,
-    exactly like an un-annotated parameter."""
+    exactly like an un-annotated parameter. ``is_scalar`` mirrors upstream's
+    HgScalarTypeVar/HgTimeSeriesTypeVar split (a SCALAR-kind parameter is
+    never a time-series input)."""
 
-    __slots__ = ("name",)
+    __slots__ = ("name", "is_scalar")
 
-    def __init__(self, name):
+    def __init__(self, name, is_scalar=False):
         self.name = name
+        self.is_scalar = is_scalar
 
     def __repr__(self):
         return self.name
 
 
-SCALAR = _TypeVarSentinel("SCALAR")
-SCHEMA = _TypeVarSentinel("SCHEMA")
+SCALAR = _TypeVarSentinel("SCALAR", is_scalar=True)
+SCHEMA = _TypeVarSentinel("SCHEMA", is_scalar=True)
 TS_SCHEMA = _TypeVarSentinel("TS_SCHEMA")
-SCALAR_1 = _TypeVarSentinel("SCALAR_1")
-KEYABLE_SCALAR = _TypeVarSentinel("KEYABLE_SCALAR")
+SCALAR_1 = _TypeVarSentinel("SCALAR_1", is_scalar=True)
+SCALAR_2 = _TypeVarSentinel("SCALAR_2", is_scalar=True)
+KEYABLE_SCALAR = _TypeVarSentinel("KEYABLE_SCALAR", is_scalar=True)
 TIME_SERIES_TYPE = _TypeVarSentinel("TIME_SERIES_TYPE")
 TIME_SERIES_TYPE_1 = _TypeVarSentinel("TIME_SERIES_TYPE_1")
 TIME_SERIES_TYPE_2 = _TypeVarSentinel("TIME_SERIES_TYPE_2")
 OUT = _TypeVarSentinel("OUT")
-K_1 = _TypeVarSentinel("K_1")
-SIZE = _TypeVarSentinel("SIZE")
-V = _TypeVarSentinel("V")
-K = _TypeVarSentinel("K")
-WINDOW_SIZE = _TypeVarSentinel("WINDOW_SIZE")
-ENUM = _TypeVarSentinel("ENUM")
-WINDOW_SIZE_MIN = _TypeVarSentinel("WINDOW_SIZE_MIN")
-TABLE = _TypeVarSentinel("TABLE")
-COMPOUND_SCALAR = _TypeVarSentinel("COMPOUND_SCALAR")
+K_1 = _TypeVarSentinel("K_1", is_scalar=True)
+SIZE = _TypeVarSentinel("SIZE", is_scalar=True)
+V = _TypeVarSentinel("V", is_scalar=True)
+K = _TypeVarSentinel("K", is_scalar=True)
+WINDOW_SIZE = _TypeVarSentinel("WINDOW_SIZE", is_scalar=True)
+ENUM = _TypeVarSentinel("ENUM", is_scalar=True)
+WINDOW_SIZE_MIN = _TypeVarSentinel("WINDOW_SIZE_MIN", is_scalar=True)
+TABLE = _TypeVarSentinel("TABLE", is_scalar=True)
+COMPOUND_SCALAR = _TypeVarSentinel("COMPOUND_SCALAR", is_scalar=True)
+
+
+def with_signature(fn=None, *, annotations=None, args=None, kwargs=None, defaults=None,
+                   return_annotation=None):
+    """hgraph parity (ported from upstream _typing_utils): rewrite a
+    function's signature - per-param annotation overrides, expansion of
+    ``*args``/``**kwargs`` into named parameters, and the return type."""
+    from inspect import signature, Parameter, Signature
+
+    if fn is None:
+        return lambda f: with_signature(f, annotations=annotations, args=args, kwargs=kwargs,
+                                        defaults=defaults, return_annotation=return_annotation)
+
+    sig = signature(fn)
+    annotations = annotations or {}
+    defaults = defaults or {}
+    new_params = []
+    new_annotations = {}
+    for n, parameter in sig.parameters.items():
+        if parameter.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.POSITIONAL_ONLY,
+                              Parameter.KEYWORD_ONLY):
+            if n in annotations:
+                new_params.append(Parameter(n, Parameter.POSITIONAL_OR_KEYWORD,
+                                            annotation=annotations[n],
+                                            default=defaults.get(n, Parameter.empty)))
+                new_annotations[n] = annotations[n]
+            else:
+                new_params.append(parameter)
+                new_annotations[n] = parameter.annotation
+        if parameter.kind == Parameter.VAR_POSITIONAL:
+            if args is None:
+                if n in annotations:
+                    new_params.append(Parameter(n, Parameter.VAR_POSITIONAL,
+                                                annotation=annotations[n],
+                                                default=defaults.get(n, Parameter.empty)))
+                    new_annotations[n] = annotations[n]
+                else:
+                    raise ValueError(
+                        f"with_signature was not provided annotations for args however there is a "
+                        f"*{n} and no entry in annotations")
+            else:
+                for n, a in args.items():
+                    new_params.append(Parameter(n, Parameter.POSITIONAL_OR_KEYWORD, annotation=a,
+                                                default=defaults.get(n, Parameter.empty)))
+                    new_annotations[n] = a
+            args = None
+        if parameter.kind == Parameter.VAR_KEYWORD:
+            for n, a in (kwargs or {}).items():
+                new_params.append(Parameter(n, Parameter.KEYWORD_ONLY, annotation=a,
+                                            default=defaults.get(n, Parameter.empty)))
+                new_annotations[n] = a
+            kwargs = None
+
+    if args is not None:
+        raise ValueError("with_signature was provided annotations for *args however there is no "
+                         "*argument in the current function signature")
+    if kwargs is not None:
+        raise ValueError("with_signature was provided annotations for **kwargs however there is no "
+                         "**argument in the current function signature")
+    if return_annotation is not None:
+        new_annotations["return"] = return_annotation
+
+    fn.__signature__ = Signature(parameters=new_params, return_annotation=return_annotation)
+    fn.__annotations__ = new_annotations
+    return fn
 
 
 class _GenericTsExpr:

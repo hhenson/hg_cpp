@@ -152,6 +152,13 @@ namespace
     // identity = the user function object).
     // ---------------------------------------------------------------
 
+    /** The python DSL's wiring-time resolution window onto the C++
+        type/pattern machinery (bound as ``ResolutionScope``). */
+    struct PyResolutionScope
+    {
+        ResolutionMap map{};
+    };
+
     struct PyGraphFnRecord
     {
         nb::object                    wrapper;   ///< package-side: wrapper(borrowed_wiring, ports) -> port|None
@@ -957,6 +964,41 @@ namespace
             return result;
         }
 
+        /** Child views in order (TSB fields / TSD entries / TSL elements). */
+        [[nodiscard]] nb::list values() const
+        {
+            nb::list    result;
+            const auto &ts = checked();
+            switch (ts.schema()->kind)
+            {
+                case TSTypeKind::TSD: {
+                    auto dict = ts.as_dict();
+                    for (const ValueView &key : dict.keys())
+                    {
+                        result.append(nb::cast(PyTimeSeries{dict.at(key), guard}));
+                    }
+                    return result;
+                }
+                case TSTypeKind::TSB: {
+                    auto bundle = ts.as_bundle();
+                    for (std::size_t index = 0; index < bundle.size(); ++index)
+                    {
+                        result.append(nb::cast(PyTimeSeries{bundle[index], guard}));
+                    }
+                    return result;
+                }
+                case TSTypeKind::TSL: {
+                    auto list = ts.as_list();
+                    for (std::size_t index = 0; index < list.size(); ++index)
+                    {
+                        result.append(nb::cast(PyTimeSeries{list[index], guard}));
+                    }
+                    return result;
+                }
+                default: throw nb::type_error("values(): not a container time-series");
+            }
+        }
+
         [[nodiscard]] nb::list removed_keys() const
         {
             nb::list result;
@@ -992,6 +1034,39 @@ namespace
      * layout markers are passive. Runtime scheduler events remain independent
      * of input activity, including for ``active=()`` nodes.
      */
+    /**
+     * The node CONFIG string: the layout markers, optionally followed by
+     * ``|name,name,...`` — the trailing layout entries called BY NAME
+     * (python params after ``*args``: keyword-only, injectables declared
+     * after the tail, and ``**kwargs`` expansions).
+     */
+    struct PyCallShape
+    {
+        std::string_view              layout;
+        std::vector<std::string_view> kw_names;
+    };
+
+    [[nodiscard]] PyCallShape parse_py_call_shape(std::string_view config)
+    {
+        PyCallShape shape;
+        const auto  separator = config.find('|');
+        if (separator == std::string_view::npos)
+        {
+            shape.layout = config;
+            return shape;
+        }
+        shape.layout = config.substr(0, separator);
+        std::string_view names = config.substr(separator + 1);
+        while (!names.empty())
+        {
+            const auto comma = names.find(',');
+            shape.kw_names.push_back(names.substr(0, comma));
+            if (comma == std::string_view::npos) { break; }
+            names.remove_prefix(comma + 1);
+        }
+        return shape;
+    }
+
     [[nodiscard]] bool py_node_should_evaluate(std::string_view layout, const TSInputView &args,
                                                const NodeScheduler &scheduler)
     {
@@ -1165,10 +1240,30 @@ namespace
         }
     }
 
+    /** Peel the trailing keyword-called entries off ``call_args`` (python
+        params after ``*args`` fill BY NAME). */
+    [[nodiscard]] nb::dict py_peel_kwargs(nb::list &call_args, std::span<const std::string_view> kw_names)
+    {
+        nb::dict kwargs;
+        if (kw_names.empty()) { return kwargs; }
+        const std::size_t total = nb::len(call_args);
+        if (total < kw_names.size()) { throw std::logic_error("python node: call shape shorter than its kw names"); }
+        const std::size_t first = total - kw_names.size();
+        for (std::size_t index = 0; index < kw_names.size(); ++index)
+        {
+            kwargs[nb::str(std::string{kw_names[index]}.c_str())] = call_args[first + index];
+        }
+        nb::list positional;
+        for (std::size_t index = 0; index < first; ++index) { positional.append(call_args[index]); }
+        call_args = std::move(positional);
+        return kwargs;
+    }
+
     /** Enter context-manager values (hgraph's context semantics), call, exit in reverse. */
     [[nodiscard]] nb::object py_call_with_contexts(const nb::object &fn, nb::list &call_args,
                                                    nb::list &context_values,
-                                                   const nb::object &runtime_global_state)
+                                                   const nb::object &runtime_global_state,
+                                                   nb::dict call_kwargs = {})
     {
         nb::object runtime = nb::module_::import_("hgraph._runtime");
         runtime.attr("_push_runtime_global_state")(runtime_global_state);
@@ -1190,7 +1285,7 @@ namespace
                 entered.push_back(std::move(holder));
             }
         }
-        nb::object result = fn(*nb::tuple(call_args));
+        nb::object result = fn(*nb::tuple(call_args), **call_kwargs);
         while (!entered.empty())
         {
             nb::object holder = std::move(entered.back());
@@ -1231,7 +1326,7 @@ namespace
                           State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
                           GlobalStateView global_state)
         {
-            py_apply_input_activity(eval_config.value(), args.base());
+            py_apply_input_activity(parse_py_call_shape(eval_config.value()).layout, args.base());
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
                               global_state);
         }
@@ -1255,7 +1350,8 @@ namespace
             static_cast<void>(stop_enabled);
             static_cast<void>(stop_config);
             static_cast<void>(stop_scalars);
-            if (!py_node_should_evaluate(config.value(), args.base(), scheduler)) { return; }
+            const PyCallShape shape = parse_py_call_shape(config.value());
+            if (!py_node_should_evaluate(shape.layout, args.base(), scheduler)) { return; }
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
@@ -1263,13 +1359,16 @@ namespace
             auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
             const auto &out_view = static_cast<const TSOutputView &>(out);
             nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
-            if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args,
+            if (!py_assemble_args(shape.layout, args.base(), scalars.value(), state, scheduler, now, call_args,
                                   context_values, guard, runtime_state, &out_view))
             {
                 return;
             }
+            nb::dict call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
             apply_py_result(
-                py_call_with_contexts(fn.value().record->fn, call_args, context_values, runtime_state), out);
+                py_call_with_contexts(fn.value().record->fn, call_args, context_values, runtime_state,
+                                      std::move(call_kwargs)),
+                out);
             invalid.release();
             guard->alive = false;
         }
@@ -1285,7 +1384,7 @@ namespace
             // Mirror the start hook: drop the per-child link subscriptions so a
             // stopped node (e.g. a removed map_ child) can never be re-scheduled
             // by a lingering active input.
-            py_clear_input_activity(eval_config.value(), args.base());
+            py_clear_input_activity(parse_py_call_shape(eval_config.value()).layout, args.base());
             auto release = UnwindCleanupGuard([&] { py_release_state(state); });
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
                               global_state);
@@ -1306,7 +1405,7 @@ namespace
                           State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
                           GlobalStateView global_state)
         {
-            py_apply_input_activity(eval_config.value(), args.base());
+            py_apply_input_activity(parse_py_call_shape(eval_config.value()).layout, args.base());
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
                               global_state);
         }
@@ -1330,19 +1429,22 @@ namespace
             static_cast<void>(stop_enabled);
             static_cast<void>(stop_config);
             static_cast<void>(stop_scalars);
-            if (!py_node_should_evaluate(config.value(), args.base(), scheduler)) { return; }
+            const PyCallShape shape = parse_py_call_shape(config.value());
+            if (!py_node_should_evaluate(shape.layout, args.base(), scheduler)) { return; }
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
             auto     guard   = std::make_shared<PyTsGuard>();
             auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
             nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
-            if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args,
+            if (!py_assemble_args(shape.layout, args.base(), scalars.value(), state, scheduler, now, call_args,
                                   context_values, guard, runtime_state))
             {
                 return;
             }
-            (void)py_call_with_contexts(fn.value().record->fn, call_args, context_values, runtime_state);
+            nb::dict call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
+            (void)py_call_with_contexts(fn.value().record->fn, call_args, context_values, runtime_state,
+                                        std::move(call_kwargs));
             invalid.release();
             guard->alive = false;
         }
@@ -1358,7 +1460,7 @@ namespace
             // Mirror the start hook: drop the per-child link subscriptions so a
             // stopped node (e.g. a removed map_ child) can never be re-scheduled
             // by a lingering active input.
-            py_clear_input_activity(eval_config.value(), args.base());
+            py_clear_input_activity(parse_py_call_shape(eval_config.value()).layout, args.base());
             auto release = UnwindCleanupGuard([&] { py_release_state(state); });
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
                               global_state);
@@ -1696,8 +1798,28 @@ namespace hgraph::static_schema_detail
     };
 }  // namespace hgraph::static_schema_detail
 
+    /** The python RequirementsNotMetWiringError class (installed at import). */
+    [[nodiscard]] nb::object &requirements_error_slot()
+    {
+        static auto *slot = new nb::object{};
+        return *slot;
+    }
+
 NB_MODULE(_hgraph, m)
 {
+    nb::register_exception_translator([](const std::exception_ptr &p, void *) {
+        try
+        {
+            std::rethrow_exception(p);
+        }
+        catch (const OperatorRequirementsError &error)
+        {
+            nb::object &cls = requirements_error_slot();
+            if (cls.is_valid()) { PyErr_SetObject(cls.ptr(), nb::str(error.what()).ptr()); }
+            else { PyErr_SetString(PyExc_RuntimeError, error.what()); }
+        }
+    });
+    m.def("_set_requirements_error", [](nb::object cls) { requirements_error_slot() = std::move(cls); });
     m.doc() = "hgraph C++ runtime bridge (slice 1: wire and run graphs by operator name)";
 
     // The graph-callable records are immortal by design (WiredFn contexts
@@ -1815,7 +1937,33 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyTypePattern>(m, "TypePattern")
         .def("__repr__", [](const PyTypePattern &self) {
             return ts_pattern_to_string(self.pattern);
+        })
+        .def_prop_ro("ts_kind", [](const PyTypePattern &self) -> int {
+            // The TS KIND the pattern describes (structural introspection -
+            // the python DSL never classifies by rendered labels). -1 = a
+            // whole-time-series variable (kind unconstrained).
+            switch (self.pattern.kind)
+            {
+                case TypePattern::Kind::Var: return -1;
+                case TypePattern::Kind::Concrete:
+                    return self.pattern.meta != nullptr ? static_cast<int>(self.pattern.meta->kind) : -1;
+                case TypePattern::Kind::TS: return static_cast<int>(TSTypeKind::TS);
+                case TypePattern::Kind::TSS: return static_cast<int>(TSTypeKind::TSS);
+                case TypePattern::Kind::TSL: return static_cast<int>(TSTypeKind::TSL);
+                case TypePattern::Kind::TSD: return static_cast<int>(TSTypeKind::TSD);
+                case TypePattern::Kind::TSW: return static_cast<int>(TSTypeKind::TSW);
+                case TypePattern::Kind::TSB: return static_cast<int>(TSTypeKind::TSB);
+                case TypePattern::Kind::REF: return static_cast<int>(TSTypeKind::REF);
+                case TypePattern::Kind::Signal: return static_cast<int>(TSTypeKind::SIGNAL);
+            }
+            return -1;
         });
+    m.attr("TS_KIND_TS")  = static_cast<int>(TSTypeKind::TS);
+    m.attr("TS_KIND_TSS") = static_cast<int>(TSTypeKind::TSS);
+    m.attr("TS_KIND_TSL") = static_cast<int>(TSTypeKind::TSL);
+    m.attr("TS_KIND_TSD") = static_cast<int>(TSTypeKind::TSD);
+    m.attr("TS_KIND_TSB") = static_cast<int>(TSTypeKind::TSB);
+    m.attr("TS_KIND_TSW") = static_cast<int>(TSTypeKind::TSW);
     nb::class_<PyPort>(m, "Port")
         .def_prop_ro("ts_type", [](const PyPort &self) { return PyTsType{self.ref.schema}; })
         .def_prop_ro("is_structural", [](const PyPort &self) { return self.ref.is_structural_source(); })
@@ -2078,11 +2226,6 @@ NB_MODULE(_hgraph, m)
     // system).
     // ------------------------------------------------------------------
     {
-        struct PyResolutionScope
-        {
-            ResolutionMap map{};
-        };
-
         nb::class_<PyResolutionScope>(m, "ResolutionScope")
             .def(nb::init<>())
             .def("match",
@@ -2596,6 +2739,7 @@ NB_MODULE(_hgraph, m)
         .def("modified_keys", &PyTimeSeries::modified_keys)
         .def("modified_items", &PyTimeSeries::modified_items)
         .def("modified_values", &PyTimeSeries::modified_values)
+        .def("values", &PyTimeSeries::values)
         .def("removed_keys", &PyTimeSeries::removed_keys)
         .def("__getitem__", &PyTimeSeries::child_at)
         .def("__getattr__", [](nb::object self_obj, const std::string &name) -> nb::object {
@@ -2866,6 +3010,124 @@ NB_MODULE(_hgraph, m)
         }};
     }, nb::arg("wrapper"), nb::arg("user_fn"), nb::arg("param_names"), nb::arg("has_output"),
        nb::arg("output_type") = nb::none());
+    // --- python operator overloads (end-game A2): a python @compute_node/
+    // @graph registers as an ordinary OperatorImpl{Source::Python} candidate.
+    // Matching/ranking/normalisation are ENTIRELY the C++ registry's (the
+    // standing ruling); the wire closure calls back into the python wiring
+    // function under a borrowed Wiring (the WiredFn trampoline pattern).
+    m.def(
+        "register_python_overload",
+        [](const std::string &name, nb::list params, nb::object output, nb::object wire_fn,
+           nb::object requires_fn, bool variadic, bool has_kwargs,
+           std::optional<std::size_t> positional_params) {
+            OperatorImpl impl;
+            impl.name       = name;
+            impl.source     = OperatorImpl::Source::Python;
+            impl.variadic   = variadic;
+            impl.has_kwargs = has_kwargs;
+            for (nb::handle item : params)
+            {
+                auto         entry = nb::cast<nb::tuple>(item);
+                ParamPattern pp;
+                pp.name = nb::cast<std::string>(entry[0]);
+                if (nb::isinstance<PyTypePattern>(entry[1]))
+                {
+                    pp.kind = ParamPattern::Kind::Input;
+                    pp.ts   = nb::cast<PyTypePattern &>(entry[1]).pattern;
+                }
+                else
+                {
+                    pp.kind   = ParamPattern::Kind::Scalar;
+                    pp.scalar = nb::cast<PyScalarPattern &>(entry[1]).pattern;
+                }
+                if (nb::len(entry) > 2)
+                {
+                    // The third slot is the DEFAULT: python None on a ts
+                    // param = the null source (an EMPTY Value); scalars
+                    // convert by inference.
+                    nb::handle default_value = entry[2];
+                    if (default_value.is_none()) { pp.default_value = Value{}; }
+                    else { pp.default_value = py_to_value(default_value); }
+                }
+                impl.params.push_back(std::move(pp));
+            }
+            if (!output.is_none())
+            {
+                impl.has_output = true;
+                impl.output     = nb::cast<PyTypePattern &>(output).pattern;
+            }
+            if (positional_params.has_value()) { impl.positional_params = *positional_params; }
+            impl.rank  = operator_dispatch_detail::operator_rank(impl.params);
+            impl.label = [&] {
+                std::string out = name + "(";
+                for (std::size_t i = 0; i < impl.params.size(); ++i)
+                {
+                    if (i != 0) { out += ", "; }
+                    if (impl.variadic && i + 1 == impl.params.size()) { out += "*"; }
+                    out += impl.params[i].kind == ParamPattern::Kind::Input
+                               ? ts_pattern_to_string(impl.params[i].ts)
+                               : scalar_pattern_to_string(impl.params[i].scalar);
+                    if (impl.params[i].default_value.has_value()) { out += "=…"; }
+                }
+                if (impl.has_kwargs) { out += impl.params.empty() ? "**kwargs" : ", **kwargs"; }
+                out += ") [py]";
+                if (impl.has_output) { out += " -> " + ts_pattern_to_string(impl.output); }
+                return out;
+            }();
+            if (!requires_fn.is_none())
+            {
+                impl.requires_predicate = [requires_fn](const ResolutionMap &map,
+                                                        OperatorCallContext context) -> bool {
+                    nb::gil_scoped_acquire gil;
+                    PyResolutionScope      scope;
+                    scope.map = map;
+                    nb::dict scalars;
+                    for (std::size_t i = 0; i < context.args.size() && i < context.params.size(); ++i)
+                    {
+                        if (context.params[i].kind == ParamPattern::Kind::Scalar &&
+                            context.args[i].kind == WiringArg::Kind::Scalar &&
+                            context.args[i].scalar_value.has_value())
+                        {
+                            scalars[nb::str(context.params[i].name.c_str())] =
+                                value_to_py(context.args[i].scalar_value.view());
+                        }
+                    }
+                    return nb::cast<bool>(requires_fn(nb::cast(scope), scalars));
+                };
+            }
+            impl.wire = [wire_fn](Wiring &w, const ResolutionMap &, std::span<const WiringArg> args,
+                                  std::span<const std::pair<std::string, WiringPortRef>> kwargs)
+                -> OperatorWireResult {
+                nb::gil_scoped_acquire gil;
+                nb::list               py_args;
+                for (const WiringArg &arg : args)
+                {
+                    if (arg.kind == WiringArg::Kind::TimeSeries)
+                    {
+                        // An unwired ts default (null source) crosses as None;
+                        // the python node wires its own nothing-source.
+                        if (arg.port.schema == nullptr) { py_args.append(nb::none()); }
+                        else { py_args.append(nb::cast(PyPort{arg.port})); }
+                    }
+                    else if (!arg.scalar_value.has_value()) { py_args.append(nb::none()); }
+                    else { py_args.append(value_to_py(arg.scalar_value.view())); }
+                }
+                nb::dict py_kwargs;
+                for (const auto &[kw_name, port] : kwargs)
+                {
+                    py_kwargs[nb::str(kw_name.c_str())] = nb::cast(PyPort{port});
+                }
+                nb::object borrowed = nb::cast(PyWiring::borrow(w));
+                nb::object result   = wire_fn(borrowed, nb::tuple(py_args), py_kwargs);
+                if (result.is_none()) { return OperatorWireResult{}; }
+                return OperatorWireResult{true, Port<void>{w, nb::cast<PyPort &>(result).ref}};
+            };
+            OperatorRegistry::instance().register_overload(std::move(impl));
+        },
+        nb::arg("name"), nb::arg("params"), nb::arg("output").none(), nb::arg("wire_fn"),
+        nb::arg("requires_fn").none() = nb::none(), nb::arg("variadic") = false,
+        nb::arg("has_kwargs") = false, nb::arg("positional_params") = nb::none());
+
     nb::class_<PySwitchCases>(m, "SwitchCases");
     nb::class_<PyFeedback>(m, "Feedback")
         .def_prop_ro("port", [](const PyFeedback &fb) { return PyPort{fb.delegate}; })

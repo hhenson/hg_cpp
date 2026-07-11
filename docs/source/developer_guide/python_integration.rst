@@ -292,6 +292,28 @@ Recorded divergences / gaps (the morning-summary list):
   ``extract_kwargs`` + the node-class aliases) is PUBLIC hgraph exports —
   ``HgTypeMetaData`` is NOT part of the public API (raw annotations carry
   type info); ``const_fn`` is NOT ported (record_replay_table.rst P1).
+- **Overload/dispatch core (end-game phase A2)**: python nodes/graphs are
+  full operator-registry citizens. ``@operator`` roots an overload family
+  (unique registry name per object); ``@compute_node/@sink_node/@graph/
+  @generator`` accept ``overloads=`` (an @operator or a built-in operator
+  family) and ``requires=`` (``lambda m[, <scalar names...>]``, ``m``
+  keyed by type variable; rejection raises
+  ``RequirementsNotMetWiringError`` — the C++ resolver throws a TYPED
+  ``OperatorRequirementsError``, translated directly). Candidates register
+  through ``register_python_overload`` as ordinary
+  ``OperatorImpl{Source::Python}`` entries — the C++ registry's matching/
+  ranking/normalisation own ALL dispatch; the wire closure re-enters the
+  python wiring function under a borrowed ``Wiring``. Var-args nodes follow
+  upstream's model exactly: the code object is rewritten to keyword-only
+  parameters, ``*args`` packs into ONE TSL (or structural TSB when so
+  annotated), ``**kwargs`` into ONE named TSB (or TSD); the node config
+  carries a ``layout|names`` suffix and the kernel calls
+  ``fn(*args, **kwargs)``. Ranking refinements: a plain value promoting to
+  const is less specific than a true scalar parameter, and nested type
+  variables decay (``TSL[~T, ~N]`` beats bare ``~T``). ``dispatch_``/
+  ``@dispatch`` = key utility + enumerated ``switch_`` (design record:
+  nested_graphs.rst) — python-class scalars dispatch today; CompoundScalar
+  hierarchies await the bundle-lineage design.
 - **Real-time + push sources** are surfaced with hgraph's shapes:
   ``run_graph(..., run_mode=EvaluationMode.REAL_TIME)`` runs the
   wall-clock executor (the GIL is released for the whole run), and

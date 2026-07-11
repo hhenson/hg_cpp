@@ -297,7 +297,8 @@ namespace hgraph
                        ResolutionMap &map,
                        int &rank_adjustment,
                        std::string &why,
-                       GlobalStateView global_state)
+                       GlobalStateView global_state,
+                       bool &requires_rejected)
         {
             if (output_required.has_value() && impl.has_output != *output_required)
             {
@@ -393,10 +394,18 @@ namespace hgraph
                             return false;
                         }
                     }
-                    else if (!scalar_value_matches_ts_pattern(param.ts, arg.scalar_value, map, rank_adjustment))
+                    else
                     {
-                        why = fmt::format("scalar argument {} cannot be promoted to {}", i, ts_pattern_to_string(param.ts));
-                        return false;
+                        // A plain value PROMOTING to a const source is less
+                        // specific than a candidate taking it as a true
+                        // scalar parameter (python's overload rule).
+                        ++rank_adjustment;
+                        if (!scalar_value_matches_ts_pattern(param.ts, arg.scalar_value, map, rank_adjustment))
+                        {
+                            why = fmt::format("scalar argument {} cannot be promoted to {}", i,
+                                              ts_pattern_to_string(param.ts));
+                            return false;
+                        }
                     }
                 }
                 else
@@ -463,7 +472,8 @@ namespace hgraph
                 if (threw) { return false; }
                 if (!accepted)
                 {
-                    why = "rejected by requires predicate";
+                    why               = "rejected by requires predicate";
+                    requires_rejected = true;
                     return false;
                 }
             }
@@ -672,6 +682,7 @@ namespace hgraph
 
         std::vector<Survivor>    survivors;
         std::vector<std::string> rejected;
+        bool                     any_requires_rejected = false;
         for (const OperatorImpl &impl : it->second)
         {
             NormalizedCall call;
@@ -702,7 +713,7 @@ namespace hgraph
             // specific than one whose parameters were all supplied.
             int rank_adjustment = call.defaults_used;
             if (try_match(impl, call.args, call.kwargs, output_required, expected_output, map, rank_adjustment, why,
-                          global_state))
+                          global_state, any_requires_rejected))
             {
                 survivors.push_back({&impl, std::move(map), std::move(call), impl.rank + rank_adjustment});
             }
@@ -711,9 +722,13 @@ namespace hgraph
 
         if (survivors.empty())
         {
-            throw OperatorResolutionError(
+            std::string message =
                 fmt::format("no matching overload for operator '{}' with {} argument(s)\nrejected candidates:\n{}", name,
-                            args.size(), fmt::join(rejected, "\n")));
+                            args.size(), fmt::join(rejected, "\n"));
+            // A structured signal, not an error-text convention: at least one
+            // candidate matched types but failed its requires predicate.
+            if (any_requires_rejected) { throw OperatorRequirementsError(std::move(message)); }
+            throw OperatorResolutionError(std::move(message));
         }
 
         // Lowest rank wins; a stable sort preserves registration order on ties.

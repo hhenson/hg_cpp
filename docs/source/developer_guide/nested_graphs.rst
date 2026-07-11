@@ -634,6 +634,39 @@ another instance requested it.
 Tests: ``tests/cpp/test_mesh.cpp``.
 
 
+``dispatch_`` — runtime type dispatch (design record)
+------------------------------------------------------
+
+Ruling (2026-07-11): dispatch is **a small key utility feeding an
+enumerated** ``switch_`` — no dedicated runtime machinery. The composition
+(python frontend, ``dispatch_(op, *args, **kwargs)`` / the ``@dispatch``
+decorator whose body registers as the most-generic overload):
+
+1. The *dispatch arguments* are the operator signature's ``TS[cls]``
+   parameters whose ``cls`` is a python class scalar (CompoundScalar or an
+   object-kind class); ``on=("name", ...)`` restricts them explicitly.
+2. ``type_(arg)`` reads each dispatch argument's DYNAMIC python type per
+   tick; a small **key node** maps the type (tuple) onto the enumerated
+   overload keys — ``issubclass`` filtering, most-derived (MRO-depth)
+   specificity, ambiguity is an error. Multi-argument dispatch flattens
+   the per-argument types through a ``TSL`` → ``TS[tuple]``.
+3. ``switch_(key, {classes: overload, ...}, **call_args)`` instantiates
+   the winning overload's graph; an unchanged key does not reload the
+   branch (ordinary ``switch_`` semantics — a re-tick of the same concrete
+   type does not re-emit).
+
+**Scope today**: python-class scalars work end-to-end — the object value
+kind carries the dynamic type (``python/tests/test_dispatch_scalar.py``).
+**CompoundScalar hierarchies are pending a design decision**: CS bundles
+flatten their MRO *compositionally* into one named bundle at registration
+(no lineage in the meta), and converting a ``Dog()`` into a ``TS[Pet]``
+port stores the PET-schema value — the concrete class does not survive to
+the runtime value, so ``type_`` has nothing to key on. Closing this needs
+(a) inheritance lineage on bundle metas, and (b) a per-tick concrete-schema
+carrier for base-typed TS (candidates: plan-compatible subclass storage, or
+an Any-boxed lineage-constrained value). Until then the ported
+``test_dispatch`` cases record the gap.
+
 Reconciliation with the 2603 RFC
 --------------------------------
 
