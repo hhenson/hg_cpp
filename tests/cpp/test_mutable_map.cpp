@@ -13,6 +13,7 @@
 #include <hgraph/types/value/value.h>
 
 #include <string>
+#include <stdexcept>
 
 namespace
 {
@@ -23,6 +24,7 @@ namespace
         const auto *schema  = TypeRegistry::instance().mutable_map(key_meta, value_meta);
         const auto *binding = ValuePlanFactory::instance().binding_for(schema);
         REQUIRE(binding != nullptr);
+        REQUIRE(binding->ops_ref().kind == ValueOpsKind::MutableMap);
         return Value{*binding};
     }
 
@@ -32,6 +34,16 @@ namespace
         Value       any{*binding};
         any.as_any().begin_mutation().set(inner.view());
         return any;
+    }
+
+    template <typename BreakHook, typename Invoke>
+    void require_missing_map_hook(Value &map, BreakHook break_hook, Invoke invoke)
+    {
+        MutableMapValueOps ops = *checked_value_ops<MutableMapValueOps>(map.binding(), "mutable map hook test");
+        break_hook(ops);
+        const ValueTypeBinding binding{map.schema(), map.binding()->plan(), &ops};
+        auto view = ValueView{&binding, const_cast<void *>(map.view().data())}.as_map().begin_mutation();
+        REQUIRE_THROWS_AS(invoke(view), std::logic_error);
     }
 }  // namespace
 
@@ -164,4 +176,35 @@ TEST_CASE("mutable map: string -> Any (GlobalState shape) holds heterogeneous va
     dict.as_map().begin_mutation().set_item(Value{std::string{"count"}}.view(),
                                             make_any(Value{std::string{"many"}}).view());
     CHECK(dict.as_map().at(Value{std::string{"count"}}.view()).as_any().get().checked_as<std::string>() == "many");
+}
+
+TEST_CASE("mutable map: every missing mutation hook fails before invocation")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    Value       map      = make_mutable_map(int_meta, int_meta);
+    Value       key{std::int32_t{7}};
+    Value       value{std::int32_t{11}};
+
+    SECTION("insert")
+    {
+        require_missing_map_hook(map, [](auto &ops) { ops.insert = nullptr; },
+                                 [&](auto &view) { view.set_item(key.view(), value.view()); });
+    }
+    SECTION("value_or_emplace")
+    {
+        require_missing_map_hook(map, [](auto &ops) { ops.value_or_emplace = nullptr; },
+                                 [&](auto &view) { (void)view.value(key.view()); });
+    }
+    SECTION("erase")
+    {
+        require_missing_map_hook(map, [](auto &ops) { ops.erase = nullptr; },
+                                 [&](auto &view) { (void)view.remove(key.view()); });
+    }
+    SECTION("clear")
+    {
+        require_missing_map_hook(map, [](auto &ops) { ops.clear = nullptr; },
+                                 [](auto &view) { view.clear(); });
+    }
 }

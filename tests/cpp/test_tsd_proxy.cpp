@@ -72,6 +72,9 @@ TEST_CASE("TSDProxy constructs builder-created values from source key slots")
 
     auto initial_view = proxy.view();
     auto initial = initial_view.as_dict();
+    REQUIRE(initial.value().binding()->ops_ref().kind == ValueOpsKind::Map);
+    REQUIRE(initial.delta_value(MIN_ST).binding()->ops_ref().kind == ValueOpsKind::Indexed);
+    REQUIRE(initial.value().as_map().key_set().binding()->ops_ref().kind == ValueOpsKind::Set);
     REQUIRE(initial.modified(MIN_ST));
     REQUIRE(initial.contains(key_one.view()));
     REQUIRE(range_count(initial.items()) == 1);

@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <stdexcept>
 
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
@@ -20,7 +21,18 @@ namespace
         const auto *schema  = TypeRegistry::instance().mutable_set(element_meta);
         const auto *binding = ValuePlanFactory::instance().binding_for(schema);
         REQUIRE(binding != nullptr);
+        REQUIRE(binding->ops_ref().kind == ValueOpsKind::MutableSet);
         return Value{*binding};
+    }
+
+    template <typename BreakHook, typename Invoke>
+    void require_missing_set_hook(Value &set, BreakHook break_hook, Invoke invoke)
+    {
+        MutableSetValueOps ops = *checked_value_ops<MutableSetValueOps>(set.binding(), "mutable set hook test");
+        break_hook(ops);
+        const ValueTypeBinding binding{set.schema(), set.binding()->plan(), &ops};
+        auto view = ValueView{&binding, const_cast<void *>(set.view().data())}.as_set().begin_mutation();
+        REQUIRE_THROWS_AS(invoke(view), std::logic_error);
     }
 }  // namespace
 
@@ -101,4 +113,29 @@ TEST_CASE("mutable set: equality is order-independent and a copy is independent"
     c.as_set().begin_mutation().clear();
     CHECK(c.as_set().size() == 0);
     CHECK(a.as_set().size() == 3);  // original unaffected
+}
+
+TEST_CASE("mutable set: every missing mutation hook fails before invocation")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    Value       set      = make_mutable_set(int_meta);
+    Value       key{std::int32_t{7}};
+
+    SECTION("add")
+    {
+        require_missing_set_hook(set, [](auto &ops) { ops.add = nullptr; },
+                                 [&](auto &view) { (void)view.add(key.view()); });
+    }
+    SECTION("remove")
+    {
+        require_missing_set_hook(set, [](auto &ops) { ops.remove = nullptr; },
+                                 [&](auto &view) { (void)view.remove(key.view()); });
+    }
+    SECTION("clear")
+    {
+        require_missing_set_hook(set, [](auto &ops) { ops.clear = nullptr; },
+                                 [](auto &view) { view.clear(); });
+    }
 }

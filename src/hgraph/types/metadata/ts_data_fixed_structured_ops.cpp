@@ -283,7 +283,7 @@ namespace hgraph::ts_data_plan_factory_detail
         void configure_value_ops()
         {
             value_indexed_ops = IndexedValueOps{
-                {this, false, &fixed_value_hash, &fixed_value_equals, &fixed_value_compare,
+                {ValueOpsKind::Indexed, this, false, &fixed_value_hash, &fixed_value_equals, &fixed_value_compare,
                  &fixed_value_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                  ,
@@ -301,7 +301,8 @@ namespace hgraph::ts_data_plan_factory_detail
             value_indexed_ops.copy_assign_view_impl    = &fixed_value_copy_assign_view;
 
             delta_bundle_ops = IndexedValueOps{
-                {this, false, &fixed_delta_bundle_hash, &fixed_delta_bundle_equals, &fixed_delta_bundle_compare,
+                {ValueOpsKind::Indexed, this, false, &fixed_delta_bundle_hash, &fixed_delta_bundle_equals,
+                 &fixed_delta_bundle_compare,
                  &fixed_delta_bundle_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                  ,
@@ -319,7 +320,8 @@ namespace hgraph::ts_data_plan_factory_detail
             delta_bundle_ops.copy_assign_view_impl    = &fixed_delta_bundle_copy_assign_view;
 
             delta_map_ops = MapValueOps{
-                {{this, false, &fixed_delta_map_hash, &fixed_delta_map_equals, &fixed_delta_map_compare,
+                {{ValueOpsKind::Map, this, false, &fixed_delta_map_hash, &fixed_delta_map_equals,
+                  &fixed_delta_map_compare,
                   &fixed_delta_map_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                   ,
@@ -345,7 +347,8 @@ namespace hgraph::ts_data_plan_factory_detail
             delta_map_ops.copy_assign_view_impl    = &fixed_delta_map_copy_assign_view;
 
             delta_key_set_ops = SetValueOps{
-                {{this, false, &fixed_delta_key_set_hash, &fixed_delta_key_set_equals, &fixed_delta_key_set_compare,
+                {{ValueOpsKind::Set, this, false, &fixed_delta_key_set_hash, &fixed_delta_key_set_equals,
+                  &fixed_delta_key_set_compare,
                   &fixed_delta_key_set_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                   ,
@@ -441,7 +444,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 throw std::logic_error("fixed TSB value binding is not resolved");
             }
-            const auto *indexed_ops = static_cast<const IndexedValueOps *>(binding->ops);
+            const auto *indexed_ops = checked_value_ops<IndexedValueOps>(binding, "fixed TSB child value");
             if (indexed_ops->mutable_element_at == nullptr)
             {
                 throw std::logic_error("fixed TSB value binding cannot mark field validity");

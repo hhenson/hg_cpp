@@ -1622,7 +1622,8 @@ namespace hgraph
             }
 
             context->value_ops = IndexedValueOps{
-                {context.get(), false, &input_value_hash, &input_value_equals, &input_value_compare,
+                {ValueOpsKind::Indexed, context.get(), false, &input_value_hash, &input_value_equals,
+                 &input_value_compare,
                  &input_value_to_string},
                 &input_indexed_size,
                 &input_value_element_at,
@@ -1645,7 +1646,7 @@ namespace hgraph
             {
                 auto &delta = context->delta.emplace_bundle();
                 delta.ops = IndexedValueOps{
-                    {context.get(), false, &input_delta_bundle_hash, &input_delta_bundle_equals,
+                    {ValueOpsKind::Indexed, context.get(), false, &input_delta_bundle_hash, &input_delta_bundle_equals,
                      &input_delta_bundle_compare, &input_delta_bundle_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                      ,
@@ -1671,7 +1672,7 @@ namespace hgraph
                 }
 
                 delta.map_ops = MapValueOps{
-                    {{context.get(), false, &input_delta_map_hash, &input_delta_map_equals,
+                    {{ValueOpsKind::Map, context.get(), false, &input_delta_map_hash, &input_delta_map_equals,
                       &input_delta_map_compare, &input_delta_map_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                       ,
@@ -1694,7 +1695,7 @@ namespace hgraph
                 };
 
                 delta.key_set_ops = SetValueOps{
-                    {{context.get(), false, &input_delta_key_set_hash, &input_delta_key_set_equals,
+                    {{ValueOpsKind::Set, context.get(), false, &input_delta_key_set_hash, &input_delta_key_set_equals,
                       &input_delta_key_set_compare, &input_delta_key_set_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                       ,

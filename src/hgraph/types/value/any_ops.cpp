@@ -87,6 +87,7 @@ namespace hgraph
     const ValueOps &any_ops() noexcept
     {
         static const ValueOps ops{
+            ValueOpsKind::Base,
             nullptr,  // context
             true,     // allows_mutation
             &any_hash,

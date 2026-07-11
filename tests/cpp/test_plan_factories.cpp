@@ -138,10 +138,12 @@ namespace
         REQUIRE(root.schema() != nullptr);
         Value current{root.value()};
         REQUIRE(current.binding() == ValuePlanFactory::instance().binding_for(root.schema()->value_schema));
+        REQUIRE(current.binding()->ops_ref().kind != ValueOpsKind::Invalid);
 
         REQUIRE(root.modified(modified_time));
         Value delta{root.delta_value(modified_time)};
         REQUIRE(delta.binding() == ValuePlanFactory::instance().binding_for(root.schema()->delta_value_schema));
+        REQUIRE(delta.binding()->ops_ref().kind != ValueOpsKind::Invalid);
     }
 
     void require_no_tsdata_relocation_hooks(const hgraph::MemoryUtils::StoragePlan &plan)
@@ -739,6 +741,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     REQUIRE(&first_child.layout() == child_ops.layout_impl(child_ops.context));
     REQUIRE(view.value().is_bundle());
     REQUIRE(view.value().binding() == ValuePlanFactory::instance().binding_for(tsb->value_schema));
+    REQUIRE(view.value().binding()->ops_ref().kind == ValueOpsKind::Indexed);
     REQUIRE(tsb_view.valid_items().begin() == tsb_view.valid_items().end());
 
     auto current = view.value().as_bundle();
@@ -1088,6 +1091,7 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     REQUIRE(layout.time_binding == registry.scalar_binding<DateTime>());
     REQUIRE_THROWS_AS(window.time_layout(), std::logic_error);
     REQUIRE(window.value().binding()->plan() == window_component->plan);
+    REQUIRE(window.value().binding()->ops_ref().kind == ValueOpsKind::Indexed);
     REQUIRE(window.value().is_list());
     REQUIRE(window.value().as_list().size() == 0);
     REQUIRE(window.size() == 0);
@@ -1217,6 +1221,7 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     REQUIRE(layout.time_binding == registry.scalar_binding<DateTime>());
     REQUIRE_THROWS_AS(window.size_layout(), std::logic_error);
     REQUIRE(window.value().binding()->plan() == window_component->plan);
+    REQUIRE(window.value().binding()->ops_ref().kind == ValueOpsKind::Indexed);
     REQUIRE(window.value().is_list());
     REQUIRE(window.size() == 0);
     REQUIRE_FALSE(window.all_valid());
@@ -1339,6 +1344,7 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     auto   set  = view.as_set();
     REQUIRE(set.empty());
     REQUIRE(view.value().is_set());
+    REQUIRE(view.value().binding()->ops_ref().kind == ValueOpsKind::Set);
 
     const auto t1 = MIN_ST;
     Value      one{1};
@@ -1411,6 +1417,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     auto   dict = view.as_dict();
     REQUIRE(dict.empty());
     REQUIRE(view.value().is_map());
+    REQUIRE(view.value().binding()->ops_ref().kind == ValueOpsKind::Map);
 
     const auto t1 = MIN_ST;
     Value      key{7};
@@ -1603,6 +1610,7 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     TSData data{*binding};
     auto   view = data.view();
     REQUIRE(view.as_list().empty());
+    REQUIRE(view.value().binding()->ops_ref().kind == ValueOpsKind::Indexed);
     REQUIRE_FALSE(view.has_current_value());
 
     const auto t1 = MIN_ST;

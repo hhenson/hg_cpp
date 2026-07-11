@@ -796,7 +796,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 added_set_ops   = set_ops_for_surface<SlotSetSurface::Added>();
                 removed_set_ops = set_ops_for_surface<SlotSetSurface::Removed>();
                 delta_bundle_ops = IndexedValueOps{
-                    {this, false, &delta_bundle_hash, &delta_bundle_equals, &delta_bundle_compare,
+                    {ValueOpsKind::Indexed, this, false, &delta_bundle_hash, &delta_bundle_equals,
+                     &delta_bundle_compare,
                      &delta_bundle_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                      ,
@@ -831,7 +832,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] SetValueOps set_ops_for_surface()
             {
                 SetValueOps ops{
-                    {{this, false, &set_hash<Surface>, &set_equals<Surface>, &set_compare<Surface>,
+                    {{ValueOpsKind::Set, this, false, &set_hash<Surface>, &set_equals<Surface>, &set_compare<Surface>,
                       &set_to_string<Surface>
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                       ,
@@ -1646,7 +1647,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 value_map_ops.copy_assign_view_impl    = &map_copy_assign_view<SlotMapSurface::Live>;
 
                 key_set_value_ops = SetValueOps{
-                    {{this, false, &map_key_set_hash, &map_key_set_equals, &map_key_set_compare,
+                    {{ValueOpsKind::Set, this, false, &map_key_set_hash, &map_key_set_equals, &map_key_set_compare,
                       &map_key_set_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                       ,
@@ -1673,7 +1674,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 modified_map_ops.copy_assign_view_impl    = &map_copy_assign_view<SlotMapSurface::Modified>;
 
                 dict_delta_bundle_ops = IndexedValueOps{
-                    {this, false, &dict_delta_hash, &dict_delta_equals, &dict_delta_compare,
+                    {ValueOpsKind::Indexed, this, false, &dict_delta_hash, &dict_delta_equals, &dict_delta_compare,
                      &dict_delta_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                      ,
@@ -1756,7 +1757,8 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] MapValueOps map_ops_for_surface()
             {
                 return MapValueOps{
-                    {{this, false, &map_hash<Surface>, &map_equals<Surface>, &map_compare<Surface>,
+                    {{ValueOpsKind::Map, this, false, &map_hash<Surface>, &map_equals<Surface>,
+                      &map_compare<Surface>,
                       &map_to_string<Surface>
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                       ,

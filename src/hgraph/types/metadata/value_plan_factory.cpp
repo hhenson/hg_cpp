@@ -694,7 +694,8 @@ namespace hgraph
                 }
 
                 ops = IndexedValueOps{
-                    {&context,
+                    {ValueOpsKind::Indexed,
+                     &context,
                      true,
                      schema.is_hashable() ? &composite_value_hash : nullptr,
                      &composite_value_equals,
@@ -754,7 +755,8 @@ namespace hgraph
                 };
 
                 ops = IndexedValueOps{
-                    {&context,
+                    {ValueOpsKind::Indexed,
+                     &context,
                      true,
                      schema.is_hashable() ? &array_value_hash : nullptr,
                      &array_value_equals,

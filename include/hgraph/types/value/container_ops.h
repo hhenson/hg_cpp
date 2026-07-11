@@ -7,6 +7,10 @@
 #include <hgraph/types/value/value_view.h>
 
 #include <cstddef>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <type_traits>
 
 namespace hgraph
 {
@@ -24,7 +28,7 @@ namespace hgraph
      * / compare / to_string) with the read accessors the typed views
      * need — ``size``, ``element_at``, ``contains``, ``front``,
      * ``head``, etc. The typed view receives a pointer to the
-     * kind-specific ops sub-class (downcast from the binding's
+     * kind-specific ops sub-class (checked from the binding's
      * ``const ValueOps *``) and calls through it without ever casting
      * the storage data pointer to a concrete C++ storage class.
      *
@@ -58,8 +62,8 @@ namespace hgraph
     //                           base ops and pairs them with values
     //                           via the derived ops.
     //
-    // Views always reach the kind-specific surface by static-casting
-    // the binding's ``const ValueOps *`` to the matching sub-class.
+    // Views reach the kind-specific surface through ``checked_value_ops``,
+    // which validates the runtime ops ABI before narrowing the pointer.
     // No view ever casts the storage data pointer to a concrete C++
     // storage class — that keeps the views layout-agnostic.
     // -----------------------------------------------------------------
@@ -209,6 +213,114 @@ namespace hgraph
          */
         void *(*value_or_emplace)(const void *context, void *memory, const void *key) = nullptr;
     };
+
+    namespace value_ops_detail
+    {
+        template <typename Ops>
+        inline constexpr bool supported_ops_type_v =
+            std::is_same_v<Ops, ValueOps> || std::is_same_v<Ops, IndexedValueOps> ||
+            std::is_same_v<Ops, ListValueOps> || std::is_same_v<Ops, MutableListValueOps> ||
+            std::is_same_v<Ops, CyclicBufferValueOps> || std::is_same_v<Ops, QueueValueOps> ||
+            std::is_same_v<Ops, SetValueOps> || std::is_same_v<Ops, MutableSetValueOps> ||
+            std::is_same_v<Ops, MapValueOps> || std::is_same_v<Ops, MutableMapValueOps>;
+
+        [[nodiscard]] constexpr std::string_view value_ops_kind_name(ValueOpsKind kind) noexcept
+        {
+            switch (kind)
+            {
+            case ValueOpsKind::Invalid: return "Invalid";
+            case ValueOpsKind::Base: return "Base";
+            case ValueOpsKind::Indexed: return "Indexed";
+            case ValueOpsKind::List: return "List";
+            case ValueOpsKind::MutableList: return "MutableList";
+            case ValueOpsKind::CyclicBuffer: return "CyclicBuffer";
+            case ValueOpsKind::Queue: return "Queue";
+            case ValueOpsKind::Set: return "Set";
+            case ValueOpsKind::MutableSet: return "MutableSet";
+            case ValueOpsKind::Map: return "Map";
+            case ValueOpsKind::MutableMap: return "MutableMap";
+            }
+            return "Unknown";
+        }
+
+        template <typename Ops>
+        [[nodiscard]] consteval ValueOpsKind requested_ops_kind()
+        {
+            static_assert(supported_ops_type_v<Ops>, "unsupported ValueOps type");
+            if constexpr (std::is_same_v<Ops, ValueOps>) return ValueOpsKind::Base;
+            else if constexpr (std::is_same_v<Ops, IndexedValueOps>) return ValueOpsKind::Indexed;
+            else if constexpr (std::is_same_v<Ops, ListValueOps>) return ValueOpsKind::List;
+            else if constexpr (std::is_same_v<Ops, MutableListValueOps>) return ValueOpsKind::MutableList;
+            else if constexpr (std::is_same_v<Ops, CyclicBufferValueOps>) return ValueOpsKind::CyclicBuffer;
+            else if constexpr (std::is_same_v<Ops, QueueValueOps>) return ValueOpsKind::Queue;
+            else if constexpr (std::is_same_v<Ops, SetValueOps>) return ValueOpsKind::Set;
+            else if constexpr (std::is_same_v<Ops, MutableSetValueOps>) return ValueOpsKind::MutableSet;
+            else if constexpr (std::is_same_v<Ops, MapValueOps>) return ValueOpsKind::Map;
+            else return ValueOpsKind::MutableMap;
+        }
+
+        [[nodiscard]] constexpr bool value_ops_compatible(ValueOpsKind actual,
+                                                          ValueOpsKind requested) noexcept
+        {
+            if (actual < ValueOpsKind::Base || actual > ValueOpsKind::MutableMap) return false;
+            switch (requested)
+            {
+            case ValueOpsKind::Base: return true;
+            case ValueOpsKind::Indexed: return actual != ValueOpsKind::Base;
+            case ValueOpsKind::List:
+                return actual == ValueOpsKind::List || actual == ValueOpsKind::MutableList;
+            case ValueOpsKind::MutableList: return actual == ValueOpsKind::MutableList;
+            case ValueOpsKind::CyclicBuffer: return actual == ValueOpsKind::CyclicBuffer;
+            case ValueOpsKind::Queue: return actual == ValueOpsKind::Queue;
+            case ValueOpsKind::Set:
+                return actual == ValueOpsKind::Set || actual == ValueOpsKind::MutableSet;
+            case ValueOpsKind::MutableSet: return actual == ValueOpsKind::MutableSet;
+            case ValueOpsKind::Map:
+                return actual == ValueOpsKind::Map || actual == ValueOpsKind::MutableMap;
+            case ValueOpsKind::MutableMap: return actual == ValueOpsKind::MutableMap;
+            case ValueOpsKind::Invalid: return false;
+            }
+            return false;
+        }
+    }  // namespace value_ops_detail
+
+    template <typename Ops>
+        requires(value_ops_detail::supported_ops_type_v<Ops>)
+    [[nodiscard]] inline const Ops *try_value_ops(const ValueOps *ops) noexcept
+    {
+        if (ops == nullptr ||
+            !value_ops_detail::value_ops_compatible(ops->kind, value_ops_detail::requested_ops_kind<Ops>()))
+        {
+            return nullptr;
+        }
+        return static_cast<const Ops *>(ops);
+    }
+
+    template <typename Ops>
+        requires(value_ops_detail::supported_ops_type_v<Ops>)
+    [[nodiscard]] inline const Ops *try_value_ops(const ValueTypeBinding *binding) noexcept
+    {
+        return binding != nullptr ? try_value_ops<Ops>(binding->ops) : nullptr;
+    }
+
+    template <typename Ops>
+        requires(value_ops_detail::supported_ops_type_v<Ops>)
+    [[nodiscard]] inline const Ops *checked_value_ops(const ValueOps *ops, std::string_view consumer)
+    {
+        if (const auto *result = try_value_ops<Ops>(ops); result != nullptr) return result;
+        const auto actual = ops != nullptr ? value_ops_detail::value_ops_kind_name(ops->kind) : std::string_view{"null"};
+        throw std::logic_error(std::string{consumer} + ": requested " +
+                               std::string{value_ops_detail::value_ops_kind_name(
+                                   value_ops_detail::requested_ops_kind<Ops>())} +
+                               " ValueOps, actual " + std::string{actual});
+    }
+
+    template <typename Ops>
+        requires(value_ops_detail::supported_ops_type_v<Ops>)
+    [[nodiscard]] inline const Ops *checked_value_ops(const ValueTypeBinding *binding, std::string_view consumer)
+    {
+        return checked_value_ops<Ops>(binding != nullptr ? binding->ops : nullptr, consumer);
+    }
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_VALUE_CONTAINER_OPS_H

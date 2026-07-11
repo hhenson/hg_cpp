@@ -312,6 +312,7 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
     REQUIRE(bundle_modified_items.size() == 1);
     REQUIRE(std::string{bundle_modified_items[0].first} == "items");
     REQUIRE(input_root.value().is_bundle());
+    REQUIRE(input_root.value().binding()->ops_ref().kind == ValueOpsKind::Indexed);
 
     REQUIRE(items.binding() != nullptr);
     REQUIRE(items.valid());

@@ -274,6 +274,17 @@ bundle uses its nominal name, while its structural twin retains the
 ``Bundle{...}`` form.  Registry aliases are lookup names only and never mutate
 that canonical label or affect schema identity.
 
+Value ops tables carry a separate one-byte ``ValueOpsKind`` discriminator at
+offset zero.  It describes the concrete ops-table ABI, not the semantic value
+schema.  The supported hierarchy is ``Base <- Indexed`` with the leaf branches
+``List <- MutableList``, ``CyclicBuffer``, ``Queue``, ``Set <- MutableSet``, and
+``Map <- MutableMap``.  ``try_value_ops`` and ``checked_value_ops`` are the only
+production base-to-derived narrowing boundary.  They validate this hierarchy
+before any derived hook is inspected; null, invalid, and unknown tags are
+rejected.  This distinction is intentional: a fixed list schema may publish an
+``Indexed`` table and supports indexed access, but it must not be treated as a
+``ListValueOps`` object.  Schema kind therefore never implies ops layout.
+
 ``TypeRecord`` does not own its schema, plan, ops, or debug metadata.  All are
 immutable and have stable addresses for at least the lifetime of the registry.
 Production registries will normally keep them for the process lifetime.  This

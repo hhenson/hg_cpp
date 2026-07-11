@@ -285,7 +285,8 @@ namespace hgraph::ts_data_plan_factory_detail
             void configure_value_ops()
             {
                 value_list_ops = IndexedValueOps{
-                    {this, false, &dynamic_value_hash, &dynamic_value_equals, &dynamic_value_compare,
+                    {ValueOpsKind::Indexed, this, false, &dynamic_value_hash, &dynamic_value_equals,
+                     &dynamic_value_compare,
                      &dynamic_value_to_string},
                     &dynamic_value_size,
                     &dynamic_value_element_at,
@@ -298,7 +299,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 value_list_ops.copy_assign_view_impl    = &dynamic_value_copy_assign_view;
 
                 delta_map_ops = MapValueOps{
-                    {{this, false, &dynamic_delta_map_hash, &dynamic_delta_map_equals, &dynamic_delta_map_compare,
+                    {{ValueOpsKind::Map, this, false, &dynamic_delta_map_hash, &dynamic_delta_map_equals,
+                      &dynamic_delta_map_compare,
                       &dynamic_delta_map_to_string},
                      &dynamic_delta_map_size,
                      &dynamic_delta_map_key_at_index,
@@ -319,7 +321,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 delta_map_ops.copy_assign_view_impl    = &dynamic_delta_map_copy_assign_view;
 
                 delta_key_set_ops = SetValueOps{
-                    {{this, false, &dynamic_delta_key_set_hash, &dynamic_delta_key_set_equals,
+                    {{ValueOpsKind::Set, this, false, &dynamic_delta_key_set_hash, &dynamic_delta_key_set_equals,
                       &dynamic_delta_key_set_compare, &dynamic_delta_key_set_to_string},
                      &dynamic_delta_map_size,
                      &dynamic_delta_map_key_at_index,

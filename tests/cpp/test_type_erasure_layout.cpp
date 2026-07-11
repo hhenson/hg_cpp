@@ -2,6 +2,7 @@
 #include <hgraph/types/metadata/type_meta_data.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/time_series/ts_data.h>
+#include <hgraph/types/type_pointer.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value.h>
 
@@ -56,6 +57,9 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     assert_storage_ref_layout<EvaluationClockTypeBinding>();
 
     static_assert(sizeof(ValueView) == sizeof(void *) * 2);
+    static_assert(sizeof(Value) == sizeof(void *) * 3);
+    static_assert(sizeof(AnyPtr) == sizeof(void *) * 2);
+    static_assert(sizeof(TypedPtr<TypeFamily::Value>) == sizeof(void *) * 2);
     static_assert(sizeof(NodeView) == sizeof(void *) * 2);
     static_assert(sizeof(GraphView) == sizeof(void *) * 2);
     static_assert(sizeof(GraphExecutorView) == sizeof(void *) * 2);
@@ -82,6 +86,29 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     assert_storage_handle_layout<EvaluationClockTypeBinding>();
 
     SUCCEED("compile-time type-erasure layout assertions passed");
+}
+
+TEST_CASE("value ops discriminator has a fixed byte ABI at offset zero")
+{
+    using namespace hgraph;
+
+    static_assert(sizeof(ValueOpsKind) == 1);
+    static_assert(offsetof(ValueOps, kind) == 0);
+    static_assert(std::is_same_v<decltype(VALUE_OPS_ABI_VERSION), const std::uint16_t>);
+    static_assert(VALUE_OPS_ABI_VERSION == 1);
+    static_assert(static_cast<std::uint8_t>(ValueOpsKind::Invalid) == 0);
+    static_assert(static_cast<std::uint8_t>(ValueOpsKind::Base) == 1);
+    static_assert(static_cast<std::uint8_t>(ValueOpsKind::Indexed) == 2);
+    static_assert(static_cast<std::uint8_t>(ValueOpsKind::List) == 3);
+    static_assert(static_cast<std::uint8_t>(ValueOpsKind::MutableList) == 4);
+    static_assert(static_cast<std::uint8_t>(ValueOpsKind::CyclicBuffer) == 5);
+    static_assert(static_cast<std::uint8_t>(ValueOpsKind::Queue) == 6);
+    static_assert(static_cast<std::uint8_t>(ValueOpsKind::Set) == 7);
+    static_assert(static_cast<std::uint8_t>(ValueOpsKind::MutableSet) == 8);
+    static_assert(static_cast<std::uint8_t>(ValueOpsKind::Map) == 9);
+    static_assert(static_cast<std::uint8_t>(ValueOpsKind::MutableMap) == 10);
+
+    SUCCEED("compile-time value ops ABI assertions passed");
 }
 
 TEST_CASE("value schemas expose the unified schema header as their standard-layout prefix")

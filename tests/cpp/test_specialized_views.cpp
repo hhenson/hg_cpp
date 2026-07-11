@@ -9,9 +9,12 @@
 // bindings through ``ValuePlanFactory``.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/value/any_ops.h>
 #include <hgraph/types/value/compact_container_ops.h>
 #include <hgraph/types/value/compact_storage.h>
 #include <hgraph/types/value/container_ops.h>
@@ -21,6 +24,7 @@
 #include <hgraph/types/value/value_view.h>
 
 #include <compare>
+#include <array>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -69,6 +73,146 @@ TEST_CASE("ListView: size, at, iteration over a built list")
     std::int32_t values_sum = 0;
     for (const auto element : view.values()) { values_sum += element.checked_as<std::int32_t>(); }
     REQUIRE(values_sum == 60);
+}
+
+TEST_CASE("ValueOps narrowing follows only the declared ops hierarchy")
+{
+    using namespace hgraph;
+
+    ValueOps invalid{};
+    ValueOps base{};
+    IndexedValueOps indexed{};
+    ListValueOps list{};
+    MutableListValueOps mutable_list{};
+    CyclicBufferValueOps cyclic_buffer{};
+    QueueValueOps queue{};
+    SetValueOps set{};
+    MutableSetValueOps mutable_set{};
+    MapValueOps map{};
+    MutableMapValueOps mutable_map{};
+    ValueOps unknown{};
+
+    base.kind          = ValueOpsKind::Base;
+    indexed.kind       = ValueOpsKind::Indexed;
+    list.kind          = ValueOpsKind::List;
+    mutable_list.kind  = ValueOpsKind::MutableList;
+    cyclic_buffer.kind = ValueOpsKind::CyclicBuffer;
+    queue.kind         = ValueOpsKind::Queue;
+    set.kind           = ValueOpsKind::Set;
+    mutable_set.kind   = ValueOpsKind::MutableSet;
+    map.kind           = ValueOpsKind::Map;
+    mutable_map.kind   = ValueOpsKind::MutableMap;
+    unknown.kind       = static_cast<ValueOpsKind>(255);
+
+    const std::array<const ValueOps *, 12> actual{
+        &invalid, &base, &indexed, &list, &mutable_list, &cyclic_buffer,
+        &queue, &set, &mutable_set, &map, &mutable_map, &unknown,
+    };
+    constexpr std::array<std::array<bool, 10>, 12> expected{{
+        {{false, false, false, false, false, false, false, false, false, false}},
+        {{true,  false, false, false, false, false, false, false, false, false}},
+        {{true,  true,  false, false, false, false, false, false, false, false}},
+        {{true,  true,  true,  false, false, false, false, false, false, false}},
+        {{true,  true,  true,  true,  false, false, false, false, false, false}},
+        {{true,  true,  false, false, true,  false, false, false, false, false}},
+        {{true,  true,  false, false, false, true,  false, false, false, false}},
+        {{true,  true,  false, false, false, false, true,  false, false, false}},
+        {{true,  true,  false, false, false, false, true,  true,  false, false}},
+        {{true,  true,  false, false, false, false, false, false, true,  false}},
+        {{true,  true,  false, false, false, false, false, false, true,  true}},
+        {{false, false, false, false, false, false, false, false, false, false}},
+    }};
+
+    const auto matches = [](const ValueOps *ops, std::size_t requested) {
+        switch (requested)
+        {
+        case 0: return try_value_ops<ValueOps>(ops) != nullptr;
+        case 1: return try_value_ops<IndexedValueOps>(ops) != nullptr;
+        case 2: return try_value_ops<ListValueOps>(ops) != nullptr;
+        case 3: return try_value_ops<MutableListValueOps>(ops) != nullptr;
+        case 4: return try_value_ops<CyclicBufferValueOps>(ops) != nullptr;
+        case 5: return try_value_ops<QueueValueOps>(ops) != nullptr;
+        case 6: return try_value_ops<SetValueOps>(ops) != nullptr;
+        case 7: return try_value_ops<MutableSetValueOps>(ops) != nullptr;
+        case 8: return try_value_ops<MapValueOps>(ops) != nullptr;
+        case 9: return try_value_ops<MutableMapValueOps>(ops) != nullptr;
+        default: return false;
+        }
+    };
+
+    for (std::size_t actual_index = 0; actual_index < actual.size(); ++actual_index)
+    {
+        for (std::size_t requested = 0; requested < expected[actual_index].size(); ++requested)
+        {
+            CAPTURE(actual_index, requested);
+            REQUIRE(matches(actual[actual_index], requested) == expected[actual_index][requested]);
+        }
+    }
+
+    REQUIRE(try_value_ops<ValueOps>(static_cast<const ValueOps *>(nullptr)) == nullptr);
+    REQUIRE(try_value_ops<IndexedValueOps>(static_cast<const ValueTypeBinding *>(nullptr)) == nullptr);
+    REQUIRE_THROWS_WITH(checked_value_ops<MapValueOps>(&set, "consumer"),
+                        "consumer: requested Map ValueOps, actual Set");
+    REQUIRE_THROWS_WITH(checked_value_ops<SetValueOps>(&unknown, "consumer"),
+                        "consumer: requested Set ValueOps, actual Unknown");
+    REQUIRE_THROWS_WITH(checked_value_ops<IndexedValueOps>(static_cast<const ValueOps *>(nullptr), "consumer"),
+                        "consumer: requested Indexed ValueOps, actual null");
+}
+
+TEST_CASE("ValueOps narrowing uses ABI kind independently of value schema")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *element  = registry.register_scalar<std::int32_t>("int32");
+    const auto *schema   = registry.list(element, 2);
+    IndexedValueOps indexed{};
+    indexed.kind = ValueOpsKind::Indexed;
+    const ValueTypeBinding binding{schema, &MemoryUtils::plan_for<std::int32_t>(), &indexed};
+
+    REQUIRE(try_value_ops<IndexedValueOps>(&binding) == &indexed);
+    REQUIRE(try_value_ops<ListValueOps>(&binding) == nullptr);
+
+    ValueOps wrong_abi{};
+    wrong_abi.kind = ValueOpsKind::Base;
+    const ValueTypeBinding wrong_binding{schema, &MemoryUtils::plan_for<std::int32_t>(), &wrong_abi};
+    std::int32_t storage{};
+    REQUIRE_THROWS_WITH((ListView{ValueView{&wrong_binding, &storage}}),
+                        "IndexedValueView: requested Indexed ValueOps, actual Base");
+
+    IndexedValueOps missing_hooks{};
+    missing_hooks.kind = ValueOpsKind::Indexed;
+    const ValueTypeBinding missing_hooks_binding{schema, &MemoryUtils::plan_for<std::int32_t>(), &missing_hooks};
+    REQUIRE_THROWS_WITH((ListView{ValueView{&missing_hooks_binding, &storage}}),
+                        "IndexedValueView: binding does not expose indexed ops");
+}
+
+TEST_CASE("published value-layer ops tables carry exact kinds")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *scalar   = registry.register_scalar<std::int32_t>("int32");
+    const auto *binding  = registry.scalar_binding<std::int32_t>();
+    REQUIRE(binding != nullptr);
+    REQUIRE(binding->ops_ref().kind == ValueOpsKind::Base);
+
+    const auto *enum_schema = registry.enum_type("ValueOpsKindInventory", {{"A", 1}, {"B", 2}});
+    const auto *enum_binding = ValuePlanFactory::instance().binding_for(enum_schema);
+    REQUIRE(enum_binding != nullptr);
+    REQUIRE(enum_binding->ops_ref().kind == ValueOpsKind::Base);
+
+    REQUIRE(any_ops().kind == ValueOpsKind::Base);
+    REQUIRE(compact_list_ops().kind == ValueOpsKind::List);
+    REQUIRE(compact_cyclic_buffer_ops().kind == ValueOpsKind::CyclicBuffer);
+    REQUIRE(compact_queue_ops().kind == ValueOpsKind::Queue);
+    REQUIRE(compact_set_ops().kind == ValueOpsKind::Set);
+    REQUIRE(compact_map_ops().kind == ValueOpsKind::Map);
+
+    const auto *fixed_list = registry.list(scalar, 2);
+    const auto *fixed_binding = ValuePlanFactory::instance().binding_for(fixed_list);
+    REQUIRE(fixed_binding != nullptr);
+    REQUIRE(fixed_binding->ops_ref().kind == ValueOpsKind::Indexed);
 }
 
 TEST_CASE("compact_list_ops: hash / equals / compare / to_string walk elements")

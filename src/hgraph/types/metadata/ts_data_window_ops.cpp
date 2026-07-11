@@ -837,7 +837,8 @@ namespace hgraph::ts_data_plan_factory_detail
             void configure_value_ops()
             {
                 value_ops = IndexedValueOps{
-                    {this, false, &window_value_hash, &window_value_equals, &window_value_compare,
+                    {ValueOpsKind::Indexed, this, false, &window_value_hash, &window_value_equals,
+                     &window_value_compare,
                      &window_value_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                      ,

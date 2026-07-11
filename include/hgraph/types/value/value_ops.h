@@ -33,6 +33,24 @@ namespace nb = nanobind;
 
 namespace hgraph
 {
+    enum class ValueOpsKind : std::uint8_t
+    {
+        Invalid      = 0,
+        Base         = 1,
+        Indexed      = 2,
+        List         = 3,
+        MutableList  = 4,
+        CyclicBuffer = 5,
+        Queue        = 6,
+        Set          = 7,
+        MutableSet   = 8,
+        Map          = 9,
+        MutableMap   = 10,
+    };
+
+    static_assert(sizeof(ValueOpsKind) == 1);
+    inline constexpr std::uint16_t VALUE_OPS_ABI_VERSION = 1;
+
     struct ValueOps;
     using ValueTypeBinding = TypeBinding<ValueTypeMetaData, ValueOps>;
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -93,6 +111,7 @@ namespace hgraph
      */
     struct ValueOps
     {
+        ValueOpsKind kind{ValueOpsKind::Invalid};
         const void *context{nullptr};
         bool        allows_mutation{false};
         std::size_t (*hash_impl)(const void *context, const void *memory) = nullptr;
@@ -225,6 +244,8 @@ namespace hgraph
             binding.checked_plan().copy_assign(dst, memory);
         }
     };
+
+    static_assert(offsetof(ValueOps, kind) == 0);
 
     namespace value_ops_detail
     {
@@ -625,6 +646,7 @@ namespace hgraph
     [[nodiscard]] inline const ValueOps &ops_for() noexcept
     {
         static const ValueOps ops{
+            ValueOpsKind::Base,
             nullptr,
             true,
             value_ops_detail::hash_impl_for<T>(),

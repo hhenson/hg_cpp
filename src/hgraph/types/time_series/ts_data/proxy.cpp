@@ -138,7 +138,7 @@ namespace hgraph
                 value_map_ops         = map_value_ops_for<TSDProxyMapSurface::Live>();
                 modified_map_ops      = map_value_ops_for<TSDProxyMapSurface::Modified>();
                 delta_bundle_ops      = IndexedValueOps{
-                    {this, false, nullptr, nullptr, nullptr, nullptr},
+                    {ValueOpsKind::Indexed, this, false, nullptr, nullptr, nullptr, nullptr},
                     &delta_size,
                     &delta_element_at,
                     &delta_element_binding,
@@ -248,7 +248,7 @@ namespace hgraph
             [[nodiscard]] SetValueOps set_value_ops_for()
             {
                 SetValueOps ops{
-                    {{this, false, nullptr, nullptr, nullptr, nullptr
+                    {{ValueOpsKind::Set, this, false, nullptr, nullptr, nullptr, nullptr
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                       ,
                       &set_surface_to_python<Surface>,
@@ -272,7 +272,7 @@ namespace hgraph
             [[nodiscard]] MapValueOps map_value_ops_for()
             {
                 MapValueOps ops{
-                    {{this, false, nullptr, nullptr, nullptr, nullptr
+                    {{ValueOpsKind::Map, this, false, nullptr, nullptr, nullptr, nullptr
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                       ,
                       &map_surface_to_python<Surface>,

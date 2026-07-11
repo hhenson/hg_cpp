@@ -412,6 +412,7 @@ namespace hgraph
         using namespace mutable_container_detail;
         static const MutableListValueOps ops = {
             {{{// ValueOps:
+               ValueOpsKind::MutableList,
                nullptr,
                true,  // allows_mutation
                &list_hash,
@@ -871,7 +872,8 @@ namespace hgraph
     {
         using namespace mutable_container_detail;
         static const SetValueOps ops = {
-            {{nullptr,
+            {{ValueOpsKind::Set,
+              nullptr,
               false,
               &map_key_set_hash,
               &map_key_set_equals,
@@ -934,6 +936,7 @@ namespace hgraph
         using namespace mutable_container_detail;
         static const MutableMapValueOps ops = {
             {{{// ValueOps:
+               ValueOpsKind::MutableMap,
                nullptr,
                true,  // allows_mutation
                &map_hash,
@@ -1210,6 +1213,7 @@ namespace hgraph
         static const MutableSetValueOps ops = {
             {{// IndexedValueOps:
               {// ValueOps:
+               ValueOpsKind::MutableSet,
                nullptr,
                true,  // allows_mutation
                &set_hash,

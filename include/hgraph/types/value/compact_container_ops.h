@@ -978,6 +978,7 @@ namespace hgraph
         {
             static const ListValueOps ops = {
                 {{// ValueOps:
+                  ValueOpsKind::List,
                   nullptr,
                   false,
                   &container_ops_detail::list_hash,
@@ -1013,7 +1014,8 @@ namespace hgraph
     [[nodiscard]] inline const SetValueOps &compact_set_ops() noexcept
     {
         static const SetValueOps ops = {
-            {{nullptr,
+            {{ValueOpsKind::Set,
+              nullptr,
               false,
               &container_ops_detail::set_hash,
               &container_ops_detail::set_equals,
@@ -1044,7 +1046,8 @@ namespace hgraph
         // the indexed kind yields keys. ``make_kv_range`` exposes the
         // paired (key, value) surface.
         static const MapValueOps ops = {
-            {{nullptr,
+            {{ValueOpsKind::Map,
+              nullptr,
               false,
               &container_ops_detail::map_hash,
               &container_ops_detail::map_equals,
@@ -1089,7 +1092,8 @@ namespace hgraph
     [[nodiscard]] inline const CyclicBufferValueOps &compact_cyclic_buffer_ops() noexcept
     {
         static const CyclicBufferValueOps ops = {
-            {{nullptr,
+            {{ValueOpsKind::CyclicBuffer,
+              nullptr,
               false,
               &container_ops_detail::cyclic_buffer_hash,
               &container_ops_detail::cyclic_buffer_equals,
@@ -1116,7 +1120,8 @@ namespace hgraph
     [[nodiscard]] inline const QueueValueOps &compact_queue_ops() noexcept
     {
         static const QueueValueOps ops = {
-            {{nullptr,
+            {{ValueOpsKind::Queue,
+              nullptr,
               false,
               &container_ops_detail::queue_hash,
               &container_ops_detail::queue_equals,
@@ -1147,7 +1152,8 @@ namespace hgraph
         // because the underlying memory is still a ``MapStorage`` —
         // the adapter just reframes the read surface as a Set.
         static const SetValueOps ops = {
-            {{nullptr,
+            {{ValueOpsKind::Set,
+              nullptr,
               false,
               &container_ops_detail::map_key_adapter_hash,
               &container_ops_detail::map_key_adapter_equals,

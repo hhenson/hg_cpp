@@ -36,10 +36,16 @@ namespace hgraph
             if (!valid) { throw std::logic_error(std::string{what} + " on invalid view"); }
         }
 
-        template <typename Ops>
-        [[nodiscard]] const Ops *kind_ops(const ValueTypeBinding *binding) noexcept
+        template <typename Hook>
+        [[nodiscard]] Hook require_mutation_hook(Hook hook, const char *view, const char *operation,
+                                                 const char *hook_name)
         {
-            return binding != nullptr ? static_cast<const Ops *>(binding->ops) : nullptr;
+            if (hook == nullptr)
+            {
+                throw std::logic_error(std::string{view} + "::" + operation + ": binding has no " + hook_name +
+                                       " mutation hook");
+            }
+            return hook;
         }
 
         inline void require_indexed_ops(const IndexedValueOps *ops, const char *what)
@@ -54,7 +60,7 @@ namespace hgraph
         [[nodiscard]] inline const IndexedValueOps *checked_indexed_ops(const ValueTypeBinding *binding,
                                                                         const char *what)
         {
-            const auto *ops = kind_ops<IndexedValueOps>(binding);
+            const auto *ops = checked_value_ops<IndexedValueOps>(binding, what);
             require_indexed_ops(ops, what);
             return ops;
         }
@@ -73,7 +79,7 @@ namespace hgraph
         [[nodiscard]] inline const CyclicBufferValueOps *checked_cyclic_buffer_ops(const ValueTypeBinding *binding,
                                                                                    const char *what)
         {
-            const auto *ops = kind_ops<CyclicBufferValueOps>(binding);
+            const auto *ops = checked_value_ops<CyclicBufferValueOps>(binding, what);
             require_indexed_ops(ops, what);
             if (ops == nullptr || ops->head == nullptr)
             {
@@ -85,7 +91,7 @@ namespace hgraph
         [[nodiscard]] inline const QueueValueOps *checked_queue_ops(const ValueTypeBinding *binding,
                                                                     const char *what)
         {
-            const auto *ops = kind_ops<QueueValueOps>(binding);
+            const auto *ops = checked_value_ops<QueueValueOps>(binding, what);
             require_indexed_ops(ops, what);
             if (ops == nullptr || ops->front == nullptr)
             {
@@ -96,7 +102,7 @@ namespace hgraph
 
         [[nodiscard]] inline const SetValueOps *checked_set_ops(const ValueTypeBinding *binding, const char *what)
         {
-            const auto *ops = kind_ops<SetValueOps>(binding);
+            const auto *ops = checked_value_ops<SetValueOps>(binding, what);
             require_indexed_ops(ops, what);
             if (ops == nullptr || ops->contains == nullptr)
             {
@@ -107,7 +113,7 @@ namespace hgraph
 
         [[nodiscard]] inline const MapValueOps *checked_map_ops(const ValueTypeBinding *binding, const char *what)
         {
-            const auto *ops = kind_ops<MapValueOps>(binding);
+            const auto *ops = checked_value_ops<MapValueOps>(binding, what);
             require_indexed_ops(ops, what);
             if (ops == nullptr || ops->contains == nullptr || ops->value_at == nullptr ||
                 ops->value_at_index == nullptr || ops->value_binding == nullptr ||
@@ -396,35 +402,53 @@ namespace hgraph
         void push_back(const ValueView &element) const
         {
             require_element(element, "push_back");
-            mutable_ops("push_back")->push_back(nullptr, mutable_data(), element.data());
+            const auto *ops = mutable_ops("push_back");
+            specialized_view_detail::require_mutation_hook(ops->push_back, "MutableListView", "push_back",
+                                                            "push_back")(nullptr, mutable_data(), element.data());
         }
 
         /** Replace the element at ``index`` with a copy of ``element``. */
         void set(std::size_t index, const ValueView &element) const
         {
             require_element(element, "set");
-            mutable_ops("set")->set_element(nullptr, mutable_data(), index, element.data());
+            const auto *ops = mutable_ops("set");
+            specialized_view_detail::require_mutation_hook(ops->set_element, "MutableListView", "set",
+                                                            "set_element")(nullptr, mutable_data(), index,
+                                                                           element.data());
         }
 
         /** Remove the element at ``index``, shifting later elements down. */
-        void erase(std::size_t index) const { mutable_ops("erase")->erase(nullptr, mutable_data(), index); }
+        void erase(std::size_t index) const
+        {
+            const auto *ops = mutable_ops("erase");
+            specialized_view_detail::require_mutation_hook(ops->erase, "MutableListView", "erase", "erase")(
+                nullptr, mutable_data(), index);
+        }
 
         /** Append an UNSET element - a hole (element validity). */
         void push_back_unset() const
         {
             const auto *ops = mutable_ops("push_back_unset");
-            if (ops->push_back_unset == nullptr)
-            {
-                throw std::logic_error("MutableListView::push_back_unset is not supported by this list");
-            }
-            ops->push_back_unset(nullptr, mutable_data());
+            specialized_view_detail::require_mutation_hook(ops->push_back_unset, "MutableListView",
+                                                            "push_back_unset", "push_back_unset")(
+                nullptr, mutable_data());
         }
 
         /** Drop the last element. */
-        void pop_back() const { mutable_ops("pop_back")->pop_back(nullptr, mutable_data()); }
+        void pop_back() const
+        {
+            const auto *ops = mutable_ops("pop_back");
+            specialized_view_detail::require_mutation_hook(ops->pop_back, "MutableListView", "pop_back",
+                                                            "pop_back")(nullptr, mutable_data());
+        }
 
         /** Remove every element. */
-        void clear() const { mutable_ops("clear")->clear(nullptr, mutable_data()); }
+        void clear() const
+        {
+            const auto *ops = mutable_ops("clear");
+            specialized_view_detail::require_mutation_hook(ops->clear, "MutableListView", "clear", "clear")(
+                nullptr, mutable_data());
+        }
 
       private:
         [[nodiscard]] const MutableListValueOps *mutable_ops(const char *what) const
@@ -433,12 +457,7 @@ namespace hgraph
             {
                 throw std::logic_error(std::string{"MutableListView::"} + what + " requires a mutable list");
             }
-            const auto *ops = static_cast<const MutableListValueOps *>(binding()->ops);
-            if (ops == nullptr || ops->push_back == nullptr)
-            {
-                throw std::logic_error(std::string{"MutableListView::"} + what + ": binding has no mutation ops");
-            }
-            return ops;
+            return checked_value_ops<MutableListValueOps>(binding(), "MutableListView");
         }
         void require_element(const ValueView &element, const char *what) const
         {
@@ -652,16 +671,25 @@ namespace hgraph
         bool add(const ValueView &key) const
         {
             require_element(key, "add");
-            return mutable_ops("add")->add(nullptr, mutable_data(), key.data());
+            const auto *ops = mutable_ops("add");
+            return specialized_view_detail::require_mutation_hook(ops->add, "MutableSetView", "add", "add")(
+                nullptr, mutable_data(), key.data());
         }
         /** Remove ``key`` if present; returns whether the set changed. */
         bool remove(const ValueView &key) const
         {
             require_element(key, "remove");
-            return mutable_ops("remove")->remove(nullptr, mutable_data(), key.data());
+            const auto *ops = mutable_ops("remove");
+            return specialized_view_detail::require_mutation_hook(ops->remove, "MutableSetView", "remove",
+                                                                   "remove")(nullptr, mutable_data(), key.data());
         }
         /** Remove every element. */
-        void clear() const { mutable_ops("clear")->clear(nullptr, mutable_data()); }
+        void clear() const
+        {
+            const auto *ops = mutable_ops("clear");
+            specialized_view_detail::require_mutation_hook(ops->clear, "MutableSetView", "clear", "clear")(
+                nullptr, mutable_data());
+        }
 
       private:
         [[nodiscard]] const MutableSetValueOps *mutable_ops(const char *what) const
@@ -670,12 +698,7 @@ namespace hgraph
             {
                 throw std::logic_error(std::string{"MutableSetView::"} + what + " requires a mutable set");
             }
-            const auto *ops = static_cast<const MutableSetValueOps *>(binding()->ops);
-            if (ops == nullptr || ops->add == nullptr)
-            {
-                throw std::logic_error(std::string{"MutableSetView::"} + what + ": binding has no mutation ops");
-            }
-            return ops;
+            return checked_value_ops<MutableSetValueOps>(binding(), "MutableSetView");
         }
         void require_element(const ValueView &key, const char *what) const
         {
@@ -784,7 +807,9 @@ namespace hgraph
         {
             require_key(key, "set_item");
             require_value(value, "set_item");
-            mutable_ops("set_item")->insert(nullptr, mutable_data(), key.data(), value.data());
+            const auto *ops = mutable_ops("set_item");
+            specialized_view_detail::require_mutation_hook(ops->insert, "MutableMapView", "set_item", "insert")(
+                nullptr, mutable_data(), key.data(), value.data());
         }
 
         /**
@@ -796,7 +821,9 @@ namespace hgraph
         {
             require_key(key, "value");
             const auto *ops  = mutable_ops("value");
-            void       *slot = ops->value_or_emplace(nullptr, mutable_data(), key.data());
+            void       *slot = specialized_view_detail::require_mutation_hook(
+                ops->value_or_emplace, "MutableMapView", "value", "value_or_emplace")(
+                nullptr, mutable_data(), key.data());
             return ValueView{ops->value_binding(nullptr, mutable_data()), slot}.begin_mutation();
         }
 
@@ -804,13 +831,21 @@ namespace hgraph
         bool remove(const ValueView &key) const
         {
             require_key(key, "remove");
+            const auto *ops = mutable_ops("remove");
+            const auto erase = specialized_view_detail::require_mutation_hook(ops->erase, "MutableMapView", "remove",
+                                                                               "erase");
             const bool had = contains(key);
-            mutable_ops("remove")->erase(nullptr, mutable_data(), key.data());
+            erase(nullptr, mutable_data(), key.data());
             return had;
         }
 
         /** Remove every entry. */
-        void clear() const { mutable_ops("clear")->clear(nullptr, mutable_data()); }
+        void clear() const
+        {
+            const auto *ops = mutable_ops("clear");
+            specialized_view_detail::require_mutation_hook(ops->clear, "MutableMapView", "clear", "clear")(
+                nullptr, mutable_data());
+        }
 
       private:
         [[nodiscard]] const MutableMapValueOps *mutable_ops(const char *what) const
@@ -819,12 +854,7 @@ namespace hgraph
             {
                 throw std::logic_error(std::string{"MutableMapView::"} + what + " requires a mutable map");
             }
-            const auto *ops = static_cast<const MutableMapValueOps *>(binding()->ops);
-            if (ops == nullptr || ops->insert == nullptr)
-            {
-                throw std::logic_error(std::string{"MutableMapView::"} + what + ": binding has no mutation ops");
-            }
-            return ops;
+            return checked_value_ops<MutableMapValueOps>(binding(), "MutableMapView");
         }
         void require_key(const ValueView &key, const char *what) const
         {

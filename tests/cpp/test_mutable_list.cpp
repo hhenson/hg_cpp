@@ -12,6 +12,7 @@
 #include <hgraph/types/value/value.h>
 
 #include <string>
+#include <stdexcept>
 
 namespace
 {
@@ -22,6 +23,7 @@ namespace
         const auto *schema  = TypeRegistry::instance().mutable_list(element_meta);
         const auto *binding = ValuePlanFactory::instance().binding_for(schema);
         REQUIRE(binding != nullptr);
+        REQUIRE(binding->ops_ref().kind == ValueOpsKind::MutableList);
         return Value{*binding};
     }
 
@@ -31,6 +33,16 @@ namespace
         Value       any{*binding};
         any.as_any().begin_mutation().set(inner.view());
         return any;
+    }
+
+    template <typename BreakHook, typename Invoke>
+    void require_missing_list_hook(Value &list, BreakHook break_hook, Invoke invoke)
+    {
+        MutableListValueOps ops = *checked_value_ops<MutableListValueOps>(list.binding(), "mutable list hook test");
+        break_hook(ops);
+        const ValueTypeBinding binding{list.schema(), list.binding()->plan(), &ops};
+        auto view = ValueView{&binding, const_cast<void *>(list.view().data())}.as_list().begin_mutation();
+        REQUIRE_THROWS_AS(invoke(view), std::logic_error);
     }
 }  // namespace
 
@@ -185,4 +197,44 @@ TEST_CASE("mutable list: holds heterogeneous Any elements")
     REQUIRE(view.size() == 2);
     CHECK(view.at(0).as_any().get().checked_as<std::int32_t>() == 7);
     CHECK(view.at(1).as_any().get().checked_as<std::string>() == "hi");
+}
+
+TEST_CASE("mutable list: every missing mutation hook fails before invocation")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    Value       list     = make_mutable_list(int_meta);
+    Value       element{std::int32_t{7}};
+
+    SECTION("push_back")
+    {
+        require_missing_list_hook(list, [](auto &ops) { ops.push_back = nullptr; },
+                                  [&](auto &view) { view.push_back(element.view()); });
+    }
+    SECTION("set_element")
+    {
+        require_missing_list_hook(list, [](auto &ops) { ops.set_element = nullptr; },
+                                  [&](auto &view) { view.set(0, element.view()); });
+    }
+    SECTION("erase")
+    {
+        require_missing_list_hook(list, [](auto &ops) { ops.erase = nullptr; },
+                                  [](auto &view) { view.erase(0); });
+    }
+    SECTION("push_back_unset")
+    {
+        require_missing_list_hook(list, [](auto &ops) { ops.push_back_unset = nullptr; },
+                                  [](auto &view) { view.push_back_unset(); });
+    }
+    SECTION("pop_back")
+    {
+        require_missing_list_hook(list, [](auto &ops) { ops.pop_back = nullptr; },
+                                  [](auto &view) { view.pop_back(); });
+    }
+    SECTION("clear")
+    {
+        require_missing_list_hook(list, [](auto &ops) { ops.clear = nullptr; },
+                                  [](auto &view) { view.clear(); });
+    }
 }
