@@ -2470,8 +2470,8 @@ namespace hgraph
                 Value scalars;
                 if constexpr (signature::scalar_count() > 0)
                 {
-                    const auto   *binding = ValuePlanFactory::instance().binding_for(signature::scalar_schema(map));
-                    BundleBuilder bundle{*binding};
+                    const auto binding = ValuePlanFactory::instance().type_for(signature::scalar_schema(map));
+                    BundleBuilder bundle{binding};
                     [&]<std::size_t... I>(std::index_sequence<I...>) {
                         (
                             [&] {
@@ -2603,8 +2603,8 @@ namespace hgraph
                 Value scalars;
                 if constexpr (signature::scalar_count() > 0)
                 {
-                    const auto *binding = ValuePlanFactory::instance().binding_for(signature::scalar_schema());
-                    scalars             = Value{*binding};
+                    const auto binding = ValuePlanFactory::instance().type_for(signature::scalar_schema());
+                    scalars             = Value{binding};
                     auto mutation       = scalars.as_bundle().begin_mutation();
                     [&]<std::size_t... I>(std::index_sequence<I...>) {
                         (

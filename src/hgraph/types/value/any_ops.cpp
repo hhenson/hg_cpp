@@ -61,10 +61,10 @@ namespace hgraph
             const Value &value = *static_cast<const Value *>(memory);
             if (!value.has_value()) { return nb::none(); }
             // Type-erased delegation: the BOXED value's own binding converts.
-            return value.view().binding()->ops_ref().to_python(value.view().data());
+            return value.view().binding().ops_ref().to_python(value.view().data());
         }
 
-        void any_from_python(const void *, const ValueTypeBinding &, void *memory, nb::handle source)
+        void any_from_python(const void *, const ValueTypeRef &, void *memory, nb::handle source)
         {
             Value &boxed = *static_cast<Value *>(memory);
             if (source.is_none())
@@ -105,14 +105,14 @@ namespace hgraph
         return ops;
     }
 
-    const ValueTypeBinding &any_binding()
+    ValueTypeRef any_type()
     {
         const ValueTypeMetaData *meta = TypeRegistry::instance().any();
-        return ValueTypeBinding::intern(*meta, MemoryUtils::plan_for<Value>(), any_ops());
+        return intern_value_type(*meta, MemoryUtils::plan_for<Value>(), any_ops());
     }
 
-    const ValueTypeBinding &any_binding(const ValueTypeMetaData &meta)
+    ValueTypeRef any_type(const ValueTypeMetaData &meta)
     {
-        return ValueTypeBinding::intern(meta, MemoryUtils::plan_for<Value>(), any_ops());
+        return intern_value_type(meta, MemoryUtils::plan_for<Value>(), any_ops());
     }
 }  // namespace hgraph

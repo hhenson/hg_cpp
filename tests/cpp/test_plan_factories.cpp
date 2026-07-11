@@ -11,12 +11,16 @@
 #include <hgraph/types/value/value.h>
 #include <hgraph/types/value/value_builder.h>
 
+#include <array>
+#include <atomic>
+#include <barrier>
 #include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -89,17 +93,17 @@ namespace
                 const auto *element_ts = schema->element_ts();
                 REQUIRE(element_ts != nullptr);
                 REQUIRE(element_ts->kind == TSTypeKind::TS);
-                const auto *element_binding =
-                    ValuePlanFactory::instance().binding_for(element_ts->value_schema);
-                const auto *source_binding =
-                    ValuePlanFactory::instance().binding_for(schema->value_schema);
+                const auto element_binding =
+                    ValuePlanFactory::instance().type_for(element_ts->value_schema);
+                const auto source_binding =
+                    ValuePlanFactory::instance().type_for(schema->value_schema);
                 REQUIRE(element_binding != nullptr);
                 REQUIRE(source_binding != nullptr);
                 Value       value{seed};
-                ListBuilder builder{*element_binding};
+                ListBuilder builder{element_binding};
                 builder.push_back_copy(value.view().data());
                 auto  source_storage = builder.build_storage();
-                Value source{*source_binding, &source_storage};
+                Value source{source_binding, &source_storage};
                 auto  mutation = child.begin_mutation(modified_time);
                 REQUIRE(mutation.copy_value_from(source.view()));
                 break;
@@ -137,13 +141,13 @@ namespace
 
         REQUIRE(root.schema() != nullptr);
         Value current{root.value()};
-        REQUIRE(current.binding() == ValuePlanFactory::instance().binding_for(root.schema()->value_schema));
-        REQUIRE(current.binding()->ops_ref().kind != ValueOpsKind::Invalid);
+        REQUIRE(current.binding() == ValuePlanFactory::instance().type_for(root.schema()->value_schema));
+        REQUIRE(current.binding().ops_ref().kind != ValueOpsKind::Invalid);
 
         REQUIRE(root.modified(modified_time));
         Value delta{root.delta_value(modified_time)};
-        REQUIRE(delta.binding() == ValuePlanFactory::instance().binding_for(root.schema()->delta_value_schema));
-        REQUIRE(delta.binding()->ops_ref().kind != ValueOpsKind::Invalid);
+        REQUIRE(delta.binding() == ValuePlanFactory::instance().type_for(root.schema()->delta_value_schema));
+        REQUIRE(delta.binding().ops_ref().kind != ValueOpsKind::Invalid);
     }
 
     void require_no_tsdata_relocation_hooks(const hgraph::MemoryUtils::StoragePlan &plan)
@@ -167,6 +171,47 @@ TEST_CASE("ValuePlanFactory: atomic round-trip via TypeRegistry")
     REQUIRE(plan == &MemoryUtils::plan_for<std::int32_t>());
     REQUIRE(plan->layout.size == sizeof(std::int32_t));
     REQUIRE(plan->layout.alignment == alignof(std::int32_t));
+}
+
+TEST_CASE("ValuePlanFactory returns one canonical record under concurrent structured lookup")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    auto &factory = ValuePlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *str_meta = registry.register_scalar<std::string>("string");
+    const auto *tuple_meta = registry.tuple({int_meta, str_meta});
+
+    constexpr std::size_t thread_count = 8;
+    std::array<std::thread, thread_count> threads;
+    std::array<ValueTypeRef, thread_count> results{};
+    std::barrier start{static_cast<std::ptrdiff_t>(thread_count)};
+    std::atomic_bool stable{true};
+
+    for (std::size_t index = 0; index < thread_count; ++index)
+    {
+        threads[index] = std::thread([&, index] {
+            start.arrive_and_wait();
+            for (std::size_t attempt = 0; attempt < 100; ++attempt)
+            {
+                const ValueTypeRef current = factory.type_for(tuple_meta);
+                if (!current)
+                {
+                    stable.store(false, std::memory_order_relaxed);
+                    continue;
+                }
+                if (!results[index]) { results[index] = current; }
+                else if (results[index] != current) { stable.store(false, std::memory_order_relaxed); }
+            }
+        });
+    }
+    for (auto &thread : threads) { thread.join(); }
+
+    REQUIRE(stable.load(std::memory_order_relaxed));
+    REQUIRE(results.front());
+    for (const ValueTypeRef result : results) { REQUIRE(result == results.front()); }
+    REQUIRE(factory.find_type(tuple_meta) == results.front());
 }
 
 TEST_CASE("TSData plan classifiers reject malformed compact value kinds")
@@ -329,17 +374,17 @@ TEST_CASE("ValuePlanFactory: dynamic list uses compact value-layer storage")
     auto       &factory   = ValuePlanFactory::instance();
     const auto *int_meta  = registry.register_scalar<std::int32_t>("int32");
     const auto *list_meta = registry.list(int_meta, 0);
-    const auto *int_binding = registry.scalar_binding<std::int32_t>();
+    const auto int_binding = registry.scalar_type<std::int32_t>();
 
     const auto *plan = factory.plan_for(list_meta);
-    const auto *binding = factory.binding_for(list_meta);
+    const auto binding = factory.type_for(list_meta);
 
     REQUIRE(int_binding != nullptr);
-    REQUIRE(plan == &compact_list_plan(*int_binding));
+    REQUIRE(plan == &compact_list_plan(int_binding));
     REQUIRE(binding != nullptr);
-    REQUIRE(binding->type_meta == list_meta);
-    REQUIRE(binding->plan() == plan);
-    REQUIRE(binding->ops == &compact_list_ops());
+    REQUIRE(binding.schema() == list_meta);
+    REQUIRE(binding.plan() == plan);
+    REQUIRE(binding.ops() == &compact_list_ops());
 }
 
 TEST_CASE("ValuePlanFactory: container kinds use compact value-layer storage")
@@ -348,40 +393,40 @@ TEST_CASE("ValuePlanFactory: container kinds use compact value-layer storage")
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = ValuePlanFactory::instance();
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
-    const auto *int_binding = registry.scalar_binding<std::int32_t>();
+    const auto int_binding = registry.scalar_type<std::int32_t>();
     REQUIRE(int_binding != nullptr);
 
     const auto *set_meta = registry.set(int_meta);
     const auto *set_plan = factory.plan_for(set_meta);
-    const auto *set_binding = factory.binding_for(set_meta);
-    REQUIRE(set_plan == &compact_set_plan(*int_binding));
+    const auto set_binding = factory.type_for(set_meta);
+    REQUIRE(set_plan == &compact_set_plan(int_binding));
     REQUIRE(set_binding != nullptr);
-    REQUIRE(set_binding->type_meta == set_meta);
-    REQUIRE(set_binding->ops == &compact_set_ops());
+    REQUIRE(set_binding.schema() == set_meta);
+    REQUIRE(set_binding.ops() == &compact_set_ops());
 
     const auto *map_meta = registry.map(int_meta, int_meta);
     const auto *map_plan = factory.plan_for(map_meta);
-    const auto *map_binding = factory.binding_for(map_meta);
-    REQUIRE(map_plan == &compact_map_plan(*int_binding, *int_binding));
+    const auto map_binding = factory.type_for(map_meta);
+    REQUIRE(map_plan == &compact_map_plan(int_binding, int_binding));
     REQUIRE(map_binding != nullptr);
-    REQUIRE(map_binding->type_meta == map_meta);
-    REQUIRE(map_binding->ops == &compact_map_ops());
+    REQUIRE(map_binding.schema() == map_meta);
+    REQUIRE(map_binding.ops() == &compact_map_ops());
 
     const auto *cyclic_meta = registry.cyclic_buffer(int_meta, 4);
     const auto *cyclic_plan = factory.plan_for(cyclic_meta);
-    const auto *cyclic_binding = factory.binding_for(cyclic_meta);
-    REQUIRE(cyclic_plan == &compact_cyclic_buffer_plan(*int_binding, 4));
+    const auto cyclic_binding = factory.type_for(cyclic_meta);
+    REQUIRE(cyclic_plan == &compact_cyclic_buffer_plan(int_binding, 4));
     REQUIRE(cyclic_binding != nullptr);
-    REQUIRE(cyclic_binding->type_meta == cyclic_meta);
-    REQUIRE(cyclic_binding->ops == &compact_cyclic_buffer_ops());
+    REQUIRE(cyclic_binding.schema() == cyclic_meta);
+    REQUIRE(cyclic_binding.ops() == &compact_cyclic_buffer_ops());
 
     const auto *queue_meta = registry.queue(int_meta, 4);
     const auto *queue_plan = factory.plan_for(queue_meta);
-    const auto *queue_binding = factory.binding_for(queue_meta);
-    REQUIRE(queue_plan == &compact_queue_plan(*int_binding, 4));
+    const auto queue_binding = factory.type_for(queue_meta);
+    REQUIRE(queue_plan == &compact_queue_plan(int_binding, 4));
     REQUIRE(queue_binding != nullptr);
-    REQUIRE(queue_binding->type_meta == queue_meta);
-    REQUIRE(queue_binding->ops == &compact_queue_ops());
+    REQUIRE(queue_binding.schema() == queue_meta);
+    REQUIRE(queue_binding.ops() == &compact_queue_ops());
 }
 
 TEST_CASE("ValuePlanFactory: binding_for synthesises structured composite bindings")
@@ -393,23 +438,23 @@ TEST_CASE("ValuePlanFactory: binding_for synthesises structured composite bindin
     const auto *float_meta = registry.register_scalar<float>("float32");
 
     const auto *tuple_meta = registry.tuple({int_meta, float_meta});
-    const auto *tuple_binding = factory.binding_for(tuple_meta);
+    const auto tuple_binding = factory.type_for(tuple_meta);
     REQUIRE(tuple_binding != nullptr);
-    REQUIRE(tuple_binding->type_meta == tuple_meta);
-    REQUIRE(tuple_binding->plan() == factory.plan_for(tuple_meta));
+    REQUIRE(tuple_binding.schema() == tuple_meta);
+    REQUIRE(tuple_binding.plan() == factory.plan_for(tuple_meta));
 
     const auto *bundle_meta = registry.bundle("PlanFactoryBindingBundle", {{"x", int_meta}, {"y", float_meta}});
-    const auto *bundle_binding = factory.binding_for(bundle_meta);
+    const auto bundle_binding = factory.type_for(bundle_meta);
     REQUIRE(bundle_binding != nullptr);
-    REQUIRE(bundle_binding->type_meta == bundle_meta);
-    REQUIRE(bundle_binding->plan() == factory.plan_for(bundle_meta));
+    REQUIRE(bundle_binding.schema() == bundle_meta);
+    REQUIRE(bundle_binding.plan() == factory.plan_for(bundle_meta));
 
     const auto *fixed_list_meta = registry.list(int_meta, 3);
-    const auto *fixed_list_binding = factory.binding_for(fixed_list_meta);
+    const auto fixed_list_binding = factory.type_for(fixed_list_meta);
     REQUIRE(fixed_list_binding != nullptr);
-    REQUIRE(fixed_list_binding->type_meta == fixed_list_meta);
-    REQUIRE(fixed_list_binding->plan() == factory.plan_for(fixed_list_meta));
-    REQUIRE(fixed_list_binding->plan()->is_array());
+    REQUIRE(fixed_list_binding.schema() == fixed_list_meta);
+    REQUIRE(fixed_list_binding.plan() == factory.plan_for(fixed_list_meta));
+    REQUIRE(fixed_list_binding.plan()->is_array());
 }
 
 TEST_CASE("ValuePlanFactory::register_atomic is idempotent for the same plan")
@@ -419,7 +464,7 @@ TEST_CASE("ValuePlanFactory::register_atomic is idempotent for the same plan")
     auto       &factory  = ValuePlanFactory::instance();
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
-    REQUIRE_NOTHROW(factory.register_atomic(int_meta, &MemoryUtils::plan_for<std::int32_t>()));
+    REQUIRE_NOTHROW(factory.register_atomic(int_meta, &MemoryUtils::plan_for<std::int32_t>(), &ops_for<std::int32_t>()));
     REQUIRE(factory.find(int_meta) == &MemoryUtils::plan_for<std::int32_t>());
 }
 
@@ -431,7 +476,7 @@ TEST_CASE("ValuePlanFactory::register_atomic rejects conflicting plans")
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     REQUIRE_THROWS_AS(
-        factory.register_atomic(int_meta, &MemoryUtils::plan_for<float>()),
+        factory.register_atomic(int_meta, &MemoryUtils::plan_for<float>(), &ops_for<std::int32_t>()),
         std::logic_error);
 }
 
@@ -439,9 +484,9 @@ TEST_CASE("ValuePlanFactory::register_atomic ignores null inputs")
 {
     using namespace hgraph;
     auto &factory = ValuePlanFactory::instance();
-    REQUIRE_NOTHROW(factory.register_atomic(nullptr, &MemoryUtils::plan_for<std::int32_t>()));
+    REQUIRE_NOTHROW(factory.register_atomic(nullptr, &MemoryUtils::plan_for<std::int32_t>(), &ops_for<std::int32_t>()));
     ValueTypeMetaData orphan(ValueTypeKind::Atomic, ValueTypeFlags::None, "orphan");
-    REQUIRE_NOTHROW(factory.register_atomic(&orphan, nullptr));
+    REQUIRE_NOTHROW(factory.register_atomic(&orphan, nullptr, &ops_for<std::int32_t>()));
 }
 
 TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified tracking")
@@ -453,7 +498,7 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified
     const auto *ts_int   = registry.ts(int_meta);
 
     const auto *plan    = factory.plan_for(ts_int);
-    const auto *binding = factory.binding_for(ts_int);
+    const auto binding = factory.binding_for(ts_int);
 
     REQUIRE(plan != nullptr);
     REQUIRE(plan->is_named_tuple());
@@ -470,8 +515,8 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified
     REQUIRE(binding->plan() == plan);
     REQUIRE(binding->ops_ref().allows_mutation);
     TSData data{*binding};
-    REQUIRE(data.view().layout().value_binding == registry.scalar_binding<std::int32_t>());
-    REQUIRE(data.view().layout().delta_binding == registry.scalar_binding<std::int32_t>());
+    REQUIRE(data.view().layout().value_binding == registry.scalar_type<std::int32_t>());
+    REQUIRE(data.view().layout().delta_binding == registry.scalar_type<std::int32_t>());
     REQUIRE_FALSE(data.view().parent_link().has_parent());
 }
 
@@ -482,7 +527,7 @@ TEST_CASE("TSDataView: mutation capability is supplied by TSDataOps")
     auto       &factory  = TSDataPlanFactory::instance();
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
-    const auto *binding  = factory.binding_for(ts_int);
+    const auto binding  = factory.binding_for(ts_int);
     REQUIRE(binding != nullptr);
 
     TSDataOps immutable_ops = binding->ops_ref();
@@ -502,7 +547,7 @@ TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified ti
     auto       &factory  = TSDataPlanFactory::instance();
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
-    const auto *binding  = factory.binding_for(ts_int);
+    const auto binding  = factory.binding_for(ts_int);
     REQUIRE(binding != nullptr);
 
     TSData data{*binding};
@@ -554,7 +599,7 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, 2);
-    const auto *binding  = factory.binding_for(tsl);
+    const auto binding  = factory.binding_for(tsl);
     REQUIRE(binding != nullptr);
 
     TSData data{*binding};
@@ -647,7 +692,7 @@ TEST_CASE("TSDataView: child parent link is stored in TSData tracking")
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsd      = registry.tsd(int_meta, ts_int);
-    const auto *binding  = factory.binding_for(tsd);
+    const auto binding  = factory.binding_for(tsd);
     REQUIRE(binding != nullptr);
 
     TSData data{*binding};
@@ -712,7 +757,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsb      = registry.tsb("PlanFactoryTSB", {{"a", ts_int}, {"b", ts_int}});
 
-    const auto *binding = factory.binding_for(tsb);
+    const auto binding = factory.binding_for(tsb);
     REQUIRE(binding != nullptr);
     REQUIRE(binding->plan()->is_named_tuple());
     const auto *value_component = binding->plan()->find_component("value");
@@ -740,8 +785,8 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     const auto &child_ops = first_child.binding()->ops_ref();
     REQUIRE(&first_child.layout() == child_ops.layout_impl(child_ops.context));
     REQUIRE(view.value().is_bundle());
-    REQUIRE(view.value().binding() == ValuePlanFactory::instance().binding_for(tsb->value_schema));
-    REQUIRE(view.value().binding()->ops_ref().kind == ValueOpsKind::Indexed);
+    REQUIRE(view.value().binding() == ValuePlanFactory::instance().type_for(tsb->value_schema));
+    REQUIRE(view.value().binding().ops_ref().kind == ValueOpsKind::Indexed);
     REQUIRE(tsb_view.valid_items().begin() == tsb_view.valid_items().end());
 
     auto current = view.value().as_bundle();
@@ -821,7 +866,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, 3);
 
-    const auto *binding = factory.binding_for(tsl);
+    const auto binding = factory.binding_for(tsl);
     REQUIRE(binding != nullptr);
     REQUIRE(binding->plan()->is_named_tuple());
     const auto *value_component = binding->plan()->find_component("value");
@@ -917,7 +962,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSL owns embedded TSS child storage")
     const auto *tss_int  = registry.tss(int_meta);
     const auto *tsl      = registry.tsl(tss_int, 2);
 
-    const auto *binding = factory.binding_for(tsl);
+    const auto binding = factory.binding_for(tsl);
     REQUIRE(binding != nullptr);
     require_no_tsdata_relocation_hooks(binding->checked_plan());
     const auto *aux_component = binding->plan()->find_component("aux");
@@ -957,12 +1002,12 @@ TEST_CASE("TSDataPlanFactory: fixed TSL owns embedded TSS child storage")
     REQUIRE(value_list.at(1).as_set().contains(two.view()));
 
     Value child_snapshot{list.at(1).value()};
-    REQUIRE(child_snapshot.binding() == ValuePlanFactory::instance().binding_for(tss_int->value_schema));
+    REQUIRE(child_snapshot.binding() == ValuePlanFactory::instance().type_for(tss_int->value_schema));
     REQUIRE(child_snapshot.view().as_set().contains(one.view()));
     REQUIRE(child_snapshot.view().as_set().contains(two.view()));
 
     Value parent_snapshot{view.value()};
-    REQUIRE(parent_snapshot.binding() == ValuePlanFactory::instance().binding_for(tsl->value_schema));
+    REQUIRE(parent_snapshot.binding() == ValuePlanFactory::instance().type_for(tsl->value_schema));
     REQUIRE(parent_snapshot.view().as_list().at(0).as_set().empty());
     REQUIRE(parent_snapshot.view().as_list().at(1).as_set().contains(one.view()));
     REQUIRE(parent_snapshot.view().as_list().at(1).as_set().contains(two.view()));
@@ -1008,7 +1053,7 @@ TEST_CASE("TSDataPlanFactory: collections nest every supported non-REF TSData ki
         SECTION(std::string{"fixed TSL child "} + child.label)
         {
             const auto *parent = registry.tsl(child.schema, 2);
-            const auto *binding = factory.binding_for(parent);
+            const auto binding = factory.binding_for(parent);
             REQUIRE(binding != nullptr);
 
             TSData data{*binding};
@@ -1026,7 +1071,7 @@ TEST_CASE("TSDataPlanFactory: collections nest every supported non-REF TSData ki
         {
             const auto *parent =
                 registry.tsb(std::string{"NestedMatrixParentBundle_"} + child.label, {{"child", child.schema}});
-            const auto *binding = factory.binding_for(parent);
+            const auto binding = factory.binding_for(parent);
             REQUIRE(binding != nullptr);
 
             TSData data{*binding};
@@ -1042,7 +1087,7 @@ TEST_CASE("TSDataPlanFactory: collections nest every supported non-REF TSData ki
         SECTION(std::string{"TSD child "} + child.label)
         {
             const auto *parent = registry.tsd(int_meta, child.schema);
-            const auto *binding = factory.binding_for(parent);
+            const auto binding = factory.binding_for(parent);
             REQUIRE(binding != nullptr);
 
             TSData data{*binding};
@@ -1070,7 +1115,7 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tsw      = registry.tsw(int_meta, 3, 2);
 
-    const auto *binding = factory.binding_for(tsw);
+    const auto binding = factory.binding_for(tsw);
     REQUIRE(binding != nullptr);
     REQUIRE(binding->plan()->is_named_tuple());
     const auto *window_component   = binding->plan()->find_component("window");
@@ -1087,11 +1132,11 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     const auto &layout = window.size_layout();
     REQUIRE(layout.period == 3);
     REQUIRE(layout.min_period == 2);
-    REQUIRE(layout.element_binding == registry.scalar_binding<std::int32_t>());
-    REQUIRE(layout.time_binding == registry.scalar_binding<DateTime>());
+    REQUIRE(layout.element_binding == registry.scalar_type<std::int32_t>());
+    REQUIRE(layout.time_binding == registry.scalar_type<DateTime>());
     REQUIRE_THROWS_AS(window.time_layout(), std::logic_error);
-    REQUIRE(window.value().binding()->plan() == window_component->plan);
-    REQUIRE(window.value().binding()->ops_ref().kind == ValueOpsKind::Indexed);
+    REQUIRE(window.value().binding().plan() == window_component->plan);
+    REQUIRE(window.value().binding().ops_ref().kind == ValueOpsKind::Indexed);
     REQUIRE(window.value().is_list());
     REQUIRE(window.value().as_list().size() == 0);
     REQUIRE(window.size() == 0);
@@ -1176,7 +1221,7 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
 
     const auto *move_assign_meta = registry.register_scalar<MoveAssignableOnlyScalar>("move_assign_only");
     const auto *move_assign_tsw  = registry.tsw(move_assign_meta, 1, 1);
-    const auto *move_binding     = factory.binding_for(move_assign_tsw);
+    const auto move_binding     = factory.binding_for(move_assign_tsw);
     REQUIRE(move_binding != nullptr);
 
     TSData move_data{*move_binding};
@@ -1205,7 +1250,7 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tsw      = registry.tsw_duration(int_meta, TimeDelta{10}, TimeDelta{5});
 
-    const auto *binding = factory.binding_for(tsw);
+    const auto binding = factory.binding_for(tsw);
     REQUIRE(binding != nullptr);
     const auto *window_component = binding->plan()->find_component("window");
     REQUIRE(window_component != nullptr);
@@ -1217,11 +1262,11 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     const auto &layout = window.time_layout();
     REQUIRE(layout.time_range == TimeDelta{10});
     REQUIRE(layout.min_time_range == TimeDelta{5});
-    REQUIRE(layout.element_binding == registry.scalar_binding<std::int32_t>());
-    REQUIRE(layout.time_binding == registry.scalar_binding<DateTime>());
+    REQUIRE(layout.element_binding == registry.scalar_type<std::int32_t>());
+    REQUIRE(layout.time_binding == registry.scalar_type<DateTime>());
     REQUIRE_THROWS_AS(window.size_layout(), std::logic_error);
-    REQUIRE(window.value().binding()->plan() == window_component->plan);
-    REQUIRE(window.value().binding()->ops_ref().kind == ValueOpsKind::Indexed);
+    REQUIRE(window.value().binding().plan() == window_component->plan);
+    REQUIRE(window.value().binding().ops_ref().kind == ValueOpsKind::Indexed);
     REQUIRE(window.value().is_list());
     REQUIRE(window.size() == 0);
     REQUIRE_FALSE(window.all_valid());
@@ -1285,7 +1330,7 @@ TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child l
     const auto *tsl      = registry.tsl(ts_int, 2);
     const auto *tsb      = registry.tsb("NestedPlanFactoryTSB", {{"xs", tsl}});
 
-    const auto *binding = factory.binding_for(tsb);
+    const auto binding = factory.binding_for(tsb);
     REQUIRE(binding != nullptr);
     const auto *root_value_component = binding->plan()->find_component("value");
     REQUIRE(root_value_component != nullptr);
@@ -1335,7 +1380,7 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tss      = registry.tss(int_meta);
 
-    const auto *binding = factory.binding_for(tss);
+    const auto binding = factory.binding_for(tss);
     REQUIRE(binding != nullptr);
     require_no_tsdata_relocation_hooks(binding->checked_plan());
 
@@ -1344,7 +1389,7 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     auto   set  = view.as_set();
     REQUIRE(set.empty());
     REQUIRE(view.value().is_set());
-    REQUIRE(view.value().binding()->ops_ref().kind == ValueOpsKind::Set);
+    REQUIRE(view.value().binding().ops_ref().kind == ValueOpsKind::Set);
 
     const auto t1 = MIN_ST;
     Value      one{1};
@@ -1408,7 +1453,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsd      = registry.tsd(int_meta, ts_int);
 
-    const auto *binding = factory.binding_for(tsd);
+    const auto binding = factory.binding_for(tsd);
     REQUIRE(binding != nullptr);
     require_no_tsdata_relocation_hooks(binding->checked_plan());
 
@@ -1417,12 +1462,12 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     auto   dict = view.as_dict();
     REQUIRE(dict.empty());
     REQUIRE(view.value().is_map());
-    REQUIRE(view.value().binding()->ops_ref().kind == ValueOpsKind::Map);
+    REQUIRE(view.value().binding().ops_ref().kind == ValueOpsKind::Map);
 
     const auto t1 = MIN_ST;
     Value      key{7};
     Value      value{42};
-    MapBuilder source_builder{*registry.scalar_binding<std::int32_t>(), *registry.scalar_binding<std::int32_t>()};
+    MapBuilder source_builder{registry.scalar_type<std::int32_t>(), registry.scalar_type<std::int32_t>()};
     source_builder.set_item<std::int32_t, std::int32_t>(7, 42);
     auto source_map = source_builder.build();
     {
@@ -1576,15 +1621,15 @@ TEST_CASE("TSDataPlanFactory: nested TSD rejects whole-child move replacement")
     const auto *ts_int       = registry.ts(int_meta);
     const auto *inner_tsd    = registry.tsd(int_meta, ts_int);
     const auto *outer_tsd    = registry.tsd(int_meta, inner_tsd);
-    const auto *key_binding  = registry.scalar_binding<std::int32_t>();
-    const auto *dict_binding = factory.binding_for(outer_tsd);
+    const auto key_binding   = registry.scalar_type<std::int32_t>();
+    const auto dict_binding = factory.binding_for(outer_tsd);
     REQUIRE(key_binding != nullptr);
     REQUIRE(dict_binding != nullptr);
     require_no_tsdata_relocation_hooks(dict_binding->checked_plan());
 
     Value inner_map = stdlib::make_map<std::int32_t, std::int32_t>({{2, 3}});
     Value outer_key{1};
-    MapBuilder outer_builder{*key_binding, *inner_map.binding()};
+    MapBuilder outer_builder{key_binding, inner_map.binding()};
     outer_builder.set_item_copy(outer_key.view().data(), inner_map.view().data());
     Value source = outer_builder.build();
 
@@ -1602,7 +1647,7 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, 0);
 
-    const auto *binding = factory.binding_for(tsl);
+    const auto binding = factory.binding_for(tsl);
     REQUIRE(binding != nullptr);
     REQUIRE(factory.plan_for(tsl) == binding->plan());
     require_no_tsdata_relocation_hooks(binding->checked_plan());
@@ -1610,7 +1655,7 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     TSData data{*binding};
     auto   view = data.view();
     REQUIRE(view.as_list().empty());
-    REQUIRE(view.value().binding()->ops_ref().kind == ValueOpsKind::Indexed);
+    REQUIRE(view.value().binding().ops_ref().kind == ValueOpsKind::Indexed);
     REQUIRE_FALSE(view.has_current_value());
 
     const auto t1 = MIN_ST;
@@ -1634,7 +1679,7 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     REQUIRE(child1_data != nullptr);
 
     Value parent_snapshot{view.value()};
-    REQUIRE(parent_snapshot.binding() == ValuePlanFactory::instance().binding_for(tsl->value_schema));
+    REQUIRE(parent_snapshot.binding() == ValuePlanFactory::instance().type_for(tsl->value_schema));
     REQUIRE(parent_snapshot.view().as_list().at(0).checked_as<std::int32_t>() == 11);
     REQUIRE(parent_snapshot.view().as_list().at(1).checked_as<std::int32_t>() == 22);
 

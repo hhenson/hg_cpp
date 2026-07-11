@@ -99,7 +99,7 @@ namespace hgraph::python_bridge
         python conversion; cleared on registry reset). */
     [[nodiscard]] std::unordered_map<const ValueTypeMetaData *, nb::object> &enum_class_registry();
 
-    [[nodiscard]] const ValueTypeBinding &delta_binding(const ValueTypeMetaData *meta);
+    [[nodiscard]] ValueTypeRef delta_binding(const ValueTypeMetaData *meta);
     [[nodiscard]] Value                   py_to_value_as(nb::handle object, const ValueTypeMetaData *meta);
     [[nodiscard]] Value                   py_to_delta(nb::handle object, const TSValueTypeMetaData *ts);
     void                                  install_arrow_conversion_hooks();

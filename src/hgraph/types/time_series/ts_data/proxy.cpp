@@ -12,6 +12,8 @@
 #include <hgraph/types/value/value_builder.h>
 #include <hgraph/util/scope.h>
 
+#include <fmt/format.h>
+
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -22,6 +24,12 @@ namespace hgraph
 {
     namespace
     {
+        [[nodiscard]] std::size_t combine_hash(std::size_t seed, std::size_t value) noexcept
+        {
+            seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+            return seed;
+        }
+
         enum class TSDProxySetSurface
         {
             Live,
@@ -82,10 +90,10 @@ namespace hgraph
             MapValueOps                     modified_map_ops{};
             IndexedValueOps                 delta_bundle_ops{};
             const TSDataBinding            *element_binding{nullptr};
-            const ValueTypeBinding         *key_set_value_binding{nullptr};
-            const ValueTypeBinding         *added_set_binding{nullptr};
-            const ValueTypeBinding         *removed_set_binding{nullptr};
-            const ValueTypeBinding         *modified_map_binding{nullptr};
+            ValueTypeRef key_set_value_binding{nullptr};
+            ValueTypeRef added_set_binding{nullptr};
+            ValueTypeRef removed_set_binding{nullptr};
+            ValueTypeRef modified_map_binding{nullptr};
 
             TSDProxyContext(const TSValueTypeMetaData &schema_, const TSDataBinding &element_binding_)
                 : schema(&schema_),
@@ -112,7 +120,7 @@ namespace hgraph
                     throw std::logic_error("TSDProxy element layout is not resolved");
                 }
 
-                layout.key_binding           = ValuePlanFactory::instance().binding_for(schema->key_type());
+                layout.key_binding           = ValuePlanFactory::instance().type_for(schema->key_type());
                 layout.element_binding       = element_binding;
                 layout.element_layout        = element_layout;
                 layout.element_value_binding = element_layout->value_binding;
@@ -138,14 +146,15 @@ namespace hgraph
                 value_map_ops         = map_value_ops_for<TSDProxyMapSurface::Live>();
                 modified_map_ops      = map_value_ops_for<TSDProxyMapSurface::Modified>();
                 delta_bundle_ops      = IndexedValueOps{
-                    {ValueOpsKind::Indexed, this, false, nullptr, nullptr, nullptr, nullptr},
+                    {ValueOpsKind::Indexed, this, false, &delta_hash, &delta_equals, &delta_compare,
+                     &delta_to_string},
                     &delta_size,
                     &delta_element_at,
                     &delta_element_binding,
                     &delta_range,
                     nullptr,
                 };
-                delta_bundle_ops.owning_binding_impl      = &canonical_value_binding;
+                delta_bundle_ops.owning_type_impl      = &canonical_value_binding;
                 delta_bundle_ops.copy_construct_view_impl = &delta_copy_construct_view;
                 delta_bundle_ops.copy_assign_view_impl    = &delta_copy_assign_view;
             }
@@ -224,23 +233,23 @@ namespace hgraph
                     throw std::logic_error("TSDProxy schemas are not populated");
                 }
 
-                layout.value_binding = &ValueTypeBinding::intern(*schema->value_schema, *plan, value_map_ops);
+                layout.value_binding = intern_value_type(*schema->value_schema, *plan, value_map_ops);
 
                 if (schema->delta_value_schema->value_kind() != ValueTypeKind::Bundle ||
                     schema->delta_value_schema->field_count != 2)
                 {
                     throw std::logic_error("TSDProxy delta schema must be Bundle{removed, modified}");
                 }
-                removed_set_binding = &ValueTypeBinding::intern(*schema->delta_value_schema->fields[0].type,
+                removed_set_binding = intern_value_type(*schema->delta_value_schema->fields[0].type,
                                                                 *plan,
                                                                 removed_set_value_ops);
-                modified_map_binding = &ValueTypeBinding::intern(*schema->delta_value_schema->fields[1].type,
+                modified_map_binding = intern_value_type(*schema->delta_value_schema->fields[1].type,
                                                                  *plan,
                                                                  modified_map_ops);
-                added_set_binding = &ValueTypeBinding::intern(*set_schema, *plan, added_set_value_ops);
-                layout.delta_binding = &ValueTypeBinding::intern(*schema->delta_value_schema, *plan, delta_bundle_ops);
+                added_set_binding = intern_value_type(*set_schema, *plan, added_set_value_ops);
+                layout.delta_binding = intern_value_type(*schema->delta_value_schema, *plan, delta_bundle_ops);
 
-                key_set_value_binding = &ValueTypeBinding::intern(*set_schema, *plan, key_set_value_ops);
+                key_set_value_binding = intern_value_type(*set_schema, *plan, key_set_value_ops);
                 layout.key_set_binding = &TSDataBinding::intern(*key_set_ts_schema, *plan, key_set_ts_ops);
             }
 
@@ -248,7 +257,8 @@ namespace hgraph
             [[nodiscard]] SetValueOps set_value_ops_for()
             {
                 SetValueOps ops{
-                    {{ValueOpsKind::Set, this, false, nullptr, nullptr, nullptr, nullptr
+                    {{ValueOpsKind::Set, this, false, &set_hash<Surface>, &set_equals<Surface>,
+                      &set_compare<Surface>, &set_to_string<Surface>
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                       ,
                       &set_surface_to_python<Surface>,
@@ -260,9 +270,9 @@ namespace hgraph
                      &set_element_binding,
                      &set_range<Surface>,
                      nullptr},
-                    &set_contains_raw,
+                    &set_contains_raw<Surface>,
                 };
-                ops.owning_binding_impl      = &canonical_value_binding;
+                ops.owning_type_impl      = &canonical_value_binding;
                 ops.copy_construct_view_impl = &set_copy_construct_view<Surface>;
                 ops.copy_assign_view_impl    = &set_copy_assign_view<Surface>;
                 return ops;
@@ -272,7 +282,8 @@ namespace hgraph
             [[nodiscard]] MapValueOps map_value_ops_for()
             {
                 MapValueOps ops{
-                    {{ValueOpsKind::Map, this, false, nullptr, nullptr, nullptr, nullptr
+                    {{ValueOpsKind::Map, this, false, &map_hash<Surface>, &map_equals<Surface>,
+                      &map_compare<Surface>, &map_to_string<Surface>
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                       ,
                       &map_surface_to_python<Surface>,
@@ -287,13 +298,13 @@ namespace hgraph
                     &map_contains_raw<Surface>,
                     &map_value_at<Surface>,
                     &map_value_at_index<Surface>,
-                    &map_value_binding,
+                    &map_value_binding<Surface>,
                     &map_key_range<Surface>,
                     &map_value_range<Surface>,
                     &map_kv_range<Surface>,
                     &map_key_set,
                 };
-                ops.owning_binding_impl      = &canonical_value_binding;
+                ops.owning_type_impl      = &canonical_value_binding;
                 ops.copy_construct_view_impl = &map_copy_construct_view<Surface>;
                 ops.copy_assign_view_impl    = &map_copy_assign_view<Surface>;
                 return ops;
@@ -304,10 +315,10 @@ namespace hgraph
                 return static_cast<const TSDProxyContext *>(context);
             }
 
-            [[nodiscard]] static const ValueTypeBinding *
-            canonical_value_binding(const void *, const ValueTypeBinding &view_binding)
+            [[nodiscard]] static ValueTypeRef
+            canonical_value_binding(const void *, ValueTypeRef view_binding)
             {
-                const auto *binding = ValuePlanFactory::instance().binding_for(view_binding.type_meta);
+                const auto binding = ValuePlanFactory::instance().type_for(view_binding.schema());
                 if (binding == nullptr)
                 {
                     throw std::logic_error("TSDProxy value surface has no canonical owning binding");
@@ -316,7 +327,7 @@ namespace hgraph
             }
 
             static void delta_copy_construct_view(const void *context,
-                                                  const ValueTypeBinding &binding,
+                                                  const ValueTypeRef &binding,
                                                   void *dst,
                                                   const void *memory)
             {
@@ -328,12 +339,12 @@ namespace hgraph
             }
 
             static void delta_copy_assign_view(const void *context,
-                                               const ValueTypeBinding &binding,
+                                               const ValueTypeRef &binding,
                                                void *dst,
                                                const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Bundle ||
-                    binding.type_meta->field_count != 2)
+                if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Bundle ||
+                    binding.schema()->field_count != 2)
                 {
                     throw std::logic_error("TSDProxy delta copy requires canonical Bundle{removed, modified}");
                 }
@@ -358,7 +369,7 @@ namespace hgraph
 
             template <TSDProxySetSurface Surface>
             static void set_copy_construct_view(const void *context,
-                                                const ValueTypeBinding &binding,
+                                                const ValueTypeRef &binding,
                                                 void *dst,
                                                 const void *memory)
             {
@@ -368,7 +379,7 @@ namespace hgraph
 
             template <TSDProxySetSurface Surface>
             static void set_copy_assign_view(const void *context,
-                                             const ValueTypeBinding &binding,
+                                             const ValueTypeRef &binding,
                                              void *dst,
                                              const void *memory)
             {
@@ -377,21 +388,21 @@ namespace hgraph
 
             template <TSDProxySetSurface Surface>
             [[nodiscard]] static SetStorage build_set_storage(const void *context,
-                                                              const ValueTypeBinding &binding,
+                                                              const ValueTypeRef &binding,
                                                               const void *memory)
             {
                 const auto *state = ctx(context);
-                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Set)
+                if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Set)
                 {
                     throw std::logic_error("TSDProxy set copy requires a canonical set binding");
                 }
-                const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                const auto key_binding = ValuePlanFactory::instance().type_for(binding.schema()->element_type);
                 if (key_binding == nullptr || key_binding != state->layout.key_binding)
                 {
                     throw std::logic_error("TSDProxy set copy key binding is not resolved");
                 }
 
-                SetBuilder builder{*key_binding};
+                SetBuilder builder{key_binding};
                 for (const auto key : set_range<Surface>(context, memory))
                 {
                     builder.insert_copy(key.data());
@@ -401,7 +412,7 @@ namespace hgraph
 
             template <TSDProxyMapSurface Surface>
             static void map_copy_construct_view(const void *context,
-                                                const ValueTypeBinding &binding,
+                                                const ValueTypeRef &binding,
                                                 void *dst,
                                                 const void *memory)
             {
@@ -411,7 +422,7 @@ namespace hgraph
 
             template <TSDProxyMapSurface Surface>
             static void map_copy_assign_view(const void *context,
-                                             const ValueTypeBinding &binding,
+                                             const ValueTypeRef &binding,
                                              void *dst,
                                              const void *memory)
             {
@@ -420,26 +431,35 @@ namespace hgraph
 
             template <TSDProxyMapSurface Surface>
             [[nodiscard]] static MapStorage build_map_storage(const void *context,
-                                                              const ValueTypeBinding &binding,
+                                                              const ValueTypeRef &binding,
                                                               const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Map)
+                if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Map)
                 {
                     throw std::logic_error("TSDProxy map copy requires a canonical map binding");
                 }
 
-                const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->key_type);
-                const auto *value_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                const auto key_binding = ValuePlanFactory::instance().type_for(binding.schema()->key_type);
+                const auto value_binding = ValuePlanFactory::instance().type_for(binding.schema()->element_type);
                 if (key_binding == nullptr || value_binding == nullptr)
                 {
                     throw std::logic_error("TSDProxy map copy bindings are not resolved");
                 }
 
-                MapBuilder builder{*key_binding, *value_binding};
-                for (const auto item : ts_kv_range<Surface>(context, memory))
+                MapBuilder builder{key_binding, value_binding};
+                for (const auto [key, value] : map_kv_range<Surface>(context, memory))
                 {
-                    Value value{item.second.value()};
-                    builder.set_item_copy(item.first.data(), value.view().data());
+                    if (!value.has_value())
+                    {
+                        builder.set_item_unset(key.data());
+                        continue;
+                    }
+                    Value owned_value{value};
+                    if (owned_value.binding() != value_binding)
+                    {
+                        throw std::logic_error("TSDProxy map copy materialized the wrong value binding");
+                    }
+                    builder.set_item_copy(key.data(), owned_value.view().data());
                 }
                 return builder.build_storage();
             }
@@ -603,9 +623,11 @@ namespace hgraph
                 return source_dict(memory).contains(key);
             }
 
+            template <TSDProxySetSurface Surface>
             [[nodiscard]] static bool set_contains_raw(const void *context, const void *memory, const void *key)
             {
-                return set_contains(context, memory, ValueView{ctx(context)->layout.key_binding, key});
+                const auto slot = source_dict(memory).find_slot(ValueView{ctx(context)->layout.key_binding, key});
+                return slot != TS_DATA_NO_CHILD_ID && slot_in_set_surface<Surface>(context, memory, slot);
             }
 
             [[nodiscard]] static std::size_t find_slot(const void *context, const void *memory, const ValueView &key)
@@ -627,7 +649,7 @@ namespace hgraph
                 throw std::out_of_range("TSDProxy set element index out of range");
             }
 
-            [[nodiscard]] static const ValueTypeBinding *set_element_binding(const void *context,
+            [[nodiscard]] static ValueTypeRef set_element_binding(const void *context,
                                                                              const void *,
                                                                              std::size_t) noexcept
             {
@@ -649,6 +671,66 @@ namespace hgraph
                     .predicate = &slot_in_set_surface<Surface>,
                     .projector = &key_projector,
                 };
+            }
+
+            template <TSDProxySetSurface Surface>
+            [[nodiscard]] static std::size_t set_hash(const void *context, const void *memory)
+            {
+                const auto &key_ops = ctx(context)->layout.key_binding.ops_ref();
+                std::size_t result = 0;
+                for (const auto key : set_range<Surface>(context, memory))
+                {
+                    result ^= key_ops.hash(key.data());
+                }
+                return result;
+            }
+
+            template <TSDProxySetSurface Surface>
+            [[nodiscard]] static bool set_equals(const void *context, const void *lhs, const void *rhs) noexcept
+            {
+                if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
+                return fallback_on_exception(false, [&] {
+                    if (set_size<Surface>(context, lhs) != set_size<Surface>(context, rhs)) { return false; }
+                    for (const auto key : set_range<Surface>(context, lhs))
+                    {
+                        if (!set_contains_raw<Surface>(context, rhs, key.data())) { return false; }
+                    }
+                    return true;
+                });
+            }
+
+            template <TSDProxySetSurface Surface>
+            [[nodiscard]] static std::partial_ordering set_compare(const void *context, const void *lhs,
+                                                                    const void *rhs) noexcept
+            {
+                if (const auto order = value_ops_detail::null_order(static_cast<const void *>(lhs),
+                                                                     static_cast<const void *>(rhs)))
+                {
+                    return *order;
+                }
+                const auto lhs_size = set_size<Surface>(context, lhs);
+                const auto rhs_size = set_size<Surface>(context, rhs);
+                if (lhs_size < rhs_size) { return std::partial_ordering::less; }
+                if (lhs_size > rhs_size) { return std::partial_ordering::greater; }
+                return set_equals<Surface>(context, lhs, rhs) ? std::partial_ordering::equivalent
+                                                              : std::partial_ordering::unordered;
+            }
+
+            template <TSDProxySetSurface Surface>
+            [[nodiscard]] static std::string set_to_string(const void *context, const void *memory)
+            {
+                const auto &key_ops = ctx(context)->layout.key_binding.ops_ref();
+                fmt::memory_buffer out;
+                fmt::format_to(std::back_inserter(out), "{{");
+                bool first = true;
+                for (const auto key : set_range<Surface>(context, memory))
+                {
+                    if (!first) { fmt::format_to(std::back_inserter(out), ", "); }
+                    first = false;
+                    fmt::format_to(std::back_inserter(out), "{}", key_ops.to_string(key.data()));
+                }
+                fmt::format_to(std::back_inserter(out), "}}");
+                return fmt::to_string(out);
             }
 
             template <TSDProxyMapSurface Surface>
@@ -717,19 +799,18 @@ namespace hgraph
             [[nodiscard]] static nanobind::object map_surface_to_python(const void *context, const void *memory)
             {
                 namespace nb = nanobind;
-                const auto *state = ctx(context);
                 const auto &proxy = proxy_storage(memory);
                 auto        dict  = source_dict(memory);
                 nb::dict    result;
                 for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
                 {
                     if (!map_slot_in_surface<Surface>(context, memory, slot) || !proxy.has_child(slot)) { continue; }
-                    auto child = TSDataView{state->element_binding, proxy.child_at_slot(slot)};
-                    auto value = child.value();
-                    if (!value.valid()) { continue; }
+                    const auto value_type = map_value_binding<Surface>(context, memory);
+                    const auto *value_memory = map_value_at_slot<Surface>(context, memory, slot);
                     auto key = dict.key_at_slot(slot);
-                    result[key.binding()->ops_ref().to_python(key.data())] =
-                        value.binding()->ops_ref().to_python(value.data());
+                    const auto py_key = key.binding().ops_ref().to_python(key.data());
+                    result[py_key] = value_memory != nullptr ? value_type.ops_ref().to_python(value_memory)
+                                                              : nb::none();
                 }
                 return result;
             }
@@ -744,11 +825,29 @@ namespace hgraph
                 {
                     if (!slot_in_set_surface<Surface>(context, memory, slot)) { continue; }
                     auto key = dict.key_at_slot(slot);
-                    items.append(key.binding()->ops_ref().to_python(key.data()));
+                    items.append(key.binding().ops_ref().to_python(key.data()));
                 }
                 return nb::steal(PyFrozenSet_New(items.ptr()));
             }
 #endif
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static const void *map_value_at_slot(const void *context,
+                                                               const void *memory,
+                                                               std::size_t slot)
+            {
+                const auto *state = ctx(context);
+                const auto &child_ops = state->element_binding->ops_ref();
+                const auto *child_memory = proxy_storage(memory).child_at_slot(slot);
+                if constexpr (Surface == TSDProxyMapSurface::Live)
+                {
+                    return child_ops.value_memory_impl(child_ops.context, child_memory);
+                }
+                else
+                {
+                    return child_ops.delta_memory_impl(child_ops.context, child_memory);
+                }
+            }
 
             template <TSDProxyMapSurface Surface>
             [[nodiscard]] static const void *map_value_at(const void *context, const void *memory, const void *key)
@@ -758,7 +857,7 @@ namespace hgraph
                 {
                     return nullptr;
                 }
-                return proxy_storage(memory).child_at_slot(slot);
+                return map_value_at_slot<Surface>(context, memory, slot);
             }
 
             template <TSDProxyMapSurface Surface>
@@ -771,30 +870,40 @@ namespace hgraph
                 for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
                 {
                     if (!map_slot_in_surface<Surface>(context, memory, slot)) { continue; }
-                    if (seen++ == index) { return proxy_storage(memory).child_at_slot(slot); }
+                    if (seen++ == index) { return map_value_at_slot<Surface>(context, memory, slot); }
                 }
                 throw std::out_of_range("TSDProxy map value index out of range");
             }
 
-            [[nodiscard]] static const ValueTypeBinding *map_value_binding(const void *context,
-                                                                           const void *) noexcept
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static ValueTypeRef map_value_binding(const void *context, const void *) noexcept
             {
-                return ctx(context)->layout.element_value_binding;
+                if constexpr (Surface == TSDProxyMapSurface::Live)
+                {
+                    return ctx(context)->layout.element_value_binding;
+                }
+                else
+                {
+                    return ctx(context)->layout.element_delta_binding;
+                }
             }
 
+            template <TSDProxyMapSurface Surface>
             [[nodiscard]] static ValueView map_value_projector(const void *context,
                                                                const void *memory,
                                                                std::size_t slot)
             {
-                return ValueView{ctx(context)->layout.element_value_binding,
-                                 proxy_storage(memory).child_at_slot(slot)};
+                return ValueView{map_value_binding<Surface>(context, memory),
+                                 map_value_at_slot<Surface>(context, memory, slot)};
             }
 
+            template <TSDProxyMapSurface Surface>
             [[nodiscard]] static std::pair<ValueView, ValueView> map_kv_projector(const void *context,
                                                                                   const void *memory,
                                                                                   std::size_t slot)
             {
-                return {key_projector(context, memory, slot), map_value_projector(context, memory, slot)};
+                return {key_projector(context, memory, slot),
+                        map_value_projector<Surface>(context, memory, slot)};
             }
 
             [[nodiscard]] static TSDataView ts_value_projector(const void *context,
@@ -831,7 +940,7 @@ namespace hgraph
                     .memory    = memory,
                     .limit     = slot_capacity(context, memory),
                     .predicate = &map_slot_in_surface<Surface>,
-                    .projector = &map_value_projector,
+                    .projector = &map_value_projector<Surface>,
                 };
             }
 
@@ -844,8 +953,76 @@ namespace hgraph
                     .memory    = memory,
                     .limit     = slot_capacity(context, memory),
                     .predicate = &map_slot_in_surface<Surface>,
-                    .projector = &map_kv_projector,
+                    .projector = &map_kv_projector<Surface>,
                 };
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static std::size_t map_hash(const void *context, const void *memory)
+            {
+                const auto *state = ctx(context);
+                const auto &key_ops = state->layout.key_binding.ops_ref();
+                const auto &value_ops = map_value_binding<Surface>(context, memory).ops_ref();
+                std::size_t result = 0;
+                for (const auto [key, value] : map_kv_range<Surface>(context, memory))
+                {
+                    const auto value_hash = value.has_value() ? value_ops.hash(value.data())
+                                                              : 0x9e3779b97f4a7c15ULL;
+                    result ^= combine_hash(key_ops.hash(key.data()), value_hash);
+                }
+                return result;
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static bool map_equals(const void *context, const void *lhs, const void *rhs) noexcept
+            {
+                if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
+                return fallback_on_exception(false, [&] {
+                    if (map_size<Surface>(context, lhs) != map_size<Surface>(context, rhs)) { return false; }
+                    const auto &value_ops = map_value_binding<Surface>(context, lhs).ops_ref();
+                    for (const auto [key, value] : map_kv_range<Surface>(context, lhs))
+                    {
+                        if (!map_contains_raw<Surface>(context, rhs, key.data())) { return false; }
+                        const auto *rhs_value = map_value_at<Surface>(context, rhs, key.data());
+                        if (value.has_value() != (rhs_value != nullptr)) { return false; }
+                        if (value.has_value() && !value_ops.equals(value.data(), rhs_value)) { return false; }
+                    }
+                    return true;
+                });
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static std::partial_ordering map_compare(const void *context, const void *lhs,
+                                                                    const void *rhs) noexcept
+            {
+                if (const auto order = value_ops_detail::null_order(static_cast<const void *>(lhs),
+                                                                     static_cast<const void *>(rhs)))
+                {
+                    return *order;
+                }
+                return map_equals<Surface>(context, lhs, rhs) ? std::partial_ordering::equivalent
+                                                              : std::partial_ordering::unordered;
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static std::string map_to_string(const void *context, const void *memory)
+            {
+                const auto *state = ctx(context);
+                const auto &key_ops = state->layout.key_binding.ops_ref();
+                const auto &value_ops = map_value_binding<Surface>(context, memory).ops_ref();
+                fmt::memory_buffer out;
+                fmt::format_to(std::back_inserter(out), "{{");
+                bool first = true;
+                for (const auto [key, value] : map_kv_range<Surface>(context, memory))
+                {
+                    if (!first) { fmt::format_to(std::back_inserter(out), ", "); }
+                    first = false;
+                    fmt::format_to(std::back_inserter(out), "{}: {}",
+                                   key_ops.to_string(key.data()),
+                                   value.has_value() ? value_ops.to_string(value.data()) : std::string{"None"});
+                }
+                fmt::format_to(std::back_inserter(out), "}}");
+                return fmt::to_string(out);
             }
 
             template <TSDProxyMapSurface Surface>
@@ -873,7 +1050,7 @@ namespace hgraph
                 };
             }
 
-            [[nodiscard]] static SetView map_key_set(const void *context, const ValueTypeBinding *, const void *memory)
+            [[nodiscard]] static SetView map_key_set(const void *context, ValueTypeRef, const void *memory)
             {
                 return ValueView{ctx(context)->key_set_value_binding, memory}.as_set();
             }
@@ -889,7 +1066,7 @@ namespace hgraph
                 throw std::out_of_range("TSDProxy delta element index out of range");
             }
 
-            [[nodiscard]] static const ValueTypeBinding *delta_element_binding(const void *context,
+            [[nodiscard]] static ValueTypeRef delta_element_binding(const void *context,
                                                                                const void *,
                                                                                std::size_t index) noexcept
             {
@@ -915,6 +1092,47 @@ namespace hgraph
             {
                 return ValueView{delta_element_binding(context, memory, index),
                                  delta_element_at(context, memory, index)};
+            }
+
+            [[nodiscard]] static std::size_t delta_hash(const void *context, const void *memory)
+            {
+                const auto *state = ctx(context);
+                return combine_hash(state->removed_set_binding.ops_ref().hash(memory),
+                                    state->modified_map_binding.ops_ref().hash(memory));
+            }
+
+            [[nodiscard]] static bool delta_equals(const void *context, const void *lhs, const void *rhs) noexcept
+            {
+                if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
+                return fallback_on_exception(false, [&] {
+                    const auto *state = ctx(context);
+                    return state->removed_set_binding.ops_ref().equals(lhs, rhs) &&
+                           state->modified_map_binding.ops_ref().equals(lhs, rhs);
+                });
+            }
+
+            [[nodiscard]] static std::partial_ordering delta_compare(const void *context, const void *lhs,
+                                                                      const void *rhs) noexcept
+            {
+                if (const auto order = value_ops_detail::null_order(static_cast<const void *>(lhs),
+                                                                     static_cast<const void *>(rhs)))
+                {
+                    return *order;
+                }
+                return fallback_on_exception(std::partial_ordering::unordered, [&] {
+                    const auto *state = ctx(context);
+                    const auto removed_order = state->removed_set_binding.ops_ref().compare(lhs, rhs);
+                    if (removed_order != 0) { return removed_order; }
+                    return state->modified_map_binding.ops_ref().compare(lhs, rhs);
+                });
+            }
+
+            [[nodiscard]] static std::string delta_to_string(const void *context, const void *memory)
+            {
+                const auto *state = ctx(context);
+                return fmt::format("{{removed: {}, modified: {}}}",
+                                   state->removed_set_binding.ops_ref().to_string(memory),
+                                   state->modified_map_binding.ops_ref().to_string(memory));
             }
         };
 

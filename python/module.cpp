@@ -2628,12 +2628,12 @@ NB_MODULE(_hgraph, m)
     m.def("any_list", [](nb::list values) {
         auto &registry = TypeRegistry::instance();
         const auto *schema  = registry.mutable_list(registry.any());
-        const auto *binding = ValuePlanFactory::instance().binding_for(schema);
-        Value       result{*binding};
+        const auto type = ValuePlanFactory::instance().type_for(schema);
+        Value      result{type};
         MutableListView list{result.begin_mutation()};
         for (nb::handle item : values)
         {
-            Value boxed_value{*ValuePlanFactory::instance().binding_for(registry.any())};
+            Value boxed_value{ValuePlanFactory::instance().type_for(registry.any())};
             MutableAnyView{boxed_value.begin_mutation()}.set(py_to_value(item));
             list.push_back(boxed_value.view());
         }
@@ -2823,9 +2823,9 @@ NB_MODULE(_hgraph, m)
         // would fail the binding-identity checks).
         auto       &registry = TypeRegistry::instance();
         const auto *ref_meta = registry.ref(registry.ts(scalar_descriptor<Int>::value_meta()));
-        const auto *binding  = ValuePlanFactory::instance().binding_for(ref_meta->value_schema);
-        if (binding == nullptr) { throw std::logic_error("TimeSeriesReference meta has no plan binding"); }
-        return PyOpaqueRef{Value{*binding}};
+        const auto type = ValuePlanFactory::instance().type_for(ref_meta->value_schema);
+        if (!type) { throw std::logic_error("TimeSeriesReference meta has no canonical type"); }
+        return PyOpaqueRef{Value{type}};
     });
 
     m.def("node_ref", [](nb::object fn) {

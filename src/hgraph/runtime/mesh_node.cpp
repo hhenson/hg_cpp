@@ -51,24 +51,24 @@ namespace hgraph
 
         [[nodiscard]] std::size_t mesh_key_hash(const void *key, const void *context)
         {
-            const auto *binding = static_cast<const ValueTypeBinding *>(context);
-            if (binding == nullptr) { throw std::logic_error("mesh_ key hash requires a key binding"); }
-            return binding->ops_ref().hash(key);
+            const auto *ops = static_cast<const ValueOps *>(context);
+            if (ops == nullptr) { throw std::logic_error("mesh_ key hash requires key ops"); }
+            return ops->hash(key);
         }
 
         [[nodiscard]] bool mesh_key_equal(const void *lhs, const void *rhs, const void *context)
         {
-            const auto *binding = static_cast<const ValueTypeBinding *>(context);
-            if (binding == nullptr) { throw std::logic_error("mesh_ key equality requires a key binding"); }
-            return binding->ops_ref().equals(lhs, rhs);
+            const auto *ops = static_cast<const ValueOps *>(context);
+            if (ops == nullptr) { throw std::logic_error("mesh_ key equality requires key ops"); }
+            return ops->equals(lhs, rhs);
         }
 
-        [[nodiscard]] KeySlotStoreOps mesh_key_store_ops(const ValueTypeBinding &binding) noexcept
+        [[nodiscard]] KeySlotStoreOps mesh_key_store_ops(const ValueTypeRef &binding) noexcept
         {
             return KeySlotStoreOps{
                 .hash = &mesh_key_hash,
                 .equal = &mesh_key_equal,
-                .context = &binding,
+                .context = &binding.ops_ref(),
             };
         }
 
@@ -139,7 +139,7 @@ namespace hgraph
             Value                       current_eval_key{};
             DateTime                    retirement_time{MIN_DT};
 
-            void initialise(const ValueTypeBinding &key_binding, MemoryUtils::StorageLayout graph_layout)
+            void initialise(const ValueTypeRef &key_binding, MemoryUtils::StorageLayout graph_layout)
             {
                 entries.bind_graph_layout(graph_layout);
                 if (instance_keys.has_value()) { return; }
@@ -265,14 +265,14 @@ namespace hgraph
         {
             MeshNodeSpec spec{};
             std::size_t  storage_offset{0};
-            const ValueTypeBinding *key_binding{nullptr};
+            ValueTypeRef key_binding{nullptr};
             MemoryUtils::StorageLayout graph_layout{};
         };
 
         void initialise_mesh_storage(MeshNodeStorage &storage, const MeshNodeContext &context)
         {
             if (context.key_binding == nullptr) { throw std::logic_error("mesh_ has no resolved key binding"); }
-            storage.initialise(*context.key_binding, context.graph_layout);
+            storage.initialise(context.key_binding, context.graph_layout);
         }
 
         struct MeshSubscribeStorage
@@ -307,13 +307,13 @@ namespace hgraph
 
         [[nodiscard]] const MeshNodeContext &register_mesh_node_context(MeshNodeSpec spec,
                                                                         std::size_t storage_offset,
-                                                                        const ValueTypeBinding &key_binding,
+                                                                        const ValueTypeRef &key_binding,
                                                                         MemoryUtils::StorageLayout graph_layout)
         {
             auto context = std::make_unique<MeshNodeContext>(MeshNodeContext{
                 .spec           = std::move(spec),
                 .storage_offset = storage_offset,
-                .key_binding    = &key_binding,
+                .key_binding    = key_binding,
                 .graph_layout   = graph_layout,
             });
             const auto *result = context.get();
@@ -1197,8 +1197,8 @@ namespace hgraph
                 TSEndpointSchema::peered(meta.output_schema->element_ts()));
         }
 
-        const auto *key_binding = ValuePlanFactory::instance().binding_for(meta.output_schema->key_type());
-        if (key_binding == nullptr) { throw std::logic_error("mesh_node could not resolve its key binding"); }
+        const auto key_binding = ValuePlanFactory::instance().type_for(meta.output_schema->key_type());
+        if (!key_binding) { throw std::logic_error("mesh_node could not resolve its key binding"); }
         const MemoryUtils::StorageLayout graph_layout = spec.child.graph_builder.nested_storage_layout();
 
         NodeTypeDescriptor descriptor;
@@ -1218,7 +1218,7 @@ namespace hgraph
         descriptor.ops.extended_view_context = &register_mesh_node_context(
             std::move(spec),
             descriptor.storage_plan->component(mesh_storage_field_name).offset,
-            *key_binding,
+            key_binding,
             graph_layout);
 
         return NodeBuilder::from_descriptor(std::move(descriptor));

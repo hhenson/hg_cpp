@@ -346,7 +346,7 @@ namespace hgraph
             {
                 if (meta->fields[index].name != nullptr && name == meta->fields[index].name)
                 {
-                    Value out{*self.binding};
+                    Value out{self.binding};
                     // The enum payload IS the assigned integer (the Int plan).
                     *static_cast<Int *>(const_cast<void *>(out.view().data())) = meta->fields[index].enum_value;
                     return out;
@@ -524,7 +524,7 @@ namespace hgraph
 
         Value read_composite(const JsonConverter &self, Reader &reader)
         {
-            BundleBuilder builder{*self.binding};
+            BundleBuilder builder{self.binding};
             if (self.names.empty())
             {
                 reader.expect('[');
@@ -574,7 +574,7 @@ namespace hgraph
 
         Value read_list(const JsonConverter &self, Reader &reader)
         {
-            ListBuilder builder{*self.children[0]->binding};
+            ListBuilder builder{self.children[0]->binding};
             reader.expect('[');
             if (!reader.consume_if(']'))
             {
@@ -591,7 +591,7 @@ namespace hgraph
 
         Value read_set(const JsonConverter &self, Reader &reader)
         {
-            SetBuilder builder{*self.children[0]->binding};
+            SetBuilder builder{self.children[0]->binding};
             reader.expect('[');
             if (!reader.consume_if(']'))
             {
@@ -608,7 +608,7 @@ namespace hgraph
 
         Value read_map(const JsonConverter &self, Reader &reader)
         {
-            MapBuilder builder{*self.children[0]->binding, *self.children[1]->binding};
+            MapBuilder builder{self.children[0]->binding, self.children[1]->binding};
             reader.expect('{');
             if (!reader.consume_if('}'))
             {
@@ -690,7 +690,7 @@ namespace hgraph
 
             auto converter     = std::make_unique<JsonConverter>();
             converter->meta    = meta;
-            converter->binding = ValuePlanFactory::instance().binding_for(meta);
+            converter->binding = ValuePlanFactory::instance().type_for(meta);
             auto *raw          = converter.get();
             // Insert before recursing so self-referential schemas terminate;
             // the guard removes the half-built entry if synthesis throws.

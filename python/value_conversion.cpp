@@ -99,8 +99,8 @@ namespace hgraph::python_bridge
         {
             auto &registry = TypeRegistry::instance();
             const auto build = [&](const ValueTypeMetaData *schema, auto &&fill) {
-                const auto *binding = ValuePlanFactory::instance().binding_for(schema);
-                Value       value{*binding};
+                const auto type = ValuePlanFactory::instance().type_for(schema);
+                Value      value{type};
                 fill(value.begin_mutation());
                 return value;
             };
@@ -292,14 +292,14 @@ namespace hgraph::python_bridge
         {
             return nb::cast(PyOpaqueRef{Value{view}});   // opaque per the REF ruling
         }
-        return view.binding()->ops_ref().to_python(view.data());
+        return view.binding().ops_ref().to_python(view.data());
     }
 
-    const ValueTypeBinding &delta_binding(const ValueTypeMetaData *meta)
+    ValueTypeRef delta_binding(const ValueTypeMetaData *meta)
     {
-        const auto *binding = ValuePlanFactory::instance().binding_for(meta);
-        if (binding == nullptr) { throw nb::type_error("schema has no canonical binding"); }
-        return *binding;
+        const auto type = ValuePlanFactory::instance().type_for(meta);
+        if (!type) { throw nb::type_error("schema has no canonical type"); }
+        return type;
     }
 
     Value py_to_value_as(nb::handle object, const ValueTypeMetaData *meta)
@@ -307,9 +307,9 @@ namespace hgraph::python_bridge
         // Frame/Series -> arrow go through the BINDING's from_python (the
         // type-erased python_conversion_traits hooks); no kind-switch.
         if (nb::isinstance<PyOpaqueRef>(object)) { return Value{nb::cast<PyOpaqueRef &>(object).value.view()}; }
-        const auto *binding = ValuePlanFactory::instance().binding_for(meta);
-        if (binding == nullptr) { throw nb::type_error("schema has no canonical binding"); }
-        Value result{*binding};
+        const auto type = ValuePlanFactory::instance().type_for(meta);
+        if (!type) { throw nb::type_error("schema has no canonical type"); }
+        Value result{type};
         result.view().assign_from_python(object);
         return result;
     }

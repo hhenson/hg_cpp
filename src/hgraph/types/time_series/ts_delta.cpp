@@ -23,11 +23,11 @@ namespace hgraph
 {
     namespace
     {
-        [[nodiscard]] const ValueTypeBinding &binding_for(const ValueTypeMetaData *meta, const char *fn)
+        [[nodiscard]] ValueTypeRef binding_for(const ValueTypeMetaData *meta, const char *fn)
         {
-            const auto *binding = ValuePlanFactory::instance().binding_for(meta);
-            if (binding == nullptr) { throw std::logic_error(fmt::format("{}: unresolved value binding", fn)); }
-            return *binding;
+            const auto binding = ValuePlanFactory::instance().type_for(meta);
+            if (!binding) { throw std::logic_error(fmt::format("{}: unresolved value binding", fn)); }
+            return binding;
         }
 
         [[nodiscard]] const TSDataBinding &ts_binding_for(const TSValueTypeMetaData *schema, const char *fn)
@@ -305,7 +305,7 @@ namespace hgraph
                 throw std::logic_error("empty_delta_tss: schema is not resolved");
             }
 
-            const ValueTypeBinding &elem_binding =
+            const ValueTypeRef elem_binding =
                 binding_for(schema->value_schema->element_type, "empty_delta_tss");
             SetBuilder    added{elem_binding};
             SetBuilder    removed{elem_binding};
@@ -323,8 +323,8 @@ namespace hgraph
                 throw std::logic_error("empty_delta_tsd: schema is not resolved");
             }
 
-            const ValueTypeBinding &key_binding = binding_for(schema->key_type(), "empty_delta_tsd");
-            const ValueTypeBinding &delta_binding =
+            const ValueTypeRef key_binding = binding_for(schema->key_type(), "empty_delta_tsd");
+            const ValueTypeRef delta_binding =
                 binding_for(schema->element_ts()->delta_value_schema, "empty_delta_tsd");
             SetBuilder    removed{key_binding};
             MapBuilder    modified{key_binding, delta_binding};
@@ -343,8 +343,8 @@ namespace hgraph
             }
 
             const ValueTypeMetaData *map_meta    = schema->delta_value_schema;
-            const ValueTypeBinding  &key_binding = binding_for(map_meta->key_type, "empty_delta_tsl");
-            const ValueTypeBinding  &val_binding = binding_for(map_meta->element_type, "empty_delta_tsl");
+            const ValueTypeRef key_binding = binding_for(map_meta->key_type, "empty_delta_tsl");
+            const ValueTypeRef val_binding = binding_for(map_meta->element_type, "empty_delta_tsl");
             MapBuilder               builder{key_binding, val_binding};
             return builder.build();
         }
@@ -382,7 +382,7 @@ namespace hgraph
             const TSValueTypeMetaData *schema = in.schema();
             const ValueTypeMetaData *bundle_meta = schema->delta_value_schema;
             const ValueTypeMetaData *elem_meta   = schema->value_schema->element_type;  // the Set's element E
-            const ValueTypeBinding  &elem_binding = binding_for(elem_meta, "capture_delta");
+            const ValueTypeRef elem_binding = binding_for(elem_meta, "capture_delta");
 
             const auto set = in.as_set();
             SetBuilder added{elem_binding};
@@ -400,9 +400,9 @@ namespace hgraph
         {
             const TSValueTypeMetaData *schema = in.schema();
             const ValueTypeMetaData *bundle_meta = schema->delta_value_schema;
-            const ValueTypeBinding  &bundle_binding = binding_for(bundle_meta, "capture_delta");
-            const ValueTypeBinding  &key_binding = binding_for(schema->key_type(), "capture_delta");
-            const ValueTypeBinding  &delta_binding =
+            const ValueTypeRef bundle_binding = binding_for(bundle_meta, "capture_delta");
+            const ValueTypeRef key_binding = binding_for(schema->key_type(), "capture_delta");
+            const ValueTypeRef delta_binding =
                 binding_for(schema->element_ts()->delta_value_schema, "capture_delta");
 
             const auto dict = in.as_dict();
@@ -427,8 +427,8 @@ namespace hgraph
         {
             const TSValueTypeMetaData *schema = in.schema();
             const ValueTypeMetaData *map_meta    = schema->delta_value_schema;
-            const ValueTypeBinding  &key_binding = binding_for(map_meta->key_type, "capture_delta");
-            const ValueTypeBinding  &val_binding = binding_for(map_meta->element_type, "capture_delta");
+            const ValueTypeRef key_binding = binding_for(map_meta->key_type, "capture_delta");
+            const ValueTypeRef val_binding = binding_for(map_meta->element_type, "capture_delta");
 
             MapBuilder builder{key_binding, val_binding};
             const auto list = in.as_list();

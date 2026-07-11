@@ -54,13 +54,13 @@ TEST_CASE("stdlib::register_standard_types registers scalar aliases")
     STATIC_REQUIRE(std::is_same_v<TimeDelta, std::chrono::microseconds>);
     STATIC_REQUIRE(std::is_same_v<Str, std::string>);
 
-    const auto *bool_type      = registry.scalar_binding<Bool>()->type_meta;
-    const auto *int_type       = registry.scalar_binding<Int>()->type_meta;
-    const auto *float_type     = registry.scalar_binding<Float>()->type_meta;
-    const auto *date_type      = registry.scalar_binding<Date>()->type_meta;
-    const auto *datetime_type  = registry.scalar_binding<DateTime>()->type_meta;
-    const auto *timedelta_type = registry.scalar_binding<TimeDelta>()->type_meta;
-    const auto *str_type       = registry.scalar_binding<Str>()->type_meta;
+    const auto *bool_type      = registry.scalar_type<Bool>().schema();
+    const auto *int_type       = registry.scalar_type<Int>().schema();
+    const auto *float_type     = registry.scalar_type<Float>().schema();
+    const auto *date_type      = registry.scalar_type<Date>().schema();
+    const auto *datetime_type  = registry.scalar_type<DateTime>().schema();
+    const auto *timedelta_type = registry.scalar_type<TimeDelta>().schema();
+    const auto *str_type       = registry.scalar_type<Str>().schema();
 
     CHECK(registry.value_type("bool") == bool_type);
     CHECK(registry.value_type("int") == int_type);
@@ -84,14 +84,14 @@ TEST_CASE("stdlib::register_standard_types registers scalar aliases")
     CHECK(scalar_descriptor<Float>::value_meta() == float_type);
     CHECK(scalar_descriptor<Str>::value_meta() == str_type);
 
-    CHECK(registry.value_type("int8") == registry.scalar_binding<std::int8_t>()->type_meta);
-    CHECK(registry.value_type("int16") == registry.scalar_binding<std::int16_t>()->type_meta);
-    CHECK(registry.value_type("int32") == registry.scalar_binding<std::int32_t>()->type_meta);
-    CHECK(registry.value_type("uint8") == registry.scalar_binding<std::uint8_t>()->type_meta);
-    CHECK(registry.value_type("uint16") == registry.scalar_binding<std::uint16_t>()->type_meta);
-    CHECK(registry.value_type("uint32") == registry.scalar_binding<std::uint32_t>()->type_meta);
-    CHECK(registry.value_type("uint64") == registry.scalar_binding<std::uint64_t>()->type_meta);
-    CHECK(registry.value_type("float32") == registry.scalar_binding<float>()->type_meta);
+    CHECK(registry.value_type("int8") == registry.scalar_type<std::int8_t>().schema());
+    CHECK(registry.value_type("int16") == registry.scalar_type<std::int16_t>().schema());
+    CHECK(registry.value_type("int32") == registry.scalar_type<std::int32_t>().schema());
+    CHECK(registry.value_type("uint8") == registry.scalar_type<std::uint8_t>().schema());
+    CHECK(registry.value_type("uint16") == registry.scalar_type<std::uint16_t>().schema());
+    CHECK(registry.value_type("uint32") == registry.scalar_type<std::uint32_t>().schema());
+    CHECK(registry.value_type("uint64") == registry.scalar_type<std::uint64_t>().schema());
+    CHECK(registry.value_type("float32") == registry.scalar_type<float>().schema());
 
     const auto types = stdlib::register_standard_types();
     CHECK(types.bool_type == bool_type);

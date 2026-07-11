@@ -214,8 +214,8 @@ namespace hgraph
     class ListBuilder
     {
       public:
-        explicit ListBuilder(const ValueTypeBinding &element_binding)
-            : element_binding_{&element_binding}, accumulator_{element_binding.checked_plan()}
+        explicit ListBuilder(const ValueTypeRef &element_binding)
+            : element_binding_{element_binding}, accumulator_{element_binding.checked_plan()}
         {
         }
 
@@ -244,7 +244,7 @@ namespace hgraph
         [[nodiscard]] ListStorage build_storage()
         {
             ensure_not_built();
-            ListStorage storage{*element_binding_, accumulator_.as_span(), accumulator_.validity()};
+            ListStorage storage{element_binding_, accumulator_.as_span(), accumulator_.validity()};
             accumulator_.clear();
             built_ = true;
             return storage;
@@ -253,7 +253,7 @@ namespace hgraph
         [[nodiscard]] Value build()
         {
             ListStorage storage = build_storage();
-            return Value{compact_list_binding(*element_binding_), &storage};
+            return Value{compact_list_type(element_binding_), &storage};
         }
 
       private:
@@ -262,7 +262,7 @@ namespace hgraph
             if (built_) { throw std::logic_error("ListBuilder is single-use"); }
         }
 
-        const ValueTypeBinding              *element_binding_{nullptr};
+        ValueTypeRef element_binding_{nullptr};
         builder_detail::ElementAccumulator   accumulator_;
         bool                                  built_{false};
     };
@@ -282,8 +282,8 @@ namespace hgraph
     class CyclicBufferBuilder
     {
       public:
-        CyclicBufferBuilder(const ValueTypeBinding &element_binding, std::size_t capacity)
-            : element_binding_{&element_binding}
+        CyclicBufferBuilder(const ValueTypeRef &element_binding, std::size_t capacity)
+            : element_binding_{element_binding}
             , accumulator_{element_binding.checked_plan()}
             , capacity_{capacity}
         {
@@ -302,7 +302,7 @@ namespace hgraph
                 // Replace the slot at `head_` (oldest) with the new value
                 // by destroying it in place and copy-constructing into
                 // its memory; advance the head.
-                const auto &plan = element_binding_->checked_plan();
+                const auto &plan = element_binding_.checked_plan();
                 if (!plan.can_copy_assign())
                 {
                     throw std::logic_error(
@@ -325,7 +325,7 @@ namespace hgraph
         [[nodiscard]] CyclicBufferStorage build_storage()
         {
             ensure_not_built();
-            CyclicBufferStorage storage{*element_binding_, accumulator_.as_span(), head_};
+            CyclicBufferStorage storage{element_binding_, accumulator_.as_span(), head_};
             accumulator_.clear();
             built_ = true;
             return storage;
@@ -334,7 +334,7 @@ namespace hgraph
         [[nodiscard]] Value build()
         {
             CyclicBufferStorage storage = build_storage();
-            return Value{compact_cyclic_buffer_binding(*element_binding_, capacity_), &storage};
+            return Value{compact_cyclic_buffer_type(element_binding_, capacity_), &storage};
         }
 
       private:
@@ -343,7 +343,7 @@ namespace hgraph
             if (built_) { throw std::logic_error("CyclicBufferBuilder is single-use"); }
         }
 
-        const ValueTypeBinding              *element_binding_{nullptr};
+        ValueTypeRef element_binding_{nullptr};
         builder_detail::ElementAccumulator   accumulator_;
         std::size_t                          capacity_{0};
         std::size_t                          head_{0};
@@ -363,8 +363,8 @@ namespace hgraph
     class QueueBuilder
     {
       public:
-        QueueBuilder(const ValueTypeBinding &element_binding, std::size_t max_capacity = 0)
-            : element_binding_{&element_binding}
+        QueueBuilder(const ValueTypeRef &element_binding, std::size_t max_capacity = 0)
+            : element_binding_{element_binding}
             , accumulator_{element_binding.checked_plan()}
             , max_capacity_{max_capacity}
         {
@@ -392,7 +392,7 @@ namespace hgraph
         [[nodiscard]] QueueStorage build_storage()
         {
             ensure_not_built();
-            QueueStorage storage{*element_binding_, accumulator_.as_span()};
+            QueueStorage storage{element_binding_, accumulator_.as_span()};
             accumulator_.clear();
             built_ = true;
             return storage;
@@ -401,7 +401,7 @@ namespace hgraph
         [[nodiscard]] Value build()
         {
             QueueStorage storage = build_storage();
-            return Value{compact_queue_binding(*element_binding_, max_capacity_), &storage};
+            return Value{compact_queue_type(element_binding_, max_capacity_), &storage};
         }
 
       private:
@@ -410,7 +410,7 @@ namespace hgraph
             if (built_) { throw std::logic_error("QueueBuilder is single-use"); }
         }
 
-        const ValueTypeBinding              *element_binding_{nullptr};
+        ValueTypeRef element_binding_{nullptr};
         builder_detail::ElementAccumulator   accumulator_;
         std::size_t                          max_capacity_{0};
         bool                                  built_{false};
@@ -429,10 +429,10 @@ namespace hgraph
     class SetBuilder
     {
       public:
-        explicit SetBuilder(const ValueTypeBinding &element_binding)
-            : element_binding_{&element_binding}, accumulator_{element_binding.checked_plan()}
+        explicit SetBuilder(const ValueTypeRef &element_binding)
+            : element_binding_{element_binding}, accumulator_{element_binding.checked_plan()}
         {
-            const auto *meta = element_binding.type_meta;
+            const auto *meta = element_binding.schema();
             if (meta == nullptr || !meta->is_hashable() || !meta->is_equatable())
             {
                 throw std::logic_error("SetBuilder requires a hashable and equatable element binding");
@@ -497,7 +497,7 @@ namespace hgraph
         [[nodiscard]] SetStorage build_storage()
         {
             ensure_not_built();
-            SetStorage storage{*element_binding_, accumulator_.as_span()};
+            SetStorage storage{element_binding_, accumulator_.as_span()};
             accumulator_.clear();
             index_.clear();
             built_ = true;
@@ -507,7 +507,7 @@ namespace hgraph
         [[nodiscard]] Value build()
         {
             SetStorage storage = build_storage();
-            return Value{compact_set_binding(*element_binding_), &storage};
+            return Value{compact_set_type(element_binding_), &storage};
         }
 
       private:
@@ -530,7 +530,7 @@ namespace hgraph
             return static_cast<const SetBuilder *>(owner)->accumulator_.at(slot);
         }
 
-        const ValueTypeBinding              *element_binding_{nullptr};
+        ValueTypeRef element_binding_{nullptr};
         builder_detail::ElementAccumulator   accumulator_;
         compact_detail::SlotIndex            index_{};
         bool                                  built_{false};
@@ -551,13 +551,13 @@ namespace hgraph
     class MapBuilder
     {
       public:
-        MapBuilder(const ValueTypeBinding &key_binding, const ValueTypeBinding &value_binding)
-            : key_binding_{&key_binding}
-            , value_binding_{&value_binding}
+        MapBuilder(const ValueTypeRef &key_binding, const ValueTypeRef &value_binding)
+            : key_binding_{key_binding}
+            , value_binding_{value_binding}
             , key_acc_{key_binding.checked_plan()}
             , value_acc_{value_binding.checked_plan()}
         {
-            const auto *km = key_binding.type_meta;
+            const auto *km = key_binding.schema();
             if (km == nullptr || !km->is_hashable() || !km->is_equatable())
             {
                 throw std::logic_error("MapBuilder requires a hashable and equatable key binding");
@@ -605,7 +605,7 @@ namespace hgraph
             ensure_not_built();
             if (auto found = find_slot(key); found.has_value())
             {
-                const auto &vp = value_binding_->checked_plan();
+                const auto &vp = value_binding_.checked_plan();
                 if (!vp.can_copy_assign())
                 {
                     throw std::logic_error("MapBuilder value replacement requires a copy-assignable value plan");
@@ -657,7 +657,7 @@ namespace hgraph
         [[nodiscard]] MapStorage build_storage()
         {
             ensure_not_built();
-            MapStorage storage{*key_binding_, *value_binding_, key_acc_.as_span(), value_acc_.as_span(),
+            MapStorage storage{key_binding_, value_binding_, key_acc_.as_span(), value_acc_.as_span(),
                                value_acc_.validity()};
             key_acc_.clear();
             value_acc_.clear();
@@ -669,7 +669,7 @@ namespace hgraph
         [[nodiscard]] Value build()
         {
             MapStorage storage = build_storage();
-            return Value{compact_map_binding(*key_binding_, *value_binding_), &storage};
+            return Value{compact_map_type(key_binding_, value_binding_), &storage};
         }
 
       private:
@@ -699,8 +699,8 @@ namespace hgraph
             return static_cast<const MapBuilder *>(owner)->key_acc_.at(slot);
         }
 
-        const ValueTypeBinding              *key_binding_{nullptr};
-        const ValueTypeBinding              *value_binding_{nullptr};
+        ValueTypeRef key_binding_{nullptr};
+        ValueTypeRef value_binding_{nullptr};
         builder_detail::ElementAccumulator   key_acc_;
         builder_detail::ElementAccumulator   value_acc_;
         compact_detail::SlotIndex            index_{};
@@ -724,7 +724,7 @@ namespace hgraph
     class BundleBuilder
     {
       public:
-        explicit BundleBuilder(const ValueTypeBinding &bundle_binding) : binding_{&bundle_binding}, value_{bundle_binding}
+        explicit BundleBuilder(const ValueTypeRef &bundle_binding) : binding_{bundle_binding}, value_{bundle_binding}
         {
             if (!bundle_binding.checked_plan().is_composite())
             {
@@ -772,14 +772,14 @@ namespace hgraph
             live; Tuple composites are dense (no validity component). */
         void mark_field(std::size_t index)
         {
-            const auto *meta = binding_->type_meta;
+            const auto *meta = binding_.schema();
             if (meta == nullptr || meta->field_count == 0 ||
                 (meta->value_kind() != ValueTypeKind::Bundle && meta->value_kind() != ValueTypeKind::Tuple))
             {
                 return;
             }
             if (index >= meta->field_count) { throw std::out_of_range("BundleBuilder: field index out of range"); }
-            const auto &plan = binding_->checked_plan();
+            const auto &plan = binding_.checked_plan();
             if (plan.component_count() <= meta->field_count) { return; }
             const auto components = plan.components();
             auto *words = static_cast<std::uint64_t *>(field_memory(components[meta->field_count].offset));
@@ -798,7 +798,7 @@ namespace hgraph
         [[nodiscard]] const MemoryUtils::CompositeState &state() const
         {
             const auto *s =
-                static_cast<const MemoryUtils::CompositeState *>(binding_->checked_plan().lifecycle_context);
+                static_cast<const MemoryUtils::CompositeState *>(binding_.checked_plan().lifecycle_context);
             if (s == nullptr) { throw std::logic_error("BundleBuilder: binding has no composite state"); }
             return *s;
         }
@@ -830,7 +830,7 @@ namespace hgraph
 
         [[nodiscard]] std::size_t field_count() const noexcept
         {
-            const auto *meta = binding_->type_meta;
+            const auto *meta = binding_.schema();
             if (meta != nullptr && meta->try_value_kind() == ValueTypeKind::Bundle) { return meta->field_count; }
             return state().component_count;
         }
@@ -840,7 +840,7 @@ namespace hgraph
             if (built_) { throw std::logic_error("BundleBuilder is single-use"); }
         }
 
-        const ValueTypeBinding *binding_{nullptr};
+        ValueTypeRef binding_{nullptr};
         Value                   value_{};
         bool                    built_{false};
     };

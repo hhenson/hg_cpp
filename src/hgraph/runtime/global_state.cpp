@@ -14,15 +14,15 @@ namespace hgraph
         thread_local GlobalContext *active_global_context = nullptr;
 
         // Canonical binding for the GlobalState backing: a mutable Map<string, Any>.
-        const ValueTypeBinding &global_state_binding()
+        ValueTypeRef global_state_binding()
         {
             auto       &registry = TypeRegistry::instance();
             const auto *str_meta = registry.register_scalar<std::string>("str");
             const auto *any_meta = registry.any();
             const auto *schema   = registry.mutable_map(str_meta, any_meta);
-            const auto *binding  = ValuePlanFactory::instance().binding_for(schema);
-            if (binding == nullptr) { throw std::logic_error("GlobalState: no binding for Map<string, Any>"); }
-            return *binding;
+            const auto binding  = ValuePlanFactory::instance().type_for(schema);
+            if (!binding) { throw std::logic_error("GlobalState: no binding for Map<string, Any>"); }
+            return binding;
         }
     }  // namespace
 

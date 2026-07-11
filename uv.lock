@@ -156,8 +156,8 @@ wheels = [
 ]
 
 [[package]]
-name = "hgraph"
-version = "0.1.0"
+name = "hg-cpp"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -175,6 +175,7 @@ dev = [
     { name = "sphinx" },
     { name = "sphinx-rtd-theme" },
     { name = "sphinxcontrib-mermaid" },
+    { name = "trove-classifiers" },
 ]
 docs = [
     { name = "myst-parser" },
@@ -188,11 +189,12 @@ python = [
 test = [
     { name = "frozendict" },
     { name = "pytest" },
+    { name = "trove-classifiers" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "cmake", marker = "extra == 'dev'", specifier = ">=3.25" },
+    { name = "cmake", marker = "extra == 'dev'", specifier = ">=3.26" },
     { name = "frozendict", marker = "extra == 'test'", specifier = ">=2.4" },
     { name = "myst-parser", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=2.0" },
@@ -200,7 +202,7 @@ requires-dist = [
     { name = "nanobind", marker = "extra == 'python'", specifier = ">=2.12" },
     { name = "ninja", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=2.0" },
-    { name = "pyarrow", specifier = ">=24" },
+    { name = "pyarrow", specifier = ">=24,<25" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
     { name = "scikit-build-core", marker = "extra == 'dev'", specifier = ">=0.12" },
@@ -210,6 +212,8 @@ requires-dist = [
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=2.0" },
     { name = "sphinxcontrib-mermaid", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "sphinxcontrib-mermaid", marker = "extra == 'docs'", specifier = ">=1.0" },
+    { name = "trove-classifiers", marker = "extra == 'dev'" },
+    { name = "trove-classifiers", marker = "extra == 'test'" },
 ]
 provides-extras = ["python", "test", "docs", "dev"]
 
@@ -768,6 +772,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/3b/44/6716b257b0aa6bfd51a1b31665d1c205fb12cb5ad56de752dfa15657de2f/sphinxcontrib_serializinghtml-2.0.0.tar.gz", hash = "sha256:e9d912827f872c029017a53f0ef2180b327c3f7fd23c87229f7a8e8b70031d4d", size = 16080, upload-time = "2024-07-29T01:10:09.332Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/52/a7/d2782e4e3f77c8450f727ba74a8f12756d5ba823d81b941f1b04da9d033a/sphinxcontrib_serializinghtml-2.0.0-py3-none-any.whl", hash = "sha256:6e2cb0eef194e10c27ec0023bfeb25badbbb5868244cf5bc5bdc04e4464bf331", size = 92072, upload-time = "2024-07-29T01:10:08.203Z" },
+]
+
+[[package]]
+name = "trove-classifiers"
+version = "2026.6.1.19"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/e3/7ca82ee24c82d344584abd5b8637b3bd056f2900226e8d82fc22f1184b92/trove_classifiers-2026.6.1.19.tar.gz", hash = "sha256:c5132b4b61a829d11cfbd2d72e97f20a45ed6edb95e45c5efdeb5e00836b2745", size = 17059, upload-time = "2026-06-01T19:41:34.649Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7c/a4/81502f486f01db95bc8320646a8a12511f5e556cb63d5e224d91816605c4/trove_classifiers-2026.6.1.19-py3-none-any.whl", hash = "sha256:ab4c4ec93cc4a4e7815fa759906e05e6bb3f2fbd92ea0f897288c6a43efd15b3", size = 14211, upload-time = "2026-06-01T19:41:33.434Z" },
 ]
 
 [[package]]

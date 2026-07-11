@@ -74,7 +74,7 @@ namespace hgraph
             {
                 throw std::logic_error("List hash requires an element binding");
             }
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -94,7 +94,7 @@ namespace hgraph
             if (a->size() != b->size()) { return false; }
             if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
             if (a->element_binding() != b->element_binding()) { return false; }
-            const auto &ops = a->element_binding()->ops_ref();
+            const auto &ops = a->element_binding().ops_ref();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
                 const bool a_set = a->element_set(i);
@@ -111,12 +111,12 @@ namespace hgraph
             const auto *b = static_cast<const ListStorage *>(rhs);
             if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
 
-            const auto *a_binding = a->element_binding();
-            const auto *b_binding = b->element_binding();
+            const auto a_binding = a->element_binding();
+            const auto b_binding = b->element_binding();
             if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
             if (a_binding != b_binding) { return std::partial_ordering::unordered; }
 
-            const auto &ops = a_binding->ops_ref();
+            const auto &ops = a_binding.ops_ref();
             const auto  n   = std::min(a->size(), b->size());
             for (std::size_t i = 0; i < n; ++i)
             {
@@ -136,7 +136,7 @@ namespace hgraph
         {
             const auto *storage = static_cast<const ListStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return "[]"; }
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             return format_delimited('[', ']', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
                 if (storage->element_set(i))
                 {
@@ -152,7 +152,7 @@ namespace hgraph
             return static_cast<const ListStorage *>(owner)->element_at(index);
         }
 
-        inline nb::object sequence_to_python_buffer(const ValueTypeBinding &element_binding,
+        inline nb::object sequence_to_python_buffer(const ValueTypeRef &element_binding,
                                                     ValueArraySource        source)
         {
             const auto &ops = element_binding.ops_ref();
@@ -161,7 +161,7 @@ namespace hgraph
                        : nb::object{};
         }
 
-        [[nodiscard]] inline ValueArraySpan compact_sequence_span(const ValueTypeBinding &element_binding,
+        [[nodiscard]] inline ValueArraySpan compact_sequence_span(const ValueTypeRef &element_binding,
                                                                   const void             *data,
                                                                   std::size_t             size)
         {
@@ -187,13 +187,13 @@ namespace hgraph
             }
             if (dense)
             {
-                if (nb::object buffer = sequence_to_python_buffer(*storage->element_binding(),
+                if (nb::object buffer = sequence_to_python_buffer(storage->element_binding(),
                                                                   ValueArraySource{
                                                                       .owner      = storage,
                                                                       .size       = storage->size(),
                                                                       .element_at = &list_value_array_element_at,
                                                                       .first      = compact_sequence_span(
-                                                                          *storage->element_binding(),
+                                                                          storage->element_binding(),
                                                                           storage->size() == 0 ? nullptr
                                                                                                 : storage->element_at(0),
                                                                           storage->size()),
@@ -204,7 +204,7 @@ namespace hgraph
                 }
             }
 
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             nb::list result;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -214,7 +214,7 @@ namespace hgraph
             return result;
         }
 
-        void list_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source);
+        void list_from_python(const void *, const ValueTypeRef &binding, void *memory, nb::handle source);
 
         /** The VARIADIC-TUPLE variant: same storage, python reads back a
             TUPLE (ops-variant selection at binding time - the type-erasure
@@ -235,7 +235,7 @@ namespace hgraph
             {
                 throw std::logic_error("CyclicBuffer hash requires an element binding");
             }
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -255,7 +255,7 @@ namespace hgraph
             if (a->size() != b->size()) { return false; }
             if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
             if (a->element_binding() != b->element_binding()) { return false; }
-            const auto &ops = a->element_binding()->ops_ref();
+            const auto &ops = a->element_binding().ops_ref();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
                 const bool a_set = a->element_set(i);
@@ -272,12 +272,12 @@ namespace hgraph
             const auto *b = static_cast<const CyclicBufferStorage *>(rhs);
             if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
 
-            const auto *a_binding = a->element_binding();
-            const auto *b_binding = b->element_binding();
+            const auto a_binding = a->element_binding();
+            const auto b_binding = b->element_binding();
             if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
             if (a_binding != b_binding) { return std::partial_ordering::unordered; }
 
-            const auto &ops = a_binding->ops_ref();
+            const auto &ops = a_binding.ops_ref();
             const auto  n   = std::min(a->size(), b->size());
             for (std::size_t i = 0; i < n; ++i)
             {
@@ -297,7 +297,7 @@ namespace hgraph
         {
             const auto *storage = static_cast<const CyclicBufferStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return "(empty)"; }
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             return format_delimited('(', ')', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
                 fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
             });
@@ -316,7 +316,7 @@ namespace hgraph
             {
                 throw std::runtime_error("CyclicBuffer to_python requires live storage with an element binding");
             }
-            if (nb::object buffer = sequence_to_python_buffer(*storage->element_binding(),
+            if (nb::object buffer = sequence_to_python_buffer(storage->element_binding(),
                                                               [&]() {
                                                                   const auto size = storage->size();
                                                                   const auto head = storage->head();
@@ -326,12 +326,12 @@ namespace hgraph
                                                                       .size       = size,
                                                                       .element_at = &cyclic_buffer_value_array_element_at,
                                                                       .first = compact_sequence_span(
-                                                                          *storage->element_binding(),
+                                                                          storage->element_binding(),
                                                                           first_size == 0 ? nullptr
                                                                                           : storage->element_at(0),
                                                                           first_size),
                                                                       .second = compact_sequence_span(
-                                                                          *storage->element_binding(),
+                                                                          storage->element_binding(),
                                                                           first_size == size
                                                                               ? nullptr
                                                                               : storage->element_at(first_size),
@@ -343,7 +343,7 @@ namespace hgraph
                 return buffer;
             }
 
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             nb::list result;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -352,7 +352,7 @@ namespace hgraph
             return result;
         }
 
-        void cyclic_buffer_from_python(const void *, const ValueTypeBinding &binding, void *memory,
+        void cyclic_buffer_from_python(const void *, const ValueTypeRef &binding, void *memory,
                                        nb::handle source);
 #endif
 
@@ -366,7 +366,7 @@ namespace hgraph
             {
                 throw std::logic_error("Queue hash requires an element binding");
             }
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -386,7 +386,7 @@ namespace hgraph
             if (a->size() != b->size()) { return false; }
             if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
             if (a->element_binding() != b->element_binding()) { return false; }
-            const auto &ops = a->element_binding()->ops_ref();
+            const auto &ops = a->element_binding().ops_ref();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
                 const bool a_set = a->element_set(i);
@@ -403,12 +403,12 @@ namespace hgraph
             const auto *b = static_cast<const QueueStorage *>(rhs);
             if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
 
-            const auto *a_binding = a->element_binding();
-            const auto *b_binding = b->element_binding();
+            const auto a_binding = a->element_binding();
+            const auto b_binding = b->element_binding();
             if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
             if (a_binding != b_binding) { return std::partial_ordering::unordered; }
 
-            const auto &ops = a_binding->ops_ref();
+            const auto &ops = a_binding.ops_ref();
             const auto  n   = std::min(a->size(), b->size());
             for (std::size_t i = 0; i < n; ++i)
             {
@@ -428,7 +428,7 @@ namespace hgraph
         {
             const auto *storage = static_cast<const QueueStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return "<>"; }
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             return format_delimited('<', '>', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
                 fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
             });
@@ -447,13 +447,13 @@ namespace hgraph
             {
                 throw std::runtime_error("Queue to_python requires live storage with an element binding");
             }
-            if (nb::object buffer = sequence_to_python_buffer(*storage->element_binding(),
+            if (nb::object buffer = sequence_to_python_buffer(storage->element_binding(),
                                                               ValueArraySource{
                                                                   .owner      = storage,
                                                                   .size       = storage->size(),
                                                                   .element_at = &queue_value_array_element_at,
                                                                   .first      = compact_sequence_span(
-                                                                      *storage->element_binding(),
+                                                                      storage->element_binding(),
                                                                       storage->size() == 0 ? nullptr
                                                                                             : storage->element_at(0),
                                                                       storage->size()),
@@ -463,7 +463,7 @@ namespace hgraph
                 return buffer;
             }
 
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             nb::list result;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -472,7 +472,7 @@ namespace hgraph
             return result;
         }
 
-        void queue_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source);
+        void queue_from_python(const void *, const ValueTypeRef &binding, void *memory, nb::handle source);
 #endif
 
         // ----- Set (order-independent) ----------------------------------
@@ -485,7 +485,7 @@ namespace hgraph
             {
                 throw std::logic_error("Set hash requires an element binding");
             }
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             std::size_t result = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -515,8 +515,8 @@ namespace hgraph
             const auto *b = static_cast<const SetStorage *>(rhs);
             if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
 
-            const auto *a_binding = a->element_binding();
-            const auto *b_binding = b->element_binding();
+            const auto a_binding = a->element_binding();
+            const auto b_binding = b->element_binding();
             if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
             if (a_binding != b_binding) { return std::partial_ordering::unordered; }
 
@@ -530,7 +530,7 @@ namespace hgraph
         {
             const auto *storage = static_cast<const SetStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return "{}"; }
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             return format_delimited('{', '}', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
                 fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
             });
@@ -544,7 +544,7 @@ namespace hgraph
             {
                 throw std::runtime_error("Set to_python requires live storage with an element binding");
             }
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             nb::set result;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -553,7 +553,7 @@ namespace hgraph
             return result;
         }
 
-        void set_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source);
+        void set_from_python(const void *, const ValueTypeRef &binding, void *memory, nb::handle source);
 #endif
 
         // ----- Map (order-independent over keys) ------------------------
@@ -566,8 +566,8 @@ namespace hgraph
             {
                 throw std::logic_error("Map hash requires key and value bindings");
             }
-            const auto &key_ops   = storage->key_binding()->ops_ref();
-            const auto &value_ops = storage->value_binding()->ops_ref();
+            const auto &key_ops   = storage->key_binding().ops_ref();
+            const auto &value_ops = storage->value_binding().ops_ref();
             std::size_t result    = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -597,7 +597,7 @@ namespace hgraph
             {
                 return false;
             }
-            const auto &val_ops = a->value_binding()->ops_ref();
+            const auto &val_ops = a->value_binding().ops_ref();
             const auto *a_const = static_cast<const MapStorage *>(lhs);
             for (std::size_t i = 0; i < a->size(); ++i)
             {
@@ -623,13 +623,13 @@ namespace hgraph
             const auto *b = static_cast<const MapStorage *>(rhs);
             if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
 
-            const auto *a_key_binding = a->key_binding();
-            const auto *b_key_binding = b->key_binding();
+            const auto a_key_binding = a->key_binding();
+            const auto b_key_binding = b->key_binding();
             if (const auto order = value_ops_detail::null_order(a_key_binding, b_key_binding)) { return *order; }
             if (a_key_binding != b_key_binding) { return std::partial_ordering::unordered; }
 
-            const auto *a_value_binding = a->value_binding();
-            const auto *b_value_binding = b->value_binding();
+            const auto a_value_binding = a->value_binding();
+            const auto b_value_binding = b->value_binding();
             if (const auto order = value_ops_detail::null_order(a_value_binding, b_value_binding)) { return *order; }
             if (a_value_binding != b_value_binding) { return std::partial_ordering::unordered; }
 
@@ -644,8 +644,8 @@ namespace hgraph
             {
                 return "{}";
             }
-            const auto &key_ops   = storage->key_binding()->ops_ref();
-            const auto &value_ops = storage->value_binding()->ops_ref();
+            const auto &key_ops   = storage->key_binding().ops_ref();
+            const auto &value_ops = storage->value_binding().ops_ref();
             return format_delimited('{', '}', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
                 fmt::format_to(std::back_inserter(out),
                                "{}: {}",
@@ -663,8 +663,8 @@ namespace hgraph
             {
                 throw std::runtime_error("Map to_python requires live storage with key/value bindings");
             }
-            const auto &key_ops   = storage->key_binding()->ops_ref();
-            const auto &value_ops = storage->value_binding()->ops_ref();
+            const auto &key_ops   = storage->key_binding().ops_ref();
+            const auto &value_ops = storage->value_binding().ops_ref();
             nb::dict result;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -675,7 +675,7 @@ namespace hgraph
             return result;
         }
 
-        void map_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source);
+        void map_from_python(const void *, const ValueTypeRef &binding, void *memory, nb::handle source);
 #endif
 
         // ----- Read accessors that go through the storage's public surface.
@@ -692,7 +692,7 @@ namespace hgraph
         {
             return static_cast<const ListStorage *>(memory)->element_at(index);
         }
-        inline const ValueTypeBinding *list_element_binding(const void *, const void *memory, std::size_t) noexcept
+        inline ValueTypeRef list_element_binding(const void *, const void *memory, std::size_t) noexcept
         {
             return static_cast<const ListStorage *>(memory)->element_binding();
         }
@@ -710,7 +710,7 @@ namespace hgraph
         {
             return static_cast<const CyclicBufferStorage *>(memory)->element_at(index);
         }
-        inline const ValueTypeBinding *cyclic_buffer_element_binding(const void *, const void *memory,
+        inline ValueTypeRef cyclic_buffer_element_binding(const void *, const void *memory,
                                                                      std::size_t) noexcept
         {
             return static_cast<const CyclicBufferStorage *>(memory)->element_binding();
@@ -729,7 +729,7 @@ namespace hgraph
         {
             return static_cast<const QueueStorage *>(memory)->element_at(index);
         }
-        inline const ValueTypeBinding *queue_element_binding(const void *, const void *memory, std::size_t) noexcept
+        inline ValueTypeRef queue_element_binding(const void *, const void *memory, std::size_t) noexcept
         {
             return static_cast<const QueueStorage *>(memory)->element_binding();
         }
@@ -747,7 +747,7 @@ namespace hgraph
         {
             return static_cast<const SetStorage *>(memory)->element_at(index);
         }
-        inline const ValueTypeBinding *set_element_binding(const void *, const void *memory, std::size_t) noexcept
+        inline ValueTypeRef set_element_binding(const void *, const void *memory, std::size_t) noexcept
         {
             return static_cast<const SetStorage *>(memory)->element_binding();
         }
@@ -854,15 +854,15 @@ namespace hgraph
         {
             return static_cast<const MapStorage *>(memory)->value_at_index(index);
         }
-        inline const ValueTypeBinding *map_key_binding(const void *, const void *memory, std::size_t) noexcept
+        inline ValueTypeRef map_key_binding(const void *, const void *memory, std::size_t) noexcept
         {
             return static_cast<const MapStorage *>(memory)->key_binding();
         }
-        inline const ValueTypeBinding *map_value_binding(const void *, const void *memory) noexcept
+        inline ValueTypeRef map_value_binding(const void *, const void *memory) noexcept
         {
             return static_cast<const MapStorage *>(memory)->value_binding();
         }
-        inline const ValueTypeBinding *map_value_binding_indexed(const void *, const void *memory, std::size_t) noexcept
+        inline ValueTypeRef map_value_binding_indexed(const void *, const void *memory, std::size_t) noexcept
         {
             return map_value_binding(nullptr, memory);
         }
@@ -881,7 +881,7 @@ namespace hgraph
             {
                 throw std::logic_error("Map key-set hash requires a key binding");
             }
-            const auto &ops = storage->key_binding()->ops_ref();
+            const auto &ops = storage->key_binding().ops_ref();
             std::size_t result = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -909,8 +909,8 @@ namespace hgraph
             const auto *b = static_cast<const MapStorage *>(rhs);
             if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
 
-            const auto *a_binding = a->key_binding();
-            const auto *b_binding = b->key_binding();
+            const auto a_binding = a->key_binding();
+            const auto b_binding = b->key_binding();
             if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
             if (a_binding != b_binding) { return std::partial_ordering::unordered; }
 
@@ -923,7 +923,7 @@ namespace hgraph
         {
             const auto *storage = static_cast<const MapStorage *>(memory);
             if (storage == nullptr || storage->key_binding() == nullptr) { return "{}"; }
-            const auto &ops = storage->key_binding()->ops_ref();
+            const auto &ops = storage->key_binding().ops_ref();
             return format_delimited('{', '}', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
                 fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->key_at(i)));
             });
@@ -936,7 +936,7 @@ namespace hgraph
             {
                 throw std::runtime_error("Map key-set to_python requires live storage with a key binding");
             }
-            const auto &ops = storage->key_binding()->ops_ref();
+            const auto &ops = storage->key_binding().ops_ref();
             nb::set result;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -945,7 +945,7 @@ namespace hgraph
             return result;
         }
 
-        void map_key_adapter_from_python(const void *, const ValueTypeBinding &binding, void *memory,
+        void map_key_adapter_from_python(const void *, const ValueTypeRef &binding, void *memory,
                                          nb::handle source);
 #endif
     }  // namespace container_ops_detail
@@ -961,9 +961,9 @@ namespace hgraph
     // -----------------------------------------------------------------
 
     // Forward declaration; ``compact_map_ops`` references the thunk,
-    // and the thunk's body references ``compact_map_key_set_binding``
+    // and the thunk's body references ``compact_map_key_set_type``
     // and ``SetView``. The definition follows the binding accessors.
-    SetView compact_map_key_set_thunk(const void *context, const ValueTypeBinding *map_binding, const void *memory);
+    SetView compact_map_key_set_thunk(const void *context, ValueTypeRef map_binding, const void *memory);
 
     namespace container_ops_detail
     {
@@ -1183,53 +1183,53 @@ namespace hgraph
     // ``Value`` over a container schema.
     // -----------------------------------------------------------------
 
-    [[nodiscard]] inline const ValueTypeBinding &
-    compact_list_binding(const ValueTypeBinding &element_binding)
+    [[nodiscard]] inline ValueTypeRef
+    compact_list_type(const ValueTypeRef &element_binding)
     {
-        const auto *meta = TypeRegistry::instance().list(element_binding.type_meta, /*fixed_size=*/0);
-        return ValueTypeBinding::intern(*meta, compact_list_plan(element_binding), compact_list_ops());
+        const auto *meta = TypeRegistry::instance().list(element_binding.schema(), /*fixed_size=*/0);
+        return intern_value_type(*meta, compact_list_plan(element_binding), compact_list_ops());
     }
 
     /** Meta-preserving form: a variadic-TUPLE schema keeps its identity (and
         its python read-back as a tuple) while sharing the list plan+ops. */
-    [[nodiscard]] inline const ValueTypeBinding &
-    compact_list_binding(const ValueTypeBinding &element_binding, const ValueTypeMetaData &meta)
+    [[nodiscard]] inline ValueTypeRef
+    compact_list_type(const ValueTypeRef &element_binding, const ValueTypeMetaData &meta)
     {
         // Ops-variant selection AT BINDING TIME: a variadic tuple reads back
         // as a python tuple through its OWN fn-ptr, not a runtime flag check.
         const auto &ops = meta.has(ValueTypeFlags::VariadicTuple)
                               ? container_ops_detail::compact_list_ops_impl<true>()
                               : compact_list_ops();
-        return ValueTypeBinding::intern(meta, compact_list_plan(element_binding), ops);
+        return intern_value_type(meta, compact_list_plan(element_binding), ops);
     }
 
-    [[nodiscard]] inline const ValueTypeBinding &compact_set_binding(const ValueTypeBinding &element_binding)
+    [[nodiscard]] inline ValueTypeRef compact_set_type(const ValueTypeRef &element_binding)
     {
-        const auto *meta = TypeRegistry::instance().set(element_binding.type_meta);
-        return ValueTypeBinding::intern(*meta, compact_set_plan(element_binding), compact_set_ops());
+        const auto *meta = TypeRegistry::instance().set(element_binding.schema());
+        return intern_value_type(*meta, compact_set_plan(element_binding), compact_set_ops());
     }
 
-    [[nodiscard]] inline const ValueTypeBinding &compact_map_binding(const ValueTypeBinding &key_binding,
-                                                                     const ValueTypeBinding &value_binding)
+    [[nodiscard]] inline ValueTypeRef compact_map_type(const ValueTypeRef &key_binding,
+                                                                     const ValueTypeRef &value_binding)
     {
-        const auto *meta = TypeRegistry::instance().map(key_binding.type_meta, value_binding.type_meta);
-        return ValueTypeBinding::intern(*meta, compact_map_plan(key_binding, value_binding), compact_map_ops());
+        const auto *meta = TypeRegistry::instance().map(key_binding.schema(), value_binding.schema());
+        return intern_value_type(*meta, compact_map_plan(key_binding, value_binding), compact_map_ops());
     }
 
-    [[nodiscard]] inline const ValueTypeBinding &
-    compact_cyclic_buffer_binding(const ValueTypeBinding &element_binding, std::size_t capacity)
+    [[nodiscard]] inline ValueTypeRef
+    compact_cyclic_buffer_type(const ValueTypeRef &element_binding, std::size_t capacity)
     {
-        const auto *meta = TypeRegistry::instance().cyclic_buffer(element_binding.type_meta, capacity);
-        return ValueTypeBinding::intern(*meta,
+        const auto *meta = TypeRegistry::instance().cyclic_buffer(element_binding.schema(), capacity);
+        return intern_value_type(*meta,
                                         compact_cyclic_buffer_plan(element_binding, capacity),
                                         compact_cyclic_buffer_ops());
     }
 
-    [[nodiscard]] inline const ValueTypeBinding &compact_queue_binding(const ValueTypeBinding &element_binding,
+    [[nodiscard]] inline ValueTypeRef compact_queue_type(const ValueTypeRef &element_binding,
                                                                        std::size_t             max_capacity)
     {
-        const auto *meta = TypeRegistry::instance().queue(element_binding.type_meta, max_capacity);
-        return ValueTypeBinding::intern(*meta,
+        const auto *meta = TypeRegistry::instance().queue(element_binding.schema(), max_capacity);
+        return intern_value_type(*meta,
                                         compact_queue_plan(element_binding, max_capacity),
                                         compact_queue_ops());
     }
@@ -1243,15 +1243,15 @@ namespace hgraph
      * coexist with the map's own binding without any layout
      * unification.
      */
-    [[nodiscard]] inline const ValueTypeBinding &
-    compact_map_key_set_binding(const ValueTypeBinding &key_binding, const ValueTypeBinding &value_binding)
+    [[nodiscard]] inline ValueTypeRef
+    compact_map_key_set_type(const ValueTypeRef &key_binding, const ValueTypeRef &value_binding)
     {
-        const auto *set_meta = TypeRegistry::instance().set(key_binding.type_meta);
-        return ValueTypeBinding::intern(
+        const auto *set_meta = TypeRegistry::instance().set(key_binding.schema());
+        return intern_value_type(
             *set_meta, compact_map_plan(key_binding, value_binding), compact_map_key_set_ops());
     }
 
-    inline SetView compact_map_key_set_thunk(const void *, const ValueTypeBinding * /*map_binding*/, const void *memory)
+    inline SetView compact_map_key_set_thunk(const void *, ValueTypeRef /*map_binding*/, const void *memory)
     {
         // Compact-storage implementation of ``MapValueOps::key_set``;
         // casting ``memory`` to ``MapStorage *`` is layout-correct
@@ -1267,9 +1267,8 @@ namespace hgraph
         {
             throw std::logic_error("compact_map_key_set: map storage missing key/value binding");
         }
-        const ValueTypeBinding &adapter =
-            compact_map_key_set_binding(*storage->key_binding(), *storage->value_binding());
-        return ValueView{&adapter, memory}.as_set();
+        const auto adapter = compact_map_key_set_type(storage->key_binding(), storage->value_binding());
+        return ValueView{adapter, memory}.as_set();
     }
 }  // namespace hgraph
 

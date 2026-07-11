@@ -21,16 +21,16 @@ namespace
     Value make_mutable_list(const ValueTypeMetaData *element_meta)
     {
         const auto *schema  = TypeRegistry::instance().mutable_list(element_meta);
-        const auto *binding = ValuePlanFactory::instance().binding_for(schema);
+        const auto binding = ValuePlanFactory::instance().type_for(schema);
         REQUIRE(binding != nullptr);
-        REQUIRE(binding->ops_ref().kind == ValueOpsKind::MutableList);
-        return Value{*binding};
+        REQUIRE(binding.ops_ref().kind == ValueOpsKind::MutableList);
+        return Value{binding};
     }
 
     Value make_any(const Value &inner)
     {
-        const auto *binding = ValuePlanFactory::instance().binding_for(TypeRegistry::instance().any());
-        Value       any{*binding};
+        const auto binding = ValuePlanFactory::instance().type_for(TypeRegistry::instance().any());
+        Value       any{binding};
         any.as_any().begin_mutation().set(inner.view());
         return any;
     }
@@ -40,8 +40,8 @@ namespace
     {
         MutableListValueOps ops = *checked_value_ops<MutableListValueOps>(list.binding(), "mutable list hook test");
         break_hook(ops);
-        const ValueTypeBinding binding{list.schema(), list.binding()->plan(), &ops};
-        auto view = ValueView{&binding, const_cast<void *>(list.view().data())}.as_list().begin_mutation();
+        const ValueTypeRef binding = intern_value_type(*list.schema(), *list.binding().plan(), ops);
+        auto view = ValueView{binding, const_cast<void *>(list.view().data())}.as_list().begin_mutation();
         REQUIRE_THROWS_AS(invoke(view), std::logic_error);
     }
 }  // namespace

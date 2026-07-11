@@ -7,6 +7,7 @@
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/registry_reset.h>
 #include <hgraph/types/static_node.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -221,9 +222,9 @@ namespace
         auto       &registry    = TypeRegistry::instance();
         const auto *int_meta    = registry.register_scalar<Int>("int");
         const auto *bundle_meta = registry.un_named_bundle({{std::string{field}, int_meta}});
-        const auto *binding     = ValuePlanFactory::instance().binding_for(bundle_meta);
+        const auto binding     = ValuePlanFactory::instance().type_for(bundle_meta);
 
-        Value scalars{*binding};
+        Value scalars{binding};
         {
             auto mutation = scalars.as_bundle().begin_mutation();
             mutation[field].checked_mutable_as<Int>() = value;
@@ -296,9 +297,7 @@ TEST_CASE("static node: set_delta construction survives value registry resets")
         CHECK(first.equals(set_delta<Int>({1}, {})));
     }
 
-    ValuePlanFactory::instance().reset();
-    ValueTypeBinding::clear();
-    TypeRegistry::instance().reset();
+    reset_all_registries();
 
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     const Value second = set_delta<Int>({2}, {1});

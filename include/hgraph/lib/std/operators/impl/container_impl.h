@@ -527,11 +527,11 @@ namespace hgraph::stdlib
             const auto *element_meta = value.schema()->element_type;
             const auto  index        = getattr_ts_bundle::field_index(element_meta, field_name);
             if (!index.has_value()) { return; }
-            const auto *field_binding =
-                ValuePlanFactory::instance().binding_for(element_meta->fields[*index].type);
+            const auto field_binding =
+                ValuePlanFactory::instance().type_for(element_meta->fields[*index].type);
             if (field_binding == nullptr) { return; }
 
-            ListBuilder builder{*field_binding};
+            ListBuilder builder{field_binding};
             auto        list = value.as_indexed_view();
             for (std::size_t i = 0; i < list.size(); ++i)
             {
@@ -660,7 +660,7 @@ namespace hgraph::stdlib
             const auto  source = ts.base().value();
             const auto *meta   = source.schema();
             auto        fields = source.as_indexed_view();
-            BundleBuilder builder{*ValuePlanFactory::instance().binding_for(meta)};
+            BundleBuilder builder{ValuePlanFactory::instance().type_for(meta)};
             const auto  target = getattr_ts_bundle::field_index(meta, attr.value());
             for (std::size_t index = 0; index < meta->field_count; ++index)
             {

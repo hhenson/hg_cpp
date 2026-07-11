@@ -43,36 +43,40 @@ This is the load-bearing reason values are type-erased rather than
 generic-templated: it lets the time-series layer reuse the value-layer
 container vocabulary without forking the surface.
 
-Binding: the shared anchor
---------------------------
+Type record: the shared anchor
+------------------------------
 
-Type erasure is held together by a *binding*: an interned triple of
-schema, plan, and ops that every erased handle dereferences:
+Value type erasure is held together by the common ``TypeRecord``. It records
+the schema, family role, storage plan, ops table, capabilities, and optional
+debug descriptor for one implementation:
 
 .. code-block:: cpp
 
-   template <typename TypeMeta, typename Ops>
-   struct TypeBinding {
-       const TypeMeta*                 type_meta;
-       const MemoryUtils::StoragePlan* storage_plan;
-       const Ops*                      ops;
+   struct TypeRecord {
+       TypeRole                        role;
+       TypeCapabilities                capabilities;
+       const SchemaHeader*             schema;
+       const MemoryUtils::StoragePlan* plan;
+       const void*                     ops;
+       const DebugDescriptor*          debug;
    };
 
-   using ValueTypeBinding = TypeBinding<ValueTypeMetaData, ValueOps>;
+   class ValueTypeRef {
+       const TypeRecord* record;
+   };
 
-A ``Value``, a ``ValueView``, or a ``Builder`` stores one borrowed
-pointer to its binding and reaches schema, plan, lifecycle, and ops
-uniformly through it.
+A ``ValueTypeRef`` is a one-word, trivially-copyable typed reference to a
+value-family ``Instance`` record. ``Value``, ``ValueView``, and builders use
+it to reach schema, plan, lifecycle, capabilities, and ``ValueOps``.
 
-Bindings are interned by ``(type, plan, ops)`` triple. Builders are
-interned by schema. Each registry exists only to expose a typed
-convenience API on top of one ``InternTable`` instance, so the
-interning contract is uniform across all erased shapes.
+``intern_value_type`` interns one record per ``(schema header, Instance role,
+plan, ops)`` key in ``TypeRecordRegistry``. ``ValuePlanFactory`` caches
+``schema -> ValueTypeRef`` by value; there is no value-family binding side
+registry.
 
-Composite bindings populate lazily. The first request for a tuple,
-list, map, or other container schema synthesises its plan from the
-element/key bindings, interns the resulting binding, and stores the
-builder.
+Composite types populate lazily. The first ``type_for`` request for a tuple,
+list, map, or other container schema synthesises its plan from child type
+refs and interns the resulting common record.
 
 The View
 --------
@@ -81,17 +85,22 @@ A view is the type-erased non-owning handle:
 
 .. code-block:: cpp
 
-   struct ValueViewContext {
-       const ValueTypeBinding* binding;
-       void*                   data;
+   class ValueView {
+       ValuePtr pointer; // tagged TypeRecord pointer + borrowed data pointer
    };
 
-The binding gives the view its schema, plan, lifecycle, and ops; the
-data pointer addresses the live payload. The base ``ValueView`` context
-is two pointers, so it is cheap to copy and pass through internal
-traversal code. Specialised view adapters carry at least this context
-and may cache resolved ops or layout facts established at construction
-time.
+The record gives the view its schema, plan, lifecycle, capabilities, and ops;
+the data pointer addresses the borrowed payload. ``ValueView`` is exactly two
+words and is move-only. Specialised view adapters carry at least this context
+and may cache resolved ops or layout facts established at construction time.
+
+Record structure and value-family identity are validated when records are
+interned and when a generic ``AnyPtr`` is narrowed with
+``ValueTypeRef::checked``. A ``ValueView`` constructed from that trusted
+``ValueTypeRef`` reads its record, payload, and access tag directly; ordinary
+``valid()``, ``has_value()``, and typed value operations do not repeat
+``TypeRecord::valid`` on every access. Explicit access-mode transitions, such
+as opening a mutation view, retain their transition checks.
 
 A view exposes:
 
@@ -101,7 +110,7 @@ A view exposes:
   atomic kinds;
 - generic ops: ``hash()``, ``equals()``, ``compare()``, ``to_string()``,
   ``clone()``, ``copy_from()``, ``try_copy_from()``
-  — routed through the binding; ``compare()`` returns
+  — routed through the type record; ``compare()`` returns
   ``std::partial_ordering`` as the common erased representation of
   ``operator<=>`` results. Compact containers use their bound ops table,
   while structured tuple/bundle/fixed-list views recurse through child
@@ -136,7 +145,7 @@ Both families are mirrored on the owning ``Value`` itself
 ``Value`` do not need to dereference into a ``ValueView`` and then
 cast again.
 
-These casts only re-interpret the existing binding's view shape. They
+These casts only re-interpret the existing type record's view shape. They
 do not change the underlying schema or copy the payload. Cross-schema
 adaptation — exposing one schema's value through a different schema —
 is a time-series concern, not a value-layer concern.
@@ -166,7 +175,7 @@ discipline:
   key insertion and value updates on maps, and so on.
 
 The generic erased handle can represent writable and mutable states
-without adding a third pointer word: the binding pointer carries a
+without adding a third pointer word: the type-record pointer carries a
 small tag. A mutable view is obtained from a writable view by calling
 ``begin_mutation()``. The transition is explicit so that consumers can
 reason about when mutation is in scope — the time-series layer in
@@ -227,7 +236,7 @@ Specialised Views
 
 Each kind has a specialised **read-only** view that adds kind-specific
 access on top of ``ValueView``. Specialised views hold at least the
-same ``(binding, data)`` context as ``ValueView`` and may cache
+same ``ValuePtr`` context as ``ValueView`` and may cache
 resolved ops pointers or other construction-time facts to keep later
 calls free of repeated validation. Most share an ``IndexedValueView``
 base for the kinds that are addressed positionally.

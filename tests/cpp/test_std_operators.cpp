@@ -920,12 +920,12 @@ TEST_CASE("std operators: string operators support replace substr and container 
     // hgraph shape: TSB{is_match: TS[bool], groups: TS[tuple[str, ...]]}.
     const auto match_delta = [](Bool flag, std::optional<std::vector<Str>> groups) {
         const auto *schema = stdlib::match_impl::result_schema();
-        BundleBuilder builder{*ValuePlanFactory::instance().binding_for(schema->delta_value_schema)};
+        BundleBuilder builder{ValuePlanFactory::instance().type_for(schema->delta_value_schema)};
         builder.set("is_match", Value{flag});
         if (groups.has_value())
         {
             const auto *groups_meta = schema->fields()[1].type->value_schema;
-            ListBuilder items{*ValuePlanFactory::instance().binding_for(groups_meta->element_type)};
+            ListBuilder items{ValuePlanFactory::instance().type_for(groups_meta->element_type)};
             for (const Str &group : *groups) { items.push_back(group); }
             builder.set("groups", items.build());
         }

@@ -164,7 +164,7 @@ TEST_CASE("race over TSBs delivers the re-raced winner's values")
     using namespace hgraph::testing;
     auto pair_delta = [](Int a, Int b) {
         const auto *schema = schema_descriptor<RaceTsbRevokeGraph::PairBundle>::ts_meta();
-        BundleBuilder builder{*ValuePlanFactory::instance().binding_for(schema->delta_value_schema)};
+        BundleBuilder builder{ValuePlanFactory::instance().type_for(schema->delta_value_schema)};
         builder.set("a", Value{a});
         builder.set("b", Value{b});
         return builder.build();

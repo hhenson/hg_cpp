@@ -160,11 +160,11 @@ namespace hgraph
 
     /** The binding for ``S``'s canonical delta value. */
     template <typename S>
-    [[nodiscard]] inline const ValueTypeBinding &delta_value_binding()
+    [[nodiscard]] inline ValueTypeRef delta_value_binding()
     {
-        const auto *binding = ValuePlanFactory::instance().binding_for(delta_value_schema<S>());
-        if (binding == nullptr) { throw std::logic_error("delta_value_binding: unresolved delta schema"); }
-        return *binding;
+        const auto binding = ValuePlanFactory::instance().type_for(delta_value_schema<S>());
+        if (!binding) { throw std::logic_error("delta_value_binding: unresolved delta schema"); }
+        return binding;
     }
 
     /**
@@ -178,18 +178,18 @@ namespace hgraph
     {
         auto       &registry       = TypeRegistry::instance();
         const auto *t_meta         = scalar_descriptor<TValue>::value_meta();
-        const auto *t_binding      = ValuePlanFactory::instance().binding_for(t_meta);
+        const auto t_binding      = ValuePlanFactory::instance().type_for(t_meta);
         const auto *set_meta       = registry.set(t_meta);
         const auto *bundle_schema  = registry.un_named_bundle({{"added", set_meta}, {"removed", set_meta}});
-        const auto *bundle_binding = ValuePlanFactory::instance().binding_for(bundle_schema);
-        if (t_binding == nullptr || bundle_binding == nullptr) { throw std::logic_error("set_delta: unresolved binding"); }
+        const auto bundle_binding = ValuePlanFactory::instance().type_for(bundle_schema);
+        if (!t_binding || !bundle_binding) { throw std::logic_error("set_delta: unresolved binding"); }
 
-        SetBuilder added_set{*t_binding};
+        SetBuilder added_set{t_binding};
         for (const auto &e : added) { (void)added_set.insert(e); }
-        SetBuilder removed_set{*t_binding};
+        SetBuilder removed_set{t_binding};
         for (const auto &e : removed) { (void)removed_set.insert(e); }
 
-        BundleBuilder bundle{*bundle_binding};
+        BundleBuilder bundle{bundle_binding};
         bundle.set("added", added_set.build());
         bundle.set("removed", removed_set.build());
         return bundle.build();
@@ -201,12 +201,12 @@ namespace hgraph
         template <typename C>
         [[nodiscard]] inline Value build_list_delta(const std::map<std::size_t, delta_input_t<C>> &entries)
         {
-            const auto *key_binding =
-                ValuePlanFactory::instance().binding_for(scalar_descriptor<Int>::value_meta());
-            const auto &val_binding = delta_value_binding<C>();
-            if (key_binding == nullptr) { throw std::logic_error("list_delta: unresolved key binding"); }
+            const auto key_binding =
+                ValuePlanFactory::instance().type_for(scalar_descriptor<Int>::value_meta());
+            const auto val_binding = delta_value_binding<C>();
+            if (!key_binding) { throw std::logic_error("list_delta: unresolved key binding"); }
 
-            MapBuilder builder{*key_binding, val_binding};
+            MapBuilder builder{key_binding, val_binding};
             for (const auto &[index, input] : entries)
             {
                 const Int key = static_cast<Int>(index);
@@ -227,7 +227,7 @@ namespace hgraph
                                                     const std::vector<K>                &removed)
         {
             const auto *key_meta = scalar_descriptor<K>::value_meta();
-            const auto *key_binding = ValuePlanFactory::instance().binding_for(key_meta);
+            const auto key_binding = ValuePlanFactory::instance().type_for(key_meta);
             const auto &val_binding = delta_value_binding<V>();
             if (key_binding == nullptr) { throw std::logic_error("dict_delta: unresolved key binding"); }
 
@@ -236,13 +236,13 @@ namespace hgraph
             const auto *modified_schema = registry.map(key_meta, delta_value_schema<V>());
             const auto *bundle_schema =
                 registry.un_named_bundle({{"removed", removed_schema}, {"modified", modified_schema}});
-            const auto *bundle_binding = ValuePlanFactory::instance().binding_for(bundle_schema);
+            const auto bundle_binding = ValuePlanFactory::instance().type_for(bundle_schema);
             if (bundle_binding == nullptr) { throw std::logic_error("dict_delta: unresolved bundle binding"); }
 
-            SetBuilder removed_set{*key_binding};
+            SetBuilder removed_set{key_binding};
             for (const auto &key : removed) { (void)removed_set.insert_copy(std::addressof(key)); }
 
-            MapBuilder modified_map{*key_binding, val_binding};
+            MapBuilder modified_map{key_binding, val_binding};
             for (const auto &[key, input] : modified)
             {
                 if constexpr (is_scalar_ts<V>::value)
@@ -255,7 +255,7 @@ namespace hgraph
                 }
             }
 
-            BundleBuilder bundle{*bundle_binding};
+            BundleBuilder bundle{bundle_binding};
             bundle.set("removed", removed_set.build());
             bundle.set("modified", modified_map.build());
             return bundle.build();

@@ -77,7 +77,7 @@ namespace hgraph
     {
         std::size_t (*size)(const void *context, const void *memory) noexcept = nullptr;
         const void *(*element_at)(const void *context, const void *memory, std::size_t index) = nullptr;
-        const ValueTypeBinding *(*element_binding)(const void *context, const void *memory,
+        ValueTypeRef (*element_binding)(const void *context, const void *memory,
                                                    std::size_t index) noexcept = nullptr;
 
         /**
@@ -159,7 +159,7 @@ namespace hgraph
         bool (*contains)(const void *context, const void *memory, const void *key) = nullptr;
         const void *(*value_at)(const void *context, const void *memory, const void *key) = nullptr;
         const void *(*value_at_index)(const void *context, const void *memory, std::size_t index) = nullptr;
-        const ValueTypeBinding *(*value_binding)(const void *context, const void *memory) noexcept = nullptr;
+        ValueTypeRef (*value_binding)(const void *context, const void *memory) noexcept = nullptr;
         /**
          * Three iteration surfaces. Each follows the predicate /
          * projector pattern; the bound thunks decide what the
@@ -190,7 +190,7 @@ namespace hgraph
          * own ``key_set`` thunk paired with a SetValueOps adapter
          * that knows that map's layout.
          */
-        SetView (*key_set)(const void *context, const ValueTypeBinding *map_binding, const void *memory) = nullptr;
+        SetView (*key_set)(const void *context, ValueTypeRef map_binding, const void *memory) = nullptr;
     };
 
     /**
@@ -298,9 +298,9 @@ namespace hgraph
 
     template <typename Ops>
         requires(value_ops_detail::supported_ops_type_v<Ops>)
-    [[nodiscard]] inline const Ops *try_value_ops(const ValueTypeBinding *binding) noexcept
+    [[nodiscard]] inline const Ops *try_value_ops(ValueTypeRef binding) noexcept
     {
-        return binding != nullptr ? try_value_ops<Ops>(binding->ops) : nullptr;
+        return binding ? try_value_ops<Ops>(binding.ops()) : nullptr;
     }
 
     template <typename Ops>
@@ -317,9 +317,9 @@ namespace hgraph
 
     template <typename Ops>
         requires(value_ops_detail::supported_ops_type_v<Ops>)
-    [[nodiscard]] inline const Ops *checked_value_ops(const ValueTypeBinding *binding, std::string_view consumer)
+    [[nodiscard]] inline const Ops *checked_value_ops(ValueTypeRef binding, std::string_view consumer)
     {
-        return checked_value_ops<Ops>(binding != nullptr ? binding->ops : nullptr, consumer);
+        return checked_value_ops<Ops>(binding ? binding.ops() : nullptr, consumer);
     }
 }  // namespace hgraph
 

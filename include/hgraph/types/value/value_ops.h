@@ -2,9 +2,9 @@
 #define HGRAPH_CPP_ROOT_VALUE_OPS_H
 
 #include <hgraph/config.h>
-#include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
 #include <hgraph/types/utils/memory_utils.h>
+#include <hgraph/types/value/value_type_ref.h>
 
 #include <algorithm>
 #include <compare>
@@ -52,7 +52,6 @@ namespace hgraph
     inline constexpr std::uint16_t VALUE_OPS_ABI_VERSION = 1;
 
     struct ValueOps;
-    using ValueTypeBinding = TypeBinding<ValueTypeMetaData, ValueOps>;
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
     using ValueArrayElementAt = const void *(*)(const void *owner, std::size_t index);
 
@@ -121,17 +120,16 @@ namespace hgraph
         std::string (*to_string_impl)(const void *context, const void *memory) = nullptr;
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         nb::object (*to_python_impl)(const void *context, const void *memory) = nullptr;
-        void (*from_python_impl)(const void *context, const ValueTypeBinding &binding, void *memory,
+        void (*from_python_impl)(const void *context, const ValueTypeRef &binding, void *memory,
                                  nb::handle source) = nullptr;
-        nb::object (*to_python_buffer_impl)(const void *context, const ValueTypeBinding &binding,
+        nb::object (*to_python_buffer_impl)(const void *context, const ValueTypeRef &binding,
                                             const ValueArraySource &source) = nullptr;
 #endif
-        void (*copy_construct_view_impl)(const void *context, const ValueTypeBinding &binding, void *dst,
+        void (*copy_construct_view_impl)(const void *context, const ValueTypeRef &binding, void *dst,
                                          const void *memory) = nullptr;
-        void (*copy_assign_view_impl)(const void *context, const ValueTypeBinding &binding, void *dst,
+        void (*copy_assign_view_impl)(const void *context, const ValueTypeRef &binding, void *dst,
                                       const void *memory) = nullptr;
-        const ValueTypeBinding *(*owning_binding_impl)(const void *context,
-                                                       const ValueTypeBinding &view_binding) = nullptr;
+        ValueTypeRef (*owning_type_impl)(const void *context, ValueTypeRef view_type) = nullptr;
 
         [[nodiscard]] std::size_t hash(const void *memory) const
         {
@@ -177,7 +175,7 @@ namespace hgraph
             return to_python_impl(context, memory);
         }
 
-        void from_python(const ValueTypeBinding &binding, void *memory, nb::handle source) const
+        void from_python(const ValueTypeRef &binding, void *memory, nb::handle source) const
         {
             if (from_python_impl == nullptr)
             {
@@ -186,13 +184,13 @@ namespace hgraph
             from_python_impl(context, binding, memory, source);
         }
 
-        [[nodiscard]] bool can_to_python_buffer(const ValueTypeBinding &binding) const noexcept
+        [[nodiscard]] bool can_to_python_buffer(const ValueTypeRef &binding) const noexcept
         {
-            return binding.type_meta != nullptr && binding.type_meta->is_buffer_compatible() &&
+            return binding.schema() != nullptr && binding.schema()->is_buffer_compatible() &&
                    to_python_buffer_impl != nullptr;
         }
 
-        [[nodiscard]] nb::object to_python_buffer(const ValueTypeBinding  &binding,
+        [[nodiscard]] nb::object to_python_buffer(const ValueTypeRef &binding,
                                                   const ValueArraySource &source) const
         {
             if (!can_to_python_buffer(binding))
@@ -207,18 +205,18 @@ namespace hgraph
         }
 #endif
 
-        [[nodiscard]] const ValueTypeBinding &owning_binding(const ValueTypeBinding &view_binding) const
+        [[nodiscard]] ValueTypeRef owning_type(ValueTypeRef view_type) const
         {
-            if (owning_binding_impl == nullptr) { return view_binding; }
-            const auto *result = owning_binding_impl(context, view_binding);
-            if (result == nullptr)
+            if (owning_type_impl == nullptr) { return view_type; }
+            const auto result = owning_type_impl(context, view_type);
+            if (!result)
             {
-                throw std::logic_error("ValueOps::owning_binding returned null");
+                throw std::logic_error("ValueOps::owning_type returned an unbound value type");
             }
-            return *result;
+            return result;
         }
 
-        void copy_construct_view(const ValueTypeBinding &binding, void *dst, const void *memory) const
+        void copy_construct_view(const ValueTypeRef &binding, void *dst, const void *memory) const
         {
             if (dst == nullptr) { throw std::logic_error("ValueOps::copy_construct_view requires destination memory"); }
             if (memory == nullptr) { throw std::logic_error("ValueOps::copy_construct_view requires live memory"); }
@@ -230,7 +228,7 @@ namespace hgraph
             binding.checked_plan().copy_construct(dst, memory);
         }
 
-        void copy_assign_view(const ValueTypeBinding &binding, void *dst, const void *memory) const
+        void copy_assign_view(const ValueTypeRef &binding, void *dst, const void *memory) const
         {
             if (dst == nullptr || memory == nullptr)
             {
@@ -255,6 +253,15 @@ namespace hgraph
             if (lhs == nullptr && rhs == nullptr) { return std::partial_ordering::equivalent; }
             if (lhs == nullptr) { return std::partial_ordering::less; }
             if (rhs == nullptr) { return std::partial_ordering::greater; }
+            return std::nullopt;
+        }
+
+        [[nodiscard]] inline std::optional<std::partial_ordering> null_order(ValueTypeRef lhs,
+                                                                             ValueTypeRef rhs) noexcept
+        {
+            if (!lhs && !rhs) { return std::partial_ordering::equivalent; }
+            if (!lhs) { return std::partial_ordering::less; }
+            if (!rhs) { return std::partial_ordering::greater; }
             return std::nullopt;
         }
 
@@ -467,7 +474,7 @@ namespace hgraph
         }
 
         template <typename T>
-        void from_python_thunk(const void *, const ValueTypeBinding &, void *memory, nb::handle source)
+        void from_python_thunk(const void *, const ValueTypeRef &, void *memory, nb::handle source)
         {
             if constexpr (python_scalar_castable<T>)
             {
@@ -581,7 +588,7 @@ namespace hgraph
 
         template <typename T>
         nb::object to_python_buffer_thunk(const void *,
-                                          const ValueTypeBinding &,
+                                          const ValueTypeRef &,
                                           const ValueArraySource &source)
         {
             if constexpr (detail::buffer_compatible_type<T>)

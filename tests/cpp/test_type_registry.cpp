@@ -51,7 +51,7 @@ TEST_CASE("TypeRegistry aliases reject conflicting schema bindings")
     using namespace hgraph;
     auto       &registry     = TypeRegistry::instance();
     const auto *standard_int = registry.value_type("int");
-    REQUIRE(standard_int == registry.scalar_binding<std::int64_t>()->type_meta);
+    REQUIRE(standard_int == registry.scalar_type<std::int64_t>().schema());
 
     const auto *int32_meta = registry.register_scalar<std::int32_t>("int32");
     REQUIRE(int32_meta != standard_int);

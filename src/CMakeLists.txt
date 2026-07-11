@@ -68,6 +68,7 @@ set(HGRAPH_RUNTIME_SOURCES
     hgraph/types/value/json_codec.cpp
     hgraph/types/value/table_codec.cpp
     hgraph/types/value/value_view.cpp
+    hgraph/types/value/value_type_ref.cpp
     hgraph/util/date_time.cpp
 )
 

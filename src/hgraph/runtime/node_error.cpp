@@ -36,10 +36,10 @@ namespace hgraph
     Value make_node_error_value(const NodeErrorFields &fields)
     {
         const auto *meta    = node_error_value_meta();
-        const auto *binding = ValuePlanFactory::instance().binding_for(meta);
-        if (binding == nullptr) { throw std::logic_error("NodeError: bundle schema has no canonical binding"); }
+        const auto binding = ValuePlanFactory::instance().type_for(meta);
+        if (!binding) { throw std::logic_error("NodeError: bundle schema has no canonical binding"); }
 
-        BundleBuilder builder{*binding};
+        BundleBuilder builder{binding};
         const auto    set_field = [&](std::string_view name, const std::string &text) {
             builder.set(name, Value{text});
         };

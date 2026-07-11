@@ -19,10 +19,10 @@ namespace
     Value make_mutable_set(const ValueTypeMetaData *element_meta)
     {
         const auto *schema  = TypeRegistry::instance().mutable_set(element_meta);
-        const auto *binding = ValuePlanFactory::instance().binding_for(schema);
+        const auto binding = ValuePlanFactory::instance().type_for(schema);
         REQUIRE(binding != nullptr);
-        REQUIRE(binding->ops_ref().kind == ValueOpsKind::MutableSet);
-        return Value{*binding};
+        REQUIRE(binding.ops_ref().kind == ValueOpsKind::MutableSet);
+        return Value{binding};
     }
 
     template <typename BreakHook, typename Invoke>
@@ -30,8 +30,8 @@ namespace
     {
         MutableSetValueOps ops = *checked_value_ops<MutableSetValueOps>(set.binding(), "mutable set hook test");
         break_hook(ops);
-        const ValueTypeBinding binding{set.schema(), set.binding()->plan(), &ops};
-        auto view = ValueView{&binding, const_cast<void *>(set.view().data())}.as_set().begin_mutation();
+        const ValueTypeRef binding = intern_value_type(*set.schema(), *set.binding().plan(), ops);
+        auto view = ValueView{binding, const_cast<void *>(set.view().data())}.as_set().begin_mutation();
         REQUIRE_THROWS_AS(invoke(view), std::logic_error);
     }
 }  // namespace

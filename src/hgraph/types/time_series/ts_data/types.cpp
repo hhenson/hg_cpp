@@ -445,12 +445,12 @@ namespace hgraph
         return TSDataView{root_binding, root_data};
     }
 
-    const ValueTypeBinding *FixedTSDataFieldLayout::value_binding() const noexcept
+    ValueTypeRef FixedTSDataFieldLayout::value_binding() const noexcept
     {
         return layout != nullptr ? layout->value_binding : nullptr;
     }
 
-    const ValueTypeBinding *FixedTSDataFieldLayout::delta_binding() const noexcept
+    ValueTypeRef FixedTSDataFieldLayout::delta_binding() const noexcept
     {
         return layout != nullptr ? layout->delta_binding : nullptr;
     }

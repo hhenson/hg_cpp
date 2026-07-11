@@ -26,12 +26,12 @@ namespace hgraph::stdlib
      */
 
     template <typename T>
-    [[nodiscard]] const ValueTypeBinding &scalar_value_binding()
+    [[nodiscard]] ValueTypeRef scalar_value_binding()
     {
         const auto *meta    = scalar_descriptor<std::remove_cvref_t<T>>::value_meta();
-        const auto *binding = ValuePlanFactory::instance().binding_for(meta);
+        const auto binding = ValuePlanFactory::instance().type_for(meta);
         if (binding == nullptr) { throw std::logic_error("scalar value type has no canonical binding"); }
-        return *binding;
+        return binding;
     }
 
     template <typename T, typename U>

@@ -330,10 +330,10 @@ TEST_CASE("TSOutput fixed TSB move mutation moves owned child fields")
     const auto *meta     = registry.register_scalar<MoveTrackedScalar>("MoveTrackedScalar");
     const auto *ts_meta  = registry.ts(meta);
     const auto *tsb_meta = registry.tsb("MoveTrackedBundle", {{"a", ts_meta}, {"b", ts_meta}});
-    const auto *binding  = ValuePlanFactory::instance().binding_for(tsb_meta->value_schema);
+    const auto binding  = ValuePlanFactory::instance().type_for(tsb_meta->value_schema);
     REQUIRE(binding != nullptr);
 
-    BundleBuilder builder{*binding};
+    BundleBuilder builder{binding};
     builder.set("a", Value{MoveTrackedScalar{10}});
     builder.set("b", Value{MoveTrackedScalar{20}});
     Value source = builder.build();
@@ -363,10 +363,10 @@ TEST_CASE("TSOutput dynamic TSL move mutation moves owned child fields")
     const auto *meta     = registry.register_scalar<MoveTrackedScalar>("MoveTrackedScalar");
     const auto *ts_meta  = registry.ts(meta);
     const auto *tsl_meta = registry.tsl(ts_meta, 0);
-    const auto *binding  = ValuePlanFactory::instance().binding_for(meta);
+    const auto binding  = ValuePlanFactory::instance().type_for(meta);
     REQUIRE(binding != nullptr);
 
-    ListBuilder builder{*binding};
+    ListBuilder builder{binding};
     builder.push_back(MoveTrackedScalar{10});
     builder.push_back(MoveTrackedScalar{20});
     builder.push_back(MoveTrackedScalar{30});
@@ -398,10 +398,10 @@ TEST_CASE("TSOutput TSW move mutation moves owned list elements")
     auto       &registry = TypeRegistry::instance();
     const auto *meta     = registry.register_scalar<MoveTrackedScalar>("MoveTrackedScalar");
     const auto *tsw_meta = registry.tsw(meta, 3, 1);
-    const auto *binding  = ValuePlanFactory::instance().binding_for(meta);
+    const auto binding  = ValuePlanFactory::instance().type_for(meta);
     REQUIRE(binding != nullptr);
 
-    ListBuilder builder{*binding};
+    ListBuilder builder{binding};
     builder.push_back(MoveTrackedScalar{10});
     builder.push_back(MoveTrackedScalar{20});
     builder.push_back(MoveTrackedScalar{30});
@@ -438,15 +438,15 @@ TEST_CASE("TSOutput TSS move mutation moves owned keys without removal copies")
     auto       &registry = TypeRegistry::instance();
     const auto *meta     = registry.register_scalar<TSSMoveTrackedKey>("TSSMoveTrackedKey");
     const auto *tss_meta = registry.tss(meta);
-    const auto *binding  = ValuePlanFactory::instance().binding_for(meta);
+    const auto binding  = ValuePlanFactory::instance().type_for(meta);
     REQUIRE(binding != nullptr);
 
-    SetBuilder initial_builder{*binding};
+    SetBuilder initial_builder{binding};
     initial_builder.insert(TSSMoveTrackedKey{10});
     initial_builder.insert(TSSMoveTrackedKey{99});
     Value initial = initial_builder.build();
 
-    SetBuilder source_builder{*binding};
+    SetBuilder source_builder{binding};
     source_builder.insert(TSSMoveTrackedKey{10});
     source_builder.insert(TSSMoveTrackedKey{20});
     Value source = source_builder.build();
@@ -487,17 +487,17 @@ TEST_CASE("TSOutput TSD move mutation moves keys and child values without remova
     const auto *value_meta = registry.register_scalar<MoveTrackedScalar>("MoveTrackedScalar");
     const auto *ts_value = registry.ts(value_meta);
     const auto *tsd_meta = registry.tsd(key_meta, ts_value);
-    const auto *key_binding = ValuePlanFactory::instance().binding_for(key_meta);
-    const auto *value_binding = ValuePlanFactory::instance().binding_for(value_meta);
+    const auto key_binding = ValuePlanFactory::instance().type_for(key_meta);
+    const auto value_binding = ValuePlanFactory::instance().type_for(value_meta);
     REQUIRE(key_binding != nullptr);
     REQUIRE(value_binding != nullptr);
 
-    MapBuilder initial_builder{*key_binding, *value_binding};
+    MapBuilder initial_builder{key_binding, value_binding};
     initial_builder.set_item(TSSMoveTrackedKey{10}, MoveTrackedScalar{1});
     initial_builder.set_item(TSSMoveTrackedKey{99}, MoveTrackedScalar{99});
     Value initial = initial_builder.build();
 
-    MapBuilder source_builder{*key_binding, *value_binding};
+    MapBuilder source_builder{key_binding, value_binding};
     source_builder.set_item(TSSMoveTrackedKey{10}, MoveTrackedScalar{100});
     source_builder.set_item(TSSMoveTrackedKey{20}, MoveTrackedScalar{200});
     Value source = source_builder.build();

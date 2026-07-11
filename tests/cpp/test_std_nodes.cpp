@@ -42,9 +42,9 @@ namespace
 
     Value make_const_pair_value(Int left, Int right)
     {
-        const auto *binding = ValuePlanFactory::instance().binding_for(
+        const auto binding = ValuePlanFactory::instance().type_for(
             value_schema_descriptor<ConstPairValue>::value_meta());
-        BundleBuilder builder{*binding};
+        BundleBuilder builder{binding};
         Value         left_value{left};
         Value         right_value{right};
         builder.set("left", left_value.view());

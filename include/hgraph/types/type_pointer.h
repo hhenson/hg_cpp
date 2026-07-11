@@ -13,6 +13,7 @@
 
 namespace hgraph
 {
+    class ValueTypeRef;
     enum class AccessMode : std::uintptr_t
     {
         ReadOnly = 0,
@@ -92,6 +93,7 @@ namespace hgraph
 
     private:
         template <TypeFamily Family, TypeRole Role> friend class TypedPtr;
+        friend class ValueTypeRef;
         friend struct detail::TypePointerLayoutAccess;
 
         constexpr AnyPtr(const TypeRecord *record, const void *data, AccessMode access) noexcept
@@ -210,6 +212,8 @@ namespace hgraph
         }
 
     private:
+        friend class ValueTypeRef;
+
         struct UncheckedTag
         {
         };

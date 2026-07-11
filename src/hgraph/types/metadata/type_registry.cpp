@@ -311,7 +311,7 @@ namespace hgraph
             return enum_to_python_slot()(meta, *static_cast<const Int *>(memory));
         }
 
-        void enum_from_python(const void *context, const ValueTypeBinding &, void *memory, nanobind::handle source)
+        void enum_from_python(const void *context, const ValueTypeRef &, void *memory, nanobind::handle source)
         {
             const auto *meta = static_cast<const ValueTypeMetaData *>(context);
             if (enum_from_python_slot() == nullptr)
@@ -417,9 +417,7 @@ namespace hgraph
         // Pair with the Int plan + this enum's ops so Value/TS machinery
         // resolves uniformly (the register_scalar pattern for a nominal type).
         const auto &plan = MemoryUtils::plan_for<Int>();
-        ValuePlanFactory::instance().register_atomic(&meta, &plan);
-        const ValueTypeBinding &binding = ValueTypeBinding::intern(meta, plan, enum_ops_for(&meta));
-        ValuePlanFactory::instance().register_binding(binding);
+        ValuePlanFactory::instance().register_atomic(&meta, &plan, &enum_ops_for(&meta));
         return &meta;
     }
 
@@ -573,11 +571,11 @@ namespace hgraph
                                                                 ValueTypeFlags flags,
                                                                 const MemoryUtils::StoragePlan *canonical_plan)
     {
+        (void)canonical_plan;
         const ValueTypeMetaData &meta = scalar_cache_.intern(type_key, [&]() {
             return ValueTypeMetaData(ValueTypeKind::Atomic, flags, store_name_interned(name));
         });
         register_value_alias(name, &meta);
-        ValuePlanFactory::instance().register_atomic(&meta, canonical_plan);
         return &meta;
     }
 
@@ -752,10 +750,8 @@ namespace hgraph
         // element-agnostic). Re-registered every call so it self-heals across
         // a registry reset (the meta is interned once; the plan/binding caches
         // clear on reset).
-        const auto *base_binding = ValuePlanFactory::instance().binding_for(base);
-        ValuePlanFactory::instance().register_atomic(&meta, base_binding->plan());
-        ValuePlanFactory::instance().register_binding(
-            ValueTypeBinding::intern(meta, *base_binding->plan(), base_binding->ops_ref()));
+        const auto base_type = ValuePlanFactory::instance().type_for(base);
+        ValuePlanFactory::instance().register_atomic(&meta, base_type.plan(), base_type.ops());
         return &meta;
     }
 
@@ -785,10 +781,8 @@ namespace hgraph
         // Share the base frame storage plan + ops (arrow conversion is
         // schema-agnostic); re-registered every call so it self-heals across
         // a registry reset (the series() pattern).
-        const auto *base_binding = ValuePlanFactory::instance().binding_for(base);
-        ValuePlanFactory::instance().register_atomic(&meta, base_binding->plan());
-        ValuePlanFactory::instance().register_binding(
-            ValueTypeBinding::intern(meta, *base_binding->plan(), base_binding->ops_ref()));
+        const auto base_type = ValuePlanFactory::instance().type_for(base);
+        ValuePlanFactory::instance().register_atomic(&meta, base_type.plan(), base_type.ops());
         return &meta;
     }
 

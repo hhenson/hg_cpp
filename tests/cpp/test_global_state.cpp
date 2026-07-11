@@ -241,8 +241,8 @@ TEST_CASE("global state: a stored mutable value comes back mutable and can be ed
 
     // Build a mutable List<int> [1, 2] and stash it.
     const auto *mutable_schema  = registry.mutable_list(int_meta);
-    const auto *mutable_binding = ValuePlanFactory::instance().binding_for(mutable_schema);
-    Value       list{*mutable_binding};
+    const auto mutable_binding = ValuePlanFactory::instance().type_for(mutable_schema);
+    Value       list{mutable_binding};
     {
         auto m = list.as_list().begin_mutation();
         m.push_back(Value{std::int32_t{1}}.view());
@@ -271,8 +271,8 @@ TEST_CASE("global state: a stored immutable value stays read-only")
 
     // An immutable (compact) list — its ops do not opt into mutation.
     const auto *immutable_schema  = registry.list(int_meta);
-    const auto *immutable_binding = ValuePlanFactory::instance().binding_for(immutable_schema);
-    Value       list{*immutable_binding};
+    const auto immutable_binding = ValuePlanFactory::instance().type_for(immutable_schema);
+    Value       list{immutable_binding};
 
     GlobalState gs;
     gs.view().set("frozen", list);

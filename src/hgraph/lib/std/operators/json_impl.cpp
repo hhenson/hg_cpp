@@ -54,9 +54,9 @@ namespace hgraph::stdlib::json_tree
 
     const ValueTypeMetaData *json_meta() { return TypeRegistry::instance().json(); }
 
-    const ValueTypeBinding &json_value_binding()
+    ValueTypeRef json_value_binding()
     {
-        return *ValuePlanFactory::instance().binding_for(json_meta());
+        return ValuePlanFactory::instance().type_for(json_meta());
     }
 
     bool is_json_ts(const TSValueTypeMetaData *ts) noexcept
@@ -155,7 +155,7 @@ namespace hgraph::stdlib::json_tree
                 return box(items.build());
             }
             case ValueTypeKind::Map: {
-                MapBuilder entries{*ValuePlanFactory::instance().binding_for(
+                MapBuilder entries{ValuePlanFactory::instance().type_for(
                                        scalar_descriptor<Str>::value_meta()),
                                    json_value_binding()};
                 for (const auto [key, item] : value.as_map())
@@ -335,7 +335,7 @@ namespace hgraph::stdlib::json_tree
                 return box(items.build());
             }
             case simdjson::dom::element_type::OBJECT: {
-                MapBuilder entries{*ValuePlanFactory::instance().binding_for(
+                MapBuilder entries{ValuePlanFactory::instance().type_for(
                                        scalar_descriptor<Str>::value_meta()),
                                    json_value_binding()};
                 for (simdjson::dom::key_value_pair field : simdjson::dom::object(element))

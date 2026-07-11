@@ -215,7 +215,7 @@ TEST_CASE("lifecycle observers: registration order and start/stop/evaluate seque
 
     stdlib::register_standard_operators();
     auto       &registry     = TypeRegistry::instance();
-    const auto *int_meta     = registry.scalar_binding<Int>()->type_meta;
+    const auto *int_meta     = registry.scalar_type<Int>().schema();
     const auto *ts_int       = registry.ts(int_meta);
     const auto *input_schema = registry.tsb("LifecycleSeqInput", {{"value", ts_int}});
 

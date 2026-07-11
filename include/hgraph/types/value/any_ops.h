@@ -20,15 +20,15 @@ namespace hgraph
     [[nodiscard]] const ValueOps &any_ops() noexcept;
 
     /**
-     * The canonical interned ``ValueTypeBinding`` for the ``Any`` schema:
+     * The canonical interned ``ValueTypeRef`` for the ``Any`` schema:
      * ``(registry.any(), plan_for<Value>, any_ops())``. Use it to construct
      * a ``Value`` whose kind is ``Any``.
      */
-    [[nodiscard]] const ValueTypeBinding &any_binding();
+    [[nodiscard]] ValueTypeRef any_type();
 
     /** Meta-preserving form: a JSON-named Any schema keeps its identity
         while sharing the Any plan + ops. */
-    [[nodiscard]] const ValueTypeBinding &any_binding(const ValueTypeMetaData &meta);
+    [[nodiscard]] ValueTypeRef any_type(const ValueTypeMetaData &meta);
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_VALUE_ANY_OPS_H

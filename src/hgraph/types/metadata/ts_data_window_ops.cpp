@@ -40,9 +40,9 @@ namespace hgraph::ts_data_plan_factory_detail
         class TSWindowStorageCore
         {
           public:
-            TSWindowStorageCore(const ValueTypeBinding &time_binding, const ValueTypeBinding &element_binding)
-                : time_binding_(&time_binding),
-                  element_binding_(&element_binding)
+            TSWindowStorageCore(const ValueTypeRef &time_binding, const ValueTypeRef &element_binding)
+                : time_binding_(time_binding),
+                  element_binding_(element_binding)
             {}
 
             TSWindowStorageCore(const TSWindowStorageCore &other)
@@ -113,8 +113,8 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] std::size_t size() const noexcept { return size_; }
             [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
-            [[nodiscard]] const ValueTypeBinding &time_binding() const { return *time_binding_; }
-            [[nodiscard]] const ValueTypeBinding &element_binding() const { return *element_binding_; }
+            [[nodiscard]] ValueTypeRef time_binding() const { return time_binding_; }
+            [[nodiscard]] ValueTypeRef element_binding() const { return element_binding_; }
 
             /** The element most recently evicted by a push (hgraph's
                 removed_value) and the evaluation time it fell out. */
@@ -223,13 +223,13 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] std::size_t time_stride() const noexcept
             {
-                const auto *plan = time_binding_ != nullptr ? time_binding_->plan() : nullptr;
+                const auto *plan = time_binding_ ? time_binding_.plan() : nullptr;
                 return plan != nullptr ? align_up(plan->layout.size, plan->layout.alignment) : 0;
             }
 
             [[nodiscard]] std::size_t value_stride() const noexcept
             {
-                const auto *plan = element_binding_ != nullptr ? element_binding_->plan() : nullptr;
+                const auto *plan = element_binding_ ? element_binding_.plan() : nullptr;
                 return plan != nullptr ? align_up(plan->layout.size, plan->layout.alignment) : 0;
             }
 
@@ -266,11 +266,11 @@ namespace hgraph::ts_data_plan_factory_detail
             void validate_source(const ValueView &source) const
             {
                 if (!source.has_value()) { throw std::invalid_argument("TSW push requires a live source value"); }
-                if (source.schema() != element_binding().type_meta)
+                if (source.schema() != element_binding().schema())
                 {
                     throw std::invalid_argument("TSW push requires the window element schema");
                 }
-                if (source.binding() == nullptr || source.binding()->plan() != element_binding().plan())
+                if (!source.binding() || source.binding().plan() != element_binding().plan())
                 {
                     throw std::invalid_argument("TSW push requires a source with the element storage plan");
                 }
@@ -444,8 +444,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 capacity_    = 0;
             }
 
-            const ValueTypeBinding *time_binding_{nullptr};
-            const ValueTypeBinding *element_binding_{nullptr};
+            ValueTypeRef time_binding_{nullptr};
+            ValueTypeRef element_binding_{nullptr};
             std::byte              *time_bytes_{nullptr};
             std::byte              *value_bytes_{nullptr};
             std::size_t             capacity_{0};
@@ -458,8 +458,8 @@ namespace hgraph::ts_data_plan_factory_detail
         class SizeTSWindowStorage final : public TSWindowStorageCore
         {
           public:
-            SizeTSWindowStorage(const ValueTypeBinding &time_binding,
-                                const ValueTypeBinding &element_binding,
+            SizeTSWindowStorage(const ValueTypeRef &time_binding,
+                                const ValueTypeRef &element_binding,
                                 std::size_t period)
                 : TSWindowStorageCore(time_binding, element_binding),
                   period_(period)
@@ -541,8 +541,8 @@ namespace hgraph::ts_data_plan_factory_detail
         class TimeTSWindowStorage final : public TSWindowStorageCore
         {
           public:
-            TimeTSWindowStorage(const ValueTypeBinding &time_binding,
-                                const ValueTypeBinding &element_binding,
+            TimeTSWindowStorage(const ValueTypeRef &time_binding,
+                                const ValueTypeRef &element_binding,
                                 TimeDelta time_range)
                 : TSWindowStorageCore(time_binding, element_binding),
                   time_range_(time_range)
@@ -613,15 +613,15 @@ namespace hgraph::ts_data_plan_factory_detail
 
         struct SizeWindowStoragePlanContext
         {
-            const ValueTypeBinding *time_binding{nullptr};
-            const ValueTypeBinding *element_binding{nullptr};
+            ValueTypeRef time_binding{nullptr};
+            ValueTypeRef element_binding{nullptr};
             std::size_t             period{0};
         };
 
         struct TimeWindowStoragePlanContext
         {
-            const ValueTypeBinding *time_binding{nullptr};
-            const ValueTypeBinding *element_binding{nullptr};
+            ValueTypeRef time_binding{nullptr};
+            ValueTypeRef element_binding{nullptr};
             TimeDelta     time_range{};
         };
 
@@ -645,7 +645,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 throw std::logic_error("TSW storage element binding is not resolved");
             }
-            std::construct_at(static_cast<SizeTSWindowStorage *>(dst), *state.time_binding, *state.element_binding,
+            std::construct_at(static_cast<SizeTSWindowStorage *>(dst), state.time_binding, state.element_binding,
                               state.period);
         }
 
@@ -660,7 +660,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 throw std::logic_error("TSW storage element binding is not resolved");
             }
-            std::construct_at(static_cast<TimeTSWindowStorage *>(dst), *state.time_binding, *state.element_binding,
+            std::construct_at(static_cast<TimeTSWindowStorage *>(dst), state.time_binding, state.element_binding,
                               state.time_range);
         }
 
@@ -714,16 +714,16 @@ namespace hgraph::ts_data_plan_factory_detail
             return mutex;
         }
 
-        [[nodiscard]] const ValueTypeBinding &window_time_binding()
+        [[nodiscard]] ValueTypeRef window_time_binding()
         {
             auto       &registry  = TypeRegistry::instance();
             const auto *time_meta = registry.register_scalar<DateTime>("datetime");
-            const auto *binding   = ValuePlanFactory::instance().binding_for(time_meta);
-            if (binding == nullptr)
+            const auto binding   = ValuePlanFactory::instance().type_for(time_meta);
+            if (!binding)
             {
                 throw std::logic_error("TSDataPlanFactory: TSW time binding is not resolved");
             }
-            return *binding;
+            return binding;
         }
 
         template <typename Storage>
@@ -754,7 +754,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     throw std::logic_error("TSDataPlanFactory: TSW value schema is not resolved");
                 }
-                layout->value_binding = &ValueTypeBinding::intern(*schema->value_schema, *value_plan, value_ops);
+                layout->value_binding = intern_value_type(*schema->value_schema, *value_plan, value_ops);
             }
         };
 
@@ -763,8 +763,8 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             void initialise_common(const TSValueTypeMetaData &schema_,
                                    const MemoryUtils::StoragePlan &value_plan_,
-                                   const ValueTypeBinding &time_binding,
-                                   const ValueTypeBinding &element_binding,
+                                   const ValueTypeRef &time_binding,
+                                   const ValueTypeRef &element_binding,
                                    TSWDataLayout &layout_,
                                    std::size_t value_offset,
                                    std::size_t tracking_offset)
@@ -773,11 +773,11 @@ namespace hgraph::ts_data_plan_factory_detail
                 value_plan = &value_plan_;
                 layout     = &layout_;
 
-                layout->element_binding = &element_binding;
-                layout->time_binding    = &time_binding;
+                layout->element_binding = element_binding;
+                layout->time_binding    = time_binding;
                 layout->value_offset    = value_offset;
                 layout->tracking_offset = tracking_offset;
-                layout->delta_binding   = &element_binding;
+                layout->delta_binding   = element_binding;
 
                 configure_ts_ops();
                 configure_value_ops();
@@ -851,7 +851,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     &window_value_make_range,
                     nullptr,
                 };
-                value_ops.owning_binding_impl      = &window_value_owning_binding;
+                value_ops.owning_type_impl      = &window_value_owning_binding;
                 value_ops.copy_construct_view_impl = &window_value_copy_construct_view;
                 value_ops.copy_assign_view_impl    = &window_value_copy_assign_view;
             }
@@ -866,10 +866,10 @@ namespace hgraph::ts_data_plan_factory_detail
                 return ctx(context)->layout;
             }
 
-            [[nodiscard]] static const ValueTypeBinding *
-            window_value_owning_binding(const void *, const ValueTypeBinding &view_binding)
+            [[nodiscard]] static ValueTypeRef
+            window_value_owning_binding(const void *, ValueTypeRef view_binding)
             {
-                const auto *binding = ValuePlanFactory::instance().binding_for(view_binding.type_meta);
+                const auto binding = ValuePlanFactory::instance().type_for(view_binding.schema());
                 if (binding == nullptr)
                 {
                     throw std::logic_error("TSW value surface has no canonical owning binding");
@@ -1003,7 +1003,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] static nb::object window_to_python(const void *context, const void *memory)
             {
-                return ctx(context)->layout->value_binding->ops_ref().to_python(window_value_memory(context, memory));
+                return ctx(context)->layout->value_binding.ops_ref().to_python(window_value_memory(context, memory));
             }
 
             [[nodiscard]] static nb::object window_delta_to_python(const void *context,
@@ -1013,7 +1013,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (window_tracking(context, memory)->last_modified_time != evaluation_time) { return nb::none(); }
                 const auto *delta = window_delta_memory(context, memory);
                 if (delta == nullptr) { return nb::none(); }
-                return ctx(context)->layout->delta_binding->ops_ref().to_python(delta);
+                return ctx(context)->layout->delta_binding.ops_ref().to_python(delta);
             }
 
             [[nodiscard]] static bool window_from_python(const void *context,
@@ -1043,9 +1043,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
 
                 const auto *state = ctx(context);
-                Value       element{*state->layout->element_binding};
-                state->layout->element_binding->ops_ref().from_python(
-                    *state->layout->element_binding,
+                Value       element{state->layout->element_binding};
+                state->layout->element_binding.ops_ref().from_python(
+                    state->layout->element_binding,
                     const_cast<void *>(element.view().data()),
                     source);
                 storage<Storage>(window_mutable_value_memory(context, memory)).push(element.view(), modified_time);
@@ -1065,7 +1065,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return storage<Storage>(memory).element_at(index);
             }
 
-            [[nodiscard]] static const ValueTypeBinding *window_value_element_binding(const void *context,
+            [[nodiscard]] static ValueTypeRef window_value_element_binding(const void *context,
                                                                                       const void *,
                                                                                       std::size_t) noexcept
             {
@@ -1090,15 +1090,15 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void window_value_copy_construct_view(const void *context,
-                                                         const ValueTypeBinding &binding,
+                                                         const ValueTypeRef &binding,
                                                          void *dst,
                                                          const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::List)
+                if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::List)
                 {
                     throw std::logic_error("TSW value copy requires a canonical list binding");
                 }
-                if (binding.type_meta->fixed_size == 0)
+                if (binding.schema()->fixed_size == 0)
                 {
                     auto storage = build_dynamic_list_storage(context, binding, memory);
                     std::construct_at(static_cast<ListStorage *>(dst), std::move(storage));
@@ -1113,15 +1113,15 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void window_value_copy_assign_view(const void *context,
-                                                      const ValueTypeBinding &binding,
+                                                      const ValueTypeRef &binding,
                                                       void *dst,
                                                       const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::List)
+                if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::List)
                 {
                     throw std::logic_error("TSW value copy requires a canonical list binding");
                 }
-                if (binding.type_meta->fixed_size == 0)
+                if (binding.schema()->fixed_size == 0)
                 {
                     *static_cast<ListStorage *>(dst) = build_dynamic_list_storage(context, binding, memory);
                     return;
@@ -1130,10 +1130,10 @@ namespace hgraph::ts_data_plan_factory_detail
                 assign_fixed_list_storage(context, binding, dst, memory);
             }
 
-            [[nodiscard]] static const ValueTypeBinding *
-            window_value_element_owning_binding(const TSWContextBase *state, const ValueTypeBinding &binding)
+            [[nodiscard]] static ValueTypeRef
+            window_value_element_owning_binding(const TSWContextBase *state, const ValueTypeRef &binding)
             {
-                const auto *element_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                const auto element_binding = ValuePlanFactory::instance().type_for(binding.schema()->element_type);
                 if (element_binding == nullptr || element_binding != state->layout->element_binding)
                 {
                     throw std::logic_error("TSW value copy element binding is not resolved");
@@ -1142,12 +1142,12 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             [[nodiscard]] static ListStorage build_dynamic_list_storage(const void *context,
-                                                                        const ValueTypeBinding &binding,
+                                                                        const ValueTypeRef &binding,
                                                                         const void *memory)
             {
                 const auto *state = ctx(context);
-                const auto *element_binding = window_value_element_owning_binding(state, binding);
-                ListBuilder builder{*element_binding};
+                const auto element_binding = window_value_element_owning_binding(state, binding);
+                ListBuilder builder{element_binding};
                 for (const auto element : window_value_make_range(context, memory))
                 {
                     builder.push_back_copy(element.data());
@@ -1156,28 +1156,28 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void assign_fixed_list_storage(const void *context,
-                                                  const ValueTypeBinding &binding,
+                                                  const ValueTypeRef &binding,
                                                   void *dst,
                                                   const void *memory)
             {
                 const auto *state = ctx(context);
-                const auto *element_binding = window_value_element_owning_binding(state, binding);
+                const auto element_binding = window_value_element_owning_binding(state, binding);
                 const auto &plan = binding.checked_plan();
-                if (!plan.is_array() || plan.array_count() != binding.type_meta->fixed_size)
+                if (!plan.is_array() || plan.array_count() != binding.schema()->fixed_size)
                 {
                     throw std::logic_error("TSW fixed value copy requires a matching array plan");
                 }
 
                 const auto &element_plan = plan.array_element_plan();
                 const auto count = window_value_size(context, memory);
-                if (count > binding.type_meta->fixed_size)
+                if (count > binding.schema()->fixed_size)
                 {
                     throw std::logic_error("TSW fixed value copy source exceeds declared fixed size");
                 }
 
                 auto *bytes = static_cast<std::byte *>(dst);
-                Value default_element{*element_binding};
-                for (std::size_t index = 0; index < binding.type_meta->fixed_size; ++index)
+                Value default_element{element_binding};
+                for (std::size_t index = 0; index < binding.schema()->fixed_size; ++index)
                 {
                     const void *source = index < count ? window_value_element_at(context, memory, index)
                                                        : default_element.view().data();
@@ -1188,7 +1188,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::size_t window_value_hash(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                const auto &ops   = state->layout->element_binding->ops_ref();
+                const auto &ops   = state->layout->element_binding.ops_ref();
                 std::size_t seed  = 0;
                 for (std::size_t index = 0; index < storage<Storage>(memory).size(); ++index)
                 {
@@ -1207,7 +1207,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     const auto &a     = storage<Storage>(lhs);
                     const auto &b     = storage<Storage>(rhs);
                     if (a.size() != b.size()) { return false; }
-                    const auto &ops = state->layout->element_binding->ops_ref();
+                    const auto &ops = state->layout->element_binding.ops_ref();
                     for (std::size_t index = 0; index < a.size(); ++index)
                     {
                         if (!ops.equals(a.element_at(index), b.element_at(index))) { return false; }
@@ -1226,7 +1226,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     const auto *state = ctx(context);
                     const auto &a     = storage<Storage>(lhs);
                     const auto &b     = storage<Storage>(rhs);
-                    const auto &ops   = state->layout->element_binding->ops_ref();
+                    const auto &ops   = state->layout->element_binding.ops_ref();
                     const auto  count = std::min(a.size(), b.size());
                     for (std::size_t index = 0; index < count; ++index)
                     {
@@ -1243,7 +1243,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 if (memory == nullptr) { return {}; }
                 const auto *state = ctx(context);
-                const auto &ops   = state->layout->element_binding->ops_ref();
+                const auto &ops   = state->layout->element_binding.ops_ref();
                 fmt::memory_buffer out;
                 fmt::format_to(std::back_inserter(out), "[");
                 for (std::size_t index = 0; index < storage<Storage>(memory).size(); ++index)
@@ -1261,8 +1261,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 if (memory == nullptr) { throw std::runtime_error("TSW value to_python requires live storage"); }
                 const auto *state = ctx(context);
-                const auto &ops   = state->layout->element_binding->ops_ref();
-                const auto &binding = *state->layout->element_binding;
+                const auto &ops   = state->layout->element_binding.ops_ref();
+                const auto binding = state->layout->element_binding;
                 const auto &window = storage<Storage>(memory);
                 if (ops.can_to_python_buffer(binding))
                 {
@@ -1295,8 +1295,8 @@ namespace hgraph::ts_data_plan_factory_detail
 
             SizeTSWContext(const TSValueTypeMetaData &schema,
                            const MemoryUtils::StoragePlan &value_plan,
-                           const ValueTypeBinding &time_binding,
-                           const ValueTypeBinding &element_binding,
+                           const ValueTypeRef &time_binding,
+                           const ValueTypeRef &element_binding,
                            std::size_t value_offset,
                            std::size_t tracking_offset)
             {
@@ -1348,8 +1348,8 @@ namespace hgraph::ts_data_plan_factory_detail
 
             TimeTSWContext(const TSValueTypeMetaData &schema,
                            const MemoryUtils::StoragePlan &value_plan,
-                           const ValueTypeBinding &time_binding,
-                           const ValueTypeBinding &element_binding,
+                           const ValueTypeRef &time_binding,
+                           const ValueTypeRef &element_binding,
                            std::size_t value_offset,
                            std::size_t tracking_offset)
             {
@@ -1447,12 +1447,12 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             throw std::logic_error("TSDataPlanFactory: TSW storage requires a TSW schema");
         }
-        const auto *element_binding = ValuePlanFactory::instance().binding_for(schema.value_type);
-        if (element_binding == nullptr)
+        const auto element_binding = ValuePlanFactory::instance().type_for(schema.value_type);
+        if (!element_binding)
         {
             throw std::logic_error("TSDataPlanFactory: TSW element binding is not resolved");
         }
-        const auto &time_binding = window_time_binding();
+        const auto time_binding = window_time_binding();
 
         std::lock_guard<std::mutex> lock(window_plan_mutex());
         auto                       &entries = window_plan_entries();
@@ -1462,7 +1462,7 @@ namespace hgraph::ts_data_plan_factory_detail
         if (schema.is_duration_based())
         {
             entry->context = TimeWindowStoragePlanContext{
-                .time_binding    = &time_binding,
+                .time_binding    = time_binding,
                 .element_binding = element_binding,
                 .time_range      = schema.time_range(),
             };
@@ -1484,7 +1484,7 @@ namespace hgraph::ts_data_plan_factory_detail
         else
         {
             entry->context = SizeWindowStoragePlanContext{
-                .time_binding    = &time_binding,
+                .time_binding    = time_binding,
                 .element_binding = element_binding,
                 .period          = schema.period(),
             };
@@ -1520,12 +1520,12 @@ namespace hgraph::ts_data_plan_factory_detail
                                                       std::size_t value_offset,
                                                       std::size_t tracking_offset)
     {
-        const auto *element_binding = ValuePlanFactory::instance().binding_for(schema.value_type);
-        if (element_binding == nullptr)
+        const auto element_binding = ValuePlanFactory::instance().type_for(schema.value_type);
+        if (!element_binding)
         {
             throw std::logic_error("TSDataPlanFactory: TSW element binding is not resolved");
         }
-        const auto &time_binding = window_time_binding();
+        const auto time_binding = window_time_binding();
 
         std::lock_guard<std::mutex> lock(window_context_mutex());
         auto                       &contexts = window_contexts();
@@ -1541,12 +1541,12 @@ namespace hgraph::ts_data_plan_factory_detail
         std::unique_ptr<TSWContextCommon> context;
         if (schema.is_duration_based())
         {
-            context = std::make_unique<TimeTSWContext>(schema, *window_component->plan, time_binding, *element_binding,
+            context = std::make_unique<TimeTSWContext>(schema, *window_component->plan, time_binding, element_binding,
                                                        value_offset, tracking_offset);
         }
         else
         {
-            context = std::make_unique<SizeTSWContext>(schema, *window_component->plan, time_binding, *element_binding,
+            context = std::make_unique<SizeTSWContext>(schema, *window_component->plan, time_binding, element_binding,
                                                        value_offset, tracking_offset);
         }
         auto *result = context.get();

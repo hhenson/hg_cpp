@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -14,6 +15,20 @@
 
 namespace
 {
+    struct NoDefaultTSInputSnapshot
+    {
+        explicit NoDefaultTSInputSnapshot(std::int32_t value_) : value{value_} {}
+        NoDefaultTSInputSnapshot() = delete;
+        auto operator<=>(const NoDefaultTSInputSnapshot &) const = default;
+
+        std::int32_t value;
+    };
+
+    std::ostream &operator<<(std::ostream &out, const NoDefaultTSInputSnapshot &value)
+    {
+        return out << value.value;
+    }
+
     struct RecordingNotifiable : hgraph::Notifiable
     {
         std::vector<hgraph::DateTime> notified{};
@@ -312,7 +327,7 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
     REQUIRE(bundle_modified_items.size() == 1);
     REQUIRE(std::string{bundle_modified_items[0].first} == "items");
     REQUIRE(input_root.value().is_bundle());
-    REQUIRE(input_root.value().binding()->ops_ref().kind == ValueOpsKind::Indexed);
+    REQUIRE(input_root.value().binding().ops_ref().kind == ValueOpsKind::Indexed);
 
     REQUIRE(items.binding() != nullptr);
     REQUIRE(items.valid());
@@ -418,6 +433,232 @@ TEST_CASE("TSInput data views project non-peered prefixes")
     auto second_child = list_data[1];
     REQUIRE_FALSE(second_child.valid());
     REQUIRE(second_child.schema() == ts_int);
+}
+
+TEST_CASE("TSInput projected bundle snapshots own canonical storage and preserve holes")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts_int = registry.ts(int_meta);
+    const auto *root = registry.tsb("TSInputOwnedSparseBundle", {{"present", ts_int}, {"hole", ts_int}});
+    const auto annotation = TSEndpointSchema::non_peered(
+        root, {TSEndpointSchema::peered(ts_int), TSEndpointSchema::peered(ts_int)});
+
+    Value current;
+    Value cloned;
+    Value delta;
+    Value delta_clone;
+    {
+        TSOutput output{*ts_int};
+        TSInput input{TSInputBuilderFactory::checked_builder_for(*root, annotation)};
+        const auto t1 = MIN_ST + TimeDelta{45};
+        set_output(output, 41, t1);
+
+        auto root_view = input.view(nullptr, t1);
+        auto bundle = root_view.as_bundle();
+        bundle.field("present").bind_output(output.view(t1));
+        current = Value{root_view.value()};
+        cloned = root_view.value().clone();
+        delta = Value{root_view.delta_value()};
+        delta_clone = root_view.delta_value().clone();
+    }
+
+    const auto current_type = ValuePlanFactory::instance().type_for(root->value_schema);
+    const auto delta_type = ValuePlanFactory::instance().type_for(root->delta_value_schema);
+    REQUIRE(current.binding() == current_type);
+    REQUIRE(cloned.binding() == current_type);
+    REQUIRE(delta.binding() == delta_type);
+    REQUIRE(delta_clone.binding() == delta_type);
+    REQUIRE(current.view().equals(cloned.view()));
+    REQUIRE(current.view().hash() == cloned.view().hash());
+    REQUIRE(delta.view().equals(delta_clone.view()));
+    REQUIRE(delta.view().hash() == delta_clone.view().hash());
+    for (Value *snapshot : {&current, &cloned})
+    {
+        auto bundle = snapshot->view().as_bundle();
+        REQUIRE(bundle.at("present").checked_as<std::int32_t>() == 41);
+        REQUIRE(bundle.at("hole").bound());
+        REQUIRE_FALSE(bundle.at("hole").has_value());
+    }
+    auto delta_bundle = delta.view().as_bundle();
+    REQUIRE(delta_bundle.at("present").checked_as<std::int32_t>() == 41);
+    REQUIRE(delta_bundle.at("hole").bound());
+    REQUIRE_FALSE(delta_bundle.at("hole").has_value());
+}
+
+TEST_CASE("TSInput projected fixed-list and delta snapshots own canonical storage")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts_int = registry.ts(int_meta);
+    const auto *list = registry.tsl(ts_int, 2);
+    const auto *root = registry.tsb("TSInputOwnedFixedList", {{"items", list}});
+    const auto annotation = TSEndpointSchema::non_peered(
+        root, {TSEndpointSchema::non_peered_list(list, TSEndpointSchema::peered(ts_int))});
+
+    Value current;
+    Value cloned;
+    Value delta;
+    Value delta_clone;
+    Value keys;
+    {
+        TSOutput first{*ts_int};
+        TSInput input{TSInputBuilderFactory::checked_builder_for(*root, annotation)};
+        const auto t1 = MIN_ST + TimeDelta{46};
+        set_output(first, 10, t1);
+
+        auto root_view = input.view(nullptr, t1);
+        auto root_bundle = root_view.as_bundle();
+        auto items = root_bundle.field("items");
+        auto list_view = items.as_list();
+        list_view[0].bind_output(first.view(t1));
+
+        auto projected = items.value().as_list();
+        REQUIRE(projected.at(0).checked_as<std::int32_t>() == 10);
+        REQUIRE(projected.at(1).bound());
+        REQUIRE_FALSE(projected.at(1).has_value());
+
+        current = Value{items.value()};
+        cloned = items.value().clone();
+        auto delta_view = items.delta_value();
+        delta = Value{delta_view};
+        delta_clone = delta_view.clone();
+        auto delta_map = delta_view.as_map();
+        keys = delta_map.key_set().clone();
+    }
+
+    const auto current_type = ValuePlanFactory::instance().type_for(list->value_schema);
+    const auto delta_type = ValuePlanFactory::instance().type_for(list->delta_value_schema);
+    const auto key_set_type = ValuePlanFactory::instance().type_for(
+        TypeRegistry::instance().set(list->delta_value_schema->key_type));
+    REQUIRE(current.binding() == current_type);
+    REQUIRE(cloned.binding() == current_type);
+    REQUIRE(delta.binding() == delta_type);
+    REQUIRE(delta_clone.binding() == delta_type);
+    REQUIRE(keys.binding() == key_set_type);
+    REQUIRE(current.view().equals(cloned.view()));
+    REQUIRE(current.view().hash() == cloned.view().hash());
+    REQUIRE(delta.view().equals(delta_clone.view()));
+    REQUIRE(delta.view().hash() == delta_clone.view().hash());
+    for (Value *snapshot : {&current, &cloned})
+    {
+        auto values = snapshot->view().as_list();
+        REQUIRE(values.at(0).checked_as<std::int32_t>() == 10);
+        REQUIRE(values.at(1).checked_as<std::int32_t>() == 0);
+    }
+
+    const auto key_type = ValuePlanFactory::instance().type_for(list->delta_value_schema->key_type);
+    Value key_zero{key_type};
+    Value key_one{key_type};
+    key_zero.begin_mutation().set(Int{0});
+    key_one.begin_mutation().set(Int{1});
+    for (Value *snapshot : {&delta, &delta_clone})
+    {
+        auto map = snapshot->view().as_map();
+        REQUIRE(map.size() == 1);
+        REQUIRE(map.at(key_zero.view()).checked_as<std::int32_t>() == 10);
+        REQUIRE_FALSE(map.contains(key_one.view()));
+    }
+    auto key_set = keys.view().as_set();
+    REQUIRE(key_set.size() == 1);
+    REQUIRE(key_set.contains(key_zero.view()));
+    REQUIRE_FALSE(key_set.contains(key_one.view()));
+}
+
+TEST_CASE("TSInput projected fixed-list snapshot rejects unsupported default fill")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *value_meta = registry.register_scalar<NoDefaultTSInputSnapshot>("NoDefaultTSInputSnapshot");
+    const auto *ts_value = registry.ts(value_meta);
+    const auto *list = registry.tsl(ts_value, 1);
+    const auto *root = registry.tsb("TSInputNoDefaultFixedList", {{"items", list}});
+    const auto annotation = TSEndpointSchema::non_peered(
+        root, {TSEndpointSchema::non_peered_list(list, TSEndpointSchema::peered(ts_value))});
+
+    TSInput input{TSInputBuilderFactory::checked_builder_for(*root, annotation)};
+    auto root_view = input.view(nullptr, MIN_ST + TimeDelta{47});
+    auto root_bundle = root_view.as_bundle();
+    auto items = root_bundle.field("items");
+    auto projected = items.value().as_list();
+    REQUIRE(projected.at(0).bound());
+    REQUIRE_FALSE(projected.at(0).has_value());
+    REQUIRE_THROWS_AS(Value{items.value()}, std::logic_error);
+    REQUIRE_THROWS_AS(items.value().clone(), std::logic_error);
+}
+
+TEST_CASE("TSInput projected owned children use their nonzero child storage offsets")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts_int = registry.ts(int_meta);
+    const auto *root = registry.tsb(
+        "TSInputOwnedChildOffsets", {{"first", ts_int}, {"second", ts_int}, {"third", ts_int}});
+    const auto annotation = TSEndpointSchema::non_peered(
+        root,
+        {TSEndpointSchema::owned(ts_int), TSEndpointSchema::owned(ts_int), TSEndpointSchema::owned(ts_int)});
+
+    Value snapshot;
+    Value clone;
+    {
+        TSInput input{TSInputBuilderFactory::checked_builder_for(*root, annotation)};
+        const auto t1 = MIN_ST + TimeDelta{48};
+        auto root_view = input.view(nullptr, t1);
+        auto root_bundle = root_view.as_bundle();
+
+        const auto set_owned = [&](std::string_view name, std::int32_t value) {
+            auto child = root_bundle.field(name);
+            REQUIRE_FALSE(child.is_bindable());
+            auto &data = child.data_view();
+            Value wrapped{value};
+            auto mutation = data.begin_mutation(t1);
+            REQUIRE(mutation.copy_value_from(wrapped.view()));
+        };
+        set_owned("first", 101);
+        set_owned("second", 202);
+        set_owned("third", 303);
+
+        REQUIRE(root_bundle.field("first").value().checked_as<std::int32_t>() == 101);
+        REQUIRE(root_bundle.field("second").value().checked_as<std::int32_t>() == 202);
+        REQUIRE(root_bundle.field("third").value().checked_as<std::int32_t>() == 303);
+
+        auto current = root_view.value();
+        auto indexed = current.as_indexed_view();
+        REQUIRE(indexed.at(0).checked_as<std::int32_t>() == 101);
+        REQUIRE(indexed.at(1).checked_as<std::int32_t>() == 202);
+        REQUIRE(indexed.at(2).checked_as<std::int32_t>() == 303);
+        auto range = indexed.elements();
+        std::vector<std::int32_t> ranged;
+        for (auto value : range) { ranged.push_back(value.checked_as<std::int32_t>()); }
+        REQUIRE(ranged == std::vector<std::int32_t>{101, 202, 303});
+
+        REQUIRE(current.hash() != 0);
+        REQUIRE(current.equals(current));
+        REQUIRE(std::is_eq(current.compare(current)));
+        REQUIRE(current.to_string() == "{first: 101, second: 202, third: 303}");
+
+        snapshot = Value{current};
+        clone = current.clone();
+        REQUIRE(current.equals(snapshot.view()));
+        REQUIRE(std::is_eq(current.compare(snapshot.view())));
+    }
+
+    const auto canonical = ValuePlanFactory::instance().type_for(root->value_schema);
+    REQUIRE(snapshot.binding() == canonical);
+    REQUIRE(clone.binding() == canonical);
+    REQUIRE(snapshot.view().equals(clone.view()));
+    REQUIRE(snapshot.view().hash() == clone.view().hash());
+    auto owned = snapshot.view().as_bundle();
+    REQUIRE(owned.at("first").checked_as<std::int32_t>() == 101);
+    REQUIRE(owned.at("second").checked_as<std::int32_t>() == 202);
+    REQUIRE(owned.at("third").checked_as<std::int32_t>() == 303);
 }
 
 TEST_CASE("TSInput data views step through target links and rebinds")

@@ -131,7 +131,7 @@ namespace hgraph::stdlib
 
     namespace json_tree
     {
-        [[nodiscard]] const ValueTypeBinding &json_value_binding();
+        [[nodiscard]] ValueTypeRef json_value_binding();
 
         class JsonValue
         {
@@ -226,7 +226,7 @@ namespace hgraph::stdlib
         {
             // keys is a tuple[str, ...] scalar parallel to the value bundle.
             auto       names = keys.value().as_list();
-            MapBuilder entries{*ValuePlanFactory::instance().binding_for(
+            MapBuilder entries{ValuePlanFactory::instance().type_for(
                                    scalar_descriptor<Str>::value_meta()),
                                json_tree::json_value_binding()};
             const auto count = values.base().schema()->field_count();
@@ -257,7 +257,7 @@ namespace hgraph::stdlib
             auto &registry = TypeRegistry::instance();
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
             std::vector<WiringPortRef>                                       children;
-            ListBuilder names{*ValuePlanFactory::instance().binding_for(scalar_descriptor<Str>::value_meta())};
+            ListBuilder names{ValuePlanFactory::instance().type_for(scalar_descriptor<Str>::value_meta())};
             fields.reserve(kwargs.size());
             children.reserve(kwargs.size());
             for (const auto &[key, port] : kwargs)

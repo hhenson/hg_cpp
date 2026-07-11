@@ -476,11 +476,11 @@ namespace hgraph::stdlib
             if (added.empty() && removed.empty()) { return std::nullopt; }
 
             auto &factory = ValuePlanFactory::instance();
-            SetBuilder added_builder{*factory.binding_for(element_meta)};
+            SetBuilder added_builder{factory.type_for(element_meta)};
             for (const Value &value : added) { static_cast<void>(added_builder.insert_copy(value.view().data())); }
-            SetBuilder removed_builder{*factory.binding_for(element_meta)};
+            SetBuilder removed_builder{factory.type_for(element_meta)};
             for (const Value &value : removed) { static_cast<void>(removed_builder.insert_copy(value.view().data())); }
-            BundleBuilder bundle{*factory.binding_for(bundle_meta)};
+            BundleBuilder bundle{factory.type_for(bundle_meta)};
             bundle.set("added", added_builder.build());
             bundle.set("removed", removed_builder.build());
             return bundle.build();
@@ -1156,14 +1156,14 @@ namespace hgraph::stdlib
             const auto *meta = out.schema()->value_schema;
             auto &factory = ValuePlanFactory::instance();
             const auto *element_meta = meta->fields[0].type->element_type;
-            ListBuilder values{*factory.binding_for(element_meta)};
-            ListBuilder times{*factory.binding_for(scalar_descriptor<DateTime>::value_meta())};
+            ListBuilder values{factory.type_for(element_meta)};
+            ListBuilder times{factory.type_for(scalar_descriptor<DateTime>::value_meta())};
             for (const auto &[time, value] : entries)
             {
                 values.push_back_copy(value.view().data());
                 times.push_back_copy(&time);
             }
-            BundleBuilder bundle{*factory.binding_for(meta)};
+            BundleBuilder bundle{factory.type_for(meta)};
             bundle.set("buffer", values.build());
             bundle.set("index", times.build());
             auto mutation = out.data_view().begin_mutation(out.evaluation_time());
@@ -1292,7 +1292,7 @@ namespace hgraph::stdlib
                 {
                     const auto &erased = static_cast<const TSOutputView &>(out);
                     const auto *meta   = erased.schema()->value_schema;
-                    ListBuilder builder{*ValuePlanFactory::instance().binding_for(meta->element_type)};
+                    ListBuilder builder{ValuePlanFactory::instance().type_for(meta->element_type)};
                     for (Value &value : current.buffer) { builder.push_back_copy(value.view().data()); }
                     current.buffer.clear();
                     Value result   = builder.build();
@@ -1508,7 +1508,7 @@ namespace hgraph::stdlib
             auto capped  = wire<min_>(w, counted, wire<const_, TS<Int>>(w, Int{period.value()}));
             const auto *element =
                 time_series_schema_as<AnyTS>(ts.erased().schema)->value_schema;
-            Value zero{*ValuePlanFactory::instance().binding_for(element)};
+            Value zero{ValuePlanFactory::instance().type_for(element)};
             auto fallback     = wire<sample>(w, counted, wire<const_>(w, std::move(zero)));
             auto safe_delayed = wire<default_>(w, delayed, fallback);
             return wire<div_>(w, wire<sub_>(w, current, safe_delayed), capped);

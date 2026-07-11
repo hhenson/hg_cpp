@@ -58,7 +58,7 @@ namespace hgraph
         WriteFn                            write_{nullptr};
         ReadFn                             read_{nullptr};
         const ValueTypeMetaData           *meta{nullptr};
-        const ValueTypeBinding            *binding{nullptr};   ///< construction binding for reads
+        ValueTypeRef binding{nullptr};   ///< construction binding for reads
         AtomicTag                          atomic_tag{AtomicTag::None};
         std::vector<const JsonConverter *> children{};         ///< element / (key, value) / fields
         std::vector<std::string_view>      names{};            ///< bundle field names

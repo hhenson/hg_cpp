@@ -17,19 +17,19 @@ namespace hgraph
     /**
      * Reset every process-wide registry/factory, in dependency order:
      *
-     * 1. ``TypeRecordRegistry`` — common records borrow every other metadata
-     *    object and are therefore invalidated first.
-     * 2. ``OperatorRegistry`` — candidate patterns borrow interned schema
-     *    pointers.
+     * 1. ``OperatorRegistry`` and converter registries — candidates borrow
+     *    schemas and their owned Values retain common type records.
+     * 2. ``TypeRecordRegistry`` — cleared after Value owners, but before the
+     *    schema, plan, and ops objects referenced by each record.
      * 3. ``ValuePlanFactory`` / ``TSDataPlanFactory`` — plans borrow schema
      *    pointers (and clear the MemoryUtils synthesised composite/array plan
      *    registries).
      * 4. ``TSInputBuilderFactory`` — input builders borrow schema + plan
      *    pointers.
-     * 5. Compact-container plan registries — lifecycle contexts reference the
-     *    bindings below.
-     * 6. ``TSDataBinding`` / ``ValueTypeBinding`` — borrow schema + plan + ops
-     *    pointers.
+     * 5. Compact, mutable-container, and synthesised plan registries —
+     *    lifecycle contexts reference the bindings below.
+     * 6. ``TSDataBinding`` — borrows schema + plan + ops pointers. Value type
+     *    identity is owned by the common record registry cleared in step 2.
      * 7. ``TypeRegistry`` — last, because it owns the schemas everyone above
      *    borrows; its reset re-seeds the standard scalar/TS vocabulary.
      */

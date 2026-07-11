@@ -12,6 +12,8 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/container_ops.h>
 #include <hgraph/types/value/specialized_views.h>
+#include <hgraph/types/value/value.h>
+#include <hgraph/types/value/value_builder.h>
 #include <hgraph/util/scope.h>
 
 #include <algorithm>
@@ -75,10 +77,7 @@ namespace hgraph
                 }
             }
 
-            if (endpoint_schema.is_owned())
-            {
-                throw std::invalid_argument("TSInput endpoint annotation cannot use owned terminals");
-            }
+            if (endpoint_schema.is_owned()) { return; }
             if (endpoint_schema.is_peered()) { return; }
             if (schema->kind == TSTypeKind::TSD)
             {
@@ -399,12 +398,12 @@ namespace hgraph
             return TSDataPlanFactory::instance().binding_for(schema);
         }
 
-        [[nodiscard]] const ValueTypeBinding *regular_value_binding_for(const TSValueTypeMetaData *schema)
+        [[nodiscard]] ValueTypeRef regular_value_binding_for(const TSValueTypeMetaData *schema)
         {
-            return schema != nullptr ? ValuePlanFactory::instance().binding_for(schema->value_schema) : nullptr;
+            return schema != nullptr ? ValuePlanFactory::instance().type_for(schema->value_schema) : nullptr;
         }
 
-        [[nodiscard]] const ValueTypeBinding *value_binding_for_data_binding(const TSDataBinding *binding)
+        [[nodiscard]] ValueTypeRef value_binding_for_data_binding(const TSDataBinding *binding)
         {
             if (binding == nullptr) { return nullptr; }
             const auto &ops = binding->ops_ref();
@@ -501,7 +500,7 @@ namespace hgraph
             const TSValueTypeMetaData *schema{nullptr};
             const TSDataBinding       *input_binding{nullptr};
             const TSDataBinding       *regular_binding{nullptr};
-            const ValueTypeBinding    *regular_value_binding{nullptr};
+            ValueTypeRef regular_value_binding{nullptr};
             std::size_t                data_offset{0};
             bool                       target_link{false};
             bool                       direct_child_memory{false};
@@ -516,9 +515,9 @@ namespace hgraph
         {
             MapValueOps               map_ops{};
             SetValueOps               key_set_ops{};
-            const ValueTypeBinding   *ordinal_key_binding{nullptr};
-            const ValueTypeBinding   *map_value_binding{nullptr};
-            const ValueTypeBinding   *key_set_binding{nullptr};
+            ValueTypeRef ordinal_key_binding{nullptr};
+            ValueTypeRef map_value_binding{nullptr};
+            ValueTypeRef key_set_binding{nullptr};
             std::vector<std::int64_t> ordinal_keys{};
         };
 
@@ -601,8 +600,8 @@ namespace hgraph
             IndexedTSDataOps                  ts_data_ops{};
             IndexedValueOps                   value_ops{};
             InputDeltaSurface                 delta{};
-            const ValueTypeBinding           *value_binding{nullptr};
-            const ValueTypeBinding           *delta_binding{nullptr};
+            ValueTypeRef value_binding{nullptr};
+            ValueTypeRef delta_binding{nullptr};
             std::vector<InputChild>           children{};
         };
 
@@ -789,7 +788,7 @@ namespace hgraph
             return static_cast<const InputBindingContext *>(context)->children.size();
         }
 
-        [[nodiscard]] const ValueTypeBinding *input_value_element_binding(const void *context,
+        [[nodiscard]] ValueTypeRef input_value_element_binding(const void *context,
                                                                           const void *memory,
                                                                           std::size_t index) noexcept
         {
@@ -817,7 +816,7 @@ namespace hgraph
                 const void *child_memory =
                     child.direct_child_memory && memory != nullptr ? advance(memory, child.data_offset) : memory;
                 if (!ops.has_current_value_impl(ops.context, child_memory)) { return nullptr; }
-                return ops.value_memory_impl(ops.context, memory);
+                return ops.value_memory_impl(ops.context, child_memory);
             }
             const auto *link = child_target_storage(child, memory);
             if (link == nullptr || !link->bound()) { return nullptr; }
@@ -848,9 +847,9 @@ namespace hgraph
             const auto  size = input_indexed_size(context, memory);
             for (std::size_t index = 0; index < size; ++index)
             {
-                const auto *binding = input_value_element_binding(context, memory, index);
+                const auto binding = input_value_element_binding(context, memory, index);
                 const auto *child   = input_value_element_at(context, memory, index);
-                const auto  value   = child != nullptr && binding != nullptr ? binding->ops_ref().hash(child) : 0;
+                const auto  value   = child != nullptr && binding != nullptr ? binding.ops_ref().hash(child) : 0;
                 seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
             }
             return seed;
@@ -864,7 +863,7 @@ namespace hgraph
                 if (input_indexed_size(context, rhs) != size) { return false; }
                 for (std::size_t index = 0; index < size; ++index)
                 {
-                    const auto *binding = input_value_element_binding(context, lhs, index);
+                    const auto binding = input_value_element_binding(context, lhs, index);
                     const auto *a       = input_value_element_at(context, lhs, index);
                     const auto *b       = input_value_element_at(context, rhs, index);
                     if (a == nullptr || b == nullptr)
@@ -872,7 +871,7 @@ namespace hgraph
                         if (a != b) { return false; }
                         continue;
                     }
-                    if (binding == nullptr || !binding->ops_ref().equals(a, b)) { return false; }
+                    if (binding == nullptr || !binding.ops_ref().equals(a, b)) { return false; }
                 }
                 return true;
             });
@@ -887,7 +886,7 @@ namespace hgraph
                 const auto size = std::min(input_indexed_size(context, lhs), input_indexed_size(context, rhs));
                 for (std::size_t index = 0; index < size; ++index)
                 {
-                    const auto *binding = input_value_element_binding(context, lhs, index);
+                    const auto binding = input_value_element_binding(context, lhs, index);
                     const auto *a       = input_value_element_at(context, lhs, index);
                     const auto *b       = input_value_element_at(context, rhs, index);
                     if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
@@ -896,7 +895,7 @@ namespace hgraph
                         if (a != b) { return std::partial_ordering::unordered; }
                         continue;
                     }
-                    const auto order = binding->ops_ref().compare(a, b);
+                    const auto order = binding.ops_ref().compare(a, b);
                     if (order != 0) { return order; }
                 }
                 const auto lhs_size = input_indexed_size(context, lhs);
@@ -925,18 +924,88 @@ namespace hgraph
                                                                      : std::string_view{};
                     fmt::format_to(std::back_inserter(out), "{}: ", key);
                 }
-                const auto *binding = input_value_element_binding(context, memory, index);
+                const auto binding = input_value_element_binding(context, memory, index);
                 const auto *child   = input_value_element_at(context, memory, index);
                 if (binding != nullptr && child != nullptr)
                 {
-                    fmt::format_to(std::back_inserter(out), "{}", binding->ops_ref().to_string(child));
+                    fmt::format_to(std::back_inserter(out), "{}", binding.ops_ref().to_string(child));
                 }
             }
             fmt::format_to(std::back_inserter(out), "{}", endpoint_ops.value_close);
             return fmt::to_string(out);
         }
 
-        [[nodiscard]] const ValueTypeBinding *input_child_delta_binding(const void *context,
+        [[nodiscard]] ValueTypeRef input_canonical_value_type(const void *, ValueTypeRef view_type)
+        {
+            const auto type = ValuePlanFactory::instance().type_for(view_type.schema());
+            if (!type) { throw std::logic_error("TSInput projected value has no canonical owning type"); }
+            return type;
+        }
+
+        [[nodiscard]] Value build_input_value_snapshot(const void *context,
+                                                       ValueTypeRef binding,
+                                                       const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            if (binding.schema() != state->schema->value_schema)
+            {
+                throw std::logic_error("TSInput value snapshot requires the canonical parent value schema");
+            }
+
+            if (state->endpoint_ops->named_value_projection)
+            {
+                BundleBuilder builder{binding};
+                for (std::size_t index = 0; index < state->children.size(); ++index)
+                {
+                    auto child_view = input_value_project_value(context, memory, index);
+                    if (!child_view.has_value()) { continue; }
+                    builder.set(index, Value{child_view});
+                }
+                return builder.build();
+            }
+
+            const auto &plan = binding.checked_plan();
+            if (!plan.is_array() || plan.array_count() != state->children.size())
+            {
+                throw std::logic_error("TSInput fixed-list snapshot requires a matching canonical array plan");
+            }
+            if (!plan.can_default_construct() || !plan.array_element_plan().can_default_construct())
+            {
+                throw std::logic_error(
+                    "TSInput fixed-list snapshot cannot default-fill invalid children for this canonical element type");
+            }
+            Value snapshot{binding};
+            auto *bytes = static_cast<std::byte *>(const_cast<void *>(snapshot.view().data()));
+            const auto &element_plan = plan.array_element_plan();
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                auto child_view = input_value_project_value(context, memory, index);
+                if (!child_view.has_value()) { continue; }
+                Value child{child_view};
+                element_plan.copy_assign(bytes + plan.element_offset(index), child.view().data());
+            }
+            return snapshot;
+        }
+
+        void input_value_copy_construct_view(const void *context,
+                                             const ValueTypeRef &binding,
+                                             void *dst,
+                                             const void *memory)
+        {
+            Value snapshot = build_input_value_snapshot(context, binding, memory);
+            binding.copy_construct_at(dst, snapshot.view().data());
+        }
+
+        void input_value_copy_assign_view(const void *context,
+                                          const ValueTypeRef &binding,
+                                          void *dst,
+                                          const void *memory)
+        {
+            Value snapshot = build_input_value_snapshot(context, binding, memory);
+            binding.copy_assign_at(dst, snapshot.view().data());
+        }
+
+        [[nodiscard]] ValueTypeRef input_child_delta_binding(const void *context,
                                                                         const void *memory,
                                                                         std::size_t index)
         {
@@ -964,7 +1033,7 @@ namespace hgraph
                                                        const void *memory,
                                                        std::size_t index)
         {
-            const auto *binding = input_child_delta_binding(context, memory, index);
+            const auto binding = input_child_delta_binding(context, memory, index);
             if (binding == nullptr) { return {}; }
             if (!input_child_modified_for_parent_time(context, memory, index))
             {
@@ -979,7 +1048,7 @@ namespace hgraph
 
         [[nodiscard]] std::size_t input_view_hash(ValueView view)
         {
-            if (!view.has_value()) { return std::hash<const ValueTypeBinding *>{}(view.binding()); }
+            if (!view.has_value()) { return std::hash<ValueTypeRef>{}(view.binding()); }
             return view.hash();
         }
 
@@ -990,11 +1059,11 @@ namespace hgraph
             return input_child_delta_view(context, memory, index).data();
         }
 
-        [[nodiscard]] const ValueTypeBinding *input_delta_bundle_element_binding(const void *context,
+        [[nodiscard]] ValueTypeRef input_delta_bundle_element_binding(const void *context,
                                                                                  const void *memory,
                                                                                  std::size_t index) noexcept
         {
-            return fallback_on_exception<const ValueTypeBinding *>(nullptr, [&] {
+            return fallback_on_exception<ValueTypeRef>(nullptr, [&] {
                 return input_child_delta_binding(context, memory, index);
             });
         }
@@ -1082,6 +1151,44 @@ namespace hgraph
             return fmt::to_string(out);
         }
 
+        [[nodiscard]] Value build_input_delta_bundle_snapshot(const void *context,
+                                                              ValueTypeRef binding,
+                                                              const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            if (binding.schema() != state->schema->delta_value_schema ||
+                binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Bundle)
+            {
+                throw std::logic_error("TSInput bundle delta snapshot requires the canonical parent delta schema");
+            }
+            BundleBuilder builder{binding};
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                auto child_view = input_child_delta_view(context, memory, index);
+                if (!child_view.has_value()) { continue; }
+                builder.set(index, Value{child_view});
+            }
+            return builder.build();
+        }
+
+        void input_delta_bundle_copy_construct_view(const void *context,
+                                                    const ValueTypeRef &binding,
+                                                    void *dst,
+                                                    const void *memory)
+        {
+            Value snapshot = build_input_delta_bundle_snapshot(context, binding, memory);
+            binding.copy_construct_at(dst, snapshot.view().data());
+        }
+
+        void input_delta_bundle_copy_assign_view(const void *context,
+                                                 const ValueTypeRef &binding,
+                                                 void *dst,
+                                                 const void *memory)
+        {
+            Value snapshot = build_input_delta_bundle_snapshot(context, binding, memory);
+            binding.copy_assign_at(dst, snapshot.view().data());
+        }
+
         [[nodiscard]] bool input_delta_child_predicate(const void *context, const void *memory, std::size_t index)
         {
             return input_child_modified_for_parent_time(context, memory, index);
@@ -1122,7 +1229,7 @@ namespace hgraph
             return &delta.ordinal_keys[input_nth_modified_child(state, memory, index)];
         }
 
-        [[nodiscard]] const ValueTypeBinding *input_delta_map_key_binding(const void *context,
+        [[nodiscard]] ValueTypeRef input_delta_map_key_binding(const void *context,
                                                                           const void *,
                                                                           std::size_t) noexcept
         {
@@ -1137,7 +1244,7 @@ namespace hgraph
             return input_child_delta_view(context, memory, input_nth_modified_child(state, memory, index)).data();
         }
 
-        [[nodiscard]] const ValueTypeBinding *input_delta_map_value_binding(const void *context,
+        [[nodiscard]] ValueTypeRef input_delta_map_value_binding(const void *context,
                                                                             const void *) noexcept
         {
             return static_cast<const InputBindingContext *>(context)->delta.list().map_value_binding;
@@ -1223,7 +1330,7 @@ namespace hgraph
         }
 
         [[nodiscard]] SetView input_delta_map_key_set(const void *context,
-                                                      const ValueTypeBinding *,
+                                                      ValueTypeRef,
                                                       const void *memory)
         {
             const auto *state = static_cast<const InputBindingContext *>(context);
@@ -1238,7 +1345,7 @@ namespace hgraph
             for (std::size_t index = 0; index < state->children.size(); ++index)
             {
                 if (!input_child_modified_for_parent_time(context, memory, index)) { continue; }
-                const auto key_hash = delta.ordinal_key_binding->ops_ref().hash(&delta.ordinal_keys[index]);
+                const auto key_hash = delta.ordinal_key_binding.ops_ref().hash(&delta.ordinal_keys[index]);
                 const auto value_hash = input_view_hash(input_child_delta_view(context, memory, index));
                 result ^= combine_hash(key_hash, value_hash);
             }
@@ -1293,6 +1400,58 @@ namespace hgraph
             return fmt::to_string(out);
         }
 
+        [[nodiscard]] MapStorage build_input_delta_map_storage(const void *context,
+                                                               ValueTypeRef binding,
+                                                               const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            if (binding.schema() != state->schema->delta_value_schema ||
+                binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Map)
+            {
+                throw std::logic_error("TSInput list delta snapshot requires the canonical parent delta map schema");
+            }
+            const auto key_type = ValuePlanFactory::instance().type_for(binding.schema()->key_type);
+            const auto value_type = ValuePlanFactory::instance().type_for(binding.schema()->element_type);
+            if (!key_type || !value_type)
+            {
+                throw std::logic_error("TSInput list delta snapshot bindings are not resolved");
+            }
+
+            MapBuilder builder{key_type, value_type};
+            for (const auto [key, value] : input_delta_map_make_kv_range(context, memory))
+            {
+                if (!value.has_value())
+                {
+                    builder.set_item_unset(key.data());
+                    continue;
+                }
+                Value owned{value};
+                if (owned.binding() != value_type)
+                {
+                    throw std::logic_error("TSInput list delta snapshot materialized the wrong value type");
+                }
+                builder.set_item_copy(key.data(), owned.view().data());
+            }
+            return builder.build_storage();
+        }
+
+        void input_delta_map_copy_construct_view(const void *context,
+                                                 const ValueTypeRef &binding,
+                                                 void *dst,
+                                                 const void *memory)
+        {
+            auto storage = build_input_delta_map_storage(context, binding, memory);
+            std::construct_at(static_cast<MapStorage *>(dst), std::move(storage));
+        }
+
+        void input_delta_map_copy_assign_view(const void *context,
+                                              const ValueTypeRef &binding,
+                                              void *dst,
+                                              const void *memory)
+        {
+            *static_cast<MapStorage *>(dst) = build_input_delta_map_storage(context, binding, memory);
+        }
+
         [[nodiscard]] std::size_t input_delta_key_set_hash(const void *context, const void *memory)
         {
             const auto *state = static_cast<const InputBindingContext *>(context);
@@ -1301,7 +1460,7 @@ namespace hgraph
             for (std::size_t index = 0; index < state->children.size(); ++index)
             {
                 if (!input_child_modified_for_parent_time(context, memory, index)) { continue; }
-                result ^= delta.ordinal_key_binding->ops_ref().hash(&delta.ordinal_keys[index]);
+                result ^= delta.ordinal_key_binding.ops_ref().hash(&delta.ordinal_keys[index]);
             }
             return result;
         }
@@ -1354,6 +1513,45 @@ namespace hgraph
             }
             fmt::format_to(std::back_inserter(out), "}}");
             return fmt::to_string(out);
+        }
+
+        [[nodiscard]] SetStorage build_input_delta_key_set_storage(const void *context,
+                                                                   ValueTypeRef binding,
+                                                                   const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Set)
+            {
+                throw std::logic_error("TSInput list delta key-set snapshot requires a canonical set schema");
+            }
+            const auto key_type = ValuePlanFactory::instance().type_for(binding.schema()->element_type);
+            if (!key_type || key_type != state->delta.list().ordinal_key_binding)
+            {
+                throw std::logic_error("TSInput list delta key-set snapshot key type is not resolved");
+            }
+            SetBuilder builder{key_type};
+            for (const auto key : input_delta_map_make_keys_range(context, memory))
+            {
+                builder.insert_copy(key.data());
+            }
+            return builder.build_storage();
+        }
+
+        void input_delta_key_set_copy_construct_view(const void *context,
+                                                     const ValueTypeRef &binding,
+                                                     void *dst,
+                                                     const void *memory)
+        {
+            auto storage = build_input_delta_key_set_storage(context, binding, memory);
+            std::construct_at(static_cast<SetStorage *>(dst), std::move(storage));
+        }
+
+        void input_delta_key_set_copy_assign_view(const void *context,
+                                                  const ValueTypeRef &binding,
+                                                  void *dst,
+                                                  const void *memory)
+        {
+            *static_cast<SetStorage *>(dst) = build_input_delta_key_set_storage(context, binding, memory);
         }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -1631,8 +1829,11 @@ namespace hgraph
                 &input_value_make_range,
                 nullptr,
             };
+            context->value_ops.owning_type_impl = &input_canonical_value_type;
+            context->value_ops.copy_construct_view_impl = &input_value_copy_construct_view;
+            context->value_ops.copy_assign_view_impl = &input_value_copy_assign_view;
 
-            context->value_binding = &ValueTypeBinding::intern(*context->schema->value_schema, root_plan,
+            context->value_binding = intern_value_type(*context->schema->value_schema, root_plan,
                                                                context->value_ops);
             context->layout.value_binding = context->value_binding;
 
@@ -1659,12 +1860,15 @@ namespace hgraph
                     &input_delta_bundle_make_range,
                     nullptr,
                 };
-                context->delta_binding = &ValueTypeBinding::intern(*delta_schema, root_plan, delta.ops);
+                delta.ops.owning_type_impl = &input_canonical_value_type;
+                delta.ops.copy_construct_view_impl = &input_delta_bundle_copy_construct_view;
+                delta.ops.copy_assign_view_impl = &input_delta_bundle_copy_assign_view;
+                context->delta_binding = intern_value_type(*delta_schema, root_plan, delta.ops);
             }
             else
             {
                 auto &delta = *list_delta;
-                delta.ordinal_key_binding = ValuePlanFactory::instance().binding_for(delta_schema->key_type);
+                delta.ordinal_key_binding = ValuePlanFactory::instance().type_for(delta_schema->key_type);
                 delta.map_value_binding = input_child_delta_binding(context.get(), nullptr, 0);
                 if (delta.ordinal_key_binding == nullptr || delta.map_value_binding == nullptr)
                 {
@@ -1693,6 +1897,9 @@ namespace hgraph
                     &input_delta_map_make_kv_range,
                     &input_delta_map_key_set,
                 };
+                delta.map_ops.owning_type_impl = &input_canonical_value_type;
+                delta.map_ops.copy_construct_view_impl = &input_delta_map_copy_construct_view;
+                delta.map_ops.copy_assign_view_impl = &input_delta_map_copy_assign_view;
 
                 delta.key_set_ops = SetValueOps{
                     {{ValueOpsKind::Set, context.get(), false, &input_delta_key_set_hash, &input_delta_key_set_equals,
@@ -1709,10 +1916,13 @@ namespace hgraph
                      nullptr},
                     &input_delta_map_contains,
                 };
+                delta.key_set_ops.owning_type_impl = &input_canonical_value_type;
+                delta.key_set_ops.copy_construct_view_impl = &input_delta_key_set_copy_construct_view;
+                delta.key_set_ops.copy_assign_view_impl = &input_delta_key_set_copy_assign_view;
 
                 const auto *key_set_schema = TypeRegistry::instance().set(delta_schema->key_type);
-                delta.key_set_binding = &ValueTypeBinding::intern(*key_set_schema, root_plan, delta.key_set_ops);
-                context->delta_binding = &ValueTypeBinding::intern(*delta_schema, root_plan, delta.map_ops);
+                delta.key_set_binding = intern_value_type(*key_set_schema, root_plan, delta.key_set_ops);
+                context->delta_binding = intern_value_type(*delta_schema, root_plan, delta.map_ops);
             }
             context->layout.delta_binding = context->delta_binding;
 

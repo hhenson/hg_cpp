@@ -161,7 +161,7 @@ namespace hgraph
             unsupported(schema);
         }
 
-        const auto *value_plan = ValuePlanFactory::instance().plan_for(schema->value_schema);
+        const auto value_plan = ValuePlanFactory::instance().plan_for(schema->value_schema);
         if (value_plan == nullptr)
         {
             throw std::logic_error("TSDataPlanFactory: atomic TSData value plan is not resolvable");
@@ -328,9 +328,9 @@ namespace hgraph
             unsupported(schema);
         }
 
-        const auto *value_binding = ValuePlanFactory::instance().binding_for(schema->value_schema);
-        const auto *delta_binding = ValuePlanFactory::instance().binding_for(schema->delta_value_schema);
-        if (value_binding == nullptr || delta_binding == nullptr)
+        const auto value_binding = ValuePlanFactory::instance().type_for(schema->value_schema);
+        const auto delta_binding = ValuePlanFactory::instance().type_for(schema->delta_value_schema);
+        if (!value_binding || !delta_binding)
         {
             throw std::logic_error("TSDataPlanFactory: atomic TSData value/delta bindings are not resolvable");
         }
@@ -348,7 +348,7 @@ namespace hgraph
             throw std::logic_error("TSDataPlanFactory: atomic TSData plan is missing required components");
         }
 
-        const auto &ops     = plan_detail::atomic_ts_data_ops(schema->kind, *value_binding, *delta_binding, *plan,
+        const auto &ops     = plan_detail::atomic_ts_data_ops(schema->kind, value_binding, delta_binding, *plan,
                                                               value_component->offset, tracking_component->offset);
         const auto &binding = TSDataBinding::intern(*schema, *plan, ops);
 

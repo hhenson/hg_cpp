@@ -533,8 +533,8 @@ namespace hgraph
             return column.read(column, *array, row);
         }
 
-        const auto *binding = ValuePlanFactory::instance().binding_for(converter.meta);
-        BundleBuilder builder{*binding};
+        const auto binding = ValuePlanFactory::instance().type_for(converter.meta);
+        BundleBuilder builder{binding};
         for (const auto &column : converter.columns)
         {
             auto array = column_array(column.name);

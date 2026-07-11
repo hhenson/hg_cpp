@@ -187,10 +187,10 @@ namespace hgraph::ts_data_plan_factory_detail
             MapValueOps                     delta_map_ops{};
             SetValueOps                     delta_key_set_ops{};
             const TSDataBinding            *element_binding{nullptr};
-            const ValueTypeBinding         *element_value_binding{nullptr};
-            const ValueTypeBinding         *element_delta_binding{nullptr};
-            const ValueTypeBinding         *ordinal_key_binding{nullptr};
-            const ValueTypeBinding         *delta_key_set_binding{nullptr};
+            ValueTypeRef element_value_binding{nullptr};
+            ValueTypeRef element_delta_binding{nullptr};
+            ValueTypeRef ordinal_key_binding{nullptr};
+            ValueTypeRef delta_key_set_binding{nullptr};
 
             DynamicTSLContext(const TSValueTypeMetaData &schema_,
                               const MemoryUtils::StoragePlan &plan_,
@@ -234,16 +234,16 @@ namespace hgraph::ts_data_plan_factory_detail
                     throw std::logic_error("dynamic TSL requires List value and Map delta schemas");
                 }
 
-                list_layout.value_binding = &ValueTypeBinding::intern(*value_schema, *plan, value_list_ops);
+                list_layout.value_binding = intern_value_type(*value_schema, *plan, value_list_ops);
 
-                ordinal_key_binding = ValuePlanFactory::instance().binding_for(delta_schema->key_type);
+                ordinal_key_binding = ValuePlanFactory::instance().type_for(delta_schema->key_type);
                 if (ordinal_key_binding == nullptr)
                 {
                     throw std::logic_error("dynamic TSL ordinal key binding is not resolved");
                 }
                 const auto *key_set_schema = TypeRegistry::instance().set(delta_schema->key_type);
-                delta_key_set_binding = &ValueTypeBinding::intern(*key_set_schema, *plan, delta_key_set_ops);
-                list_layout.delta_binding = &ValueTypeBinding::intern(*delta_schema, *plan, delta_map_ops);
+                delta_key_set_binding = intern_value_type(*key_set_schema, *plan, delta_key_set_ops);
+                list_layout.delta_binding = intern_value_type(*delta_schema, *plan, delta_map_ops);
             }
 
           private:
@@ -294,7 +294,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     &dynamic_value_make_range,
                     nullptr,
                 };
-                value_list_ops.owning_binding_impl      = &canonical_value_binding;
+                value_list_ops.owning_type_impl      = &canonical_value_binding;
                 value_list_ops.copy_construct_view_impl = &dynamic_value_copy_construct_view;
                 value_list_ops.copy_assign_view_impl    = &dynamic_value_copy_assign_view;
 
@@ -316,7 +316,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     &dynamic_delta_map_make_kv_range,
                     &dynamic_delta_map_key_set,
                 };
-                delta_map_ops.owning_binding_impl      = &canonical_value_binding;
+                delta_map_ops.owning_type_impl      = &canonical_value_binding;
                 delta_map_ops.copy_construct_view_impl = &dynamic_delta_map_copy_construct_view;
                 delta_map_ops.copy_assign_view_impl    = &dynamic_delta_map_copy_assign_view;
 
@@ -330,7 +330,7 @@ namespace hgraph::ts_data_plan_factory_detail
                      nullptr},
                     &dynamic_delta_key_set_contains,
                 };
-                delta_key_set_ops.owning_binding_impl      = &canonical_value_binding;
+                delta_key_set_ops.owning_type_impl      = &canonical_value_binding;
                 delta_key_set_ops.copy_construct_view_impl = &dynamic_delta_key_set_copy_construct_view;
                 delta_key_set_ops.copy_assign_view_impl    = &dynamic_delta_key_set_copy_assign_view;
             }
@@ -419,10 +419,10 @@ namespace hgraph::ts_data_plan_factory_detail
                 return ValueView{state->element_delta_binding, ops.delta_memory_impl(ops.context, data)};
             }
 
-            [[nodiscard]] static const ValueTypeBinding *
-            canonical_value_binding(const void *, const ValueTypeBinding &view_binding)
+            [[nodiscard]] static ValueTypeRef
+            canonical_value_binding(const void *, ValueTypeRef view_binding)
             {
-                const auto *binding = ValuePlanFactory::instance().binding_for(view_binding.type_meta);
+                const auto binding = ValuePlanFactory::instance().type_for(view_binding.schema());
                 if (binding == nullptr)
                 {
                     throw std::logic_error("dynamic TSL value surface has no canonical owning binding");
@@ -472,7 +472,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return child_value_view(ctx(context), memory, index).data();
             }
 
-            [[nodiscard]] static const ValueTypeBinding *dynamic_value_element_binding(const void *context,
+            [[nodiscard]] static ValueTypeRef dynamic_value_element_binding(const void *context,
                                                                                        const void *,
                                                                                        std::size_t) noexcept
             {
@@ -501,7 +501,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 if (!view.has_value())
                 {
-                    return std::hash<const ValueTypeBinding *>{}(view.binding());
+                    return std::hash<ValueTypeRef>{}(view.binding());
                 }
                 return view.hash();
             }
@@ -577,7 +577,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void dynamic_value_copy_construct_view(const void *context,
-                                                          const ValueTypeBinding &binding,
+                                                          const ValueTypeRef &binding,
                                                           void *dst,
                                                           const void *memory)
             {
@@ -586,7 +586,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void dynamic_value_copy_assign_view(const void *context,
-                                                       const ValueTypeBinding &binding,
+                                                       const ValueTypeRef &binding,
                                                        void *dst,
                                                        const void *memory)
             {
@@ -594,22 +594,22 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             [[nodiscard]] static ListStorage build_dynamic_value_list_storage(const void *context,
-                                                                              const ValueTypeBinding &binding,
+                                                                              const ValueTypeRef &binding,
                                                                               const void *memory)
             {
                 const auto *state = ctx(context);
-                if (binding.type_meta != state->schema->value_schema ||
-                    binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::List)
+                if (binding.schema() != state->schema->value_schema ||
+                    binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::List)
                 {
                     throw std::logic_error("dynamic TSL value copy requires the canonical parent list schema");
                 }
-                const auto *element_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                const auto element_binding = ValuePlanFactory::instance().type_for(binding.schema()->element_type);
                 if (element_binding == nullptr)
                 {
                     throw std::logic_error("dynamic TSL value copy element binding is not resolved");
                 }
 
-                ListBuilder builder{*element_binding};
+                ListBuilder builder{element_binding};
                 const auto &store = storage(memory);
                 for (std::size_t index = 0; index < store.size(); ++index)
                 {
@@ -677,7 +677,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return &storage(memory).ordinal_key(slot);
             }
 
-            [[nodiscard]] static const ValueTypeBinding *dynamic_delta_map_key_binding(const void *context,
+            [[nodiscard]] static ValueTypeRef dynamic_delta_map_key_binding(const void *context,
                                                                                        const void *,
                                                                                        std::size_t) noexcept
             {
@@ -692,7 +692,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return child_delta_view(state, memory, nth_modified_child(state, memory, index)).data();
             }
 
-            [[nodiscard]] static const ValueTypeBinding *dynamic_delta_map_value_binding(const void *context,
+            [[nodiscard]] static ValueTypeRef dynamic_delta_map_value_binding(const void *context,
                                                                                          const void *) noexcept
             {
                 return ctx(context)->element_delta_binding;
@@ -782,7 +782,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             [[nodiscard]] static SetView dynamic_delta_map_key_set(const void *context,
-                                                                   const ValueTypeBinding *,
+                                                                   ValueTypeRef,
                                                                    const void *memory)
             {
                 return ValueView{ctx(context)->delta_key_set_binding, memory}.as_set();
@@ -796,7 +796,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 for (std::size_t index = 0; index < store.size(); ++index)
                 {
                     if (!child_modified_for_parent_time(state, memory, index)) { continue; }
-                    const auto key_hash = state->ordinal_key_binding->ops_ref().hash(&store.ordinal_key(index));
+                    const auto key_hash = state->ordinal_key_binding.ops_ref().hash(&store.ordinal_key(index));
                     const auto value_hash = view_hash(child_delta_view(state, memory, index));
                     result ^= dynamic_combine_hash(key_hash, value_hash);
                 }
@@ -862,7 +862,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void dynamic_delta_map_copy_construct_view(const void *context,
-                                                              const ValueTypeBinding &binding,
+                                                              const ValueTypeRef &binding,
                                                               void *dst,
                                                               const void *memory)
             {
@@ -871,7 +871,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void dynamic_delta_map_copy_assign_view(const void *context,
-                                                           const ValueTypeBinding &binding,
+                                                           const ValueTypeRef &binding,
                                                            void *dst,
                                                            const void *memory)
             {
@@ -879,17 +879,17 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             [[nodiscard]] static MapStorage build_dynamic_delta_map_storage(const void *context,
-                                                                            const ValueTypeBinding &binding,
+                                                                            const ValueTypeRef &binding,
                                                                             const void *memory)
             {
                 const auto *state = ctx(context);
-                if (binding.type_meta != state->schema->delta_value_schema ||
-                    binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Map)
+                if (binding.schema() != state->schema->delta_value_schema ||
+                    binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Map)
                 {
                     throw std::logic_error("dynamic TSL delta copy requires the canonical parent delta map schema");
                 }
-                const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->key_type);
-                const auto *value_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                const auto key_binding = ValuePlanFactory::instance().type_for(binding.schema()->key_type);
+                const auto value_binding = ValuePlanFactory::instance().type_for(binding.schema()->element_type);
                 if (key_binding == nullptr || key_binding != state->ordinal_key_binding)
                 {
                     throw std::logic_error("dynamic TSL delta copy key binding is not resolved");
@@ -899,7 +899,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     throw std::logic_error("dynamic TSL delta copy value binding is not resolved");
                 }
 
-                MapBuilder builder{*key_binding, *value_binding};
+                MapBuilder builder{key_binding, value_binding};
                 const auto &store = storage(memory);
                 for (std::size_t index = 0; index < store.size(); ++index)
                 {
@@ -930,7 +930,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     if (child_modified_for_parent_time(state, memory, index))
                     {
-                        result ^= state->ordinal_key_binding->ops_ref().hash(&store.ordinal_key(index));
+                        result ^= state->ordinal_key_binding.ops_ref().hash(&store.ordinal_key(index));
                     }
                 }
                 return result;
@@ -988,7 +988,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void dynamic_delta_key_set_copy_construct_view(const void *context,
-                                                                  const ValueTypeBinding &binding,
+                                                                  const ValueTypeRef &binding,
                                                                   void *dst,
                                                                   const void *memory)
             {
@@ -997,7 +997,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void dynamic_delta_key_set_copy_assign_view(const void *context,
-                                                               const ValueTypeBinding &binding,
+                                                               const ValueTypeRef &binding,
                                                                void *dst,
                                                                const void *memory)
             {
@@ -1005,21 +1005,21 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             [[nodiscard]] static SetStorage build_dynamic_delta_key_set_storage(const void *context,
-                                                                                const ValueTypeBinding &binding,
+                                                                                const ValueTypeRef &binding,
                                                                                 const void *memory)
             {
                 const auto *state = ctx(context);
-                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Set)
+                if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Set)
                 {
                     throw std::logic_error("dynamic TSL delta key-set copy requires a canonical set schema");
                 }
-                const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                const auto key_binding = ValuePlanFactory::instance().type_for(binding.schema()->element_type);
                 if (key_binding == nullptr || key_binding != state->ordinal_key_binding)
                 {
                     throw std::logic_error("dynamic TSL delta key-set copy key binding is not resolved");
                 }
 
-                SetBuilder builder{*key_binding};
+                SetBuilder builder{key_binding};
                 const auto &store = storage(memory);
                 for (std::size_t index = 0; index < store.size(); ++index)
                 {
@@ -1136,7 +1136,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     void *data = target.child_memory(index);
                     auto  source_value = source_values.at(index);
-                    auto  source_child = Value::reference(*source_value.binding(),
+                    auto  source_child = Value::reference(source_value.binding(),
                                                           const_cast<void *>(source_value.data()));
                     if (!ops.move_value_from_impl(ops.context, data, std::move(source_child), modified_time))
                     {

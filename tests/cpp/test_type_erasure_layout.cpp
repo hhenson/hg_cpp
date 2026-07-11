@@ -42,14 +42,17 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
 {
     using namespace hgraph;
 
-    assert_binding_layout<ValueTypeBinding>();
+    static_assert(sizeof(ValueTypeRef) == sizeof(void *));
+    static_assert(alignof(ValueTypeRef) == alignof(void *));
+    static_assert(std::is_standard_layout_v<ValueTypeRef>);
+    static_assert(std::is_trivially_copyable_v<ValueTypeRef>);
     assert_binding_layout<TSDataBinding>();
     assert_binding_layout<NodeTypeBinding>();
     assert_binding_layout<GraphTypeBinding>();
     assert_binding_layout<GraphExecutorTypeBinding>();
     assert_binding_layout<EvaluationClockTypeBinding>();
 
-    assert_storage_ref_layout<ValueTypeBinding>();
+    assert_storage_ref_layout<TypeRecord>();
     assert_storage_ref_layout<TSDataBinding>();
     assert_storage_ref_layout<NodeTypeBinding>();
     assert_storage_ref_layout<GraphTypeBinding>();
@@ -78,7 +81,7 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(sizeof(RawHandle) == sizeof(void *) * 3);
     static_assert(alignof(RawHandle) == alignof(void *));
 
-    assert_storage_handle_layout<ValueTypeBinding>();
+    assert_storage_handle_layout<TypeRecord>();
     assert_storage_handle_layout<TSDataBinding>();
     assert_storage_handle_layout<NodeTypeBinding>();
     assert_storage_handle_layout<GraphTypeBinding>();

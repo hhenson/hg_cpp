@@ -253,9 +253,9 @@ namespace hgraph::stdlib
         Value to_table_mode_value(Int member)
         {
             const auto *meta    = to_table_mode_meta();
-            const auto *binding = ValuePlanFactory::instance().binding_for(meta);
+            const auto binding = ValuePlanFactory::instance().type_for(meta);
             if (binding == nullptr) { throw std::logic_error("ToTableMode has no value binding"); }
-            Value value{*binding};
+            Value value{binding};
             *static_cast<Int *>(const_cast<void *>(value.view().data())) = member;
             return value;
         }
@@ -269,15 +269,15 @@ namespace hgraph::stdlib
             // Row building
             // ---------------------------------------------------------------
 
-            [[nodiscard]] const ValueTypeBinding &checked_binding(const ValueTypeMetaData *meta,
+            [[nodiscard]] ValueTypeRef checked_binding(const ValueTypeMetaData *meta,
                                                                   const char              *what)
             {
-                const auto *binding = ValuePlanFactory::instance().binding_for(meta);
+                const auto binding = ValuePlanFactory::instance().type_for(meta);
                 if (binding == nullptr)
                 {
                     throw std::logic_error(fmt::format("{}: schema has no value binding", what));
                 }
-                return *binding;
+                return binding;
             }
 
             /** A fresh borrow over the same binding + memory (the read views

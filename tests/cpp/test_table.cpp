@@ -64,8 +64,8 @@ TEST_CASE("table codec: a depth-1 bundle flattens to named columns and round-tri
     CHECK(converter.columns[0].name == "qty");
     CHECK(converter.columns[1].name == "symbol");
 
-    const auto *binding = ValuePlanFactory::instance().binding_for(bundle_meta);
-    BundleBuilder builder{*binding};
+    const auto binding = ValuePlanFactory::instance().type_for(bundle_meta);
+    BundleBuilder builder{binding};
     builder.set("qty", Value{Int{7}});
     builder.set("symbol", Value{Str{"VOD"}});
     const Value value = builder.build();
@@ -83,8 +83,8 @@ TEST_CASE("table codec: unset bundle fields round-trip as Arrow nulls")
     const auto *str_meta = registry.register_scalar<Str>("str");
     const auto *bundle_meta = registry.un_named_bundle({{"qty", int_meta}, {"symbol", str_meta}});
 
-    const auto *binding = ValuePlanFactory::instance().binding_for(bundle_meta);
-    BundleBuilder builder{*binding};
+    const auto binding = ValuePlanFactory::instance().type_for(bundle_meta);
+    BundleBuilder builder{binding};
     builder.set("qty", Value{Int{7}});
     const Value value = builder.build();
 
@@ -109,8 +109,8 @@ TEST_CASE("table codec: input schemas are a minimum - extra columns pass, missin
     const auto *narrow_meta = registry.un_named_bundle({{"qty", int_meta}});
     const auto *other_meta  = registry.un_named_bundle({{"price", int_meta}});
 
-    const auto *binding = ValuePlanFactory::instance().binding_for(wide_meta);
-    BundleBuilder builder{*binding};
+    const auto binding = ValuePlanFactory::instance().type_for(wide_meta);
+    BundleBuilder builder{binding};
     builder.set("qty", Value{Int{9}});
     builder.set("symbol", Value{Str{"BP"}});
     const Frame wide = single_row_frame(table_converter(wide_meta), MIN_ST, MIN_ST, builder.build().view());

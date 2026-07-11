@@ -11,27 +11,27 @@ namespace hgraph
     {
         namespace
         {
-            [[nodiscard]] const ValueTypeMetaData &checked_schema(const ValueTypeBinding &binding,
+            [[nodiscard]] const ValueTypeMetaData &checked_schema(const ValueTypeRef &binding,
                                                                   ValueTypeKind           kind,
                                                                   const char             *what)
             {
                 if (!binding.valid()) { throw std::logic_error(std::string{what} + " requires a valid binding"); }
-                if (binding.type_meta->value_kind() != kind)
+                if (binding.schema()->value_kind() != kind)
                 {
                     throw std::logic_error(std::string{what} + " received the wrong value kind");
                 }
-                return *binding.type_meta;
+                return *binding.schema();
             }
 
-            [[nodiscard]] const ValueTypeBinding &checked_binding_for(const ValueTypeMetaData *schema,
-                                                                      const char             *what)
+            [[nodiscard]] ValueTypeRef checked_binding_for(const ValueTypeMetaData *schema,
+                                                           const char *what)
             {
-                const auto *binding = ValuePlanFactory::instance().binding_for(schema);
-                if (binding == nullptr)
+                const auto binding = ValuePlanFactory::instance().type_for(schema);
+                if (!binding)
                 {
                     throw std::logic_error(std::string{what} + ": schema has no canonical value binding");
                 }
-                return *binding;
+                return binding;
             }
 
             void require_non_none(nb::handle source, const char *what)
@@ -67,7 +67,7 @@ namespace hgraph
                 }
             }
 
-            [[nodiscard]] Value value_from_python(const ValueTypeBinding &binding, nb::handle source)
+            [[nodiscard]] Value value_from_python(const ValueTypeRef &binding, nb::handle source)
             {
                 require_non_none(source, "from_python");
                 Value out{binding};
@@ -76,7 +76,7 @@ namespace hgraph
             }
         }  // namespace
 
-        void list_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source)
+        void list_from_python(const void *, const ValueTypeRef &binding, void *memory, nb::handle source)
         {
             if (memory == nullptr) { throw std::runtime_error("List from_python requires live storage"); }
             const auto &schema = checked_schema(binding, ValueTypeKind::List, "List from_python");
@@ -95,7 +95,7 @@ namespace hgraph
             *static_cast<ListStorage *>(memory) = builder.build_storage();
         }
 
-        void cyclic_buffer_from_python(const void *, const ValueTypeBinding &binding, void *memory,
+        void cyclic_buffer_from_python(const void *, const ValueTypeRef &binding, void *memory,
                                        nb::handle source)
         {
             if (memory == nullptr) { throw std::runtime_error("CyclicBuffer from_python requires live storage"); }
@@ -115,7 +115,7 @@ namespace hgraph
             *static_cast<CyclicBufferStorage *>(memory) = builder.build_storage();
         }
 
-        void queue_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source)
+        void queue_from_python(const void *, const ValueTypeRef &binding, void *memory, nb::handle source)
         {
             if (memory == nullptr) { throw std::runtime_error("Queue from_python requires live storage"); }
             const auto &schema = checked_schema(binding, ValueTypeKind::Queue, "Queue from_python");
@@ -130,7 +130,7 @@ namespace hgraph
             *static_cast<QueueStorage *>(memory) = builder.build_storage();
         }
 
-        void set_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source)
+        void set_from_python(const void *, const ValueTypeRef &binding, void *memory, nb::handle source)
         {
             if (memory == nullptr) { throw std::runtime_error("Set from_python requires live storage"); }
             const auto &schema = checked_schema(binding, ValueTypeKind::Set, "Set from_python");
@@ -157,7 +157,7 @@ namespace hgraph
             *static_cast<SetStorage *>(memory) = builder.build_storage();
         }
 
-        void map_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source)
+        void map_from_python(const void *, const ValueTypeRef &binding, void *memory, nb::handle source)
         {
             if (memory == nullptr) { throw std::runtime_error("Map from_python requires live storage"); }
             const auto &schema = checked_schema(binding, ValueTypeKind::Map, "Map from_python");
@@ -198,7 +198,7 @@ namespace hgraph
             *static_cast<MapStorage *>(memory) = builder.build_storage();
         }
 
-        void map_key_adapter_from_python(const void *, const ValueTypeBinding &, void *, nb::handle)
+        void map_key_adapter_from_python(const void *, const ValueTypeRef &, void *, nb::handle)
         {
             throw std::logic_error("Map key-set adapter is read-only and cannot load from Python");
         }

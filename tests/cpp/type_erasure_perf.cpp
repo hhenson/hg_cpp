@@ -399,12 +399,12 @@ int main()
         });
 
     const auto *bundle_meta = registry.tsb("TypeErasurePerfBundle", {{"left", ts_int}, {"right", ts_int}});
-    const auto *bundle_binding = ValuePlanFactory::instance().binding_for(bundle_meta->value_schema);
+    const auto bundle_binding = ValuePlanFactory::instance().type_for(bundle_meta->value_schema);
     if (bundle_binding == nullptr)
     {
         throw std::runtime_error("bundle value binding is missing");
     }
-    BundleBuilder bundle_builder{*bundle_binding};
+    BundleBuilder bundle_builder{bundle_binding};
     bundle_builder.set("left", Value{Int{47}});
     bundle_builder.set("right", Value{Int{53}});
     TSOutput bundle_output{*bundle_meta};

@@ -22,9 +22,9 @@ namespace
     // Build an empty Any value (its box exists; the contained value is empty).
     Value make_any()
     {
-        const ValueTypeBinding *binding = ValuePlanFactory::instance().binding_for(TypeRegistry::instance().any());
+        ValueTypeRef binding = ValuePlanFactory::instance().type_for(TypeRegistry::instance().any());
         REQUIRE(binding != nullptr);
-        return Value{*binding};
+        return Value{binding};
     }
 
     // Build an Any value holding a copy of `inner`.
@@ -57,12 +57,12 @@ TEST_CASE("Any: plan + binding synthesise and the binding is interned")
     auto       &factory = ValuePlanFactory::instance();
     const auto *schema  = TypeRegistry::instance().any();
 
-    const ValueTypeBinding *binding = factory.binding_for(schema);
+    ValueTypeRef binding = factory.type_for(schema);
     REQUIRE(binding != nullptr);
-    REQUIRE(binding->plan() != nullptr);
-    CHECK(binding->type_meta == schema);
-    CHECK(factory.plan_for(schema) == binding->plan());
-    CHECK(&any_binding() == binding);  // same interned triple
+    REQUIRE(binding.plan() != nullptr);
+    CHECK(binding.schema() == schema);
+    CHECK(factory.plan_for(schema) == binding.plan());
+    CHECK(any_type() == binding);  // same interned triple
 }
 
 TEST_CASE("Any: an empty box reports no contained value")

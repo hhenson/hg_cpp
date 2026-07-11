@@ -106,7 +106,7 @@ void instantiate_schema() {
     auto       &registry = TypeRegistry::instance();
     [[maybe_unused]] const auto *standard_int_meta = registry.value_type("int");
     assert(standard_int_meta != nullptr);
-    assert(standard_int_meta == registry.scalar_binding<std::int64_t>()->type_meta);
+    assert(standard_int_meta == registry.scalar_type<std::int64_t>().schema());
 
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     assert(int_meta != nullptr);

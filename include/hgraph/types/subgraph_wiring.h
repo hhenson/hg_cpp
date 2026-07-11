@@ -349,9 +349,9 @@ namespace hgraph
                         ...);
                 }(std::make_index_sequence<sig::param_count()>{});
 
-                const auto   *binding = ValuePlanFactory::instance().binding_for(
+                const auto binding = ValuePlanFactory::instance().type_for(
                     TypeRegistry::instance().un_named_bundle(fields));
-                BundleBuilder bundle{*binding};
+                BundleBuilder bundle{binding};
                 [&]<std::size_t... I>(std::index_sequence<I...>) {
                     (
                         [&] {

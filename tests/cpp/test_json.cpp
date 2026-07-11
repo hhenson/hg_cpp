@@ -84,8 +84,8 @@ TEST_CASE("json: bundles serialize as objects; unknown fields are skipped on rea
     const auto *str_meta = registry.register_scalar<Str>("str");
     const auto *bundle_meta = registry.un_named_bundle({{"count", int_meta}, {"label", str_meta}});
 
-    const auto *binding = ValuePlanFactory::instance().binding_for(bundle_meta);
-    BundleBuilder builder{*binding};
+    const auto binding = ValuePlanFactory::instance().type_for(bundle_meta);
+    BundleBuilder builder{binding};
     builder.set("count", Value{Int{3}});
     builder.set("label", Value{Str{"here"}});
     const Value bundle = builder.build();
@@ -107,8 +107,8 @@ TEST_CASE("json: unset bundle fields are omitted on write and null on read")
     const auto *str_meta = registry.register_scalar<Str>("str");
     const auto *bundle_meta = registry.un_named_bundle({{"count", int_meta}, {"label", str_meta}});
 
-    const auto *binding = ValuePlanFactory::instance().binding_for(bundle_meta);
-    BundleBuilder builder{*binding};
+    const auto binding = ValuePlanFactory::instance().type_for(bundle_meta);
+    BundleBuilder builder{binding};
     builder.set("count", Value{Int{4}});
     const Value partial = builder.build();
 
@@ -182,7 +182,7 @@ namespace
 
     [[nodiscard]] Value eager_reference_json()
     {
-        const auto &str_binding = *ValuePlanFactory::instance().binding_for(scalar_descriptor<Str>::value_meta());
+        const auto &str_binding = ValuePlanFactory::instance().type_for(scalar_descriptor<Str>::value_meta());
 
         MapBuilder target_entries{str_binding, stdlib::json_tree::json_value_binding()};
         Value      answer_key{Str{"answer"}};

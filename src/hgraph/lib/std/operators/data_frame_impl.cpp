@@ -19,15 +19,15 @@ namespace hgraph::stdlib
     {
         namespace
         {
-            [[nodiscard]] const ValueTypeBinding &checked_binding(const ValueTypeMetaData *meta,
+            [[nodiscard]] ValueTypeRef checked_binding(const ValueTypeMetaData *meta,
                                                                   const char              *what)
             {
-                const auto *binding = ValuePlanFactory::instance().binding_for(meta);
+                const auto binding = ValuePlanFactory::instance().type_for(meta);
                 if (binding == nullptr)
                 {
                     throw std::logic_error(fmt::format("{}: schema has no value binding", what));
                 }
-                return *binding;
+                return binding;
             }
 
             [[nodiscard]] const ValueTypeMetaData *datetime_meta()
@@ -85,7 +85,7 @@ namespace hgraph::stdlib
             [[nodiscard]] bool key_equal(const ValueView &lhs, const ValueView &rhs)
             {
                 return lhs.binding() == rhs.binding() &&
-                       lhs.binding()->ops_ref().equals(lhs.data(), rhs.data());
+                       lhs.binding().ops_ref().equals(lhs.data(), rhs.data());
             }
         }  // namespace
 

@@ -1,5 +1,5 @@
 // Tests for the value-layer plumbing: ``ValueOps`` synthesis,
-// ``ValueTypeBinding`` interning, ``StorageHandle`` SBO behaviour, and the
+// ``ValueTypeRef`` interning, ``StorageHandle`` SBO behaviour, and the
 // owning ``Value`` + non-owning ``ValueView`` round-trip for atomic and
 // structured value-layer kinds.
 
@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include <hgraph/types/metadata/type_binding.h>
+#include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/types/time_series/ts_delta.h>
@@ -136,28 +137,129 @@ TEST_CASE("TypeRegistry::register_scalar pairs the schema with a binding")
     auto       &registry = TypeRegistry::instance();
     const auto *meta     = registry.register_scalar<std::int32_t>("int32");
 
-    const auto *binding = registry.scalar_binding<std::int32_t>();
+    const auto binding = registry.scalar_type<std::int32_t>();
     REQUIRE(binding != nullptr);
-    REQUIRE(binding->valid());
-    REQUIRE(binding->type_meta == meta);
-    REQUIRE(binding->plan() == &MemoryUtils::plan_for<std::int32_t>());
-    REQUIRE(binding->ops == &ops_for<std::int32_t>());
+    REQUIRE(binding.valid());
+    REQUIRE(binding.schema() == meta);
+    REQUIRE(binding.plan() == &MemoryUtils::plan_for<std::int32_t>());
+    REQUIRE(binding.ops() == &ops_for<std::int32_t>());
 
-    // Idempotency: re-registering returns the same binding pointer.
+    // Idempotency: re-registering returns the same canonical type record.
     (void)registry.register_scalar<std::int32_t>("int32");
-    REQUIRE(registry.scalar_binding<std::int32_t>() == binding);
+    REQUIRE(registry.scalar_type<std::int32_t>() == binding);
 }
 
-TEST_CASE("TypeRegistry::scalar_binding returns null for unregistered types")
+TEST_CASE("TypeRegistry::scalar_type returns null for unregistered types")
 {
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
-    REQUIRE(registry.scalar_binding<UnregisteredScalar>() == nullptr);
+    REQUIRE(registry.scalar_type<UnregisteredScalar>() == nullptr);
+}
+
+TEST_CASE("intern_value_type rejects advertised semantics without implementation hooks")
+{
+    using namespace hgraph;
+
+    SECTION("equality")
+    {
+        ValueTypeMetaData schema{ValueTypeKind::Atomic, ValueTypeFlags::Equatable, "missing equality"};
+        ValueOps ops = ops_for<std::int32_t>();
+        ops.equals_impl = nullptr;
+        REQUIRE_THROWS_AS(intern_value_type(schema, MemoryUtils::plan_for<std::int32_t>(), ops),
+                          std::invalid_argument);
+    }
+    SECTION("comparison")
+    {
+        ValueTypeMetaData schema{ValueTypeKind::Atomic, ValueTypeFlags::Comparable, "missing comparison"};
+        ValueOps ops = ops_for<std::int32_t>();
+        ops.compare_impl = nullptr;
+        REQUIRE_THROWS_AS(intern_value_type(schema, MemoryUtils::plan_for<std::int32_t>(), ops),
+                          std::invalid_argument);
+    }
+    SECTION("hashing")
+    {
+        ValueTypeMetaData schema{ValueTypeKind::Atomic, ValueTypeFlags::Hashable, "missing hashing"};
+        ValueOps ops = ops_for<std::int32_t>();
+        ops.hash_impl = nullptr;
+        REQUIRE_THROWS_AS(intern_value_type(schema, MemoryUtils::plan_for<std::int32_t>(), ops),
+                          std::invalid_argument);
+    }
+}
+
+TEST_CASE("value destructibility capability follows the storage plan")
+{
+    using namespace hgraph;
+
+    SECTION("schema triviality does not override a non-destructible plan")
+    {
+        ValueTypeMetaData schema{ValueTypeKind::Atomic,
+                                 ValueTypeFlags::TriviallyDestructible,
+                                 "schema-only trivial destructor"};
+        auto plan = MemoryUtils::plan_for<std::int32_t>();
+        plan.trivially_destructible = false;
+        plan.lifecycle.destroy = nullptr;
+
+        REQUIRE_FALSE(has_capability(value_type_capabilities(schema, plan, ops_for<std::int32_t>()),
+                                     TypeCapabilities::Destructible));
+    }
+
+    SECTION("plan triviality is sufficient when the schema does not advertise it")
+    {
+        ValueTypeMetaData schema{ValueTypeKind::Atomic, ValueTypeFlags::None,
+                                 "plan-only trivial destructor"};
+        auto plan = MemoryUtils::plan_for<std::int32_t>();
+        plan.trivially_destructible = true;
+        plan.lifecycle.destroy = nullptr;
+
+        REQUIRE(has_capability(value_type_capabilities(schema, plan, ops_for<std::int32_t>()),
+                               TypeCapabilities::Destructible));
+    }
+}
+
+TEST_CASE("ValueTypeRef is canonical by record and narrows generic pointers safely")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const ValueTypeRef scalar_type = registry.scalar_type<std::int32_t>();
+    const ValueTypeRef factory_type = ValuePlanFactory::instance().type_for(int_meta);
+    REQUIRE(scalar_type);
+    REQUIRE(scalar_type == factory_type);
+    REQUIRE(scalar_type.record() == factory_type.record());
+
+    std::int32_t payload = 42;
+    const ValuePtr read_only = scalar_type.read_only(&payload);
+    const ValuePtr writable = scalar_type.writable(&payload);
+    const ValuePtr typed_null = scalar_type.typed_null();
+    REQUIRE(ValueTypeRef::checked(read_only.to_any()) == scalar_type);
+    REQUIRE(ValueTypeRef::checked(writable.to_any()) == scalar_type);
+    REQUIRE(ValueTypeRef::checked(typed_null.to_any()) == scalar_type);
+    REQUIRE_FALSE(ValueTypeRef::checked(AnyPtr{}));
+    REQUIRE(read_only.read_only_access());
+    REQUIRE(writable.writable_access());
+    REQUIRE(typed_null.is_typed_null());
+
+    SchemaHeader foreign_schema{TypeFamily::Node, 1, "foreign node"};
+    std::uint32_t foreign_ops = 1;
+    const TypeRecordDefinition foreign_definition{
+        .key = TypeRecordKey{.schema = &foreign_schema,
+                             .role = TypeRole::Runtime,
+                             .plan = &MemoryUtils::plan_for<std::int32_t>(),
+                             .ops = &foreign_ops,
+                             .debug = nullptr},
+        .ops_abi_version = 1,
+        .capabilities = TypeCapabilities::None,
+        .implementation_label = {},
+    };
+    const TypeRecord &foreign_record = TypeRecordRegistry::instance().intern(foreign_definition);
+    REQUIRE_THROWS_AS(ValueTypeRef::checked(AnyPtr::read_only(foreign_record, &payload)),
+                      std::invalid_argument);
 }
 
 // ``StorageHandle`` itself has its own coverage in ``test_memory_utils.cpp``;
 // here we exercise the value-layer round-trip that uses it through
-// ``Value`` and ``ValueTypeBinding``.
+// ``Value`` and ``ValueTypeRef``.
 
 TEST_CASE("Value: atomic round-trip — construct, view, hash/equals/to_string")
 {
@@ -218,23 +320,17 @@ TEST_CASE("ValueView kind predicates reject malformed compact kinds without thro
 
     ValueTypeMetaData malformed{ValueTypeKind::Atomic, ValueTypeFlags::None, "malformed"};
     malformed.header.kind = static_cast<TypeKind>(ValueTypeKind::Any) + 1;
-    const ValueTypeBinding binding{
-        &malformed,
-        &MemoryUtils::plan_for<std::int32_t>(),
-        &ops_for<std::int32_t>(),
-    };
+    const ValueTypeRef binding = intern_value_type(
+        malformed, MemoryUtils::plan_for<std::int32_t>(), ops_for<std::int32_t>());
     const std::int32_t payload = 42;
-    ValueView view{&binding, &payload};
+    ValueView view{binding, &payload};
 
     ValueTypeMetaData other_malformed{ValueTypeKind::Atomic, ValueTypeFlags::None, "other malformed"};
     other_malformed.header.kind = static_cast<TypeKind>(ValueTypeKind::Any) + 2;
-    const ValueTypeBinding other_binding{
-        &other_malformed,
-        &MemoryUtils::plan_for<std::int32_t>(),
-        &ops_for<std::int32_t>(),
-    };
+    const ValueTypeRef other_binding = intern_value_type(
+        other_malformed, MemoryUtils::plan_for<std::int32_t>(), ops_for<std::int32_t>());
     const std::int32_t other_payload = 42;
-    ValueView other_view{&other_binding, &other_payload};
+    ValueView other_view{other_binding, &other_payload};
 
     STATIC_REQUIRE(noexcept(view.is_atomic()));
     STATIC_REQUIRE(noexcept(view.is_indexed()));
@@ -358,7 +454,7 @@ TEST_CASE("Value: Value(schema) preserves binding in typed-null state")
     Value v{*int_meta};
     REQUIRE_FALSE(v.has_value());
     REQUIRE(v.schema() == int_meta);
-    REQUIRE(v.binding() == ValuePlanFactory::instance().binding_for(int_meta));
+    REQUIRE(v.binding() == ValuePlanFactory::instance().type_for(int_meta));
     REQUIRE_FALSE(v.view().valid());
 
     Value copy = v;
@@ -373,10 +469,10 @@ TEST_CASE("Value: Value(binding) builds a default-valued payload of the bound ty
     auto &registry = TypeRegistry::instance();
     (void)registry.register_scalar<double>("double");
 
-    const ValueTypeBinding *binding = registry.scalar_binding<double>();
+    ValueTypeRef binding = registry.scalar_type<double>();
     REQUIRE(binding != nullptr);
 
-    Value v{*binding};
+    Value v{binding};
     REQUIRE(v.has_value());
     REQUIRE(v.schema() != nullptr);
     REQUIRE(v.schema()->value_kind() == ValueTypeKind::Atomic);

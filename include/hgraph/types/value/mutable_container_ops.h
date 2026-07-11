@@ -45,8 +45,8 @@ namespace hgraph
       public:
         MutableListStorage() noexcept = default;
 
-        explicit MutableListStorage(const ValueTypeBinding &element_binding)
-            : element_binding_{&element_binding}, slots_{element_binding.checked_plan()}
+        explicit MutableListStorage(const ValueTypeRef &element_binding)
+            : element_binding_{element_binding}, slots_{element_binding.checked_plan()}
         {
         }
 
@@ -84,7 +84,7 @@ namespace hgraph
 
         [[nodiscard]] std::size_t              size() const noexcept { return size_; }
         [[nodiscard]] bool                     empty() const noexcept { return size_ == 0; }
-        [[nodiscard]] const ValueTypeBinding  *element_binding() const noexcept { return element_binding_; }
+        [[nodiscard]] ValueTypeRef element_binding() const noexcept { return element_binding_; }
 
         [[nodiscard]] const void *element_at(std::size_t index) const
         {
@@ -131,7 +131,7 @@ namespace hgraph
         void set_element(std::size_t index, const void *src)
         {
             require_index(index);
-            element_binding_->checked_plan().copy_assign(slots_.value_memory(index), src);
+            element_binding_.checked_plan().copy_assign(slots_.value_memory(index), src);
         }
 
         /** Remove the element at ``index``, shifting later elements down one place. */
@@ -143,7 +143,7 @@ namespace hgraph
                 for (std::size_t j = index; j + 1 < validity_.size(); ++j) { validity_[j] = validity_[j + 1]; }
                 validity_.resize(size_ - 1);
             }
-            const auto &plan = element_binding_->checked_plan();
+            const auto &plan = element_binding_.checked_plan();
             for (std::size_t j = index; j + 1 < size_; ++j)
             {
                 plan.move_assign(slots_.value_memory(j), slots_.value_memory(j + 1));
@@ -170,7 +170,7 @@ namespace hgraph
         }
 
       private:
-        const ValueTypeBinding *element_binding_{nullptr};
+        ValueTypeRef element_binding_{nullptr};
         ValueSlotStore          slots_{};
         std::size_t             size_{0};
         // Element validity (holes): EMPTY = dense/all-set; sized on the
@@ -200,7 +200,7 @@ namespace hgraph
                 slots_ = ValueSlotStore{};  // unbound; destroys any prior payloads
                 return;
             }
-            slots_ = ValueSlotStore{element_binding_->checked_plan()};
+            slots_ = ValueSlotStore{element_binding_.checked_plan()};
             slots_.reserve_to(other.size_);
             for (std::size_t index = 0; index < other.size_; ++index)
             {
@@ -215,7 +215,7 @@ namespace hgraph
     {
         struct MutableListState
         {
-            const ValueTypeBinding *element_binding{nullptr};
+            ValueTypeRef element_binding{nullptr};
         };
 
         // -- lifecycle thunks (element binding comes from the plan's state) --
@@ -226,7 +226,7 @@ namespace hgraph
             {
                 throw std::logic_error("mutable_list construction requires an element binding");
             }
-            std::construct_at(static_cast<MutableListStorage *>(dst), *state.element_binding);
+            std::construct_at(static_cast<MutableListStorage *>(dst), state.element_binding);
         }
         inline void list_destroy(void *memory, const void *) noexcept
         {
@@ -260,7 +260,7 @@ namespace hgraph
             if (!storage->element_set(index)) { return nullptr; }   // hole: UNSET element
             return storage->element_at(index);
         }
-        inline const ValueTypeBinding *list_element_binding(const void *, const void *memory, std::size_t) noexcept
+        inline ValueTypeRef list_element_binding(const void *, const void *memory, std::size_t) noexcept
         {
             return static_cast<const MutableListStorage *>(memory)->element_binding();
         }
@@ -268,7 +268,7 @@ namespace hgraph
         {
             const auto *storage = static_cast<const MutableListStorage *>(memory);
             if (storage->element_binding() == nullptr) { throw std::logic_error("mutable list hash requires a binding"); }
-            const auto &ops  = storage->element_binding()->ops_ref();
+            const auto &ops  = storage->element_binding().ops_ref();
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -287,7 +287,7 @@ namespace hgraph
             if (a->size() == 0) { return true; }
             if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
             if (a->element_binding() != b->element_binding()) { return false; }
-            const auto &ops = a->element_binding()->ops_ref();
+            const auto &ops = a->element_binding().ops_ref();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
                 const bool a_set = a->element_set(i);
@@ -301,11 +301,11 @@ namespace hgraph
         {
             const auto *a = static_cast<const MutableListStorage *>(lhs);
             const auto *b = static_cast<const MutableListStorage *>(rhs);
-            const auto *a_binding = a->element_binding();
-            const auto *b_binding = b->element_binding();
+            const auto a_binding = a->element_binding();
+            const auto b_binding = b->element_binding();
             if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
             if (a_binding != b_binding) { return std::partial_ordering::unordered; }
-            const auto &ops = a_binding->ops_ref();
+            const auto &ops = a_binding.ops_ref();
             const auto  n   = std::min(a->size(), b->size());
             for (std::size_t i = 0; i < n; ++i)
             {
@@ -328,7 +328,7 @@ namespace hgraph
         {
             const auto *storage = static_cast<const MutableListStorage *>(memory);
             if (storage->element_binding() == nullptr) { return "[]"; }
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             return container_ops_detail::format_delimited(
                 '[', ']', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
                     if (!storage->element_set(i))
@@ -345,7 +345,7 @@ namespace hgraph
         {
             const auto *storage = static_cast<const MutableListStorage *>(memory);
             if (storage->element_binding() == nullptr) { return nb::list(); }
-            const auto &ops = storage->element_binding()->ops_ref();
+            const auto &ops = storage->element_binding().ops_ref();
             nb::list    result;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -393,12 +393,12 @@ namespace hgraph
         }
     }  // namespace mutable_container_detail
 
-    [[nodiscard]] inline const MemoryUtils::StoragePlan &mutable_list_plan(const ValueTypeBinding &element_binding)
+    [[nodiscard]] inline const MemoryUtils::StoragePlan &mutable_list_plan(const ValueTypeRef &element_binding)
     {
         using namespace mutable_container_detail;
         return list_registry().intern(
-            compact_detail::UnaryBindingKey{.binding = &element_binding},
-            [&] { return std::make_unique<MutableListState>(MutableListState{.element_binding = &element_binding}); },
+            compact_detail::UnaryBindingKey{.binding = element_binding},
+            [&] { return std::make_unique<MutableListState>(MutableListState{.element_binding = element_binding}); },
             [&](const MutableListState &state) {
                 return std::make_unique<MemoryUtils::StoragePlan>(
                     compact_detail::make_storage_plan<MutableListStorage, &list_construct, &list_destroy,
@@ -442,10 +442,10 @@ namespace hgraph
         return ops;
     }
 
-    [[nodiscard]] inline const ValueTypeBinding &mutable_list_binding(const ValueTypeBinding &element_binding)
+    [[nodiscard]] inline ValueTypeRef mutable_list_type(const ValueTypeRef &element_binding)
     {
-        const auto *meta = TypeRegistry::instance().mutable_list(element_binding.type_meta);
-        return ValueTypeBinding::intern(*meta, mutable_list_plan(element_binding), mutable_list_ops());
+        const auto *meta = TypeRegistry::instance().mutable_list(element_binding.schema());
+        return intern_value_type(*meta, mutable_list_plan(element_binding), mutable_list_ops());
     }
 
     // =================================================================
@@ -465,7 +465,7 @@ namespace hgraph
         {
             return static_cast<const ValueOps *>(context)->equals(lhs, rhs);
         }
-        [[nodiscard]] inline KeySlotStoreOps key_ops_for(const ValueTypeBinding &key_binding)
+        [[nodiscard]] inline KeySlotStoreOps key_ops_for(const ValueTypeRef &key_binding)
         {
             return KeySlotStoreOps{
                 .hash    = &key_hash_adapter,
@@ -486,9 +486,9 @@ namespace hgraph
     class MutableMapStorage
     {
       public:
-        MutableMapStorage(const ValueTypeBinding &key_binding, const ValueTypeBinding &value_binding)
-            : key_binding_{&key_binding}
-            , value_binding_{&value_binding}
+        MutableMapStorage(const ValueTypeRef &key_binding, const ValueTypeRef &value_binding)
+            : key_binding_{key_binding}
+            , value_binding_{value_binding}
             , keys_{key_binding.checked_plan(), mutable_container_detail::key_ops_for(key_binding)}
             , values_{value_binding.checked_plan()}
         {
@@ -497,8 +497,8 @@ namespace hgraph
         MutableMapStorage(const MutableMapStorage &other)
             : key_binding_{other.key_binding_}
             , value_binding_{other.value_binding_}
-            , keys_{other.key_binding_->checked_plan(), mutable_container_detail::key_ops_for(*other.key_binding_)}
-            , values_{other.value_binding_->checked_plan()}
+            , keys_{other.key_binding_.checked_plan(), mutable_container_detail::key_ops_for(other.key_binding_)}
+            , values_{other.value_binding_.checked_plan()}
         {
             copy_entries_from(other);
         }
@@ -508,9 +508,9 @@ namespace hgraph
             if (this != &other)
             {
                 values_.destroy_all();
-                keys_          = KeySlotStore{other.key_binding_->checked_plan(),
-                                              mutable_container_detail::key_ops_for(*other.key_binding_)};
-                values_        = ValueSlotStore{other.value_binding_->checked_plan()};
+                keys_          = KeySlotStore{other.key_binding_.checked_plan(),
+                                              mutable_container_detail::key_ops_for(other.key_binding_)};
+                values_        = ValueSlotStore{other.value_binding_.checked_plan()};
                 key_binding_   = other.key_binding_;
                 value_binding_ = other.value_binding_;
                 copy_entries_from(other);
@@ -525,8 +525,8 @@ namespace hgraph
         [[nodiscard]] std::size_t             size() const noexcept { return keys_.size(); }
         [[nodiscard]] std::size_t             slot_capacity() const noexcept { return keys_.slot_capacity(); }
         [[nodiscard]] bool                    slot_live(std::size_t slot) const noexcept { return keys_.slot_live(slot); }
-        [[nodiscard]] const ValueTypeBinding *key_binding() const noexcept { return key_binding_; }
-        [[nodiscard]] const ValueTypeBinding *value_binding() const noexcept { return value_binding_; }
+        [[nodiscard]] ValueTypeRef key_binding() const noexcept { return key_binding_; }
+        [[nodiscard]] ValueTypeRef value_binding() const noexcept { return value_binding_; }
 
         [[nodiscard]] const void *key_at(std::size_t slot) const noexcept { return keys_.key_memory(slot); }
         [[nodiscard]] const void *value_at_slot(std::size_t slot) const noexcept { return values_.value_memory(slot); }
@@ -548,7 +548,7 @@ namespace hgraph
             const auto result = keys_.insert(key);  // may grow key capacity
             values_.reserve_to(keys_.slot_capacity());
             if (result.inserted) { values_.construct_at(result.slot, value); }
-            else { value_binding_->checked_plan().copy_assign(values_.value_memory(result.slot), value); }
+            else { value_binding_.checked_plan().copy_assign(values_.value_memory(result.slot), value); }
         }
 
         /**
@@ -585,8 +585,8 @@ namespace hgraph
         }
 
       private:
-        const ValueTypeBinding *key_binding_{nullptr};
-        const ValueTypeBinding *value_binding_{nullptr};
+        ValueTypeRef key_binding_{nullptr};
+        ValueTypeRef value_binding_{nullptr};
         KeySlotStore            keys_;
         ValueSlotStore          values_;
 
@@ -615,8 +615,8 @@ namespace hgraph
     {
         struct MutableMapState
         {
-            const ValueTypeBinding *key_binding{nullptr};
-            const ValueTypeBinding *value_binding{nullptr};
+            ValueTypeRef key_binding{nullptr};
+            ValueTypeRef value_binding{nullptr};
         };
 
         // -- lifecycle thunks --
@@ -627,7 +627,7 @@ namespace hgraph
             {
                 throw std::logic_error("mutable_map construction requires key and value bindings");
             }
-            std::construct_at(static_cast<MutableMapStorage *>(dst), *state.key_binding, *state.value_binding);
+            std::construct_at(static_cast<MutableMapStorage *>(dst), state.key_binding, state.value_binding);
         }
         inline void map_destroy(void *memory, const void *) noexcept
         {
@@ -671,15 +671,15 @@ namespace hgraph
         {
             return static_cast<const MutableMapStorage *>(m)->value_at_ordinal(i);
         }
-        inline const ValueTypeBinding *map_key_binding(const void *, const void *m, std::size_t) noexcept
+        inline ValueTypeRef map_key_binding(const void *, const void *m, std::size_t) noexcept
         {
             return static_cast<const MutableMapStorage *>(m)->key_binding();
         }
-        inline const ValueTypeBinding *map_value_binding(const void *, const void *m) noexcept
+        inline ValueTypeRef map_value_binding(const void *, const void *m) noexcept
         {
             return static_cast<const MutableMapStorage *>(m)->value_binding();
         }
-        inline const ValueTypeBinding *map_value_binding_indexed(const void *, const void *m, std::size_t) noexcept
+        inline ValueTypeRef map_value_binding_indexed(const void *, const void *m, std::size_t) noexcept
         {
             return map_value_binding(nullptr, m);
         }
@@ -725,8 +725,8 @@ namespace hgraph
         inline std::size_t map_hash(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding()->ops_ref();
-            const auto &vops = s->value_binding()->ops_ref();
+            const auto &kops = s->key_binding().ops_ref();
+            const auto &vops = s->value_binding().ops_ref();
             std::size_t acc  = 0;  // xor of per-entry hashes -> order-independent
             for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
             {
@@ -741,7 +741,7 @@ namespace hgraph
             const auto *b = static_cast<const MutableMapStorage *>(rhs);
             if (a->size() != b->size()) { return false; }
             if (a->key_binding() != b->key_binding() || a->value_binding() != b->value_binding()) { return false; }
-            const auto &vops = a->value_binding()->ops_ref();
+            const auto &vops = a->value_binding().ops_ref();
             for (std::size_t slot = 0; slot < a->slot_capacity(); ++slot)
             {
                 if (!a->slot_live(slot)) { continue; }
@@ -761,8 +761,8 @@ namespace hgraph
             const auto *s = static_cast<const MutableMapStorage *>(m);
             nb::dict    result;
             if (s->key_binding() == nullptr) { return result; }
-            const auto &kops = s->key_binding()->ops_ref();
-            const auto &vops = s->value_binding()->ops_ref();
+            const auto &kops = s->key_binding().ops_ref();
+            const auto &vops = s->value_binding().ops_ref();
             for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
             {
                 if (!s->slot_live(slot)) { continue; }
@@ -775,8 +775,8 @@ namespace hgraph
         inline std::string map_to_string(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding()->ops_ref();
-            const auto &vops = s->value_binding()->ops_ref();
+            const auto &kops = s->key_binding().ops_ref();
+            const auto &vops = s->value_binding().ops_ref();
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "{{");
             bool first = true;
@@ -811,7 +811,7 @@ namespace hgraph
         inline std::size_t map_key_set_hash(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding()->ops_ref();
+            const auto &kops = s->key_binding().ops_ref();
             std::size_t acc = 0;
             for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
             {
@@ -838,7 +838,7 @@ namespace hgraph
         inline std::string map_key_set_to_string(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding()->ops_ref();
+            const auto &kops = s->key_binding().ops_ref();
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "{{");
             bool first = true;
@@ -865,8 +865,8 @@ namespace hgraph
     }  // namespace mutable_container_detail
 
     // Forward-declared: the key-set binding's plan is the map's own plan.
-    [[nodiscard]] const MemoryUtils::StoragePlan &mutable_map_plan(const ValueTypeBinding &key_binding,
-                                                                   const ValueTypeBinding &value_binding);
+    [[nodiscard]] const MemoryUtils::StoragePlan &mutable_map_plan(const ValueTypeRef &key_binding,
+                                                                   const ValueTypeRef &value_binding);
 
     [[nodiscard]] inline const SetValueOps &mutable_map_key_set_ops() noexcept
     {
@@ -895,33 +895,33 @@ namespace hgraph
         return ops;
     }
 
-    [[nodiscard]] inline const ValueTypeBinding &mutable_map_key_set_binding(const ValueTypeBinding &key_binding,
-                                                                             const ValueTypeBinding &value_binding)
+    [[nodiscard]] inline ValueTypeRef mutable_map_key_set_type(const ValueTypeRef &key_binding,
+                                                                             const ValueTypeRef &value_binding)
     {
-        const auto *set_meta = TypeRegistry::instance().set(key_binding.type_meta);
-        return ValueTypeBinding::intern(*set_meta, mutable_map_plan(key_binding, value_binding),
+        const auto *set_meta = TypeRegistry::instance().set(key_binding.schema());
+        return intern_value_type(*set_meta, mutable_map_plan(key_binding, value_binding),
                                         mutable_map_key_set_ops());
     }
 
     namespace mutable_container_detail
     {
-        inline SetView map_key_set_thunk(const void *, const ValueTypeBinding * /*map_binding*/, const void *memory)
+        inline SetView map_key_set_thunk(const void *, ValueTypeRef /*map_binding*/, const void *memory)
         {
             const auto *s = static_cast<const MutableMapStorage *>(memory);
-            const ValueTypeBinding &set_binding = mutable_map_key_set_binding(*s->key_binding(), *s->value_binding());
-            return SetView{ValueView{&set_binding, memory}};
+            const auto set_binding = mutable_map_key_set_type(s->key_binding(), s->value_binding());
+            return SetView{ValueView{set_binding, memory}};
         }
     }  // namespace mutable_container_detail
 
-    [[nodiscard]] inline const MemoryUtils::StoragePlan &mutable_map_plan(const ValueTypeBinding &key_binding,
-                                                                          const ValueTypeBinding &value_binding)
+    [[nodiscard]] inline const MemoryUtils::StoragePlan &mutable_map_plan(const ValueTypeRef &key_binding,
+                                                                          const ValueTypeRef &value_binding)
     {
         using namespace mutable_container_detail;
         return map_registry().intern(
-            compact_detail::BinaryBindingKey{.first = &key_binding, .second = &value_binding},
+            compact_detail::BinaryBindingKey{.first = key_binding, .second = value_binding},
             [&] {
                 return std::make_unique<MutableMapState>(
-                    MutableMapState{.key_binding = &key_binding, .value_binding = &value_binding});
+                    MutableMapState{.key_binding = key_binding, .value_binding = value_binding});
             },
             [&](const MutableMapState &state) {
                 return std::make_unique<MemoryUtils::StoragePlan>(
@@ -973,11 +973,11 @@ namespace hgraph
         return ops;
     }
 
-    [[nodiscard]] inline const ValueTypeBinding &mutable_map_binding(const ValueTypeBinding &key_binding,
-                                                                     const ValueTypeBinding &value_binding)
+    [[nodiscard]] inline ValueTypeRef mutable_map_type(const ValueTypeRef &key_binding,
+                                                                     const ValueTypeRef &value_binding)
     {
-        const auto *meta = TypeRegistry::instance().mutable_map(key_binding.type_meta, value_binding.type_meta);
-        return ValueTypeBinding::intern(*meta, mutable_map_plan(key_binding, value_binding), mutable_map_ops());
+        const auto *meta = TypeRegistry::instance().mutable_map(key_binding.schema(), value_binding.schema());
+        return intern_value_type(*meta, mutable_map_plan(key_binding, value_binding), mutable_map_ops());
     }
 
     // -----------------------------------------------------------------
@@ -989,15 +989,15 @@ namespace hgraph
     class MutableSetStorage
     {
       public:
-        explicit MutableSetStorage(const ValueTypeBinding &element_binding)
-            : element_binding_{&element_binding}
+        explicit MutableSetStorage(const ValueTypeRef &element_binding)
+            : element_binding_{element_binding}
             , keys_{element_binding.checked_plan(), mutable_container_detail::key_ops_for(element_binding)}
         {
         }
 
         MutableSetStorage(const MutableSetStorage &other)
             : element_binding_{other.element_binding_}
-            , keys_{other.element_binding_->checked_plan(), mutable_container_detail::key_ops_for(*other.element_binding_)}
+            , keys_{other.element_binding_.checked_plan(), mutable_container_detail::key_ops_for(other.element_binding_)}
         {
             copy_keys_from(other);
         }
@@ -1006,8 +1006,8 @@ namespace hgraph
         {
             if (this != &other)
             {
-                keys_           = KeySlotStore{other.element_binding_->checked_plan(),
-                                               mutable_container_detail::key_ops_for(*other.element_binding_)};
+                keys_           = KeySlotStore{other.element_binding_.checked_plan(),
+                                               mutable_container_detail::key_ops_for(other.element_binding_)};
                 element_binding_ = other.element_binding_;
                 copy_keys_from(other);
             }
@@ -1021,7 +1021,7 @@ namespace hgraph
         [[nodiscard]] std::size_t             size() const noexcept { return keys_.size(); }
         [[nodiscard]] std::size_t             slot_capacity() const noexcept { return keys_.slot_capacity(); }
         [[nodiscard]] bool                    slot_live(std::size_t slot) const noexcept { return keys_.slot_live(slot); }
-        [[nodiscard]] const ValueTypeBinding *element_binding() const noexcept { return element_binding_; }
+        [[nodiscard]] ValueTypeRef element_binding() const noexcept { return element_binding_; }
         [[nodiscard]] const void             *key_at(std::size_t slot) const noexcept { return keys_.key_memory(slot); }
         [[nodiscard]] bool                    contains(const void *key) const { return keys_.find_slot(key) != KeySlotStore::npos; }
         [[nodiscard]] const void             *key_at_ordinal(std::size_t ordinal) const { return nth_live_memory(ordinal); }
@@ -1042,7 +1042,7 @@ namespace hgraph
         void clear() { keys_.clear(); }
 
       private:
-        const ValueTypeBinding *element_binding_{nullptr};
+        ValueTypeRef element_binding_{nullptr};
         KeySlotStore            keys_;
 
         [[nodiscard]] const void *nth_live_memory(std::size_t ordinal) const
@@ -1070,14 +1070,14 @@ namespace hgraph
     {
         struct MutableSetState
         {
-            const ValueTypeBinding *element_binding{nullptr};
+            ValueTypeRef element_binding{nullptr};
         };
 
         inline void set_construct(void *dst, const void *context)
         {
             const auto &state = compact_detail::checked_state<MutableSetState>(context, "mutable_set");
             if (state.element_binding == nullptr) { throw std::logic_error("mutable_set construction requires an element binding"); }
-            std::construct_at(static_cast<MutableSetStorage *>(dst), *state.element_binding);
+            std::construct_at(static_cast<MutableSetStorage *>(dst), state.element_binding);
         }
         inline void set_destroy(void *memory, const void *) noexcept { std::destroy_at(static_cast<MutableSetStorage *>(memory)); }
         inline void set_copy_construct(void *dst, const void *src, const void *)
@@ -1100,7 +1100,7 @@ namespace hgraph
         inline std::size_t set_size(const void *, const void *m) noexcept { return static_cast<const MutableSetStorage *>(m)->size(); }
         inline bool        set_contains(const void *, const void *m, const void *key) { return static_cast<const MutableSetStorage *>(m)->contains(key); }
         inline const void *set_element_at(const void *, const void *m, std::size_t i) { return static_cast<const MutableSetStorage *>(m)->key_at_ordinal(i); }
-        inline const ValueTypeBinding *set_element_binding(const void *, const void *m, std::size_t) noexcept
+        inline ValueTypeRef set_element_binding(const void *, const void *m, std::size_t) noexcept
         {
             return static_cast<const MutableSetStorage *>(m)->element_binding();
         }
@@ -1119,7 +1119,7 @@ namespace hgraph
         inline std::size_t set_hash(const void *, const void *m)
         {
             const auto *s    = static_cast<const MutableSetStorage *>(m);
-            const auto &eops = s->element_binding()->ops_ref();
+            const auto &eops = s->element_binding().ops_ref();
             std::size_t acc  = 0;  // xor of element hashes -> order-independent
             for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
             {
@@ -1149,7 +1149,7 @@ namespace hgraph
             nb::list    items;
             if (s->element_binding() != nullptr)
             {
-                const auto &eops = s->element_binding()->ops_ref();
+                const auto &eops = s->element_binding().ops_ref();
                 for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
                 {
                     if (!s->slot_live(slot)) { continue; }
@@ -1163,7 +1163,7 @@ namespace hgraph
         inline std::string set_to_string(const void *, const void *m)
         {
             const auto *s    = static_cast<const MutableSetStorage *>(m);
-            const auto &eops = s->element_binding()->ops_ref();
+            const auto &eops = s->element_binding().ops_ref();
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "{{");
             bool first = true;
@@ -1193,12 +1193,12 @@ namespace hgraph
         }
     }  // namespace mutable_container_detail
 
-    [[nodiscard]] inline const MemoryUtils::StoragePlan &mutable_set_plan(const ValueTypeBinding &element_binding)
+    [[nodiscard]] inline const MemoryUtils::StoragePlan &mutable_set_plan(const ValueTypeRef &element_binding)
     {
         using namespace mutable_container_detail;
         return set_registry().intern(
-            compact_detail::UnaryBindingKey{.binding = &element_binding},
-            [&] { return std::make_unique<MutableSetState>(MutableSetState{.element_binding = &element_binding}); },
+            compact_detail::UnaryBindingKey{.binding = element_binding},
+            [&] { return std::make_unique<MutableSetState>(MutableSetState{.element_binding = element_binding}); },
             [&](const MutableSetState &state) {
                 return std::make_unique<MemoryUtils::StoragePlan>(
                     compact_detail::make_storage_plan<MutableSetStorage, &set_construct, &set_destroy,
@@ -1241,10 +1241,10 @@ namespace hgraph
         return ops;
     }
 
-    [[nodiscard]] inline const ValueTypeBinding &mutable_set_binding(const ValueTypeBinding &element_binding)
+    [[nodiscard]] inline ValueTypeRef mutable_set_type(const ValueTypeRef &element_binding)
     {
-        const auto *meta = TypeRegistry::instance().mutable_set(element_binding.type_meta);
-        return ValueTypeBinding::intern(*meta, mutable_set_plan(element_binding), mutable_set_ops());
+        const auto *meta = TypeRegistry::instance().mutable_set(element_binding.schema());
+        return intern_value_type(*meta, mutable_set_plan(element_binding), mutable_set_ops());
     }
 
     inline void clear_mutable_container_plans() noexcept

@@ -15,7 +15,7 @@ int main() {
 
     auto       &registry = hgraph::TypeRegistry::instance();
     const auto *int_meta = registry.value_type("int");
-    if (int_meta == nullptr || int_meta != registry.scalar_binding<hgraph::Int>()->type_meta) {
+    if (int_meta == nullptr || int_meta != registry.scalar_type<hgraph::Int>().schema()) {
         return 1;
     }
     if (registry.time_series_type("TS[int]") != registry.ts(int_meta)) {

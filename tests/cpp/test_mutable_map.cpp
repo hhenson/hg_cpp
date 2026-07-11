@@ -22,16 +22,16 @@ namespace
     Value make_mutable_map(const ValueTypeMetaData *key_meta, const ValueTypeMetaData *value_meta)
     {
         const auto *schema  = TypeRegistry::instance().mutable_map(key_meta, value_meta);
-        const auto *binding = ValuePlanFactory::instance().binding_for(schema);
+        const auto binding = ValuePlanFactory::instance().type_for(schema);
         REQUIRE(binding != nullptr);
-        REQUIRE(binding->ops_ref().kind == ValueOpsKind::MutableMap);
-        return Value{*binding};
+        REQUIRE(binding.ops_ref().kind == ValueOpsKind::MutableMap);
+        return Value{binding};
     }
 
     Value make_any(const Value &inner)
     {
-        const auto *binding = ValuePlanFactory::instance().binding_for(TypeRegistry::instance().any());
-        Value       any{*binding};
+        const auto binding = ValuePlanFactory::instance().type_for(TypeRegistry::instance().any());
+        Value       any{binding};
         any.as_any().begin_mutation().set(inner.view());
         return any;
     }
@@ -41,8 +41,8 @@ namespace
     {
         MutableMapValueOps ops = *checked_value_ops<MutableMapValueOps>(map.binding(), "mutable map hook test");
         break_hook(ops);
-        const ValueTypeBinding binding{map.schema(), map.binding()->plan(), &ops};
-        auto view = ValueView{&binding, const_cast<void *>(map.view().data())}.as_map().begin_mutation();
+        const ValueTypeRef binding = intern_value_type(*map.schema(), *map.binding().plan(), ops);
+        auto view = ValueView{binding, const_cast<void *>(map.view().data())}.as_map().begin_mutation();
         REQUIRE_THROWS_AS(invoke(view), std::logic_error);
     }
 }  // namespace

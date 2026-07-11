@@ -268,15 +268,15 @@ namespace hgraph
             return TSInputBuilderFactory::checked_builder_for(schema, endpoint);
         }
 
-        [[nodiscard]] const ValueTypeBinding &state_binding_for(const ValueTypeMetaData *schema)
+        [[nodiscard]] ValueTypeRef state_binding_for(const ValueTypeMetaData *schema)
         {
             if (schema == nullptr) { throw std::logic_error("Node state schema is null"); }
-            const auto *binding = ValuePlanFactory::instance().binding_for(schema);
-            if (binding == nullptr)
+            const auto binding = ValuePlanFactory::instance().type_for(schema);
+            if (!binding)
             {
                 throw std::logic_error("Node state schema has no value binding");
             }
-            return *binding;
+            return binding;
         }
 
         void destroy_constructed_components(

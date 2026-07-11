@@ -217,8 +217,8 @@ namespace hgraph::stdlib
             if (!is_match) { return; }
 
             const auto *groups_meta = bundle.at(1).schema()->value_schema;
-            const auto *element_binding = ValuePlanFactory::instance().binding_for(groups_meta->element_type);
-            ListBuilder builder{*element_binding};
+            const auto element_binding = ValuePlanFactory::instance().type_for(groups_meta->element_type);
+            ListBuilder builder{element_binding};
             for (std::size_t i = 1; i < match.size(); ++i)
             {
                 const Str group = match[i].str();
@@ -303,9 +303,9 @@ namespace hgraph::stdlib
             Value result;
             if (fixed == 0)
             {
-                const auto *element_binding =
-                    ValuePlanFactory::instance().binding_for(value_meta->element_type);
-                ListBuilder builder{*element_binding};
+                const auto element_binding =
+                    ValuePlanFactory::instance().type_for(value_meta->element_type);
+                ListBuilder builder{element_binding};
                 for (const Str &part : parts) { builder.push_back(part); }
                 result = builder.build();
             }
@@ -317,7 +317,7 @@ namespace hgraph::stdlib
                 }
                 if (value_meta->value_kind() == ValueTypeKind::Tuple)
                 {
-                    BundleBuilder builder{*ValuePlanFactory::instance().binding_for(value_meta)};
+                    BundleBuilder builder{ValuePlanFactory::instance().type_for(value_meta)};
                     for (std::size_t index = 0; index < fixed; ++index)
                     {
                         builder.set(index, Value{parts[index]});
@@ -326,13 +326,13 @@ namespace hgraph::stdlib
                 }
                 else
                 {
-                    const auto *binding = ValuePlanFactory::instance().binding_for(value_meta);
-                    result = Value{*binding};
+                    const auto binding = ValuePlanFactory::instance().type_for(value_meta);
+                    result = Value{binding};
                     auto mutation = result.begin_mutation();
                     auto *base = static_cast<std::byte *>(mutation.mutable_data());
                     const auto stride = ValuePlanFactory::instance()
-                                            .binding_for(value_meta->element_type)
-                                            ->checked_plan()
+                                            .type_for(value_meta->element_type)
+                                            .checked_plan()
                                             .layout.size;
                     for (std::size_t index = 0; index < fixed; ++index)
                     {

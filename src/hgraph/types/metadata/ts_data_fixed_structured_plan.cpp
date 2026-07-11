@@ -272,13 +272,13 @@ namespace hgraph::ts_data_plan_factory_detail
 
         if (is_compact_atomic_ts_data(schema))
         {
-            const auto *value_binding = ValuePlanFactory::instance().binding_for(schema.value_schema);
-            const auto *delta_binding = ValuePlanFactory::instance().binding_for(schema.delta_value_schema);
-            if (value_binding == nullptr || delta_binding == nullptr)
+            const auto value_binding = ValuePlanFactory::instance().type_for(schema.value_schema);
+            const auto delta_binding = ValuePlanFactory::instance().type_for(schema.delta_value_schema);
+            if (!value_binding || !delta_binding)
             {
                 throw std::logic_error("TSDataPlanFactory: embedded atomic bindings are not resolved");
             }
-            const auto &ops = atomic_ts_data_ops(schema.kind, *value_binding, *delta_binding, root_plan, value_offset,
+            const auto &ops = atomic_ts_data_ops(schema.kind, value_binding, delta_binding, root_plan, value_offset,
                                                  tracking_offset);
             return &TSDataBinding::intern(schema, root_plan, ops);
         }
@@ -290,13 +290,13 @@ namespace hgraph::ts_data_plan_factory_detail
                             static_cast<int>(schema.kind)));
         }
 
-        const auto *value_binding = ValuePlanFactory::instance().binding_for(schema.value_schema);
-        if (value_binding == nullptr)
+        const auto value_binding = ValuePlanFactory::instance().type_for(schema.value_schema);
+        if (!value_binding)
         {
             throw std::logic_error("TSDataPlanFactory: embedded fixed value binding is not resolved");
         }
 
-        const auto                        &value_plan = value_binding->checked_plan();
+        const auto                        &value_plan = value_binding.checked_plan();
         const auto                         count      = fixed_element_count(schema);
         std::vector<const TSDataBinding *> element_bindings;
         std::vector<std::size_t>           element_data_offsets;
@@ -329,7 +329,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_fixed_plan(const TSValueTypeMetaData &schema)
     {
-        const auto *value_plan = ValuePlanFactory::instance().plan_for(schema.value_schema);
+        const auto value_plan = ValuePlanFactory::instance().plan_for(schema.value_schema);
         if (value_plan == nullptr)
         {
             throw std::logic_error("TSDataPlanFactory: fixed TSData value plan is not resolved");

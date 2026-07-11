@@ -57,7 +57,7 @@ namespace hgraph
             }
         }
 
-        [[nodiscard]] inline const IndexedValueOps *checked_indexed_ops(const ValueTypeBinding *binding,
+        [[nodiscard]] inline const IndexedValueOps *checked_indexed_ops(ValueTypeRef binding,
                                                                         const char *what)
         {
             const auto *ops = checked_value_ops<IndexedValueOps>(binding, what);
@@ -65,7 +65,7 @@ namespace hgraph
             return ops;
         }
 
-        [[nodiscard]] inline const IndexedValueOps *checked_mutable_indexed_ops(const ValueTypeBinding *binding,
+        [[nodiscard]] inline const IndexedValueOps *checked_mutable_indexed_ops(ValueTypeRef binding,
                                                                                 const char *what)
         {
             const auto *ops = checked_indexed_ops(binding, what);
@@ -76,7 +76,7 @@ namespace hgraph
             return ops;
         }
 
-        [[nodiscard]] inline const CyclicBufferValueOps *checked_cyclic_buffer_ops(const ValueTypeBinding *binding,
+        [[nodiscard]] inline const CyclicBufferValueOps *checked_cyclic_buffer_ops(ValueTypeRef binding,
                                                                                    const char *what)
         {
             const auto *ops = checked_value_ops<CyclicBufferValueOps>(binding, what);
@@ -88,7 +88,7 @@ namespace hgraph
             return ops;
         }
 
-        [[nodiscard]] inline const QueueValueOps *checked_queue_ops(const ValueTypeBinding *binding,
+        [[nodiscard]] inline const QueueValueOps *checked_queue_ops(ValueTypeRef binding,
                                                                     const char *what)
         {
             const auto *ops = checked_value_ops<QueueValueOps>(binding, what);
@@ -100,7 +100,7 @@ namespace hgraph
             return ops;
         }
 
-        [[nodiscard]] inline const SetValueOps *checked_set_ops(const ValueTypeBinding *binding, const char *what)
+        [[nodiscard]] inline const SetValueOps *checked_set_ops(ValueTypeRef binding, const char *what)
         {
             const auto *ops = checked_value_ops<SetValueOps>(binding, what);
             require_indexed_ops(ops, what);
@@ -111,7 +111,7 @@ namespace hgraph
             return ops;
         }
 
-        [[nodiscard]] inline const MapValueOps *checked_map_ops(const ValueTypeBinding *binding, const char *what)
+        [[nodiscard]] inline const MapValueOps *checked_map_ops(ValueTypeRef binding, const char *what)
         {
             const auto *ops = checked_value_ops<MapValueOps>(binding, what);
             require_indexed_ops(ops, what);
@@ -143,7 +143,7 @@ namespace hgraph
         }
 
         [[nodiscard]] inline bool binding_matches(const ValueView &view,
-                                                  const ValueTypeBinding *expected) noexcept
+                                                  ValueTypeRef expected) noexcept
         {
             return view.valid() && expected != nullptr && view.binding() == expected;
         }

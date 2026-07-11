@@ -1,5 +1,8 @@
 #include <hgraph/types/metadata/type_record_registry.h>
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/registry_reset.h>
+#include <hgraph/types/value/json_codec.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_tostring.hpp>
@@ -519,4 +522,35 @@ TEST_CASE("canonical registry reset clears type records before their lenders", "
     const TypeRecord &reinterned = registry.intern(definition);
     REQUIRE(reinterned.valid());
     REQUIRE(registry.find(definition.key) == &reinterned);
+}
+
+TEST_CASE("registry reset destroys converter-built operator defaults before their type records",
+          "[type-erasure][type-record][reset]")
+{
+    using namespace hgraph;
+
+    auto &types = TypeRegistry::instance();
+    const auto *str = types.register_scalar<std::string>("str");
+    const auto *list = types.list(str, 0);
+    const JsonConverter &converter = json_converter(list);
+
+    OperatorImpl impl;
+    impl.name = "type_record_reset_nontrivial_default";
+    ParamPattern parameter;
+    parameter.kind = ParamPattern::Kind::Scalar;
+    parameter.name = "items";
+    parameter.default_value = from_json_string(converter, R"(["a deliberately non-small string payload"])");
+    const TypeRecord *record = parameter.default_value->binding().record();
+    REQUIRE(record != nullptr);
+    REQUIRE(record->valid());
+    impl.params.push_back(std::move(parameter));
+    OperatorRegistry::instance().register_overload(std::move(impl));
+
+    reset_all_registries();
+
+    const auto reseeded_str = TypeRegistry::instance().scalar_type<std::string>();
+    REQUIRE(reseeded_str);
+    Value after_reset{std::string{"records and converter caches were rebuilt"}};
+    REQUIRE(after_reset.binding() == reseeded_str);
+    REQUIRE(after_reset.as<std::string>() == "records and converter caches were rebuilt");
 }

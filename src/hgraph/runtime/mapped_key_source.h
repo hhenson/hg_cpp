@@ -42,9 +42,9 @@ namespace hgraph::runtime_detail
             static std::mutex mutex;
             static auto      *contexts = new std::vector<std::unique_ptr<Context>>;
 
-            const auto *value_binding = ValuePlanFactory::instance().binding_for(schema.value_schema);
-            const auto *delta_binding = ValuePlanFactory::instance().binding_for(schema.delta_value_schema);
-            if (value_binding == nullptr || delta_binding == nullptr)
+            const auto value_binding = ValuePlanFactory::instance().type_for(schema.value_schema);
+            const auto delta_binding = ValuePlanFactory::instance().type_for(schema.delta_value_schema);
+            if (!value_binding || !delta_binding)
             {
                 throw std::logic_error("mapped key source could not resolve value bindings");
             }
@@ -118,7 +118,7 @@ namespace hgraph::runtime_detail
                     {
                         return nb::none();
                     }
-                    return context->layout.value_binding->ops_ref().to_python(storage->key->view().data());
+                    return context->layout.value_binding.ops_ref().to_python(storage->key->view().data());
                 },
                 .delta_to_python_impl      = [](const void *ctx, const void *memory, DateTime evaluation_time) -> nb::object {
                     const auto *context = static_cast<const Context *>(ctx);
@@ -128,7 +128,7 @@ namespace hgraph::runtime_detail
                     {
                         return nb::none();
                     }
-                    return context->layout.delta_binding->ops_ref().to_python(storage->key->view().data());
+                    return context->layout.delta_binding.ops_ref().to_python(storage->key->view().data());
                 },
 #endif
             };

@@ -11,6 +11,7 @@
 #include <hgraph/types/time_series/ts_data.h>
 #include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/value/compact_storage.h>
+#include <hgraph/types/value/mutable_container_ops.h>
 #include <hgraph/types/value/value_ops.h>
 
 namespace hgraph
@@ -22,26 +23,28 @@ namespace hgraph
         // schemas every other registry borrows by pointer.
         // Construct TypeRegistry before resetting any registry: instance()
         // seeds the standard vocabulary on first touch and future seeding may
-        // create common type records. TypeRecordRegistry remains the first
-        // registry actually reset, so those records cannot survive teardown of
-        // the lender and family registries below. If TypeRegistry's first touch
+        // create common type records. Values now retain their TypeRecord as the
+        // storage identity, so registries owning Values must be cleared before
+        // the common records. The records are still cleared before their plan,
+        // ops, and schema lenders below. If TypeRegistry's first touch
         // happened at its reset() call at the END of this function, the clears
         // would run BEFORE the first seed instead of between the seeds, leaving
         // prior-generation entries to collide with re-seeded metas on reused
         // addresses (the stale-pointer-reuse class; conflict manifests as
         // "already registered with a different plan").
         TypeRegistry &type_registry = TypeRegistry::instance();
-        TypeRecordRegistry::instance().reset();
 
         OperatorRegistry::instance().reset();
         clear_json_converters();   // interns by meta/binding pointer — must precede the lenders below
         clear_table_converters();  // same rule (also captures record_replay config keys)
+        TypeRecordRegistry::instance().reset();
         ValuePlanFactory::instance().reset();
         TSDataPlanFactory::instance().reset();
         TSInputBuilderFactory::reset();
         clear_compact_container_plans();
+        clear_mutable_container_plans();
+        MemoryUtils::clear_synthesised_plans();
         TSDataBinding::clear();
-        ValueTypeBinding::clear();
         type_registry.reset();  // re-seeds the standard scalar/TS vocabulary
     }
 }  // namespace hgraph

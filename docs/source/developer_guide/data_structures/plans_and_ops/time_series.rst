@@ -372,6 +372,22 @@ current value and child TSData views from their children. This keeps the
 public surface consistent with output views while avoiding duplicate
 payload storage for non-peered prefixes.
 
+These projected value records borrow the TSInput root allocation only while
+they remain views. Constructing or cloning a ``Value`` materialises through
+``ValuePlanFactory::type_for(projected.schema())``; the resulting value owns
+canonical storage and may outlive the input. TSB current/delta projections,
+nested bundles, map deltas, and key-set adapters preserve unset entries when
+their canonical schema carries validity state.
+
+A fixed TSL has a deliberate boundary distinction. Its input-side projected
+view reports an invalid child as a typed-null element (and the direct Python
+value path reports that child as ``None``). Its canonical owning schema is the
+dense fixed ``List[E, N]``, so owning construction copies live children and
+default-fills invalid positions with canonical ``E`` defaults. The TSL delta
+map continues to represent absence by omitting the ordinal key. If the list or
+element plan cannot default-construct that fill value, owning construction
+throws; it does not fabricate bytes or invent a nullable fixed-list layout.
+
 Their state is recorded on the input prefix and updated by the same
 child-modified bubble-up path used for scheduling:
 

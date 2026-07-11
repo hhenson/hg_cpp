@@ -42,9 +42,9 @@ namespace hgraph::ts_data_plan_factory_detail
         IndexedValueOps                 delta_bundle_ops{};
         MapValueOps                     delta_map_ops{};
         SetValueOps                     delta_key_set_ops{};
-        const ValueTypeBinding         *ordinal_key_binding{nullptr};
-        const ValueTypeBinding         *delta_map_value_binding{nullptr};
-        const ValueTypeBinding         *delta_key_set_binding{nullptr};
+        ValueTypeRef ordinal_key_binding{nullptr};
+        ValueTypeRef delta_map_value_binding{nullptr};
+        ValueTypeRef delta_key_set_binding{nullptr};
         std::vector<const TSDataBinding *> element_bindings{};
         std::vector<std::size_t>       element_data_offsets{};
         std::vector<std::int64_t>       ordinal_keys{};
@@ -109,8 +109,8 @@ namespace hgraph::ts_data_plan_factory_detail
                     }
                 }
                 ordinal_keys.push_back(static_cast<std::int64_t>(index));
-                const auto *canonical_value_binding =
-                    ValuePlanFactory::instance().binding_for(indexed_binding->type_meta->value_schema);
+                const auto canonical_value_binding =
+                    ValuePlanFactory::instance().type_for(indexed_binding->type_meta->value_schema);
                 if (canonical_value_binding == nullptr || canonical_value_binding != indexed_layout->value_binding)
                 {
                     projected_value_surface = true;
@@ -134,30 +134,30 @@ namespace hgraph::ts_data_plan_factory_detail
                 throw std::logic_error("TSDataPlanFactory: fixed TSData schemas are not populated");
             }
 
-            const auto *canonical_value_binding = ValuePlanFactory::instance().binding_for(value_schema);
+            const auto canonical_value_binding = ValuePlanFactory::instance().type_for(value_schema);
             if (canonical_value_binding == nullptr)
             {
                 throw std::logic_error("TSDataPlanFactory: fixed TSData value binding is not resolved");
             }
             active_layout().value_binding =
-                projected_value_surface ? &ValueTypeBinding::intern(*value_schema, *plan, value_indexed_ops)
+                projected_value_surface ? intern_value_type(*value_schema, *plan, value_indexed_ops)
                                         : canonical_value_binding;
 
             if (schema->kind == TSTypeKind::TSB)
             {
-                active_layout().delta_binding = &ValueTypeBinding::intern(*delta_schema, *plan, delta_bundle_ops);
+                active_layout().delta_binding = intern_value_type(*delta_schema, *plan, delta_bundle_ops);
                 return;
             }
 
-            ordinal_key_binding     = ValuePlanFactory::instance().binding_for(delta_schema->key_type);
+            ordinal_key_binding     = ValuePlanFactory::instance().type_for(delta_schema->key_type);
             delta_map_value_binding = element_count() == 0 ? nullptr : element_delta_binding(0);
             if (ordinal_key_binding == nullptr || delta_map_value_binding == nullptr)
             {
                 throw std::logic_error("TSDataPlanFactory: fixed TSL delta bindings are not resolved");
             }
             const auto *key_set_schema = TypeRegistry::instance().set(delta_schema->key_type);
-            delta_key_set_binding      = &ValueTypeBinding::intern(*key_set_schema, *plan, delta_key_set_ops);
-            active_layout().delta_binding = &ValueTypeBinding::intern(*delta_schema, *plan, delta_map_ops);
+            delta_key_set_binding      = intern_value_type(*key_set_schema, *plan, delta_key_set_ops);
+            active_layout().delta_binding = intern_value_type(*delta_schema, *plan, delta_map_ops);
         }
 
         [[nodiscard]] const TSDataLayout *layout_ptr() const noexcept
@@ -185,7 +185,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             list_layout.element_count = element_count;
 
-            const auto *value_plan = ValuePlanFactory::instance().plan_for(schema->value_schema);
+            const auto value_plan = ValuePlanFactory::instance().plan_for(schema->value_schema);
             if (value_plan == nullptr || !value_plan->is_array())
             {
                 throw std::logic_error("TSDataPlanFactory: fixed TSL value plan must be an array");
@@ -224,13 +224,13 @@ namespace hgraph::ts_data_plan_factory_detail
             return binding_ops.layout_impl(binding_ops.context);
         }
 
-        [[nodiscard]] const ValueTypeBinding *element_value_binding(std::size_t index) const
+        [[nodiscard]] ValueTypeRef element_value_binding(std::size_t index) const
         {
             const auto *layout = element_layout(index);
             return layout != nullptr ? layout->value_binding : nullptr;
         }
 
-        [[nodiscard]] const ValueTypeBinding *element_delta_binding(std::size_t index) const
+        [[nodiscard]] ValueTypeRef element_delta_binding(std::size_t index) const
         {
             const auto *layout = element_layout(index);
             return layout != nullptr ? layout->delta_binding : nullptr;
@@ -296,7 +296,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 &fixed_value_make_range,
                 nullptr,
             };
-            value_indexed_ops.owning_binding_impl      = &canonical_value_binding;
+            value_indexed_ops.owning_type_impl      = &canonical_value_binding;
             value_indexed_ops.copy_construct_view_impl = &fixed_value_copy_construct_view;
             value_indexed_ops.copy_assign_view_impl    = &fixed_value_copy_assign_view;
 
@@ -315,7 +315,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 &fixed_delta_bundle_make_range,
                 nullptr,
             };
-            delta_bundle_ops.owning_binding_impl      = &canonical_value_binding;
+            delta_bundle_ops.owning_type_impl      = &canonical_value_binding;
             delta_bundle_ops.copy_construct_view_impl = &fixed_delta_bundle_copy_construct_view;
             delta_bundle_ops.copy_assign_view_impl    = &fixed_delta_bundle_copy_assign_view;
 
@@ -342,7 +342,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 &fixed_delta_map_make_kv_range,
                 &fixed_delta_map_key_set,
             };
-            delta_map_ops.owning_binding_impl      = &canonical_value_binding;
+            delta_map_ops.owning_type_impl      = &canonical_value_binding;
             delta_map_ops.copy_construct_view_impl = &fixed_delta_map_copy_construct_view;
             delta_map_ops.copy_assign_view_impl    = &fixed_delta_map_copy_assign_view;
 
@@ -362,7 +362,7 @@ namespace hgraph::ts_data_plan_factory_detail
                  nullptr},
                 &fixed_delta_map_contains,
             };
-            delta_key_set_ops.owning_binding_impl      = &canonical_value_binding;
+            delta_key_set_ops.owning_type_impl      = &canonical_value_binding;
             delta_key_set_ops.copy_construct_view_impl = &fixed_delta_key_set_copy_construct_view;
             delta_key_set_ops.copy_assign_view_impl    = &fixed_delta_key_set_copy_assign_view;
         }
@@ -439,8 +439,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 throw std::out_of_range("fixed TSB child modification index is out of range");
             }
 
-            const auto *binding = state->layout_ptr()->value_binding;
-            if (binding == nullptr || binding->ops == nullptr)
+            const auto binding = state->layout_ptr()->value_binding;
+            if (!binding || binding.ops() == nullptr)
             {
                 throw std::logic_error("fixed TSB value binding is not resolved");
             }
@@ -499,7 +499,7 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto *child = state->element_binding(index);
             const auto &ops   = child_ops(*child);
             const auto *data  = child_data(state, memory, index);
-            const auto *binding = state->element_value_binding(index);
+            const auto binding = state->element_value_binding(index);
             if (state->schema->kind == TSTypeKind::TSB &&
                 !ops.has_current_value_impl(ops.context, data))
             {
@@ -522,10 +522,10 @@ namespace hgraph::ts_data_plan_factory_detail
             return ValueView{state->element_delta_binding(index), ops.delta_memory_impl(ops.context, data)};
         }
 
-        [[nodiscard]] static const ValueTypeBinding *
-        canonical_value_binding(const void *, const ValueTypeBinding &view_binding)
+        [[nodiscard]] static ValueTypeRef
+        canonical_value_binding(const void *, ValueTypeRef view_binding)
         {
-            const auto *binding = ValuePlanFactory::instance().binding_for(view_binding.type_meta);
+            const auto binding = ValuePlanFactory::instance().type_for(view_binding.schema());
             if (binding == nullptr)
             {
                 throw std::logic_error("fixed TSData value surface has no canonical owning binding");
@@ -562,7 +562,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return child_value_view(ctx(context), memory, index).data();
         }
 
-        [[nodiscard]] static const ValueTypeBinding *
+        [[nodiscard]] static ValueTypeRef
         fixed_value_element_binding(const void *context, const void *, std::size_t index) noexcept
         {
             return ctx(context)->element_value_binding(index);
@@ -591,7 +591,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return child_delta_view(ctx(context), memory, index).data();
         }
 
-        [[nodiscard]] static const ValueTypeBinding *
+        [[nodiscard]] static ValueTypeRef
         fixed_delta_bundle_element_binding(const void *context, const void *, std::size_t index) noexcept
         {
             return ctx(context)->element_delta_binding(index);
@@ -618,7 +618,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             if (!view.has_value())
             {
-                return std::hash<const ValueTypeBinding *>{}(view.binding());
+                return std::hash<ValueTypeRef>{}(view.binding());
             }
             return view.hash();
         }
@@ -711,7 +711,7 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         static void fixed_value_copy_construct_view(const void *context,
-                                                    const ValueTypeBinding &binding,
+                                                    const ValueTypeRef &binding,
                                                     void *dst,
                                                     const void *memory)
         {
@@ -723,12 +723,12 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         static void fixed_value_copy_assign_view(const void *context,
-                                                 const ValueTypeBinding &binding,
+                                                 const ValueTypeRef &binding,
                                                  void *dst,
                                                  const void *memory)
         {
             const auto *state = ctx(context);
-            if (binding.type_meta != state->schema->value_schema)
+            if (binding.schema() != state->schema->value_schema)
             {
                 throw std::logic_error("fixed TSData value copy requires the canonical parent value schema");
             }
@@ -869,7 +869,7 @@ namespace hgraph::ts_data_plan_factory_detail
 #endif
 
         static void fixed_delta_bundle_copy_construct_view(const void *context,
-                                                           const ValueTypeBinding &binding,
+                                                           const ValueTypeRef &binding,
                                                            void *dst,
                                                            const void *memory)
         {
@@ -881,12 +881,12 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         static void fixed_delta_bundle_copy_assign_view(const void *context,
-                                                        const ValueTypeBinding &binding,
+                                                        const ValueTypeRef &binding,
                                                         void *dst,
                                                         const void *memory)
         {
             const auto *state = ctx(context);
-            if (binding.type_meta != state->schema->delta_value_schema)
+            if (binding.schema() != state->schema->delta_value_schema)
             {
                 throw std::logic_error("fixed TSB delta copy requires the canonical parent delta schema");
             }
@@ -972,7 +972,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return &state->ordinal_keys[nth_modified_child(state, memory, index)];
         }
 
-        [[nodiscard]] static const ValueTypeBinding *fixed_delta_map_key_binding(const void *context, const void *,
+        [[nodiscard]] static ValueTypeRef fixed_delta_map_key_binding(const void *context, const void *,
                                                                                  std::size_t) noexcept
         {
             return ctx(context)->ordinal_key_binding;
@@ -985,7 +985,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return child_delta_view(state, memory, nth_modified_child(state, memory, index)).data();
         }
 
-        [[nodiscard]] static const ValueTypeBinding *fixed_delta_map_value_binding(const void *context,
+        [[nodiscard]] static ValueTypeRef fixed_delta_map_value_binding(const void *context,
                                                                                    const void *) noexcept
         {
             return ctx(context)->delta_map_value_binding;
@@ -1070,7 +1070,7 @@ namespace hgraph::ts_data_plan_factory_detail
             };
         }
 
-        [[nodiscard]] static SetView fixed_delta_map_key_set(const void *context, const ValueTypeBinding *,
+        [[nodiscard]] static SetView fixed_delta_map_key_set(const void *context, ValueTypeRef,
                                                              const void *memory)
         {
             const auto *state = ctx(context);
@@ -1087,7 +1087,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     continue;
                 }
-                const auto key_hash   = state->ordinal_key_binding->ops_ref().hash(&state->ordinal_keys[index]);
+                const auto key_hash   = state->ordinal_key_binding.ops_ref().hash(&state->ordinal_keys[index]);
                 const auto value_hash = view_hash(child_delta_view(state, memory, index));
                 result ^= combine_hash(key_hash, value_hash);
             }
@@ -1175,7 +1175,7 @@ namespace hgraph::ts_data_plan_factory_detail
 #endif
 
         static void fixed_delta_map_copy_construct_view(const void *context,
-                                                        const ValueTypeBinding &binding,
+                                                        const ValueTypeRef &binding,
                                                         void *dst,
                                                         const void *memory)
         {
@@ -1184,7 +1184,7 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         static void fixed_delta_map_copy_assign_view(const void *context,
-                                                     const ValueTypeBinding &binding,
+                                                     const ValueTypeRef &binding,
                                                      void *dst,
                                                      const void *memory)
         {
@@ -1192,12 +1192,12 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         [[nodiscard]] static MapStorage build_fixed_delta_map_storage(const void *context,
-                                                                      const ValueTypeBinding &binding,
+                                                                      const ValueTypeRef &binding,
                                                                       const void *memory)
         {
             const auto *state = ctx(context);
-            if (binding.type_meta != state->schema->delta_value_schema ||
-                binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Map)
+            if (binding.schema() != state->schema->delta_value_schema ||
+                binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Map)
             {
                 throw std::logic_error("fixed TSL delta copy requires the canonical parent delta map schema");
             }
@@ -1206,8 +1206,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 throw std::logic_error("fixed delta map copy requires TSL TSData");
             }
 
-            const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->key_type);
-            const auto *value_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+            const auto key_binding = ValuePlanFactory::instance().type_for(binding.schema()->key_type);
+            const auto value_binding = ValuePlanFactory::instance().type_for(binding.schema()->element_type);
             if (key_binding == nullptr || key_binding != state->ordinal_key_binding)
             {
                 throw std::logic_error("fixed TSL delta copy key binding is not resolved");
@@ -1217,7 +1217,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 throw std::logic_error("fixed TSL delta copy value binding is not resolved");
             }
 
-            MapBuilder builder{*key_binding, *value_binding};
+            MapBuilder builder{key_binding, value_binding};
             for (std::size_t index = 0; index < state->element_count(); ++index)
             {
                 if (!child_modified_for_parent_time(state, memory, index))
@@ -1244,7 +1244,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     continue;
                 }
-                result ^= state->ordinal_key_binding->ops_ref().hash(&state->ordinal_keys[index]);
+                result ^= state->ordinal_key_binding.ops_ref().hash(&state->ordinal_keys[index]);
             }
             return result;
         }
@@ -1327,7 +1327,7 @@ namespace hgraph::ts_data_plan_factory_detail
 #endif
 
         static void fixed_delta_key_set_copy_construct_view(const void *context,
-                                                            const ValueTypeBinding &binding,
+                                                            const ValueTypeRef &binding,
                                                             void *dst,
                                                             const void *memory)
         {
@@ -1336,7 +1336,7 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         static void fixed_delta_key_set_copy_assign_view(const void *context,
-                                                         const ValueTypeBinding &binding,
+                                                         const ValueTypeRef &binding,
                                                          void *dst,
                                                          const void *memory)
         {
@@ -1344,21 +1344,21 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         [[nodiscard]] static SetStorage build_fixed_delta_key_set_storage(const void *context,
-                                                                          const ValueTypeBinding &binding,
+                                                                          const ValueTypeRef &binding,
                                                                           const void *memory)
         {
             const auto *state = ctx(context);
-            if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Set)
+            if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Set)
             {
                 throw std::logic_error("fixed TSL delta key-set copy requires a canonical set schema");
             }
-            const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+            const auto key_binding = ValuePlanFactory::instance().type_for(binding.schema()->element_type);
             if (key_binding == nullptr || key_binding != state->ordinal_key_binding)
             {
                 throw std::logic_error("fixed TSL delta key-set copy key binding is not resolved");
             }
 
-            SetBuilder builder{*key_binding};
+            SetBuilder builder{key_binding};
             for (std::size_t index = 0; index < state->element_count(); ++index)
             {
                 if (child_modified_for_parent_time(state, memory, index))
@@ -1466,7 +1466,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 const auto *child = state->element_binding(index);
                 const auto &ops   = child_ops(*child);
                 void       *data  = child_data(state, memory, index);
-                auto        source_child = Value::reference(*source_value.binding(),
+                auto        source_child = Value::reference(source_value.binding(),
                                                             const_cast<void *>(source_value.data()));
                 if (ops.move_value_from_impl(ops.context, data, std::move(source_child), modified_time))
                 {
@@ -1487,7 +1487,7 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static nb::object fixed_to_python(const void *context, const void *memory)
         {
             const auto *state = ctx(context);
-            return state->layout_ptr()->value_binding->ops_ref().to_python(fixed_value_memory(context, memory));
+            return state->layout_ptr()->value_binding.ops_ref().to_python(fixed_value_memory(context, memory));
         }
 
         [[nodiscard]] static nb::object fixed_delta_to_python(const void *context,
@@ -1496,7 +1496,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             const auto *state = ctx(context);
             if (fixed_tracking(state, memory)->last_modified_time != evaluation_time) { return nb::none(); }
-            return state->layout_ptr()->delta_binding->ops_ref().to_python(fixed_delta_memory(context, memory));
+            return state->layout_ptr()->delta_binding.ops_ref().to_python(fixed_delta_memory(context, memory));
         }
 
         [[nodiscard]] static bool is_python_sequence(nb::handle source)

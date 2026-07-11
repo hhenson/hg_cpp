@@ -2,8 +2,6 @@
 #define HGRAPH_CPP_ROOT_VALUE_VIEW_H
 
 #include <hgraph/types/value/value_ops.h>
-#include <hgraph/util/tagged_ptr.h>
-
 #include <cassert>
 #include <compare>
 #include <cstddef>
@@ -39,9 +37,8 @@ namespace hgraph
     /**
      * Non-owning two-word reference to a value.
      *
-     * The view carries a borrowed pointer to a ``ValueTypeBinding`` (which
-     * exposes the schema, the storage plan, and the runtime ops) plus a
-     * pointer to the underlying memory. Constructing a view does not copy
+     * The view carries a typed value pointer containing the canonical
+     * ``TypeRecord`` and a pointer to the underlying memory. Constructing a view does not copy
      * the value; destroying it does not destroy the value. Use ``Value``
      * for owning storage.
      *
@@ -62,63 +59,62 @@ namespace hgraph
       public:
         constexpr ValueView() noexcept = default;
 
-        ValueView(const ValueTypeBinding *binding, void *data) noexcept
-            : binding_{binding, tag_for(binding, data, BindingTag::Writable)}, data_{data} {}
+        ValueView(ValueTypeRef binding, void *data) noexcept
+            : pointer_{data != nullptr ? binding.writable(data) : binding.typed_null()} {}
 
-        ValueView(const ValueTypeBinding *binding, const void *data) noexcept
-            : binding_{binding, BindingTag::ReadOnly}, data_{data} {}
+        ValueView(ValueTypeRef binding, const void *data) noexcept
+            : pointer_{data != nullptr ? binding.read_only(data) : binding.typed_null()} {}
 
-        ValueView(const ValueTypeBinding *binding, std::nullptr_t) noexcept
-            : binding_{binding, BindingTag::ReadOnly}, data_{nullptr} {}
+        ValueView(ValueTypeRef binding, std::nullptr_t) noexcept
+            : pointer_{binding.typed_null()} {}
 
         ValueView(const ValueView &) = delete;
         ValueView &operator=(const ValueView &) = delete;
         ValueView(ValueView &&) noexcept = default;
         ValueView &operator=(ValueView &&) noexcept = default;
 
-        /** True when both the binding and the data pointer are non-null. */
-        [[nodiscard]] bool valid() const noexcept { return binding() != nullptr && data_ != nullptr; }
+        /** True when both the trusted type record and the data pointer are non-null. */
+        [[nodiscard]] bool valid() const noexcept { return pointer_.record() != nullptr && pointer_.data() != nullptr; }
 
         explicit operator bool() const noexcept { return valid(); }
 
         /** True when the view carries a binding/schema, even if the payload is currently absent. */
-        [[nodiscard]] bool bound() const noexcept { return binding() != nullptr; }
+        [[nodiscard]] bool bound() const noexcept { return pointer_.record() != nullptr; }
         /** True when the view references a live payload. */
-        [[nodiscard]] bool has_value() const noexcept { return data_ != nullptr; }
+        [[nodiscard]] bool has_value() const noexcept { return pointer_.data() != nullptr; }
         /** True when the view may write through the payload pointer. */
         [[nodiscard]] bool mutable_payload() const noexcept
         {
-            return valid() && binding_.has_enum(BindingTag::Mutable);
+            return valid() && pointer_.access_mode() == AccessMode::Mutation;
         }
         /** True when the view was built from writable storage, even if mutation is not open. */
         [[nodiscard]] bool writable_payload() const noexcept
         {
-            return valid() && (binding_.has_enum(BindingTag::Writable) ||
-                               binding_.has_enum(BindingTag::Mutable));
+            const auto access = pointer_.access_mode();
+            return valid() && (access == AccessMode::Writable || access == AccessMode::Mutation);
         }
 
-        [[nodiscard]] const ValueTypeBinding *binding() const noexcept { return binding_.ptr(); }
+        [[nodiscard]] ValueTypeRef type() const noexcept { return ValueTypeRef{pointer_.record()}; }
+        [[nodiscard]] ValueTypeRef binding() const noexcept { return type(); }
+        [[nodiscard]] const TypeRecord *record() const noexcept { return pointer_.record(); }
         [[nodiscard]] const ValueTypeMetaData *schema() const noexcept
         {
-            const auto *bound = binding();
-            return bound != nullptr ? bound->type_meta : nullptr;
+            return type().schema();
         }
-        [[nodiscard]] const void *data() const noexcept { return data_; }
+        [[nodiscard]] const void *data() const noexcept { return pointer_.data(); }
         [[nodiscard]] void *mutable_data() const
         {
             if (!valid()) { throw std::logic_error("ValueView::mutable_data on invalid view"); }
-            if (!binding_.has_enum(BindingTag::Mutable))
+            if (!pointer_.mutation_access())
             {
                 throw std::logic_error("ValueView::mutable_data requires begin_mutation");
             }
-            return const_cast<void *>(data_);
+            return pointer_.mutable_data();
         }
 
         [[nodiscard]] bool can_begin_mutation() const noexcept
         {
-            const auto *bound = binding();
-            return writable_payload() && bound != nullptr && bound->ops != nullptr &&
-                   bound->ops->can_begin_mutation();
+            return writable_payload() && type().ops() != nullptr && type().ops()->can_begin_mutation();
         }
 
         [[nodiscard]] ValueView begin_mutation() const
@@ -128,12 +124,11 @@ namespace hgraph
             {
                 throw std::logic_error("ValueView::begin_mutation requires writable storage");
             }
-            const auto *bound = binding();
-            if (bound == nullptr || bound->ops == nullptr || !bound->ops->can_begin_mutation())
+            if (type().ops() == nullptr || !type().ops()->can_begin_mutation())
             {
                 throw std::logic_error("ValueView::begin_mutation is not supported by this value ops");
             }
-            return ValueView{bound, const_cast<void *>(data_), MutableAccess{}};
+            return ValueView{pointer_.begin_mutation(), TrustedPointer{}};
         }
 
         void end_mutation() const noexcept {}
@@ -153,8 +148,8 @@ namespace hgraph
             {
                 throw std::logic_error("ValueView::assign_from_python requires writable storage");
             }
-            const auto *bound = binding();
-            bound->ops_ref().from_python(*bound, const_cast<void *>(data_), source);
+            const auto bound = type();
+            bound.ops_ref().from_python(bound, const_cast<void *>(data()), source);
         }
 #endif
 
@@ -206,8 +201,7 @@ namespace hgraph
         template <typename T>
         [[nodiscard]] bool holds_alternative() const noexcept
         {
-            const auto *bound = binding();
-            return is_atomic() && bound->ops == &ops_for<T>();
+            return is_atomic() && type().ops() == &ops_for<T>();
         }
 
         template <typename T>
@@ -222,7 +216,7 @@ namespace hgraph
         {
             assert(valid() && "as<T>() on invalid ValueView");
             assert(holds_alternative<T>() && "as<T>() type mismatch");
-            return *static_cast<const T *>(data_);
+            return *static_cast<const T *>(data());
         }
         template <typename T>
         [[nodiscard]] T &as()
@@ -234,14 +228,14 @@ namespace hgraph
         template <typename T>
         [[nodiscard]] const T *try_as() const noexcept
         {
-            return holds_alternative<T>() ? static_cast<const T *>(data_) : nullptr;
+            return holds_alternative<T>() ? static_cast<const T *>(data()) : nullptr;
         }
 
         /** Mutable variant of ``try_as<T>``; returns ``nullptr`` for read-only views. */
         template <typename T>
         [[nodiscard]] T *try_mutable_as() noexcept
         {
-            return holds_alternative<T>() && mutable_payload() ? static_cast<T *>(const_cast<void *>(data_))
+            return holds_alternative<T>() && mutable_payload() ? static_cast<T *>(const_cast<void *>(data()))
                                                                : nullptr;
         }
 
@@ -252,7 +246,7 @@ namespace hgraph
             if (!valid()) { throw std::logic_error("checked_as<T> on invalid ValueView"); }
             if (!is_atomic()) { throw std::logic_error("checked_as<T> on non-atomic ValueView"); }
             if (!holds_alternative<T>()) { throw std::logic_error("checked_as<T> type mismatch"); }
-            return *static_cast<const T *>(data_);
+            return *static_cast<const T *>(data());
         }
         template <typename T>
         [[nodiscard]] T &checked_mutable_as()
@@ -261,7 +255,7 @@ namespace hgraph
             if (!mutable_payload()) { throw std::logic_error("checked_mutable_as<T> requires begin_mutation"); }
             if (!is_atomic()) { throw std::logic_error("checked_mutable_as<T> on non-atomic ValueView"); }
             if (!holds_alternative<T>()) { throw std::logic_error("checked_mutable_as<T> type mismatch"); }
-            return *static_cast<T *>(const_cast<void *>(data_));
+            return *static_cast<T *>(const_cast<void *>(data()));
         }
 
         template <typename T>
@@ -278,7 +272,7 @@ namespace hgraph
             if (!mutable_payload()) { throw std::logic_error("set_scalar<T> requires begin_mutation"); }
             if (!is_atomic()) { throw std::logic_error("set_scalar<T> on non-atomic ValueView"); }
             if (!holds_alternative<value_type>()) { throw std::logic_error("set_scalar<T> type mismatch"); }
-            *static_cast<value_type *>(const_cast<void *>(data_)) = std::forward<T>(value);
+            *static_cast<value_type *>(const_cast<void *>(data())) = std::forward<T>(value);
         }
 
         // -- kind-specialised view casts (definitions in specialised_views.h) --
@@ -327,7 +321,7 @@ namespace hgraph
         [[nodiscard]] std::size_t hash() const
         {
             if (!valid()) { throw std::logic_error("ValueView::hash requires a non-empty view"); }
-            return binding()->ops_ref().hash(data_);
+            return type().ops_ref().hash(data());
         }
         [[nodiscard]] bool equals(const ValueView &other) const noexcept;
         [[nodiscard]] std::partial_ordering compare(const ValueView &other) const noexcept;
@@ -344,7 +338,7 @@ namespace hgraph
         [[nodiscard]] std::string to_string() const
         {
             if (!valid()) { return std::string{}; }
-            return binding()->ops_ref().to_string(data_);
+            return type().ops_ref().to_string(data());
         }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -353,38 +347,19 @@ namespace hgraph
 #endif
 
       private:
-        enum class BindingTag : std::uintptr_t
-        {
-            ReadOnly = 0,
-            Writable = 1,
-            Mutable  = 2,
-        };
-
-        using BindingPtr = tagged_ptr<const ValueTypeBinding, 2, BindingTag>;
-
-        struct MutableAccess
+        struct TrustedPointer
         {};
 
         [[nodiscard]] ValueView borrowed_ref() const noexcept
         {
             ValueView result;
-            result.binding_ = binding_;
-            result.data_    = data_;
+            result.pointer_ = pointer_;
             return result;
         }
 
-        [[nodiscard]] static constexpr BindingTag tag_for(const ValueTypeBinding *binding,
-                                                          const void             *data,
-                                                          BindingTag              tag) noexcept
-        {
-            return binding != nullptr && data != nullptr ? tag : BindingTag::ReadOnly;
-        }
+        explicit ValueView(ValuePtr pointer, TrustedPointer) noexcept : pointer_{pointer} {}
 
-        ValueView(const ValueTypeBinding *binding, void *data, MutableAccess) noexcept
-            : binding_{binding, tag_for(binding, data, BindingTag::Mutable)}, data_{data} {}
-
-        BindingPtr  binding_{nullptr};
-        const void *data_{nullptr};
+        ValuePtr pointer_{};
     };
 
     static_assert(sizeof(ValueView) == sizeof(void *) * 2, "ValueView must remain a two-word handle");

@@ -39,32 +39,32 @@ namespace hgraph::ts_data_plan_factory_detail
 
         [[nodiscard]] std::size_t value_key_hash(const void *key, const void *context)
         {
-            const auto *binding = static_cast<const ValueTypeBinding *>(context);
-            if (binding == nullptr) { throw std::logic_error("slot TSData key hash requires a key binding"); }
-            return binding->ops_ref().hash(key);
+            const auto *ops = static_cast<const ValueOps *>(context);
+            if (ops == nullptr) { throw std::logic_error("slot TSData key hash requires key ops"); }
+            return ops->hash(key);
         }
 
         [[nodiscard]] bool value_key_equal(const void *lhs, const void *rhs, const void *context)
         {
-            const auto *binding = static_cast<const ValueTypeBinding *>(context);
-            if (binding == nullptr) { throw std::logic_error("slot TSData key equality requires a key binding"); }
-            return binding->ops_ref().equals(lhs, rhs);
+            const auto *ops = static_cast<const ValueOps *>(context);
+            if (ops == nullptr) { throw std::logic_error("slot TSData key equality requires key ops"); }
+            return ops->equals(lhs, rhs);
         }
 
-        [[nodiscard]] KeySlotStoreOps key_store_ops(const ValueTypeBinding &key_binding) noexcept
+        [[nodiscard]] KeySlotStoreOps key_store_ops(const ValueTypeRef &key_binding) noexcept
         {
             return KeySlotStoreOps{
                 .hash    = &value_key_hash,
                 .equal   = &value_key_equal,
-                .context = &key_binding,
+                .context = &key_binding.ops_ref(),
             };
         }
 
         class TSSSlotStorage
         {
           public:
-            explicit TSSSlotStorage(const ValueTypeBinding &key_binding)
-                : key_binding_(&key_binding),
+            explicit TSSSlotStorage(const ValueTypeRef &key_binding)
+                : key_binding_(key_binding),
                   keys_(key_binding.checked_plan(), key_store_ops(key_binding))
             {}
 
@@ -78,7 +78,7 @@ namespace hgraph::ts_data_plan_factory_detail
             TSSSlotStorage &operator=(TSSSlotStorage &&)      = delete;
             ~TSSSlotStorage() = default;
 
-            [[nodiscard]] const ValueTypeBinding &key_binding() const { return *key_binding_; }
+            [[nodiscard]] ValueTypeRef key_binding() const { return key_binding_; }
             [[nodiscard]] const TSDataTracking &tracking() const noexcept { return tracking_; }
             [[nodiscard]] TSDataTracking &mutable_tracking() noexcept { return tracking_; }
             [[nodiscard]] const KeySlotStore &keys() const noexcept { return keys_; }
@@ -248,7 +248,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return {.slot = slot, .changed = true};
             }
 
-            const ValueTypeBinding *key_binding_{nullptr};
+            ValueTypeRef key_binding_{nullptr};
             TSDataTracking         tracking_{};
             KeySlotStore           keys_;
             sul::dynamic_bitset<>  added_{};
@@ -259,8 +259,8 @@ namespace hgraph::ts_data_plan_factory_detail
         class TSDSlotStorage
         {
           public:
-            TSDSlotStorage(const ValueTypeBinding &key_binding, const TSDataBinding &element_binding)
-                : key_binding_(&key_binding),
+            TSDSlotStorage(const ValueTypeRef &key_binding, const TSDataBinding &element_binding)
+                : key_binding_(key_binding),
                   element_binding_(&element_binding),
                   keys_(key_binding.checked_plan(), key_store_ops(key_binding)),
                   values_(keys_, element_binding.checked_plan())
@@ -275,7 +275,7 @@ namespace hgraph::ts_data_plan_factory_detail
             TSDSlotStorage &operator=(TSDSlotStorage &&)      = delete;
             ~TSDSlotStorage() = default;
 
-            [[nodiscard]] const ValueTypeBinding &key_binding() const { return *key_binding_; }
+            [[nodiscard]] ValueTypeRef key_binding() const { return key_binding_; }
             [[nodiscard]] const TSDataBinding &element_binding() const { return *element_binding_; }
             [[nodiscard]] const TSDataTracking &tracking() const noexcept { return tracking_; }
             [[nodiscard]] TSDataTracking &mutable_tracking() noexcept { return tracking_; }
@@ -485,7 +485,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return {.slot = slot, .changed = true};
             }
 
-            const ValueTypeBinding     *key_binding_{nullptr};
+            ValueTypeRef key_binding_{nullptr};
             const TSDataBinding        *element_binding_{nullptr};
             TSDataTracking              tracking_{};
             TSDataTracking          key_set_tracking_{};
@@ -499,12 +499,12 @@ namespace hgraph::ts_data_plan_factory_detail
 
         struct TSSStoragePlanContext
         {
-            const ValueTypeBinding *key_binding{nullptr};
+            ValueTypeRef key_binding{nullptr};
         };
 
         struct TSDStoragePlanContext
         {
-            const ValueTypeBinding *key_binding{nullptr};
+            ValueTypeRef key_binding{nullptr};
             const TSDataBinding    *element_binding{nullptr};
         };
 
@@ -524,7 +524,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             const auto &state = tss_plan_context(context);
             if (state.key_binding == nullptr) { throw std::logic_error("TSS key binding is not resolved"); }
-            std::construct_at(static_cast<TSSSlotStorage *>(dst), *state.key_binding);
+            std::construct_at(static_cast<TSSSlotStorage *>(dst), state.key_binding);
         }
 
         void tsd_storage_construct(void *dst, const void *context)
@@ -532,7 +532,7 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto &state = tsd_plan_context(context);
             if (state.key_binding == nullptr) { throw std::logic_error("TSD key binding is not resolved"); }
             if (state.element_binding == nullptr) { throw std::logic_error("TSD element binding is not resolved"); }
-            std::construct_at(static_cast<TSDSlotStorage *>(dst), *state.key_binding, *state.element_binding);
+            std::construct_at(static_cast<TSDSlotStorage *>(dst), state.key_binding, *state.element_binding);
         }
 
         template <typename Storage>
@@ -605,7 +605,7 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
-        [[nodiscard]] Value value_from_python(const ValueTypeBinding &binding, nb::handle source, const char *what)
+        [[nodiscard]] Value value_from_python(const ValueTypeRef &binding, nb::handle source, const char *what)
         {
             if (source.is_none()) { throw std::invalid_argument(std::string{what} + " requires a non-None value"); }
             Value value{binding};
@@ -702,8 +702,8 @@ namespace hgraph::ts_data_plan_factory_detail
             IndexedValueOps                 delta_bundle_ops{};
             SetValueOps                     added_set_ops{};
             SetValueOps                     removed_set_ops{};
-            const ValueTypeBinding         *added_set_binding{nullptr};
-            const ValueTypeBinding         *removed_set_binding{nullptr};
+            ValueTypeRef added_set_binding{nullptr};
+            ValueTypeRef removed_set_binding{nullptr};
 
             virtual ~SlotContextBase() = default;
             virtual const TSDataOps &ops_ref() const noexcept = 0;
@@ -715,17 +715,17 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             void initialise_tss_common(const TSValueTypeMetaData &schema_,
                                        const MemoryUtils::StoragePlan &plan_,
-                                       const ValueTypeBinding &key_binding,
+                                       const ValueTypeRef &key_binding,
                                        bool mutable_storage)
             {
                 schema = &schema_;
                 plan   = &plan_;
-                set_layout.key_binding     = &key_binding;
+                set_layout.key_binding     = key_binding;
                 set_layout.tracking_offset = 0;
 
                 configure_set_value_ops();
                 configure_delta_ops();
-                set_layout.value_binding   = &ValueTypeBinding::intern(*schema->value_schema, *plan, value_set_ops);
+                set_layout.value_binding   = intern_value_type(*schema->value_schema, *plan, value_set_ops);
                 configure_tss_ops(mutable_storage);
                 bind_tss_delta_surfaces();
             }
@@ -810,7 +810,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     &delta_bundle_make_range,
                     nullptr,
                 };
-                delta_bundle_ops.owning_binding_impl      = &canonical_value_binding;
+                delta_bundle_ops.owning_type_impl      = &canonical_value_binding;
                 delta_bundle_ops.copy_construct_view_impl = &delta_copy_construct_view;
                 delta_bundle_ops.copy_assign_view_impl    = &delta_copy_assign_view;
             }
@@ -823,9 +823,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     throw std::logic_error("TSS TSData delta schema must be Bundle{added, removed}");
                 }
-                added_set_binding   = &ValueTypeBinding::intern(*delta_schema->fields[0].type, *plan, added_set_ops);
-                removed_set_binding = &ValueTypeBinding::intern(*delta_schema->fields[1].type, *plan, removed_set_ops);
-                set_layout.delta_binding = &ValueTypeBinding::intern(*delta_schema, *plan, delta_bundle_ops);
+                added_set_binding   = intern_value_type(*delta_schema->fields[0].type, *plan, added_set_ops);
+                removed_set_binding = intern_value_type(*delta_schema->fields[1].type, *plan, removed_set_ops);
+                set_layout.delta_binding = intern_value_type(*delta_schema, *plan, delta_bundle_ops);
             }
 
             template <SlotSetSurface Surface>
@@ -846,7 +846,7 @@ namespace hgraph::ts_data_plan_factory_detail
                      nullptr},
                     &set_contains<Surface>,
                 };
-                ops.owning_binding_impl      = &canonical_value_binding;
+                ops.owning_type_impl      = &canonical_value_binding;
                 ops.copy_construct_view_impl = &set_copy_construct_view<Surface>;
                 ops.copy_assign_view_impl    = &set_copy_assign_view<Surface>;
                 return ops;
@@ -857,10 +857,10 @@ namespace hgraph::ts_data_plan_factory_detail
                 return static_cast<const TSSContextBase *>(context);
             }
 
-            [[nodiscard]] static const ValueTypeBinding *
-            canonical_value_binding(const void *, const ValueTypeBinding &view_binding)
+            [[nodiscard]] static ValueTypeRef
+            canonical_value_binding(const void *, ValueTypeRef view_binding)
             {
-                const auto *binding = ValuePlanFactory::instance().binding_for(view_binding.type_meta);
+                const auto binding = ValuePlanFactory::instance().type_for(view_binding.schema());
                 if (binding == nullptr)
                 {
                     throw std::logic_error("TSS value surface has no canonical owning binding");
@@ -870,7 +870,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             template <SlotSetSurface Surface>
             static void set_copy_construct_view(const void *context,
-                                                const ValueTypeBinding &binding,
+                                                const ValueTypeRef &binding,
                                                 void *dst,
                                                 const void *memory)
             {
@@ -880,7 +880,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             template <SlotSetSurface Surface>
             static void set_copy_assign_view(const void *context,
-                                             const ValueTypeBinding &binding,
+                                             const ValueTypeRef &binding,
                                              void *dst,
                                              const void *memory)
             {
@@ -889,20 +889,20 @@ namespace hgraph::ts_data_plan_factory_detail
 
             template <SlotSetSurface Surface>
             [[nodiscard]] static SetStorage build_set_storage(const void *context,
-                                                              const ValueTypeBinding &binding,
+                                                              const ValueTypeRef &binding,
                                                               const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Set)
+                if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Set)
                 {
                     throw std::logic_error("TSS set copy requires a canonical set binding");
                 }
-                const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                const auto key_binding = ValuePlanFactory::instance().type_for(binding.schema()->element_type);
                 if (key_binding == nullptr || key_binding != ctx(context)->set_layout.key_binding)
                 {
                     throw std::logic_error("TSS set copy key binding is not resolved");
                 }
 
-                SetBuilder builder{*key_binding};
+                SetBuilder builder{key_binding};
                 for (const auto key : set_make_range<Surface>(context, memory))
                 {
                     builder.insert_copy(key.data());
@@ -911,7 +911,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void delta_copy_construct_view(const void *context,
-                                                  const ValueTypeBinding &binding,
+                                                  const ValueTypeRef &binding,
                                                   void *dst,
                                                   const void *memory)
             {
@@ -923,12 +923,12 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void delta_copy_assign_view(const void *context,
-                                               const ValueTypeBinding &binding,
+                                               const ValueTypeRef &binding,
                                                void *dst,
                                                const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Bundle ||
-                    binding.type_meta->field_count != 2)
+                if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Bundle ||
+                    binding.schema()->field_count != 2)
                 {
                     throw std::logic_error("TSS delta copy requires canonical Bundle{added, removed}");
                 }
@@ -1073,7 +1073,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static nb::object tss_to_python(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                return state->set_layout.value_binding->ops_ref().to_python(memory);
+                return state->set_layout.value_binding.ops_ref().to_python(memory);
             }
 
             [[nodiscard]] static nb::object tss_delta_to_python(const void *context,
@@ -1082,7 +1082,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctx(context);
                 if (storage<Storage>(memory).tracking().last_modified_time != evaluation_time) { return nb::none(); }
-                return state->set_layout.delta_binding->ops_ref().to_python(memory);
+                return state->set_layout.delta_binding.ops_ref().to_python(memory);
             }
 
             [[nodiscard]] static bool tss_from_python(const void *context,
@@ -1110,14 +1110,14 @@ namespace hgraph::ts_data_plan_factory_detail
                     if (has_added && !added.is_none())
                     {
                         for_each_python_iterable(added, "TSS added update", [&](nb::handle item) {
-                            Value key = value_from_python(*state->set_layout.key_binding, item, "TSS added update");
+                            Value key = value_from_python(state->set_layout.key_binding, item, "TSS added update");
                             static_cast<void>(target.insert_key(key.view(), modified_time));
                         });
                     }
                     if (has_removed && !removed.is_none())
                     {
                         for_each_python_iterable(removed, "TSS removed update", [&](nb::handle item) {
-                            Value key = value_from_python(*state->set_layout.key_binding, item, "TSS removed update");
+                            Value key = value_from_python(state->set_layout.key_binding, item, "TSS removed update");
                             static_cast<void>(target.remove_key(key.view(), modified_time));
                         });
                     }
@@ -1137,7 +1137,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     replacement.reserve(static_cast<std::size_t>(nb::len(object)));
                 }
                 for_each_python_iterable(source, "TSS value", [&](nb::handle item) {
-                    replacement.push_back(value_from_python(*state->set_layout.key_binding, item, "TSS value"));
+                    replacement.push_back(value_from_python(state->set_layout.key_binding, item, "TSS value"));
                 });
 
                 const bool newly_touched = target.touch(modified_time);
@@ -1146,7 +1146,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     static_cast<void>(target.insert_key(key.view(), modified_time));
                 }
 
-                const auto &key_ops = state->set_layout.key_binding->ops_ref();
+                const auto &key_ops = state->set_layout.key_binding.ops_ref();
                 std::vector<Value> removals;
                 for (const auto key : set_make_range<SlotSetSurface::Live>(context, memory))
                 {
@@ -1291,7 +1291,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             template <SlotSetSurface>
-            [[nodiscard]] static const ValueTypeBinding *set_element_binding(const void *context, const void *,
+            [[nodiscard]] static ValueTypeRef set_element_binding(const void *context, const void *,
                                                                              std::size_t) noexcept
             {
                 return ctx(context)->set_layout.key_binding;
@@ -1349,7 +1349,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::size_t set_hash(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                const auto &ops   = state->set_layout.key_binding->ops_ref();
+                const auto &ops   = state->set_layout.key_binding.ops_ref();
                 std::size_t result = 0;
                 for (const auto key : set_make_range<Surface>(context, memory))
                 {
@@ -1393,7 +1393,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::string set_to_string(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                const auto &ops   = state->set_layout.key_binding->ops_ref();
+                const auto &ops   = state->set_layout.key_binding.ops_ref();
                 fmt::memory_buffer out;
                 fmt::format_to(std::back_inserter(out), "{{");
                 bool first = true;
@@ -1412,7 +1412,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static nb::object set_to_python(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                const auto &ops   = state->set_layout.key_binding->ops_ref();
+                const auto &ops   = state->set_layout.key_binding.ops_ref();
                 nb::set     result;
                 for (const auto key : set_make_range<Surface>(context, memory))
                 {
@@ -1431,7 +1431,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return memory;
             }
 
-            [[nodiscard]] static const ValueTypeBinding *delta_bundle_element_binding(const void *context,
+            [[nodiscard]] static ValueTypeRef delta_bundle_element_binding(const void *context,
                                                                                       const void *,
                                                                                       std::size_t index) noexcept
             {
@@ -1460,8 +1460,8 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::size_t delta_bundle_hash(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                return combine_hash(state->added_set_binding->ops_ref().hash(memory),
-                                    state->removed_set_binding->ops_ref().hash(memory));
+                return combine_hash(state->added_set_binding.ops_ref().hash(memory),
+                                    state->removed_set_binding.ops_ref().hash(memory));
             }
 
             [[nodiscard]] static bool delta_bundle_equals(const void *context, const void *lhs,
@@ -1470,8 +1470,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
                 return fallback_on_exception(false, [&] {
                     const auto *state = ctx(context);
-                    return state->added_set_binding->ops_ref().equals(lhs, rhs) &&
-                           state->removed_set_binding->ops_ref().equals(lhs, rhs);
+                    return state->added_set_binding.ops_ref().equals(lhs, rhs) &&
+                           state->removed_set_binding.ops_ref().equals(lhs, rhs);
                 });
             }
 
@@ -1491,8 +1491,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctx(context);
                 return fmt::format("{{added: {}, removed: {}}}",
-                                   state->added_set_binding->ops_ref().to_string(memory),
-                                   state->removed_set_binding->ops_ref().to_string(memory));
+                                   state->added_set_binding.ops_ref().to_string(memory),
+                                   state->removed_set_binding.ops_ref().to_string(memory));
             }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -1500,8 +1500,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctx(context);
                 nb::dict    result;
-                result[nb::str{"added"}] = state->added_set_binding->ops_ref().to_python(memory);
-                result[nb::str{"removed"}] = state->removed_set_binding->ops_ref().to_python(memory);
+                result[nb::str{"added"}] = state->added_set_binding.ops_ref().to_python(memory);
+                result[nb::str{"removed"}] = state->removed_set_binding.ops_ref().to_python(memory);
                 return result;
             }
 #endif
@@ -1511,7 +1511,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             TSSContext(const TSValueTypeMetaData &schema,
                        const MemoryUtils::StoragePlan &plan,
-                       const ValueTypeBinding &key_binding)
+                       const ValueTypeRef &key_binding)
             {
                 initialise_tss_common(schema, plan, key_binding, true);
             }
@@ -1527,13 +1527,13 @@ namespace hgraph::ts_data_plan_factory_detail
             MapValueOps             modified_map_ops{};
             SetValueOps             key_set_value_ops{};
             IndexedValueOps          dict_delta_bundle_ops{};
-            const ValueTypeBinding *modified_map_binding{nullptr};
-            const ValueTypeBinding *key_set_value_binding{nullptr};
+            ValueTypeRef modified_map_binding{nullptr};
+            ValueTypeRef key_set_value_binding{nullptr};
             const TSDataBinding    *key_set_ts_binding{nullptr};
 
             TSDContext(const TSValueTypeMetaData &schema,
                        const MemoryUtils::StoragePlan &plan,
-                       const ValueTypeBinding &key_binding,
+                       const ValueTypeRef &key_binding,
                        const TSDataBinding &element_binding)
             {
                 dict_schema = &schema;
@@ -1552,7 +1552,7 @@ namespace hgraph::ts_data_plan_factory_detail
           private:
             void initialise_tsd(const TSValueTypeMetaData &schema_,
                                 const MemoryUtils::StoragePlan &plan_,
-                                const ValueTypeBinding &key_binding,
+                                const ValueTypeRef &key_binding,
                                 const TSDataBinding &element_binding)
             {
                 const auto &element_ops = element_binding.ops_ref();
@@ -1562,7 +1562,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     throw std::logic_error("TSD element layout is not resolved");
                 }
 
-                dict_layout.key_binding           = &key_binding;
+                dict_layout.key_binding           = key_binding;
                 dict_layout.element_binding       = &element_binding;
                 dict_layout.element_layout        = element_layout;
                 dict_layout.element_value_binding = element_layout->value_binding;
@@ -1642,7 +1642,7 @@ namespace hgraph::ts_data_plan_factory_detail
             void configure_map_value_ops()
             {
                 value_map_ops = map_ops_for_surface<SlotMapSurface::Live>();
-                value_map_ops.owning_binding_impl      = &canonical_value_binding;
+                value_map_ops.owning_type_impl      = &canonical_value_binding;
                 value_map_ops.copy_construct_view_impl = &map_copy_construct_view<SlotMapSurface::Live>;
                 value_map_ops.copy_assign_view_impl    = &map_copy_assign_view<SlotMapSurface::Live>;
 
@@ -1661,7 +1661,7 @@ namespace hgraph::ts_data_plan_factory_detail
                      nullptr},
                     &map_contains_key,
                 };
-                key_set_value_ops.owning_binding_impl      = &canonical_value_binding;
+                key_set_value_ops.owning_type_impl      = &canonical_value_binding;
                 key_set_value_ops.copy_construct_view_impl = &set_copy_construct_view<SlotSetSurface::Live>;
                 key_set_value_ops.copy_assign_view_impl    = &set_copy_assign_view<SlotSetSurface::Live>;
             }
@@ -1669,7 +1669,7 @@ namespace hgraph::ts_data_plan_factory_detail
             void configure_modified_map_ops()
             {
                 modified_map_ops = map_ops_for_surface<SlotMapSurface::Modified>();
-                modified_map_ops.owning_binding_impl      = &canonical_value_binding;
+                modified_map_ops.owning_type_impl      = &canonical_value_binding;
                 modified_map_ops.copy_construct_view_impl = &map_copy_construct_view<SlotMapSurface::Modified>;
                 modified_map_ops.copy_assign_view_impl    = &map_copy_assign_view<SlotMapSurface::Modified>;
 
@@ -1687,7 +1687,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     &dict_delta_make_range,
                     nullptr,
                 };
-                dict_delta_bundle_ops.owning_binding_impl      = &canonical_value_binding;
+                dict_delta_bundle_ops.owning_type_impl      = &canonical_value_binding;
                 dict_delta_bundle_ops.copy_construct_view_impl = &dict_delta_copy_construct_view;
                 dict_delta_bundle_ops.copy_assign_view_impl    = &dict_delta_copy_assign_view;
             }
@@ -1700,19 +1700,19 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     throw std::logic_error("TSD schemas are not populated");
                 }
-                dict_layout.value_binding = &ValueTypeBinding::intern(*value_schema, plan_, value_map_ops);
+                dict_layout.value_binding = intern_value_type(*value_schema, plan_, value_map_ops);
 
                 if (delta_schema->value_kind() != ValueTypeKind::Bundle || delta_schema->field_count != 2)
                 {
                     throw std::logic_error("TSD delta schema must be Bundle{removed, modified}");
                 }
-                removed_set_binding = &ValueTypeBinding::intern(*delta_schema->fields[0].type, plan_, removed_set_ops);
-                modified_map_binding = &ValueTypeBinding::intern(*delta_schema->fields[1].type, plan_, modified_map_ops);
-                added_set_binding = &ValueTypeBinding::intern(*TypeRegistry::instance().set(schema_.key_type()),
+                removed_set_binding = intern_value_type(*delta_schema->fields[0].type, plan_, removed_set_ops);
+                modified_map_binding = intern_value_type(*delta_schema->fields[1].type, plan_, modified_map_ops);
+                added_set_binding = intern_value_type(*TypeRegistry::instance().set(schema_.key_type()),
                                                               plan_, added_set_ops);
-                dict_layout.delta_binding = &ValueTypeBinding::intern(*delta_schema, plan_, dict_delta_bundle_ops);
+                dict_layout.delta_binding = intern_value_type(*delta_schema, plan_, dict_delta_bundle_ops);
 
-                key_set_value_binding = &ValueTypeBinding::intern(*TypeRegistry::instance().set(schema_.key_type()),
+                key_set_value_binding = intern_value_type(*TypeRegistry::instance().set(schema_.key_type()),
                                                                   plan_, key_set_value_ops);
                 set_layout.value_binding = key_set_value_binding;
 
@@ -1788,7 +1788,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             template <SlotMapSurface Surface>
             static void map_copy_construct_view(const void *context,
-                                                const ValueTypeBinding &binding,
+                                                const ValueTypeRef &binding,
                                                 void *dst,
                                                 const void *memory)
             {
@@ -1798,7 +1798,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             template <SlotMapSurface Surface>
             static void map_copy_assign_view(const void *context,
-                                             const ValueTypeBinding &binding,
+                                             const ValueTypeRef &binding,
                                              void *dst,
                                              const void *memory)
             {
@@ -1807,18 +1807,18 @@ namespace hgraph::ts_data_plan_factory_detail
 
             template <SlotMapSurface Surface>
             [[nodiscard]] static MapStorage build_map_storage(const void *context,
-                                                              const ValueTypeBinding &binding,
+                                                              const ValueTypeRef &binding,
                                                               const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Map)
+                if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Map)
                 {
                     throw std::logic_error("TSD map copy requires a canonical map binding");
                 }
 
                 const auto *state       = ctxd(context);
-                const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->key_type);
-                const auto *value_binding =
-                    ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                const auto key_binding = ValuePlanFactory::instance().type_for(binding.schema()->key_type);
+                const auto value_binding =
+                    ValuePlanFactory::instance().type_for(binding.schema()->element_type);
                 if (key_binding == nullptr || key_binding != state->dict_layout.key_binding)
                 {
                     throw std::logic_error("TSD map copy key binding is not resolved");
@@ -1828,7 +1828,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     throw std::logic_error("TSD map copy value binding is not resolved");
                 }
 
-                MapBuilder builder{*key_binding, *value_binding};
+                MapBuilder builder{key_binding, value_binding};
                 for (const auto [key, value] : map_kv_range<Surface>(context, memory))
                 {
                     Value owned_value{value};
@@ -1842,7 +1842,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void dict_delta_copy_construct_view(const void *context,
-                                                       const ValueTypeBinding &binding,
+                                                       const ValueTypeRef &binding,
                                                        void *dst,
                                                        const void *memory)
             {
@@ -1854,12 +1854,12 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void dict_delta_copy_assign_view(const void *context,
-                                                    const ValueTypeBinding &binding,
+                                                    const ValueTypeRef &binding,
                                                     void *dst,
                                                     const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Bundle ||
-                    binding.type_meta->field_count != 2)
+                if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Bundle ||
+                    binding.schema()->field_count != 2)
                 {
                     throw std::logic_error("TSD delta copy requires canonical Bundle{removed, modified}");
                 }
@@ -1964,7 +1964,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static nb::object tsd_to_python(const void *context, const void *memory)
             {
                 const auto *state = ctxd(context);
-                return state->dict_layout.value_binding->ops_ref().to_python(memory);
+                return state->dict_layout.value_binding.ops_ref().to_python(memory);
             }
 
             [[nodiscard]] static nb::object tsd_delta_to_python(const void *context,
@@ -1976,7 +1976,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     return nb::none();
                 }
-                return state->dict_layout.delta_binding->ops_ref().to_python(memory);
+                return state->dict_layout.delta_binding.ops_ref().to_python(memory);
             }
 
             [[nodiscard]] static bool tsd_from_python(const void *context,
@@ -2008,7 +2008,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     if (has_removed && !removed.is_none())
                     {
                         for_each_python_iterable(removed, "TSD removed update", [&](nb::handle item) {
-                            Value key = value_from_python(*state->dict_layout.key_binding, item, "TSD removed update");
+                            Value key = value_from_python(state->dict_layout.key_binding, item, "TSD removed update");
                             static_cast<void>(target.remove_key(key.view(), modified_time));
                         });
                     }
@@ -2019,7 +2019,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                                           nb::handle value_source) {
                             if (value_source.is_none()) { return; }
 
-                            Value key = value_from_python(*state->dict_layout.key_binding, key_source,
+                            Value key = value_from_python(state->dict_layout.key_binding, key_source,
                                                           "TSD modified update key");
                             const auto result = target.insert_key(key.view(), modified_time);
 
@@ -2058,7 +2058,7 @@ namespace hgraph::ts_data_plan_factory_detail
                         throw std::invalid_argument("TSD from_python does not allow None child values");
                     }
                     entries.emplace_back(
-                        value_from_python(*state->dict_layout.key_binding, key_source, "TSD value key"),
+                        value_from_python(state->dict_layout.key_binding, key_source, "TSD value key"),
                         nb::borrow<nb::object>(value_source));
                 });
 
@@ -2083,7 +2083,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     }
                 }
 
-                const auto &key_ops = state->dict_layout.key_binding->ops_ref();
+                const auto &key_ops = state->dict_layout.key_binding.ops_ref();
                 std::vector<Value> removals;
                 for (const auto key : set_make_range<SlotSetSurface::Live>(context, memory))
                 {
@@ -2357,14 +2357,14 @@ namespace hgraph::ts_data_plan_factory_detail
                 return map_key_at_index<SlotMapSurface::Live>(context, memory, index);
             }
 
-            [[nodiscard]] static const ValueTypeBinding *map_key_binding(const void *context, const void *,
+            [[nodiscard]] static ValueTypeRef map_key_binding(const void *context, const void *,
                                                                          std::size_t) noexcept
             {
                 return ctxd(context)->dict_layout.key_binding;
             }
 
             template <SlotMapSurface Surface>
-            [[nodiscard]] static const ValueTypeBinding *map_value_binding(const void *context, const void *) noexcept
+            [[nodiscard]] static ValueTypeRef map_value_binding(const void *context, const void *) noexcept
             {
                 const auto *state = ctxd(context);
                 if constexpr (Surface == SlotMapSurface::Live) { return state->dict_layout.element_value_binding; }
@@ -2488,7 +2488,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 };
             }
 
-            [[nodiscard]] static SetView map_key_set(const void *context, const ValueTypeBinding *, const void *memory)
+            [[nodiscard]] static SetView map_key_set(const void *context, ValueTypeRef, const void *memory)
             {
                 return ValueView{ctxd(context)->key_set_value_binding, memory}.as_set();
             }
@@ -2497,8 +2497,8 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::size_t map_hash(const void *context, const void *memory)
             {
                 const auto *state = ctxd(context);
-                const auto &key_ops = state->dict_layout.key_binding->ops_ref();
-                const auto &value_ops = map_value_binding<Surface>(context, memory)->ops_ref();
+                const auto &key_ops = state->dict_layout.key_binding.ops_ref();
+                const auto &value_ops = map_value_binding<Surface>(context, memory).ops_ref();
                 std::size_t result = 0;
                 for (const auto [key, value] : map_kv_range<Surface>(context, memory))
                 {
@@ -2513,7 +2513,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
                 return fallback_on_exception(false, [&] {
                     if (map_size<Surface>(context, lhs) != map_size<Surface>(context, rhs)) { return false; }
-                    const auto &value_ops = map_value_binding<Surface>(context, lhs)->ops_ref();
+                    const auto &value_ops = map_value_binding<Surface>(context, lhs).ops_ref();
                     for (const auto [key, value] : map_kv_range<Surface>(context, lhs))
                     {
                         const auto *rhs_value = map_value_at<Surface>(context, rhs, key.data());
@@ -2540,8 +2540,8 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::string map_to_string(const void *context, const void *memory)
             {
                 const auto *state = ctxd(context);
-                const auto &key_ops = state->dict_layout.key_binding->ops_ref();
-                const auto &value_ops = map_value_binding<Surface>(context, memory)->ops_ref();
+                const auto &key_ops = state->dict_layout.key_binding.ops_ref();
+                const auto &value_ops = map_value_binding<Surface>(context, memory).ops_ref();
                 fmt::memory_buffer out;
                 fmt::format_to(std::back_inserter(out), "{{");
                 bool first = true;
@@ -2562,8 +2562,8 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static nb::object map_to_python(const void *context, const void *memory)
             {
                 const auto *state = ctxd(context);
-                const auto &key_ops = state->dict_layout.key_binding->ops_ref();
-                const auto &value_ops = map_value_binding<Surface>(context, memory)->ops_ref();
+                const auto &key_ops = state->dict_layout.key_binding.ops_ref();
+                const auto &value_ops = map_value_binding<Surface>(context, memory).ops_ref();
                 nb::dict result;
                 for (const auto [key, value] : map_kv_range<Surface>(context, memory))
                 {
@@ -2611,7 +2611,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return memory;
             }
 
-            [[nodiscard]] static const ValueTypeBinding *dict_delta_element_binding(const void *context,
+            [[nodiscard]] static ValueTypeRef dict_delta_element_binding(const void *context,
                                                                                     const void *,
                                                                                     std::size_t index) noexcept
             {
@@ -2640,8 +2640,8 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::size_t dict_delta_hash(const void *context, const void *memory)
             {
                 const auto *state = ctxd(context);
-                return combine_hash(state->removed_set_binding->ops_ref().hash(memory),
-                                    state->modified_map_binding->ops_ref().hash(memory));
+                return combine_hash(state->removed_set_binding.ops_ref().hash(memory),
+                                    state->modified_map_binding.ops_ref().hash(memory));
             }
 
             [[nodiscard]] static bool dict_delta_equals(const void *context, const void *lhs,
@@ -2650,8 +2650,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
                 return fallback_on_exception(false, [&] {
                     const auto *state = ctxd(context);
-                    return state->removed_set_binding->ops_ref().equals(lhs, rhs) &&
-                           state->modified_map_binding->ops_ref().equals(lhs, rhs);
+                    return state->removed_set_binding.ops_ref().equals(lhs, rhs) &&
+                           state->modified_map_binding.ops_ref().equals(lhs, rhs);
                 });
             }
 
@@ -2671,8 +2671,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctxd(context);
                 return fmt::format("{{removed: {}, modified: {}}}",
-                                   state->removed_set_binding->ops_ref().to_string(memory),
-                                   state->modified_map_binding->ops_ref().to_string(memory));
+                                   state->removed_set_binding.ops_ref().to_string(memory),
+                                   state->modified_map_binding.ops_ref().to_string(memory));
             }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -2680,8 +2680,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctxd(context);
                 nb::dict result;
-                result[nb::str{"removed"}] = state->removed_set_binding->ops_ref().to_python(memory);
-                result[nb::str{"modified"}] = state->modified_map_binding->ops_ref().to_python(memory);
+                result[nb::str{"removed"}] = state->removed_set_binding.ops_ref().to_python(memory);
+                result[nb::str{"modified"}] = state->modified_map_binding.ops_ref().to_python(memory);
                 return result;
             }
 #endif
@@ -2721,7 +2721,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return mutex;
         }
 
-        [[nodiscard]] const ValueTypeBinding &key_binding_for(const TSValueTypeMetaData &schema)
+        [[nodiscard]] ValueTypeRef key_binding_for(const TSValueTypeMetaData &schema)
         {
             const ValueTypeMetaData *key_schema = nullptr;
             if (schema.kind == TSTypeKind::TSS)
@@ -2733,9 +2733,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 key_schema = schema.key_type();
             }
             if (key_schema == nullptr) { throw std::logic_error("slot TSData key schema is not resolved"); }
-            const auto *binding = ValuePlanFactory::instance().binding_for(key_schema);
-            if (binding == nullptr) { throw std::logic_error("slot TSData key binding is not resolved"); }
-            return *binding;
+            const auto binding = ValuePlanFactory::instance().type_for(key_schema);
+            if (!binding) { throw std::logic_error("slot TSData key binding is not resolved"); }
+            return binding;
         }
 
         [[nodiscard]] const TSDataBinding &element_binding_for(const TSValueTypeMetaData &schema)
@@ -2748,11 +2748,11 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         [[nodiscard]] std::unique_ptr<SlotPlanEntry> make_tsd_slot_plan_entry(
-            const ValueTypeBinding &key_binding,
+            const ValueTypeRef &key_binding,
             const TSDataBinding    &element_binding)
         {
             auto entry = std::make_unique<SlotPlanEntry>();
-            entry->tsd_context = TSDStoragePlanContext{.key_binding = &key_binding,
+            entry->tsd_context = TSDStoragePlanContext{.key_binding = key_binding,
                                                        .element_binding = &element_binding};
             // Deliberately no copy/move lifecycle hooks: TSD values expose
             // stable child TSData addresses, so assignment is expressed as
@@ -2798,7 +2798,7 @@ namespace hgraph::ts_data_plan_factory_detail
             throw std::logic_error("TSDataPlanFactory: slot storage requires TSS or TSD schema");
         }
 
-        const auto &key_binding = key_binding_for(schema);
+        const auto key_binding = key_binding_for(schema);
 
         std::lock_guard<std::recursive_mutex> lock(slot_plan_mutex());
         auto                       &entries = slot_plan_entries();
@@ -2807,7 +2807,7 @@ namespace hgraph::ts_data_plan_factory_detail
         auto entry = std::make_unique<SlotPlanEntry>();
         if (schema.kind == TSTypeKind::TSS)
         {
-            entry->tss_context = TSSStoragePlanContext{.key_binding = &key_binding};
+            entry->tss_context = TSSStoragePlanContext{.key_binding = key_binding};
             // Deliberately no copy/move lifecycle hooks: TSS slots are stable
             // path targets for observers and key-set projections.
             entry->storage_plan = std::make_unique<MemoryUtils::StoragePlan>(MemoryUtils::StoragePlan{

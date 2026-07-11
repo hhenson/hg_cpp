@@ -20,26 +20,28 @@ Plan              ``MemoryUtils::StoragePlan`` — memory layout (size,
                   (construct, copy/move construct and assign, destroy).
                   Carries no allocator reference.
 Plan factory      ``ValuePlanFactory`` — schema → plan mapping and
-                  canonical default binding resolution, with results
-                  cached against the schema. Atomic plans/bindings are
+                  canonical ``ValueTypeRef`` resolution, with results
+                  cached against the schema. Atomic plans/types are
                   pre-registered by ``TypeRegistry`` from
                   ``MemoryUtils::plan_for<T>()`` and ``ops_for<T>()``;
-                  composite and container plans/bindings are
+                  composite and container plans/types are
                   synthesised on first use.
 Ops               ``ValueOps`` — ``hash``, ``equals``, ``compare``
                   returning ``std::partial_ordering``, ``to_string``
                   function pointers
-Binding           ``ValueTypeBinding`` — interned ``(ValueTypeMetaData,
-                  StoragePlan, ValueOps)`` triple; the canonical handle the
-                  rest of the layer shares
-Builder           Per-kind value builders — wrap bindings, accumulate
+Type              ``TypeRecord`` — canonical common record for the
+                  ``(schema, Instance role, StoragePlan, ValueOps)``
+                  implementation. ``ValueTypeRef`` is its one-word typed
+                  handle.
+Builder           Per-kind value builders — wrap type refs, accumulate
                   construction-time scratch storage, and construct
                   immutable ``Value`` instances. These are local,
                   single-use instance assemblers, not cached reusable
                   builders.
-Value             ``Value`` — owning handle over storage + binding + allocator
+Value             ``Value`` — owning handle over storage + type record + allocator
 View              ``ValueView`` — base two-word reference:
-                  ``(binding, data)``. Specialized adapters extend it
+                  a ``ValuePtr`` containing ``(tagged TypeRecord, data)``.
+                  Specialized adapters extend it
                   for composite kinds and may cache resolved ops/layout
                   facts.
 ================  ============================================================
@@ -55,19 +57,18 @@ Plan Factory
 ------------
 
 ``ValuePlanFactory`` is the schema → plan mapping and the default
-schema → binding resolver. It is the value layer's answer to "the
+schema → ``ValueTypeRef`` resolver. It is the value layer's answer to "the
 schema is independent of plan, but a builder needs to pick a plan and
 ops surface": the factory hands back the canonical plan or canonical
-``ValueTypeBinding`` for a given schema, with results cached against
-the schema for stable addresses.
+common ``TypeRecord`` through a one-word ``ValueTypeRef``, with results
+cached by value against the schema.
 
 - **Atomic schemas** are paired with their canonical plan at
   registration time. ``TypeRegistry::register_scalar<T>()`` calls
-  ``ValuePlanFactory::register_atomic(schema, &MemoryUtils::plan_for<T>())``,
-  and registers the canonical ``ValueTypeBinding`` using
-  ``ops_for<T>()``. Subsequent ``plan_for(atomic_schema)`` and
-  ``binding_for(atomic_schema)`` calls return the registry-owned
-  canonical entries.
+  ``ValuePlanFactory::register_atomic(schema, &MemoryUtils::plan_for<T>(),
+  &ops_for<T>())``. This interns the canonical value-family ``TypeRecord``.
+  Subsequent ``plan_for(atomic_schema)`` and ``type_for(atomic_schema)``
+  calls return that canonical implementation.
 - **Tuple, bundle, and fixed-size list schemas** are synthesised on
   first use. ``plan_for`` recursively resolves component schemas to
   their plans and feeds them into ``MemoryUtils::tuple_plan`` /
@@ -80,7 +81,8 @@ the schema for stable addresses.
   matching plan on first request, attaching a per-instantiation
   ``*State`` struct as the ``StoragePlan::lifecycle_context`` so the
   lifecycle hooks know how to construct the storage. ``binding_for``
-  pairs the plan with the compact kind-specific ops table.
+  is replaced by ``type_for``, which pairs the plan with the compact
+  kind-specific ops table in the common type-record registry.
 
 The time-series layer has the matching ``TSDataPlanFactory`` for the
 payload/delta component inside a time-series endpoint. Atomic TSData
@@ -103,7 +105,7 @@ Owning Value
   given schema, in a typed-null state. Schema is preserved even when the
   payload is absent.
 - ``Value(T&&)`` — convenience for scalars; resolves to the canonical
-  scalar binding via ``TypeRegistry::scalar_binding<T>()``.
+  scalar type via ``TypeRegistry::scalar_type<T>()``.
 - ``has_value()`` / ``reset()`` — manage top-level payload presence.
 - ``view()`` — produces a ``ValueView`` over the live payload.
 - ``hash()`` / ``equals()`` / ``compare()`` / ``to_string()`` — route
@@ -112,8 +114,8 @@ Owning Value
   contract. ``Value`` itself only carries the minimum behaviour needed
   to live in a container.
 - ``clone()`` and construction from ``ValueView`` — copy the represented
-  binding and payload, preserving typed-null state when the view carries
-  a binding without a live payload.
+  type and payload, preserving typed-null state when the view carries
+  a type record without a live payload.
 - ``to_python()`` / ``from_python()`` when the Python bridge is enabled.
   ``Value::to_python()`` maps a typed-null value to ``None``;
   ``Value::from_python(None)`` calls ``reset()``. Non-null conversion
@@ -127,8 +129,8 @@ Storage and Allocation
 ----------------------
 
 Memory is owned by ``MemoryUtils::StorageHandle``, parameterised by
-an inline-storage policy and the binding type. Lifecycle hooks
-delegated to ``LifecycleOps`` on the binding's ``StoragePlan`` cover
+an inline-storage policy and ``TypeRecord`` identity. Lifecycle hooks
+delegated to ``LifecycleOps`` on the record's ``StoragePlan`` cover
 only object lifetime:
 
 - ``construct``, ``copy_construct``, ``move_construct``
@@ -269,7 +271,7 @@ not on compact scalar container storage.
 Lifecycle context. Each storage shape pairs with a small ``*State``
 struct (``ListState``, ``SetState``, ``MapState``,
 ``CyclicBufferState``, ``QueueState``) carried as the
-``StoragePlan::lifecycle_context``. The state holds the binding(s)
+``StoragePlan::lifecycle_context``. The state holds the ``ValueTypeRef`` values
 and any per-instantiation parameters (constructed size, ring head)
 so the plan's ``default_construct`` and copy/move hooks can
 assemble the storage without knowing the C++ template arguments at
@@ -316,7 +318,7 @@ This keeps compact container storage immutable after construction
 while still letting callers build a value in stages.
 
 Status. The compact value-layer storage shapes, builders, specialised
-read-only views, and ``ValuePlanFactory`` compact container bindings
+read-only views, and ``ValuePlanFactory`` compact container types
 are implemented. The slot-store-based shapes used by the time-series layer
 *are* described under *Time-Series Plans and Ops > The Slot Store
 Family*; they are not the value layer's compact form and should not be

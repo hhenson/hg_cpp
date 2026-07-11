@@ -506,9 +506,23 @@ namespace hgraph
          * accept either a raw plan or a richer binding type.
          */
         template <typename Binding>
+        [[nodiscard]] static constexpr const StoragePlan *storage_binding_plan(const Binding &binding) noexcept
+        {
+            if constexpr (requires { binding.plan(); }) return binding.plan();
+            else return binding.plan;
+        }
+
+        template <typename Binding>
+        [[nodiscard]] static const StoragePlan &checked_storage_binding_plan(const Binding &binding)
+        {
+            const auto *plan = storage_binding_plan(binding);
+            if (plan == nullptr) throw std::logic_error("storage identity has no plan");
+            return *plan;
+        }
+
+        template <typename Binding>
         static constexpr bool storage_binding = requires(const Binding &binding) {
-            { binding.plan() } -> std::same_as<const StoragePlan *>;
-            { binding.checked_plan() } -> std::same_as<const StoragePlan &>;
+            { storage_binding_plan(binding) } -> std::same_as<const StoragePlan *>;
         };
 
         /**
@@ -567,7 +581,7 @@ namespace hgraph
             /** Bound storage plan, or ``nullptr`` when unbound. */
             [[nodiscard]] constexpr const StoragePlan *plan() const noexcept
             {
-                return m_binding != nullptr ? m_binding->plan() : nullptr;
+                return m_binding != nullptr ? storage_binding_plan(*m_binding) : nullptr;
             }
             /** Checked storage plan access for callers that require a binding. */
             [[nodiscard]] const StoragePlan &checked_plan() const
@@ -576,7 +590,7 @@ namespace hgraph
                 {
                     throw std::logic_error("MemoryUtils::StorageRef requires a bound binding");
                 }
-                return m_binding->checked_plan();
+                return checked_storage_binding_plan(*m_binding);
             }
 
             /** Mutable borrowed memory pointer, or ``nullptr`` when empty. */
@@ -901,7 +915,7 @@ namespace hgraph
                 if constexpr (std::is_void_v<Binding>) {
                     return m_identity;
                 } else {
-                    return m_identity != nullptr ? m_identity->plan() : nullptr;
+                    return m_identity != nullptr ? storage_binding_plan(*m_identity) : nullptr;
                 }
             }
             /** Bound binding (when ``Binding`` is not ``void``); ``nullptr`` if no identity is retained. */
@@ -1094,7 +1108,7 @@ namespace hgraph
             template <typename B = Binding>
                 requires(!std::is_void_v<B>)
             void construct_owned_default(const B &binding, const AllocatorOps &allocator) {
-                const StoragePlan &plan = binding.checked_plan();
+                const StoragePlan &plan = checked_storage_binding_plan(binding);
                 if (!plan.valid()) { throw std::logic_error("MemoryUtils::StorageHandle requires a valid plan"); }
 
                 m_identity = &binding;
@@ -1103,13 +1117,13 @@ namespace hgraph
                 if (storage_state() == State::OwningHeap) {
                     m_storage.ptr = tagged_allocator()->allocate_storage(plan.layout);
                     auto rollback = ::hgraph::make_scope_exit([this]() noexcept { abandon_failed_construction(); });
-                    binding.default_construct_at(data());
+                    plan.default_construct(data());
                     rollback.release();
                     return;
                 }
 
                 auto rollback = ::hgraph::make_scope_exit([this]() noexcept { abandon_failed_construction(); });
-                binding.default_construct_at(data());
+                plan.default_construct(data());
                 rollback.release();
             }
 
@@ -1135,7 +1149,7 @@ namespace hgraph
             template <typename B = Binding>
                 requires(!std::is_void_v<B>)
             void construct_owned_copy(const B &binding, const void *src, const AllocatorOps &allocator) {
-                const StoragePlan &plan = binding.checked_plan();
+                const StoragePlan &plan = checked_storage_binding_plan(binding);
                 if (!plan.valid()) { throw std::logic_error("MemoryUtils::StorageHandle requires a valid plan"); }
 
                 m_identity = &binding;
@@ -1144,20 +1158,20 @@ namespace hgraph
                 if (storage_state() == State::OwningHeap) {
                     m_storage.ptr = tagged_allocator()->allocate_storage(plan.layout);
                     auto rollback = ::hgraph::make_scope_exit([this]() noexcept { abandon_failed_construction(); });
-                    binding.copy_construct_at(data(), src);
+                    plan.copy_construct(data(), src);
                     rollback.release();
                     return;
                 }
 
                 auto rollback = ::hgraph::make_scope_exit([this]() noexcept { abandon_failed_construction(); });
-                binding.copy_construct_at(data(), src);
+                plan.copy_construct(data(), src);
                 rollback.release();
             }
 
             template <typename B, typename Construct>
                 requires(!std::is_void_v<B>)
             void construct_owned_custom(const B &binding, Construct &&construct, const AllocatorOps &allocator) {
-                const StoragePlan &plan = binding.checked_plan();
+                const StoragePlan &plan = checked_storage_binding_plan(binding);
                 if (!plan.valid()) { throw std::logic_error("MemoryUtils::StorageHandle requires a valid plan"); }
 
                 m_identity = &binding;

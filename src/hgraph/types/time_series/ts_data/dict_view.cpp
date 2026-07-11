@@ -377,7 +377,7 @@ namespace hgraph
         {
             throw std::invalid_argument("TSDDataMutationView::copy_value_from requires a live source");
         }
-        if (source.schema() != layout().value_binding->type_meta)
+        if (source.schema() != layout().value_binding.schema())
         {
             throw std::invalid_argument("TSDDataMutationView::copy_value_from requires the map value schema");
         }
@@ -403,7 +403,7 @@ namespace hgraph
         {
             throw std::invalid_argument("TSDDataMutationView::move_value_from requires a live source");
         }
-        if (source.schema() != layout().value_binding->type_meta)
+        if (source.schema() != layout().value_binding.schema())
         {
             throw std::invalid_argument("TSDDataMutationView::move_value_from requires the map value schema");
         }
@@ -447,7 +447,7 @@ namespace hgraph
 
             auto child = at_slot(result.slot);
             auto child_mutation = child.begin_mutation(current_mutation_time());
-            auto source_child = Value::reference(*value.binding(), const_cast<void *>(value.data()));
+            auto source_child = Value::reference(value.binding(), const_cast<void *>(value.data()));
             static_cast<void>(child_mutation.move_value_from(std::move(source_child)));
         }
 

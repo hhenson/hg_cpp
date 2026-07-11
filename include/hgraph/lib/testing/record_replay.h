@@ -41,15 +41,15 @@ namespace hgraph::testing
     /** An empty ``Any`` value (the "no tick this cycle" marker). */
     [[nodiscard]] inline Value empty_any()
     {
-        const auto *binding = ValuePlanFactory::instance().binding_for(TypeRegistry::instance().any());
-        return Value{*binding};  // unset == empty == None
+        const auto binding = ValuePlanFactory::instance().type_for(TypeRegistry::instance().any());
+        return Value{binding};  // unset == empty == None
     }
 
     /** An ``Any`` boxing a copy of the value behind ``inner`` (type-erased). */
     [[nodiscard]] inline Value make_any(const ValueView &inner)
     {
-        const auto *binding = ValuePlanFactory::instance().binding_for(TypeRegistry::instance().any());
-        Value       any{*binding};
+        const auto binding = ValuePlanFactory::instance().type_for(TypeRegistry::instance().any());
+        Value       any{binding};
         any.as_any().begin_mutation().set(inner);
         return any;
     }
@@ -63,8 +63,8 @@ namespace hgraph::testing
     {
         auto       &registry = TypeRegistry::instance();
         const auto *schema   = registry.mutable_list(registry.any());
-        const auto *binding  = ValuePlanFactory::instance().binding_for(schema);
-        return Value{*binding};
+        const auto binding  = ValuePlanFactory::instance().type_for(schema);
+        return Value{binding};
     }
 
     /** A fresh, empty TYPED dense recording buffer: ``List<delta_schema>``
@@ -73,7 +73,7 @@ namespace hgraph::testing
     {
         auto       &registry = TypeRegistry::instance();
         const auto *schema   = registry.mutable_list(delta_schema);
-        return Value{*ValuePlanFactory::instance().binding_for(schema)};
+        return Value{ValuePlanFactory::instance().type_for(schema)};
     }
 
     /** The delta at ``index`` of a dense buffer, either layout: the seeded
@@ -116,13 +116,13 @@ namespace hgraph::testing
     {
         auto       &registry = TypeRegistry::instance();
         const auto *schema   = registry.mutable_list(sparse_entry_meta(delta_schema));
-        return Value{*ValuePlanFactory::instance().binding_for(schema)};
+        return Value{ValuePlanFactory::instance().type_for(schema)};
     }
 
     /** Build a (time, delta) sparse-buffer entry. */
     [[nodiscard]] inline Value make_sparse_entry(const ValueTypeMetaData *delta_schema, DateTime when, Value delta)
     {
-        BundleBuilder entry{*ValuePlanFactory::instance().binding_for(sparse_entry_meta(delta_schema))};
+        BundleBuilder entry{ValuePlanFactory::instance().type_for(sparse_entry_meta(delta_schema))};
         entry.set(0, Value{when});
         entry.set(1, std::move(delta));
         return entry.build();

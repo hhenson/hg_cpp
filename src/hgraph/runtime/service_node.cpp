@@ -402,18 +402,18 @@ namespace hgraph
             storage.pending.clear();
         }
 
-        [[nodiscard]] const ValueTypeBinding &value_binding_for(const ValueTypeMetaData *schema, const char *context)
+        [[nodiscard]] ValueTypeRef value_binding_for(const ValueTypeMetaData *schema, const char *context)
         {
             if (schema == nullptr)
             {
                 throw std::logic_error(std::string{context} + ": value schema is null");
             }
-            const auto *binding = ValuePlanFactory::instance().binding_for(schema);
-            if (binding == nullptr)
+            const auto binding = ValuePlanFactory::instance().type_for(schema);
+            if (!binding)
             {
                 throw std::logic_error(std::string{context} + ": value schema has no binding");
             }
-            return *binding;
+            return binding;
         }
 
         [[nodiscard]] const ValueTypeMetaData *request_input_state_schema(const TSValueTypeMetaData &request_schema)

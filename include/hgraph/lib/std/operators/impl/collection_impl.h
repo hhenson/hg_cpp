@@ -99,7 +99,7 @@ namespace hgraph::stdlib
                 const TSDInputView &dict   = ts;
                 const auto         &erased = static_cast<const TSOutputView &>(out);
                 const auto *out_meta = erased.schema()->value_schema;
-                SetBuilder builder{*ValuePlanFactory::instance().binding_for(out_meta->element_type)};
+                SetBuilder builder{ValuePlanFactory::instance().type_for(out_meta->element_type)};
                 for (const auto key : dict.keys()) { (void)builder.insert_copy(key.data()); }
                 Value set = builder.build();
                 if (erased.data_view().has_current_value() && erased.value().equals(set.view())) { return; }
@@ -130,7 +130,7 @@ namespace hgraph::stdlib
                 TSSOutputView       &erased  = out;
                 // TSS value schema = Set[element]; the element binding builds it.
                 const auto *element_meta = erased.schema()->value_schema->element_type;
-                SetBuilder union_builder{*ValuePlanFactory::instance().binding_for(element_meta)};
+                SetBuilder union_builder{ValuePlanFactory::instance().type_for(element_meta)};
                 for (auto &&[key, child] : dict.items())
                 {
                     if (child.valid()) { (void)union_builder.insert_copy(child.value().data()); }
@@ -1119,7 +1119,7 @@ namespace hgraph::stdlib
                 const auto  evaluation_time = erased.evaluation_time();
                 auto        mutation = dict_out.begin_mutation(evaluation_time);
                 const auto *tuple_meta = erased.schema()->key_type();
-                const auto &tuple_binding = *ValuePlanFactory::instance().binding_for(tuple_meta);
+                const auto tuple_binding = ValuePlanFactory::instance().type_for(tuple_meta);
                 const std::size_t depth = tuple_meta->field_count;
 
                 // Removed SUBTREES erase every output tuple-key with the
@@ -2079,18 +2079,18 @@ namespace hgraph::stdlib
             return ts_map_value_schema(ts);
         }
 
-        [[nodiscard]] inline const ValueTypeBinding &map_scalar_binding(const ValueTypeMetaData *key,
+        [[nodiscard]] inline ValueTypeRef map_scalar_type(const ValueTypeMetaData *key,
                                                                         const ValueTypeMetaData *value)
         {
             const auto *meta = TypeRegistry::instance().map(key, value);
-            return *ValuePlanFactory::instance().binding_for(meta);
+            return ValuePlanFactory::instance().type_for(meta);
         }
 
         [[nodiscard]] inline MapBuilder make_map_builder(const ValueTypeMetaData *key,
                                                          const ValueTypeMetaData *value)
         {
-            return MapBuilder{*ValuePlanFactory::instance().binding_for(key),
-                              *ValuePlanFactory::instance().binding_for(value)};
+            return MapBuilder{ValuePlanFactory::instance().type_for(key),
+                              ValuePlanFactory::instance().type_for(value)};
         }
 
         inline void publish_value(const TSOutputView &out, Value &&value)
@@ -2127,7 +2127,7 @@ namespace hgraph::stdlib
             {
                 auto map = ts.base().value().as_map();
                 const auto *key_meta = ts.base().schema()->value_schema->key_type;
-                SetBuilder builder{*ValuePlanFactory::instance().binding_for(key_meta)};
+                SetBuilder builder{ValuePlanFactory::instance().type_for(key_meta)};
                 for (const auto key : map.keys()) { builder.insert_copy(key.data()); }
                 publish_value(static_cast<const TSOutputView &>(out), builder.build());
             }
@@ -2157,7 +2157,7 @@ namespace hgraph::stdlib
             {
                 auto map = ts.base().value().as_map();
                 const auto *value_meta = ts.base().schema()->value_schema->element_type;
-                ListBuilder builder{*ValuePlanFactory::instance().binding_for(value_meta)};
+                ListBuilder builder{ValuePlanFactory::instance().type_for(value_meta)};
                 for (const auto [key, item] : map) { builder.push_back_copy(item.data()); }
                 publish_value(static_cast<const TSOutputView &>(out), builder.build());
             }
@@ -2386,14 +2386,14 @@ namespace hgraph::stdlib
                 const auto *meta  = ts.base().schema()->value_schema;
                 const auto *inner = nested_map_meta(meta);
                 const auto *pair  = TypeRegistry::instance().tuple({meta->key_type, inner->key_type});
-                const auto *pair_binding = ValuePlanFactory::instance().binding_for(pair);
+                const auto pair_binding = ValuePlanFactory::instance().type_for(pair);
 
                 auto builder = make_map_builder(pair, inner->element_type);
                 for (const auto [outer_key, inner_value] : ts.base().value().as_map())
                 {
                     for (const auto [inner_key, item] : inner_value.as_map())
                     {
-                        BundleBuilder key_builder{*pair_binding};
+                        BundleBuilder key_builder{pair_binding};
                         key_builder.set(0, Value{outer_key});
                         key_builder.set(1, Value{inner_key});
                         Value pair_key = key_builder.build();
@@ -2881,7 +2881,7 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline ListBuilder make_list_builder(const ValueTypeMetaData *list_meta)
         {
-            return ListBuilder{*ValuePlanFactory::instance().binding_for(list_meta->element_type)};
+            return ListBuilder{ValuePlanFactory::instance().type_for(list_meta->element_type)};
         }
 
         /** mul_(tuple, n): python tuple repetition. */
@@ -3270,7 +3270,7 @@ namespace hgraph::stdlib
         void combine_cs_from_fields_eval(const TSInputView &fields, const TSOutputView &erased)
         {
             const auto *target = erased.schema()->value_schema;
-            BundleBuilder builder{*ValuePlanFactory::instance().binding_for(target)};
+            BundleBuilder builder{ValuePlanFactory::instance().type_for(target)};
 
             const auto *input_schema = fields.schema();
             for (std::size_t index = 0; index < input_schema->field_count(); ++index)
@@ -3616,7 +3616,7 @@ namespace hgraph::stdlib
             static Value merge(const ValueView &orig, const ValueView &delta)
             {
                 const auto *meta = orig.schema();
-                BundleBuilder builder{*ValuePlanFactory::instance().binding_for(meta)};
+                BundleBuilder builder{ValuePlanFactory::instance().type_for(meta)};
                 auto orig_fields  = orig.as_indexed_view();
                 auto delta_fields = delta.as_indexed_view();
                 for (std::size_t index = 0; index < meta->field_count; ++index)

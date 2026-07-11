@@ -249,13 +249,13 @@ namespace hgraph
         void reset() noexcept;
 
         /**
-         * Look up the canonical ``ValueTypeBinding`` for a scalar type ``T``
+         * Look up the canonical ``ValueTypeRef`` for a scalar type ``T``
          * registered via ``register_scalar``. Returns ``nullptr`` when not
          * registered. Implemented in the header tail so the binding type is
          * visible (defined in ``hgraph/types/value/value_ops.h``).
          */
         template <typename T>
-        [[nodiscard]] const ValueTypeBinding *scalar_binding() const;
+        [[nodiscard]] ValueTypeRef scalar_type() const;
         /**
          * Return the ``REF``-stripped version of ``meta``. ``REF<T>`` becomes
          * ``T``; container kinds recurse; non-REF metadata returns the same
@@ -581,11 +581,10 @@ namespace hgraph
             compute_scalar_flags<T>() | extra_flags,
             &MemoryUtils::plan_for<T>());
         // Pair the schema with the canonical (plan, ops) binding so
-        // ``Value(T{...})`` and ``scalar_binding<T>()`` resolve uniformly.
+        // ``Value(T{...})`` and ``scalar_type<T>()`` resolve uniformly.
         // ``ops_for<T>`` lives in ``value_ops.h``; we forward-declare the
         // helper to avoid a circular header dependency.
-        const ValueTypeBinding &binding = ValueTypeBinding::intern(*meta, MemoryUtils::plan_for<T>(), ops_for<T>());
-        ValuePlanFactory::instance().register_binding(binding);
+        ValuePlanFactory::instance().register_atomic(meta, &MemoryUtils::plan_for<T>(), &ops_for<T>());
         return meta;
     }
 
@@ -595,12 +594,12 @@ namespace hgraph
      * ``nullptr`` when no binding exists for the type.
      */
     template <typename T>
-    [[nodiscard]] inline const ValueTypeBinding *TypeRegistry::scalar_binding() const
+    [[nodiscard]] inline ValueTypeRef TypeRegistry::scalar_type() const
     {
         const std::lock_guard lock(mutex_);
         const ValueTypeMetaData *meta = scalar_cache_.find(std::type_index(typeid(T)));
-        if (meta == nullptr) { return nullptr; }
-        return ValueTypeBinding::find(meta, &MemoryUtils::plan_for<T>(), &ops_for<T>());
+        if (meta == nullptr) { return {}; }
+        return ValuePlanFactory::instance().find_type(meta);
     }
 }  // namespace hgraph
 

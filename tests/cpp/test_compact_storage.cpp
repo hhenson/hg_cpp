@@ -45,10 +45,10 @@ TEST_CASE("ListBuilder: push_back round-trips through ListStorage")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *binding = registry.scalar_binding<std::int32_t>();
+    const auto binding = registry.scalar_type<std::int32_t>();
     REQUIRE(binding != nullptr);
 
-    ListBuilder builder{*binding};
+    ListBuilder builder{binding};
     builder.push_back<std::int32_t>(7);
     builder.push_back<std::int32_t>(11);
     builder.push_back<std::int32_t>(13);
@@ -66,9 +66,9 @@ TEST_CASE("ListStorage: copy and move preserve contents")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *binding = registry.scalar_binding<std::int32_t>();
+    const auto binding = registry.scalar_type<std::int32_t>();
 
-    ListBuilder builder{*binding};
+    ListBuilder builder{binding};
     builder.push_back<std::int32_t>(1);
     builder.push_back<std::int32_t>(2);
     builder.push_back<std::int32_t>(3);
@@ -89,9 +89,9 @@ TEST_CASE("ListStorage: empty list construction is well-defined")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *binding = registry.scalar_binding<std::int32_t>();
+    const auto binding = registry.scalar_type<std::int32_t>();
 
-    ListBuilder builder{*binding};
+    ListBuilder builder{binding};
     REQUIRE(builder.empty());
     auto storage = builder.build_storage();
     REQUIRE(storage.empty());
@@ -103,10 +103,10 @@ TEST_CASE("ListBuilder: works with non-trivial element types (std::string)")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::string>("string");
-    const auto *binding = registry.scalar_binding<std::string>();
+    const auto binding = registry.scalar_type<std::string>();
     REQUIRE(binding != nullptr);
 
-    ListBuilder builder{*binding};
+    ListBuilder builder{binding};
     builder.push_back<std::string>(std::string{"alpha"});
     builder.push_back<std::string>(std::string{"beta"});
     builder.push_back<std::string>(std::string{"gamma"});
@@ -123,9 +123,9 @@ TEST_CASE("CyclicBufferBuilder: rotates after capacity is reached")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *binding = registry.scalar_binding<std::int32_t>();
+    const auto binding = registry.scalar_type<std::int32_t>();
 
-    CyclicBufferBuilder builder{*binding, /*capacity=*/3};
+    CyclicBufferBuilder builder{binding, /*capacity=*/3};
     builder.push_back<std::int32_t>(1);
     builder.push_back<std::int32_t>(2);
     builder.push_back<std::int32_t>(3);
@@ -148,9 +148,9 @@ TEST_CASE("CyclicBufferBuilder: zero capacity is rejected at construction")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *binding = registry.scalar_binding<std::int32_t>();
+    const auto binding = registry.scalar_type<std::int32_t>();
 
-    REQUIRE_THROWS_AS(CyclicBufferBuilder(*binding, /*capacity=*/0), std::invalid_argument);
+    REQUIRE_THROWS_AS(CyclicBufferBuilder(binding, /*capacity=*/0), std::invalid_argument);
 }
 
 TEST_CASE("CyclicBufferBuilder: replacement requires copy assignment and preserves existing slot on rejection")
@@ -158,9 +158,9 @@ TEST_CASE("CyclicBufferBuilder: replacement requires copy assignment and preserv
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<CopyConstructOnlyValue>("CopyConstructOnlyValue");
-    const auto *binding = registry.scalar_binding<CopyConstructOnlyValue>();
+    const auto binding = registry.scalar_type<CopyConstructOnlyValue>();
 
-    CyclicBufferBuilder builder{*binding, /*capacity=*/1};
+    CyclicBufferBuilder builder{binding, /*capacity=*/1};
     const CopyConstructOnlyValue first{1};
     const CopyConstructOnlyValue second{2};
     builder.push_back(first);
@@ -176,11 +176,11 @@ TEST_CASE("QueueBuilder: bounded queue rejects on overflow; unbounded grows")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *binding = registry.scalar_binding<std::int32_t>();
+    const auto binding = registry.scalar_type<std::int32_t>();
 
     SECTION("bounded")
     {
-        QueueBuilder builder{*binding, /*max_capacity=*/2};
+        QueueBuilder builder{binding, /*max_capacity=*/2};
         builder.push<std::int32_t>(10);
         builder.push<std::int32_t>(20);
         REQUIRE_THROWS_AS(builder.push<std::int32_t>(30), std::overflow_error);
@@ -194,7 +194,7 @@ TEST_CASE("QueueBuilder: bounded queue rejects on overflow; unbounded grows")
 
     SECTION("unbounded")
     {
-        QueueBuilder builder{*binding};  // max_capacity = 0
+        QueueBuilder builder{binding};  // max_capacity = 0
         builder.push<std::int32_t>(1);
         builder.push<std::int32_t>(2);
         builder.push<std::int32_t>(3);
@@ -212,9 +212,9 @@ TEST_CASE("SetBuilder: deduplicates by content; build produces a SetStorage")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *binding = registry.scalar_binding<std::int32_t>();
+    const auto binding = registry.scalar_type<std::int32_t>();
 
-    SetBuilder builder{*binding};
+    SetBuilder builder{binding};
     REQUIRE(builder.insert<std::int32_t>(7));
     REQUIRE(builder.insert<std::int32_t>(11));
     REQUIRE_FALSE(builder.insert<std::int32_t>(7));  // duplicate
@@ -235,11 +235,11 @@ TEST_CASE("SetStorage: direct duplicate construction is rejected")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *binding = registry.scalar_binding<std::int32_t>();
-    const auto &plan    = binding->checked_plan();
+    const auto binding = registry.scalar_type<std::int32_t>();
+    const auto &plan    = binding.checked_plan();
 
     std::int32_t values[] = {7, 7};
-    REQUIRE_THROWS_AS(SetStorage(*binding,
+    REQUIRE_THROWS_AS(SetStorage(binding,
                                  ElementSpan{
                                      .bytes  = values,
                                      .size   = 2,
@@ -254,9 +254,9 @@ TEST_CASE("SetStorage: move preserves slot index lookups")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *binding = registry.scalar_binding<std::int32_t>();
+    const auto binding = registry.scalar_type<std::int32_t>();
 
-    SetBuilder builder{*binding};
+    SetBuilder builder{binding};
     REQUIRE(builder.insert<std::int32_t>(3));
     REQUIRE(builder.insert<std::int32_t>(5));
     auto original = builder.build_storage();
@@ -282,8 +282,8 @@ TEST_CASE("SetBuilder: rejects non-hashable / non-equatable element bindings")
     // capability flags, so the rejection logic gets exercised when the
     // schema's flags are missing those bits.
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *binding = registry.scalar_binding<std::int32_t>();
-    REQUIRE_NOTHROW(SetBuilder{*binding});
+    const auto binding = registry.scalar_type<std::int32_t>();
+    REQUIRE_NOTHROW(SetBuilder{binding});
 }
 
 TEST_CASE("MapBuilder: set_item / contains / value_at round-trip")
@@ -292,10 +292,10 @@ TEST_CASE("MapBuilder: set_item / contains / value_at round-trip")
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::string>("string");
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *key_binding   = registry.scalar_binding<std::string>();
-    const auto *value_binding = registry.scalar_binding<std::int32_t>();
+    const auto key_binding   = registry.scalar_type<std::string>();
+    const auto value_binding = registry.scalar_type<std::int32_t>();
 
-    MapBuilder builder{*key_binding, *value_binding};
+    MapBuilder builder{key_binding, value_binding};
     builder.set_item<std::string, std::int32_t>(std::string{"alpha"}, 1);
     builder.set_item<std::string, std::int32_t>(std::string{"beta"}, 2);
     builder.set_item<std::string, std::int32_t>(std::string{"gamma"}, 3);
@@ -329,10 +329,10 @@ TEST_CASE("MapBuilder: value replacement requires copy assignment and preserves 
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
     (void)registry.register_scalar<CopyConstructOnlyValue>("CopyConstructOnlyValue");
-    const auto *key_binding   = registry.scalar_binding<std::int32_t>();
-    const auto *value_binding = registry.scalar_binding<CopyConstructOnlyValue>();
+    const auto key_binding   = registry.scalar_type<std::int32_t>();
+    const auto value_binding = registry.scalar_type<CopyConstructOnlyValue>();
 
-    MapBuilder builder{*key_binding, *value_binding};
+    MapBuilder builder{key_binding, value_binding};
     const CopyConstructOnlyValue first{10};
     const CopyConstructOnlyValue second{20};
     builder.set_item<std::int32_t, CopyConstructOnlyValue>(1, first);
@@ -349,10 +349,10 @@ TEST_CASE("SetBuilder and MapBuilder: indexes survive accumulator growth")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *binding = registry.scalar_binding<std::int32_t>();
+    const auto binding = registry.scalar_type<std::int32_t>();
 
-    SetBuilder set_builder{*binding};
-    MapBuilder map_builder{*binding, *binding};
+    SetBuilder set_builder{binding};
+    MapBuilder map_builder{binding, binding};
     for (std::int32_t i = 0; i < 40; ++i)
     {
         REQUIRE(set_builder.insert<std::int32_t>(i));
@@ -380,10 +380,10 @@ TEST_CASE("MapStorage: copy and move preserve slot index lookups")
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::string>("string");
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *key_binding   = registry.scalar_binding<std::string>();
-    const auto *value_binding = registry.scalar_binding<std::int32_t>();
+    const auto key_binding   = registry.scalar_type<std::string>();
+    const auto value_binding = registry.scalar_type<std::int32_t>();
 
-    MapBuilder builder{*key_binding, *value_binding};
+    MapBuilder builder{key_binding, value_binding};
     builder.set_item<std::string, std::int32_t>(std::string{"x"}, 10);
     builder.set_item<std::string, std::int32_t>(std::string{"y"}, 20);
     auto original = builder.build_storage();
@@ -411,14 +411,14 @@ TEST_CASE("MapStorage: direct duplicate key construction is rejected")
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::string>("string");
     (void)registry.register_scalar<std::int32_t>("int32");
-    const auto *key_binding   = registry.scalar_binding<std::string>();
-    const auto *value_binding = registry.scalar_binding<std::int32_t>();
-    const auto &key_plan      = key_binding->checked_plan();
-    const auto &value_plan    = value_binding->checked_plan();
+    const auto key_binding   = registry.scalar_type<std::string>();
+    const auto value_binding = registry.scalar_type<std::int32_t>();
+    const auto &key_plan      = key_binding.checked_plan();
+    const auto &value_plan    = value_binding.checked_plan();
 
     std::string keys[]   = {"same", "same"};
     std::int32_t values[] = {1, 2};
-    REQUIRE_THROWS_AS(MapStorage(*key_binding, *value_binding,
+    REQUIRE_THROWS_AS(MapStorage(key_binding, value_binding,
                                  ElementSpan{
                                      .bytes  = keys,
                                      .size   = 2,
@@ -440,16 +440,16 @@ TEST_CASE("compact plans: same binding inputs return canonical pointers")
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::int32_t>("int32");
     (void)registry.register_scalar<std::string>("string");
-    const auto *int_binding = registry.scalar_binding<std::int32_t>();
-    const auto *str_binding = registry.scalar_binding<std::string>();
+    const auto int_binding = registry.scalar_type<std::int32_t>();
+    const auto str_binding = registry.scalar_type<std::string>();
 
-    REQUIRE(&compact_list_plan(*int_binding) == &compact_list_plan(*int_binding));
-    REQUIRE(&compact_set_plan(*int_binding) == &compact_set_plan(*int_binding));
-    REQUIRE(&compact_map_plan(*str_binding, *int_binding) ==
-            &compact_map_plan(*str_binding, *int_binding));
-    REQUIRE(&compact_cyclic_buffer_plan(*int_binding, 4) ==
-            &compact_cyclic_buffer_plan(*int_binding, 4));
-    REQUIRE(&compact_cyclic_buffer_plan(*int_binding, 4) !=
-            &compact_cyclic_buffer_plan(*int_binding, 8));
-    REQUIRE(&compact_queue_plan(*int_binding, 0) == &compact_queue_plan(*int_binding, 0));
+    REQUIRE(&compact_list_plan(int_binding) == &compact_list_plan(int_binding));
+    REQUIRE(&compact_set_plan(int_binding) == &compact_set_plan(int_binding));
+    REQUIRE(&compact_map_plan(str_binding, int_binding) ==
+            &compact_map_plan(str_binding, int_binding));
+    REQUIRE(&compact_cyclic_buffer_plan(int_binding, 4) ==
+            &compact_cyclic_buffer_plan(int_binding, 4));
+    REQUIRE(&compact_cyclic_buffer_plan(int_binding, 4) !=
+            &compact_cyclic_buffer_plan(int_binding, 8));
+    REQUIRE(&compact_queue_plan(int_binding, 0) == &compact_queue_plan(int_binding, 0));
 }

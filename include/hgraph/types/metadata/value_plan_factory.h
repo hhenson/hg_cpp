@@ -13,7 +13,7 @@ namespace hgraph
     /**
      * Factory that maps a value-layer ``ValueTypeMetaData`` schema to its
      * canonical ``MemoryUtils::StoragePlan`` and default
-     * ``ValueTypeBinding``.
+     * ``ValueTypeRef``.
      *
      * The schema describes *what* a value is; the plan describes *how* it
      * is laid out in memory. The factory bridges the two so callers never
@@ -64,7 +64,7 @@ namespace hgraph
          * the same plan is a no-op; re-registration with a different plan
          * throws.
          */
-        void register_atomic(const ValueTypeMetaData *schema, const MemoryUtils::StoragePlan *plan);
+        void register_atomic(const ValueTypeMetaData *schema, const MemoryUtils::StoragePlan *plan, const ValueOps *ops);
 
         /**
          * Register the canonical binding for ``binding.type_meta``.
@@ -74,7 +74,7 @@ namespace hgraph
          * factory synthesises composite/container bindings lazily; callers
          * normally do not register those by hand.
          */
-        void register_binding(const ValueTypeBinding &binding);
+        void register_type(ValueTypeRef type);
 
         /**
          * Look up or synthesise the canonical plan for ``schema``.
@@ -95,12 +95,12 @@ namespace hgraph
          *
          * Atomic bindings must have been registered by ``TypeRegistry``.
          * Composite and container bindings are created lazily from child
-         * bindings and interned through ``ValueTypeBinding``.
+         * bindings and interned through ``ValueTypeRef``.
          */
-        const ValueTypeBinding *binding_for(const ValueTypeMetaData *schema);
+        [[nodiscard]] ValueTypeRef type_for(const ValueTypeMetaData *schema);
 
         /** Binding lookup only; never synthesises. Returns ``nullptr`` when missing. */
-        const ValueTypeBinding *find_binding(const ValueTypeMetaData *schema) const;
+        [[nodiscard]] ValueTypeRef find_type(const ValueTypeMetaData *schema) const;
 
         /**
          * Drop every cached schema → plan mapping. Test-only helper used to
@@ -112,11 +112,11 @@ namespace hgraph
         ValuePlanFactory() = default;
 
         const MemoryUtils::StoragePlan *synthesise(const ValueTypeMetaData *schema);
-        const ValueTypeBinding         *synthesise_binding(const ValueTypeMetaData *schema);
+        ValueTypeRef synthesise_type(const ValueTypeMetaData *schema);
 
         mutable std::mutex                                                              mutex_;
         std::unordered_map<const ValueTypeMetaData *, const MemoryUtils::StoragePlan *> cache_;
-        std::unordered_map<const ValueTypeMetaData *, const ValueTypeBinding *>          binding_cache_;
+        std::unordered_map<const ValueTypeMetaData *, ValueTypeRef>                  type_cache_;
     };
 }  // namespace hgraph
 

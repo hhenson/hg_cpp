@@ -505,11 +505,11 @@ namespace hgraph::stdlib
             return resolution.find_scalar("T");
         }
 
-        [[nodiscard]] inline const ValueTypeBinding &element_binding_of(const ValueTypeMetaData *meta)
+        [[nodiscard]] inline ValueTypeRef element_binding_of(const ValueTypeMetaData *meta)
         {
-            const auto *binding = ValuePlanFactory::instance().binding_for(meta);
+            const auto binding = ValuePlanFactory::instance().type_for(meta);
             if (binding == nullptr) { throw std::logic_error("container element schema has no binding"); }
-            return *binding;
+            return binding;
         }
 
         /** Tuple/list concatenation (python's tuple + tuple). */

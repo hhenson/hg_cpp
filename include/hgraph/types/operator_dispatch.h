@@ -718,8 +718,8 @@ namespace hgraph
             else
             {
                 using wire_params   = typename sig::wire_param_types;
-                const auto *binding = ValuePlanFactory::instance().binding_for(sig::scalar_schema(map));
-                BundleBuilder bundle{*binding};
+                const auto binding = ValuePlanFactory::instance().type_for(sig::scalar_schema(map));
+                BundleBuilder bundle{binding};
                 [&]<std::size_t... I>(std::index_sequence<I...>) {
                     (
                         [&] {
@@ -776,9 +776,9 @@ namespace hgraph
             map.bind_scalar("T", coerced->schema());
             map.bind_ts("S", target_schema);
 
-            const auto *binding =
-                ValuePlanFactory::instance().binding_for(StaticNodeSignature<operator_auto_const>::scalar_schema(map));
-            BundleBuilder bundle{*binding};
+            const auto binding =
+                ValuePlanFactory::instance().type_for(StaticNodeSignature<operator_auto_const>::scalar_schema(map));
+            BundleBuilder bundle{binding};
             bundle.set("value", std::move(*coerced));
 
             NodeBuilder builder;

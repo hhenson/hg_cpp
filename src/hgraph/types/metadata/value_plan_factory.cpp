@@ -27,7 +27,7 @@ namespace hgraph
         struct CompositeIndexedContext
         {
             const ValueTypeMetaData              *schema{nullptr};
-            std::vector<const ValueTypeBinding *> child_bindings{};
+            std::vector<ValueTypeRef> child_bindings{};
             std::vector<std::size_t>              offsets{};
             std::size_t                           validity_offset{0};
             std::size_t                           validity_word_count{0};
@@ -101,7 +101,7 @@ namespace hgraph
         struct ArrayIndexedContext
         {
             const ValueTypeMetaData *schema{nullptr};
-            const ValueTypeBinding *element_binding{nullptr};
+            ValueTypeRef element_binding{nullptr};
             std::size_t             size{0};
             std::size_t             stride{0};
         };
@@ -125,7 +125,7 @@ namespace hgraph
             return static_cast<const std::byte *>(memory) + state->offsets[index];
         }
 
-        [[nodiscard]] const ValueTypeBinding *composite_indexed_element_binding(const void *context, const void *,
+        [[nodiscard]] ValueTypeRef composite_indexed_element_binding(const void *context, const void *,
                                                                                 std::size_t index) noexcept
         {
             return static_cast<const CompositeIndexedContext *>(context)->child_bindings[index];
@@ -190,7 +190,7 @@ namespace hgraph
                     seed = combine_hash(seed, 0x9e3779b97f4a7c15ULL);   // UNSET marker
                     continue;
                 }
-                const auto &ops = state->child_bindings[index]->ops_ref();
+                const auto &ops = state->child_bindings[index].ops_ref();
                 const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                 seed = combine_hash(seed, ops.hash(child));
             }
@@ -208,7 +208,7 @@ namespace hgraph
                     const bool rhs_set = composite_field_set(state, rhs, index);
                     if (lhs_set != rhs_set) { return false; }
                     if (!lhs_set) { continue; }   // UNSET == UNSET
-                    const auto &ops = state->child_bindings[index]->ops_ref();
+                    const auto &ops = state->child_bindings[index].ops_ref();
                     const auto *a = static_cast<const std::byte *>(lhs) + state->offsets[index];
                     const auto *b = static_cast<const std::byte *>(rhs) + state->offsets[index];
                     if (!ops.equals(a, b)) { return false; }
@@ -233,7 +233,7 @@ namespace hgraph
                         return lhs_set ? std::partial_ordering::greater : std::partial_ordering::less;
                     }
                     if (!lhs_set) { continue; }
-                    const auto &ops = state->child_bindings[index]->ops_ref();
+                    const auto &ops = state->child_bindings[index].ops_ref();
                     const auto *a = static_cast<const std::byte *>(lhs) + state->offsets[index];
                     const auto *b = static_cast<const std::byte *>(rhs) + state->offsets[index];
                     const auto  c = ops.compare(a, b);
@@ -263,7 +263,7 @@ namespace hgraph
                     fmt::format_to(std::back_inserter(out), "<unset>");
                     continue;
                 }
-                const auto &ops = state->child_bindings[index]->ops_ref();
+                const auto &ops = state->child_bindings[index].ops_ref();
                 const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                 fmt::format_to(std::back_inserter(out), "{}", ops.to_string(child));
             }
@@ -283,7 +283,7 @@ namespace hgraph
             return nb::isinstance<nb::list>(object) || nb::isinstance<nb::tuple>(object);
         }
 
-        void assign_child_from_python(const ValueTypeBinding &binding,
+        void assign_child_from_python(const ValueTypeRef &binding,
                                       void                   *memory,
                                       nb::handle              source,
                                       const char             *what)
@@ -321,7 +321,7 @@ namespace hgraph
                         if (bundle_class.is_valid()) { result[nb::str{name}] = nb::none(); }
                         continue;   // plain dicts OMIT unset fields
                     }
-                    const auto &ops = state->child_bindings[index]->ops_ref();
+                    const auto &ops = state->child_bindings[index].ops_ref();
                     const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                     result[nb::str{name}] = ops.to_python(child);
                 }
@@ -339,7 +339,7 @@ namespace hgraph
                     result.append(nb::none());
                     continue;
                 }
-                const auto &ops = state->child_bindings[index]->ops_ref();
+                const auto &ops = state->child_bindings[index].ops_ref();
                 const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                 result.append(ops.to_python(child));
             }
@@ -381,11 +381,11 @@ namespace hgraph
                     continue;
                 }
                 auto      *child   = static_cast<std::byte *>(memory) + state->offsets[index];
-                assign_child_from_python(*state->child_bindings[index], child, element, what);
+                assign_child_from_python(state->child_bindings[index], child, element, what);
             }
         }
 
-        void composite_value_from_python(const void *context, const ValueTypeBinding &, void *memory,
+        void composite_value_from_python(const void *context, const ValueTypeRef &, void *memory,
                                          nb::handle source)
         {
             if (memory == nullptr) { throw std::runtime_error("composite from_python requires live value memory"); }
@@ -420,7 +420,7 @@ namespace hgraph
                     // the attribute form; eval_node bundles tick partially).
                     if (value.is_none()) { continue; }
                     auto      *child = static_cast<std::byte *>(memory) + state->offsets[index];
-                    assign_child_from_python(*state->child_bindings[index], child, value, "Bundle value");
+                    assign_child_from_python(state->child_bindings[index], child, value, "Bundle value");
                     composite_mark_field(state, memory, index, true);
                 }
                 return;
@@ -446,7 +446,7 @@ namespace hgraph
                 nb::object value = nb::getattr(object, name);
                 if (value.is_none()) { continue; }
                 auto *child = static_cast<std::byte *>(memory) + state->offsets[index];
-                assign_child_from_python(*state->child_bindings[index], child, value, "Bundle value");
+                assign_child_from_python(state->child_bindings[index], child, value, "Bundle value");
                 composite_mark_field(state, memory, index, true);
             }
         }
@@ -463,7 +463,7 @@ namespace hgraph
             return static_cast<const std::byte *>(memory) + index * state->stride;
         }
 
-        [[nodiscard]] const ValueTypeBinding *array_indexed_element_binding(const void *context, const void *,
+        [[nodiscard]] ValueTypeRef array_indexed_element_binding(const void *context, const void *,
                                                                             std::size_t) noexcept
         {
             return static_cast<const ArrayIndexedContext *>(context)->element_binding;
@@ -509,7 +509,7 @@ namespace hgraph
         [[nodiscard]] std::size_t array_value_hash(const void *context, const void *memory)
         {
             const auto *state = static_cast<const ArrayIndexedContext *>(context);
-            const auto &ops   = state->element_binding->ops_ref();
+            const auto &ops   = state->element_binding.ops_ref();
             std::size_t seed  = 0;
             for (std::size_t index = 0; index < state->size; ++index)
             {
@@ -524,7 +524,7 @@ namespace hgraph
             if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
             return fallback_on_exception(false, [&] {
                 const auto *state = static_cast<const ArrayIndexedContext *>(context);
-                const auto &ops   = state->element_binding->ops_ref();
+                const auto &ops   = state->element_binding.ops_ref();
                 for (std::size_t index = 0; index < state->size; ++index)
                 {
                     const auto *a = static_cast<const std::byte *>(lhs) + index * state->stride;
@@ -542,7 +542,7 @@ namespace hgraph
 
             return fallback_on_exception(std::partial_ordering::unordered, [&]() {
                 const auto *state = static_cast<const ArrayIndexedContext *>(context);
-                const auto &ops   = state->element_binding->ops_ref();
+                const auto &ops   = state->element_binding.ops_ref();
                 for (std::size_t index = 0; index < state->size; ++index)
                 {
                     const auto *a = static_cast<const std::byte *>(lhs) + index * state->stride;
@@ -558,7 +558,7 @@ namespace hgraph
         {
             if (memory == nullptr) { return "[]"; }
             const auto *state = static_cast<const ArrayIndexedContext *>(context);
-            const auto &ops   = state->element_binding->ops_ref();
+            const auto &ops   = state->element_binding.ops_ref();
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "[");
             for (std::size_t index = 0; index < state->size; ++index)
@@ -576,8 +576,8 @@ namespace hgraph
         {
             if (memory == nullptr) { throw std::runtime_error("array to_python requires live value memory"); }
             const auto *state = static_cast<const ArrayIndexedContext *>(context);
-            const auto &ops   = state->element_binding->ops_ref();
-            if (ops.can_to_python_buffer(*state->element_binding))
+            const auto &ops   = state->element_binding.ops_ref();
+            if (ops.can_to_python_buffer(state->element_binding))
             {
                 struct ArrayBufferOwner
                 {
@@ -590,7 +590,7 @@ namespace hgraph
                     return static_cast<const std::byte *>(owner_state->memory) +
                            index * owner_state->state->stride;
                 };
-                return ops.to_python_buffer(*state->element_binding,
+                return ops.to_python_buffer(state->element_binding,
                                             ValueArraySource{
                                                 .owner      = &owner,
                                                 .size       = state->size,
@@ -612,7 +612,7 @@ namespace hgraph
             return result;
         }
 
-        void array_value_from_python(const void *context, const ValueTypeBinding &, void *memory, nb::handle source)
+        void array_value_from_python(const void *context, const ValueTypeRef &, void *memory, nb::handle source)
         {
             if (memory == nullptr) { throw std::runtime_error("array from_python requires live value memory"); }
             require_python_source(source, "Fixed List value");
@@ -635,7 +635,7 @@ namespace hgraph
             {
                 nb::object element = sequence[index];
                 auto      *child   = static_cast<std::byte *>(memory) + index * state->stride;
-                assign_child_from_python(*state->element_binding, child, element, "Fixed List value");
+                assign_child_from_python(state->element_binding, child, element, "Fixed List value");
             }
         }
 #endif
@@ -674,8 +674,8 @@ namespace hgraph
                 const auto components = plan.components();
                 for (std::size_t index = 0; index < schema.field_count; ++index)
                 {
-                    const auto *child_binding =
-                        ValuePlanFactory::instance().binding_for(schema.fields[index].type);
+                    const auto child_binding =
+                        ValuePlanFactory::instance().type_for(schema.fields[index].type);
                     if (child_binding == nullptr)
                     {
                         throw std::logic_error("ValuePlanFactory: composite field has no resolvable indexed binding");
@@ -741,7 +741,7 @@ namespace hgraph
                     throw std::logic_error("ValuePlanFactory: array indexed ops require an array plan");
                 }
 
-                const auto *element_binding = ValuePlanFactory::instance().binding_for(schema.element_type);
+                const auto element_binding = ValuePlanFactory::instance().type_for(schema.element_type);
                 if (element_binding == nullptr)
                 {
                     throw std::logic_error("ValuePlanFactory: fixed list element has no resolvable binding");
@@ -817,45 +817,54 @@ namespace hgraph
         return *factory;
     }
 
-    void ValuePlanFactory::register_atomic(const ValueTypeMetaData *schema, const MemoryUtils::StoragePlan *plan)
+    void ValuePlanFactory::register_atomic(const ValueTypeMetaData *schema, const MemoryUtils::StoragePlan *plan,
+                                           const ValueOps *ops)
     {
-        if (schema == nullptr || plan == nullptr) { return; }
+        if (schema == nullptr || plan == nullptr || ops == nullptr) { return; }
+        const ValueTypeRef type = intern_value_type(*schema, *plan, *ops);
 
         std::lock_guard<std::mutex> lock(mutex_);
         if (const auto it = cache_.find(schema); it != cache_.end())
         {
-            if (it->second == plan) { return; }
+            if (it->second == plan)
+            {
+                const auto type_it = type_cache_.find(schema);
+                if (type_it != type_cache_.end() && type_it->second == type) return;
+                throw std::logic_error("ValuePlanFactory: atomic schema already registered with a different type");
+            }
             throw std::logic_error(std::string{"ValuePlanFactory: atomic schema already registered with a "
                                                "different plan: "} +
                                    (schema->header.label ? schema->header.label : "?"));
         }
         cache_.emplace(schema, plan);
+        type_cache_.emplace(schema, type);
     }
 
-    void ValuePlanFactory::register_binding(const ValueTypeBinding &binding)
+    void ValuePlanFactory::register_type(ValueTypeRef type)
     {
-        if (!binding.valid()) { return; }
+        if (!type.valid()) { return; }
+        const auto *schema = type.schema();
 
         std::lock_guard<std::mutex> lock(mutex_);
-        if (const auto it = binding_cache_.find(binding.type_meta); it != binding_cache_.end())
+        if (const auto it = type_cache_.find(schema); it != type_cache_.end())
         {
-            if (it->second == &binding) { return; }
-            throw std::logic_error("ValuePlanFactory: schema already registered with a different binding");
+            if (it->second == type) { return; }
+            throw std::logic_error("ValuePlanFactory: schema already registered with a different type");
         }
 
-        if (const auto it = cache_.find(binding.type_meta); it != cache_.end())
+        if (const auto it = cache_.find(schema); it != cache_.end())
         {
-            if (it->second != binding.plan())
+            if (it->second != type.plan())
             {
                 throw std::logic_error("ValuePlanFactory: schema already registered with a different plan");
             }
         }
         else
         {
-            cache_.emplace(binding.type_meta, binding.plan());
+            cache_.emplace(schema, type.plan());
         }
 
-        binding_cache_.emplace(binding.type_meta, &binding);
+        type_cache_.emplace(schema, type);
     }
 
     const MemoryUtils::StoragePlan *ValuePlanFactory::plan_for(const ValueTypeMetaData *schema)
@@ -879,35 +888,32 @@ namespace hgraph
         return it == cache_.end() ? nullptr : it->second;
     }
 
-    const ValueTypeBinding *ValuePlanFactory::binding_for(const ValueTypeMetaData *schema)
+    ValueTypeRef ValuePlanFactory::type_for(const ValueTypeMetaData *schema)
     {
-        if (schema == nullptr) { return nullptr; }
+        if (schema == nullptr) { return {}; }
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (const auto it = binding_cache_.find(schema); it != binding_cache_.end()) { return it->second; }
+            if (const auto it = type_cache_.find(schema); it != type_cache_.end()) { return it->second; }
         }
 
-        return synthesise_binding(schema);
+        return synthesise_type(schema);
     }
 
-    const ValueTypeBinding *ValuePlanFactory::find_binding(const ValueTypeMetaData *schema) const
+    ValueTypeRef ValuePlanFactory::find_type(const ValueTypeMetaData *schema) const
     {
-        if (schema == nullptr) { return nullptr; }
+        if (schema == nullptr) { return {}; }
 
         std::lock_guard<std::mutex> lock(mutex_);
-        const auto                  it = binding_cache_.find(schema);
-        return it == binding_cache_.end() ? nullptr : it->second;
+        const auto                  it = type_cache_.find(schema);
+        return it == type_cache_.end() ? ValueTypeRef{} : it->second;
     }
 
     void ValuePlanFactory::reset() noexcept
     {
         std::lock_guard<std::mutex> lock(mutex_);
         cache_.clear();
-        binding_cache_.clear();
-        clear_compact_container_plans();
-        clear_mutable_container_plans();
-        MemoryUtils::clear_synthesised_plans();
+        type_cache_.clear();
         clear_structured_indexed_ops();
     }
 
@@ -980,8 +986,7 @@ namespace hgraph
             {
                 if (schema->fixed_size == 0)
                 {
-                    const ValueTypeBinding *binding = binding_for(schema);
-                    plan = binding != nullptr ? binding->plan() : nullptr;
+                    plan = type_for(schema).plan();
                     break;
                 }
                 const MemoryUtils::StoragePlan *element_plan = plan_for(schema->element_type);
@@ -999,8 +1004,7 @@ namespace hgraph
             case ValueTypeKind::Queue:
             case ValueTypeKind::Any:
             {
-                const ValueTypeBinding *binding = binding_for(schema);
-                plan = binding != nullptr ? binding->plan() : nullptr;
+                plan = type_for(schema).plan();
                 break;
             }
         }
@@ -1017,9 +1021,9 @@ namespace hgraph
         return plan;
     }
 
-    const ValueTypeBinding *ValuePlanFactory::synthesise_binding(const ValueTypeMetaData *schema)
+    ValueTypeRef ValuePlanFactory::synthesise_type(const ValueTypeMetaData *schema)
     {
-        const ValueTypeBinding *binding = nullptr;
+        ValueTypeRef type{};
 
         switch (schema->value_kind())
         {
@@ -1032,112 +1036,111 @@ namespace hgraph
             {
                 for (size_t index = 0; index < schema->field_count; ++index)
                 {
-                    if (binding_for(schema->fields[index].type) == nullptr)
+                    if (!type_for(schema->fields[index].type))
                     {
                         throw std::logic_error("ValuePlanFactory: composite field has no resolvable binding");
                     }
                 }
                 const MemoryUtils::StoragePlan *plan = plan_for(schema);
                 if (plan == nullptr) { throw std::logic_error("ValuePlanFactory: composite has no resolvable plan"); }
-                binding = &ValueTypeBinding::intern(*schema, *plan, composite_indexed_ops(*schema, *plan));
+                type = intern_value_type(*schema, *plan, composite_indexed_ops(*schema, *plan));
                 break;
             }
 
             case ValueTypeKind::List:
             {
-                const ValueTypeBinding *element_binding = binding_for(schema->element_type);
-                if (element_binding == nullptr)
+                const ValueTypeRef element_type = type_for(schema->element_type);
+                if (!element_type)
                 {
                     throw std::logic_error("ValuePlanFactory: list element has no resolvable binding");
                 }
                 if (schema->fixed_size == 0)
                 {
-                    binding = schema->is_mutable() ? &mutable_list_binding(*element_binding)
-                                                   : &compact_list_binding(*element_binding, *schema);
+                    type = schema->is_mutable() ? mutable_list_type(element_type)
+                                                : compact_list_type(element_type, *schema);
                 }
                 else
                 {
                     const MemoryUtils::StoragePlan *plan = plan_for(schema);
                     if (plan == nullptr) { throw std::logic_error("ValuePlanFactory: fixed list has no resolvable plan"); }
-                    binding = &ValueTypeBinding::intern(*schema, *plan, array_indexed_ops(*schema, *plan));
+                    type = intern_value_type(*schema, *plan, array_indexed_ops(*schema, *plan));
                 }
                 break;
             }
 
             case ValueTypeKind::Set:
             {
-                const ValueTypeBinding *element_binding = binding_for(schema->element_type);
-                if (element_binding == nullptr)
+                const ValueTypeRef element_type = type_for(schema->element_type);
+                if (!element_type)
                 {
                     throw std::logic_error("ValuePlanFactory: set element has no resolvable binding");
                 }
-                binding = schema->is_mutable() ? &mutable_set_binding(*element_binding)
-                                               : &compact_set_binding(*element_binding);
+                type = schema->is_mutable() ? mutable_set_type(element_type) : compact_set_type(element_type);
                 break;
             }
 
             case ValueTypeKind::Map:
             {
-                const ValueTypeBinding *key_binding = binding_for(schema->key_type);
-                const ValueTypeBinding *value_binding = binding_for(schema->element_type);
-                if (key_binding == nullptr || value_binding == nullptr)
+                const ValueTypeRef key_type = type_for(schema->key_type);
+                const ValueTypeRef value_type = type_for(schema->element_type);
+                if (!key_type || !value_type)
                 {
                     throw std::logic_error("ValuePlanFactory: map key/value has no resolvable binding");
                 }
-                binding = schema->is_mutable() ? &mutable_map_binding(*key_binding, *value_binding)
-                                               : &compact_map_binding(*key_binding, *value_binding);
+                type = schema->is_mutable() ? mutable_map_type(key_type, value_type)
+                                            : compact_map_type(key_type, value_type);
                 break;
             }
 
             case ValueTypeKind::CyclicBuffer:
             {
-                const ValueTypeBinding *element_binding = binding_for(schema->element_type);
-                if (element_binding == nullptr)
+                const ValueTypeRef element_type = type_for(schema->element_type);
+                if (!element_type)
                 {
                     throw std::logic_error("ValuePlanFactory: cyclic buffer element has no resolvable binding");
                 }
-                binding = &compact_cyclic_buffer_binding(*element_binding, schema->fixed_size);
+                type = compact_cyclic_buffer_type(element_type, schema->fixed_size);
                 break;
             }
 
             case ValueTypeKind::Queue:
             {
-                const ValueTypeBinding *element_binding = binding_for(schema->element_type);
-                if (element_binding == nullptr)
+                const ValueTypeRef element_type = type_for(schema->element_type);
+                if (!element_type)
                 {
                     throw std::logic_error("ValuePlanFactory: queue element has no resolvable binding");
                 }
-                binding = &compact_queue_binding(*element_binding, schema->fixed_size);
+                type = compact_queue_type(element_type, schema->fixed_size);
                 break;
             }
 
             case ValueTypeKind::Any:
-                binding = &any_binding(*schema);   // JSON keeps its identity
+                type = any_type(*schema);   // JSON keeps its identity
                 break;
         }
 
-        if (binding == nullptr)
+        if (!type)
         {
             throw std::logic_error("ValuePlanFactory: unhandled ValueTypeKind while synthesising binding");
         }
 
         std::lock_guard<std::mutex> lock(mutex_);
-        const auto                  it = binding_cache_.find(schema);
-        if (it != binding_cache_.end()) { return it->second; }
+        const auto                  it = type_cache_.find(schema);
+        if (it != type_cache_.end()) { return it->second; }
 
         if (const auto plan_it = cache_.find(schema); plan_it != cache_.end())
         {
-            if (plan_it->second != binding->plan())
+            if (plan_it->second != type.plan())
             {
                 throw std::logic_error("ValuePlanFactory: synthesised binding does not match cached plan");
             }
         }
         else
         {
-            cache_.emplace(schema, binding->plan());
+            cache_.emplace(schema, type.plan());
         }
 
-        binding_cache_.emplace(schema, binding);
-        return binding;
+        type_cache_.emplace(schema, type);
+        return type;
     }
 }  // namespace hgraph

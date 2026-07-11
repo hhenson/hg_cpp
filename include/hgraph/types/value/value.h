@@ -27,7 +27,7 @@ namespace hgraph
      * Owning handle for a value-layer instance.
      *
      * ``Value`` is a thin wrapper over ``MemoryUtils::StorageHandle``
-     * specialised on the value-layer ``ValueTypeBinding``. The storage
+     * specialised on the value-layer ``ValueTypeRef``. The storage
      * handle owns the bytes (inline or heap, deciding via the policy) and
      * retains the binding identity. The binding carries the schema, plan,
      * and ops, and ``Value`` adds the
@@ -42,7 +42,7 @@ namespace hgraph
     class Value
     {
       public:
-        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, ValueTypeBinding>;
+        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
 
         Value() noexcept = default;
 
@@ -53,46 +53,46 @@ namespace hgraph
          */
         explicit Value(const ValueTypeMetaData &schema)
         {
-            const auto *binding = ValuePlanFactory::instance().binding_for(&schema);
-            if (binding == nullptr) { throw std::logic_error("Value(schema): schema has no canonical binding"); }
-            storage_ = storage_type::empty(*binding);
+            const auto type = ValuePlanFactory::instance().type_for(&schema);
+            if (!type) { throw std::logic_error("Value(schema): schema has no canonical value type"); }
+            storage_ = storage_type::empty(*type.record());
         }
 
         /**
          * Construct a default-valued ``Value`` for the given binding (the
          * binding's plan default-constructs the payload).
          */
-        explicit Value(const ValueTypeBinding &binding)
-            : storage_(binding)
+        explicit Value(const ValueTypeRef &binding)
+            : storage_(*binding.record())
         {
         }
 
         /**
          * Copy-construct a payload from external storage using ``binding``.
          */
-        Value(const ValueTypeBinding &binding, const void *src)
-            : storage_(storage_type::owning_copy(binding, src))
+        Value(const ValueTypeRef &binding, const void *src)
+            : storage_(storage_type::owning_copy(*binding.record(), src))
         {
         }
 
         /** Copy or bind-null construct from a non-owning view. */
         explicit Value(const ValueView &view)
         {
-            const auto *view_binding = view.binding();
-            if (view_binding == nullptr)
+            const auto view_type = view.type();
+            if (!view_type)
             {
                 throw std::invalid_argument("Value(ValueView): view has no binding");
             }
-            const auto &ops     = view_binding->ops_ref();
-            const auto &binding = ops.owning_binding(*view_binding);
+            const auto &ops = view_type.ops_ref();
+            const auto owning_type = ops.owning_type(view_type);
             if (view.data() == nullptr)
             {
-                storage_ = storage_type::empty(binding);
+                storage_ = storage_type::empty(*owning_type.record());
                 return;
             }
 
-            storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
-                ops.copy_construct_view(binding, dst, view.data());
+            storage_ = storage_type::owning_constructed(*owning_type.record(), [&](void *dst) {
+                ops.copy_construct_view(owning_type, dst, view.data());
             });
         }
 
@@ -104,16 +104,16 @@ namespace hgraph
          */
         template <typename T,
                   typename = std::enable_if_t<!std::is_same_v<std::decay_t<T>, Value> &&
-                                              !std::is_same_v<std::decay_t<T>, ValueTypeBinding>>>
+                                              !std::is_same_v<std::decay_t<T>, ValueTypeRef>>>
         explicit Value(T value)
         {
-            const ValueTypeBinding *binding = TypeRegistry::instance().scalar_binding<T>();
-            if (binding == nullptr)
+            ValueTypeRef binding = TypeRegistry::instance().scalar_type<T>();
+            if (!binding)
             {
                 throw std::logic_error(
                     "Value(T): scalar type not registered — call register_scalar<T>(name) first");
             }
-            storage_ = storage_type(*binding);
+            storage_ = storage_type(*binding.record());
             // The handle has default-constructed the payload; assign the
             // caller-supplied value into the live storage.
             *static_cast<T *>(storage_.data()) = std::move(value);
@@ -134,10 +134,10 @@ namespace hgraph
          * when the caller owns a larger parent value and needs to move one
          * child field out of that parent without first copying the child.
          */
-        [[nodiscard]] static Value reference(const ValueTypeBinding &binding, void *data) noexcept
+        [[nodiscard]] static Value reference(const ValueTypeRef &binding, void *data) noexcept
         {
             Value value;
-            value.storage_ = storage_type::reference(binding, data);
+            value.storage_ = storage_type::reference(*binding.record(), data);
             return value;
         }
 
@@ -147,10 +147,10 @@ namespace hgraph
         /** The bound schema; ``nullptr`` for a default-constructed ``Value``. */
         [[nodiscard]] const ValueTypeMetaData *schema() const noexcept
         {
-            const auto *bound = binding();
-            return bound != nullptr ? bound->type_meta : nullptr;
+            return binding().schema();
         }
-        [[nodiscard]] const ValueTypeBinding *binding() const noexcept { return storage_.binding(); }
+        [[nodiscard]] ValueTypeRef type() const noexcept { return ValueTypeRef{storage_.binding()}; }
+        [[nodiscard]] ValueTypeRef binding() const noexcept { return type(); }
 
         /** Tear down the constructed value (if any), preserving the binding/schema. */
         void reset() noexcept { storage_.reset_payload(); }
@@ -287,7 +287,7 @@ namespace hgraph
         {
             return compare(other);
         }
-        [[nodiscard]] Value clone() const { return binding() != nullptr ? Value{view()} : Value{}; }
+        [[nodiscard]] Value clone() const { return binding() ? Value{view()} : Value{}; }
 
         /**
          * Replace this owning value with an owning copy of ``source``.

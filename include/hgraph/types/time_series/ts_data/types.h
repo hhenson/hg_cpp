@@ -308,8 +308,8 @@ namespace hgraph
      */
     struct TSDataLayout
     {
-        const ValueTypeBinding *value_binding{nullptr};
-        const ValueTypeBinding *delta_binding{nullptr};
+        ValueTypeRef value_binding{nullptr};
+        ValueTypeRef delta_binding{nullptr};
         std::size_t             value_offset{0};
         std::size_t             tracking_offset{0};
     };
@@ -328,10 +328,10 @@ namespace hgraph
         std::size_t          data_offset{0};
 
         /** Current-value binding for this field, or null when the child layout is absent. */
-        [[nodiscard]] const ValueTypeBinding *value_binding() const noexcept;
+        [[nodiscard]] ValueTypeRef value_binding() const noexcept;
 
         /** Delta-value binding for this field, or null when the child layout is absent. */
-        [[nodiscard]] const ValueTypeBinding *delta_binding() const noexcept;
+        [[nodiscard]] ValueTypeRef delta_binding() const noexcept;
     };
 
     /**
@@ -380,7 +380,7 @@ namespace hgraph
 
     struct TSSDataLayout : TSDataLayout
     {
-        const ValueTypeBinding *key_binding{nullptr};
+        ValueTypeRef key_binding{nullptr};
     };
 
     struct TSDDataLayout : TSSDataLayout
@@ -388,8 +388,8 @@ namespace hgraph
         const TSDataBinding    *element_binding{nullptr};
         const TSDataLayout     *element_layout{nullptr};
         const TSDataBinding    *key_set_binding{nullptr};
-        const ValueTypeBinding *element_value_binding{nullptr};
-        const ValueTypeBinding *element_delta_binding{nullptr};
+        ValueTypeRef element_value_binding{nullptr};
+        ValueTypeRef element_delta_binding{nullptr};
     };
 
     struct SlotTSDataMutationResult
@@ -400,8 +400,8 @@ namespace hgraph
 
     struct TSWDataLayout : TSDataLayout
     {
-        const ValueTypeBinding *element_binding{nullptr};
-        const ValueTypeBinding *time_binding{nullptr};
+        ValueTypeRef element_binding{nullptr};
+        ValueTypeRef time_binding{nullptr};
     };
 
     struct SizeTSWDataLayout : TSWDataLayout

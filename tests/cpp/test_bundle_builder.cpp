@@ -61,12 +61,12 @@ namespace
         const auto *int_meta       = registry.register_scalar<std::int32_t>("int32");
         const auto *set_meta        = registry.set(int_meta);
         const auto *bundle_schema   = registry.un_named_bundle({{"added", set_meta}, {"removed", set_meta}});
-        const auto *bundle_binding  = ValuePlanFactory::instance().binding_for(bundle_schema);
+        const auto bundle_binding  = ValuePlanFactory::instance().type_for(bundle_schema);
 
         Value added_set   = stdlib::make_set<std::int32_t>(added);
         Value removed_set = stdlib::make_set<std::int32_t>(removed);
 
-        BundleBuilder builder{*bundle_binding};
+        BundleBuilder builder{bundle_binding};
         builder.set("added", added_set.view());
         builder.set("removed", removed_set.view());
         return builder.build();
@@ -96,17 +96,17 @@ TEST_CASE("BundleBuilder: bundle fields are unset until explicitly set")
     const auto *int_meta       = registry.register_scalar<std::int32_t>("int32");
     const auto *str_meta       = registry.register_scalar<Str>("str");
     const auto *bundle_schema  = registry.un_named_bundle({{"count", int_meta}, {"label", str_meta}});
-    const auto *bundle_binding = ValuePlanFactory::instance().binding_for(bundle_schema);
+    const auto bundle_binding = ValuePlanFactory::instance().type_for(bundle_schema);
     REQUIRE(bundle_binding != nullptr);
 
-    Value empty{*bundle_binding};
+    Value empty{bundle_binding};
     auto  empty_view = empty.as_bundle();
     CHECK(empty_view.size() == 2);
     CHECK_FALSE(empty_view.at("count").has_value());
     CHECK_FALSE(empty_view.at("label").has_value());
     CHECK_FALSE(empty_view.has_field("___validity"));
 
-    BundleBuilder builder{*bundle_binding};
+    BundleBuilder builder{bundle_binding};
     CHECK(builder.size() == 2);
     builder.set("count", Value{std::int32_t{42}});
     Value partial = builder.build();
@@ -116,7 +116,7 @@ TEST_CASE("BundleBuilder: bundle fields are unset until explicitly set")
     CHECK(partial_view.at("count").checked_as<std::int32_t>() == 42);
     CHECK_FALSE(partial_view.at("label").has_value());
 
-    BundleBuilder rejecting_builder{*bundle_binding};
+    BundleBuilder rejecting_builder{bundle_binding};
     Value         typed_null{*str_meta};
     CHECK_THROWS_AS(rejecting_builder.set("label", typed_null.view()), std::invalid_argument);
 }
@@ -128,10 +128,10 @@ TEST_CASE("BundleBuilder: moves owned field values")
     auto       &registry = TypeRegistry::instance();
     const auto *field_meta = registry.register_scalar<BundleMoveCountingScalar>("BundleMoveCountingScalar");
     const auto *bundle_schema = registry.un_named_bundle({{"field", field_meta}});
-    const auto *bundle_binding = ValuePlanFactory::instance().binding_for(bundle_schema);
+    const auto bundle_binding = ValuePlanFactory::instance().type_for(bundle_schema);
     REQUIRE(bundle_binding != nullptr);
 
-    BundleBuilder builder{*bundle_binding};
+    BundleBuilder builder{bundle_binding};
     Value         field{BundleMoveCountingScalar{13}};
 
     reset_bundle_move_counting_scalar_counts();

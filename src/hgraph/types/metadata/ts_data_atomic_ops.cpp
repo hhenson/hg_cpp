@@ -14,13 +14,13 @@ namespace hgraph::ts_data_plan_factory_detail
         TSDataLayout layout{};
         TSDataOps    ops{};
 
-        AtomicTSDataOpsEntry(TSTypeKind kind, const ValueTypeBinding &value_binding,
-                             const ValueTypeBinding &delta_binding,
+        AtomicTSDataOpsEntry(TSTypeKind kind, const ValueTypeRef &value_binding,
+                             const ValueTypeRef &delta_binding,
                              std::size_t value_offset, std::size_t tracking_offset)
         {
             layout = TSDataLayout{
-                .value_binding   = &value_binding,
-                .delta_binding   = &delta_binding,
+                .value_binding   = value_binding,
+                .delta_binding   = delta_binding,
                 .value_offset    = value_offset,
                 .tracking_offset = tracking_offset,
             };
@@ -141,12 +141,12 @@ namespace hgraph::ts_data_plan_factory_detail
         /** Same binding, or distinct schema identities over ONE layout
             (variadic tuple vs list: the PLAN is the layout contract; the ops
             may be per-binding variants, e.g. tuple-shaped python read-back). */
-        [[nodiscard]] static bool atomic_value_binding_compatible(const ValueTypeBinding *source,
-                                                                  const ValueTypeBinding *bound) noexcept
+        [[nodiscard]] static bool atomic_value_binding_compatible(ValueTypeRef source,
+                                                                  ValueTypeRef bound) noexcept
         {
             if (source == bound) { return true; }
             if (source == nullptr || bound == nullptr) { return false; }
-            return source->plan() == bound->plan();
+            return source.plan() == bound.plan();
         }
 
         [[nodiscard]] static bool atomic_copy_value_from(const void *context, void *memory, const ValueView &source,
@@ -174,7 +174,7 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto *tracking       = atomic_tracking(context, memory);
             const bool  first_for_time = tracking->last_modified_time != modified_time;
 
-            const auto &value_plan = layout->value_binding->checked_plan();
+            const auto &value_plan = layout->value_binding.checked_plan();
             copy_assign_required(value_plan, atomic_mutable_value_memory(context, memory), source.data());
             return first_for_time;
         }
@@ -204,7 +204,7 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto *tracking       = atomic_tracking(context, memory);
             const bool  first_for_time = tracking->last_modified_time != modified_time;
 
-            const auto &value_plan = layout->value_binding->checked_plan();
+            const auto &value_plan = layout->value_binding.checked_plan();
             move_assign_required(value_plan,
                                  atomic_mutable_value_memory(context, memory),
                                  const_cast<void *>(source.view().data()));
@@ -233,8 +233,8 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto *layout = atomic_layout(context);
             const auto *tracking = atomic_tracking(context, memory);
             const bool  first_for_time = tracking->last_modified_time != modified_time;
-            layout->value_binding->ops_ref().from_python(
-                *layout->value_binding,
+            layout->value_binding.ops_ref().from_python(
+                layout->value_binding,
                 atomic_mutable_value_memory(context, memory),
                 source);
             return first_for_time;
@@ -243,7 +243,7 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static nb::object atomic_to_python(const void *context, const void *memory)
         {
             const auto *layout = atomic_layout(context);
-            return layout->value_binding->ops_ref().to_python(atomic_value_memory(context, memory));
+            return layout->value_binding.ops_ref().to_python(atomic_value_memory(context, memory));
         }
 
         [[nodiscard]] static nb::object atomic_delta_to_python(const void *context,
@@ -252,15 +252,15 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             if (atomic_tracking(context, memory)->last_modified_time != evaluation_time) { return nb::none(); }
             const auto *layout = atomic_layout(context);
-            return layout->delta_binding->ops_ref().to_python(atomic_delta_memory(context, memory));
+            return layout->delta_binding.ops_ref().to_python(atomic_delta_memory(context, memory));
         }
 #endif
     };
 
     struct AtomicTSDataOpsKey
     {
-        const ValueTypeBinding         *value_binding{nullptr};
-        const ValueTypeBinding         *delta_binding{nullptr};
+        ValueTypeRef value_binding{nullptr};
+        ValueTypeRef delta_binding{nullptr};
         const MemoryUtils::StoragePlan *plan{nullptr};
         TSTypeKind                      kind{TSTypeKind::TS};
         std::size_t                     value_offset{0};
@@ -273,8 +273,8 @@ namespace hgraph::ts_data_plan_factory_detail
     {
         [[nodiscard]] std::size_t operator()(const AtomicTSDataOpsKey &key) const noexcept
         {
-            std::size_t seed = std::hash<const ValueTypeBinding *>{}(key.value_binding);
-            seed ^= std::hash<const ValueTypeBinding *>{}(key.delta_binding) + 0x9e3779b97f4a7c15ULL + (seed << 6U) +
+            std::size_t seed = std::hash<ValueTypeRef>{}(key.value_binding);
+            seed ^= std::hash<ValueTypeRef>{}(key.delta_binding) + 0x9e3779b97f4a7c15ULL + (seed << 6U) +
                     (seed >> 2U);
             seed ^= std::hash<const MemoryUtils::StoragePlan *>{}(key.plan) + 0x9e3779b97f4a7c15ULL + (seed << 6U) +
                     (seed >> 2U);
@@ -294,13 +294,13 @@ namespace hgraph::ts_data_plan_factory_detail
     }
 
     [[nodiscard]] const TSDataOps &atomic_ts_data_ops(TSTypeKind                     kind,
-                                                      const ValueTypeBinding         &value_binding,
-                                                      const ValueTypeBinding         &delta_binding,
+                                                      const ValueTypeRef         &value_binding,
+                                                      const ValueTypeRef         &delta_binding,
                                                       const MemoryUtils::StoragePlan &plan, std::size_t value_offset,
                                                       std::size_t tracking_offset)
     {
         return atomic_ts_data_ops_cache()
-            .emplace(AtomicTSDataOpsKey{&value_binding, &delta_binding, &plan, kind, value_offset, tracking_offset},
+            .emplace(AtomicTSDataOpsKey{value_binding, delta_binding, &plan, kind, value_offset, tracking_offset},
                      kind, value_binding, delta_binding, value_offset, tracking_offset)
             .ops;
     }
