@@ -184,8 +184,9 @@ namespace hgraph
     {
         std::span<const WiringArg>     args{};
         std::span<const ParamPattern>  params{};
-        /** Collected ``**kwargs`` (named time-series matching no parameter). */
-        std::span<const std::pair<std::string, WiringPortRef>> kwargs{};
+        /** Collected ``**kwargs`` (named args matching no parameter: ports,
+            or plain values that lift to const once a candidate wins). */
+        std::span<const std::pair<std::string, WiringArg>> kwargs{};
         /** The top-level wiring state used for state-dependent resolution. */
         GlobalStateView global_state{};
 
@@ -300,7 +301,8 @@ namespace hgraph
             std::optional<bool> output_required = std::nullopt,
             const TSValueTypeMetaData *expected_output = nullptr,
             std::span<const std::size_t> size_hints = {},
-            GlobalStateView global_state = {}) const;
+            GlobalStateView global_state = {},
+            Wiring *wiring = nullptr) const;
 
         /**
          * Resolve and EAGERLY evaluate a const-evaluable overload (the
@@ -1514,8 +1516,8 @@ namespace hgraph
                                                           std::optional<bool> output_required = std::nullopt,
                                                           const TSValueTypeMetaData *expected_output = nullptr)
     {
-        ResolvedOperatorCall resolved =
-            OperatorRegistry::instance().resolve(name, args, output_required, expected_output, {}, w.operator_state());
+        ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
+            name, args, output_required, expected_output, {}, w.operator_state(), &w);
         return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs);
     }
 
@@ -1551,7 +1553,7 @@ namespace hgraph
 
             ResolvedOperatorCall resolved =
                 OperatorRegistry::instance().resolve(X::name, wiring_args, X::has_output, expected_output, {},
-                                                     w.operator_state());
+                                                     w.operator_state(), &w);
             return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs);
         }
     }  // namespace operator_dispatch_detail

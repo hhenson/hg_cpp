@@ -355,7 +355,7 @@ namespace
                 name, std::span<const WiringArg>{wiring_args.data(), wiring_args.size()}, std::nullopt,
                 output_type.has_value() ? output_type->meta : nullptr,
                 std::span<const std::size_t>{size_hints.data(), size_hints.size()},
-                wiring_ref().operator_state());
+                wiring_ref().operator_state(), &wiring_ref());
             OperatorWireResult result =
                 resolved.impl->wire(wiring_ref(), resolved.map, resolved.args, resolved.kwargs);
             if (!result.has_output) { return nb::none(); }

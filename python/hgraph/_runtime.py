@@ -50,27 +50,14 @@ def wire(name, *args, __output_type__=None, **kwargs):
     unwrapped = tuple(_unwrap(a) for a in args)
     unwrapped_kw = {k: _unwrap(v) for k, v in kwargs.items()}
     try:
+        # Plain-value kwargs falling to a **kwargs collector lift to const
+        # sources inside the C++ call normalisation (the scalar-kwargs rule) -
+        # no python-side retry.
         if sizes is not None:
             result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type, sizes=sizes)
         else:
             result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type)
     except (RuntimeError, ValueError) as error:
-        # AUTO-CONST retry for kwargs collectors: a plain-value keyword
-        # argument lifts to a const port (the **kwargs collector takes
-        # time-series only; declared SCALAR params matched by name already
-        # consumed theirs on the first attempt).
-        if "must be a time-series" in str(error) and any(
-                not isinstance(v, _hgraph.Port) for v in unwrapped_kw.values()):
-            lifted = {k: v if isinstance(v, _hgraph.Port) else _unwrap(operator_function("const")(v))
-                      for k, v in unwrapped_kw.items()}
-            try:
-                if sizes is not None:
-                    result = w.wire(name, unwrapped, lifted, output_type=out_type, sizes=sizes)
-                else:
-                    result = w.wire(name, unwrapped, lifted, output_type=out_type)
-                return WiringPort(result) if result is not None else None
-            except (RuntimeError, ValueError):
-                pass
         # std::invalid_argument surfaces as ValueError; both are wiring-time.
         raise WiringError(str(error)) from error
     return WiringPort(result) if result is not None else None

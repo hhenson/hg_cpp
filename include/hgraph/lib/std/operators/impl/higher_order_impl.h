@@ -951,10 +951,11 @@ namespace hgraph::stdlib
             }
             const std::size_t positional_count = slot_schemas.size();
             std::vector<std::pair<std::string, std::size_t>> named_slots;
-            for (const auto &[name, port] : context.kwargs)
+            for (const auto &[name, kw_arg] : context.kwargs)
             {
+                if (kw_arg.kind != WiringArg::Kind::TimeSeries) { continue; }
                 named_slots.emplace_back(name, slot_schemas.size());
-                slot_schemas.push_back(port.schema);
+                slot_schemas.push_back(kw_arg.port.schema);
             }
 
             // A resolution probe: leave unresolved on failure — the real
@@ -1215,9 +1216,12 @@ namespace hgraph::stdlib
                 }
                 return nullptr;
             };
-            for (const auto &[name, port] : context.kwargs)
+            for (const auto &[name, kw_arg] : context.kwargs)
             {
-                if (name == "__keys__") { return element_of(port); }
+                if (name == "__keys__" && kw_arg.kind == WiringArg::Kind::TimeSeries)
+                {
+                    return element_of(kw_arg.port);
+                }
             }
             for (const WiringArg &arg : context.args)
             {
@@ -1631,10 +1635,11 @@ namespace hgraph::stdlib
             }
             std::vector<std::pair<std::string, WiringPortRef>> named;
             named.reserve(context.kwargs.size());
-            for (const auto &[name, port] : context.kwargs)
+            for (const auto &[name, kw_arg] : context.kwargs)
             {
                 if (name == "__keys__") { continue; }   // map_'s own argument, not func's
-                named.emplace_back(name, port);
+                if (kw_arg.kind != WiringArg::Kind::TimeSeries) { continue; }
+                named.emplace_back(name, kw_arg.port);
             }
 
             const std::string *key_override = context.scalar_as<Str>("__key_arg__");

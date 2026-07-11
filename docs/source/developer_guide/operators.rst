@@ -654,11 +654,14 @@ future Python frontend gets identical behaviour by passing named
    with ``InputValidity::Unchecked`` to observe it invalid). Each default a
    candidate falls back on costs one rank point, so an overload whose
    parameters were all supplied wins at equal specificity;
-4. named time-series arguments matching no parameter collect into the
-   candidate's ``**kwargs`` — the trailing ``VarKwIn<"kwargs">`` selector
-   (marker + last ``compose`` parameter, after ``VarIn`` if both), received
-   as ``(name, port)`` pairs in call order. A kwargs collector costs one
-   rank point, like a variadic tail.
+4. named arguments matching no parameter collect into the candidate's
+   ``**kwargs`` — the trailing ``VarKwIn<"kwargs">`` selector (marker +
+   last ``compose`` parameter, after ``VarIn`` if both), received as
+   ``(name, port)`` pairs in call order. A **plain value** here follows
+   the same rule as time-series defaults: it lifts to a ``const`` source
+   (materialised for the WINNING candidate only — losing candidates never
+   touch the graph). A kwargs collector costs one rank point, like a
+   variadic tail.
 
 The selected candidate's ``wire`` receives the **normalised** call:
 arguments in declared parameter order with defaults materialised and the

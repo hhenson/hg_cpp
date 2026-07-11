@@ -123,9 +123,12 @@ namespace hgraph
         // candidate (C++ today, Python later).
         struct NormalizedCall
         {
-            std::vector<WiringArg>                              args{};
-            std::vector<std::pair<std::string, WiringPortRef>>  kwargs{};
-            int                                                 defaults_used{0};
+            std::vector<WiringArg>                          args{};
+            /** Collected ``**kwargs`` in call order: ports pass through;
+                plain VALUES lift to const sources once a winner is chosen
+                (Python's scalar-kwargs rule). */
+            std::vector<std::pair<std::string, WiringArg>>  kwargs{};
+            int                                             defaults_used{0};
         };
 
         constexpr int variadic_pack_fixed_input_penalty = 100'000'000;
@@ -232,11 +235,9 @@ namespace hgraph
                 }
                 else if (impl.has_kwargs)
                 {
-                    if (named.kind != WiringArg::Kind::TimeSeries)
-                    {
-                        why = fmt::format("keyword argument '{}' must be a time-series", named.name);
-                        return false;
-                    }
+                    // Ports collect directly; a plain VALUE is accepted and
+                    // lifts to a const source once this candidate wins
+                    // (Python's scalar-kwargs rule - value -> const).
                     if (std::find_if(out.kwargs.begin(), out.kwargs.end(),
                                      [&](const auto &kw) { return kw.first == named.name; }) !=
                         out.kwargs.end())
@@ -244,7 +245,7 @@ namespace hgraph
                         why = fmt::format("got multiple values for argument '{}'", named.name);
                         return false;
                     }
-                    out.kwargs.emplace_back(named.name, named.port);
+                    out.kwargs.emplace_back(named.name, named);
                 }
                 else
                 {
@@ -290,7 +291,7 @@ namespace hgraph
 
         bool try_match(const OperatorImpl &impl,
                        std::span<const WiringArg> args,
-                       std::span<const std::pair<std::string, WiringPortRef>> kwargs,
+                       std::span<const std::pair<std::string, WiringArg>> kwargs,
                        std::optional<bool> output_required,
                        const TSValueTypeMetaData *expected_output,
                        ResolutionMap &map,
@@ -496,11 +497,19 @@ namespace hgraph
         }
         const TSValueTypeMetaData *resolved_output =
             resolved.impl->has_output ? ts_pattern_resolve(resolved.impl->output, resolved.map) : nullptr;
+        std::vector<std::pair<std::string, WiringArg>> kwargs;
+        kwargs.reserve(resolved.kwargs.size());
+        for (const auto &[kw_name, port] : resolved.kwargs)
+        {
+            WiringArg arg;
+            arg.kind = WiringArg::Kind::TimeSeries;
+            arg.port = port;
+            kwargs.emplace_back(kw_name, std::move(arg));
+        }
         return resolved.impl->const_kernel(
             resolved_output,
             OperatorCallContext{resolved.args, resolved.impl->params,
-                                std::span<const std::pair<std::string, WiringPortRef>>{resolved.kwargs},
-                                global_state});
+                                std::span<const std::pair<std::string, WiringArg>>{kwargs}, global_state});
     }
 
     std::vector<std::string> OperatorRegistry::registered_names() const
@@ -594,7 +603,8 @@ namespace hgraph
         std::optional<bool> output_required,
         const TSValueTypeMetaData *expected_output,
         std::span<const std::size_t> size_hints,
-        GlobalStateView global_state) const
+        GlobalStateView global_state,
+        Wiring *wiring) const
     {
         auto it = overloads_.find(std::string{name});
         if (it == overloads_.end() || it->second.empty())
@@ -674,7 +684,35 @@ namespace hgraph
                 fmt::format("ambiguous overloads for operator '{}':\n{}", name, fmt::join(tied, "\n")));
         }
 
-        return ResolvedOperatorCall{survivors[0].impl, std::move(survivors[0].map),
-                                    std::move(survivors[0].call.args), std::move(survivors[0].call.kwargs)};
+        // Materialise the winner's kwargs: ports pass through; plain VALUES
+        // lift to const sources (Python's scalar-kwargs rule). Only the
+        // winning candidate wires nodes - losers never touch the graph.
+        Survivor &winner = survivors[0];
+        std::vector<std::pair<std::string, WiringPortRef>> kwargs;
+        kwargs.reserve(winner.call.kwargs.size());
+        for (auto &[kw_name, kw_arg] : winner.call.kwargs)
+        {
+            if (kw_arg.kind == WiringArg::Kind::TimeSeries)
+            {
+                kwargs.emplace_back(kw_name, kw_arg.port);
+                continue;
+            }
+            if (wiring == nullptr)
+            {
+                throw OperatorResolutionError(fmt::format(
+                    "keyword argument '{}' of '{}' is a plain value and no wiring context is "
+                    "available to lift it to a const source",
+                    kw_name, name));
+            }
+            WiringArg positional = kw_arg;
+            positional.name.clear();   // const takes the value positionally
+            ResolvedOperatorCall lifted =
+                resolve("const", std::span<const WiringArg>{&positional, 1}, true, nullptr, {}, global_state);
+            OperatorWireResult source = lifted.impl->wire(*wiring, lifted.map, lifted.args, lifted.kwargs);
+            kwargs.emplace_back(kw_name, source.output.erased());
+        }
+
+        return ResolvedOperatorCall{winner.impl, std::move(winner.map), std::move(winner.call.args),
+                                    std::move(kwargs)};
     }
 }  // namespace hgraph
