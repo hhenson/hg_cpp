@@ -332,7 +332,7 @@ namespace hgraph::stdlib
             const auto *in = time_series_schema_at(context, 0);
             return data_frame_impl_detail::output_is_frame(resolution) && in != nullptr &&
                    in->kind == TSTypeKind::TSD && in->element_ts()->kind == TSTypeKind::TS &&
-                   in->element_ts()->value_schema->kind == ValueTypeKind::Bundle;
+                   in->element_ts()->value_schema->value_kind() == ValueTypeKind::Bundle;
         }
 
         static void start(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
@@ -400,9 +400,9 @@ namespace hgraph::stdlib
                 return false;
             }
             const auto *value = in->value_schema;
-            if (value->kind == ValueTypeKind::Bundle) { return true; }
-            return value->kind == ValueTypeKind::List && value->element_type != nullptr &&
-                   value->element_type->kind == ValueTypeKind::Bundle;
+            if (value->value_kind() == ValueTypeKind::Bundle) { return true; }
+            return value->value_kind() == ValueTypeKind::List && value->element_type != nullptr &&
+                   value->element_type->value_kind() == ValueTypeKind::Bundle;
         }
 
         static void start(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,

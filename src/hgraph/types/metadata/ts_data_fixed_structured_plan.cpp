@@ -40,8 +40,10 @@ namespace hgraph::ts_data_plan_factory_detail
             // tuple/frozenset/frozendict values) - all copy whole through
             // their value plans. Mutable (slot-store-backed) containers are
             // NOT whole-value copyable and stay excluded.
-            const auto whole_value = [](const ValueTypeMetaData &meta) {
-                switch (meta.kind)
+            const auto whole_value = [](const ValueTypeMetaData &meta) noexcept {
+                const auto kind = meta.try_value_kind();
+                if (!kind.has_value()) { return false; }
+                switch (*kind)
                 {
                     case ValueTypeKind::Atomic:
                     case ValueTypeKind::Bundle:

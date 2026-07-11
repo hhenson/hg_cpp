@@ -171,7 +171,8 @@ namespace hgraph
                 return {arrow::time64(arrow::TimeUnit::MICRO), &append_time, &read_time};
             }
             throw std::logic_error(fmt::format("table codec: unsupported leaf scalar '{}'",
-                                               meta != nullptr && meta->display_name ? meta->display_name : "?"));
+                                               meta != nullptr && !meta->name().empty() ? meta->name()
+                                                                                      : std::string_view{"?"}));
         }
 
         // ---------------------------------------------------------------
@@ -224,14 +225,14 @@ namespace hgraph
                                                     .read      = ops.read});
             };
 
-            switch (meta->kind)
+            switch (meta->value_kind())
             {
                 case ValueTypeKind::Atomic: add_leaf("value", meta, {}); break;
                 case ValueTypeKind::Bundle: {
                     for (std::size_t i = 0; i < meta->field_count; ++i)
                     {
                         const auto &field = meta->fields[i];
-                        if (field.type->kind != ValueTypeKind::Atomic)
+                        if (field.type->value_kind() != ValueTypeKind::Atomic)
                         {
                             throw std::logic_error(
                                 "table codec: nested compound bundle fields are not supported yet "
@@ -244,7 +245,7 @@ namespace hgraph
                 default:
                     throw std::logic_error(fmt::format(
                         "table codec: unsupported value kind for '{}' (atomics and depth-1 bundles in v1)",
-                        meta->display_name ? meta->display_name : "?"));
+                        meta->name()));
             }
 
             arrow::FieldVector fields;
@@ -524,7 +525,7 @@ namespace hgraph
             return chunked->chunk(0);
         };
 
-        if (converter.meta->kind == ValueTypeKind::Atomic)
+        if (converter.meta->value_kind() == ValueTypeKind::Atomic)
         {
             const auto &column = converter.columns.front();
             auto array = column_array(column.name);

@@ -161,24 +161,26 @@ namespace hgraph
         // -- kind queries --
         [[nodiscard]] bool is_atomic() const noexcept
         {
-            return valid() && schema()->kind == ValueTypeKind::Atomic;
+            return valid() && schema()->try_value_kind() == ValueTypeKind::Atomic;
         }
-        [[nodiscard]] bool is_tuple()  const noexcept { return valid() && schema()->kind == ValueTypeKind::Tuple; }
-        [[nodiscard]] bool is_bundle() const noexcept { return valid() && schema()->kind == ValueTypeKind::Bundle; }
-        [[nodiscard]] bool is_list()   const noexcept { return valid() && schema()->kind == ValueTypeKind::List; }
-        [[nodiscard]] bool is_set()    const noexcept { return valid() && schema()->kind == ValueTypeKind::Set; }
-        [[nodiscard]] bool is_map()    const noexcept { return valid() && schema()->kind == ValueTypeKind::Map; }
+        [[nodiscard]] bool is_tuple()  const noexcept { return valid() && schema()->try_value_kind() == ValueTypeKind::Tuple; }
+        [[nodiscard]] bool is_bundle() const noexcept { return valid() && schema()->try_value_kind() == ValueTypeKind::Bundle; }
+        [[nodiscard]] bool is_list()   const noexcept { return valid() && schema()->try_value_kind() == ValueTypeKind::List; }
+        [[nodiscard]] bool is_set()    const noexcept { return valid() && schema()->try_value_kind() == ValueTypeKind::Set; }
+        [[nodiscard]] bool is_map()    const noexcept { return valid() && schema()->try_value_kind() == ValueTypeKind::Map; }
         [[nodiscard]] bool is_cyclic_buffer() const noexcept
         {
-            return valid() && schema()->kind == ValueTypeKind::CyclicBuffer;
+            return valid() && schema()->try_value_kind() == ValueTypeKind::CyclicBuffer;
         }
-        [[nodiscard]] bool is_queue() const noexcept { return valid() && schema()->kind == ValueTypeKind::Queue; }
-        [[nodiscard]] bool is_any()   const noexcept { return valid() && schema()->kind == ValueTypeKind::Any; }
+        [[nodiscard]] bool is_queue() const noexcept { return valid() && schema()->try_value_kind() == ValueTypeKind::Queue; }
+        [[nodiscard]] bool is_any()   const noexcept { return valid() && schema()->try_value_kind() == ValueTypeKind::Any; }
         [[nodiscard]] bool is_indexed() const noexcept
         {
             const auto *type = schema();
             if (!valid() || type == nullptr) { return false; }
-            switch (type->kind)
+            const auto kind = type->try_value_kind();
+            if (!kind.has_value()) { return false; }
+            switch (*kind)
             {
                 case ValueTypeKind::Tuple:
                 case ValueTypeKind::Bundle:

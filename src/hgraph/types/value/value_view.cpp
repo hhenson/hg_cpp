@@ -17,13 +17,14 @@ namespace hgraph
     {
         [[nodiscard]] const char *schema_name(const ValueTypeMetaData *schema) noexcept
         {
-            if (schema == nullptr || schema->display_name == nullptr) { return "<unnamed>"; }
-            return schema->display_name;
+            if (schema == nullptr || schema->header.label == nullptr) { return "<unnamed>"; }
+            return schema->header.label;
         }
 
         [[nodiscard]] const ValueTypeMetaData *structural_schema(const ValueTypeMetaData *schema) noexcept
         {
-            if (schema != nullptr && schema->kind == ValueTypeKind::Bundle && schema->wrapped_un_named != nullptr)
+            if (schema != nullptr && schema->try_value_kind() == ValueTypeKind::Bundle &&
+                schema->wrapped_un_named != nullptr)
             {
                 return schema->wrapped_un_named;
             }
@@ -36,9 +37,13 @@ namespace hgraph
             lhs = structural_schema(lhs);
             rhs = structural_schema(rhs);
             if (lhs == rhs) { return true; }
-            if (lhs == nullptr || rhs == nullptr || lhs->kind != rhs->kind) { return false; }
+            if (lhs == nullptr || rhs == nullptr) { return false; }
 
-            switch (lhs->kind)
+            const auto lhs_kind = lhs->try_value_kind();
+            const auto rhs_kind = rhs->try_value_kind();
+            if (!lhs_kind.has_value() || lhs_kind != rhs_kind) { return false; }
+
+            switch (*lhs_kind)
             {
                 case ValueTypeKind::Atomic:
                     return false;
@@ -162,9 +167,9 @@ namespace hgraph
             const auto *schema = structural_schema(lhs.schema());
             if (schema == nullptr) { return false; }
 
-            if (ordered_indexed_kind(schema->kind)) { return semantic_indexed_equals(lhs, rhs); }
-            if (schema->kind == ValueTypeKind::Set) { return semantic_set_equals(lhs, rhs); }
-            if (schema->kind == ValueTypeKind::Map) { return semantic_map_equals(lhs, rhs); }
+            if (ordered_indexed_kind(schema->value_kind())) { return semantic_indexed_equals(lhs, rhs); }
+            if (schema->value_kind() == ValueTypeKind::Set) { return semantic_set_equals(lhs, rhs); }
+            if (schema->value_kind() == ValueTypeKind::Map) { return semantic_map_equals(lhs, rhs); }
             return false;
         }
 
@@ -173,11 +178,11 @@ namespace hgraph
             const auto *schema = structural_schema(lhs.schema());
             if (schema == nullptr) { return std::partial_ordering::unordered; }
 
-            if (ordered_indexed_kind(schema->kind)) { return semantic_indexed_compare(lhs, rhs); }
+            if (ordered_indexed_kind(schema->value_kind())) { return semantic_indexed_compare(lhs, rhs); }
 
-            if (schema->kind == ValueTypeKind::Set) { return semantic_set_compare(lhs, rhs); }
+            if (schema->value_kind() == ValueTypeKind::Set) { return semantic_set_compare(lhs, rhs); }
 
-            if (schema->kind == ValueTypeKind::Map)
+            if (schema->value_kind() == ValueTypeKind::Map)
             {
                 return semantic_equals(lhs, rhs) ? std::partial_ordering::equivalent
                                                  : std::partial_ordering::unordered;

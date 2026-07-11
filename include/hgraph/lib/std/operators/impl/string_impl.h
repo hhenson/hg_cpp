@@ -256,11 +256,11 @@ namespace hgraph::stdlib
             if (out == nullptr) { return true; }   // default form resolves the variadic tuple
             if (out->kind != TSTypeKind::TS || out->value_schema == nullptr) { return false; }
             const auto *value_meta = out->value_schema;
-            if (value_meta->kind == ValueTypeKind::List)
+            if (value_meta->value_kind() == ValueTypeKind::List)
             {
                 return value_meta->element_type == scalar_descriptor<Str>::value_meta();
             }
-            if (value_meta->kind == ValueTypeKind::Tuple)
+            if (value_meta->value_kind() == ValueTypeKind::Tuple)
             {
                 // Tuple[str, str, ...]: every field must be str.
                 for (std::size_t index = 0; index < value_meta->field_count; ++index)
@@ -283,7 +283,7 @@ namespace hgraph::stdlib
         {
             const auto &erased = static_cast<const TSOutputView &>(out);
             const auto *value_meta = erased.schema()->value_schema;
-            const auto  fixed = value_meta->kind == ValueTypeKind::Tuple
+            const auto  fixed = value_meta->value_kind() == ValueTypeKind::Tuple
                                     ? static_cast<std::size_t>(value_meta->field_count)
                                     : static_cast<std::size_t>(value_meta->fixed_size);
 
@@ -315,7 +315,7 @@ namespace hgraph::stdlib
                 {
                     throw std::invalid_argument("split: input does not produce the fixed tuple arity");
                 }
-                if (value_meta->kind == ValueTypeKind::Tuple)
+                if (value_meta->value_kind() == ValueTypeKind::Tuple)
                 {
                     BundleBuilder builder{*ValuePlanFactory::instance().binding_for(value_meta)};
                     for (std::size_t index = 0; index < fixed; ++index)
@@ -424,7 +424,7 @@ namespace hgraph::stdlib
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
         {
             const auto *meta = resolution.find_scalar("T");
-            return meta != nullptr && meta->kind == ValueTypeKind::List && !meta->is_mutable() &&
+            return meta != nullptr && meta->value_kind() == ValueTypeKind::List && !meta->is_mutable() &&
                    meta->element_type == scalar_descriptor<Str>::value_meta();
         }
 

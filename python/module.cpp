@@ -1548,7 +1548,7 @@ NB_MODULE(_hgraph, m)
         auto &registry = python_bridge::enum_class_registry();
         if (const auto it = registry.find(meta); it != registry.end()) { return it->second(value); }
         throw std::logic_error(std::string{"enum '"} +
-                               (meta->display_name ? meta->display_name : "?") +
+                               (meta->header.label ? meta->header.label : "?") +
                                "' has no registered python class");
     };
     enum_from_python_slot() = [](const ValueTypeMetaData *, nb::handle source) -> long long {
@@ -1584,7 +1584,7 @@ NB_MODULE(_hgraph, m)
         .def_prop_ro("value_kind",
                      [](const PyTsType &self) {
                          return self.meta->value_schema != nullptr
-                                    ? static_cast<int>(self.meta->value_schema->kind)
+                                    ? static_cast<int>(self.meta->value_schema->value_kind())
                                     : -1;
                      })
         .def_prop_ro("fixed_size", [](const PyTsType &self) {
@@ -1610,11 +1610,13 @@ NB_MODULE(_hgraph, m)
         })
         .def_prop_ro("is_ts_bundle", [](const PyTsType &self) {
             return self.meta != nullptr && self.meta->kind == TSTypeKind::TS &&
-                   self.meta->value_schema != nullptr && self.meta->value_schema->kind == ValueTypeKind::Bundle;
+                   self.meta->value_schema != nullptr &&
+                   self.meta->value_schema->value_kind() == ValueTypeKind::Bundle;
         })
         .def_prop_ro("is_ts_mapping", [](const PyTsType &self) {
             return self.meta != nullptr && self.meta->kind == TSTypeKind::TS &&
-                   self.meta->value_schema != nullptr && self.meta->value_schema->kind == ValueTypeKind::Map;
+                   self.meta->value_schema != nullptr &&
+                   self.meta->value_schema->value_kind() == ValueTypeKind::Map;
         })
         .def_prop_ro("is_tss", [](const PyTsType &self) {
             return self.meta != nullptr && self.meta->kind == TSTypeKind::TSS;
@@ -1622,8 +1624,8 @@ NB_MODULE(_hgraph, m)
         .def_prop_ro("is_ts_sequence", [](const PyTsType &self) {
             return self.meta != nullptr && self.meta->kind == TSTypeKind::TS &&
                    self.meta->value_schema != nullptr &&
-                   (self.meta->value_schema->kind == ValueTypeKind::Tuple ||
-                    self.meta->value_schema->kind == ValueTypeKind::List);
+                   (self.meta->value_schema->value_kind() == ValueTypeKind::Tuple ||
+                    self.meta->value_schema->value_kind() == ValueTypeKind::List);
         })
         .def_prop_ro("is_ts_json", [](const PyTsType &self) {
             return stdlib::json_tree::is_json_ts(self.meta);
@@ -1780,8 +1782,7 @@ NB_MODULE(_hgraph, m)
         {
             keys.append(nb::str(layout.keys[i].c_str()));
             const auto *meta = layout.col_metas[i];
-            types.append(
-                nb::str(meta != nullptr && meta->display_name != nullptr ? meta->display_name : "?"));
+            types.append(nb::str(meta != nullptr && meta->header.label != nullptr ? meta->header.label : "?"));
         }
         for (const auto &name : layout.partition_keys) { partition_keys.append(nb::str(name.c_str())); }
         for (const auto &name : layout.removed_keys) { removed_keys.append(nb::str(name.c_str())); }
@@ -1802,7 +1803,7 @@ NB_MODULE(_hgraph, m)
     });
     // Type INTROSPECTION for wiring-time target inference (py convert etc.).
     m.def("ts_value_vt", [](PyTsType t) { return PyValueType{t.meta->value_schema}; });
-    m.def("vt_kind", [](PyValueType v) { return static_cast<int>(v.meta->kind); });
+    m.def("vt_kind", [](PyValueType v) { return static_cast<int>(v.meta->value_kind()); });
     m.def("vt_element", [](PyValueType v) { return PyValueType{v.meta->element_type}; });
     m.def("vt_key", [](PyValueType v) { return PyValueType{v.meta->key_type}; });
     m.def("tsd_key_vt", [](PyTsType t) { return PyValueType{t.meta->key_type()}; });

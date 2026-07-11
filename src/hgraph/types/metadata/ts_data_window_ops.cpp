@@ -204,7 +204,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static IndexedValueView checked_source_values(const ValueView &source)
             {
                 if (!source.has_value()) { throw std::invalid_argument("TSW copy requires a live source value"); }
-                if (source.schema() == nullptr || source.schema()->kind != ValueTypeKind::List)
+                if (source.schema() == nullptr || source.schema()->value_kind() != ValueTypeKind::List)
                 {
                     throw std::invalid_argument("TSW copy requires a list-shaped source value");
                 }
@@ -980,7 +980,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 const auto *state = ctx(context);
                 const auto *source_schema = source.schema();
-                if (source_schema == nullptr || source_schema->kind != ValueTypeKind::List ||
+                if (source_schema == nullptr || source_schema->value_kind() != ValueTypeKind::List ||
                     source_schema->element_type != state->schema->value_type)
                 {
                     throw std::invalid_argument("TSW move requires a list source with the window element schema");
@@ -1093,7 +1093,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                          void *dst,
                                                          const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::List)
+                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::List)
                 {
                     throw std::logic_error("TSW value copy requires a canonical list binding");
                 }
@@ -1116,7 +1116,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                       void *dst,
                                                       const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::List)
+                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::List)
                 {
                     throw std::logic_error("TSW value copy requires a canonical list binding");
                 }

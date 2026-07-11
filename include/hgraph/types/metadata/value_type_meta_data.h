@@ -6,12 +6,15 @@
 #define HGRAPH_CPP_ROOT_VALUE_TYPE_META_DATA_H
 
 #include <hgraph/util/date_time.h>
-#include <hgraph/types/metadata/type_meta_data.h>
+#include <hgraph/types/metadata/type_record.h>
 
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
+#include <stdexcept>
+#include <string_view>
 #include <type_traits>
 
 namespace hgraph
@@ -24,24 +27,24 @@ namespace hgraph
      * tags; consumers dispatch on it to interpret the rest of the metadata
      * fields.
      */
-    enum class ValueTypeKind : uint8_t
+    enum class ValueTypeKind : std::uint8_t
     {
         /** Single scalar (integer, floating-point, bool, string, date/time). */
-        Atomic,
+        Atomic = 0,
         /** Fixed-arity ordered fields, addressed by index. */
-        Tuple,
+        Tuple = 1,
         /** Named tuple; fields addressed by name with field-name metadata preserved. */
-        Bundle,
+        Bundle = 2,
         /** Ordered sequence of one element type; ``fixed_size`` distinguishes static vs dynamic. */
-        List,
+        List = 3,
         /** Unordered set of unique elements of one type. */
-        Set,
+        Set = 4,
         /** Key-value mapping with one key type and one value type. */
-        Map,
+        Map = 5,
         /** Fixed-capacity ring buffer of one element type. */
-        CyclicBuffer,
+        CyclicBuffer = 6,
         /** FIFO queue with capacity and ordering. */
-        Queue,
+        Queue = 7,
         /**
          * Type-erased "any value" box. Compile-time schema knowledge ends
          * here: the box stores an embedded owning ``Value`` whose own schema
@@ -52,8 +55,23 @@ namespace hgraph
          * unconstrained. The slot type for heterogeneous mutable containers
          * (and the eventual analogue of a generic / Python ``object``).
          */
-        Any,
+        Any = 8,
     };
+
+    /** Convert a compact kind when it belongs to the value family. */
+    [[nodiscard]] constexpr std::optional<ValueTypeKind> try_value_type_kind(TypeKind kind) noexcept
+    {
+        if (kind > static_cast<TypeKind>(ValueTypeKind::Any)) { return std::nullopt; }
+        return static_cast<ValueTypeKind>(kind);
+    }
+
+    /** Convert the compact schema kind to the value-family enum, rejecting foreign values. */
+    [[nodiscard]] constexpr ValueTypeKind checked_value_type_kind(TypeKind kind)
+    {
+        const auto result = try_value_type_kind(kind);
+        if (!result.has_value()) { throw std::invalid_argument("invalid value type kind"); }
+        return *result;
+    }
 
     /**
      * Capability flags carried on each ``ValueTypeMetaData``.
@@ -153,26 +171,22 @@ namespace hgraph
      * Always interned by ``TypeRegistry``: equivalent descriptions resolve
      * to the same pointer.
      */
-    struct ValueTypeMetaData final : TypeMetaData
+    struct ValueTypeMetaData final
     {
-        /** Default-construct an empty atomic-category descriptor. */
-        constexpr ValueTypeMetaData() noexcept
-            : TypeMetaData(MetaCategory::Value)
-        {
-        }
+        /** Default-construct an invalid descriptor for factory population. */
+        constexpr ValueTypeMetaData() noexcept = default;
 
-        /** Construct a descriptor with kind, flags, and optional name. */
+        /** Construct a value-family descriptor with kind, flags, and canonical label. */
         constexpr ValueTypeMetaData(ValueTypeKind kind_,
                                     ValueTypeFlags flags_,
-                                    const char *display_name_ = nullptr) noexcept
-            : TypeMetaData(MetaCategory::Value, display_name_)
-            , kind(kind_)
+                                    const char *label) noexcept
+            : header(TypeFamily::Value, static_cast<TypeKind>(kind_), label)
             , flags(flags_)
         {
         }
 
-        /** Kind tag; see ``ValueTypeKind``. */
-        ValueTypeKind kind{ValueTypeKind::Atomic};
+        /** Common family/kind/label prefix shared by all unified schemas. */
+        SchemaHeader header{};
         /** Capability flags. */
         ValueTypeFlags flags{ValueTypeFlags::None};
         /** Element type for ``List``, ``Set``, ``Map`` (value), ``CyclicBuffer``, ``Queue``. */
@@ -195,15 +209,33 @@ namespace hgraph
          */
         const ValueTypeMetaData *wrapped_un_named{nullptr};
 
-        /** True when this metadata is a named bundle (carries a name). */
+        /** Checked value-family kind. */
+        [[nodiscard]] constexpr ValueTypeKind value_kind() const
+        {
+            return checked_value_type_kind(header.kind);
+        }
+        /** Nonthrowing value-family kind query for diagnostic and predicate paths. */
+        [[nodiscard]] constexpr std::optional<ValueTypeKind> try_value_kind() const noexcept
+        {
+            return try_value_type_kind(header.kind);
+        }
+        /** Registry-owned canonical diagnostic label. */
+        [[nodiscard]] constexpr std::string_view name() const noexcept
+        {
+            return header.label == nullptr ? std::string_view{} : std::string_view{header.label};
+        }
+        /** Common schema prefix. */
+        [[nodiscard]] constexpr const SchemaHeader &schema_header() const noexcept { return header; }
+
+        /** True when this metadata is a nominal named bundle. */
         [[nodiscard]] constexpr bool is_named_bundle() const noexcept
         {
-            return kind == ValueTypeKind::Bundle && display_name != nullptr;
+            return try_value_kind() == ValueTypeKind::Bundle && wrapped_un_named != nullptr;
         }
         /** True when this metadata is a structural (un-named) bundle. */
         [[nodiscard]] constexpr bool is_un_named_bundle() const noexcept
         {
-            return kind == ValueTypeKind::Bundle && display_name == nullptr;
+            return try_value_kind() == ValueTypeKind::Bundle && wrapped_un_named == nullptr;
         }
 
         /** True when ``fixed_size`` is non-zero. Note: this is a semantic property (capacity / staticness), not a layout property. */

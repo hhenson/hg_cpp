@@ -1130,7 +1130,7 @@ TEST_CASE("TimeSeriesReference: registry pairs the type with a real plan via Val
 
     const auto *ref_atom = registry.value_type("TimeSeriesReference");
     REQUIRE(ref_atom != nullptr);
-    REQUIRE(ref_atom->kind == ValueTypeKind::Atomic);
+    REQUIRE(ref_atom->value_kind() == ValueTypeKind::Atomic);
 
     // Unlike the previous synthetic atomic, the registered type now has a
     // canonical plan paired with it.

@@ -1194,7 +1194,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             const auto *state = ctx(context);
             if (binding.type_meta != state->schema->delta_value_schema ||
-                binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Map)
+                binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Map)
             {
                 throw std::logic_error("fixed TSL delta copy requires the canonical parent delta map schema");
             }
@@ -1345,7 +1345,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                           const void *memory)
         {
             const auto *state = ctx(context);
-            if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Set)
+            if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Set)
             {
                 throw std::logic_error("fixed TSL delta key-set copy requires a canonical set schema");
             }

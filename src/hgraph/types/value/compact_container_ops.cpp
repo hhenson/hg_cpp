@@ -16,7 +16,7 @@ namespace hgraph
                                                                   const char             *what)
             {
                 if (!binding.valid()) { throw std::logic_error(std::string{what} + " requires a valid binding"); }
-                if (binding.type_meta->kind != kind)
+                if (binding.type_meta->value_kind() != kind)
                 {
                     throw std::logic_error(std::string{what} + " received the wrong value kind");
                 }

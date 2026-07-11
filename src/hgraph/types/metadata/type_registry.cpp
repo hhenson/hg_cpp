@@ -180,6 +180,49 @@ namespace hgraph
             }
             return flags;
         }
+
+        [[nodiscard]] std::string value_label(const ValueTypeMetaData *meta)
+        {
+            return meta == nullptr || meta->name().empty() ? std::string{"<unresolved>"} : std::string{meta->name()};
+        }
+
+        [[nodiscard]] std::string unary_label(std::string_view family, const ValueTypeMetaData *element_type)
+        {
+            std::string label{family};
+            label.push_back('[');
+            label.append(value_label(element_type));
+            label.push_back(']');
+            return label;
+        }
+
+        [[nodiscard]] std::string sized_label(std::string_view family,
+                                              const ValueTypeMetaData *element_type,
+                                              size_t size)
+        {
+            std::string label{family};
+            label.push_back('[');
+            label.append(value_label(element_type));
+            if (size != 0)
+            {
+                label.push_back(',');
+                label.append(std::to_string(size));
+            }
+            label.push_back(']');
+            return label;
+        }
+
+        [[nodiscard]] std::string map_label(std::string_view family,
+                                            const ValueTypeMetaData *key_type,
+                                            const ValueTypeMetaData *value_type)
+        {
+            std::string label{family};
+            label.push_back('[');
+            label.append(value_label(key_type));
+            label.push_back(',');
+            label.append(value_label(value_type));
+            label.push_back(']');
+            return label;
+        }
     }  // namespace
 
     TypeRegistry &TypeRegistry::instance()
@@ -198,28 +241,33 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::value_type(std::string_view name) const
     {
+        const std::lock_guard lock(mutex_);
         const auto it = value_name_cache_.find(std::string(name));
         return it == value_name_cache_.end() ? nullptr : it->second;
     }
 
     const TSValueTypeMetaData *TypeRegistry::time_series_type(std::string_view name) const
     {
+        const std::lock_guard lock(mutex_);
         const auto it = ts_name_cache_.find(std::string(name));
         return it == ts_name_cache_.end() ? nullptr : it->second;
     }
 
     void TypeRegistry::register_value_type_alias(std::string_view name, const ValueTypeMetaData *meta)
     {
+        const std::lock_guard lock(mutex_);
         register_value_alias(name, meta);
     }
 
     void TypeRegistry::register_time_series_type_alias(std::string_view name, const TSValueTypeMetaData *meta)
     {
+        const std::lock_guard lock(mutex_);
         register_ts_alias(name, meta);
     }
 
     const ValueTypeMetaData *TypeRegistry::named_bundle(std::string_view name) const
     {
+        const std::lock_guard lock(mutex_);
         const ValueTypeMetaData *meta = value_type(name);
         return (meta != nullptr && meta->is_named_bundle()) ? meta : nullptr;
     }
@@ -316,6 +364,7 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::named_enum(std::string_view name) const
     {
+        const std::lock_guard lock(mutex_);
         const ValueTypeMetaData *meta = value_type(name);
         return (meta != nullptr && meta->is_enum()) ? meta : nullptr;
     }
@@ -323,6 +372,7 @@ namespace hgraph
     const ValueTypeMetaData *
     TypeRegistry::enum_type(std::string_view name, const std::vector<std::pair<std::string, long long>> &members)
     {
+        const std::lock_guard lock(mutex_);
         if (name.empty()) { throw std::invalid_argument("enum_type requires a non-empty name"); }
         if (members.empty()) { throw std::invalid_argument("enum_type requires at least one member"); }
 
@@ -375,12 +425,14 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::named_tsb(std::string_view name) const
     {
+        const std::lock_guard lock(mutex_);
         const TSValueTypeMetaData *meta = time_series_type(name);
         return (meta != nullptr && meta->is_named_tsb()) ? meta : nullptr;
     }
 
     void TypeRegistry::reset() noexcept
     {
+        const std::lock_guard lock(mutex_);
         // Drop every interned identity cache.
         scalar_cache_.clear();
         synthetic_scalar_cache_.clear();
@@ -489,10 +541,6 @@ namespace hgraph
         }
 
         value_name_cache_.emplace(std::move(key), meta);
-        if (!meta->display_name)
-        {
-            const_cast<ValueTypeMetaData *>(meta)->display_name = store_name_interned(name);
-        }
     }
 
     void TypeRegistry::register_ts_alias(std::string_view name, const TSValueTypeMetaData *meta)
@@ -544,6 +592,7 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::tuple(const std::vector<const ValueTypeMetaData *> &element_types)
     {
+        const std::lock_guard lock(mutex_);
         TupleKey key{element_types};
         const ValueTypeMetaData &meta = tuple_cache_.intern(std::move(key), [&]() {
             std::unique_ptr<ValueFieldMetaData[]> fields =
@@ -556,7 +605,16 @@ namespace hgraph
             }
             ValueFieldMetaData *fields_ptr = fields ? store_value_fields(std::move(fields)) : nullptr;
 
-            ValueTypeMetaData m(ValueTypeKind::Tuple, compute_composite_flags(element_types));
+            std::string label{"Tuple["};
+            for (size_t index = 0; index < element_types.size(); ++index)
+            {
+                if (index != 0) { label.push_back(','); }
+                label.append(value_label(element_types[index]));
+            }
+            label.push_back(']');
+            ValueTypeMetaData m(ValueTypeKind::Tuple,
+                                compute_composite_flags(element_types),
+                                store_name_interned(label));
             m.fields = fields_ptr;
             m.field_count = element_types.size();
             return m;
@@ -567,6 +625,7 @@ namespace hgraph
     const ValueTypeMetaData *
     TypeRegistry::un_named_bundle(const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields)
     {
+        const std::lock_guard lock(mutex_);
         BundleKey key;
         key.fields.reserve(fields.size());
         for (const auto &[field_name, field_type] : fields)
@@ -585,8 +644,18 @@ namespace hgraph
             }
             ValueFieldMetaData *fields_ptr = stored_fields ? store_value_fields(std::move(stored_fields)) : nullptr;
 
-            // Un-named bundle: name = nullptr, wrapped_un_named = nullptr.
-            ValueTypeMetaData m(ValueTypeKind::Bundle, compute_bundle_flags(fields), nullptr);
+            std::string label{"Bundle{"};
+            for (size_t index = 0; index < fields.size(); ++index)
+            {
+                if (index != 0) { label.push_back(','); }
+                label.append(fields[index].first);
+                label.push_back(':');
+                label.append(value_label(fields[index].second));
+            }
+            label.push_back('}');
+            ValueTypeMetaData m(ValueTypeKind::Bundle,
+                                compute_bundle_flags(fields),
+                                store_name_interned(label));
             m.fields = fields_ptr;
             m.field_count = fields.size();
             return m;
@@ -598,6 +667,7 @@ namespace hgraph
     TypeRegistry::bundle(std::string_view name,
                          const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields)
     {
+        const std::lock_guard lock(mutex_);
         if (name.empty())
         {
             throw std::invalid_argument("bundle requires a non-empty name; use un_named_bundle for the structural form");
@@ -635,9 +705,14 @@ namespace hgraph
     const ValueTypeMetaData *
     TypeRegistry::list(const ValueTypeMetaData *element_type, size_t fixed_size, bool variadic_tuple)
     {
+        const std::lock_guard lock(mutex_);
         const ListKey key{element_type, fixed_size, variadic_tuple};
         const ValueTypeMetaData &meta = list_cache_.intern(key, [&]() {
-            ValueTypeMetaData m(ValueTypeKind::List, list_flags(element_type, fixed_size, variadic_tuple));
+            const std::string label = variadic_tuple ? unary_label("VariadicTuple", element_type)
+                                                     : sized_label("List", element_type, fixed_size);
+            ValueTypeMetaData m(ValueTypeKind::List,
+                                list_flags(element_type, fixed_size, variadic_tuple),
+                                store_name_interned(label));
             m.element_type = element_type;
             m.fixed_size = fixed_size;
             return m;
@@ -647,10 +722,12 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::mutable_list(const ValueTypeMetaData *element_type)
     {
+        const std::lock_guard lock(mutex_);
         const ValueTypeMetaData &meta = mutable_list_cache_.intern(element_type, [&]() {
             ValueTypeMetaData m(ValueTypeKind::List,
                                 list_flags(element_type, /*fixed_size=*/0, /*variadic_tuple=*/false) |
-                                    ValueTypeFlags::Mutable);
+                                    ValueTypeFlags::Mutable,
+                                store_name_interned(unary_label("MutableList", element_type)));
             m.element_type = element_type;
             return m;
         });
@@ -659,12 +736,15 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::series(const ValueTypeMetaData *element_type)
     {
+        const std::lock_guard lock(mutex_);
         const ValueTypeMetaData *base = value_type("series");
         if (base == nullptr) { throw std::logic_error("series scalar is not registered"); }
         if (element_type == nullptr) { return base; }
 
         const ValueTypeMetaData &meta = series_cache_.intern(element_type, [&]() {
-            ValueTypeMetaData m(ValueTypeKind::Atomic, base->flags, base->display_name);
+            ValueTypeMetaData m(ValueTypeKind::Atomic,
+                                base->flags,
+                                store_name_interned(unary_label(base->name(), element_type)));
             m.element_type = element_type;
             return m;
         });
@@ -679,14 +759,26 @@ namespace hgraph
         return &meta;
     }
 
+    bool TypeRegistry::is_series(const ValueTypeMetaData *meta) const
+    {
+        const std::lock_guard lock(mutex_);
+        if (meta == nullptr) { return false; }
+        const auto base = value_name_cache_.find("series");
+        if (base != value_name_cache_.end() && meta == base->second) { return true; }
+        return meta->element_type != nullptr && series_cache_.find(meta->element_type) == meta;
+    }
+
     const ValueTypeMetaData *TypeRegistry::frame(const ValueTypeMetaData *column_schema)
     {
+        const std::lock_guard lock(mutex_);
         const ValueTypeMetaData *base = value_type("frame");
         if (base == nullptr) { throw std::logic_error("frame scalar is not registered"); }
         if (column_schema == nullptr) { return base; }
 
         const ValueTypeMetaData &meta = frame_cache_.intern(column_schema, [&]() {
-            ValueTypeMetaData m(ValueTypeKind::Atomic, base->flags, base->display_name);
+            ValueTypeMetaData m(ValueTypeKind::Atomic,
+                                base->flags,
+                                store_name_interned(unary_label(base->name(), column_schema)));
             m.element_type = column_schema;
             return m;
         });
@@ -700,12 +792,23 @@ namespace hgraph
         return &meta;
     }
 
+    bool TypeRegistry::is_frame(const ValueTypeMetaData *meta) const
+    {
+        const std::lock_guard lock(mutex_);
+        if (meta == nullptr) { return false; }
+        const auto base = value_name_cache_.find("frame");
+        if (base != value_name_cache_.end() && meta == base->second) { return true; }
+        return meta->element_type != nullptr && frame_cache_.find(meta->element_type) == meta;
+    }
+
     const ValueTypeMetaData *TypeRegistry::nullable_tuple(const ValueTypeMetaData *element_type)
     {
+        const std::lock_guard lock(mutex_);
         const ValueTypeMetaData &meta = nullable_tuple_cache_.intern(element_type, [&]() {
             ValueTypeMetaData m(ValueTypeKind::List,
                                 list_flags(element_type, /*fixed_size=*/0, /*variadic_tuple=*/true) |
-                                    ValueTypeFlags::Nullable);
+                                    ValueTypeFlags::Nullable,
+                                store_name_interned(unary_label("NullableTuple", element_type)));
             m.element_type = element_type;
             return m;
         });
@@ -714,8 +817,11 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::set(const ValueTypeMetaData *element_type)
     {
+        const std::lock_guard lock(mutex_);
         const ValueTypeMetaData &meta = set_cache_.intern(element_type, [&]() {
-            ValueTypeMetaData m(ValueTypeKind::Set, set_flags(element_type));
+            ValueTypeMetaData m(ValueTypeKind::Set,
+                                set_flags(element_type),
+                                store_name_interned(unary_label("Set", element_type)));
             m.element_type = element_type;
             return m;
         });
@@ -724,8 +830,11 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::mutable_set(const ValueTypeMetaData *element_type)
     {
+        const std::lock_guard lock(mutex_);
         const ValueTypeMetaData &meta = mutable_set_cache_.intern(element_type, [&]() {
-            ValueTypeMetaData m(ValueTypeKind::Set, set_flags(element_type) | ValueTypeFlags::Mutable);
+            ValueTypeMetaData m(ValueTypeKind::Set,
+                                set_flags(element_type) | ValueTypeFlags::Mutable,
+                                store_name_interned(unary_label("MutableSet", element_type)));
             m.element_type = element_type;
             return m;
         });
@@ -734,9 +843,12 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::map(const ValueTypeMetaData *key_type, const ValueTypeMetaData *value_type)
     {
+        const std::lock_guard lock(mutex_);
         const MapKey key{key_type, value_type};
         const ValueTypeMetaData &meta = map_cache_.intern(key, [&]() {
-            ValueTypeMetaData m(ValueTypeKind::Map, map_flags(key_type, value_type));
+            ValueTypeMetaData m(ValueTypeKind::Map,
+                                map_flags(key_type, value_type),
+                                store_name_interned(map_label("Map", key_type, value_type)));
             m.key_type = key_type;
             m.element_type = value_type;
             return m;
@@ -746,6 +858,7 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::json()
     {
+        const std::lock_guard lock(mutex_);
         // JSON = a distinct schema identity over Any STORAGE: the boxed value
         // is one of Bool | Int | Float | Str | List<JSON> | Map<Str, JSON>;
         // an EMPTY box is JSON null.
@@ -753,7 +866,7 @@ namespace hgraph
             return ValueTypeMetaData(ValueTypeKind::Any,
                                      ValueTypeFlags::Hashable | ValueTypeFlags::Equatable |
                                          ValueTypeFlags::Comparable,
-                                     "JSON");
+                                     store_name_interned("JSON"));
         });
         if (value_name_cache_.find("JSON") == value_name_cache_.end())
         {
@@ -764,6 +877,7 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::any()
     {
+        const std::lock_guard lock(mutex_);
         // Unconstrained, singleton: no element/key/fields. Hashable / equatable /
         // comparable because the Any ops delegate to the embedded value (which may
         // itself throw if the contained value lacks the capability).
@@ -771,7 +885,7 @@ namespace hgraph
             return ValueTypeMetaData(ValueTypeKind::Any,
                                      ValueTypeFlags::Hashable | ValueTypeFlags::Equatable |
                                          ValueTypeFlags::Comparable,
-                                     "Any");
+                                     store_name_interned("Any"));
         });
         return &meta;
     }
@@ -779,9 +893,12 @@ namespace hgraph
     const ValueTypeMetaData *TypeRegistry::mutable_map(const ValueTypeMetaData *key_type,
                                                        const ValueTypeMetaData *value_type)
     {
+        const std::lock_guard lock(mutex_);
         const MapKey key{key_type, value_type};
         const ValueTypeMetaData &meta = mutable_map_cache_.intern(key, [&]() {
-            ValueTypeMetaData m(ValueTypeKind::Map, map_flags(key_type, value_type) | ValueTypeFlags::Mutable);
+            ValueTypeMetaData m(ValueTypeKind::Map,
+                                map_flags(key_type, value_type) | ValueTypeFlags::Mutable,
+                                store_name_interned(map_label("MutableMap", key_type, value_type)));
             m.key_type     = key_type;
             m.element_type = value_type;
             return m;
@@ -791,9 +908,12 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::cyclic_buffer(const ValueTypeMetaData *element_type, size_t capacity)
     {
+        const std::lock_guard lock(mutex_);
         const SizedKey key{element_type, capacity};
         const ValueTypeMetaData &meta = cyclic_buffer_cache_.intern(key, [&]() {
-            ValueTypeMetaData m(ValueTypeKind::CyclicBuffer, ordered_container_flags(element_type));
+            ValueTypeMetaData m(ValueTypeKind::CyclicBuffer,
+                                ordered_container_flags(element_type),
+                                store_name_interned(sized_label("CyclicBuffer", element_type, capacity)));
             m.element_type = element_type;
             m.fixed_size = capacity;
             return m;
@@ -803,9 +923,12 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::queue(const ValueTypeMetaData *element_type, size_t max_capacity)
     {
+        const std::lock_guard lock(mutex_);
         const SizedKey key{element_type, max_capacity};
         const ValueTypeMetaData &meta = queue_cache_.intern(key, [&]() {
-            ValueTypeMetaData m(ValueTypeKind::Queue, ordered_container_flags(element_type));
+            ValueTypeMetaData m(ValueTypeKind::Queue,
+                                ordered_container_flags(element_type),
+                                store_name_interned(sized_label("Queue", element_type, max_capacity)));
             m.element_type = element_type;
             m.fixed_size = max_capacity;
             return m;
@@ -815,6 +938,7 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::signal()
     {
+        const std::lock_guard lock(mutex_);
         if (!signal_meta_)
         {
             signal_meta_ = std::make_unique<TSValueTypeMetaData>(
@@ -827,6 +951,7 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::ts(const ValueTypeMetaData *value_type)
     {
+        const std::lock_guard lock(mutex_);
         const TSValueTypeMetaData &meta = ts_cache_.intern(value_type, [&]() {
             TSValueTypeMetaData m(TSTypeKind::TS, value_type);
             populate_ts_schemas(m);
@@ -837,6 +962,7 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::tss(const ValueTypeMetaData *element_type)
     {
+        const std::lock_guard lock(mutex_);
         const TSValueTypeMetaData &meta = tss_cache_.intern(element_type, [&]() {
             TSValueTypeMetaData m(TSTypeKind::TSS, element_type ? set(element_type) : nullptr);
             populate_ts_schemas(m);
@@ -847,6 +973,7 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::tsd(const ValueTypeMetaData *key_type, const TSValueTypeMetaData *value_ts)
     {
+        const std::lock_guard lock(mutex_);
         const TSDictKey key{key_type, value_ts};
         const TSValueTypeMetaData &meta = tsd_cache_.intern(key, [&]() {
             TSValueTypeMetaData m(
@@ -860,6 +987,7 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::tsl(const TSValueTypeMetaData *element_ts, size_t fixed_size)
     {
+        const std::lock_guard lock(mutex_);
         const TSListKey key{element_ts, fixed_size};
         const TSValueTypeMetaData &meta = tsl_cache_.intern(key, [&]() {
             TSValueTypeMetaData m(
@@ -874,6 +1002,7 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::tsw(const ValueTypeMetaData *value_type, size_t period, size_t min_period)
     {
+        const std::lock_guard lock(mutex_);
         const TSWindowKey key{value_type, false, static_cast<std::int64_t>(period), static_cast<std::int64_t>(min_period)};
         const TSValueTypeMetaData &meta = tsw_cache_.intern(key, [&]() {
             TSValueTypeMetaData m(TSTypeKind::TSW, value_type);
@@ -888,6 +1017,7 @@ namespace hgraph
                                                           TimeDelta time_range,
                                                           TimeDelta min_time_range)
     {
+        const std::lock_guard lock(mutex_);
         const TSWindowKey key{value_type, true, time_range.count(), min_time_range.count()};
         const TSValueTypeMetaData &meta = tsw_cache_.intern(key, [&]() {
             TSValueTypeMetaData m(TSTypeKind::TSW, value_type);
@@ -901,6 +1031,7 @@ namespace hgraph
     const TSValueTypeMetaData *
     TypeRegistry::un_named_tsb(const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> &fields)
     {
+        const std::lock_guard lock(mutex_);
         TSBundleKey ts_key;
         ts_key.fields.reserve(fields.size());
         for (const auto &[field_name, field_type] : fields)
@@ -938,6 +1069,7 @@ namespace hgraph
     TypeRegistry::tsb(std::string_view name,
                       const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> &fields)
     {
+        const std::lock_guard lock(mutex_);
         if (name.empty())
         {
             throw std::invalid_argument("tsb requires a non-empty name; use un_named_tsb for the structural form");
@@ -979,6 +1111,7 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::ref(const TSValueTypeMetaData *referenced_ts)
     {
+        const std::lock_guard lock(mutex_);
         if (referenced_ts == nullptr)
         {
             throw std::invalid_argument("TypeRegistry::ref requires a referenced time-series schema");
@@ -1088,6 +1221,13 @@ namespace hgraph
 
     bool TypeRegistry::contains_ref(const TSValueTypeMetaData *meta)
     {
+        TypeRegistry &registry = instance();
+        const std::lock_guard lock(registry.mutex_);
+        return contains_ref_unlocked(meta);
+    }
+
+    bool TypeRegistry::contains_ref_unlocked(const TSValueTypeMetaData *meta)
+    {
         if (!meta)
         {
             return false;
@@ -1099,20 +1239,21 @@ namespace hgraph
             case TSTypeKind::TSB:
                 for (size_t index = 0; index < meta->field_count(); ++index)
                 {
-                    if (contains_ref(meta->fields()[index].type))
+                    if (contains_ref_unlocked(meta->fields()[index].type))
                     {
                         return true;
                     }
                 }
                 return false;
             case TSTypeKind::TSD:
-            case TSTypeKind::TSL: return contains_ref(meta->element_ts());
+            case TSTypeKind::TSL: return contains_ref_unlocked(meta->element_ts());
             default: return false;
         }
     }
 
     const TSValueTypeMetaData *TypeRegistry::dereference(const TSValueTypeMetaData *meta)
     {
+        const std::lock_guard lock(mutex_);
         if (!meta)
         {
             return nullptr;
@@ -1132,7 +1273,7 @@ namespace hgraph
 
             case TSTypeKind::TSB:
             {
-                if (!contains_ref(meta))
+                if (!contains_ref_unlocked(meta))
                 {
                     result = meta;
                     break;

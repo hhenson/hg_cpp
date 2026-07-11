@@ -5,7 +5,27 @@
 #include <hgraph/types/utils/memory_utils.h>
 
 #include <cstdint>
+#include <array>
 #include <string>
+#include <thread>
+
+namespace
+{
+    struct LabelScalarA
+    {
+        int value{};
+    };
+
+    struct LabelScalarB
+    {
+        int value{};
+    };
+
+    struct AnonymousLabelScalar
+    {
+        int value{};
+    };
+}
 
 TEST_CASE("TypeRegistry::register_scalar returns canonical metadata")
 {
@@ -15,7 +35,7 @@ TEST_CASE("TypeRegistry::register_scalar returns canonical metadata")
     const auto *b        = registry.register_scalar<std::int32_t>("int32");
     REQUIRE(a == b);
     REQUIRE(a != nullptr);
-    REQUIRE(a->kind == ValueTypeKind::Atomic);
+    REQUIRE(a->value_kind() == ValueTypeKind::Atomic);
 }
 
 TEST_CASE("TypeRegistry::register_scalar populates the value_type alias")
@@ -77,7 +97,7 @@ TEST_CASE("TypeRegistry::tuple interns by component identity and is order-sensit
 
     REQUIRE(t_if == t_if_again);
     REQUIRE(t_if != t_fi);
-    REQUIRE(t_if->kind == ValueTypeKind::Tuple);
+    REQUIRE(t_if->value_kind() == ValueTypeKind::Tuple);
     REQUIRE(t_if->field_count == 2);
     REQUIRE(t_if->fields[0].type == int_meta);
     REQUIRE(t_if->fields[1].type == float_meta);
@@ -94,7 +114,7 @@ TEST_CASE("TypeRegistry::bundle interns by structural identity and registers the
     const auto *bundle_meta = registry.bundle("TestBundleA", {{"x", int_meta}, {"y", str_meta}});
 
     REQUIRE(bundle_meta != nullptr);
-    REQUIRE(bundle_meta->kind == ValueTypeKind::Bundle);
+    REQUIRE(bundle_meta->value_kind() == ValueTypeKind::Bundle);
     REQUIRE(bundle_meta->field_count == 2);
     REQUIRE(std::string(bundle_meta->fields[0].name) == "x");
     REQUIRE(std::string(bundle_meta->fields[1].name) == "y");
@@ -119,7 +139,7 @@ TEST_CASE("TypeRegistry: un_named_bundle and bundle distinguish structural vs no
     REQUIRE(u1 == u2);
     REQUIRE(u1->is_un_named_bundle());
     REQUIRE_FALSE(u1->is_named_bundle());
-    REQUIRE(u1->display_name == nullptr);
+    REQUIRE(std::string{u1->name()} == "Bundle{x:int32,y:str}");
     REQUIRE(u1->wrapped_un_named == nullptr);
 
     // bundle(name, fields) wraps an un_named_bundle; same name + same fields → same pointer.
@@ -161,6 +181,97 @@ TEST_CASE("TypeRegistry: un_named_bundle and bundle distinguish structural vs no
                       std::invalid_argument);
 }
 
+TEST_CASE("TypeRegistry assigns exact stable canonical labels to every value schema family")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *i        = registry.register_scalar<LabelScalarA>("LabelInt");
+    const auto *s        = registry.register_scalar<LabelScalarB>("LabelStr");
+    const auto *anonymous = registry.register_scalar<AnonymousLabelScalar>();
+    const auto label = [](const ValueTypeMetaData *meta) { return std::string{meta->name()}; };
+
+    REQUIRE(label(i) == "LabelInt");
+    REQUIRE_FALSE(anonymous->name().empty());
+    REQUIRE(label(anonymous) == typeid(AnonymousLabelScalar).name());
+    REQUIRE(label(registry.tuple({i, s})) == "Tuple[LabelInt,LabelStr]");
+    REQUIRE(label(registry.un_named_bundle({{"field", i}, {"other", s}})) ==
+            "Bundle{field:LabelInt,other:LabelStr}");
+    REQUIRE(label(registry.bundle("LabelBundle", {{"field", i}})) == "LabelBundle");
+    REQUIRE(label(registry.list(i)) == "List[LabelInt]");
+    REQUIRE(label(registry.list(i, 4)) == "List[LabelInt,4]");
+    REQUIRE(label(registry.list(i, 0, true)) == "VariadicTuple[LabelInt]");
+    REQUIRE(label(registry.nullable_tuple(i)) == "NullableTuple[LabelInt]");
+    REQUIRE(label(registry.mutable_list(i)) == "MutableList[LabelInt]");
+    REQUIRE(label(registry.set(i)) == "Set[LabelInt]");
+    REQUIRE(label(registry.mutable_set(i)) == "MutableSet[LabelInt]");
+    REQUIRE(label(registry.map(i, s)) == "Map[LabelInt,LabelStr]");
+    REQUIRE(label(registry.mutable_map(i, s)) == "MutableMap[LabelInt,LabelStr]");
+    REQUIRE(label(registry.cyclic_buffer(i, 4)) == "CyclicBuffer[LabelInt,4]");
+    REQUIRE(label(registry.queue(i)) == "Queue[LabelInt]");
+    REQUIRE(label(registry.queue(i, 4)) == "Queue[LabelInt,4]");
+    const auto *typed_series = registry.series(i);
+    const auto *typed_frame = registry.frame(registry.bundle("LabelFrameColumns", {{"field", i}}));
+    REQUIRE(label(typed_series) == "series[LabelInt]");
+    REQUIRE(label(typed_frame) == "frame[LabelFrameColumns]");
+    REQUIRE(registry.is_series(typed_series));
+    REQUIRE_FALSE(registry.is_frame(typed_series));
+    REQUIRE(registry.is_frame(typed_frame));
+    REQUIRE_FALSE(registry.is_series(typed_frame));
+    REQUIRE(label(registry.any()) == "Any");
+    REQUIRE(label(registry.json()) == "JSON");
+    REQUIRE(label(registry.list(nullptr)) == "List[<unresolved>]");
+
+    const char *canonical_label = i->schema_header().label;
+    registry.register_value_type_alias("LabelIntAlias", i);
+    REQUIRE(registry.value_type("LabelIntAlias") == i);
+    REQUIRE(i->schema_header().label == canonical_label);
+    REQUIRE(label(i) == "LabelInt");
+
+    const auto *structural = registry.un_named_bundle({{"field", i}});
+    const char *structural_label = structural->schema_header().label;
+    registry.register_value_type_alias("StructuralAlias", structural);
+    REQUIRE(structural->schema_header().label == structural_label);
+    REQUIRE(label(structural) == "Bundle{field:LabelInt}");
+    REQUIRE(structural->is_un_named_bundle());
+    REQUIRE_FALSE(structural->is_named_bundle());
+}
+
+TEST_CASE("TypeRegistry serializes concurrent equal schema requests")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *i        = registry.register_scalar<LabelScalarA>("ConcurrentInt");
+    const auto *s        = registry.register_scalar<LabelScalarB>("ConcurrentStr");
+
+    constexpr std::size_t thread_count = 8;
+    std::array<const ValueTypeMetaData *, thread_count> tuples{};
+    std::array<const ValueTypeMetaData *, thread_count> bundles{};
+    std::array<const ValueTypeMetaData *, thread_count> maps{};
+    std::array<std::thread, thread_count> threads;
+    for (std::size_t index = 0; index < thread_count; ++index)
+    {
+        threads[index] = std::thread([&, index] {
+            for (int iteration = 0; iteration < 100; ++iteration)
+            {
+                tuples[index] = registry.tuple({i, s});
+                bundles[index] = registry.bundle("ConcurrentBundle", {{"i", i}, {"s", s}});
+                maps[index] = registry.map(i, s);
+            }
+        });
+    }
+    for (auto &thread : threads) { thread.join(); }
+
+    for (std::size_t index = 1; index < thread_count; ++index)
+    {
+        REQUIRE(tuples[index] == tuples[0]);
+        REQUIRE(bundles[index] == bundles[0]);
+        REQUIRE(maps[index] == maps[0]);
+    }
+    REQUIRE(std::string{tuples[0]->name()} == "Tuple[ConcurrentInt,ConcurrentStr]");
+    REQUIRE(std::string{bundles[0]->name()} == "ConcurrentBundle");
+    REQUIRE(std::string{maps[0]->name()} == "Map[ConcurrentInt,ConcurrentStr]");
+}
+
 TEST_CASE("TypeRegistry::list distinguishes fixed and dynamic forms")
 {
     using namespace hgraph;
@@ -185,18 +296,18 @@ TEST_CASE("TypeRegistry: set, map, cyclic_buffer and queue intern correctly")
     const auto *int_meta  = registry.register_scalar<std::int32_t>("int32");
 
     const auto *s = registry.set(int_meta);
-    REQUIRE(s->kind == ValueTypeKind::Set);
+    REQUIRE(s->value_kind() == ValueTypeKind::Set);
     REQUIRE(s == registry.set(int_meta));
     REQUIRE(s->element_type == int_meta);
 
     const auto *m = registry.map(int_meta, int_meta);
-    REQUIRE(m->kind == ValueTypeKind::Map);
+    REQUIRE(m->value_kind() == ValueTypeKind::Map);
     REQUIRE(m == registry.map(int_meta, int_meta));
     REQUIRE(m->key_type == int_meta);
     REQUIRE(m->element_type == int_meta);
 
     const auto *cb = registry.cyclic_buffer(int_meta, 8);
-    REQUIRE(cb->kind == ValueTypeKind::CyclicBuffer);
+    REQUIRE(cb->value_kind() == ValueTypeKind::CyclicBuffer);
     REQUIRE(cb->fixed_size == 8);
     REQUIRE(cb->is_hashable());
     REQUIRE(cb->is_equatable());
@@ -205,7 +316,7 @@ TEST_CASE("TypeRegistry: set, map, cyclic_buffer and queue intern correctly")
     REQUIRE(cb == registry.cyclic_buffer(int_meta, 8));
 
     const auto *q = registry.queue(int_meta, 16);
-    REQUIRE(q->kind == ValueTypeKind::Queue);
+    REQUIRE(q->value_kind() == ValueTypeKind::Queue);
     REQUIRE(q->fixed_size == 16);
     REQUIRE(q->is_hashable());
     REQUIRE(q->is_equatable());
@@ -387,6 +498,9 @@ TEST_CASE("TypeRegistry::contains_ref recurses through composite TS kinds")
 
     const auto *dict_with_ref = registry.tsd(int_meta, ref_int);
     REQUIRE(TypeRegistry::contains_ref(dict_with_ref));
+
+    const auto *nested_list_dict_ref = registry.tsl(registry.tsd(int_meta, ref_int));
+    REQUIRE(TypeRegistry::contains_ref(nested_list_dict_ref));
 }
 
 TEST_CASE("TypeRegistry::dereference unwraps refs and recurses into containers")
@@ -422,7 +536,7 @@ TEST_CASE("TypeRegistry::synthetic_atomic interns by name")
 
     const auto *synthetic = registry.value_type("TimeSeriesReference");
     REQUIRE(synthetic != nullptr);
-    REQUIRE(synthetic->kind == ValueTypeKind::Atomic);
+    REQUIRE(synthetic->value_kind() == ValueTypeKind::Atomic);
     REQUIRE(synthetic->is_hashable());
     REQUIRE(synthetic->is_equatable());
 }

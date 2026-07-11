@@ -9,6 +9,9 @@
 
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/operator_type_resolution.h>
+#include <hgraph/types/time_series/ts_delta.h>
+#include <hgraph/types/type_resolution.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/types/value/value_ops.h>
@@ -165,7 +168,7 @@ TEST_CASE("Value: atomic round-trip — construct, view, hash/equals/to_string")
     Value v{42};
     REQUIRE(v.has_value());
     REQUIRE(v.schema() != nullptr);
-    REQUIRE(v.schema()->kind == ValueTypeKind::Atomic);
+    REQUIRE(v.schema()->value_kind() == ValueTypeKind::Atomic);
 
     // Owning-handle accessors.
     REQUIRE(v.as<std::int32_t>() == 42);
@@ -207,6 +210,60 @@ TEST_CASE("Value: atomic round-trip — construct, view, hash/equals/to_string")
     REQUIRE_THROWS_AS(read_only.set<std::int32_t>(456), std::logic_error);
     REQUIRE_THROWS_AS(read_only.checked_mutable_as<std::int32_t>() = 456, std::logic_error);
     REQUIRE(v.as<std::int32_t>() == 123);
+}
+
+TEST_CASE("ValueView kind predicates reject malformed compact kinds without throwing")
+{
+    using namespace hgraph;
+
+    ValueTypeMetaData malformed{ValueTypeKind::Atomic, ValueTypeFlags::None, "malformed"};
+    malformed.header.kind = static_cast<TypeKind>(ValueTypeKind::Any) + 1;
+    const ValueTypeBinding binding{
+        &malformed,
+        &MemoryUtils::plan_for<std::int32_t>(),
+        &ops_for<std::int32_t>(),
+    };
+    const std::int32_t payload = 42;
+    ValueView view{&binding, &payload};
+
+    ValueTypeMetaData other_malformed{ValueTypeKind::Atomic, ValueTypeFlags::None, "other malformed"};
+    other_malformed.header.kind = static_cast<TypeKind>(ValueTypeKind::Any) + 2;
+    const ValueTypeBinding other_binding{
+        &other_malformed,
+        &MemoryUtils::plan_for<std::int32_t>(),
+        &ops_for<std::int32_t>(),
+    };
+    const std::int32_t other_payload = 42;
+    ValueView other_view{&other_binding, &other_payload};
+
+    STATIC_REQUIRE(noexcept(view.is_atomic()));
+    STATIC_REQUIRE(noexcept(view.is_indexed()));
+    STATIC_REQUIRE(noexcept(view.holds_alternative<std::int32_t>()));
+    REQUIRE(view.valid());
+    REQUIRE_FALSE(view.is_atomic());
+    REQUIRE_FALSE(view.is_tuple());
+    REQUIRE_FALSE(view.is_bundle());
+    REQUIRE_FALSE(view.is_list());
+    REQUIRE_FALSE(view.is_set());
+    REQUIRE_FALSE(view.is_map());
+    REQUIRE_FALSE(view.is_cyclic_buffer());
+    REQUIRE_FALSE(view.is_queue());
+    REQUIRE_FALSE(view.is_any());
+    REQUIRE_FALSE(view.is_indexed());
+    REQUIRE_FALSE(view.holds_alternative<std::int32_t>());
+    REQUIRE_FALSE(view.is_scalar_type<std::int32_t>());
+    REQUIRE_FALSE(view.equals(other_view));
+    REQUIRE(view.compare(other_view) == std::partial_ordering::unordered);
+
+    REQUIRE(operator_type_resolution::collection_element_schema(&malformed) == nullptr);
+    REQUIRE(operator_type_resolution::homogeneous_tuple_element_schema(&malformed) == nullptr);
+    REQUIRE(operator_type_resolution::tuple_element_schema(&malformed) == nullptr);
+    REQUIRE(type_resolution_detail::homogeneous_tuple_element(&malformed) == nullptr);
+
+    TSValueTypeMetaData malformed_ts{TSTypeKind::TS, &malformed};
+    malformed_ts.value_schema = &malformed;
+    REQUIRE(operator_type_resolution::ts_map_value_schema(&malformed_ts) == nullptr);
+    REQUIRE_FALSE(current_value_schema_compatible(malformed_ts, other_malformed));
 }
 
 TEST_CASE("Value: equality and ordering through bound ValueOps")
@@ -322,13 +379,13 @@ TEST_CASE("Value: Value(binding) builds a default-valued payload of the bound ty
     Value v{*binding};
     REQUIRE(v.has_value());
     REQUIRE(v.schema() != nullptr);
-    REQUIRE(v.schema()->kind == ValueTypeKind::Atomic);
+    REQUIRE(v.schema()->value_kind() == ValueTypeKind::Atomic);
     REQUIRE(v.as<double>() == 0.0);  // default-constructed double
 
     v.reset();
     REQUIRE_FALSE(v.has_value());
     REQUIRE(v.schema() != nullptr);
-    REQUIRE(v.schema()->kind == ValueTypeKind::Atomic);
+    REQUIRE(v.schema()->value_kind() == ValueTypeKind::Atomic);
 }
 
 TEST_CASE("Value: move construction transfers ownership")

@@ -817,7 +817,7 @@ namespace hgraph::ts_data_plan_factory_detail
             void bind_tss_delta_surfaces()
             {
                 const auto *delta_schema = schema->delta_value_schema;
-                if (delta_schema == nullptr || delta_schema->kind != ValueTypeKind::Bundle ||
+                if (delta_schema == nullptr || delta_schema->value_kind() != ValueTypeKind::Bundle ||
                     delta_schema->field_count != 2)
                 {
                     throw std::logic_error("TSS TSData delta schema must be Bundle{added, removed}");
@@ -891,7 +891,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                               const ValueTypeBinding &binding,
                                                               const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Set)
+                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Set)
                 {
                     throw std::logic_error("TSS set copy requires a canonical set binding");
                 }
@@ -926,7 +926,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                void *dst,
                                                const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Bundle ||
+                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Bundle ||
                     binding.type_meta->field_count != 2)
                 {
                     throw std::logic_error("TSS delta copy requires canonical Bundle{added, removed}");
@@ -1701,7 +1701,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
                 dict_layout.value_binding = &ValueTypeBinding::intern(*value_schema, plan_, value_map_ops);
 
-                if (delta_schema->kind != ValueTypeKind::Bundle || delta_schema->field_count != 2)
+                if (delta_schema->value_kind() != ValueTypeKind::Bundle || delta_schema->field_count != 2)
                 {
                     throw std::logic_error("TSD delta schema must be Bundle{removed, modified}");
                 }
@@ -1808,7 +1808,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                               const ValueTypeBinding &binding,
                                                               const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Map)
+                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Map)
                 {
                     throw std::logic_error("TSD map copy requires a canonical map binding");
                 }
@@ -1856,7 +1856,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                     void *dst,
                                                     const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Bundle ||
+                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Bundle ||
                     binding.type_meta->field_count != 2)
                 {
                     throw std::logic_error("TSD delta copy requires canonical Bundle{removed, modified}");
@@ -2780,10 +2780,10 @@ namespace hgraph::ts_data_plan_factory_detail
         {
         case TSTypeKind::TSS:
             return schema.value_schema != nullptr && schema.delta_value_schema != nullptr &&
-                   schema.value_schema->kind == ValueTypeKind::Set;
+                   schema.value_schema->try_value_kind() == ValueTypeKind::Set;
         case TSTypeKind::TSD:
             return schema.value_schema != nullptr && schema.delta_value_schema != nullptr &&
-                   schema.value_schema->kind == ValueTypeKind::Map && schema.element_ts() != nullptr;
+                   schema.value_schema->try_value_kind() == ValueTypeKind::Map && schema.element_ts() != nullptr;
         default:
             return false;
         }

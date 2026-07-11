@@ -217,9 +217,9 @@ namespace hgraph::operator_type_resolution
     [[nodiscard]] inline const ValueTypeMetaData *collection_element_schema(
         const ValueTypeMetaData *value) noexcept
     {
-        return value != nullptr && (value->kind == ValueTypeKind::List || value->kind == ValueTypeKind::Set)
-                   ? value->element_type
-                   : nullptr;
+        if (value == nullptr) { return nullptr; }
+        const auto kind = value->try_value_kind();
+        return kind == ValueTypeKind::List || kind == ValueTypeKind::Set ? value->element_type : nullptr;
     }
 
     /** Return the collection element when present, otherwise the original scalar schema. */
@@ -234,7 +234,7 @@ namespace hgraph::operator_type_resolution
     [[nodiscard]] inline const ValueTypeMetaData *homogeneous_tuple_element_schema(
         const ValueTypeMetaData *value) noexcept
     {
-        if (value == nullptr || value->kind != ValueTypeKind::Tuple || value->field_count == 0)
+        if (value == nullptr || value->try_value_kind() != ValueTypeKind::Tuple || value->field_count == 0)
         {
             return nullptr;
         }
@@ -251,8 +251,9 @@ namespace hgraph::operator_type_resolution
         const ValueTypeMetaData *value) noexcept
     {
         if (value == nullptr) { return nullptr; }
-        if (value->kind == ValueTypeKind::List) { return value->element_type; }
-        if (value->kind == ValueTypeKind::Tuple) { return homogeneous_tuple_element_schema(value); }
+        const auto kind = value->try_value_kind();
+        if (kind == ValueTypeKind::List) { return value->element_type; }
+        if (kind == ValueTypeKind::Tuple) { return homogeneous_tuple_element_schema(value); }
         return nullptr;
     }
 
@@ -269,7 +270,7 @@ namespace hgraph::operator_type_resolution
     [[nodiscard]] inline const ValueTypeMetaData *ts_map_value_schema(const TSValueTypeMetaData *ts) noexcept
     {
         const ValueTypeMetaData *value = ts_value_schema(ts);
-        return value != nullptr && value->kind == ValueTypeKind::Map ? value : nullptr;
+        return value != nullptr && value->try_value_kind() == ValueTypeKind::Map ? value : nullptr;
     }
 
     /** Return the erased graph-output binding, or null when it is unresolved. */

@@ -27,7 +27,7 @@ TEST_CASE("schema example: Atomic — register a scalar C++ type")
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     REQUIRE(int_meta != nullptr);
-    REQUIRE(int_meta->kind == ValueTypeKind::Atomic);
+    REQUIRE(int_meta->value_kind() == ValueTypeKind::Atomic);
     REQUIRE(int_meta->is_trivially_copyable());
     REQUIRE(int_meta->is_hashable());
     REQUIRE(int_meta->is_equatable());
@@ -46,7 +46,7 @@ TEST_CASE("schema example: Tuple — positional fields, possibly mixed types")
     // (int, double, bool) — typical mixed-type tuple, addressed by index.
     const auto *tup = registry.tuple({int_meta, double_meta, bool_meta});
 
-    REQUIRE(tup->kind == ValueTypeKind::Tuple);
+    REQUIRE(tup->value_kind() == ValueTypeKind::Tuple);
     REQUIRE(tup->field_count == 3);
     REQUIRE(tup->fields[0].type == int_meta);
     REQUIRE(tup->fields[1].type == double_meta);
@@ -68,7 +68,7 @@ TEST_CASE("schema example: Bundle — named fields with display name")
         "ExamplePoint2D",
         {{"x", double_meta}, {"y", double_meta}, {"label", str_meta}});
 
-    REQUIRE(point->kind == ValueTypeKind::Bundle);
+    REQUIRE(point->value_kind() == ValueTypeKind::Bundle);
     REQUIRE(point->field_count == 3);
     REQUIRE(std::string(point->fields[0].name) == "x");
     REQUIRE(std::string(point->fields[1].name) == "y");
@@ -88,7 +88,7 @@ TEST_CASE("schema example: List — fixed-size")
     // Static list of 4 ints (e.g. for a 4-vector).
     const auto *arr4 = registry.list(int_meta, /*fixed_size=*/4);
 
-    REQUIRE(arr4->kind == ValueTypeKind::List);
+    REQUIRE(arr4->value_kind() == ValueTypeKind::List);
     REQUIRE(arr4->element_type == int_meta);
     REQUIRE(arr4->fixed_size == 4);
     REQUIRE(arr4->is_fixed_size());
@@ -103,7 +103,7 @@ TEST_CASE("schema example: List — dynamic (no fixed size)")
     // Dynamic list — fixed_size == 0 means "growable".
     const auto *vec = registry.list(int_meta, /*fixed_size=*/0);
 
-    REQUIRE(vec->kind == ValueTypeKind::List);
+    REQUIRE(vec->value_kind() == ValueTypeKind::List);
     REQUIRE(vec->element_type == int_meta);
     REQUIRE(vec->fixed_size == 0);
     REQUIRE_FALSE(vec->is_fixed_size());
@@ -117,7 +117,7 @@ TEST_CASE("schema example: Set — unordered unique elements")
 
     const auto *string_set = registry.set(str_meta);
 
-    REQUIRE(string_set->kind == ValueTypeKind::Set);
+    REQUIRE(string_set->value_kind() == ValueTypeKind::Set);
     REQUIRE(string_set->element_type == str_meta);
 }
 
@@ -131,7 +131,7 @@ TEST_CASE("schema example: Map — keyed lookup")
     // Map<string, int> — the typical name → count pattern.
     const auto *counts = registry.map(str_meta, int_meta);
 
-    REQUIRE(counts->kind == ValueTypeKind::Map);
+    REQUIRE(counts->value_kind() == ValueTypeKind::Map);
     REQUIRE(counts->key_type == str_meta);
     REQUIRE(counts->element_type == int_meta);
 }
@@ -145,7 +145,7 @@ TEST_CASE("schema example: CyclicBuffer — fixed-capacity ring")
     // Rolling buffer of the last 32 doubles.
     const auto *rolling = registry.cyclic_buffer(double_meta, /*capacity=*/32);
 
-    REQUIRE(rolling->kind == ValueTypeKind::CyclicBuffer);
+    REQUIRE(rolling->value_kind() == ValueTypeKind::CyclicBuffer);
     REQUIRE(rolling->element_type == double_meta);
     REQUIRE(rolling->fixed_size == 32);
 }
@@ -158,7 +158,7 @@ TEST_CASE("schema example: Queue — FIFO with capacity")
 
     // Bounded queue — at most 100 ints.
     const auto *bounded = registry.queue(int_meta, /*max_capacity=*/100);
-    REQUIRE(bounded->kind == ValueTypeKind::Queue);
+    REQUIRE(bounded->value_kind() == ValueTypeKind::Queue);
     REQUIRE(bounded->element_type == int_meta);
     REQUIRE(bounded->fixed_size == 100);
 
@@ -200,7 +200,7 @@ TEST_CASE("schema example: TSS — time-series set")
     REQUIRE(tss->is_collection());
     // The TSS schema points at the underlying value-layer Set schema.
     REQUIRE(tss->value_type != nullptr);
-    REQUIRE(tss->value_type->kind == ValueTypeKind::Set);
+    REQUIRE(tss->value_type->value_kind() == ValueTypeKind::Set);
     REQUIRE(tss->value_type->element_type == str_meta);
 }
 
@@ -356,10 +356,10 @@ TEST_CASE("compositional example: nested tuple — tuple of (tuple, scalar)")
     const auto *inner = registry.tuple({int_meta, float_meta});
     const auto *outer = registry.tuple({inner, int_meta});
 
-    REQUIRE(outer->kind == ValueTypeKind::Tuple);
+    REQUIRE(outer->value_kind() == ValueTypeKind::Tuple);
     REQUIRE(outer->field_count == 2);
     REQUIRE(outer->fields[0].type == inner);
-    REQUIRE(outer->fields[0].type->kind == ValueTypeKind::Tuple);
+    REQUIRE(outer->fields[0].type->value_kind() == ValueTypeKind::Tuple);
     REQUIRE(outer->fields[1].type == int_meta);
 }
 
@@ -374,10 +374,10 @@ TEST_CASE("compositional example: bundle of bundles")
     const auto *point    = registry.bundle("ExamplePt", {{"x", double_meta}, {"y", double_meta}});
     const auto *labelled = registry.bundle("ExampleLabelledPt", {{"label", str_meta}, {"location", point}});
 
-    REQUIRE(labelled->kind == ValueTypeKind::Bundle);
+    REQUIRE(labelled->value_kind() == ValueTypeKind::Bundle);
     REQUIRE(labelled->field_count == 2);
     REQUIRE(labelled->fields[1].type == point);
-    REQUIRE(labelled->fields[1].type->kind == ValueTypeKind::Bundle);
+    REQUIRE(labelled->fields[1].type->value_kind() == ValueTypeKind::Bundle);
     REQUIRE(std::string(labelled->fields[0].name) == "label");
     REQUIRE(std::string(labelled->fields[1].name) == "location");
 }

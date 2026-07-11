@@ -20,6 +20,7 @@
 #include <hgraph/types/value/value_ops.h>
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <typeindex>
@@ -66,15 +67,15 @@ namespace hgraph
         const ValueTypeMetaData *register_scalar(std::string_view name = {},
                                                  ValueTypeFlags extra_flags = ValueTypeFlags::None);
 
-        /** Look up a value-layer schema by display name; returns null when unknown. */
+        /** Look up a value-layer schema by registered name or alias; returns null when unknown. */
         [[nodiscard]] const ValueTypeMetaData *value_type(std::string_view name) const;
         /** Look up a time-series schema by display name; returns null when unknown. */
         [[nodiscard]] const TSValueTypeMetaData *time_series_type(std::string_view name) const;
 
         /**
-         * Register an additional display-name alias for an already-interned
-         * value-layer schema. This is intended for standard-library aliases
-         * such as ``int`` -> ``int64`` and ``str`` -> ``std::string``.
+         * Register an additional lookup alias for an already-interned
+         * value-layer schema. Aliases never change the schema's canonical
+         * ``SchemaHeader::label``.
          */
         void register_value_type_alias(std::string_view name, const ValueTypeMetaData *meta);
         /**
@@ -88,8 +89,8 @@ namespace hgraph
         /**
          * Intern a *structural* (un-named) bundle value-schema. Two
          * ``un_named_bundle`` calls with the same field list always return
-         * the same canonical pointer; the result has ``name == nullptr`` and
-         * ``wrapped_un_named == nullptr``.
+         * the same canonical pointer; the result has a structural
+         * ``Bundle{...}`` label and ``wrapped_un_named == nullptr``.
          */
         const ValueTypeMetaData *un_named_bundle(
             const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields);
@@ -147,12 +148,16 @@ namespace hgraph
             ``element_type`` so operators can resolve the element type. A null
             element returns the base (element-untyped) series scalar. */
         const ValueTypeMetaData *series(const ValueTypeMetaData *element_type);
+        /** True when ``meta`` is the base Series schema or an interned ``Series[T]`` schema. */
+        [[nodiscard]] bool is_series(const ValueTypeMetaData *meta) const;
         /** A Frame parameterised by its column schema (``Frame[Schema]``, a
             Bundle meta); shares the base ``frame`` storage plan + ops (the
             :cpp:func:`series` pattern), distinct meta carrying the schema on
             ``element_type`` so table operators can resolve columns. A null
             schema returns the base (untyped) frame scalar. */
         const ValueTypeMetaData *frame(const ValueTypeMetaData *column_schema);
+        /** True when ``meta`` is the base Frame schema or an interned ``Frame[Schema]`` schema. */
+        [[nodiscard]] bool is_frame(const ValueTypeMetaData *meta) const;
         /** Intern a set value-schema for ``element_type``. */
         const ValueTypeMetaData *set(const ValueTypeMetaData *element_type);
         /**
@@ -272,6 +277,8 @@ namespace hgraph
                                                       const MemoryUtils::StoragePlan *canonical_plan);
         const ValueTypeMetaData *synthetic_atomic(std::string_view name,
                                                   ValueTypeFlags flags);
+
+        [[nodiscard]] static bool contains_ref_unlocked(const TSValueTypeMetaData *meta);
 
         void register_value_alias(std::string_view name, const ValueTypeMetaData *meta);
         void register_ts_alias(std::string_view name, const TSValueTypeMetaData *meta);
@@ -513,7 +520,8 @@ namespace hgraph
             }
         };
 
-        // Auxiliary memory referenced by metadata (display names, field arrays).
+        // Auxiliary memory referenced by metadata (canonical labels, TS display names, field arrays).
+        mutable std::recursive_mutex mutex_;
         std::vector<std::unique_ptr<std::string>> name_storage_;
         std::vector<std::unique_ptr<ValueFieldMetaData[]>> value_field_storage_;
         std::vector<std::unique_ptr<TSFieldMetaData[]>> ts_field_storage_;
@@ -565,9 +573,11 @@ namespace hgraph
     template <typename T>
     const ValueTypeMetaData *TypeRegistry::register_scalar(std::string_view name, ValueTypeFlags extra_flags)
     {
+        const std::lock_guard lock(mutex_);
+        const std::string_view canonical_name = name.empty() ? std::string_view{typeid(T).name()} : name;
         const ValueTypeMetaData *meta = register_scalar_impl(
             std::type_index(typeid(T)),
-            name,
+            canonical_name,
             compute_scalar_flags<T>() | extra_flags,
             &MemoryUtils::plan_for<T>());
         // Pair the schema with the canonical (plan, ops) binding so
@@ -587,6 +597,7 @@ namespace hgraph
     template <typename T>
     [[nodiscard]] inline const ValueTypeBinding *TypeRegistry::scalar_binding() const
     {
+        const std::lock_guard lock(mutex_);
         const ValueTypeMetaData *meta = scalar_cache_.find(std::type_index(typeid(T)));
         if (meta == nullptr) { return nullptr; }
         return ValueTypeBinding::find(meta, &MemoryUtils::plan_for<T>(), &ops_for<T>());

@@ -353,7 +353,7 @@ namespace hgraph
                 }
             }
             reader.fail(fmt::format("unknown member '{}' for enum '{}'", name,
-                                    meta->display_name ? meta->display_name : "?"));
+                                    meta->name()));
         }
 
         void write_atomic(const JsonConverter &self, const ValueView &view, std::string &out)
@@ -430,7 +430,7 @@ namespace hgraph
         {
             out.push_back('[');
             bool first = true;
-            if (view.schema()->kind == ValueTypeKind::List)
+            if (view.schema()->value_kind() == ValueTypeKind::List)
             {
                 const auto list = view.as_list();
                 for (std::size_t i = 0; i < list.size(); ++i)
@@ -531,7 +531,7 @@ namespace hgraph
                     if (i != 0) { reader.expect(','); }
                     if (reader.consume_keyword("null"))
                     {
-                        if (self.meta->kind != ValueTypeKind::Bundle)
+                        if (self.meta->value_kind() != ValueTypeKind::Bundle)
                         {
                             reader.fail("null composite field is only supported for Bundle values");
                         }
@@ -686,7 +686,7 @@ namespace hgraph
             g_converters.emplace(meta, std::move(converter));
             auto unwind = UnwindCleanupGuard([&] { g_converters.erase(meta); });
 
-            switch (meta->kind)
+            switch (meta->value_kind())
             {
                 case ValueTypeKind::Atomic: {
                     if (meta->is_enum())
@@ -699,7 +699,7 @@ namespace hgraph
                     if (raw->atomic_tag == AtomicTag::None)
                     {
                         throw std::logic_error(fmt::format("json: unsupported atomic scalar '{}'",
-                                                           meta->display_name ? meta->display_name : "?"));
+                                                           meta->name()));
                     }
                     raw->write_ = &write_atomic;
                     raw->read_  = &read_atomic;
@@ -741,7 +741,7 @@ namespace hgraph
                 }
                 default:
                     throw std::logic_error(fmt::format("json: unsupported value kind for '{}'",
-                                                       meta->display_name ? meta->display_name : "?"));
+                                                       meta->name()));
             }
             unwind.release();
             return raw;

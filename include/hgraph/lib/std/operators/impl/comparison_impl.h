@@ -189,7 +189,7 @@ namespace hgraph::stdlib
                 // (min over the container's values), not the running form.
                 const auto *meta = resolution.find_scalar("T");
                 if (meta == nullptr) { return false; }
-                switch (meta->kind)
+                switch (meta->value_kind())
                 {
                     case ValueTypeKind::Map:
                     case ValueTypeKind::Set:

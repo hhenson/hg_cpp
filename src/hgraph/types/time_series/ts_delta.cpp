@@ -86,8 +86,8 @@ namespace hgraph
             // Variadic tuple vs list: distinct schema identity, ONE layout
             // (same element type; flags differ only by VariadicTuple).
             const auto *target = schema.value_schema;
-            return target != nullptr && target->kind == ValueTypeKind::List &&
-                   value_schema.kind == ValueTypeKind::List && target->fixed_size == 0 &&
+            return target != nullptr && target->try_value_kind() == ValueTypeKind::List &&
+                   value_schema.try_value_kind() == ValueTypeKind::List && target->fixed_size == 0 &&
                    value_schema.fixed_size == 0 && !target->is_mutable() && !value_schema.is_mutable() &&
                    target->element_type == value_schema.element_type;
         }
@@ -101,7 +101,7 @@ namespace hgraph
         [[nodiscard]] bool current_value_schema_compatible_tsd(const TSValueTypeMetaData &schema,
                                                                const ValueTypeMetaData   &value_schema)
         {
-            return value_schema.kind == ValueTypeKind::Map &&
+            return value_schema.value_kind() == ValueTypeKind::Map &&
                    schema.key_type() == value_schema.key_type &&
                    schema.element_ts() != nullptr &&
                    value_schema.element_type != nullptr &&
@@ -111,7 +111,7 @@ namespace hgraph
         [[nodiscard]] bool current_value_schema_compatible_tsl(const TSValueTypeMetaData &schema,
                                                                const ValueTypeMetaData   &value_schema)
         {
-            return value_schema.kind == ValueTypeKind::List &&
+            return value_schema.value_kind() == ValueTypeKind::List &&
                    schema.element_ts() != nullptr &&
                    value_schema.element_type != nullptr &&
                    (schema.fixed_size() == 0 || value_schema.fixed_size == 0 ||
@@ -122,7 +122,7 @@ namespace hgraph
         [[nodiscard]] bool current_value_schema_compatible_tsb(const TSValueTypeMetaData &schema,
                                                                const ValueTypeMetaData   &value_schema)
         {
-            if (value_schema.kind != ValueTypeKind::Bundle ||
+            if (value_schema.value_kind() != ValueTypeKind::Bundle ||
                 schema.field_count() != value_schema.field_count)
             {
                 return false;

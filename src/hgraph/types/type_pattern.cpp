@@ -52,7 +52,7 @@ namespace hgraph
 
         [[nodiscard]] const ValueTypeMetaData *homogeneous_tuple_element(const ValueTypeMetaData *value)
         {
-            if (value == nullptr || value->kind != ValueTypeKind::Tuple || value->field_count == 0)
+            if (value == nullptr || value->value_kind() != ValueTypeKind::Tuple || value->field_count == 0)
             {
                 return nullptr;
             }
@@ -89,12 +89,12 @@ namespace hgraph
             }
             case ScalarPattern::Kind::Concrete: return pattern.meta == concrete;  // interned: pointer identity
             case ScalarPattern::Kind::UnknownTuple:
-                if (concrete->kind == ValueTypeKind::List)
+                if (concrete->value_kind() == ValueTypeKind::List)
                 {
                     return pattern.children.empty() ||
                            scalar_pattern_match(pattern.children[0], concrete->element_type, map);
                 }
-                if (concrete->kind == ValueTypeKind::Tuple)
+                if (concrete->value_kind() == ValueTypeKind::Tuple)
                 {
                     if (pattern.children.empty()) { return true; }
                     const ValueTypeMetaData *element = homogeneous_tuple_element(concrete);
@@ -104,13 +104,13 @@ namespace hgraph
             case ScalarPattern::Kind::HomogeneousTuple:
             {
                 const ValueTypeMetaData *element = nullptr;
-                if (concrete->kind == ValueTypeKind::List) { element = concrete->element_type; }
-                else if (concrete->kind == ValueTypeKind::Tuple) { element = homogeneous_tuple_element(concrete); }
+                if (concrete->value_kind() == ValueTypeKind::List) { element = concrete->element_type; }
+                else if (concrete->value_kind() == ValueTypeKind::Tuple) { element = homogeneous_tuple_element(concrete); }
                 return element != nullptr && !pattern.children.empty() &&
                        scalar_pattern_match(pattern.children[0], element, map);
             }
             case ScalarPattern::Kind::FixedTuple:
-                if (concrete->kind != ValueTypeKind::Tuple || concrete->field_count != pattern.children.size())
+                if (concrete->value_kind() != ValueTypeKind::Tuple || concrete->field_count != pattern.children.size())
                 {
                     return false;
                 }
@@ -120,14 +120,14 @@ namespace hgraph
                 }
                 return true;
             case ScalarPattern::Kind::Set:
-                return concrete->kind == ValueTypeKind::Set && !pattern.children.empty() &&
+                return concrete->value_kind() == ValueTypeKind::Set && !pattern.children.empty() &&
                        scalar_pattern_match(pattern.children[0], concrete->element_type, map);
             case ScalarPattern::Kind::Map:
-                return concrete->kind == ValueTypeKind::Map && pattern.children.size() == 2 &&
+                return concrete->value_kind() == ValueTypeKind::Map && pattern.children.size() == 2 &&
                        scalar_pattern_match(pattern.children[0], concrete->key_type, map) &&
                        scalar_pattern_match(pattern.children[1], concrete->element_type, map);
             case ScalarPattern::Kind::Bundle:
-                if (concrete->kind != ValueTypeKind::Bundle) { return false; }
+                if (concrete->value_kind() != ValueTypeKind::Bundle) { return false; }
                 if (!pattern.schema_var) { return true; }
                 if (const ValueTypeMetaData *bound = map.find_scalar(pattern.name)) { return bound == concrete; }
                 map.bind_scalar(pattern.name, concrete);
@@ -480,8 +480,8 @@ namespace hgraph
         {
             case ScalarPattern::Kind::Var: return "~" + pattern.name;
             case ScalarPattern::Kind::Concrete:
-                return (pattern.meta != nullptr && pattern.meta->display_name != nullptr)
-                           ? std::string{pattern.meta->display_name}
+                return (pattern.meta != nullptr && !pattern.meta->name().empty())
+                           ? std::string{pattern.meta->name()}
                            : std::string{"scalar"};
             case ScalarPattern::Kind::UnknownTuple:
                 return pattern.children.empty()

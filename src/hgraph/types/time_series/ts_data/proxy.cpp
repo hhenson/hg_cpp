@@ -226,7 +226,7 @@ namespace hgraph
 
                 layout.value_binding = &ValueTypeBinding::intern(*schema->value_schema, *plan, value_map_ops);
 
-                if (schema->delta_value_schema->kind != ValueTypeKind::Bundle ||
+                if (schema->delta_value_schema->value_kind() != ValueTypeKind::Bundle ||
                     schema->delta_value_schema->field_count != 2)
                 {
                     throw std::logic_error("TSDProxy delta schema must be Bundle{removed, modified}");
@@ -332,7 +332,7 @@ namespace hgraph
                                                void *dst,
                                                const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Bundle ||
+                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Bundle ||
                     binding.type_meta->field_count != 2)
                 {
                     throw std::logic_error("TSDProxy delta copy requires canonical Bundle{removed, modified}");
@@ -381,7 +381,7 @@ namespace hgraph
                                                               const void *memory)
             {
                 const auto *state = ctx(context);
-                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Set)
+                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Set)
                 {
                     throw std::logic_error("TSDProxy set copy requires a canonical set binding");
                 }
@@ -423,7 +423,7 @@ namespace hgraph
                                                               const ValueTypeBinding &binding,
                                                               const void *memory)
             {
-                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Map)
+                if (binding.type_meta == nullptr || binding.type_meta->value_kind() != ValueTypeKind::Map)
                 {
                     throw std::logic_error("TSDProxy map copy requires a canonical map binding");
                 }

@@ -520,7 +520,7 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
             {
                 const auto *meta = resolved_t(resolution);
-                return meta != nullptr && meta->kind == ValueTypeKind::List && !meta->is_mutable();
+                return meta != nullptr && meta->value_kind() == ValueTypeKind::List && !meta->is_mutable();
             }
 
             static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
@@ -548,7 +548,7 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
             {
                 const auto *meta = resolved_t(resolution);
-                return meta != nullptr && meta->kind == ValueTypeKind::Set;
+                return meta != nullptr && meta->value_kind() == ValueTypeKind::Set;
             }
 
             static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
@@ -610,7 +610,7 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
             {
                 const auto *meta = resolved_t(resolution);
-                return meta != nullptr && meta->kind == ValueTypeKind::Map;
+                return meta != nullptr && meta->value_kind() == ValueTypeKind::Map;
             }
 
             static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
@@ -637,7 +637,7 @@ namespace hgraph::stdlib
             {
                 const auto *meta = resolved_t(resolution);
                 if (meta == nullptr) { return false; }
-                switch (meta->kind)
+                switch (meta->value_kind())
                 {
                     case ValueTypeKind::Map:
                     case ValueTypeKind::Set:
@@ -649,7 +649,7 @@ namespace hgraph::stdlib
 
             [[nodiscard]] static bool truthy(const ValueView &container)
             {
-                switch (container.schema()->kind)
+                switch (container.schema()->value_kind())
                 {
                     case ValueTypeKind::Map: return container.as_map().size() != 0;
                     case ValueTypeKind::Set: return container.as_set().size() != 0;
@@ -675,7 +675,7 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
             {
                 const auto *meta = resolved_t(resolution);
-                return meta != nullptr && meta->kind == ValueTypeKind::Map;
+                return meta != nullptr && meta->value_kind() == ValueTypeKind::Map;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -684,7 +684,7 @@ namespace hgraph::stdlib
                 {
                     if (arg.kind != WiringArg::Kind::TimeSeries || arg.port.schema == nullptr) { continue; }
                     const auto *value_meta = arg.port.schema->value_schema;
-                    if (value_meta == nullptr || value_meta->kind != ValueTypeKind::Map) { continue; }
+                    if (value_meta == nullptr || value_meta->value_kind() != ValueTypeKind::Map) { continue; }
                     resolution.bind_scalar("K", value_meta->key_type);
                     resolution.bind_scalar("E", value_meta->element_type);
                     return;
@@ -711,7 +711,7 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
             {
                 const auto *meta = resolved_t(resolution);
-                return meta != nullptr && meta->kind == ValueTypeKind::Map;
+                return meta != nullptr && meta->value_kind() == ValueTypeKind::Map;
             }
 
             static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
@@ -740,7 +740,7 @@ namespace hgraph::stdlib
             {
                 const auto *meta = resolved_t(resolution);
                 if (meta == nullptr) { return false; }
-                switch (meta->kind)
+                switch (meta->value_kind())
                 {
                     case ValueTypeKind::List:
                     case ValueTypeKind::Tuple:
@@ -753,7 +753,7 @@ namespace hgraph::stdlib
             static void eval(In<"ts", TS<ScalarVar<"T">>> ts, Out<TS<Int>> out)
             {
                 const ValueView value = ts.base().value();
-                switch (value.schema()->kind)
+                switch (value.schema()->value_kind())
                 {
                     case ValueTypeKind::List: out.set(static_cast<Int>(value.as_list().size())); return;
                     case ValueTypeKind::Tuple: out.set(static_cast<Int>(value.as_tuple().size())); return;
@@ -776,7 +776,7 @@ namespace hgraph::stdlib
         [[nodiscard]] inline const ValueTypeMetaData *container_agg_element_meta(
             const ValueTypeMetaData *meta) noexcept
         {
-            if (meta == nullptr || meta->is_mutable() || meta->kind != Kind) { return nullptr; }
+            if (meta == nullptr || meta->is_mutable() || meta->try_value_kind() != Kind) { return nullptr; }
             if constexpr (Kind == ValueTypeKind::Map || Kind == ValueTypeKind::Set ||
                           Kind == ValueTypeKind::List)
             {

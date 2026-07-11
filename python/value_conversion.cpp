@@ -288,8 +288,7 @@ namespace hgraph::python_bridge
         // python_conversion_traits hooks installed at module init); no
         // kind-switch here (the type-erasure rule - conversion lives with the
         // ops).
-        if (view.schema()->display_name != nullptr &&
-            std::string_view{view.schema()->display_name} == "TimeSeriesReference")
+        if (view.schema()->name() == "TimeSeriesReference")
         {
             return nb::cast(PyOpaqueRef{Value{view}});   // opaque per the REF ruling
         }

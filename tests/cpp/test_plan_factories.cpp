@@ -2,6 +2,7 @@
 
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
+#include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/utils/memory_utils.h>
@@ -166,11 +167,29 @@ TEST_CASE("ValuePlanFactory: atomic round-trip via TypeRegistry")
     REQUIRE(plan->layout.alignment == alignof(std::int32_t));
 }
 
+TEST_CASE("TSData plan classifiers reject malformed compact value kinds")
+{
+    using namespace hgraph;
+
+    ValueTypeMetaData malformed{ValueTypeKind::Atomic, ValueTypeFlags::None, "malformed"};
+    malformed.header.kind = static_cast<TypeKind>(ValueTypeKind::Any) + 1;
+
+    TSValueTypeMetaData scalar{TSTypeKind::TS, &malformed};
+    scalar.value_schema       = &malformed;
+    scalar.delta_value_schema = &malformed;
+    REQUIRE_FALSE(ts_data_plan_factory_detail::is_compact_atomic_ts_data(scalar));
+
+    TSValueTypeMetaData set{TSTypeKind::TSS, &malformed};
+    set.value_schema       = &malformed;
+    set.delta_value_schema = &malformed;
+    REQUIRE_FALSE(ts_data_plan_factory_detail::is_slot_ts_data(set));
+}
+
 TEST_CASE("ValuePlanFactory::find returns null for unregistered atomic schemas")
 {
     using namespace hgraph;
     auto                 &factory = ValuePlanFactory::instance();
-    ValueTypeMetaData     orphan(ValueTypeKind::Atomic, ValueTypeFlags::None);
+    ValueTypeMetaData     orphan(ValueTypeKind::Atomic, ValueTypeFlags::None, "orphan");
     REQUIRE(factory.find(&orphan) == nullptr);
 }
 
@@ -178,7 +197,7 @@ TEST_CASE("ValuePlanFactory::plan_for throws for unregistered atomic schemas")
 {
     using namespace hgraph;
     auto             &factory = ValuePlanFactory::instance();
-    ValueTypeMetaData orphan(ValueTypeKind::Atomic, ValueTypeFlags::None);
+    ValueTypeMetaData orphan(ValueTypeKind::Atomic, ValueTypeFlags::None, "orphan");
     REQUIRE_THROWS_AS(factory.plan_for(&orphan), std::logic_error);
 }
 
@@ -419,7 +438,7 @@ TEST_CASE("ValuePlanFactory::register_atomic ignores null inputs")
     using namespace hgraph;
     auto &factory = ValuePlanFactory::instance();
     REQUIRE_NOTHROW(factory.register_atomic(nullptr, &MemoryUtils::plan_for<std::int32_t>()));
-    ValueTypeMetaData orphan(ValueTypeKind::Atomic, ValueTypeFlags::None);
+    ValueTypeMetaData orphan(ValueTypeKind::Atomic, ValueTypeFlags::None, "orphan");
     REQUIRE_NOTHROW(factory.register_atomic(&orphan, nullptr));
 }
 

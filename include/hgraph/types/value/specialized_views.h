@@ -122,7 +122,7 @@ namespace hgraph
         [[nodiscard]] inline ValueView require_kind(ValueView base, ValueTypeKind kind, const char *what)
         {
             require_valid(base.valid(), what);
-            if (base.schema() == nullptr || base.schema()->kind != kind)
+            if (base.schema() == nullptr || base.schema()->value_kind() != kind)
             {
                 throw std::logic_error(std::string{what} + " on wrong value kind");
             }

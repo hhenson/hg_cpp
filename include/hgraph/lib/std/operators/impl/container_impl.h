@@ -413,7 +413,7 @@ namespace hgraph::stdlib
             const auto *schema = time_series_schema_at_as<AnyTS>(context, 0);
             if (schema == nullptr ||
                 schema->value_schema == nullptr ||
-                schema->value_schema->kind != ValueTypeKind::Bundle)
+                schema->value_schema->value_kind() != ValueTypeKind::Bundle)
             {
                 return nullptr;
             }

@@ -83,7 +83,7 @@ namespace hgraph::testing
     {
         const auto element = list.at(index);
         if (!element.has_value()) { return std::nullopt; }   // typed hole
-        if (element.schema()->kind == ValueTypeKind::Any)
+        if (element.schema()->value_kind() == ValueTypeKind::Any)
         {
             const auto boxed = element.as_any();
             if (!boxed.has_value()) { return std::nullopt; }   // legacy empty box

@@ -140,7 +140,7 @@ namespace hgraph::stdlib::json_tree
     {
         const auto *meta = value.schema();
         if (meta == json_meta()) { return Value{value}; }
-        switch (meta->kind)
+        switch (meta->value_kind())
         {
             case ValueTypeKind::Atomic:
                 return box(Value{value});
@@ -272,7 +272,7 @@ namespace hgraph::stdlib::json_tree
             escape_into(inner.checked_as<Str>(), out);
             return;
         }
-        if (meta->kind == ValueTypeKind::List)
+        if (meta->value_kind() == ValueTypeKind::List)
         {
             out += '[';
             bool first = true;
@@ -285,7 +285,7 @@ namespace hgraph::stdlib::json_tree
             out += ']';
             return;
         }
-        if (meta->kind == ValueTypeKind::Map)
+        if (meta->value_kind() == ValueTypeKind::Map)
         {
             out += '{';
             bool first = true;

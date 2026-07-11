@@ -151,7 +151,7 @@ namespace hgraph::stdlib
 
         [[nodiscard]] const TSValueTypeMetaData *tsb_for_bundle_value(const ValueTypeMetaData *bundle)
         {
-            if (bundle == nullptr || bundle->kind != ValueTypeKind::Bundle || bundle->display_name == nullptr)
+            if (bundle == nullptr || !bundle->is_named_bundle())
             {
                 return nullptr;
             }
@@ -164,7 +164,7 @@ namespace hgraph::stdlib
                 fields.emplace_back(std::string{field.name != nullptr ? field.name : ""},
                                     registry.ts(field.type));
             }
-            return registry.tsb(bundle->display_name, fields);
+            return registry.tsb(bundle->name(), fields);
         }
 
         [[nodiscard]] const TSValueTypeMetaData *require_one_input(
@@ -217,7 +217,7 @@ namespace hgraph::stdlib
             if (const TSValueTypeMetaData *ts = time_series_schema_as<AnyTS>(input))
             {
                 const ValueTypeMetaData *value = ts->value_schema;
-                if (value != nullptr && (value->kind == ValueTypeKind::Tuple || value->kind == ValueTypeKind::List))
+                if (value != nullptr && (value->value_kind() == ValueTypeKind::Tuple || value->value_kind() == ValueTypeKind::List))
                 {
                     return value;
                 }
@@ -269,7 +269,7 @@ namespace hgraph::stdlib
             {
                 if (const TSValueTypeMetaData *ts = time_series_schema_as<AnyTS>(first))
                 {
-                    if (ts->value_schema != nullptr && ts->value_schema->kind == ValueTypeKind::Map)
+                    if (ts->value_schema != nullptr && ts->value_schema->value_kind() == ValueTypeKind::Map)
                     {
                         return ts->value_schema;
                     }
@@ -317,7 +317,7 @@ namespace hgraph::stdlib
                 if (const TSValueTypeMetaData *ts = time_series_schema_as<AnyTS>(first))
                 {
                     const ValueTypeMetaData *value = ts->value_schema;
-                    if (value != nullptr && value->kind == ValueTypeKind::Map)
+                    if (value != nullptr && value->value_kind() == ValueTypeKind::Map)
                     {
                         return registry.tsd(value->key_type, registry.ts(value->element_type));
                     }
@@ -352,11 +352,11 @@ namespace hgraph::stdlib
                 ts != nullptr && ts->value_schema != nullptr)
             {
                 const ValueTypeMetaData *value = ts->value_schema;
-                if (value->kind == ValueTypeKind::List && value->fixed_size > 0)
+                if (value->value_kind() == ValueTypeKind::List && value->fixed_size > 0)
                 {
                     return registry.tsl(registry.ts(value->element_type), value->fixed_size);
                 }
-                if (value->kind == ValueTypeKind::Tuple)
+                if (value->value_kind() == ValueTypeKind::Tuple)
                 {
                     if (const ValueTypeMetaData *element = homogeneous_tuple_element_schema(value))
                     {
@@ -411,7 +411,7 @@ namespace hgraph::stdlib
                     }
                     if (const TSValueTypeMetaData *ts = time_series_schema_as<AnyTS>(input);
                         ts != nullptr && ts->value_schema != nullptr &&
-                        ts->value_schema->kind == ValueTypeKind::Bundle)
+                        ts->value_schema->value_kind() == ValueTypeKind::Bundle)
                     {
                         return ts;
                     }
@@ -482,7 +482,7 @@ namespace hgraph::stdlib
             if (time_series_schema_as<AnyTSD>(first) != nullptr) { return first; }
             const auto *first_ts = time_series_schema_as<AnyTS>(first);
             if (inputs.size() == 1 && first_ts != nullptr &&
-                first_ts->value_schema != nullptr && first_ts->value_schema->kind == ValueTypeKind::Map)
+                first_ts->value_schema != nullptr && first_ts->value_schema->value_kind() == ValueTypeKind::Map)
             {
                 return registry.tsd(first_ts->value_schema->key_type, registry.ts(first_ts->value_schema->element_type));
             }
@@ -525,7 +525,7 @@ namespace hgraph::stdlib
                 const auto *meta = pattern.meta;
                 if (inputs.size() > 1 && meta != nullptr && meta->kind == TSTypeKind::TS &&
                     meta->value_schema != nullptr &&
-                    meta->value_schema->kind == ValueTypeKind::List &&
+                    meta->value_schema->value_kind() == ValueTypeKind::List &&
                     meta->value_schema->has(ValueTypeFlags::VariadicTuple))
                 {
                     // combine[TS[Tuple[T, ...]]](a, b, ...): hgraph emits the
@@ -640,7 +640,7 @@ namespace hgraph::stdlib
         if (const auto *tsd = time_series_schema_as<AnyTSD>(input)) { key = tsd->key_type(); }
         else if (const auto *ts = time_series_schema_as<AnyTS>(input);
                  ts != nullptr && ts->value_schema != nullptr &&
-                 ts->value_schema->kind == ValueTypeKind::Map)
+                 ts->value_schema->value_kind() == ValueTypeKind::Map)
         {
             key = ts->value_schema->key_type;
         }

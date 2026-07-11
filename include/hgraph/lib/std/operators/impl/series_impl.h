@@ -23,12 +23,10 @@ namespace hgraph::stdlib
 
     namespace series_impl_detail
     {
-        /** Any Series scalar (base or parameterised Series[T]) - all share the
-            interned "series" display name. */
+        /** Any Series scalar (base or parameterised Series[T]). */
         [[nodiscard]] inline bool is_series_value(const ValueTypeMetaData *value)
         {
-            return value != nullptr && value->kind == ValueTypeKind::Atomic && value->display_name != nullptr &&
-                   std::string_view{value->display_name} == "series";
+            return TypeRegistry::instance().is_series(value);
         }
 
         [[nodiscard]] inline bool is_series_arg(OperatorCallContext context, std::size_t index)

@@ -31,22 +31,22 @@ namespace hgraph
                 case TypePattern::Kind::TS:
                     return scalar_pattern_match(pattern.scalar, value_schema, map);
                 case TypePattern::Kind::TSS:
-                    return value_schema->kind == ValueTypeKind::Set &&
+                    return value_schema->value_kind() == ValueTypeKind::Set &&
                            scalar_pattern_match(pattern.scalar, value_schema->element_type, map);
                 case TypePattern::Kind::TSL:
-                    return value_schema->kind == ValueTypeKind::List &&
+                    return value_schema->value_kind() == ValueTypeKind::List &&
                            size_pattern_match(pattern, value_schema->fixed_size, map) &&
                            value_schema_matches_ts_pattern(pattern.children[0], value_schema->element_type, map);
                 case TypePattern::Kind::TSD:
-                    return value_schema->kind == ValueTypeKind::Map &&
+                    return value_schema->value_kind() == ValueTypeKind::Map &&
                            scalar_pattern_match(pattern.scalar, value_schema->key_type, map) &&
                            value_schema_matches_ts_pattern(pattern.children[0], value_schema->element_type, map);
                 case TypePattern::Kind::TSW:
-                    return value_schema->kind == ValueTypeKind::List &&
+                    return value_schema->value_kind() == ValueTypeKind::List &&
                            pattern.fixed_size == value_schema->fixed_size &&
                            scalar_pattern_match(pattern.scalar, value_schema->element_type, map);
                 case TypePattern::Kind::TSB:
-                    if (value_schema->kind != ValueTypeKind::Bundle ||
+                    if (value_schema->value_kind() != ValueTypeKind::Bundle ||
                         value_schema->field_count != pattern.children.size())
                     {
                         return false;

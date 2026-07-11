@@ -45,7 +45,7 @@ TEST_CASE("Any: registry.any() is an unconstrained singleton schema")
     const ValueTypeMetaData *b = registry.any();
     REQUIRE(a != nullptr);
     CHECK(a == b);  // interned singleton
-    CHECK(a->kind == ValueTypeKind::Any);
+    CHECK(a->value_kind() == ValueTypeKind::Any);
     CHECK(a->element_type == nullptr);  // unconstrained
     CHECK(a->key_type == nullptr);
     CHECK(a->field_count == 0);
@@ -91,7 +91,7 @@ TEST_CASE("Any: set / get a contained value and clear it")
     auto view = any.as_any();
     REQUIRE(view.has_value());
     REQUIRE(view.value_schema() != nullptr);
-    CHECK(view.value_schema()->kind == ValueTypeKind::Atomic);
+    CHECK(view.value_schema()->value_kind() == ValueTypeKind::Atomic);
     CHECK(view.get().checked_as<std::int32_t>() == 42);
     CHECK(any.to_string() == "42");
 
@@ -114,7 +114,7 @@ TEST_CASE("Any: holds heterogeneous values (different schemas)")
 
     // Re-assign with a different schema entirely.
     any.as_any().begin_mutation().set(Value{std::string{"hello"}});
-    REQUIRE(any.as_any().value_schema()->kind == ValueTypeKind::Atomic);
+    REQUIRE(any.as_any().value_schema()->value_kind() == ValueTypeKind::Atomic);
     CHECK(any.as_any().get().checked_as<std::string>() == "hello");
 }
 

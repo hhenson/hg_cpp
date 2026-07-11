@@ -397,7 +397,7 @@ namespace hgraph::stdlib
             }
             if constexpr (ByName)
             {
-                if (inner.schema()->kind != ValueTypeKind::Map) { return; }
+                if (inner.schema()->value_kind() != ValueTypeKind::Map) { return; }
                 auto map = inner.as_map();
                 Value key_value{key.value()};
                 if (!map.contains(key_value.view())) { return; }
@@ -405,7 +405,7 @@ namespace hgraph::stdlib
             }
             else
             {
-                if (inner.schema()->kind != ValueTypeKind::List) { return; }
+                if (inner.schema()->value_kind() != ValueTypeKind::List) { return; }
                 auto list  = inner.as_list();
                 Int  index = key.value();
                 if (index < 0) { index += static_cast<Int>(list.size()); }   // python semantics

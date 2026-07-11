@@ -247,7 +247,7 @@ namespace hgraph
         {
             if (memory == nullptr) { return {}; }
             const auto *state = static_cast<const CompositeIndexedContext *>(context);
-            const bool  bundle = state->schema != nullptr && state->schema->kind == ValueTypeKind::Bundle;
+            const bool  bundle = state->schema != nullptr && state->schema->value_kind() == ValueTypeKind::Bundle;
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "{}", bundle ? '{' : '(');
             for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
@@ -297,7 +297,7 @@ namespace hgraph
         {
             if (memory == nullptr) { throw std::runtime_error("composite to_python requires live value memory"); }
             const auto *state = static_cast<const CompositeIndexedContext *>(context);
-            const bool  bundle = state->schema != nullptr && state->schema->kind == ValueTypeKind::Bundle;
+            const bool  bundle = state->schema != nullptr && state->schema->value_kind() == ValueTypeKind::Bundle;
 
             if (bundle)
             {
@@ -392,7 +392,7 @@ namespace hgraph
             require_python_source(source, "Composite value");
 
             const auto *state  = static_cast<const CompositeIndexedContext *>(context);
-            const bool  bundle = state->schema != nullptr && state->schema->kind == ValueTypeKind::Bundle;
+            const bool  bundle = state->schema != nullptr && state->schema->value_kind() == ValueTypeKind::Bundle;
             if (!bundle)
             {
                 fill_composite_from_sequence(state, memory, source, "Tuple value");
@@ -660,7 +660,7 @@ namespace hgraph
             CompositeIndexedOpsEntry(const ValueTypeMetaData &schema, const MemoryUtils::StoragePlan &plan)
             {
                 const std::size_t validity_words =
-                    (schema.kind == ValueTypeKind::Bundle || schema.kind == ValueTypeKind::Tuple)
+                    (schema.value_kind() == ValueTypeKind::Bundle || schema.value_kind() == ValueTypeKind::Tuple)
                         ? bundle_validity_word_count(schema.field_count)
                         : 0;
                 const std::size_t validity_components = validity_words == 0 ? 0 : 1;
@@ -825,7 +825,7 @@ namespace hgraph
             if (it->second == plan) { return; }
             throw std::logic_error(std::string{"ValuePlanFactory: atomic schema already registered with a "
                                                "different plan: "} +
-                                   (schema->display_name ? schema->display_name : "?"));
+                                   (schema->header.label ? schema->header.label : "?"));
         }
         cache_.emplace(schema, plan);
     }
@@ -913,7 +913,7 @@ namespace hgraph
     {
         const MemoryUtils::StoragePlan *plan = nullptr;
 
-        switch (schema->kind)
+        switch (schema->value_kind())
         {
             case ValueTypeKind::Atomic:
                 throw std::logic_error(
@@ -1019,7 +1019,7 @@ namespace hgraph
     {
         const ValueTypeBinding *binding = nullptr;
 
-        switch (schema->kind)
+        switch (schema->value_kind())
         {
             case ValueTypeKind::Atomic:
                 throw std::logic_error(

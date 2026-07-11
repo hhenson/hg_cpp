@@ -261,6 +261,19 @@ memory instead of guessing.  The schema ABI versions the schema-header layout;
 the type-record ABI versions the record layout; the ops ABI versions the table
 selected by family and role.
 
+The value-family pilot makes this concrete: ``ValueTypeMetaData`` is a
+standard-layout type whose first member is ``SchemaHeader`` and whose second
+member is ``ValueTypeFlags``.  It does not inherit the legacy family metadata.
+Its kind values are the fixed numeric range ``Atomic=0`` through ``Any=8``;
+conversion from the compact header kind is checked before family-specific
+dispatch.  ``TypeRegistry`` owns a non-empty canonical label for every value
+schema before interning it.  Composite labels use forms such as
+``Tuple[A,B]``, ``Bundle{field:A}``, ``List[A,4]``, ``Map[K,V]``, and
+``Queue[A]``; unresolved children are rendered as ``<unresolved>``.  A named
+bundle uses its nominal name, while its structural twin retains the
+``Bundle{...}`` form.  Registry aliases are lookup names only and never mutate
+that canonical label or affect schema identity.
+
 ``TypeRecord`` does not own its schema, plan, ops, or debug metadata.  All are
 immutable and have stable addresses for at least the lifetime of the registry.
 Production registries will normally keep them for the process lifetime.  This

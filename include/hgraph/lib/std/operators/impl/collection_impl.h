@@ -88,7 +88,7 @@ namespace hgraph::stdlib
                 // The output pattern TS<ScalarVar<"S">> binds S from the
                 // REQUESTED output (keys_[OUT: TS[Set[K]]]).
                 const auto *element = resolution.find_scalar("S");
-                if (element == nullptr || element->kind != ValueTypeKind::Set) { return false; }
+                if (element == nullptr || element->value_kind() != ValueTypeKind::Set) { return false; }
                 const auto *schema = time_series_schema_at_as<AnyTSD>(context, 0);
                 return schema != nullptr && schema->key_type() == element->element_type;
             }
@@ -1212,7 +1212,7 @@ namespace hgraph::stdlib
                     return false;
                 }
                 const auto *key = schema->key_type();
-                return key->kind == ValueTypeKind::Tuple && key->field_count >= 2;
+                return key->value_kind() == ValueTypeKind::Tuple && key->field_count >= 2;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -1222,7 +1222,7 @@ namespace hgraph::stdlib
                 const auto *schema = time_series_schema_at_as<AnyTSD>(context, 0);
                 if (schema == nullptr) { return; }
                 const auto *key = schema->key_type();
-                if (key == nullptr || key->kind != ValueTypeKind::Tuple || key->field_count < 2) { return; }
+                if (key == nullptr || key->value_kind() != ValueTypeKind::Tuple || key->field_count < 2) { return; }
                 const TSValueTypeMetaData *out =
                     registry.ref(registry.dereference(schema->element_ts()));
                 for (std::size_t index = key->field_count; index-- > 0;)
@@ -2111,7 +2111,7 @@ namespace hgraph::stdlib
                 if (out == nullptr) { return true; }
                 if (out->kind == TSTypeKind::TSS) { return true; }
                 return out->kind == TSTypeKind::TS && out->value_schema != nullptr &&
-                       out->value_schema->kind == ValueTypeKind::Set;
+                       out->value_schema->value_kind() == ValueTypeKind::Set;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
@@ -2295,9 +2295,9 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline const ValueTypeMetaData *nested_map_meta(const ValueTypeMetaData *meta) noexcept
         {
-            if (meta == nullptr || meta->kind != ValueTypeKind::Map) { return nullptr; }
+            if (meta == nullptr || meta->try_value_kind() != ValueTypeKind::Map) { return nullptr; }
             const auto *inner = meta->element_type;
-            return inner != nullptr && inner->kind == ValueTypeKind::Map ? inner : nullptr;
+            return inner != nullptr && inner->try_value_kind() == ValueTypeKind::Map ? inner : nullptr;
         }
 
         /** flip_keys over a NESTED map scalar: {k: {k1: v}} -> {k1: {k: v}}. */
@@ -2413,14 +2413,14 @@ namespace hgraph::stdlib
             {
                 const auto *ts = ts_map_meta(resolution.find_ts("S"));
                 return ts != nullptr && ts->key_type != nullptr &&
-                       ts->key_type->kind == ValueTypeKind::Tuple && ts->key_type->field_count == 2;
+                       ts->key_type->value_kind() == ValueTypeKind::Tuple && ts->key_type->field_count == 2;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
             {
                 if (local_output_bound(resolution, "O")) { return; }
                 const auto *ts = ts_map_meta(resolution.find_ts("S"));
-                if (ts == nullptr || ts->key_type == nullptr || ts->key_type->kind != ValueTypeKind::Tuple ||
+                if (ts == nullptr || ts->key_type == nullptr || ts->key_type->value_kind() != ValueTypeKind::Tuple ||
                     ts->key_type->field_count != 2) { return; }
                 auto &registry = TypeRegistry::instance();
                 const auto *inner = registry.map(ts->key_type->fields[1].type, ts->element_type);
@@ -2470,8 +2470,8 @@ namespace hgraph::stdlib
             {
                 const auto *keys   = ts_value_schema(resolution.find_ts("A"));
                 const auto *values = ts_value_schema(resolution.find_ts("B"));
-                return keys != nullptr && values != nullptr && keys->kind != ValueTypeKind::List &&
-                       values->kind != ValueTypeKind::List;
+                return keys != nullptr && values != nullptr && keys->value_kind() != ValueTypeKind::List &&
+                       values->value_kind() != ValueTypeKind::List;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
@@ -2503,8 +2503,8 @@ namespace hgraph::stdlib
             {
                 const auto *keys   = ts_value_schema(resolution.find_ts("A"));
                 const auto *values = ts_value_schema(resolution.find_ts("B"));
-                return keys != nullptr && values != nullptr && keys->kind == ValueTypeKind::List &&
-                       values->kind == ValueTypeKind::List;
+                return keys != nullptr && values != nullptr && keys->value_kind() == ValueTypeKind::List &&
+                       values->value_kind() == ValueTypeKind::List;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
@@ -2698,7 +2698,7 @@ namespace hgraph::stdlib
                 const auto *values = time_series_schema_as<AnyTSL>(resolution.find_ts("B"));
                 const auto *keys   = keys_meta(context);
                 return values != nullptr && values->fixed_size() != 0 &&
-                       keys != nullptr && keys->kind == ValueTypeKind::List;
+                       keys != nullptr && keys->value_kind() == ValueTypeKind::List;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -2755,7 +2755,7 @@ namespace hgraph::stdlib
                 if (output_bound(resolution)) { return; }
                 if (context.args.size() < 2 || context.args[0].kind != WiringArg::Kind::Scalar) { return; }
                 const auto *keys = context.args[0].scalar_value.schema();
-                if (keys == nullptr || keys->kind != ValueTypeKind::List) { return; }
+                if (keys == nullptr || keys->value_kind() != ValueTypeKind::List) { return; }
                 // The VarIn tail normalises LAST (after fixed params + the
                 // injected __strict__ default): the first VALUE port is the
                 // first TimeSeries argument from the back-half.
@@ -2814,8 +2814,8 @@ namespace hgraph::stdlib
             {
                 const auto *keys   = ts_value_schema(resolution.find_ts("A"));
                 const auto *values = ts_value_schema(resolution.find_ts("B"));
-                return keys != nullptr && values != nullptr && keys->kind == ValueTypeKind::List &&
-                       values->kind == ValueTypeKind::List;
+                return keys != nullptr && values != nullptr && keys->value_kind() == ValueTypeKind::List &&
+                       values->value_kind() == ValueTypeKind::List;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
@@ -2872,7 +2872,7 @@ namespace hgraph::stdlib
             const auto *schema = time_series_schema_at_as<AnyTS>(context, index);
             if (schema == nullptr ||
                 schema->value_schema == nullptr ||
-                schema->value_schema->kind != ValueTypeKind::List)
+                schema->value_schema->value_kind() != ValueTypeKind::List)
             {
                 return nullptr;
             }
@@ -2994,7 +2994,7 @@ namespace hgraph::stdlib
                 const auto *schema = time_series_schema_at_as<AnyTS>(context, 0);
                 if (schema == nullptr ||
                     schema->value_schema == nullptr ||
-                    schema->value_schema->kind != ValueTypeKind::Tuple || schema->value_schema->field_count == 0)
+                    schema->value_schema->value_kind() != ValueTypeKind::Tuple || schema->value_schema->field_count == 0)
                 {
                     return nullptr;
                 }
@@ -3343,7 +3343,7 @@ namespace hgraph::stdlib
                     return false;
                 }
                 const auto *bundle_value = requested->value_schema;
-                return bundle_value != nullptr && bundle_value->kind == ValueTypeKind::Bundle;
+                return bundle_value != nullptr && bundle_value->value_kind() == ValueTypeKind::Bundle;
             }
 
             static void eval(In<"ts", TsVar<"S">, InputValidity::AllValid> ts, Out<TsVar<"__out__">> out)
@@ -3389,7 +3389,7 @@ namespace hgraph::stdlib
                 const auto *in        = time_series_schema_at_as<AnyTS>(context, 0);
                 return requested != nullptr && requested->kind == TSTypeKind::TSB &&
                        in != nullptr && in->value_schema != nullptr &&
-                       in->value_schema->kind == ValueTypeKind::Bundle;
+                       in->value_schema->value_kind() == ValueTypeKind::Bundle;
             }
 
             static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
@@ -3602,8 +3602,8 @@ namespace hgraph::stdlib
             {
                 const auto *orig  = ts_value_schema(resolution.find_ts("A"));
                 const auto *delta = ts_value_schema(resolution.find_ts("B"));
-                return orig != nullptr && delta != nullptr && orig->kind == ValueTypeKind::Bundle &&
-                       delta->kind == ValueTypeKind::Bundle;
+                return orig != nullptr && delta != nullptr && orig->value_kind() == ValueTypeKind::Bundle &&
+                       delta->value_kind() == ValueTypeKind::Bundle;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
@@ -3628,7 +3628,7 @@ namespace hgraph::stdlib
                         if (original.valid()) { builder.set(index, Value{original}); }
                         continue;
                     }
-                    if (original.valid() && meta->fields[index].type->kind == ValueTypeKind::Bundle)
+                    if (original.valid() && meta->fields[index].type->value_kind() == ValueTypeKind::Bundle)
                     {
                         builder.set(index, merge(original, update));
                         continue;

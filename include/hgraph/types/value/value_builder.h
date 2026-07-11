@@ -753,7 +753,7 @@ namespace hgraph
         {
             const auto *meta = binding_->type_meta;
             if (meta == nullptr || meta->field_count == 0 ||
-                (meta->kind != ValueTypeKind::Bundle && meta->kind != ValueTypeKind::Tuple))
+                (meta->value_kind() != ValueTypeKind::Bundle && meta->value_kind() != ValueTypeKind::Tuple))
             {
                 return;
             }
@@ -810,7 +810,7 @@ namespace hgraph
         [[nodiscard]] std::size_t field_count() const noexcept
         {
             const auto *meta = binding_->type_meta;
-            if (meta != nullptr && meta->kind == ValueTypeKind::Bundle) { return meta->field_count; }
+            if (meta != nullptr && meta->try_value_kind() == ValueTypeKind::Bundle) { return meta->field_count; }
             return state().component_count;
         }
 

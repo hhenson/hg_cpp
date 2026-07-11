@@ -108,7 +108,7 @@ namespace hgraph::stdlib
                 for (std::size_t i = 0; i < bundle->field_count; ++i)
                 {
                     const auto &field = bundle->fields[i];
-                    if (field.type->kind != ValueTypeKind::Atomic)
+                    if (field.type->value_kind() != ValueTypeKind::Atomic)
                     {
                         throw std::invalid_argument(
                             fmt::format("{}: non-atomic field '{}' is not supported", what,
@@ -233,13 +233,13 @@ namespace hgraph::stdlib
             const auto *leaf = ts;
             if (ts->kind == TSTypeKind::TSD)
             {
-                if (ts->key_type()->kind != ValueTypeKind::Atomic) { return nullptr; }
+                if (ts->key_type()->value_kind() != ValueTypeKind::Atomic) { return nullptr; }
                 fields.emplace_back(std::string{key_col}, ts->key_type());
                 leaf = ts->element_ts();
             }
             if (leaf->kind == TSTypeKind::TS)
             {
-                if (leaf->value_schema->kind != ValueTypeKind::Atomic) { return nullptr; }
+                if (leaf->value_schema->value_kind() != ValueTypeKind::Atomic) { return nullptr; }
                 fields.emplace_back(std::string{value_col}, leaf->value_schema);
             }
             else if (leaf->kind == TSTypeKind::TSB)
@@ -248,7 +248,7 @@ namespace hgraph::stdlib
                 for (std::size_t i = 0; i < bundle->field_count; ++i)
                 {
                     const auto &field = bundle->fields[i];
-                    if (field.type->kind != ValueTypeKind::Atomic) { return nullptr; }
+                    if (field.type->value_kind() != ValueTypeKind::Atomic) { return nullptr; }
                     fields.emplace_back(field.name != nullptr ? field.name : "", field.type);
                 }
             }
@@ -380,7 +380,7 @@ namespace hgraph::stdlib
             };
 
             const ValueTypeMetaData *key_meta = nullptr;
-            if (by.schema()->kind == ValueTypeKind::Atomic)
+            if (by.schema()->value_kind() == ValueTypeKind::Atomic)
             {
                 key_meta = field_meta(by.checked_as<Str>());
             }
@@ -414,7 +414,7 @@ namespace hgraph::stdlib
                     FieldRead{std::string{name}, columns->fields[index].type, index});
             };
 
-            if (by.schema()->kind == ValueTypeKind::Atomic)
+            if (by.schema()->value_kind() == ValueTypeKind::Atomic)
             {
                 add_key(by.checked_as<Str>());
                 plan->key_meta = plan->key_cols.front().leaf;
@@ -510,11 +510,7 @@ namespace hgraph::stdlib
 
         bool value_is_frame(const ValueTypeMetaData *meta)
         {
-            const auto *base = TypeRegistry::instance().value_type("frame");
-            if (meta == nullptr || base == nullptr) { return false; }
-            return meta == base ||
-                   (meta->display_name != nullptr && base->display_name != nullptr &&
-                    std::string_view{meta->display_name} == std::string_view{base->display_name});
+            return TypeRegistry::instance().is_frame(meta);
         }
 
         bool ts_value_is_frame(const TSValueTypeMetaData *ts)
@@ -538,7 +534,7 @@ namespace hgraph::stdlib
             plan->dict         = true;
             const auto *child  = ts.schema()->element_ts();
             const auto *fields = child->value_schema;
-            if (fields == nullptr || fields->kind != ValueTypeKind::Bundle)
+            if (fields == nullptr || fields->value_kind() != ValueTypeKind::Bundle)
             {
                 throw std::invalid_argument("convert: TSD to Frame needs compound-valued elements");
             }
@@ -584,8 +580,8 @@ namespace hgraph::stdlib
             auto        plan  = std::make_unique<ToFramePlan>();
             const auto *value = ts.schema()->value_schema;
             const auto *element =
-                value->kind == ValueTypeKind::List ? value->element_type : value;
-            if (element == nullptr || element->kind != ValueTypeKind::Bundle)
+                value->value_kind() == ValueTypeKind::List ? value->element_type : value;
+            if (element == nullptr || element->value_kind() != ValueTypeKind::Bundle)
             {
                 throw std::invalid_argument("convert: value to Frame needs a compound payload");
             }
@@ -634,7 +630,7 @@ namespace hgraph::stdlib
         {
             std::vector<Value> rows;
             const ValueView    value = ts.value();
-            if (value.schema()->kind == ValueTypeKind::List)
+            if (value.schema()->value_kind() == ValueTypeKind::List)
             {
                 auto list = value.as_list();
                 for (ValueView element : list) { rows.push_back(value_row(plan, element)); }

@@ -44,7 +44,7 @@ TEST_CASE("mutable list: the Mutable schema axis interns distinctly from the imm
     const ValueTypeMetaData *mutable_  = registry.mutable_list(int_meta);
 
     REQUIRE(mutable_ != nullptr);
-    CHECK(mutable_->kind == ValueTypeKind::List);
+    CHECK(mutable_->value_kind() == ValueTypeKind::List);
     CHECK(mutable_->is_mutable());
     CHECK_FALSE(immutable->is_mutable());
     CHECK(mutable_ != immutable);                       // distinct schemas

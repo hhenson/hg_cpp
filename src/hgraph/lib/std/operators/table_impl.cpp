@@ -55,18 +55,18 @@ namespace hgraph::stdlib
             void flatten_value(const ValueTypeMetaData *meta, const std::string &suffix,
                                std::vector<std::size_t> path, Sink &&sink)
             {
-                if (meta != nullptr && meta->kind == ValueTypeKind::Atomic)
+                if (meta != nullptr && meta->value_kind() == ValueTypeKind::Atomic)
                 {
                     sink(suffix, meta, std::move(path));
                     return;
                 }
                 if (meta != nullptr &&
-                    (meta->kind == ValueTypeKind::Bundle || meta->kind == ValueTypeKind::Tuple))
+                    (meta->value_kind() == ValueTypeKind::Bundle || meta->value_kind() == ValueTypeKind::Tuple))
                 {
                     for (std::size_t i = 0; i < meta->field_count; ++i)
                     {
                         const auto &field = meta->fields[i];
-                        std::string name  = meta->kind == ValueTypeKind::Bundle && field.name != nullptr
+                        std::string name  = meta->value_kind() == ValueTypeKind::Bundle && field.name != nullptr
                                                 ? std::string{field.name}
                                                 : fmt::format("{}", i);
                         auto        child_path = path;
@@ -79,7 +79,7 @@ namespace hgraph::stdlib
                 throw std::invalid_argument(
                     fmt::format("to_table: unsupported value kind for column '{}' ('{}')",
                                 suffix.empty() ? "value" : suffix,
-                                meta != nullptr && meta->display_name ? meta->display_name : "?"));
+                                meta != nullptr && !meta->name().empty() ? meta->name() : std::string_view{"?"}));
             }
 
             /** Flatten the LEAF time-series (below all TSD levels): TSB
@@ -122,11 +122,7 @@ namespace hgraph::stdlib
 
             [[nodiscard]] bool is_frame_meta(const ValueTypeMetaData *meta)
             {
-                const auto *base = TypeRegistry::instance().value_type("frame");
-                if (meta == nullptr || base == nullptr) { return false; }
-                return meta == base ||
-                       (meta->display_name != nullptr && base->display_name != nullptr &&
-                        std::string_view{meta->display_name} == std::string_view{base->display_name});
+                return TypeRegistry::instance().is_frame(meta);
             }
 
             [[nodiscard]] const TsTableLayout *build_layout(const TSValueTypeMetaData *ts,

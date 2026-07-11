@@ -344,7 +344,7 @@ namespace hgraph
         [[nodiscard]] inline const ValueTypeMetaData *homogeneous_tuple_element(
             const ValueTypeMetaData *concrete) noexcept
         {
-            if (concrete == nullptr || concrete->kind != ValueTypeKind::Tuple || concrete->field_count == 0)
+            if (concrete == nullptr || concrete->try_value_kind() != ValueTypeKind::Tuple || concrete->field_count == 0)
             {
                 return nullptr;
             }
@@ -377,7 +377,7 @@ namespace hgraph
         static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
         {
             const ValueTypeMetaData *element = nullptr;
-            if (concrete != nullptr && concrete->kind == ValueTypeKind::List) { element = concrete->element_type; }
+            if (concrete != nullptr && concrete->value_kind() == ValueTypeKind::List) { element = concrete->element_type; }
             else { element = type_resolution_detail::homogeneous_tuple_element(concrete); }
             scalar_unifier<TElement>::unify(element, m);
         }
@@ -389,7 +389,7 @@ namespace hgraph
         static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
         {
             const ValueTypeMetaData *element = nullptr;
-            if (concrete != nullptr && concrete->kind == ValueTypeKind::List) { element = concrete->element_type; }
+            if (concrete != nullptr && concrete->value_kind() == ValueTypeKind::List) { element = concrete->element_type; }
             else { element = type_resolution_detail::homogeneous_tuple_element(concrete); }
             scalar_unifier<TElement>::unify(element, m);
         }
@@ -400,7 +400,7 @@ namespace hgraph
     {
         static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
         {
-            if (concrete == nullptr || concrete->kind != ValueTypeKind::Tuple ||
+            if (concrete == nullptr || concrete->value_kind() != ValueTypeKind::Tuple ||
                 concrete->field_count != sizeof...(TElements))
             {
                 return;
@@ -415,7 +415,7 @@ namespace hgraph
     {
         static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
         {
-            if (concrete == nullptr || concrete->kind != ValueTypeKind::Set) { return; }
+            if (concrete == nullptr || concrete->value_kind() != ValueTypeKind::Set) { return; }
             scalar_unifier<TElement>::unify(concrete->element_type, m);
         }
     };
@@ -425,7 +425,7 @@ namespace hgraph
     {
         static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
         {
-            if (concrete == nullptr || concrete->kind != ValueTypeKind::Map) { return; }
+            if (concrete == nullptr || concrete->value_kind() != ValueTypeKind::Map) { return; }
             scalar_unifier<TKey>::unify(concrete->key_type, m);
             scalar_unifier<TValue>::unify(concrete->element_type, m);
         }

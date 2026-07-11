@@ -42,12 +42,12 @@ TEST_CASE("ts_schemas: TSS<T>.value_schema is Set<T>, delta is Bundle{added: Set
     // value_schema = Set<string>
     const auto *expected_value = registry.set(str_meta);
     REQUIRE(tss->value_schema == expected_value);
-    REQUIRE(tss->value_schema->kind == ValueTypeKind::Set);
+    REQUIRE(tss->value_schema->value_kind() == ValueTypeKind::Set);
     REQUIRE(tss->value_schema->element_type == str_meta);
 
     // delta_value_schema = Bundle{added: Set<string>, removed: Set<string>}
     REQUIRE(tss->delta_value_schema != nullptr);
-    REQUIRE(tss->delta_value_schema->kind == ValueTypeKind::Bundle);
+    REQUIRE(tss->delta_value_schema->value_kind() == ValueTypeKind::Bundle);
     REQUIRE(tss->delta_value_schema->field_count == 2);
     REQUIRE(std::string(tss->delta_value_schema->fields[0].name) == "added");
     REQUIRE(std::string(tss->delta_value_schema->fields[1].name) == "removed");
@@ -67,14 +67,14 @@ TEST_CASE("ts_schemas: TSD<K, V>.value_schema is Map<K, V.value_schema>, delta i
     // value_schema = Map<string, int>
     const auto *expected_value = registry.map(str_meta, ts_int->value_schema);
     REQUIRE(tsd->value_schema == expected_value);
-    REQUIRE(tsd->value_schema->kind == ValueTypeKind::Map);
+    REQUIRE(tsd->value_schema->value_kind() == ValueTypeKind::Map);
     REQUIRE(tsd->value_schema->key_type == str_meta);
     REQUIRE(tsd->value_schema->element_type == int_meta);
 
     // delta_value_schema = Bundle{removed: Set<string>, modified: Map<string, int>}
     // (modified carries both new and updated entries — see schema design doc)
     REQUIRE(tsd->delta_value_schema != nullptr);
-    REQUIRE(tsd->delta_value_schema->kind == ValueTypeKind::Bundle);
+    REQUIRE(tsd->delta_value_schema->value_kind() == ValueTypeKind::Bundle);
     REQUIRE(tsd->delta_value_schema->field_count == 2);
     REQUIRE(std::string(tsd->delta_value_schema->fields[0].name) == "removed");
     REQUIRE(std::string(tsd->delta_value_schema->fields[1].name) == "modified");
@@ -99,7 +99,7 @@ TEST_CASE("ts_schemas: TSL<T>.value_schema is List<T.value>, delta is Map<int, T
         // value_schema = List<double, 4>
         const auto *expected_value = registry.list(double_meta, 4);
         REQUIRE(tsl->value_schema == expected_value);
-        REQUIRE(tsl->value_schema->kind == ValueTypeKind::List);
+        REQUIRE(tsl->value_schema->value_kind() == ValueTypeKind::List);
         REQUIRE(tsl->value_schema->element_type == double_meta);
         REQUIRE(tsl->value_schema->fixed_size == 4);
 
@@ -139,7 +139,7 @@ TEST_CASE("ts_schemas: TSW<T>.value_schema is List<T, period>, delta is T")
         // value_schema = List<double, 10>
         const auto *expected_value = registry.list(double_meta, 10);
         REQUIRE(win->value_schema == expected_value);
-        REQUIRE(win->value_schema->kind == ValueTypeKind::List);
+        REQUIRE(win->value_schema->value_kind() == ValueTypeKind::List);
         REQUIRE(win->value_schema->element_type == double_meta);
         REQUIRE(win->value_schema->fixed_size == 10);
 
@@ -176,7 +176,7 @@ TEST_CASE("ts_schemas: TSB<{f...}>.value_schema is Bundle{f.value...}, delta is 
 
     // value_schema = Bundle{price: double, size: int}
     REQUIRE(tsb->value_schema != nullptr);
-    REQUIRE(tsb->value_schema->kind == ValueTypeKind::Bundle);
+    REQUIRE(tsb->value_schema->value_kind() == ValueTypeKind::Bundle);
     REQUIRE(tsb->value_schema->field_count == 2);
     REQUIRE(std::string(tsb->value_schema->fields[0].name) == "price");
     REQUIRE(std::string(tsb->value_schema->fields[1].name) == "size");
@@ -186,7 +186,7 @@ TEST_CASE("ts_schemas: TSB<{f...}>.value_schema is Bundle{f.value...}, delta is 
     // delta_value_schema = Bundle{price: double, size: int} — same shape since
     // each TS<T> has delta == T.
     REQUIRE(tsb->delta_value_schema != nullptr);
-    REQUIRE(tsb->delta_value_schema->kind == ValueTypeKind::Bundle);
+    REQUIRE(tsb->delta_value_schema->value_kind() == ValueTypeKind::Bundle);
     REQUIRE(tsb->delta_value_schema->field_count == 2);
     REQUIRE(tsb->delta_value_schema->fields[0].type == double_meta);
     REQUIRE(tsb->delta_value_schema->fields[1].type == int_meta);
@@ -227,7 +227,7 @@ TEST_CASE("ts_schemas: REF<T> value/delta schemas are TimeSeriesReference, but t
     // TimeSeriesReference atomic.
     const auto *ref_atom = registry.value_type("TimeSeriesReference");
     REQUIRE(ref_atom != nullptr);
-    REQUIRE(ref_atom->kind == ValueTypeKind::Atomic);
+    REQUIRE(ref_atom->value_kind() == ValueTypeKind::Atomic);
 
     REQUIRE(ref_int->value_schema == ref_atom);
     REQUIRE(ref_int->delta_value_schema == ref_atom);
@@ -265,7 +265,7 @@ TEST_CASE("ts_schemas: nested compositions resolve recursively")
     // tsd.delta_value_schema = Bundle{removed, modified} where the
     // modified-map values are Map<int, double> (TSL's delta).
     REQUIRE(tsd->delta_value_schema != nullptr);
-    REQUIRE(tsd->delta_value_schema->kind == ValueTypeKind::Bundle);
+    REQUIRE(tsd->delta_value_schema->value_kind() == ValueTypeKind::Bundle);
     REQUIRE(tsd->delta_value_schema->field_count == 2);
 
     const auto *int_meta               = registry.value_type("int");

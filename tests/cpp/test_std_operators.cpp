@@ -14,6 +14,8 @@
 // with ``Value`` equality.
 
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/operators/impl/arithmetic_impl.h>
+#include <hgraph/lib/std/operators/impl/collection_impl.h>
 #include <hgraph/lib/std/operators/impl/string_impl.h>
 #include <hgraph/lib/std/standard_types.h>
 #include <hgraph/lib/std/value_util.h>
@@ -460,6 +462,17 @@ TEST_CASE("std operators: add_ selects the int implementation for TS<Int> operan
 {
     stdlib::register_standard_operators();
     CHECK_OUTPUT(eval_node<stdlib::add_>(values<Int>(1, 2, 3), values<Int>(10, 20, 30)), values<Int>(11, 22, 33));
+}
+
+TEST_CASE("stdlib nonthrowing schema helpers reject malformed compact kinds")
+{
+    using namespace hgraph;
+
+    ValueTypeMetaData malformed{ValueTypeKind::Atomic, ValueTypeFlags::None, "malformed"};
+    malformed.header.kind = static_cast<TypeKind>(ValueTypeKind::Any) + 1;
+
+    REQUIRE(stdlib::arithmetic_impl_detail::container_agg_element_meta<ValueTypeKind::Map>(&malformed) == nullptr);
+    REQUIRE(stdlib::collection_impl_detail::nested_map_meta(&malformed) == nullptr);
 }
 
 TEST_CASE("std operators: add_ supports mixed numeric operands (int + float -> float)")
@@ -961,7 +974,7 @@ TEST_CASE("std operators: string operators support replace substr and container 
             "split", std::span<const WiringArg>{unresolved_split_args.data(), unresolved_split_args.size()}, true);
         const auto *out = default_split.map.find_ts("O");
         REQUIRE(out != nullptr);
-        CHECK(out->value_schema->kind == ValueTypeKind::List);
+        CHECK(out->value_schema->value_kind() == ValueTypeKind::List);
         CHECK(out->value_schema->has(ValueTypeFlags::VariadicTuple));
     }
 

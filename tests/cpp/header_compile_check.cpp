@@ -110,7 +110,7 @@ void instantiate_schema() {
 
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     assert(int_meta != nullptr);
-    assert(int_meta->kind == hgraph::ValueTypeKind::Atomic);
+    assert(int_meta->value_kind() == hgraph::ValueTypeKind::Atomic);
     assert(int_meta == registry.value_type("int32"));
 
     [[maybe_unused]] const auto *ts_int = registry.ts(int_meta);

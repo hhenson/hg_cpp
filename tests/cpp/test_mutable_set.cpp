@@ -34,7 +34,7 @@ TEST_CASE("mutable set: the Mutable schema axis interns distinctly from the immu
     const ValueTypeMetaData *mutable_  = registry.mutable_set(int_meta);
 
     REQUIRE(mutable_ != nullptr);
-    CHECK(mutable_->kind == ValueTypeKind::Set);
+    CHECK(mutable_->value_kind() == ValueTypeKind::Set);
     CHECK(mutable_->is_mutable());
     CHECK_FALSE(immutable->is_mutable());
     CHECK(mutable_ != immutable);

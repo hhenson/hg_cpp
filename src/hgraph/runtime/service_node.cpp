@@ -448,7 +448,7 @@ namespace hgraph
                                                            const ValueView &state)
         {
             if (output_schema.delta_value_schema == nullptr ||
-                output_schema.delta_value_schema->kind != ValueTypeKind::Bundle ||
+                output_schema.delta_value_schema->value_kind() != ValueTypeKind::Bundle ||
                 output_schema.delta_value_schema->field_count != 2)
             {
                 throw std::logic_error("request input source output has no TSD delta schema");
