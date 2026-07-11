@@ -414,6 +414,90 @@ namespace hgraph
                                         static_cast<std::int64_t>(rows.size()))};
     }
 
+    Frame frame_from_values(const TableConverter &converter, std::span<const Value> rows)
+    {
+        const auto        &columns = converter.columns;
+        arrow::FieldVector fields;
+        fields.reserve(columns.size());
+        for (const auto &column : columns) { fields.push_back(arrow::field(column.name, column.type)); }
+        const auto schema = arrow::schema(std::move(fields));
+
+        std::vector<std::unique_ptr<arrow::ArrayBuilder>> builders;
+        builders.reserve(columns.size());
+        for (const auto &column : columns) { builders.push_back(make_builder(column.type)); }
+
+        for (const Value &row : rows)
+        {
+            const ValueView view = row.view();
+            for (std::size_t i = 0; i < columns.size(); ++i)
+            {
+                const auto &column = columns[i];
+                if (column.path.empty()) { append_column(column, view, *builders[i]); }
+                else { append_column(column, view.as_bundle().at(column.path.front()), *builders[i]); }
+            }
+        }
+
+        arrow::ArrayVector arrays;
+        arrays.reserve(columns.size());
+        for (auto &builder : builders) { arrays.push_back(finish(*builder)); }
+        return Frame{arrow::Table::Make(schema, std::move(arrays),
+                                        static_cast<std::int64_t>(rows.size()))};
+    }
+
+    std::vector<std::string> frame_column_names(const Frame &frame)
+    {
+        std::vector<std::string> names;
+        if (!frame.has_value()) { return names; }
+        for (const auto &field : frame.table->schema()->fields()) { names.push_back(field->name()); }
+        return names;
+    }
+
+    Value frame_cell(const Frame &frame, std::string_view column, const ValueTypeMetaData *leaf,
+                     std::int64_t row)
+    {
+        if (!frame.has_value()) { throw std::invalid_argument("table codec: cannot read an empty frame"); }
+        const auto chunked = frame.table->GetColumnByName(std::string{column});
+        if (chunked == nullptr)
+        {
+            throw std::invalid_argument(fmt::format("table codec: frame is missing column '{}'", column));
+        }
+        std::shared_ptr<arrow::Array> array;
+        if (chunked->num_chunks() != 1)
+        {
+            const auto combined = arrow::Concatenate(chunked->chunks());
+            if (!combined.ok()) { fail_status(combined.status(), "concatenate chunks"); }
+            array = *combined;
+        }
+        else { array = chunked->chunk(0); }
+        if (array->IsNull(row)) { return Value{}; }
+        const LeafOps ops = leaf_ops_for(leaf);
+        const Column  temp{.name = std::string{column}, .leaf_meta = leaf, .type = ops.type};
+        return ops.read(temp, *array, row);
+    }
+
+    Frame frame_rename_columns(const Frame &frame,
+                               std::span<const std::pair<std::string, std::string>> renames)
+    {
+        if (!frame.has_value()) { return frame; }
+        std::vector<std::string> names;
+        for (const auto &field : frame.table->schema()->fields())
+        {
+            std::string name = field->name();
+            for (const auto &[from, to] : renames)
+            {
+                if (name == from)
+                {
+                    name = to;
+                    break;
+                }
+            }
+            names.push_back(std::move(name));
+        }
+        auto renamed = frame.table->RenameColumns(names);
+        if (!renamed.ok()) { fail_status(renamed.status(), "rename columns"); }
+        return Frame{*renamed};
+    }
+
     Value read_row(const TableConverter &converter, const Frame &frame, std::int64_t row)
     {
         if (!frame.has_value()) { throw std::invalid_argument("table codec: cannot read from an empty frame"); }

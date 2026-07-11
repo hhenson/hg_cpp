@@ -87,6 +87,7 @@ set(HGRAPH_STDLIB_SOURCES
     hgraph/lib/std/operators/conversion_impl.cpp
     hgraph/lib/std/operators/higher_order_impl.cpp
     hgraph/lib/std/operators/io_impl.cpp
+    hgraph/lib/std/operators/data_frame_impl.cpp
     hgraph/lib/std/operators/json_impl.cpp
     hgraph/lib/std/operators/logical_impl.cpp
     hgraph/lib/std/operators/record_replay_frame_impl.cpp

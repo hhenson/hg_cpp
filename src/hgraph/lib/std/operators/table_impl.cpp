@@ -402,7 +402,8 @@ namespace hgraph::stdlib
             void emit_frame_rows(const TsTableLayout &layout, const TSInputView &leaf, DateTime now,
                                  DateTime as_of, std::vector<Value> &rows)
             {
-                const Frame &frame = leaf.value().checked_as<Frame>();
+                const ValueView view  = leaf.value();
+                const Frame    &frame = view.checked_as<Frame>();
                 if (!frame.has_value()) { return; }
                 for (std::int64_t r = 0; r < frame_rows(frame); ++r)
                 {

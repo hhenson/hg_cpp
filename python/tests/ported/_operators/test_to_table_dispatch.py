@@ -15,7 +15,15 @@ from hgraph import TS, CompoundScalar, TimeSeriesSchema, TSB, compute_node, TIME
 from hgraph._compat import extract_table_schema_raw_type, PartialSchema
 from hgraph.test import eval_node
 
-pytestmark = pytest.mark.wip
+# This file exercises upstream's `_impl` INTERNALS (the PartialSchema
+# builder-closure bundle and its raw-type extraction), not operator
+# behaviour. The C++ equivalent is the interned TsTableLayout/TableConverter
+# (design record *Record/replay, tables and const_fn*, step 6), whose
+# behaviour is covered by test_to_table.py (the same schema/partition-key
+# shapes assert there through the public table_schema/to_table surface).
+pytestmark = pytest.mark.skip(
+    reason="deviation: upstream _impl internals (PartialSchema dispatch); the C++ "
+           "equivalent is the interned TsTableLayout, covered by test_to_table.py")
 
 
 @compute_node(resolvers={TABLE: lambda m, schema: tuple[tuple[*schema.types], ...] if schema.partition_keys else tuple[*schema.types]})

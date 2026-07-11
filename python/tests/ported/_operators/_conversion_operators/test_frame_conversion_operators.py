@@ -17,8 +17,6 @@ from frozendict import frozendict
 from hgraph import CompoundScalar, TS, TSD, convert, Frame, graph, combine
 from hgraph.test import eval_node
 
-pytestmark = pytest.mark.wip
-
 
 def test_convert_tsd_to_frame():
     @dataclass

@@ -1823,6 +1823,26 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     named_series = {k: v for k, v in kwargs.items() if k in param_names and isinstance(v, (list, tuple))}
     for k in named_series:
         kwargs.pop(k)
+    if not named_series and kwargs and params:
+        # A non-list kwarg naming a TS-annotated param is a plain value:
+        # promote it to its positional slot so the const-lift rule applies
+        # (scalar-annotated params pass through unchanged either way).
+        from ._types import _TsExpr as _TsE
+        promoted = {k: v for k, v in kwargs.items()
+                    if k in param_names and isinstance(
+                        dict((p.name, p.annotation) for p in params).get(k), _TsE)}
+        if promoted:
+            named_series = {k: v for k, v in promoted.items()}
+            for k in named_series:
+                kwargs.pop(k)
+            by_name = {p.name: i for i, p in enumerate(params)}
+            extended = list(inputs) + [None] * (max(by_name[k] for k in named_series) + 1 - len(inputs))
+            for k, value in named_series.items():
+                extended[by_name[k]] = value
+            return eval_node(fn, *extended, output_type=output_type, resolution_dict=resolution_dict,
+                             __start_time__=__start_time__, __end_time__=__end_time__,
+                             __scalars__=__scalars__, __elide__=__elide__, **kwargs)
+        named_series = {}
     if named_series:
         by_name = {p.name: i for i, p in enumerate(params)}
         extended = list(inputs) + [None] * (max(by_name[k] for k in named_series) + 1 - len(inputs))

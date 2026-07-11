@@ -138,8 +138,19 @@ def _value_type(scalar):
             import dataclasses
 
             fields = [(f.name, _value_type(f.type)) for f in dataclasses.fields(scalar)]
-            meta = _hgraph.bundle_vt(scalar.__name__, fields)
-            _hgraph.register_bundle_class(scalar.__name__, scalar)
+            if getattr(scalar, "__unnamed_compound__", False):
+                # compound_scalar(**kwargs) anonymous compounds are the
+                # STRUCTURAL (un-named) bundle (scalar.rst nominal-vs-
+                # structural rule).
+                return _hgraph.un_named_bundle_vt(fields)
+            # Function-local classes qualify by module+qualname (the enum
+            # rule): two same-named locals must not collide nominally.
+            bundle_name = scalar.__name__
+            qualname = getattr(scalar, "__qualname__", bundle_name)
+            if "<locals>" in qualname:
+                bundle_name = f"{scalar.__module__}.{qualname}"
+            meta = _hgraph.bundle_vt(bundle_name, fields)
+            _hgraph.register_bundle_class(bundle_name, scalar)
             return meta
     if name is None and isinstance(scalar, type) and issubclass(scalar, _enum.Enum):
         # A python Enum is a FIRST-CLASS enum scalar (nominal identity by
@@ -268,6 +279,29 @@ class _TsExpr:
                     value = wire("const", value, output_type=tp)
                 lifted[name] = value
             return wire("combine_json", **lifted)
+        if kwargs and not ports and getattr(self.handle, "is_ts", False):
+            # The GENERIC kwargs form for any remaining TS-valued target
+            # (e.g. combine[TS[Frame[X]]](a=..., b=...)): pack a structural
+            # un-named TSB and let the C++ registry's overload matching pick
+            # the kernel from the target - no py-side kind tests.
+            lifted = {}
+            for name, value in kwargs.items():
+                unwrapped = _unwrap(value)
+                if not isinstance(unwrapped, _m.Port):
+                    from ._runtime import _infer_ts_type
+
+                    tp = _infer_ts_type([value])
+                    if tp is None:
+                        raise TypeError(f"combine: cannot infer a type for '{name}'")
+                    value = wire("const", value, output_type=tp)
+                lifted[name] = value
+            fields = [(k, _unwrap(v).ts_type) for k, v in lifted.items()]
+            tsb_type = _m.un_named_tsb_type(fields)
+            structural = WiringPort(
+                _m.tsb_port(tsb_type, {k: _unwrap(v) for k, v in lifted.items()}))
+            if strict_cs is False:
+                return wire("combine", structural, __strict__=False, output_type=self)
+            return wire("combine", structural, output_type=self)
         if ports and not kwargs:
             # combine[TS[frozendict...]](keys, values) -> the combine_map
             # operator. The BARE frozendict form
@@ -593,7 +627,9 @@ class _TSBMeta(type):
         # __name__ stays for stable top-level classes (nicer diagnostics).
         name = schema.__name__
         qualname = getattr(schema, "__qualname__", name)
-        if "<locals>" in qualname and not is_cs:
+        if "<locals>" in qualname:
+            # CS classes qualify the same way in _value_type, so the TSB's
+            # value side stays THE SAME named bundle as the CS registration.
             name = f"{schema.__module__}.{qualname}"
         return _TsExpr(_hgraph.tsb(name, fields), f"TSB[{schema.__name__}]")
 
@@ -736,7 +772,7 @@ def compound_scalar(**kwargs):
     label = "_".join(f"{name}_{tp!r}" for name, tp in kwargs.items())
     digest = hashlib.md5(label.encode()).hexdigest()[:12]
     cls = type(f"UnNamedCompoundScalar_{digest}", (CompoundScalar,),
-               {"__annotations__": dict(kwargs)})
+               {"__annotations__": dict(kwargs), "__unnamed_compound__": True})
     return dataclasses.dataclass(frozen=True)(cls)
 
 

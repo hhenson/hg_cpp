@@ -25,6 +25,7 @@
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
 #include <hgraph/lib/std/operators/impl/io_impl.h>
 #include <hgraph/lib/std/operators/impl/json_impl.h>
+#include <hgraph/lib/std/operators/impl/data_frame_impl.h>
 #include <hgraph/lib/std/operators/impl/record_replay_frame_impl.h>
 #include <hgraph/lib/std/operators/impl/table_impl.h>
 #include <hgraph/lib/std/operators/impl/logical_impl.h>

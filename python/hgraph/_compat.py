@@ -43,7 +43,6 @@ _KNOWN_GAPS = (
     "collapse_keys", "flip_keys", "uncollapse_keys", "values_",
     "assert_", "print_", "setattr_", "type_",
     "evaluation_time_in_range", "round_",
-    "from_data_frame", "to_data_frame",
 )
 
 

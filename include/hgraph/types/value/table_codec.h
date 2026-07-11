@@ -129,6 +129,29 @@ namespace hgraph
     [[nodiscard]] HGRAPH_EXPORT Frame frame_from_rows(const TableConverter &converter,
                                                       std::span<const ValueView> rows,
                                                       std::size_t first_column);
+
+    /**
+     * Build a frame from whole row VALUES (each row a value of the
+     * converter's schema — bundle or atomic), value columns only, no
+     * bitemporal columns (to_data_frame / group_by; design record step 6).
+     */
+    [[nodiscard]] HGRAPH_EXPORT Frame frame_from_values(const TableConverter &converter,
+                                                        std::span<const Value> rows);
+
+    /** The frame's own column names, in schema order. */
+    [[nodiscard]] HGRAPH_EXPORT std::vector<std::string> frame_column_names(const Frame &frame);
+
+    /**
+     * Read one cell by column NAME at ``row``, typed by ``leaf`` (an atomic
+     * scalar meta). An Arrow null yields an empty ``Value``; a missing
+     * column throws (the input-minimum rule).
+     */
+    [[nodiscard]] HGRAPH_EXPORT Value frame_cell(const Frame &frame, std::string_view column,
+                                                 const ValueTypeMetaData *leaf, std::int64_t row);
+
+    /** Rename columns per (from, to) pairs (convert frame->frame mapping). */
+    [[nodiscard]] HGRAPH_EXPORT Frame frame_rename_columns(
+        const Frame &frame, std::span<const std::pair<std::string, std::string>> renames);
 }  // namespace hgraph
 
 #endif  // HGRAPH_TYPES_VALUE_TABLE_CODEC_H

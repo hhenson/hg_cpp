@@ -1737,6 +1737,19 @@ NB_MODULE(_hgraph, m)
     m.def("series_vt", [](PyValueType e) {
         return PyValueType{TypeRegistry::instance().series(e.meta)};
     });
+    m.def("un_named_bundle_vt", [](nb::list fields) {
+        // The structural (un-named) bundle - python's compound_scalar()
+        // anonymous compounds (nominal-vs-structural rule, scalar.rst).
+        std::vector<std::pair<std::string, const ValueTypeMetaData *>> field_metas;
+        field_metas.reserve(nb::len(fields));
+        for (nb::handle field : fields)
+        {
+            auto pair = nb::cast<nb::tuple>(field);
+            field_metas.emplace_back(nb::cast<std::string>(pair[0]),
+                                     nb::cast<PyValueType &>(pair[1]).meta);
+        }
+        return PyValueType{TypeRegistry::instance().un_named_bundle(field_metas)};
+    });
     m.def("frame_vt", [](PyValueType schema) {
         // Frame[Schema]: the typed frame meta carrying its column bundle.
         return PyValueType{TypeRegistry::instance().frame(schema.meta)};
