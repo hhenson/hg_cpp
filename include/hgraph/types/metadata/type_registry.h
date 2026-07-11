@@ -147,6 +147,12 @@ namespace hgraph
             ``element_type`` so operators can resolve the element type. A null
             element returns the base (element-untyped) series scalar. */
         const ValueTypeMetaData *series(const ValueTypeMetaData *element_type);
+        /** A Frame parameterised by its column schema (``Frame[Schema]``, a
+            Bundle meta); shares the base ``frame`` storage plan + ops (the
+            :cpp:func:`series` pattern), distinct meta carrying the schema on
+            ``element_type`` so table operators can resolve columns. A null
+            schema returns the base (untyped) frame scalar. */
+        const ValueTypeMetaData *frame(const ValueTypeMetaData *column_schema);
         /** Intern a set value-schema for ``element_type``. */
         const ValueTypeMetaData *set(const ValueTypeMetaData *element_type);
         /**
@@ -525,6 +531,7 @@ namespace hgraph
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_list_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> nullable_tuple_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> series_cache_;
+        InternTable<const ValueTypeMetaData *, ValueTypeMetaData> frame_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_set_cache_;
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> map_cache_;
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> mutable_map_cache_;

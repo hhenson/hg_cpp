@@ -1,3 +1,4 @@
+#include <hgraph/lib/std/operators/impl/table_impl.h>
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
@@ -136,27 +137,26 @@ namespace
     };
 }  // namespace
 
-TEST_CASE("table operators: to_table emits one bitemporal row per tick")
+TEST_CASE("table operators: to_table emits one bitemporal tuple row per tick")
 {
     stdlib::register_standard_operators();
 
-    // eval_node<Operator> returns type-erased Values; unwrap the Frame scalar.
-    auto frames = eval_node<stdlib::to_table>(values<Int>(42, none, -1));
-    REQUIRE(frames.size() == 3);
-    REQUIRE(frames[0].has_value());
-    CHECK_FALSE(frames[1].has_value());
-    REQUIRE(frames[2].has_value());
+    // The tuple-row parity protocol (design record step 6): TS<int> emits
+    // TS<tuple[datetime, datetime, int]>; eval_node<Operator> returns
+    // type-erased Values.
+    auto rows = eval_node<stdlib::to_table>(values<Int>(42, none, -1));
+    REQUIRE(rows.size() == 3);
+    REQUIRE(rows[0].has_value());
+    CHECK_FALSE(rows[1].has_value());
+    REQUIRE(rows[2].has_value());
 
-    const auto   first_value = frames[0]->view();
-    const auto   last_value  = frames[2]->view();
-    const Frame &first       = first_value.checked_as<Frame>();
-    const Frame &last        = last_value.checked_as<Frame>();
-    CHECK(frame_rows(first) == 1);
-    const auto &converter = table_converter(scalar_descriptor<Int>::value_meta());
-    CHECK(read_row(converter, first, 0).view().checked_as<Int>() == Int{42});
-    CHECK(read_row(converter, last, 0).view().checked_as<Int>() == Int{-1});
-    // The date column carries the tick's evaluation time (cycle 2 = start + 2 ticks).
-    CHECK(timestamp_at(last, "__date_time__", 0) == (MIN_ST + TimeDelta{2}).time_since_epoch().count());
+    const auto first = rows[0]->view();
+    const auto last  = rows[2]->view();
+    REQUIRE(first.is_tuple());
+    CHECK(first.as_tuple().at(2).checked_as<Int>() == Int{42});
+    CHECK(last.as_tuple().at(2).checked_as<Int>() == Int{-1});
+    // The date cell carries the tick's evaluation time (cycle 2 = start + 2 ticks).
+    CHECK(last.as_tuple().at(0).checked_as<DateTime>() == MIN_ST + TimeDelta{2});
 }
 
 TEST_CASE("table operators: to_table honours the configured as_of override")
@@ -166,26 +166,28 @@ TEST_CASE("table operators: to_table honours the configured as_of override")
     const DateTime fixed = MIN_ST + TimeDelta{123456};
     record_replay::set_config(context.state().view(), record_replay::Config{.as_of = fixed});
 
-    auto frames = eval_node<stdlib::to_table>(values<Int>(1));
-    REQUIRE(frames[0].has_value());
-    CHECK(timestamp_at(frames[0]->view().checked_as<Frame>(), "__as_of__", 0) ==
-          fixed.time_since_epoch().count());
+    auto rows = eval_node<stdlib::to_table>(values<Int>(1));
+    REQUIRE(rows[0].has_value());
+    CHECK(rows[0]->view().as_tuple().at(1).checked_as<DateTime>() == fixed);
 }
 
-TEST_CASE("table converters are isolated by seeded column configuration")
+TEST_CASE("table layouts are isolated by seeded column configuration")
 {
     stdlib::register_standard_operators();
     GlobalContext context;
     record_replay::set_config(context.state().view(),
                               record_replay::Config{.date_key = "event_time", .as_of_key = "observed_at"});
 
-    auto frames = eval_node<stdlib::to_table>(values<Int>(1));
-    REQUIRE(frames[0].has_value());
-    const auto   frame_value = frames[0]->view();
-    const Frame &frame       = frame_value.checked_as<Frame>();
-    CHECK(frame.table->GetColumnByName("event_time") != nullptr);
-    CHECK(frame.table->GetColumnByName("observed_at") != nullptr);
-    CHECK(frame.table->GetColumnByName("__date_time__") == nullptr);
+    const auto &layout = stdlib::table_ts_detail::ts_table_layout(
+        TypeRegistry::instance().ts(scalar_descriptor<Int>::value_meta()), "event_time", "observed_at");
+    REQUIRE(layout.keys.size() == 3);
+    CHECK(layout.keys[0] == "event_time");
+    CHECK(layout.keys[1] == "observed_at");
+    CHECK(layout.keys[2] == "value");
+
+    auto rows = eval_node<stdlib::to_table>(values<Int>(1));
+    REQUIRE(rows[0].has_value());
+    CHECK(rows[0]->view().is_tuple());
 }
 
 TEST_CASE("table operators: to_table -> from_table round-trips through a graph")

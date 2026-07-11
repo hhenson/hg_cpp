@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -118,6 +119,16 @@ namespace hgraph
      */
     [[nodiscard]] HGRAPH_EXPORT Value read_row(const TableConverter &converter, const Frame &frame,
                                                std::int64_t row);
+
+    /**
+     * Build a frame from row TUPLE values, value columns only — no
+     * bitemporal columns (the ``from_table`` frame rebuild; design record
+     * step 6). ``first_column`` is the tuple index of the first value
+     * column; unset tuple cells become Arrow nulls.
+     */
+    [[nodiscard]] HGRAPH_EXPORT Frame frame_from_rows(const TableConverter &converter,
+                                                      std::span<const ValueView> rows,
+                                                      std::size_t first_column);
 }  // namespace hgraph
 
 #endif  // HGRAPH_TYPES_VALUE_TABLE_CODEC_H

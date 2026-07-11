@@ -471,3 +471,66 @@ Rulings (Howard, 2026-07-04)
    seeding was expedience ("kept simple because I wanted something I was
    reasonably sure would work"); C++ recovery seeds outputs/recordable state
    directly at start (P7).
+
+Step 6 — the TABLE parity surface (design, 2026-07-11)
+------------------------------------------------------
+
+The user-visible ``to_table`` promised by P4 ("a ``TS`` of row values")
+lands as the **tuple-row protocol**, replacing the step-3 first-pass
+``to_table -> TS<Frame>`` shape (that emission path stays as the
+record/replay backend's fused Arrow route; the frame round-trip remains
+reachable through ``TS[Frame[...]]`` payloads below). Python-parity rules:
+
+- **Row layout** (synthesised once per resolved input TS schema + configured
+  bitemporal names, the serializer-ops pattern):
+  ``[date_key, as_of_key, {removed, *key-cols}(per TSD level), *value-cols]``.
+  Value columns are the ``TableConverter`` flattening (bundles dotted).
+  Partition-key columns follow Python's naming: level *N* of a TSD
+  contributes ``__key_N_removed__`` plus ``__key_N__`` (atomic key),
+  ``__key_N_<i>__`` (tuple key, per index) or ``__key_N_<field>__``
+  (compound key, dotted for nesting).
+- **Row value** = a fixed **Tuple** value over the layout's leaf schemas.
+  A time-series type with no partition keys and no multi-row payload emits
+  ``TS<tuple[...]>`` — one row per tick. Partitioned (any TSD level) or
+  multi-row (``Frame``-valued ``TS``) types emit ``TS<tuple[tuple[...], ...]>``
+  (the variadic-tuple/List value). The output schema is computed at wiring
+  by the ``to_table`` compose (the window-operator precedent).
+- **Nullable cells are tuple field validity.** Upstream writes ``None`` into
+  unmodified/absent cells; here an unset tuple field IS that ``None`` (the
+  established field-validity concept; ``to_python`` already reads holes back
+  as ``None``). The value layer's sequence-fill (``Tuple``-from-python)
+  learns the reverse rule: a ``None`` element marks the field UNSET rather
+  than erroring. No new value kind, no ``Any`` boxes on the hot path.
+- **Modes** (``ToTableMode`` — a first-class C++ enum ``Tick=1, Sample=2,
+  Snap=3`` mirroring Python's ``auto()`` values; the operator takes it as a
+  ``TS`` input defaulting to ``Tick``): *Tick* writes modified leaves only
+  (unmodified cells stay unset); *Sample* writes the full current value for
+  every modified/removed partition entry; *Snap* writes full values for all
+  current entries and no removals. Removal rows set the level's removed flag
+  ``True`` and leave deeper key/value cells unset.
+- **``from_table``** reverses: each row applies as this tick's delta at the
+  resolved output (last-write-wins per tick for whole-value ``TS``; removed
+  flags map to key removal on TSD outputs).
+- **``table_schema``** is const-evaluable in spirit: the C++ layout is the
+  single source (bridge introspection over the synthesised layout); the
+  Python ``TableSchema``/``make_table_schema`` classes are thin declarative
+  mappings from layout leaf kinds to Python types (C++-first API ruling —
+  no schema derivation logic in Python).
+- **``Frame``-valued ``TS``** payloads are multi-row: ``to_table`` explodes
+  the tick's frame into one row per frame row (shared bitemporal cells);
+  ``from_table`` rebuilds the frame. The typed wiring marker
+  ``Frame[Schema]`` maps to an interned typed frame meta
+  (``TypeRegistry::frame(bundle)`` — the ``series(element)`` pattern:
+  shared storage plan + ops, distinct meta carrying the column schema).
+- **Data-frame convenience operators** (Python's
+  ``to_data_frame``/``from_data_frame``/``group_by``): the same layout
+  machinery with a plain ``date`` column and no ``as_of``;
+  ``to_data_frame`` emits one-tick frames, ``from_data_frame`` replays a
+  frame VALUE by its date column (TSD forms take ``key_col``). These ride
+  the tuple-row/frame codecs — no third serialisation path.
+
+The TS-level walkers live with the operator impls (the ``json_ts_detail``
+precedent): layout synthesis + row emission in ``lib/std/operators/impl``
+(interned per (ts-schema, date-key, as-of-key); cleared on registry reset
+per the plan-registries rule); the value-level ``TableConverter`` is
+unchanged underneath.

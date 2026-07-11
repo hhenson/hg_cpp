@@ -373,6 +373,13 @@ namespace hgraph
             for (std::size_t index = 0; index < fill_count; ++index)
             {
                 nb::object element = sequence[index];
+                // None = UNSET (field validity) - the TABLE row convention:
+                // to_python reads holes back as None, so None round-trips.
+                if (element.is_none())
+                {
+                    composite_mark_field(state, memory, index, false);
+                    continue;
+                }
                 auto      *child   = static_cast<std::byte *>(memory) + state->offsets[index];
                 assign_child_from_python(*state->child_bindings[index], child, element, what);
             }

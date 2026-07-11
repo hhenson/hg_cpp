@@ -394,6 +394,7 @@ namespace hgraph
         mutable_list_cache_.clear();
         nullable_tuple_cache_.clear();
         series_cache_.clear();
+        frame_cache_.clear();
         mutable_set_cache_.clear();
         map_cache_.clear();
         mutable_map_cache_.clear();
@@ -671,6 +672,27 @@ namespace hgraph
         // element-agnostic). Re-registered every call so it self-heals across
         // a registry reset (the meta is interned once; the plan/binding caches
         // clear on reset).
+        const auto *base_binding = ValuePlanFactory::instance().binding_for(base);
+        ValuePlanFactory::instance().register_atomic(&meta, base_binding->plan());
+        ValuePlanFactory::instance().register_binding(
+            ValueTypeBinding::intern(meta, *base_binding->plan(), base_binding->ops_ref()));
+        return &meta;
+    }
+
+    const ValueTypeMetaData *TypeRegistry::frame(const ValueTypeMetaData *column_schema)
+    {
+        const ValueTypeMetaData *base = value_type("frame");
+        if (base == nullptr) { throw std::logic_error("frame scalar is not registered"); }
+        if (column_schema == nullptr) { return base; }
+
+        const ValueTypeMetaData &meta = frame_cache_.intern(column_schema, [&]() {
+            ValueTypeMetaData m(ValueTypeKind::Atomic, base->flags, base->display_name);
+            m.element_type = column_schema;
+            return m;
+        });
+        // Share the base frame storage plan + ops (arrow conversion is
+        // schema-agnostic); re-registered every call so it self-heals across
+        // a registry reset (the series() pattern).
         const auto *base_binding = ValuePlanFactory::instance().binding_for(base);
         ValuePlanFactory::instance().register_atomic(&meta, base_binding->plan());
         ValuePlanFactory::instance().register_binding(

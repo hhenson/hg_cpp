@@ -23,6 +23,10 @@ def _value_type(scalar):
         return _hgraph.series_vt(_value_type(scalar.element))
     if scalar is Series:
         return _hgraph.value_type("series")   # element-untyped base
+    if isinstance(scalar, _FrameType):
+        return _hgraph.frame_vt(_value_type(scalar.schema))
+    if scalar is Frame:
+        return _hgraph.value_type("frame")    # schema-untyped base
     if isinstance(scalar, str):
         return _hgraph.value_type(scalar)
     if isinstance(scalar, _TypeVarSentinel):
@@ -447,6 +451,37 @@ class Series(metaclass=_SeriesMeta):
     """Series[T] - a first-class arrow-backed column scalar."""
 
 
+class _FrameMeta(type):
+    def __getitem__(cls, schema):
+        # Frame[Schema] - an arrow-backed table. The C++ value kind is the
+        # 'frame' scalar; the typed form carries its column bundle so table
+        # operators can resolve columns (an input schema is a MINIMUM
+        # requirement, an output schema is exact - the P4 ruling).
+        return _FrameType(schema)
+
+
+class _FrameType:
+    """Frame[Schema]: resolves to the typed 'frame' scalar value type."""
+
+    __slots__ = ("schema",)
+
+    def __init__(self, schema):
+        self.schema = schema
+
+    def __repr__(self):
+        return f"Frame[{getattr(self.schema, '__name__', self.schema)!r}]"
+
+    def __eq__(self, other):
+        return isinstance(other, _FrameType) and self.schema is other.schema
+
+    def __hash__(self):
+        return hash((_FrameType, self.schema))
+
+
+class Frame(metaclass=_FrameMeta):
+    """Frame[Schema] - a first-class arrow-backed table scalar."""
+
+
 class _TSWMeta(type):
     def __getitem__(cls, item):
         # TSW[T] / TSW[T, WindowSize[N]] / TSW[T, WindowSize[N], WindowSize[M]].
@@ -640,6 +675,8 @@ K = _TypeVarSentinel("K")
 WINDOW_SIZE = _TypeVarSentinel("WINDOW_SIZE")
 ENUM = _TypeVarSentinel("ENUM")
 WINDOW_SIZE_MIN = _TypeVarSentinel("WINDOW_SIZE_MIN")
+TABLE = _TypeVarSentinel("TABLE")
+COMPOUND_SCALAR = _TypeVarSentinel("COMPOUND_SCALAR")
 
 
 class _GenericTsExpr:
@@ -685,6 +722,22 @@ def ts_schema(**kwargs):
     schema = type(f"UnNamedTimeSeriesSchema_{digest}", (TimeSeriesSchema,), {})
     schema.__annotations__ = dict(kwargs)
     return schema
+
+
+def compound_scalar(**kwargs):
+    """hgraph parity: build an un-named CompoundScalar type from kwargs (the
+    ts_schema analogue at the scalar layer). The type name derives from the
+    field spec so equal shapes intern to the same C++ bundle."""
+    import dataclasses
+    import hashlib
+
+    from ._compat import CompoundScalar
+
+    label = "_".join(f"{name}_{tp!r}" for name, tp in kwargs.items())
+    digest = hashlib.md5(label.encode()).hexdigest()[:12]
+    cls = type(f"UnNamedCompoundScalar_{digest}", (CompoundScalar,),
+               {"__annotations__": dict(kwargs)})
+    return dataclasses.dataclass(frozen=True)(cls)
 
 
 class _DefaultMeta(type):

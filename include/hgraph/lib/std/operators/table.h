@@ -10,27 +10,32 @@ namespace hgraph::stdlib
 {
     /**
      * Table serialization operators (design record: *Record/replay, tables
-     * and const_fn*, P4). ``to_table`` converts each tick's value into a
-     * one-row bitemporal ``Frame`` (``[date, as_of, *columns]``; Arrow-backed
-     * — see ``types/value/table_codec.h``); ``from_table`` reverses it,
-     * resolving frame columns BY NAME (the input-minimum rule: extra columns
-     * pass through, missing required columns throw). The output type is
-     * supplied at the wiring site: ``wire<from_table, TS<MySchema>>(w, ts)``.
+     * and const_fn*, P4 + step 6). ``to_table`` is the Python-parity TUPLE-ROW
+     * protocol: each tick converts to bitemporal row values
+     * ``[date, as_of, {removed, *keys}(per TSD level), *value columns]`` —
+     * ``TS<tuple[...]>`` for single-row types, ``TS<tuple[tuple[...], ...]>``
+     * for partitioned (TSD) or multi-row (``Frame``-valued) types; unset
+     * cells are tuple field validity (Python ``None``). The output schema is
+     * computed from the resolved input at wiring. ``mode`` is a ``ToTableMode``
+     * enum time-series (Tick/Sample/Snap) defaulting to Tick.
      *
-     * v1 covers ``TS`` over atomics and depth-1 compound bundles; TSD
-     * partitioning and the Sample/Snap write modes land with the
-     * record/replay backend (step 4).
+     * ``from_table`` reverses it, applying each row as the tick's delta at
+     * the resolved output (supplied at the wiring site:
+     * ``wire<from_table, TS<MySchema>>(w, ts)``); removed flags map to TSD
+     * key removals. The record/replay backends bypass both and drive the
+     * Arrow serializer ops directly (``types/value/table_codec.h``).
      */
-    struct to_table : Operator<"to_table", In<"ts", TsVar<"S">>, Out<TS<Frame>>>
+    struct to_table : Operator<"to_table", In<"ts", TsVar<"S">>, In<"mode", TS<ScalarVar<"M">>>, Out<TsVar<"__out__">>>
     {
     };
 
-    struct from_table : Operator<"from_table", In<"ts", TS<Frame>>, Out<TsVar<"O">>>
+    struct from_table : Operator<"from_table", In<"ts", TsVar<"T">>, Out<TsVar<"O">>>
     {
     };
 
-    /** ``from_table_const`` — the const-evaluable form of ``from_table``:
-        extract the (last) row of a frame VALUE as the output type. */
+    /** ``from_table_const`` — the const-evaluable read of a recorded FRAME
+        value (the replay_const seam): extract the (last) row of a frame
+        VALUE as the output type. */
     struct from_table_const : Operator<"from_table_const", Scalar<"value", Frame>, Out<TsVar<"O">>>
     {
     };

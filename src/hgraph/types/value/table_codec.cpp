@@ -385,6 +385,35 @@ namespace hgraph
         return Frame{arrow::Table::Make(converter.arrow_schema, std::move(arrays), 1)};
     }
 
+    Frame frame_from_rows(const TableConverter &converter, std::span<const ValueView> rows,
+                          std::size_t first_column)
+    {
+        const auto        &columns = converter.columns;
+        arrow::FieldVector fields;
+        fields.reserve(columns.size());
+        for (const auto &column : columns) { fields.push_back(arrow::field(column.name, column.type)); }
+        const auto schema = arrow::schema(std::move(fields));
+
+        std::vector<std::unique_ptr<arrow::ArrayBuilder>> builders;
+        builders.reserve(columns.size());
+        for (const auto &column : columns) { builders.push_back(make_builder(column.type)); }
+
+        for (const ValueView &row : rows)
+        {
+            const auto tuple = row.as_tuple();
+            for (std::size_t i = 0; i < columns.size(); ++i)
+            {
+                append_column(columns[i], tuple.at(first_column + i), *builders[i]);
+            }
+        }
+
+        arrow::ArrayVector arrays;
+        arrays.reserve(columns.size());
+        for (auto &builder : builders) { arrays.push_back(finish(*builder)); }
+        return Frame{arrow::Table::Make(schema, std::move(arrays),
+                                        static_cast<std::int64_t>(rows.size()))};
+    }
+
     Value read_row(const TableConverter &converter, const Frame &frame, std::int64_t row)
     {
         if (!frame.has_value()) { throw std::invalid_argument("table codec: cannot read from an empty frame"); }

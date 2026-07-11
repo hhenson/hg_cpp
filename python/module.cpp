@@ -18,6 +18,7 @@
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/lib/std/operators/json.h>
 #include <hgraph/lib/std/operators/impl/io_impl.h>   // io_write_slot (sys.stdout routing)
+#include <hgraph/lib/std/operators/impl/table_impl.h>   // ts_table_layout (table_schema_info)
 #include <hgraph/types/value/json_codec.h>          // to_json_string / from_json_string (builders)
 #include <hgraph/types/context_wiring.h>
 #include <hgraph/types/service_runtime.h>
@@ -1736,6 +1737,35 @@ NB_MODULE(_hgraph, m)
     m.def("series_vt", [](PyValueType e) {
         return PyValueType{TypeRegistry::instance().series(e.meta)};
     });
+    m.def("frame_vt", [](PyValueType schema) {
+        // Frame[Schema]: the typed frame meta carrying its column bundle.
+        return PyValueType{TypeRegistry::instance().frame(schema.meta)};
+    });
+    m.def("table_schema_info", [](PyTsType ts, const std::string &date_key, const std::string &as_of_key) {
+        // TABLE layout introspection (design record step 6): the C++ layout
+        // is the single source; python's TableSchema maps it declaratively.
+        const auto &layout =
+            hgraph::stdlib::table_ts_detail::ts_table_layout(ts.meta, date_key, as_of_key);
+        nb::dict info;
+        nb::list keys, types, partition_keys, removed_keys;
+        for (std::size_t i = 0; i < layout.keys.size(); ++i)
+        {
+            keys.append(nb::str(layout.keys[i].c_str()));
+            const auto *meta = layout.col_metas[i];
+            types.append(
+                nb::str(meta != nullptr && meta->display_name != nullptr ? meta->display_name : "?"));
+        }
+        for (const auto &name : layout.partition_keys) { partition_keys.append(nb::str(name.c_str())); }
+        for (const auto &name : layout.removed_keys) { removed_keys.append(nb::str(name.c_str())); }
+        info["keys"]           = keys;
+        info["types"]          = types;
+        info["partition_keys"] = partition_keys;
+        info["removed_keys"]   = removed_keys;
+        info["date_key"]       = nb::str(layout.date_key.c_str());
+        info["as_of_key"]      = nb::str(layout.as_of_key.c_str());
+        info["is_multi_row"]   = layout.is_multi_row;
+        return info;
+    });
     m.def("fixed_tuple_vt", [](nb::list elements) {
         std::vector<const ValueTypeMetaData *> metas;
         metas.reserve(nb::len(elements));
@@ -1987,6 +2017,10 @@ NB_MODULE(_hgraph, m)
         auto config = record_replay::config(state.view());
         config.as_of_key = key;
         record_replay::set_config(state.view(), std::move(config));
+    });
+    m.def("_table_schema_keys", [](GlobalState &state) {
+        const auto config = record_replay::config(state.view());
+        return nb::make_tuple(config.date_key, config.as_of_key);
     });
     m.attr("MODE_NONE")          = static_cast<unsigned>(record_replay::Mode::None);
     m.attr("MODE_RECORD")        = static_cast<unsigned>(record_replay::Mode::Record);

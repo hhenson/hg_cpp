@@ -43,7 +43,25 @@ _KNOWN_GAPS = (
     "collapse_keys", "flip_keys", "uncollapse_keys", "values_",
     "assert_", "print_", "setattr_", "type_",
     "evaluation_time_in_range", "round_",
+    "from_data_frame", "to_data_frame",
 )
+
+
+class PartialSchema:
+    """Upstream's per-type to_table builder bundle (an _impl internal). The
+    C++ equivalent is the interned TS-table layout (TableConverter /
+    ts_table_layout); this name exists so ported tests import, and raises
+    at use."""
+
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError(
+            "gap: PartialSchema is an upstream _impl internal (C++: ts_table_layout)")
+
+
+def extract_table_schema_raw_type(tp):
+    raise NotImplementedError(
+        "gap: extract_table_schema_raw_type is an upstream _impl internal "
+        "(use table_schema(tp) - the C++ layout introspection)")
 
 
 def _gap(name):
