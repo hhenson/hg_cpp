@@ -263,6 +263,57 @@ namespace hgraph::stdlib
             }
         };
 
+        /** std over a NUMERIC TSW: the POPULATION standard deviation of the
+            window contents (hgraph parity for windowed std). */
+        template <typename T>
+        struct tsw_std_impl
+        {
+            static constexpr auto name = std::same_as<T, Int> ? "std_tsw_int" : "std_tsw_float";
+
+            [[nodiscard]] static bool matches(OperatorCallContext context)
+            {
+                const auto *schema = time_series_schema_at_as<AnyTSW>(context, 0);
+                return schema != nullptr &&
+                       schema->value_schema->element_type == scalar_descriptor<T>::value_meta();
+            }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context) { return matches(context); }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (output_bound(resolution)) { return; }
+                if (!matches(context)) { return; }
+                bind_output(resolution,
+                            TypeRegistry::instance().ts(scalar_descriptor<Float>::value_meta()));
+            }
+
+            static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+            {
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                if (!ts.valid()) { return; }
+                const TSWInputView window_input{ts.base().borrowed_ref()};
+                auto window = window_input.data_view();
+                if (!tsw_ready(window)) { return; }
+
+                const auto size = window.size();
+                Float      total{};
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    total += static_cast<Float>(window.at(index).checked_as<T>());
+                }
+                const Float mean_value = total / static_cast<Float>(size);
+                Float       squares{};
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    const Float delta = static_cast<Float>(window.at(index).checked_as<T>()) - mean_value;
+                    squares += delta * delta;
+                }
+                auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(
+                    Value{std::sqrt(squares / static_cast<Float>(size))}));
+            }
+        };
+
         /** min_/max_ over a TSW with a default while the window is below its
             minimum period (hgraph's default_value kwarg; a separate variant -
             the extremum_tss_default pattern). */

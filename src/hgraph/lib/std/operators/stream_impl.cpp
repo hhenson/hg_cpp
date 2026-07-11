@@ -32,6 +32,8 @@ namespace hgraph::stdlib
         register_overload<sum_, stream_impl_detail::tsw_numeric_aggregate_impl<false, Float>>();
         register_overload<mean, stream_impl_detail::tsw_numeric_aggregate_impl<true, Int>>();
         register_overload<mean, stream_impl_detail::tsw_numeric_aggregate_impl<true, Float>>();
+        register_overload<std_, stream_impl_detail::tsw_std_impl<Int>>();
+        register_overload<std_, stream_impl_detail::tsw_std_impl<Float>>();
         register_overload<min_, stream_impl_detail::tsw_extremum_impl<true>>();
         register_overload<max_, stream_impl_detail::tsw_extremum_impl<false>>();
         register_overload<min_, stream_impl_detail::tsw_extremum_default_impl<true>>();

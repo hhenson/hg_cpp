@@ -65,7 +65,6 @@ def test_add_str():
     assert eval_node(add_, ["abc"], ["xyz"]) == ["abcxyz"]
 
 
-@pytest.mark.skip(reason="gap: variadic-tuple values read back as lists (binding canonicalisation)")
 def test_add_tuples():
     assert eval_node(add_, [(1, 2)], [(3, 4)]) == [(1, 2, 3, 4)]
 
@@ -428,7 +427,6 @@ def test_mean_scalars_unary():
     assert eval_node(app, [1, 3, 5, 11]) == [1.0, 2.0, 3.0, 5.0]
 
 
-@pytest.mark.skip(reason="gap: to_window (duration/tick windows not surfaced)")
 def test_mean_tsw_number():
     @graph
     def app(ts: TS[float]) -> TS[float]:
@@ -472,7 +470,6 @@ def test_std_scalars_unary():
     assert eval_node(app, [1, 2, 3, 5]) == pytest.approx([0.0, 0.5, 0.8164965809277263, 1.479019945774904])
 
 
-@pytest.mark.skip(reason="gap: to_window (duration/tick windows not surfaced)")
 def test_std_tsw_number():
     @graph
     def app(ts: TS[int]) -> TS[float]:

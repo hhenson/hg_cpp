@@ -33,6 +33,8 @@ namespace hgraph::stdlib
         register_overload<getattr_, getattr_tsd>();
         register_overload<getitem_, getitem_tsd_by_keys>();
         register_overload<getattr_, getattr_enum>();
+        register_overload<getattr_, getattr_ts_tuple_bundle>();
+        register_overload<getattr_, getattr_ts_tuple_bundle_default>();
         register_overload<getattr_, getattr_ts_bundle>();
         register_overload<getattr_, getattr_ts_bundle_default>();
         register_overload<setattr_, setattr_ts_bundle>();

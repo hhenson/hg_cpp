@@ -468,6 +468,111 @@ namespace hgraph::stdlib
         }
     };
 
+    /** getattr_ over TS[tuple[CompoundScalar, ...]]: the named field of
+        EACH element - unset fields become holes (python None) or, in the
+        default form, the fallback scalar. */
+    struct getattr_ts_tuple_bundle
+    {
+        static constexpr auto name = "getattr_ts_tuple_bundle";
+
+        [[nodiscard]] static const ValueTypeMetaData *element_bundle(OperatorCallContext context)
+        {
+            const auto *schema = time_series_schema_at_as<AnyTS>(context, 0);
+            if (schema == nullptr || schema->value_schema == nullptr) { return nullptr; }
+            const auto *value = schema->value_schema;
+            if (value->value_kind() != ValueTypeKind::List || value->element_type == nullptr ||
+                value->element_type->value_kind() != ValueTypeKind::Bundle)
+            {
+                return nullptr;
+            }
+            return value->element_type;
+        }
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *bundle = element_bundle(context);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            return bundle != nullptr && attr != nullptr &&
+                   getattr_ts_bundle::field_index(bundle, *attr).has_value();
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (output_bound(resolution)) { return; }
+            const auto *bundle = element_bundle(context);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            if (bundle == nullptr || attr == nullptr) { return; }
+            const auto index = getattr_ts_bundle::field_index(bundle, *attr);
+            if (!index.has_value()) { return; }
+            auto &registry = TypeRegistry::instance();
+            bind_output(resolution,
+                        registry.ts(registry.list(bundle->fields[*index].type, 0,
+                                                  /*variadic_tuple=*/true)));
+        }
+
+        static void emit(const TSInputView &ts, std::string_view field_name, const ValueView *fallback,
+                         const TSOutputView &out)
+        {
+            const auto  value        = ts.value();
+            const auto *element_meta = value.schema()->element_type;
+            const auto  index        = getattr_ts_bundle::field_index(element_meta, field_name);
+            if (!index.has_value()) { return; }
+            const auto *field_binding =
+                ValuePlanFactory::instance().binding_for(element_meta->fields[*index].type);
+            if (field_binding == nullptr) { return; }
+
+            ListBuilder builder{*field_binding};
+            auto        list = value.as_indexed_view();
+            for (std::size_t i = 0; i < list.size(); ++i)
+            {
+                const ValueView &element = list.at(i);
+                auto             fields  = element.as_indexed_view();
+                const ValueView &field   = fields.at(*index);
+                if (field.has_value()) { builder.push_back_copy(field.data()); }
+                else if (fallback != nullptr) { builder.push_back_copy(fallback->data()); }
+                else { builder.push_back_unset(); }
+            }
+            auto mutation = out.data_view().begin_mutation(out.evaluation_time());
+            static_cast<void>(mutation.move_value_from(builder.build()));
+        }
+
+        static void eval(In<"ts", TS<ScalarVar<"S">>> ts, Scalar<"attr", Str> attr,
+                         Out<TsVar<"__out__">> out)
+        {
+            emit(ts.base(), attr.value(), nullptr, static_cast<const TSOutputView &>(out));
+        }
+    };
+
+    /** The default form: getattr_(tuple_of_cs_ts, attr, default). */
+    struct getattr_ts_tuple_bundle_default
+    {
+        static constexpr auto name = "getattr_ts_tuple_bundle_default";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *bundle = getattr_ts_tuple_bundle::element_bundle(context);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            if (bundle == nullptr || attr == nullptr) { return false; }
+            const auto index = getattr_ts_bundle::field_index(bundle, *attr);
+            if (!index.has_value()) { return false; }
+            const WiringArg *fallback = scalar_arg_at(context, 2);
+            return fallback != nullptr && fallback->scalar_meta == bundle->fields[*index].type;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            getattr_ts_tuple_bundle::resolve_default_types(resolution, context);
+        }
+
+        static void eval(In<"ts", TS<ScalarVar<"S">>> ts, Scalar<"attr", Str> attr,
+                         Scalar<"default", ScalarVar<"D">> fallback, Out<TsVar<"__out__">> out)
+        {
+            const ValueView value = fallback.value();
+            getattr_ts_tuple_bundle::emit(ts.base(), attr.value(), &value,
+                                          static_cast<const TSOutputView &>(out));
+        }
+    };
+
     /** getattr_(ts, attr, default): the bundle field, or the DEFAULT scalar
         when that field is UNSET (hgraph's default-valued attribute read). */
     struct getattr_ts_bundle_default

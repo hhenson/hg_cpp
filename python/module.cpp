@@ -1431,6 +1431,45 @@ namespace
         }
     };
 
+    /** ``type_(ts)`` — the python TYPE of each tick's value (hgraph's
+        TS[type]; the type object is a py-object scalar). */
+    struct type_py_node
+    {
+        static constexpr auto name = "type_py";
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TS<PyObj>> out)
+        {
+            nb::gil_scoped_acquire gil;
+            nb::object value = value_to_py(ts.value());
+            out.set(PyObj{nb::borrow(value.type())});
+        }
+    };
+
+    /** ``getattr_(TS[type], "name" | "__name__")`` — the type's __name__
+        (upstream's getattr_type_name). */
+    struct getattr_type_name_node
+    {
+        static constexpr auto name = "getattr_type_name";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            using namespace hgraph::operator_type_resolution;
+            const auto *schema = time_series_schema_at(context, 0);
+            const Str  *attr   = context.scalar_as<Str>("attr");
+            return schema != nullptr && schema->kind == TSTypeKind::TS && attr != nullptr &&
+                   schema->value_schema == TypeRegistry::instance().value_type("object") &&
+                   (*attr == "name" || *attr == "__name__");
+        }
+
+        static void eval(In<"ts", TS<PyObj>> ts, Scalar<"attr", Str> attr, Out<TS<Str>> out)
+        {
+            static_cast<void>(attr);
+            nb::gil_scoped_acquire gil;
+            nb::handle value{ts.value().get()};
+            out.set(Str{nb::cast<std::string>(nb::str(value.attr("__name__")))});
+        }
+    };
+
     /** ``call(fn, ts)`` — hgraph's side-effect sink: invoke the python
         callable with each ticked value. */
     struct call_callable_node
@@ -1572,6 +1611,8 @@ NB_MODULE(_hgraph, m)
     register_overload<op_harness_replay, harness_replay>();
     register_overload<op_harness_record, harness_record>();
     register_overload<stdlib::until_true, until_true_callable_node>();
+    register_overload<stdlib::type_, type_py_node>();
+    register_overload<stdlib::getattr_, getattr_type_name_node>();
     register_graph_overload<stdlib::freeze, freeze_callable_compose>();
     register_overload<stdlib::call_op, call_callable_node>();
 
@@ -2673,6 +2714,8 @@ NB_MODULE(_hgraph, m)
     register_overload<op_harness_replay, harness_replay>();
     register_overload<op_harness_record, harness_record>();
     register_overload<stdlib::until_true, until_true_callable_node>();
+    register_overload<stdlib::type_, type_py_node>();
+    register_overload<stdlib::getattr_, getattr_type_name_node>();
     register_graph_overload<stdlib::freeze, freeze_callable_compose>();
     register_overload<stdlib::call_op, call_callable_node>();
     });

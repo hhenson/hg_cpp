@@ -41,7 +41,7 @@ _KNOWN_GAPS = (
     "convert", "collect", "emit",
     "downcast_", "downcast_ref",
     "collapse_keys", "flip_keys", "uncollapse_keys", "values_",
-    "assert_", "print_", "setattr_", "type_",
+    "assert_", "print_", "setattr_",
     "evaluation_time_in_range", "round_",
 )
 
