@@ -28,6 +28,15 @@ namespace hgraph::stdlib
     [[nodiscard]] HGRAPH_EXPORT const TSValueTypeMetaData *resolve_combine_target(
         const TypePattern &pattern,
         std::span<const TSValueTypeMetaData *const> inputs);
+
+    /**
+     * Resolve ``emit``'s hinted KeyValue output: ``emit[VALUE_TS](dict)``
+     * yields ``TSB{key: TS[K], value: VALUE_TS}`` with ``K`` derived from
+     * the dict-like input (TSD key or mapping-value key).
+     */
+    [[nodiscard]] HGRAPH_EXPORT const TSValueTypeMetaData *resolve_emit_target(
+        const TSValueTypeMetaData *value_ts,
+        std::span<const TSValueTypeMetaData *const> inputs);
 }  // namespace hgraph::stdlib
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_CONVERT_TARGET_H

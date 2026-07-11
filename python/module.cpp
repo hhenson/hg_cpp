@@ -1994,6 +1994,19 @@ NB_MODULE(_hgraph, m)
           },
           nb::arg("pattern"), nb::arg("inputs"));
 
+    m.def("resolve_emit_target",
+          [target_input_schemas](PyTsType value_ts, nb::tuple inputs) {
+              std::vector<const TSValueTypeMetaData *> schemas = target_input_schemas(inputs);
+              return PyTsType{stdlib::resolve_emit_target(
+                  value_ts.meta,
+                  std::span<const TSValueTypeMetaData *const>{schemas.data(), schemas.size()})};
+          },
+          nb::arg("value_ts"), nb::arg("inputs"));
+
+    m.def("operator_output_is_selective", [](const std::string &name) {
+        return OperatorRegistry::instance().output_is_selective(name);
+    });
+
     nb::class_<GlobalState>(m, "_GlobalState")
         .def(nb::init<>())
         .def("__len__", [](GlobalState &self) { return self.view().size(); })

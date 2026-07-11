@@ -512,6 +512,56 @@ namespace hgraph
                                 std::span<const std::pair<std::string, WiringArg>>{kwargs}, global_state});
     }
 
+    namespace
+    {
+        [[nodiscard]] bool scalar_pattern_has_var(const ScalarPattern &pattern)
+        {
+            if (pattern.kind == ScalarPattern::Kind::Var || pattern.schema_var) { return true; }
+            for (const ScalarPattern &child : pattern.children)
+            {
+                if (scalar_pattern_has_var(child)) { return true; }
+            }
+            return false;
+        }
+
+        [[nodiscard]] bool ts_pattern_has_var(const TypePattern &pattern)
+        {
+            if (pattern.kind == TypePattern::Kind::Var || pattern.schema_var || pattern.size_var)
+            {
+                return true;
+            }
+            if (scalar_pattern_has_var(pattern.scalar)) { return true; }
+            for (const TypePattern &child : pattern.children)
+            {
+                if (ts_pattern_has_var(child)) { return true; }
+            }
+            return false;
+        }
+    }  // namespace
+
+    bool OperatorRegistry::output_is_selective(std::string_view name) const
+    {
+        // Can a requested output type influence overload selection? True
+        // when any candidate's output carries type variables, or when
+        // candidates disagree on a concrete output. False for sinks and for
+        // operators whose every candidate shares ONE fixed output - there a
+        // bare subscript type can only be an INPUT constraint (to_json[tp]).
+        auto it = overloads_.find(std::string{name});
+        if (it == overloads_.end() || it->second.empty()) { return true; }
+        const TSValueTypeMetaData *shared = nullptr;
+        for (const OperatorImpl &impl : it->second)
+        {
+            if (!impl.has_output) { continue; }
+            if (ts_pattern_has_var(impl.output)) { return true; }
+            ResolutionMap              empty;
+            const TSValueTypeMetaData *meta = ts_pattern_resolve(impl.output, empty);
+            if (meta == nullptr) { return true; }
+            if (shared == nullptr) { shared = meta; }
+            else if (shared != meta) { return true; }
+        }
+        return false;
+    }
+
     std::vector<std::string> OperatorRegistry::registered_names() const
     {
         std::vector<std::string> names;

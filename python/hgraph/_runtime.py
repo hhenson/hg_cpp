@@ -121,9 +121,11 @@ class _OperatorFunction:
                 continue
             if output_type is None:
                 output_type = i
-        if self.__name__ == "to_json" and output_type is not None:
-            # hgraph's to_json[tp] declares the INPUT series type (the
-            # output is always TS[str]); from_json[tp] keeps the output rule.
+        if output_type is not None and not _hgraph.operator_output_is_selective(self.__name__):
+            # The REGISTRY decides what a bare subscript type means: when no
+            # candidate's output can be influenced by it (sinks, or every
+            # overload shares one fixed output - to_json's TS[str]), the
+            # type is an INPUT constraint; otherwise it names the output.
             ts_hints.append(output_type)
             output_type = None
         return _OperatorFunction(self.__name__, output_type=output_type, sizes=sizes or None,
@@ -132,14 +134,15 @@ class _OperatorFunction:
     def _normalise_type_arguments(self, args, kwargs):
         if "tp" in kwargs or "output_type" in kwargs:
             return args, kwargs
-        if self.__name__ == "nothing" and len(args) == 1 and isinstance(args[0], _TsExpr):
-            kwargs = dict(kwargs)
-            kwargs["output_type"] = args[0]
-            return (), kwargs
-        if self.__name__ == "const" and len(args) >= 2 and isinstance(args[1], _TsExpr):
-            kwargs = dict(kwargs)
-            kwargs["output_type"] = args[1]
-            return (args[0], *args[2:]), kwargs
+        # hgraph's positional ``tp`` arguments (const(value, tp) /
+        # nothing(tp)): a TYPE EXPRESSION is a wiring directive, never a
+        # value - the registry has no type-valued scalars - so the first
+        # one names the requested output, whatever the operator.
+        for index, arg in enumerate(args):
+            if isinstance(arg, _TsExpr):
+                kwargs = dict(kwargs)
+                kwargs["output_type"] = arg
+                return (*args[:index], *args[index + 1:]), kwargs
         return args, kwargs
 
     def __repr__(self):
@@ -577,20 +580,14 @@ class _Collect:
         return _resolve_requested_target("collect", target, ports)
 
     def __call__(self, *ports, reset=None, exclude=None, **kwargs):
-        from ._types import TS
-
+        # Absent reset/exclude take the kernels' None defaults (null
+        # sources) - no python-side nothing-wiring.
         target = self._infer(ports)
-        if reset is None:
-            reset = wire("nothing", output_type=TS[bool])
-        if ports and _unwrap(ports[0]).ts_type.is_tsd:
-            # collect over a TSD: reset AND exclude inputs (nothing-filled).
-            if exclude is None:
-                exclude = wire("nothing",
-                               output_type=_TsExprFor(_hgraph.tss(_hgraph.tsd_key_vt(_unwrap(ports[0]).ts_type))))
-            return wire("collect", *ports, reset=reset, exclude=exclude, output_type=target, **kwargs)
+        if reset is not None:
+            kwargs["reset"] = reset
         if exclude is not None:
-            return wire("collect", *ports, exclude=exclude, output_type=target, **kwargs)
-        return wire("collect", *ports, reset=reset, output_type=target, **kwargs)
+            kwargs["exclude"] = exclude
+        return wire("collect", *ports, output_type=target, **kwargs)
 
 
 collect = _Collect()
@@ -615,15 +612,9 @@ class _Emit:
 
         if self._value_ts is None or not isinstance(self._value_ts, _TsExpr):
             return wire("emit", ts, **kwargs)
-        # Build the KeyValue output {key: TS[K], value: <value_ts>} from the
-        # dict/mapping key type and the hinted value TS.
-        handle = _unwrap(ts).ts_type
-        if handle.is_tsd:
-            key_vt = _hgraph.tsd_key_vt(handle)
-        else:                                       # TS[Mapping[K, V]]
-            key_vt = _hgraph.vt_key(_hgraph.ts_value_vt(handle))
-        fields = [("key", _hgraph.ts(key_vt)), ("value", self._value_ts.handle)]
-        out = _TsExprFor(_hgraph.un_named_tsb_type(fields))
+        # The hinted KeyValue output resolves in C++ (the target-resolution
+        # home): {key: TS[K], value: <value_ts>} with K from the dict input.
+        out = _TsExprFor(_hgraph.resolve_emit_target(self._value_ts.handle, (_unwrap(ts),)))
         return wire("emit", ts, output_type=out, **kwargs)
 
 

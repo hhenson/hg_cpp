@@ -1251,6 +1251,12 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "collect_map_zip";
 
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            // None defaults: null sources - the inputs stay unwired.
+            return {{"reset", Value{}}};
+        }
+
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out = output_ts_value_schema(resolution);
@@ -1537,6 +1543,12 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "collect_collection";
 
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            // None defaults: null sources - the inputs stay unwired.
+            return {{"reset", Value{}}};
+        }
+
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out_element = collection_element_schema(output_ts_value_schema(resolution));
@@ -1611,6 +1623,12 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "collect_map";
 
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            // None defaults: null sources - the inputs stay unwired.
+            return {{"reset", Value{}}};
+        }
+
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out = output_ts_value_schema(resolution);
@@ -1650,6 +1668,12 @@ namespace hgraph::stdlib
     struct collect_tsd_impl
     {
         static constexpr auto name = "collect_tsd";
+
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            // None defaults: null sources - the inputs stay unwired.
+            return {{"reset", Value{}}};
+        }
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
@@ -1703,6 +1727,12 @@ namespace hgraph::stdlib
     struct collect_tss_impl
     {
         static constexpr auto name = "collect_tss";
+
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            // None defaults: null sources - the inputs stay unwired.
+            return {{"reset", Value{}}};
+        }
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
@@ -1817,6 +1847,12 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "collect_tsd_zip";
 
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            // None defaults: null sources - the inputs stay unwired.
+            return {{"reset", Value{}}};
+        }
+
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out = output_schema(resolution);
@@ -1885,6 +1921,12 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "collect_tsd_from_map";
 
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            // None defaults: null sources - the inputs stay unwired.
+            return {{"reset", Value{}}};
+        }
+
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {
             const auto *out = output_schema(resolution);
@@ -1935,6 +1977,22 @@ namespace hgraph::stdlib
     struct collect_tsd_from_tsd_impl
     {
         static constexpr auto name = "collect_tsd_from_tsd";
+
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            // None defaults: null sources - the inputs stay unwired.
+            return {{"reset", Value{}}, {"exclude", Value{}}};
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            // A defaulted (unwired) exclude still needs its type variable:
+            // the natural exclude set is TSS over the input's key.
+            if (resolution.find_ts("E") != nullptr) { return; }
+            const auto *in = time_series_schema_at(context, 0);
+            if (in == nullptr || in->kind != TSTypeKind::TSD) { return; }
+            resolution.bind_ts("E", TypeRegistry::instance().tss(in->key_type()));
+        }
 
         static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
         {

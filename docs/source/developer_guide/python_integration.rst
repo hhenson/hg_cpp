@@ -139,7 +139,15 @@ the ``_hgraph`` bridge module (built from ``python/module.cpp``):
 - **Operator surface**: every registered operator (113) is a module-level
   function via PEP 562; ``WiringPort`` carries hgraph's dunder sugar
   (arithmetic/comparison/bitwise/unary, ``[]``, ``.field`` via
-  ``getattr_``); ``const`` takes hgraph's ``tp=``.
+  ``getattr_``); ``const`` takes hgraph's ``tp=``. Two calling-convention
+  rules are REGISTRY-driven, never name tests: a bare subscript type
+  (``op[tp]``) names the requested OUTPUT when the operator's candidates
+  can be selected by it (``operator_output_is_selective``) and otherwise
+  types the INPUT series (``to_json[tp]`` — every overload shares one
+  fixed output); a positional TYPE EXPRESSION argument
+  (``const(value, tp)`` / ``nothing(tp)``) always names the requested
+  output — the registry has no type-valued scalars, so a type in argument
+  position is a wiring directive, whatever the operator.
 - **Composition/evaluation**: ``@graph`` (nested graphs inline by calling),
   ``run_graph(fn, *args, start_time=, end_time=)`` returning
   ``[(time, value), ...]``, ``eval_node(fn, *vectors, __start_time__=,

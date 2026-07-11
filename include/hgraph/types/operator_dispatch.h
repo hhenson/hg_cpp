@@ -312,6 +312,13 @@ namespace hgraph
          * wanted. Throws ``OperatorResolutionError`` when the selected
          * overload has no const kernel.
          */
+        /** True when a requested output type can influence selection for
+            ``name`` (any candidate output carries variables, or candidates
+            disagree on a concrete output). False for sinks and single-fixed-
+            output operators - a bare subscript type is then an INPUT
+            constraint (``to_json[tp]``). Unknown names return true. */
+        [[nodiscard]] bool output_is_selective(std::string_view name) const;
+
         [[nodiscard]] Value evaluate_const(std::string_view name,
                                            std::span<const WiringArg> args,
                                            const TSValueTypeMetaData *expected_output = nullptr,

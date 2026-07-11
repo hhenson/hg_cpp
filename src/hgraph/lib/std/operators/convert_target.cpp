@@ -631,6 +631,28 @@ namespace hgraph::stdlib
         return resolve_convert_target(pattern, inputs, {});
     }
 
+    const TSValueTypeMetaData *resolve_emit_target(const TSValueTypeMetaData *value_ts,
+                                                   std::span<const TSValueTypeMetaData *const> inputs)
+    {
+        if (value_ts == nullptr) { throw std::invalid_argument("emit target resolution requires a value hint"); }
+        const TSValueTypeMetaData *input = require_one_input(inputs, "emit");
+        const ValueTypeMetaData   *key   = nullptr;
+        if (const auto *tsd = time_series_schema_as<AnyTSD>(input)) { key = tsd->key_type(); }
+        else if (const auto *ts = time_series_schema_as<AnyTS>(input);
+                 ts != nullptr && ts->value_schema != nullptr &&
+                 ts->value_schema->kind == ValueTypeKind::Map)
+        {
+            key = ts->value_schema->key_type;
+        }
+        if (key == nullptr)
+        {
+            throw std::invalid_argument(
+                fmt::format("cannot infer the emit key from {}", schema_name(input)));
+        }
+        auto &registry = TypeRegistry::instance();
+        return registry.un_named_tsb({{"key", registry.ts(key)}, {"value", value_ts}});
+    }
+
     const TSValueTypeMetaData *resolve_collect_target(const TypePattern &pattern,
                                                       std::span<const TSValueTypeMetaData *const> inputs)
     {
