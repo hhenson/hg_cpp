@@ -962,7 +962,8 @@ namespace hgraph
             {
                 const auto *state = ctx(context);
                 const auto &key_ops = state->layout.key_binding.ops_ref();
-                const auto &value_ops = map_value_binding<Surface>(context, memory).ops_ref();
+                const auto value_binding = map_value_binding<Surface>(context, memory);
+                const auto &value_ops = value_binding.ops_ref();
                 std::size_t result = 0;
                 for (const auto [key, value] : map_kv_range<Surface>(context, memory))
                 {
@@ -979,7 +980,8 @@ namespace hgraph
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
                 return fallback_on_exception(false, [&] {
                     if (map_size<Surface>(context, lhs) != map_size<Surface>(context, rhs)) { return false; }
-                    const auto &value_ops = map_value_binding<Surface>(context, lhs).ops_ref();
+                    const auto value_binding = map_value_binding<Surface>(context, lhs);
+                    const auto &value_ops = value_binding.ops_ref();
                     for (const auto [key, value] : map_kv_range<Surface>(context, lhs))
                     {
                         if (!map_contains_raw<Surface>(context, rhs, key.data())) { return false; }
@@ -1009,7 +1011,8 @@ namespace hgraph
             {
                 const auto *state = ctx(context);
                 const auto &key_ops = state->layout.key_binding.ops_ref();
-                const auto &value_ops = map_value_binding<Surface>(context, memory).ops_ref();
+                const auto value_binding = map_value_binding<Surface>(context, memory);
+                const auto &value_ops = value_binding.ops_ref();
                 fmt::memory_buffer out;
                 fmt::format_to(std::back_inserter(out), "{{");
                 bool first = true;

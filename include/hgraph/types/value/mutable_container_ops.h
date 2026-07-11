@@ -268,7 +268,8 @@ namespace hgraph
         {
             const auto *storage = static_cast<const MutableListStorage *>(memory);
             if (storage->element_binding() == nullptr) { throw std::logic_error("mutable list hash requires a binding"); }
-            const auto &ops  = storage->element_binding().ops_ref();
+            const auto element_binding = storage->element_binding();
+            const auto &ops = element_binding.ops_ref();
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -287,7 +288,8 @@ namespace hgraph
             if (a->size() == 0) { return true; }
             if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
             if (a->element_binding() != b->element_binding()) { return false; }
-            const auto &ops = a->element_binding().ops_ref();
+            const auto element_binding = a->element_binding();
+            const auto &ops = element_binding.ops_ref();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
                 const bool a_set = a->element_set(i);
@@ -328,7 +330,8 @@ namespace hgraph
         {
             const auto *storage = static_cast<const MutableListStorage *>(memory);
             if (storage->element_binding() == nullptr) { return "[]"; }
-            const auto &ops = storage->element_binding().ops_ref();
+            const auto element_binding = storage->element_binding();
+            const auto &ops = element_binding.ops_ref();
             return container_ops_detail::format_delimited(
                 '[', ']', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
                     if (!storage->element_set(i))
@@ -345,7 +348,8 @@ namespace hgraph
         {
             const auto *storage = static_cast<const MutableListStorage *>(memory);
             if (storage->element_binding() == nullptr) { return nb::list(); }
-            const auto &ops = storage->element_binding().ops_ref();
+            const auto element_binding = storage->element_binding();
+            const auto &ops = element_binding.ops_ref();
             nb::list    result;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -1132,7 +1136,8 @@ namespace hgraph
         inline std::size_t set_hash(const void *, const void *m)
         {
             const auto *s    = static_cast<const MutableSetStorage *>(m);
-            const auto &eops = s->element_binding().ops_ref();
+            const auto element_binding = s->element_binding();
+            const auto &eops = element_binding.ops_ref();
             std::size_t acc  = 0;  // xor of element hashes -> order-independent
             for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
             {
@@ -1162,7 +1167,8 @@ namespace hgraph
             nb::list    items;
             if (s->element_binding() != nullptr)
             {
-                const auto &eops = s->element_binding().ops_ref();
+                const auto element_binding = s->element_binding();
+                const auto &eops = element_binding.ops_ref();
                 for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
                 {
                     if (!s->slot_live(slot)) { continue; }
@@ -1176,7 +1182,8 @@ namespace hgraph
         inline std::string set_to_string(const void *, const void *m)
         {
             const auto *s    = static_cast<const MutableSetStorage *>(m);
-            const auto &eops = s->element_binding().ops_ref();
+            const auto element_binding = s->element_binding();
+            const auto &eops = element_binding.ops_ref();
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "{{");
             bool first = true;

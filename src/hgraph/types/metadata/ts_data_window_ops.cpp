@@ -213,12 +213,12 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] const MemoryUtils::StoragePlan &time_plan() const
             {
-                return time_binding().checked_plan();
+                return time_binding_.checked_plan();
             }
 
             [[nodiscard]] const MemoryUtils::StoragePlan &element_plan() const
             {
-                return element_binding().checked_plan();
+                return element_binding_.checked_plan();
             }
 
             [[nodiscard]] std::size_t time_stride() const noexcept

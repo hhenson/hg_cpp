@@ -2498,7 +2498,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctxd(context);
                 const auto &key_ops = state->dict_layout.key_binding.ops_ref();
-                const auto &value_ops = map_value_binding<Surface>(context, memory).ops_ref();
+                const auto value_binding = map_value_binding<Surface>(context, memory);
+                const auto &value_ops = value_binding.ops_ref();
                 std::size_t result = 0;
                 for (const auto [key, value] : map_kv_range<Surface>(context, memory))
                 {
@@ -2513,7 +2514,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
                 return fallback_on_exception(false, [&] {
                     if (map_size<Surface>(context, lhs) != map_size<Surface>(context, rhs)) { return false; }
-                    const auto &value_ops = map_value_binding<Surface>(context, lhs).ops_ref();
+                    const auto value_binding = map_value_binding<Surface>(context, lhs);
+                    const auto &value_ops = value_binding.ops_ref();
                     for (const auto [key, value] : map_kv_range<Surface>(context, lhs))
                     {
                         const auto *rhs_value = map_value_at<Surface>(context, rhs, key.data());
@@ -2541,7 +2543,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctxd(context);
                 const auto &key_ops = state->dict_layout.key_binding.ops_ref();
-                const auto &value_ops = map_value_binding<Surface>(context, memory).ops_ref();
+                const auto value_binding = map_value_binding<Surface>(context, memory);
+                const auto &value_ops = value_binding.ops_ref();
                 fmt::memory_buffer out;
                 fmt::format_to(std::back_inserter(out), "{{");
                 bool first = true;
@@ -2563,7 +2566,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctxd(context);
                 const auto &key_ops = state->dict_layout.key_binding.ops_ref();
-                const auto &value_ops = map_value_binding<Surface>(context, memory).ops_ref();
+                const auto value_binding = map_value_binding<Surface>(context, memory);
+                const auto &value_ops = value_binding.ops_ref();
                 nb::dict result;
                 for (const auto [key, value] : map_kv_range<Surface>(context, memory))
                 {
