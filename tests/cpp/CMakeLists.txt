@@ -125,6 +125,7 @@ hgraph_add_test_objects(hgraph_value_test_objects
     test_ts_input.cpp
     test_ts_output.cpp
     test_ts_schemas.cpp
+    test_type_erasure_layout.cpp
     test_tsd_proxy.cpp
     test_type_registry.cpp
     test_value.cpp
@@ -186,6 +187,17 @@ target_link_libraries(hgraph_json_perf
 )
 
 hgraph_enable_private_pch(hgraph_json_perf)
+
+add_executable(hgraph_type_erasure_perf
+    type_erasure_perf.cpp
+)
+
+target_link_libraries(hgraph_type_erasure_perf
+    PRIVATE
+        hgraph::core
+)
+
+hgraph_enable_private_pch(hgraph_type_erasure_perf)
 
 include(Catch)
 catch_discover_tests(hgraph_unit_tests)

@@ -21,6 +21,8 @@ The chapters below split the description by responsibility:
   and compact pointer model for all erased runtime families.
 - *Unified Type Erasure Implementation Plan* divides that proposal into
   measured, independently reviewable migrations.
+- *Type Erasure Inventory and Baseline* records the current binding families,
+  layouts, ownership paths, debugger assumptions, and performance workloads.
 - *Linking Strategies* covers the three flavours of binding,
   unbinding, and rebinding that connect time-series instances at
   runtime.
@@ -35,5 +37,6 @@ The chapters below split the description by responsibility:
    data_structures/plans_and_ops/index
    data_structures/unified_type_erasure
    data_structures/unified_type_erasure_implementation_plan
+   data_structures/type_erasure_inventory
    data_structures/linking_strategies
    data_structures/refinements
