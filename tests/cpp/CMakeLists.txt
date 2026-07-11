@@ -126,6 +126,7 @@ hgraph_add_test_objects(hgraph_value_test_objects
     test_ts_output.cpp
     test_ts_schemas.cpp
     test_type_erasure_layout.cpp
+    test_type_record.cpp
     test_tsd_proxy.cpp
     test_type_registry.cpp
     test_value.cpp

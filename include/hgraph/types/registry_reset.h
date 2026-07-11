@@ -17,18 +17,20 @@ namespace hgraph
     /**
      * Reset every process-wide registry/factory, in dependency order:
      *
-     * 1. ``OperatorRegistry`` — candidate patterns borrow interned schema
+     * 1. ``TypeRecordRegistry`` — common records borrow every other metadata
+     *    object and are therefore invalidated first.
+     * 2. ``OperatorRegistry`` — candidate patterns borrow interned schema
      *    pointers.
-     * 2. ``ValuePlanFactory`` / ``TSDataPlanFactory`` — plans borrow schema
+     * 3. ``ValuePlanFactory`` / ``TSDataPlanFactory`` — plans borrow schema
      *    pointers (and clear the MemoryUtils synthesised composite/array plan
      *    registries).
-     * 3. ``TSInputBuilderFactory`` — input builders borrow schema + plan
+     * 4. ``TSInputBuilderFactory`` — input builders borrow schema + plan
      *    pointers.
-     * 4. Compact-container plan registries — lifecycle contexts reference the
+     * 5. Compact-container plan registries — lifecycle contexts reference the
      *    bindings below.
-     * 5. ``TSDataBinding`` / ``ValueTypeBinding`` — borrow schema + plan + ops
+     * 6. ``TSDataBinding`` / ``ValueTypeBinding`` — borrow schema + plan + ops
      *    pointers.
-     * 6. ``TypeRegistry`` — last, because it owns the schemas everyone above
+     * 7. ``TypeRegistry`` — last, because it owns the schemas everyone above
      *    borrows; its reset re-seeds the standard scalar/TS vocabulary.
      */
     HGRAPH_EXPORT void reset_all_registries() noexcept;

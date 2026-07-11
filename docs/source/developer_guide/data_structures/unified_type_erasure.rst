@@ -427,12 +427,12 @@ Resolution should follow one visible pipeline:
        -> Pointer
        -> View
 
-``TypeRecordRegistry`` is the common boundary.  It validates the schema family,
-role, ops ABI, capabilities, and plan before interning a tuple equivalent to:
-
-.. code-block:: text
-
-   (schema, role, plan, ops, debug descriptor, implementation label)
+``TypeRecordRegistry`` is the common boundary.  It validates the schema header
+and settled family-role pair, nonzero ops ABI, known capabilities, valid plan,
+and nonnull ops pointer.  Its canonical identity key is ``(schema, role, plan,
+ops, debug descriptor)``.  The ops ABI, capabilities, and implementation label
+are immutable metadata attached to that identity: a same-key disagreement is
+rejected, and a different implementation label cannot create a second record.
 
 Family factories remain responsible for family-specific policy.  A
 time-series factory knows how TSD data uses a slot store; a node factory knows
