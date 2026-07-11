@@ -84,7 +84,7 @@ namespace hgraph
 
         [[nodiscard]] std::size_t              size() const noexcept { return size_; }
         [[nodiscard]] bool                     empty() const noexcept { return size_ == 0; }
-        [[nodiscard]] ValueTypeRef element_binding() const noexcept { return element_binding_; }
+        [[nodiscard]] const ValueTypeRef &element_binding() const noexcept { return element_binding_; }
 
         [[nodiscard]] const void *element_at(std::size_t index) const
         {
@@ -525,8 +525,8 @@ namespace hgraph
         [[nodiscard]] std::size_t             size() const noexcept { return keys_.size(); }
         [[nodiscard]] std::size_t             slot_capacity() const noexcept { return keys_.slot_capacity(); }
         [[nodiscard]] bool                    slot_live(std::size_t slot) const noexcept { return keys_.slot_live(slot); }
-        [[nodiscard]] ValueTypeRef key_binding() const noexcept { return key_binding_; }
-        [[nodiscard]] ValueTypeRef value_binding() const noexcept { return value_binding_; }
+        [[nodiscard]] const ValueTypeRef &key_binding() const noexcept { return key_binding_; }
+        [[nodiscard]] const ValueTypeRef &value_binding() const noexcept { return value_binding_; }
 
         [[nodiscard]] const void *key_at(std::size_t slot) const noexcept { return keys_.key_memory(slot); }
         [[nodiscard]] const void *value_at_slot(std::size_t slot) const noexcept { return values_.value_memory(slot); }
@@ -721,12 +721,17 @@ namespace hgraph
                                                        &map_slot_live, &map_kv_projector};
         }
 
+        // Capture bindings in locals before calling ops_ref(). That keeps the
+        // ValueTypeRef alive for the whole use site and avoids dangling
+        // references from chained temporary expressions.
         // -- whole-map hash/equals/compare/to_string (order-independent) --
         inline std::size_t map_hash(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding().ops_ref();
-            const auto &vops = s->value_binding().ops_ref();
+            const auto  key_binding   = s->key_binding();
+            const auto  value_binding = s->value_binding();
+            const auto &kops          = key_binding.ops_ref();
+            const auto &vops          = value_binding.ops_ref();
             std::size_t acc  = 0;  // xor of per-entry hashes -> order-independent
             for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
             {
@@ -740,8 +745,10 @@ namespace hgraph
             const auto *a = static_cast<const MutableMapStorage *>(lhs);
             const auto *b = static_cast<const MutableMapStorage *>(rhs);
             if (a->size() != b->size()) { return false; }
-            if (a->key_binding() != b->key_binding() || a->value_binding() != b->value_binding()) { return false; }
-            const auto &vops = a->value_binding().ops_ref();
+            const auto  a_key_binding   = a->key_binding();
+            const auto  a_value_binding = a->value_binding();
+            if (a_key_binding != b->key_binding() || a_value_binding != b->value_binding()) { return false; }
+            const auto &vops = a_value_binding.ops_ref();
             for (std::size_t slot = 0; slot < a->slot_capacity(); ++slot)
             {
                 if (!a->slot_live(slot)) { continue; }
@@ -760,9 +767,11 @@ namespace hgraph
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
             nb::dict    result;
-            if (s->key_binding() == nullptr) { return result; }
-            const auto &kops = s->key_binding().ops_ref();
-            const auto &vops = s->value_binding().ops_ref();
+            const auto  key_binding   = s->key_binding();
+            const auto  value_binding = s->value_binding();
+            if (key_binding == nullptr) { return result; }
+            const auto &kops = key_binding.ops_ref();
+            const auto &vops = value_binding.ops_ref();
             for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
             {
                 if (!s->slot_live(slot)) { continue; }
@@ -775,8 +784,10 @@ namespace hgraph
         inline std::string map_to_string(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding().ops_ref();
-            const auto &vops = s->value_binding().ops_ref();
+            const auto  key_binding   = s->key_binding();
+            const auto  value_binding = s->value_binding();
+            const auto &kops          = key_binding.ops_ref();
+            const auto &vops          = value_binding.ops_ref();
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "{{");
             bool first = true;
@@ -811,7 +822,8 @@ namespace hgraph
         inline std::size_t map_key_set_hash(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding().ops_ref();
+            const auto  key_binding = s->key_binding();
+            const auto &kops        = key_binding.ops_ref();
             std::size_t acc = 0;
             for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
             {
@@ -838,7 +850,8 @@ namespace hgraph
         inline std::string map_key_set_to_string(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding().ops_ref();
+            const auto  key_binding = s->key_binding();
+            const auto &kops        = key_binding.ops_ref();
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "{{");
             bool first = true;
@@ -1021,7 +1034,7 @@ namespace hgraph
         [[nodiscard]] std::size_t             size() const noexcept { return keys_.size(); }
         [[nodiscard]] std::size_t             slot_capacity() const noexcept { return keys_.slot_capacity(); }
         [[nodiscard]] bool                    slot_live(std::size_t slot) const noexcept { return keys_.slot_live(slot); }
-        [[nodiscard]] ValueTypeRef element_binding() const noexcept { return element_binding_; }
+        [[nodiscard]] const ValueTypeRef &element_binding() const noexcept { return element_binding_; }
         [[nodiscard]] const void             *key_at(std::size_t slot) const noexcept { return keys_.key_memory(slot); }
         [[nodiscard]] bool                    contains(const void *key) const { return keys_.find_slot(key) != KeySlotStore::npos; }
         [[nodiscard]] const void             *key_at_ordinal(std::size_t ordinal) const { return nth_live_memory(ordinal); }
