@@ -29,6 +29,7 @@
 #include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/time_series/ts_output.h>
+#include <hgraph/types/type_pointer.h>
 #include <hgraph/types/value/compact_container_ops.h>
 #include <hgraph/types/value/compact_storage.h>
 #include <hgraph/types/value/container_ops.h>
@@ -68,6 +69,13 @@ void instantiate_intern_table() {
     hgraph::InternTable<int, int> table;
     [[maybe_unused]] const int &v = table.emplace(7, 7);
     assert(v == 7);
+}
+
+void instantiate_type_pointer() {
+    [[maybe_unused]] constexpr hgraph::AnyPtr any{};
+    [[maybe_unused]] constexpr hgraph::NodePtr node{};
+    static_assert(any.is_unbound());
+    static_assert(node.is_unbound());
 }
 
 void instantiate_slot_stores() {
@@ -146,6 +154,7 @@ void instantiate_plan_factory() {
 int main() {
     instantiate_memory_utils();
     instantiate_intern_table();
+    instantiate_type_pointer();
     instantiate_slot_stores();
     instantiate_schema();
     instantiate_plan_factory();

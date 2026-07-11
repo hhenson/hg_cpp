@@ -287,9 +287,17 @@ words:
 
 .. code-block:: cpp
 
+   enum class AccessMode : std::uintptr_t {
+       ReadOnly = 0,
+       Writable = 1,
+       Mutation = 2,
+   };
+
+   using TaggedTypeRecordPtr = tagged_ptr<const TypeRecord, 2, AccessMode>;
+
    class AnyPtr {
-       tagged_ptr<const TypeRecord, AccessMode> type_;
-       void *data_;
+       TaggedTypeRecordPtr type_;
+       const void *data_;
    };
 
    template<TypeFamily Family, TypeRole Role = TypeRole::Invalid>
@@ -314,18 +322,36 @@ schema.  Generic graph diagnostics can accept ``AnyPtr``.  Converting the same
 object to a time-series pointer fails immediately rather than reinterpreting
 its ops table.
 
-The low alignment bits of the type-record pointer may encode access state, as
-value views do today.  ``ReadOnly``, ``Writable``, and ``Mutation`` are pointer
-properties, not part of type identity, and must be masked before displaying the
-record.  This optimisation is conditional on alignment and covered by layout
-assertions.
+The low two alignment bits of the type-record pointer encode access state.
+``ReadOnly`` can inspect live data, ``Writable`` can begin mutation only when
+the record has the ``Mutable`` capability, and ``Mutation`` alone exposes a
+mutable data address.  Access can be downgraded to ``ReadOnly`` but never
+escalated from it.  Beginning mutation is idempotent; ending it returns to
+``Writable``.  These access modes are pointer properties, not type identity,
+and are masked before inspecting the record.
+``read_only_access()``, ``writable_access()``, and ``mutation_access()`` query
+the encoded access state without implying an access transition.
+
+``TypedPtr<Family, TypeRole::Invalid>`` is a family wildcard.  A specific
+typed pointer widens implicitly to ``AnyPtr`` or its same-family wildcard
+without revalidation.  Narrowing from ``AnyPtr`` validates the exact family
+and, for a specific typed pointer, the exact role.  Narrowing from a family
+wildcard to a specific role is therefore explicit and checked.  Cross-family
+conversion goes through ``AnyPtr``.
 
 The valid null states should be explicit:
 
 * ``{nullptr, nullptr}`` is unbound;
-* ``{type, nullptr}`` is a typed null when that family supports it;
+* ``{type, nullptr}`` with ``ReadOnly`` access is a typed null;
 * ``{nullptr, data}`` is invalid;
-* ``{type, data}`` is a live borrowed pointer.
+* ``{type, data}`` with a known access tag is a live borrowed pointer;
+* writable or mutation typed-null states and tag value 3 are invalid.
+
+Pointer equality compares the masked type-record pointer and data address, so
+access mode does not affect object identity.  ``same_access_as`` compares only
+the access mode, while ``same_state_as`` compares both encoded words including
+the access tag.  Typed nulls therefore compare equal only when they carry the
+same record, and unbound pointers compare equal.
 
 Ownership must be separate.  An ``ErasedOwner`` may retain the current useful
 inline/heap allocation optimisation and an allocator reference, but it should
