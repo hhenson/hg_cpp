@@ -658,10 +658,11 @@ namespace hgraph::service
             WiringNodeSchema schema;
             schema.output = ref_meta;
             schema.state  = ref_meta->value_schema;
+            Value path_key = path_key_value(full_path);
 
             WiringPortRef port = w.add_node(
                 std::type_index(typeid(reference_output_source_marker)), schema,
-                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                std::span<const WiringPortRef>{}, std::move(path_key),
                 [path = std::move(full_path), target_meta]() {
                     return make_shared_output_source_node(path, *target_meta);
                 });
@@ -680,10 +681,11 @@ namespace hgraph::service
 
             WiringNodeSchema schema;
             schema.output = out_meta;
+            Value path_key = path_key_value(full_path);
 
             WiringPortRef port = w.add_node(
                 std::type_index(typeid(subscription_source_marker)), schema,
-                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                std::span<const WiringPortRef>{}, std::move(path_key),
                 [path = std::move(full_path), key_meta]() {
                     return make_subscription_key_source_node(path, *key_meta);
                 });
@@ -707,10 +709,11 @@ namespace hgraph::service
             WiringNodeSchema schema;
             schema.output = ref_meta;
             schema.state  = ref_meta->value_schema;
+            Value path_key = path_key_value(full_path);
 
             WiringPortRef port = w.add_node(
                 std::type_index(typeid(shared_output_source_marker)), schema,
-                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                std::span<const WiringPortRef>{}, std::move(path_key),
                 [path = std::move(full_path), target_meta]() {
                     return make_shared_output_source_node(path, *target_meta);
                 });
@@ -734,10 +737,11 @@ namespace hgraph::service
             WiringNodeSchema schema;
             schema.output = out_meta;
             schema.state  = request_input_state_schema(*request_meta);
+            Value path_key = path_key_value(full_path);
 
             WiringPortRef port = w.add_node(
                 std::type_index(typeid(request_input_source_marker)), schema,
-                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                std::span<const WiringPortRef>{}, std::move(path_key),
                 [path = std::move(full_path), request_meta]() {
                     return make_request_input_source_node(path, *request_meta);
                 });
@@ -761,10 +765,11 @@ namespace hgraph::service
             WiringNodeSchema schema;
             schema.output = ref_meta;
             schema.state  = ref_meta->value_schema;
+            Value path_key = path_key_value(full_path);
 
             WiringPortRef port = w.add_node(
                 std::type_index(typeid(request_reply_output_source_marker)), schema,
-                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                std::span<const WiringPortRef>{}, std::move(path_key),
                 [path = std::move(full_path), target_meta]() {
                     return make_shared_output_source_node(path, *target_meta);
                 });
@@ -1579,10 +1584,11 @@ namespace hgraph::service_adaptor
             WiringNodeSchema schema;
             schema.output = out_meta;
             schema.state  = service::detail::request_input_state_schema(*input_meta);
+            Value path_key = path_key_value(full_path);
 
             WiringPortRef port = w.add_node(
                 std::type_index(typeid(request_input_source_marker<Interface>)), schema,
-                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                std::span<const WiringPortRef>{}, std::move(path_key),
                 [path = std::move(full_path), input_meta]() {
                     return make_request_input_source_node(path, *input_meta);
                 });
@@ -1606,10 +1612,11 @@ namespace hgraph::service_adaptor
             WiringNodeSchema schema;
             schema.output = ref_meta;
             schema.state  = ref_meta->value_schema;
+            Value path_key = path_key_value(full_path);
 
             WiringPortRef port = w.add_node(
                 std::type_index(typeid(output_source_marker<Interface>)), schema,
-                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                std::span<const WiringPortRef>{}, std::move(path_key),
                 [path = std::move(full_path), target_meta]() {
                     return make_shared_output_source_node(path, *target_meta);
                 });

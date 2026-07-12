@@ -504,6 +504,31 @@ TEST_CASE("adaptor wiring supports scalar-qualified paths")
 
     (void)TypeRegistry::instance().register_scalar<Int>("int");
 
+    const auto primary_graph = build_graph<TypedPathAdaptorGraph>(Str{"primary"});
+    std::vector<std::string> configured_paths;
+    std::vector<std::string> output_sources;
+    for (std::size_t index = 0; index < primary_graph.node_count(); ++index)
+    {
+        const auto &node = primary_graph.nodes()[index];
+        const auto name = node_name(primary_graph, index);
+        if (name == "path_source")
+        {
+            configured_paths.push_back(node.scalars().as_bundle().field("path").checked_as<Str>());
+        }
+        else if (name.starts_with("shared_output_source:adaptor://typed"))
+        {
+            output_sources.push_back(name);
+        }
+    }
+    CHECK(configured_paths == std::vector<std::string>{
+                                  "typed[side=primary]",
+                                  "typed[side=secondary]",
+                                  "typed[side=secondary%2Fspecial%2C%20value]"});
+    CHECK(output_sources == std::vector<std::string>{
+                                "shared_output_source:adaptor://typed[side=primary]/typed_source/to_graph",
+                                "shared_output_source:adaptor://typed[side=secondary]/typed_source/to_graph",
+                                "shared_output_source:adaptor://typed[side=secondary%2Fspecial%2C%20value]/typed_source/to_graph"});
+
     CHECK_OUTPUT(testing::eval_node<TypedPathAdaptorGraph>(Str{"primary"}), testing::values<Int>(11));
     CHECK_OUTPUT(testing::eval_node<TypedPathAdaptorGraph>(Str{"secondary"}), testing::values<Int>(22));
     CHECK_OUTPUT(testing::eval_node<TypedPathAdaptorGraph>(Str{"secondary/special, value"}), testing::values<Int>(22));

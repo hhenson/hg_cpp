@@ -1562,16 +1562,15 @@ namespace hgraph::detail
 
     std::size_t TSOutputAlternativeStore::AlternativeKeyHash::operator()(const AlternativeKey &key) const noexcept
     {
-        auto combine = [](std::size_t seed, const void *value) noexcept {
-            const auto h = std::hash<const void *>{}(value);
+        auto combine = [](std::size_t seed, std::size_t h) noexcept {
             return seed ^ (h + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U));
         };
 
         std::size_t seed = 0;
-        seed = combine(seed, key.source_output);
-        seed = combine(seed, reinterpret_cast<const void *>(key.source_type.raw_bits()));
-        seed = combine(seed, key.source_data);
-        seed = combine(seed, key.requested_schema);
+        seed = combine(seed, std::hash<const void *>{}(key.source_output));
+        seed = combine(seed, std::hash<std::uintptr_t>{}(key.source_type.raw_bits()));
+        seed = combine(seed, std::hash<const void *>{}(key.source_data));
+        seed = combine(seed, std::hash<const void *>{}(key.requested_schema));
         return seed;
     }
 

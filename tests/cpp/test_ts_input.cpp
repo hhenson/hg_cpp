@@ -1240,7 +1240,7 @@ TEST_CASE("TSW ranges use stable ops contexts across data and endpoint roles")
     const auto t4 = t3 + TimeDelta{1};
 
     const auto populate = [&](TSWDataView window) {
-        for (const auto [time, raw] : std::array{
+        for (const auto &[time, raw] : std::array{
                  std::pair{t1, std::int32_t{11}},
                  std::pair{t2, std::int32_t{22}},
                  std::pair{t3, std::int32_t{33}},
