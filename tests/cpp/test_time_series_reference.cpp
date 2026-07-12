@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/time_series/ts_output.h>
@@ -456,8 +457,26 @@ TEST_CASE("TimeSeriesReference: to-REF alternative stores fixed list children th
         REQUIRE(mutation.copy_value_from(two.view()));
     }
 
+    auto source_output = target.view(MIN_ST);
+    auto source_output_list = source_output.as_list();
+    auto first_ref_handle = source_output_list.at(0).binding_for(*ref_int);
+    auto second_ref_handle = source_output_list.at(1).binding_for(*ref_int);
+    REQUIRE(first_ref_handle.data_view().data() != second_ref_handle.data_view().data());
+    REQUIRE(first_ref_handle.view(MIN_ST).value().checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_output_list.at(0)});
+    REQUIRE(second_ref_handle.view(MIN_ST).value().checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_output_list.at(1)});
+
     auto handle = target.view(MIN_ST).binding_for(*requested_schema);
     REQUIRE(handle.schema() == requested_schema);
+    REQUIRE(handle.binding() == nullptr);
+    REQUIRE(handle.type_ref().as_role().role() == TypeRole::Output);
+    const auto requested_data_type = TSDataPlanFactory::instance().data_type_for(requested_schema);
+    REQUIRE(handle.type_ref().plan() == requested_data_type.plan());
+
+    TSData data_owner{requested_data_type};
+    TSOutputHandle wrong_role{&target, data_owner.view()};
+    REQUIRE_THROWS_AS(wrong_role.type_ref(), std::invalid_argument);
 
     auto projected_view = handle.view(MIN_ST);
     REQUIRE(projected_view.valid());
@@ -465,8 +484,6 @@ TEST_CASE("TimeSeriesReference: to-REF alternative stores fixed list children th
     auto projected_list = projected_view.as_list();
     REQUIRE(projected_list.size() == 2);
 
-    auto source_view = target.view(MIN_ST);
-    auto source_output_list = source_view.as_list();
     const auto  first_value  = projected_list.at(0).value();
     const auto  second_value = projected_list.at(1).value();
     const auto &first        = first_value.checked_as<TimeSeriesReference>();
@@ -475,6 +492,51 @@ TEST_CASE("TimeSeriesReference: to-REF alternative stores fixed list children th
     REQUIRE(second.target_schema() == ts_int);
     REQUIRE(first == TimeSeriesReference{source_output_list.at(0)});
     REQUIRE(second == TimeSeriesReference{source_output_list.at(1)});
+}
+
+TEST_CASE("TimeSeriesReference: fixed to-REF owns Data storage behind an Output role facade")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts = registry.ts(integer);
+    const auto *ref = registry.ref(ts);
+    const auto *source_nested = registry.tsb("ToRefRoleSourceNested", {{"value", ts}});
+    const auto *requested_nested = registry.tsb("ToRefRoleRequestedNested", {{"value", ref}});
+    const auto *source_root = registry.tsb("ToRefRoleSourceRoot", {{"nested", source_nested}});
+    const auto *requested_root = registry.tsb("ToRefRoleRequestedRoot", {{"nested", requested_nested}});
+
+    TSOutput target{source_root};
+    auto target_view = target.view(MIN_ST);
+    auto target_bundle = target_view.as_bundle();
+    auto target_nested_view = target_bundle.field("nested");
+    auto target_nested = target_nested_view.as_bundle();
+    Value stored{std::int32_t{42}};
+    REQUIRE(target_nested.field("value").begin_mutation(MIN_ST).copy_value_from(stored.view()));
+
+    auto handle = target.view(MIN_ST).binding_for(*requested_root);
+    const auto data_type = TSDataPlanFactory::instance().data_type_for(requested_root);
+    REQUIRE(handle.binding() == nullptr);
+    REQUIRE(handle.type_ref().as_role().role() == TypeRole::Output);
+    REQUIRE(handle.type_ref().plan() == data_type.plan());
+    REQUIRE(std::string{handle.type_ref().record()->implementation_name()} == "ts.fixed.output.root");
+
+    auto projected = handle.view(MIN_ST);
+    REQUIRE(projected.type_ref() == handle.type_ref());
+    auto projected_bundle = projected.as_bundle();
+    auto projected_nested_view = projected_bundle.field("nested");
+    REQUIRE(projected_nested_view.type_ref().as_role().role() == TypeRole::Output);
+    REQUIRE(std::string{projected_nested_view.type_ref().record()->implementation_name()} ==
+            "ts.fixed.output.embedded");
+    auto projected_nested = projected_nested_view.as_bundle();
+    const auto reference_value = projected_nested.field("value").value();
+    REQUIRE(reference_value.checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{target_nested.field("value")});
+
+    TSData owner{data_type};
+    REQUIRE(owner.type_ref().role() == TypeRole::Data);
+    TSOutputHandle wrong_role{&target, owner.view()};
+    REQUIRE_THROWS_AS(wrong_role.type_ref(), std::invalid_argument);
 }
 
 TEST_CASE("TimeSeriesReference: to-REF TSD alternative keeps keys synchronized")

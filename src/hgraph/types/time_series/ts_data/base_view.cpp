@@ -263,18 +263,18 @@ namespace hgraph
             throw std::out_of_range("TSDataView::indexed_child_at index out of range");
         }
 
-        const auto *element_binding = table.indexed_child_binding_impl(table.context, data(), index);
-        if (element_binding == nullptr)
+        const auto element_type = table.indexed_child_binding_impl(table.context, data(), index);
+        if (!element_type)
         {
             throw std::logic_error("TSDataView::indexed_child_at element binding is not resolved");
         }
 
         const auto *element_memory = table.indexed_child_memory_impl(table.context, data(), index);
-        if (element_memory == nullptr) { return TSDataView{element_binding, element_memory}; }
+        if (element_memory == nullptr) { return TSDataView{element_type, element_memory}; }
 
         auto parent = borrowed_ref();
-        if (!parent.ops().allows_mutation) { return TSDataView{element_binding, element_memory}; }
-        return TSDataView{element_binding, element_memory, parent, index};
+        if (!parent.ops().allows_mutation) { return TSDataView{element_type, element_memory}; }
+        return TSDataView{element_type, element_memory, parent, index};
     }
 
     TSDataView TSDataView::ensure_indexed_child_at(std::size_t index) const

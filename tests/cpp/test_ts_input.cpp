@@ -296,7 +296,9 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
 
     auto input_root = input.view(nullptr, t1);
     REQUIRE(input_root.evaluation_time() == t1);
-    REQUIRE(input_root.binding() != nullptr);
+    REQUIRE(input_root.binding() == nullptr);
+    REQUIRE(input_root.type_ref());
+    REQUIRE(std::string{input_root.type_ref().record()->implementation_name()} == "ts.fixed.input.composite");
     REQUIRE_FALSE(input_root.is_bindable());
     REQUIRE(input_root.bound());
     REQUIRE_FALSE(input_root.valid());
@@ -329,7 +331,8 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
     REQUIRE(input_root.value().is_bundle());
     REQUIRE(input_root.value().binding().ops_ref().kind == ValueOpsKind::Indexed);
 
-    REQUIRE(items.binding() != nullptr);
+    REQUIRE(items.binding() == nullptr);
+    REQUIRE(items.type_ref());
     REQUIRE(items.valid());
     REQUIRE_FALSE(items.all_valid());
     REQUIRE(items.last_modified_time() == t1);
@@ -340,7 +343,8 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
     REQUIRE(list_valid_items.size() == 1);
     REQUIRE(list_valid_items[0].first == 0);
     REQUIRE(list_valid_items[0].second.value().checked_as<std::int32_t>() == 10);
-    REQUIRE(list_view[0].binding() != nullptr);
+    REQUIRE(list_view[0].binding() == nullptr);
+    REQUIRE(list_view[0].type_ref());
     REQUIRE(list_view[0].evaluation_time() == t1);
     auto list_modified_items = collect_range(list_view.modified_items());
     REQUIRE(list_modified_items.size() == 1);
@@ -618,8 +622,13 @@ TEST_CASE("TSInput projected owned children use their nonzero child storage offs
             REQUIRE_FALSE(child.is_bindable());
             auto &data = child.data_view();
             Value wrapped{value};
-            auto mutation = data.begin_mutation(t1);
-            REQUIRE(mutation.copy_value_from(wrapped.view()));
+            REQUIRE(data.type_ref().role() == TypeRole::Input);
+            REQUIRE_FALSE(has_capability(data.type_ref().capabilities(), TypeCapabilities::Mutable));
+            const auto &ops = data.ops();
+            REQUIRE(ops.copy_value_from_impl(ops.context, const_cast<void *>(data.data()), wrapped.view(), t1));
+            auto *tracking = ops.mutable_tracking_impl(ops.context, const_cast<void *>(data.data()));
+            REQUIRE(tracking != nullptr);
+            if (tracking->record_modified(t1)) { data.parent_link().notify_child_modified(t1); }
         };
         set_owned("first", 101);
         set_owned("second", 202);

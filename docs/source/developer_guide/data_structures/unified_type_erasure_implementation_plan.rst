@@ -261,12 +261,17 @@ Iteration 4A
    plans and ops tables.
 
 Iteration 4B
-   Migrate fixed composites such as bundles and lists, including child type
-   records and plan offsets.
+   Migrate TSB and fixed TSL composites, including child type records, named
+   TSB identity, root-plan offsets, and Data/Input/Output topology.
 
 Iteration 4C
    Migrate keyed and reference types, including TSD, TSS, and REF restrictions.
    Preserve subscription, unsubscription, delete, and erase semantics.
+
+Iteration 4D
+   Migrate dynamic TSL and TSW. Preserve dynamic-list growth and element
+   lifetime semantics, and keep window storage and eviction behaviour
+   unchanged.
 
 Technical model
    TS, TSS, TSL, TSB, TSD, and REF remain schema kinds.  Data, Input, and Output

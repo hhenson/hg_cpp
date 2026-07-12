@@ -514,15 +514,15 @@ type record selects the compact value plan and integer value ops.  ``AnyPtr``
 prints ``int64``, ``Value/Instance/Atomic``, its address, and its layout.  A
 ``ValuePtr`` adds the value API without changing the two-word representation.
 
-Time-Series Dictionary (post-4A target)
+Time-Series Dictionary (post-4C target)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``TSD[str, TS[int64]]`` will have one semantic time-series schema. Its data
 type record will use ``TimeSeries/Data/TSD`` and select the slot-store plan and
-TSD data ops. Milestone 4A deliberately migrates only scalar ``TS`` and
-``SIGNAL`` roots; TSD and the other composite/keyed/reference shapes still use
-``TSDataBinding`` until 4B/4C. This example describes the intended later state,
-not the current 4A representation.
+TSD data ops. Scalar ``TS``/``SIGNAL`` and fixed ``TSB``/``TSL`` roots are
+record-backed; keyed/reference shapes and dynamic ``TSL``/``TSW`` still use
+``TSDataBinding`` until 4C/4D. This TSD example describes that intended later
+state.
 
 The keyed-slots debug descriptor identifies key records, slot state, and child
 type records.  A debugger can distinguish live, stopped/deleted, and erased

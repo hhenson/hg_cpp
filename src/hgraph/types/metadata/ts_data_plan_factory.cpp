@@ -14,9 +14,16 @@ namespace hgraph
 
     namespace
     {
-        [[nodiscard]] bool scalar_root(const TSValueTypeMetaData *schema) noexcept
+        [[nodiscard]] bool fixed_root(const TSValueTypeMetaData *schema) noexcept
         {
-            return schema != nullptr && (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL);
+            return schema != nullptr &&
+                   (schema->kind == TSTypeKind::TSB ||
+                    (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0));
+        }
+
+        [[nodiscard]] bool migrated_root(const TSValueTypeMetaData *schema) noexcept
+        {
+            return is_migrated_ts_root_schema(schema);
         }
 
         [[noreturn]] void unsupported(const TSValueTypeMetaData *schema)
@@ -82,9 +89,9 @@ namespace hgraph
     const TSDataBinding *TSDataPlanFactory::binding_for(const TSValueTypeMetaData *schema)
     {
         if (schema == nullptr) return nullptr;
-        if (scalar_root(schema))
+        if (migrated_root(schema))
         {
-            throw std::logic_error("TSDataPlanFactory: scalar root identity is a TypeRecord, not TSDataBinding");
+            throw std::logic_error("TSDataPlanFactory: migrated root identity is a TypeRecord, not TSDataBinding");
         }
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -109,12 +116,24 @@ namespace hgraph
 
     TSDataTypeRef TSDataPlanFactory::data_type_for(const TSValueTypeMetaData *schema)
     {
-        if (!scalar_root(schema)) throw std::invalid_argument("data_type_for requires TS or SIGNAL schema");
+        if (!migrated_root(schema)) throw std::invalid_argument("data_type_for requires a migrated TS schema");
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (const auto it = data_type_cache_.find(schema); it != data_type_cache_.end()) return it->second;
         }
         const auto *plan = plan_for(schema);
+        if (fixed_root(schema))
+        {
+            const auto *value = plan != nullptr ? plan->find_component("value") : nullptr;
+            const auto *aux = plan != nullptr ? plan->find_component("aux") : nullptr;
+            if (plan == nullptr || value == nullptr || aux == nullptr)
+                throw std::logic_error("data_type_for could not resolve fixed storage");
+            const auto storage_type = plan_detail::embedded_ts_storage_type(
+                *schema, TypeRole::Data, *plan, value->offset, aux->offset, true);
+            const auto type = TSDataTypeRef::checked(storage_type.type_ref());
+            std::lock_guard<std::mutex> lock(mutex_);
+            return data_type_cache_.try_emplace(schema, type).first->second;
+        }
         const auto value_type = ValuePlanFactory::instance().type_for(schema->value_schema);
         const auto delta_type = ValuePlanFactory::instance().type_for(schema->delta_value_schema);
         const auto *value = plan != nullptr ? plan->find_component("value") : nullptr;
@@ -131,10 +150,23 @@ namespace hgraph
 
     TSOutputTypeRef TSDataPlanFactory::output_type_for(const TSValueTypeMetaData *schema)
     {
-        if (!scalar_root(schema)) throw std::invalid_argument("output_type_for requires TS or SIGNAL schema");
+        if (!migrated_root(schema)) throw std::invalid_argument("output_type_for requires a migrated TS schema");
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (const auto it = output_type_cache_.find(schema); it != output_type_cache_.end()) return it->second;
+        }
+        if (fixed_root(schema))
+        {
+            const auto *plan = plan_for(schema);
+            const auto *value = plan != nullptr ? plan->find_component("value") : nullptr;
+            const auto *aux = plan != nullptr ? plan->find_component("aux") : nullptr;
+            if (plan == nullptr || value == nullptr || aux == nullptr)
+                throw std::logic_error("output_type_for could not resolve fixed storage");
+            const auto storage_type = plan_detail::embedded_ts_storage_type(
+                *schema, TypeRole::Output, *plan, value->offset, aux->offset, true);
+            const auto type = TSOutputTypeRef::checked(storage_type.type_ref());
+            std::lock_guard<std::mutex> lock(mutex_);
+            return output_type_cache_.try_emplace(schema, type).first->second;
         }
         const auto data_type = data_type_for(schema);
         const auto type = checked_ts_role_type(
@@ -160,7 +192,7 @@ namespace hgraph
 
     const TSDataBinding *TSDataPlanFactory::find_binding(const TSValueTypeMetaData *schema) const
     {
-        if (schema == nullptr || scalar_root(schema))
+        if (schema == nullptr || migrated_root(schema))
         {
             return nullptr;
         }

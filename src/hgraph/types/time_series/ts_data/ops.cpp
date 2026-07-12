@@ -164,7 +164,7 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("indexed size");
     }
 
-    const TSDataBinding *missing_indexed_element_binding(const void *, const void *, std::size_t)
+    TSStorageTypeRef missing_indexed_element_binding(const void *, const void *, std::size_t)
     {
         missing_ts_data_op("indexed element binding");
     }

@@ -37,10 +37,13 @@ namespace hgraph
         OperatorRegistry::instance().reset();
         clear_json_converters();   // interns by meta/binding pointer — must precede the lenders below
         clear_table_converters();  // same rule (also captures record_replay config keys)
+        // Records borrow plan/ops contexts from the endpoint and TSData
+        // factories. Their cached handles are trivial and are not dereferenced
+        // while those factories are subsequently cleared.
         TypeRecordRegistry::instance().reset();
-        ValuePlanFactory::instance().reset();
-        TSDataPlanFactory::instance().reset();
         TSInputBuilderFactory::reset();
+        TSDataPlanFactory::instance().reset();
+        ValuePlanFactory::instance().reset();
         clear_compact_container_plans();
         clear_mutable_container_plans();
         MemoryUtils::clear_synthesised_plans();

@@ -5,6 +5,7 @@
 #include <hgraph/lib/testing/mock_runtime.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/time_series/ts_input.h>
+#include <hgraph/types/time_series/ts_input/detail.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/value/value.h>
 
@@ -88,6 +89,20 @@ namespace
     {
         return hgraph::TSInput{
             hgraph::TSInputBuilderFactory::checked_builder_for(*schema, hgraph::TSEndpointSchema::peered(schema))};
+    }
+
+    void set_scalar_output(hgraph::TSOutput &output, std::int32_t value, hgraph::DateTime time)
+    {
+        hgraph::Value stored{value};
+        REQUIRE(output.begin_mutation(time).copy_value_from(stored.view()));
+    }
+
+    void set_list_output(hgraph::TSOutput &output, std::size_t index, std::int32_t value, hgraph::DateTime time)
+    {
+        hgraph::Value stored{value};
+        auto          view = output.view(time);
+        auto          list = view.as_list();
+        REQUIRE(list[index].begin_mutation(time).copy_value_from(stored.view()));
     }
 }
 
@@ -254,6 +269,505 @@ TEST_CASE("time-series role validation rejects common header kind mismatches")
         REQUIRE(TSRoleTypeRef::checked(type.typed_null().to_any()).valid());
         REQUIRE(TSDataTypeRef::checked(type.as_role()).valid());
     }
+}
+
+TEST_CASE("fixed structured role records preserve semantic identity and embedded roles")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    auto &factory = TSDataPlanFactory::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts = registry.ts(integer);
+    const auto *fixed_list = registry.tsl(ts, 2);
+    const auto *structural = registry.un_named_tsb({{"value", ts}, {"items", fixed_list}});
+    const auto *named = registry.tsb("FixedRoleBundle", {{"value", ts}, {"items", fixed_list}});
+    const auto *window = registry.tsw(integer, 2, 1);
+    const auto *mixed = registry.tsb("FixedRoleMixed", {{"value", ts}, {"window", window}});
+
+    for (const auto *schema : {fixed_list, structural, named})
+    {
+        const auto data = factory.data_type_for(schema);
+        const auto output = factory.output_type_for(schema);
+        REQUIRE(data.valid());
+        REQUIRE(output.valid());
+        REQUIRE(data.schema() == schema);
+        REQUIRE(output.schema() == schema);
+        REQUIRE(data.record() != output.record());
+        REQUIRE(data.record()->ops_abi_version == 2);
+        REQUIRE(output.record()->ops_abi_version == 2);
+        REQUIRE(std::string{data.record()->implementation_name()} == "ts.fixed.data.root");
+        REQUIRE(std::string{output.record()->implementation_name()} == "ts.fixed.output.root");
+        REQUIRE(has_capability(data.capabilities(), TypeCapabilities::Viewable));
+        REQUIRE(has_capability(data.capabilities(), TypeCapabilities::HasChildren));
+        REQUIRE(has_capability(data.capabilities(), TypeCapabilities::Mutable));
+        REQUIRE(has_capability(output.capabilities(), TypeCapabilities::Mutable));
+        REQUIRE_THROWS_AS(factory.binding_for(schema), std::logic_error);
+        REQUIRE(factory.find_binding(schema) == nullptr);
+    }
+
+    REQUIRE(factory.data_type_for(named).record() != factory.data_type_for(structural).record());
+    REQUIRE(&factory.data_type_for(named).checked_plan() ==
+            &factory.data_type_for(structural).checked_plan());
+
+    TSData data{factory.data_type_for(named)};
+    auto data_root = data.view();
+    auto data_bundle = data_root.as_bundle();
+    auto data_scalar = data_bundle.field("value");
+    auto data_list = data_bundle.field("items");
+    REQUIRE(data_scalar.type_ref().role() == TypeRole::Data);
+    REQUIRE(std::string{data_scalar.type_ref().record()->implementation_name()} == "ts.fixed.data.embedded");
+    REQUIRE(data_list.type_ref().role() == TypeRole::Data);
+    REQUIRE(std::string{data_list.type_ref().record()->implementation_name()} == "ts.fixed.data.embedded");
+    auto data_list_view = data_list.as_list();
+    REQUIRE(data_list_view[0].type_ref().role() == TypeRole::Data);
+    REQUIRE(data_list_view[0].type_ref().record() != data_list_view[1].type_ref().record());
+    REQUIRE(data_list_view[0].layout().value_offset != data_list_view[1].layout().value_offset);
+
+    TSOutput output{named};
+    auto output_root = output.data_view();
+    auto output_bundle = output_root.as_bundle();
+    auto output_scalar = output_bundle.field("value");
+    auto output_list = output_bundle.field("items");
+    REQUIRE(output.binding() == nullptr);
+    REQUIRE(output.type_ref().schema() == named);
+    REQUIRE(output_scalar.type_ref().role() == TypeRole::Output);
+    REQUIRE(std::string{output_scalar.type_ref().record()->implementation_name()} == "ts.fixed.output.embedded");
+    REQUIRE(output_list.type_ref().role() == TypeRole::Output);
+    auto output_list_view = output_list.as_list();
+    REQUIRE(output_list_view[1].type_ref().role() == TypeRole::Output);
+    REQUIRE(output_list_view[0].type_ref().record() != output_list_view[1].type_ref().record());
+    REQUIRE(output_list_view[0].layout().value_offset != output_list_view[1].layout().value_offset);
+
+    TSOutput mixed_output{mixed};
+    auto mixed_root = mixed_output.data_view();
+    auto mixed_bundle = mixed_root.as_bundle();
+    REQUIRE(mixed_bundle.field("value").storage_type().record_backed());
+    REQUIRE(mixed_bundle.field("window").storage_type().legacy_backed());
+}
+
+TEST_CASE("migrated fixed roots reject legacy ownership while excluded parents remain compatible")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    auto &factory = TSDataPlanFactory::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *string = registry.register_scalar<std::string>("string");
+    const auto *ts = registry.ts(integer);
+    const auto *fixed_list = registry.tsl(ts, 2);
+    const auto *structural = registry.un_named_tsb({{"value", ts}});
+    const auto *named = registry.tsb("LegacyRootRejected", {{"value", ts}});
+
+    for (const auto *schema : {fixed_list, structural, named})
+    {
+        const auto *legacy = factory.legacy_binding_for(schema);
+        REQUIRE(legacy != nullptr);
+        REQUIRE_THROWS_AS(TSData{*legacy}, std::invalid_argument);
+    }
+
+    const auto *dict = registry.tsd(string, named);
+    const auto *dynamic_list = registry.tsl(named, 0);
+    for (const auto *schema : {dict, dynamic_list})
+    {
+        const auto *legacy = factory.legacy_binding_for(schema);
+        REQUIRE(legacy != nullptr);
+        TSData excluded_root{*legacy};
+        REQUIRE(excluded_root.binding() == legacy);
+        REQUIRE(excluded_root.type_ref() == TSRoleTypeRef{});
+    }
+}
+
+TEST_CASE("mixed fixed output topology preserves Output roles through forwarding children")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *ts = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+    const auto *inner = registry.tsb("MixedOutputInner", {{"owned", ts}, {"forwarded", ts}});
+    const auto *root = registry.tsb("MixedOutputRoot", {{"nested", inner}, {"owned", ts}});
+    const auto endpoint = TSEndpointSchema::non_peered(
+        root,
+        {TSEndpointSchema::non_peered(
+             inner, {TSEndpointSchema::owned(ts), TSEndpointSchema::peered(ts)}),
+         TSEndpointSchema::owned(ts)});
+
+    TSOutput output{endpoint};
+    auto root_view = output.view(MIN_ST);
+    auto root_bundle = root_view.as_bundle();
+    auto nested = root_bundle.field("nested");
+    auto nested_bundle = nested.as_bundle();
+    auto owned = nested_bundle.field("owned");
+    auto forwarded = nested_bundle.field("forwarded");
+    REQUIRE(detail::has_input_children(root_view.data_view()));
+    REQUIRE(detail::has_input_children(nested.data_view()));
+    auto forwarding_projection = detail::input_child_projection(nested.data_view(), 1);
+    CAPTURE(forwarding_projection.visible.valid(), forwarding_projection.target_link.valid(),
+            forwarding_projection.visible.storage_type().record_backed(),
+            forwarding_projection.target_link.storage_type().record_backed());
+    REQUIRE(forwarding_projection.target_link.valid());
+
+    const std::array views{&nested, &owned, &forwarded};
+    for (std::size_t index = 0; index < views.size(); ++index)
+    {
+        const auto *view = views[index];
+        CAPTURE(index, view->storage_type().record_backed(), view->storage_type().legacy_backed());
+        const auto type = view->type_ref();
+        REQUIRE(type.valid());
+        REQUIRE(type.as_role().role() == TypeRole::Output);
+        REQUIRE(type.checked_plan().layout.size == output.type_ref().checked_plan().layout.size);
+        REQUIRE(type.plan() == output.type_ref().plan());
+        REQUIRE(type.ops() == &view->data_view().ops());
+        REQUIRE(std::string{type.record()->implementation_name()} == "ts.fixed.output.embedded");
+
+        TSOutputHandle handle = view->handle();
+        REQUIRE(handle.type_ref() == type);
+        REQUIRE(handle.storage_type() == view->storage_type());
+    }
+
+    REQUIRE(forwarded.forwarding());
+    TSOutput source{ts};
+    forwarded.bind_forwarding_target(source.view(MIN_ST));
+    REQUIRE(forwarded.forwarding_bound());
+    REQUIRE(forwarded.forwarding_target().type_ref().as_role().role() == TypeRole::Output);
+    forwarded.clear_forwarding_target();
+}
+
+TEST_CASE("composed fixed input ownership remains local across copy move rebind and teardown")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *ts = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+    const auto *list = registry.tsl(ts, 2);
+    const auto *nested = registry.tsb("OwnedTraversalNested", {{"items", list}, {"owned", ts}});
+    const auto *root = registry.tsb("OwnedTraversalRoot", {{"whole", list}, {"nested", nested}});
+    const auto endpoint = TSEndpointSchema::non_peered(
+        root,
+        {
+            TSEndpointSchema::peered(list),
+            TSEndpointSchema::non_peered(
+                nested,
+                {
+                    TSEndpointSchema::non_peered_list(list, TSEndpointSchema::peered(ts)),
+                    TSEndpointSchema::owned(ts),
+                }),
+        });
+    const auto &builder = TSInputBuilderFactory::checked_builder_for(*root, endpoint);
+
+    TSOutput list_source{list};
+    TSOutput list_replacement{list};
+    TSOutput scalar_source{ts};
+    set_list_output(list_source, 0, 10, MIN_ST);
+    set_list_output(list_replacement, 0, 20, MIN_ST);
+    set_scalar_output(scalar_source, 30, MIN_ST);
+
+    auto producer_root = list_source.data_view();
+    auto producer_list = producer_root.as_list();
+    auto producer_child = producer_list[0];
+    const auto producer_root_parent = producer_root.parent_link();
+    const auto producer_child_parent = producer_child.parent_link();
+    REQUIRE(producer_root_parent.parent_output() == &list_source);
+    REQUIRE(producer_child_parent.parent_data() == producer_root.data());
+
+    TSInput independent{TSInputBuilderFactory::checked_builder_for(*list, TSEndpointSchema::peered(list))};
+    auto independent_view = independent.view(nullptr, MIN_ST);
+    independent_view.bind_output(list_source.view(MIN_ST));
+
+    RecordingNotifier scheduling;
+    {
+        TSInput input{builder};
+        auto root_view = input.view(&scheduling, MIN_ST);
+        auto root_bundle = root_view.as_bundle();
+        auto whole = root_bundle.field("whole");
+        auto nested_view = root_bundle.field("nested");
+        auto nested_bundle = nested_view.as_bundle();
+        auto items = nested_bundle.field("items");
+        auto item_list = items.as_list();
+        auto linked_leaf = item_list[0];
+        auto owned_leaf = nested_bundle.field("owned");
+        whole.bind_output(list_source.view(MIN_ST));
+        linked_leaf.bind_output(scalar_source.view(MIN_ST));
+        whole.make_active();
+        linked_leaf.make_active();
+        REQUIRE(owned_leaf.data_view().parent_link().parent_data() == nested_view.data_view().data());
+
+        auto local_root = root_view.data_view().borrowed_ref();
+        auto whole_local = detail::input_child_projection(local_root, 0).target_link;
+        auto nested_local = detail::input_child_projection(local_root, 1).visible;
+        auto items_local = detail::input_child_projection(nested_local, 0).visible;
+        auto leaf_local = detail::input_child_projection(items_local, 0).target_link;
+        REQUIRE(whole_local.path_from_root() == std::vector<std::size_t>{0});
+        REQUIRE(leaf_local.path_from_root() == std::vector<std::size_t>{1, 0, 0});
+        REQUIRE(whole_local.parent_link().parent_data() == local_root.data());
+        REQUIRE(leaf_local.parent_link().parent_data() == items_local.data());
+
+        const auto list_observers_before_copy = list_source.data_view().observer_count();
+        const auto scalar_observers_before_copy = scalar_source.data_view().observer_count();
+        TSInput copied{input};
+        auto copied_root = copied.view(nullptr, MIN_ST);
+        auto copied_bundle = copied_root.as_bundle();
+        REQUIRE_FALSE(copied_bundle.field("whole").bound());
+        auto copied_nested_view = copied_bundle.field("nested");
+        auto copied_nested = copied_nested_view.as_bundle();
+        auto copied_items_view = copied_nested.field("items");
+        auto copied_items = copied_items_view.as_list();
+        REQUIRE_FALSE(copied_items[0].bound());
+        REQUIRE(list_source.data_view().observer_count() == list_observers_before_copy);
+        REQUIRE(scalar_source.data_view().observer_count() == scalar_observers_before_copy);
+
+        TSInput moved{std::move(input)};
+        auto moved_root = moved.view(&scheduling, MIN_ST);
+        auto moved_bundle = moved_root.as_bundle();
+        auto moved_whole = moved_bundle.field("whole");
+        auto moved_nested_view = moved_bundle.field("nested");
+        auto moved_nested = moved_nested_view.as_bundle();
+        auto moved_items_view = moved_nested.field("items");
+        auto moved_items = moved_items_view.as_list();
+        auto moved_leaf = moved_items[0];
+        REQUIRE(moved_whole.bound());
+        REQUIRE(moved_whole.active());
+        REQUIRE(moved_leaf.bound());
+        REQUIRE(moved_leaf.active());
+        REQUIRE(detail::input_child_projection(moved_root.data_view(), 0).target_link.path_from_root() ==
+                std::vector<std::size_t>{0});
+
+        REQUIRE(list_source.data_view().parent_link().parent_output() == &list_source);
+        REQUIRE(producer_child.parent_link().parent_data() == producer_child_parent.parent_data());
+        REQUIRE(producer_child.parent_link().parent_storage_type() == producer_child_parent.parent_storage_type());
+
+        scheduling.notifications.clear();
+        moved_whole.bind_output(list_replacement.view(MIN_ST));
+        set_list_output(list_replacement, 0, 21, MIN_ST + TimeDelta{1});
+        REQUIRE_FALSE(scheduling.notifications.empty());
+        auto moved_after_rebind = moved.view(&scheduling, MIN_ST + TimeDelta{1});
+        auto moved_after_bundle = moved_after_rebind.as_bundle();
+        auto moved_after_whole = moved_after_bundle.field("whole");
+        auto moved_after_list = moved_after_whole.as_list();
+        REQUIRE(moved_after_list[0].value().checked_as<std::int32_t>() == 21);
+
+        set_list_output(list_source, 0, 11, MIN_ST + TimeDelta{2});
+        auto independent_after = independent.view(nullptr, MIN_ST + TimeDelta{2});
+        auto independent_list = independent_after.as_list();
+        REQUIRE(independent_list[0].value().checked_as<std::int32_t>() == 11);
+        REQUIRE(independent_after.bound());
+    }
+
+    REQUIRE(list_replacement.data_view().observer_count() == 0);
+    REQUIRE(scalar_source.data_view().observer_count() == 0);
+    REQUIRE(independent_view.bound());
+    REQUIRE(list_source.data_view().observer_count() == 1);
+    REQUIRE(list_source.data_view().parent_link().parent_output() == &list_source);
+    REQUIRE(producer_child.parent_link().parent_data() == producer_child_parent.parent_data());
+
+    TSInput producer_first{builder};
+    std::optional<TSOutput> short_list{std::in_place, list};
+    std::optional<TSOutput> short_scalar{std::in_place, ts};
+    auto producer_first_view = producer_first.view(nullptr, MIN_ST);
+    auto producer_first_root = producer_first_view.as_bundle();
+    auto producer_first_whole = producer_first_root.field("whole");
+    auto producer_first_nested_view = producer_first_root.field("nested");
+    auto producer_first_nested = producer_first_nested_view.as_bundle();
+    auto producer_first_items_view = producer_first_nested.field("items");
+    auto producer_first_items = producer_first_items_view.as_list();
+    auto producer_first_leaf = producer_first_items[0];
+    producer_first_whole.bind_output(short_list->view(MIN_ST));
+    producer_first_leaf.bind_output(short_scalar->view(MIN_ST));
+    short_list.reset();
+    REQUIRE_FALSE(producer_first_whole.bound());
+    REQUIRE(producer_first_leaf.bound());
+    short_scalar.reset();
+    REQUIRE_FALSE(producer_first_leaf.bound());
+}
+
+TEST_CASE("composed forwarding output invalidates local consumers without touching producer consumers")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *ts = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+    const auto *list = registry.tsl(ts, 2);
+    const auto *nested = registry.tsb("ForwardOwnershipNested", {{"value", ts}});
+    const auto *root = registry.tsb("ForwardOwnershipRoot", {{"whole", list}, {"nested", nested}});
+    const auto endpoint = TSEndpointSchema::non_peered(
+        root,
+        {
+            TSEndpointSchema::peered(list),
+            TSEndpointSchema::non_peered(nested, {TSEndpointSchema::peered(ts)}),
+        });
+
+    TSOutput list_source{list};
+    TSOutput scalar_source{ts};
+    set_list_output(list_source, 0, 1, MIN_ST);
+    set_scalar_output(scalar_source, 2, MIN_ST);
+
+    TSInput independent{TSInputBuilderFactory::checked_builder_for(*list, TSEndpointSchema::peered(list))};
+    auto independent_view = independent.view(nullptr, MIN_ST);
+    independent_view.bind_output(list_source.view(MIN_ST));
+
+    TSInput root_consumer{TSInputBuilderFactory::checked_builder_for(*root, TSEndpointSchema::peered(root))};
+    TSInput child_consumer{TSInputBuilderFactory::checked_builder_for(*ts, TSEndpointSchema::peered(ts))};
+    RecordingNotifier root_scheduling;
+    auto root_view = root_consumer.view(&root_scheduling, MIN_ST);
+    auto child_view = child_consumer.view(nullptr, MIN_ST);
+
+    std::optional<TSOutput> forwarding{std::in_place, endpoint};
+    auto forwarding_view = forwarding->view(MIN_ST);
+    auto forwarding_bundle = forwarding_view.as_bundle();
+    auto forwarding_whole = forwarding_bundle.field("whole");
+    auto forwarding_nested_view = forwarding_bundle.field("nested");
+    auto forwarding_nested = forwarding_nested_view.as_bundle();
+    auto forwarding_leaf = forwarding_nested.field("value");
+    forwarding_whole.bind_forwarding_target(list_source.view(MIN_ST));
+    forwarding_leaf.bind_forwarding_target(scalar_source.view(MIN_ST));
+    auto forwarding_local_root = forwarding_view.data_view().borrowed_ref();
+    auto forwarding_local_whole = detail::input_child_projection(forwarding_local_root, 0).target_link;
+    auto forwarding_local_nested = detail::input_child_projection(forwarding_local_root, 1).visible;
+    auto forwarding_local_leaf = detail::input_child_projection(forwarding_local_nested, 0).target_link;
+    REQUIRE(forwarding_local_whole.path_from_root() == std::vector<std::size_t>{0});
+    REQUIRE(forwarding_local_leaf.path_from_root() == std::vector<std::size_t>{1, 0});
+    root_view.bind_output(forwarding_view.borrowed_ref());
+    root_view.make_active();
+    child_view.bind_output(forwarding_leaf.borrowed_ref());
+
+    REQUIRE(root_view.bound());
+    REQUIRE(root_view.active());
+    REQUIRE(child_view.bound());
+    REQUIRE_FALSE(child_view.active());
+    REQUIRE(independent_view.bound());
+    REQUIRE(list_source.data_view().parent_link().parent_output() == &list_source);
+
+    root_scheduling.notifications.clear();
+    set_scalar_output(scalar_source, 3, MIN_ST + TimeDelta{1});
+    REQUIRE_FALSE(root_scheduling.notifications.empty());
+    forwarding.reset();
+
+    REQUIRE_FALSE(root_view.bound());
+    REQUIRE(root_view.active());
+    REQUIRE_FALSE(child_view.bound());
+    REQUIRE(independent_view.bound());
+    REQUIRE(list_source.data_view().parent_link().parent_output() == &list_source);
+
+    set_list_output(list_source, 0, 4, MIN_ST + TimeDelta{2});
+    auto independent_after = independent.view(nullptr, MIN_ST + TimeDelta{2});
+    auto independent_list = independent_after.as_list();
+    REQUIRE(independent_after.bound());
+    REQUIRE(independent_list[0].value().checked_as<std::int32_t>() == 4);
+}
+
+TEST_CASE("fixed ownership traversal has the same local boundary for Data Input and Output roles")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts = registry.ts(integer);
+    const auto *list = registry.tsl(ts, 2);
+    const auto *root_schema = registry.tsb("RoleOwnershipBoundary", {{"items", list}});
+
+    const auto verify = [](TSDataView root, TypeRole role) {
+        REQUIRE(root.type_ref().role() == role);
+        auto bundle = root.as_bundle();
+        auto list_data = bundle.field("items");
+        auto list_view = list_data.as_list();
+        auto leaf = list_view[1];
+        REQUIRE(list_data.type_ref().role() == role);
+        REQUIRE(leaf.type_ref().role() == role);
+        REQUIRE(list_data.parent_link().parent_data() == root.data());
+        REQUIRE(leaf.parent_link().parent_data() == root.data());
+        REQUIRE(leaf.path_from_root() == std::vector<std::size_t>{0, 1});
+        REQUIRE(leaf.root_view().data() == root.data());
+    };
+
+    TSData data{TSDataPlanFactory::instance().data_type_for(root_schema)};
+    verify(data.view(), TypeRole::Data);
+
+    TSInput input{TSInputBuilderFactory::checked_builder_for(
+        *root_schema, TSEndpointSchema::owned(root_schema))};
+    verify(input.view().data_view().borrowed_ref(), TypeRole::Input);
+
+    TSOutput output{root_schema};
+    verify(output.data_view(), TypeRole::Output);
+}
+
+TEST_CASE("ownership traversal treats excluded keyed roots as leaves")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *schema = registry.tsd(integer, registry.ts(integer));
+    InvalidationRecorder root_observer;
+    InvalidationRecorder child_observer;
+
+    {
+        TSOutput output{schema};
+        Value key{std::int32_t{1}};
+        Value stored{std::int32_t{2}};
+        auto root = output.data_view();
+        auto dict = root.as_dict();
+        auto mutation = dict.begin_mutation(MIN_ST);
+        auto child = mutation.at(key.view());
+        REQUIRE(child.begin_mutation(MIN_ST).copy_value_from(stored.view()));
+        root.subscribe(&root_observer);
+        child.subscribe(&child_observer);
+    }
+
+    REQUIRE(root_observer.invalidations == 1);
+    REQUIRE(child_observer.invalidations == 0);
+}
+
+TEST_CASE("fixed structured role caches are canonical and thread stable")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    auto &factory = TSDataPlanFactory::instance();
+    const auto *ts = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+    const auto *schema = registry.tsl(ts, 3);
+    const auto expected = factory.output_type_for(schema);
+
+    std::array<const TypeRecord *, 8> records{};
+    std::array<std::thread, 8> threads{};
+    for (std::size_t index = 0; index < threads.size(); ++index)
+        threads[index] = std::thread([&, index] { records[index] = factory.output_type_for(schema).record(); });
+    for (auto &thread : threads) thread.join();
+    for (const auto *record : records) REQUIRE(record == expected.record());
+}
+
+TEST_CASE("fixed input records describe owned target composite and embedded topology")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *ts = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+    const auto *list = registry.tsl(ts, 2);
+    const auto *root = registry.tsb("FixedInputRoles", {{"owned", ts}, {"target", ts}, {"items", list}});
+
+    TSInput owned{TSInputBuilderFactory::checked_builder_for(*root, TSEndpointSchema::owned(root))};
+    REQUIRE(owned.type_ref().schema() == root);
+    REQUIRE(std::string{owned.type_ref().record()->implementation_name()} == "ts.fixed.input.owned");
+
+    TSInput target{TSInputBuilderFactory::checked_builder_for(*root, TSEndpointSchema::peered(root))};
+    REQUIRE(target.type_ref().schema() == root);
+    REQUIRE(std::string{target.type_ref().record()->implementation_name()} == "ts.fixed.input.target");
+
+    const auto composite_schema = TSEndpointSchema::non_peered(
+        root,
+        {TSEndpointSchema::owned(ts), TSEndpointSchema::peered(ts),
+         TSEndpointSchema::non_peered_list(list, TSEndpointSchema::owned(ts))});
+    TSInput composite{TSInputBuilderFactory::checked_builder_for(*root, composite_schema)};
+    const auto root_type = composite.type_ref();
+    REQUIRE(root_type.schema() == root);
+    REQUIRE(std::string{root_type.record()->implementation_name()} == "ts.fixed.input.composite");
+    REQUIRE(has_capability(root_type.capabilities(), TypeCapabilities::HasChildren));
+    REQUIRE_FALSE(has_capability(root_type.capabilities(), TypeCapabilities::Mutable));
+
+    auto composite_view = composite.view();
+    auto bundle = composite_view.as_bundle();
+    const auto owned_type = bundle.field("owned").type_ref();
+    const auto target_type = bundle.field("target").type_ref();
+    const auto list_type = bundle.field("items").type_ref();
+    REQUIRE(owned_type.as_role().role() == TypeRole::Input);
+    REQUIRE(std::string{owned_type.record()->implementation_name()} == "ts.fixed.input.embedded");
+    REQUIRE(target_type.as_role().role() == TypeRole::Input);
+    REQUIRE(std::string{target_type.record()->implementation_name()} == "ts.fixed.input.target");
+    REQUIRE(list_type.as_role().role() == TypeRole::Input);
+    REQUIRE(std::string{list_type.record()->implementation_name()} == "ts.fixed.input.embedded");
+    auto items = bundle.field("items");
+    auto item_list = items.as_list();
+    REQUIRE(item_list[0].type_ref().as_role().role() == TypeRole::Input);
 }
 
 TEST_CASE("scalar output and peered input preserve binding, timing, and subscriptions")
@@ -588,6 +1102,71 @@ TEST_CASE("scalar observer invalidation is detached and reentrant")
     REQUIRE(tracking.observers.empty());
 }
 
+TEST_CASE("fixed output invalidates every published descendant and relinks copied storage")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *ts = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+    const auto *list = registry.tsl(ts, 2);
+    const auto *schema = registry.tsb("FixedLifetimeTree", {{"items", list}});
+
+    InvalidationRecorder root_observer;
+    InvalidationRecorder list_observer;
+    InvalidationRecorder first_observer;
+    InvalidationRecorder second_observer;
+    const TSDataTracking *root_tracking = nullptr;
+    const TSDataTracking *list_tracking = nullptr;
+    const TSDataTracking *first_tracking = nullptr;
+    const TSDataTracking *second_tracking = nullptr;
+    {
+        auto output = std::make_unique<TSOutput>(schema);
+        auto root = output->data_view().borrowed_ref();
+        auto bundle = root.as_bundle();
+        auto list_data = bundle.field("items");
+        auto items = list_data.as_list();
+        auto first = items[0];
+        auto second = items[1];
+        root_tracking = &root.tracking();
+        list_tracking = &list_data.tracking();
+        first_tracking = &first.tracking();
+        second_tracking = &second.tracking();
+        root.subscribe(&root_observer);
+        list_data.subscribe(&list_observer);
+        first.subscribe(&first_observer);
+        second.subscribe(&second_observer);
+
+        TSOutput copied{*output};
+        auto copied_root = copied.data_view().borrowed_ref();
+        auto copied_bundle = copied_root.as_bundle();
+        auto copied_list_data = copied_bundle.field("items");
+        auto copied_items = copied_list_data.as_list();
+        auto copied_leaf = copied_items[1];
+        REQUIRE(copied_leaf.path_from_root() == std::vector<std::size_t>{0, 1});
+        REQUIRE(copied_leaf.root_view().storage_type() == copied_root.storage_type());
+        REQUIRE(copied_leaf.root_view().data() == copied_root.data());
+
+        TSOutput moved{std::move(copied)};
+        auto moved_root = moved.data_view().borrowed_ref();
+        auto moved_bundle = moved_root.as_bundle();
+        auto moved_list_data = moved_bundle.field("items");
+        auto moved_items = moved_list_data.as_list();
+        auto moved_leaf = moved_items[0];
+        REQUIRE(moved_leaf.path_from_root() == std::vector<std::size_t>{0, 0});
+        REQUIRE(moved_leaf.root_view().data() == moved_root.data());
+
+        output.reset();
+    }
+
+    REQUIRE(root_observer.invalidations == 1);
+    REQUIRE(list_observer.invalidations == 1);
+    REQUIRE(first_observer.invalidations == 1);
+    REQUIRE(second_observer.invalidations == 1);
+    REQUIRE(root_observer.invalidated_source == root_tracking);
+    REQUIRE(list_observer.invalidated_source == list_tracking);
+    REQUIRE(first_observer.invalidated_source == first_tracking);
+    REQUIRE(second_observer.invalidated_source == second_tracking);
+}
+
 TEST_CASE("scalar reverse member teardown and normal graph stop are safe")
 {
     using namespace hgraph;
@@ -658,4 +1237,81 @@ TEST_CASE("scalar role caches reset after owners are destroyed and reseed cleanl
     REQUIRE(output.valid());
     REQUIRE(data.schema() == schema);
     REQUIRE(output.schema() == schema);
+}
+
+TEST_CASE("fixed role caches reset after owners are destroyed and reseed cleanly")
+{
+    using namespace hgraph;
+    const TSValueTypeMetaData *old_schema = nullptr;
+    const TypeRecord *old_data_record = nullptr;
+    const TypeRecord *old_input_record = nullptr;
+    const TypeRecord *old_output_record = nullptr;
+
+    {
+        auto &registry = TypeRegistry::instance();
+        const auto *ts = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+        const auto *list = registry.tsl(ts, 2);
+        old_schema = registry.tsb("FixedResetBundle", {{"items", list}, {"target", ts}});
+        const auto endpoint = TSEndpointSchema::non_peered(
+            old_schema,
+            {TSEndpointSchema::non_peered_list(list, TSEndpointSchema::owned(ts)),
+             TSEndpointSchema::peered(ts)});
+
+        TSData data{TSDataPlanFactory::instance().data_type_for(old_schema)};
+        TSInput input{TSInputBuilderFactory::checked_builder_for(*old_schema, endpoint)};
+        TSOutput output{old_schema};
+        old_data_record = data.type_ref().record();
+        old_input_record = input.type_ref().record();
+        old_output_record = output.type_ref().record();
+        auto data_view = data.view();
+        auto input_view = input.view();
+        auto output_view = output.view(MIN_ST);
+        auto data_bundle = data_view.as_bundle();
+        auto input_bundle = input_view.as_bundle();
+        auto output_bundle = output_view.as_bundle();
+        REQUIRE(data_bundle.field("items").type_ref().role() == TypeRole::Data);
+        REQUIRE(input_bundle.field("items").type_ref().as_role().role() == TypeRole::Input);
+        REQUIRE(output_bundle.field("items").type_ref().as_role().role() == TypeRole::Output);
+    }
+
+    reset_all_registries();
+
+    auto &registry = TypeRegistry::instance();
+    const auto *ts = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+    const auto *list = registry.tsl(ts, 2);
+    const auto *schema = registry.tsb("FixedResetBundle", {{"items", list}, {"target", ts}});
+    const auto endpoint = TSEndpointSchema::non_peered(
+        schema,
+        {TSEndpointSchema::non_peered_list(list, TSEndpointSchema::owned(ts)),
+         TSEndpointSchema::peered(ts)});
+    TSData data{TSDataPlanFactory::instance().data_type_for(schema)};
+    TSInput input{TSInputBuilderFactory::checked_builder_for(*schema, endpoint)};
+    TSOutput output{schema};
+
+    REQUIRE(schema->header.valid());
+    REQUIRE(data.type_ref().valid());
+    REQUIRE(input.type_ref().valid());
+    REQUIRE(output.type_ref().valid());
+    REQUIRE(data.type_ref().role() == TypeRole::Data);
+    REQUIRE(input.type_ref().as_role().role() == TypeRole::Input);
+    REQUIRE(output.type_ref().as_role().role() == TypeRole::Output);
+    REQUIRE(data.type_ref().ops()->context != nullptr);
+    REQUIRE(input.type_ref().ops()->context != nullptr);
+    REQUIRE(output.type_ref().ops()->context != nullptr);
+    auto data_view = data.view();
+    auto input_view = input.view();
+    auto output_view = output.view(MIN_ST);
+    auto data_bundle = data_view.as_bundle();
+    auto input_bundle = input_view.as_bundle();
+    auto output_bundle = output_view.as_bundle();
+    REQUIRE(data_bundle.field("items").type_ref().valid());
+    REQUIRE(input_bundle.field("items").type_ref().valid());
+    REQUIRE(output_bundle.field("items").type_ref().valid());
+
+    // Allocators may reuse schema and record addresses after reset. Either
+    // outcome must reseed without stale ops/context conflicts.
+    static_cast<void>(old_schema == schema);
+    static_cast<void>(old_data_record == data.type_ref().record());
+    static_cast<void>(old_input_record == input.type_ref().record());
+    static_cast<void>(old_output_record == output.type_ref().record());
 }

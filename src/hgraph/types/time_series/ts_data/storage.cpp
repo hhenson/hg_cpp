@@ -1,5 +1,8 @@
 #include <hgraph/types/time_series/ts_data/storage.h>
 
+#include "ownership.h"
+#include "../ts_input/target_link_ops.h"
+
 #include <hgraph/util/scope.h>
 
 #include <stdexcept>
@@ -7,6 +10,74 @@
 
 namespace hgraph
 {
+    namespace
+    {
+        [[nodiscard]] TSStorageTypeRef checked_legacy_root_type(const TSDataBinding &binding)
+        {
+            if (is_migrated_ts_root_schema(binding.type_meta))
+            {
+                throw std::invalid_argument(
+                    "migrated TSData roots require a Data/Input/Output TypeRecord");
+            }
+            return TSStorageTypeRef{binding};
+        }
+    }
+
+    namespace detail
+    {
+        [[nodiscard]] const TSDataOwnershipOps *ownership_ops_for(const TSDataOps *ops) noexcept
+        {
+            if (target_link_context_for_ops(ops) != nullptr)
+            {
+                static const TSDataOwnershipOps target_link_leaf{
+                    .child_count = [](const void *) noexcept { return std::size_t{0}; },
+                    .child_at = [](const void *, void *, std::size_t) noexcept { return TSDataOwnedChild{}; },
+                };
+                return &target_link_leaf;
+            }
+            if (const auto *composed = composed_input_ownership_ops_for(ops); composed != nullptr) { return composed; }
+            return fixed_ts_data_ownership_ops_for(ops);
+        }
+
+        void attach_owned_ts_data_parents(TSDataView root)
+        {
+            if (!root.valid()) { return; }
+            const auto &ops = root.ops();
+            const auto *ownership = ownership_ops_for(&ops);
+            if (ownership == nullptr) { return; }
+            const auto count = ownership->child_count(ops.context);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                const auto owned = ownership->child_at(ops.context, const_cast<void *>(root.data()), index);
+                if (!owned.type || owned.data == nullptr) { continue; }
+                TSDataView child{owned.type, owned.data};
+                child.bind_parent(root, index);
+                attach_owned_ts_data_parents(child.borrowed_ref());
+            }
+        }
+
+        void invalidate_owned_ts_data_tree(TSDataView root) noexcept
+        {
+            if (!root.valid()) { return; }
+            static_cast<void>(fallback_on_exception(false, [&] {
+                auto &tracking = root.mutable_tracking();
+                tracking.observers.invalidate(&tracking);
+                const auto &ops = root.ops();
+                const auto *ownership = ownership_ops_for(&ops);
+                if (ownership == nullptr) { return true; }
+                const auto count = ownership->child_count(ops.context);
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    const auto owned = ownership->child_at(ops.context, const_cast<void *>(root.data()), index);
+                    if (!owned.type || owned.data == nullptr) { continue; }
+                    TSDataView child{owned.type, owned.data};
+                    invalidate_owned_ts_data_tree(std::move(child));
+                }
+                return true;
+            }));
+        }
+    }
+
     TSDataOwnedStorage::TSDataOwnedStorage(TSStorageTypeRef type, const MemoryUtils::AllocatorOps &allocator)
     {
         construct_default(type, allocator);
@@ -31,6 +102,7 @@ namespace hgraph
         : type_(std::exchange(other.type_, {})), allocator_(std::exchange(other.allocator_, nullptr)),
           data_(std::exchange(other.data_, nullptr))
     {
+        if (data_ != nullptr) { detail::attach_owned_ts_data_parents(TSDataView{type_, data_}); }
     }
 
     TSDataOwnedStorage &TSDataOwnedStorage::operator=(TSDataOwnedStorage &&other) noexcept
@@ -41,6 +113,7 @@ namespace hgraph
             type_ = std::exchange(other.type_, {});
             allocator_ = std::exchange(other.allocator_, nullptr);
             data_ = std::exchange(other.data_, nullptr);
+            if (data_ != nullptr) { detail::attach_owned_ts_data_parents(TSDataView{type_, data_}); }
         }
         return *this;
     }
@@ -65,6 +138,7 @@ namespace hgraph
             data_ = nullptr;
         });
         plan->default_construct(data_);
+        detail::attach_owned_ts_data_parents(TSDataView{type_, data_});
         rollback.release();
     }
 
@@ -84,6 +158,7 @@ namespace hgraph
             data_ = nullptr;
         });
         plan->copy_construct(data_, other.data_);
+        detail::attach_owned_ts_data_parents(TSDataView{type_, data_});
         rollback.release();
     }
 
@@ -92,6 +167,7 @@ namespace hgraph
         if (data_ != nullptr)
         {
             const auto *plan = type_.plan();
+            detail::invalidate_owned_ts_data_tree(TSDataView{type_, data_});
             plan->destroy(data_);
             allocator_->deallocate_storage(data_, plan->layout);
         }
@@ -103,14 +179,8 @@ namespace hgraph
     TSData::TSData() noexcept = default;
 
     TSData::TSData(const TSDataBinding &binding)
-        : storage_(TSStorageTypeRef{binding})
-    {
-        if (binding.type_meta != nullptr &&
-            (binding.type_meta->kind == TSTypeKind::TS || binding.type_meta->kind == TSTypeKind::SIGNAL))
-        {
-            throw std::invalid_argument("scalar TSData roots require a Data/Input/Output TypeRecord");
-        }
-    }
+        : storage_(checked_legacy_root_type(binding))
+    {}
 
     TSData::TSData(TSRoleTypeRef type)
         : storage_(TSStorageTypeRef{type})

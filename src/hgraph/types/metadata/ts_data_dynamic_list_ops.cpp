@@ -211,7 +211,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     throw std::logic_error("dynamic TSL element value/delta bindings are not resolved");
                 }
 
-                list_layout.element_binding = &element_binding_;
+                list_layout.element_type = TSStorageTypeRef{element_binding_};
                 list_layout.element_layout  = element_layout;
                 list_layout.element_count   = 0;
                 list_layout.value_offset    = 0;
@@ -435,11 +435,11 @@ namespace hgraph::ts_data_plan_factory_detail
                 return storage(memory).size();
             }
 
-            [[nodiscard]] static const TSDataBinding *dynamic_indexed_element_binding(const void *context,
-                                                                                      const void *,
-                                                                                      std::size_t) noexcept
+            [[nodiscard]] static TSStorageTypeRef dynamic_indexed_element_binding(const void *context,
+                                                                                   const void *,
+                                                                                   std::size_t) noexcept
             {
-                return ctx(context)->element_binding;
+                return TSStorageTypeRef{ctx(context)->element_binding};
             }
 
             [[nodiscard]] static const void *dynamic_indexed_element_memory(const void *,

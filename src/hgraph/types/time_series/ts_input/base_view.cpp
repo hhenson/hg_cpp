@@ -259,6 +259,15 @@ namespace hgraph
     TSInputTypeRef TSInputView::type_ref() const
     {
         const auto type = data_.storage_type().type_ref();
+        // Descents through one peered root share the root TargetLink storage
+        // and therefore its root record. That record must not describe a
+        // child at a different semantic path; callers fall back through the
+        // child's schema until target-path records are introduced.
+        if (type && type.schema() != data_.schema()) { return {}; }
+        // A migrated composed from-REF alternative is published through its
+        // Output record and may be the resolved storage of a non-target input
+        // view. Do not reinterpret that record as an Input type.
+        if (type && type.role() != TypeRole::Input) { return {}; }
         return type ? TSInputTypeRef::checked(type) : TSInputTypeRef{};
     }
 

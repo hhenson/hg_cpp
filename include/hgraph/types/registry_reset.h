@@ -19,13 +19,13 @@ namespace hgraph
      *
      * 1. ``OperatorRegistry`` and converter registries — candidates borrow
      *    schemas and their owned Values retain common type records.
-     * 2. ``TypeRecordRegistry`` — cleared after Value owners, but before the
-     *    schema, plan, and ops objects referenced by each record.
-     * 3. ``ValuePlanFactory`` / ``TSDataPlanFactory`` — plans borrow schema
-     *    pointers (and clear the MemoryUtils synthesised composite/array plan
-     *    registries).
-     * 4. ``TSInputBuilderFactory`` — input builders borrow schema + plan
-     *    pointers.
+     * 2. ``TypeRecordRegistry`` — records borrow plan and ops contexts from the
+     *    time-series and value factories below. Cached record handles are
+     *    trivially cleared later and are never dereferenced during reset.
+     * 3. ``TSInputBuilderFactory`` / ``TSDataPlanFactory`` — clear the endpoint
+     *    and TSData ops contexts after the records that pointed into them.
+     * 4. ``ValuePlanFactory`` — plans borrow schema pointers (and the later
+     *    clears release MemoryUtils synthesised composite/array plans).
      * 5. Compact, mutable-container, and synthesised plan registries —
      *    lifecycle contexts reference the bindings below.
      * 6. ``TSDataBinding`` — borrows schema + plan + ops pointers. Value type

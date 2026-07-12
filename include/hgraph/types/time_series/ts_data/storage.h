@@ -6,6 +6,12 @@
 
 namespace hgraph
 {
+    namespace detail
+    {
+        void attach_owned_ts_data_parents(TSDataView root);
+        void invalidate_owned_ts_data_tree(TSDataView root) noexcept;
+    }
+
     class TSDataOwnedStorage
     {
       public:

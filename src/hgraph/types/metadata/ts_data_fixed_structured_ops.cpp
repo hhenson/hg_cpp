@@ -7,6 +7,8 @@
 #include <hgraph/types/value/value_builder.h>
 #include <hgraph/util/scope.h>
 
+#include "../time_series/ts_data/ownership.h"
+
 #include <fmt/format.h>
 
 #include <algorithm>
@@ -35,6 +37,7 @@ namespace hgraph::ts_data_plan_factory_detail
     {
         const TSValueTypeMetaData      *schema{nullptr};
         const MemoryUtils::StoragePlan *plan{nullptr};
+        TypeRole                        role{TypeRole::Data};
         FixedTSBDataLayout              bundle_layout{};
         FixedTSLDataLayout              list_layout{};
         IndexedTSDataOps                ops{};
@@ -45,42 +48,42 @@ namespace hgraph::ts_data_plan_factory_detail
         ValueTypeRef ordinal_key_binding{nullptr};
         ValueTypeRef delta_map_value_binding{nullptr};
         ValueTypeRef delta_key_set_binding{nullptr};
-        std::vector<const TSDataBinding *> element_bindings{};
+        std::vector<TSStorageTypeRef>       element_types{};
         std::vector<std::size_t>       element_data_offsets{};
         std::vector<std::int64_t>       ordinal_keys{};
         bool                           projected_value_surface{false};
 
-        FixedTSDataContext(const TSValueTypeMetaData &schema_, const MemoryUtils::StoragePlan &plan_,
+        FixedTSDataContext(const TSValueTypeMetaData &schema_, const MemoryUtils::StoragePlan &plan_, TypeRole role_,
                            std::size_t value_offset, std::size_t aux_offset, std::size_t tracking_offset,
-                           std::vector<const TSDataBinding *> element_binding_cache,
+                           std::vector<TSStorageTypeRef> element_type_cache,
                            std::vector<std::size_t> element_data_offset_cache)
-            : schema(&schema_), plan(&plan_)
+            : schema(&schema_), plan(&plan_), role(role_)
         {
-            if (element_binding_cache.size() != element_data_offset_cache.size())
+            if (element_type_cache.size() != element_data_offset_cache.size())
             {
                 throw std::logic_error("TSDataPlanFactory: fixed TSData element offsets do not match bindings");
             }
             init_layout_base(value_offset, tracking_offset);
             if (schema->kind == TSTypeKind::TSB)
             {
-                bundle_layout.fields.reserve(element_binding_cache.size());
+                bundle_layout.fields.reserve(element_type_cache.size());
             }
             else
             {
-                element_bindings.reserve(element_binding_cache.size());
+                element_types.reserve(element_type_cache.size());
             }
-            ordinal_keys.reserve(element_binding_cache.size());
+            ordinal_keys.reserve(element_type_cache.size());
             element_data_offsets.reserve(element_data_offset_cache.size());
 
-            for (std::size_t index = 0; index < element_binding_cache.size(); ++index)
+            for (std::size_t index = 0; index < element_type_cache.size(); ++index)
             {
-                const auto *indexed_binding = element_binding_cache[index];
-                if (indexed_binding == nullptr)
+                const auto indexed_type = element_type_cache[index];
+                if (!indexed_type)
                 {
                     throw std::logic_error("TSDataPlanFactory: fixed TSData element binding is not resolved");
                 }
 
-                const auto &indexed_table = indexed_binding->ops_ref();
+                const auto &indexed_table = *indexed_type.ops();
                 const auto *indexed_layout = indexed_table.layout_impl(indexed_table.context);
                 if (indexed_layout == nullptr)
                 {
@@ -89,28 +92,28 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (schema->kind == TSTypeKind::TSB)
                 {
                     bundle_layout.fields.push_back(FixedTSDataFieldLayout{
-                        .binding     = indexed_binding,
+                        .type        = indexed_type,
                         .layout      = indexed_layout,
                         .data_offset = element_data_offset_cache[index],
                     });
                 }
                 else
                 {
-                    element_bindings.push_back(indexed_binding);
+                    element_types.push_back(indexed_type);
                     element_data_offsets.push_back(element_data_offset_cache[index]);
                     if (index == 0)
                     {
-                        list_layout.element_binding = indexed_binding;
+                        list_layout.element_type = indexed_type;
                         list_layout.element_layout  = indexed_layout;
                     }
-                    else if (indexed_binding->type_meta != list_layout.element_binding->type_meta)
+                    else if (indexed_type.schema() != list_layout.element_type.schema())
                     {
                         throw std::logic_error("TSDataPlanFactory: fixed TSL element bindings are not homogeneous");
                     }
                 }
                 ordinal_keys.push_back(static_cast<std::int64_t>(index));
                 const auto canonical_value_binding =
-                    ValuePlanFactory::instance().type_for(indexed_binding->type_meta->value_schema);
+                    ValuePlanFactory::instance().type_for(indexed_type.schema()->value_schema);
                 if (canonical_value_binding == nullptr || canonical_value_binding != indexed_layout->value_binding)
                 {
                     projected_value_surface = true;
@@ -118,7 +121,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
             if (schema->kind == TSTypeKind::TSL)
             {
-                configure_list_layout(aux_offset, element_binding_cache.size());
+                configure_list_layout(aux_offset, element_type_cache.size());
             }
 
             configure_ts_ops();
@@ -166,6 +169,16 @@ namespace hgraph::ts_data_plan_factory_detail
                                                    : static_cast<const TSDataLayout *>(&list_layout);
         }
 
+        [[nodiscard]] static const detail::TSDataOwnershipOps *ownership_ops_for(const TSDataOps *candidate) noexcept
+        {
+            if (candidate == nullptr || candidate->layout_impl != &fixed_layout) { return nullptr; }
+            static const detail::TSDataOwnershipOps ops{
+                .child_count = &owned_child_count,
+                .child_at = &owned_child_at,
+            };
+            return &ops;
+        }
+
       private:
         void init_layout_base(std::size_t value_offset, std::size_t tracking_offset) noexcept
         {
@@ -208,9 +221,9 @@ namespace hgraph::ts_data_plan_factory_detail
             return schema->kind == TSTypeKind::TSB ? bundle_layout.fields.size() : list_layout.element_count;
         }
 
-        [[nodiscard]] const TSDataBinding *element_binding(std::size_t index) const noexcept
+        [[nodiscard]] TSStorageTypeRef element_type(std::size_t index) const noexcept
         {
-            return schema->kind == TSTypeKind::TSB ? bundle_layout.fields[index].binding : element_bindings[index];
+            return schema->kind == TSTypeKind::TSB ? bundle_layout.fields[index].type : element_types[index];
         }
 
         [[nodiscard]] const TSDataLayout *element_layout(std::size_t index) const
@@ -219,9 +232,9 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 return bundle_layout.fields[index].layout;
             }
-            const auto *binding = element_binding(index);
-            const auto &binding_ops = binding->ops_ref();
-            return binding_ops.layout_impl(binding_ops.context);
+            const auto type = element_type(index);
+            const auto *ops = type.ops();
+            return ops->layout_impl(ops->context);
         }
 
         [[nodiscard]] ValueTypeRef element_value_binding(std::size_t index) const
@@ -409,8 +422,8 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto *state = ctx(context);
             for (std::size_t index = 0; index < state->element_count(); ++index)
             {
-                const auto *child = state->element_binding(index);
-                const auto &ops   = child_ops(*child);
+                const auto child = state->element_type(index);
+                const auto &ops  = child_ops(child);
                 const auto *data  = child_data(state, memory, index);
                 if (!ops.all_valid_impl(ops.context, data)) { return false; }
             }
@@ -488,16 +501,33 @@ namespace hgraph::ts_data_plan_factory_detail
             return offset == 0 ? memory : advance(memory, offset);
         }
 
-        [[nodiscard]] static const TSDataOps &child_ops(const TSDataBinding &child)
+        [[nodiscard]] static std::size_t owned_child_count(const void *context) noexcept
         {
-            return child.ops_ref();
+            return ctx(context)->element_count();
+        }
+
+        [[nodiscard]] static detail::TSDataOwnedChild owned_child_at(const void *context,
+                                                                     void       *memory,
+                                                                     std::size_t index) noexcept
+        {
+            const auto *state = ctx(context);
+            if (memory == nullptr || index >= state->element_count()) { return {}; }
+            return detail::TSDataOwnedChild{
+                .type = state->element_type(index),
+                .data = child_data(state, memory, index),
+            };
+        }
+
+        [[nodiscard]] static const TSDataOps &child_ops(TSStorageTypeRef child)
+        {
+            return *child.ops();
         }
 
         [[nodiscard]] static ValueView child_value_view(const FixedTSDataContext *state, const void *memory,
                                                         std::size_t index)
         {
-            const auto *child = state->element_binding(index);
-            const auto &ops   = child_ops(*child);
+            const auto child = state->element_type(index);
+            const auto &ops  = child_ops(child);
             const auto *data  = child_data(state, memory, index);
             const auto binding = state->element_value_binding(index);
             if (state->schema->kind == TSTypeKind::TSB &&
@@ -511,8 +541,8 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static ValueView child_delta_view(const FixedTSDataContext *state, const void *memory,
                                                         std::size_t index)
         {
-            const auto *child = state->element_binding(index);
-            const auto &ops   = child_ops(*child);
+            const auto child = state->element_type(index);
+            const auto &ops  = child_ops(child);
             const auto *data  = child_data(state, memory, index);
             const auto  time  = fixed_tracking(state, memory)->last_modified_time;
             if (ops.tracking_impl(ops.context, data)->last_modified_time != time)
@@ -538,10 +568,10 @@ namespace hgraph::ts_data_plan_factory_detail
             return ctx(context)->element_count();
         }
 
-        [[nodiscard]] static const TSDataBinding *fixed_indexed_element_binding(const void *context, const void *,
-                                                                                std::size_t index) noexcept
+        [[nodiscard]] static TSStorageTypeRef fixed_indexed_element_binding(const void *context, const void *,
+                                                                            std::size_t index) noexcept
         {
-            return ctx(context)->element_binding(index);
+            return ctx(context)->element_type(index);
         }
 
         [[nodiscard]] static const void *fixed_indexed_element_memory(const void *context, const void *memory,
@@ -920,8 +950,8 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static bool child_modified_for_parent_time(const FixedTSDataContext *state, const void *memory,
                                                                  std::size_t index) noexcept
         {
-            const auto *child = state->element_binding(index);
-            const auto &ops   = child_ops(*child);
+            const auto child = state->element_type(index);
+            const auto &ops  = child_ops(child);
             const auto *data  = child_data(state, memory, index);
             const auto  time  = fixed_tracking(state, memory)->last_modified_time;
             return ops.tracking_impl(ops.context, data)->last_modified_time == time;
@@ -1401,8 +1431,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 auto source_value = source_values.at(index);
                 if (!source_value.has_value()) { continue; }
-                const auto *child = state->element_binding(index);
-                const auto &ops   = child_ops(*child);
+                const auto child = state->element_type(index);
+                const auto &ops  = child_ops(child);
                 void       *data  = child_data(state, memory, index);
                 if (ops.copy_value_from_impl(ops.context, data, source_value, modified_time))
                 {
@@ -1450,7 +1480,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 auto source_value = source_values.at(index);
                 if (!source_value.has_value()) { continue; }
-                const auto &ops = child_ops(*state->element_binding(index));
+                const auto &ops = child_ops(state->element_type(index));
                 if (ops.move_value_from_impl == &ts_data_detail::missing_move_value_from)
                 {
                     throw std::logic_error(
@@ -1463,8 +1493,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 auto source_value = source_values.at(index);
                 if (!source_value.has_value()) { continue; }
-                const auto *child = state->element_binding(index);
-                const auto &ops   = child_ops(*child);
+                const auto child = state->element_type(index);
+                const auto &ops  = child_ops(child);
                 void       *data  = child_data(state, memory, index);
                 auto        source_child = Value::reference(source_value.binding(),
                                                             const_cast<void *>(source_value.data()));
@@ -1553,8 +1583,8 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             if (source.is_none()) { return false; }
 
-            const auto *child = state->element_binding(index);
-            const auto &ops   = child_ops(*child);
+            const auto child = state->element_type(index);
+            const auto &ops  = child_ops(child);
             void       *data  = child_data(state, memory, index);
             if (!ops.from_python_impl(ops.context, data, source, modified_time)) { return false; }
 
@@ -1699,6 +1729,7 @@ namespace hgraph::ts_data_plan_factory_detail
     {
         const TSValueTypeMetaData      *schema{nullptr};
         const MemoryUtils::StoragePlan *plan{nullptr};
+        TypeRole                        role{TypeRole::Data};
         std::size_t                     value_offset{0};
         std::size_t                     aux_offset{0};
         std::size_t                     tracking_offset{0};
@@ -1712,6 +1743,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             auto seed = combine_hash(std::hash<const TSValueTypeMetaData *>{}(key.schema),
                                      std::hash<const MemoryUtils::StoragePlan *>{}(key.plan));
+            seed      = combine_hash(seed, static_cast<std::size_t>(key.role));
             seed      = combine_hash(seed, key.value_offset);
             seed      = combine_hash(seed, key.aux_offset);
             seed      = combine_hash(seed, key.tracking_offset);
@@ -1736,21 +1768,22 @@ namespace hgraph::ts_data_plan_factory_detail
 
     [[nodiscard]] FixedTSDataContext &fixed_ts_data_context(const TSValueTypeMetaData      &schema,
                                                             const MemoryUtils::StoragePlan &plan,
+                                                            TypeRole role,
                                                             std::size_t value_offset, std::size_t aux_offset,
                                                             std::size_t tracking_offset,
-                                                            std::vector<const TSDataBinding *> element_bindings,
+                                                            std::vector<TSStorageTypeRef> element_types,
                                                             std::vector<std::size_t> element_data_offsets)
     {
         std::lock_guard<std::mutex> lock(fixed_ts_data_context_mutex());
         auto                       &contexts = fixed_ts_data_contexts();
-        const FixedTSDataContextKey key{&schema, &plan, value_offset, aux_offset, tracking_offset};
+        const FixedTSDataContextKey key{&schema, &plan, role, value_offset, aux_offset, tracking_offset};
         if (const auto it = contexts.find(key); it != contexts.end())
         {
             return *it->second;
         }
 
-        auto  context = std::make_unique<FixedTSDataContext>(schema, plan, value_offset, aux_offset, tracking_offset,
-                                                             std::move(element_bindings), std::move(element_data_offsets));
+        auto  context = std::make_unique<FixedTSDataContext>(schema, plan, role, value_offset, aux_offset, tracking_offset,
+                                                             std::move(element_types), std::move(element_data_offsets));
         auto *result  = context.get();
         contexts.emplace(key, std::move(context));
         result->bind_surfaces();
@@ -1759,13 +1792,14 @@ namespace hgraph::ts_data_plan_factory_detail
 
     [[nodiscard]] const TSDataOps &fixed_structured_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                                 const MemoryUtils::StoragePlan &plan,
+                                                                TypeRole role,
                                                                 std::size_t value_offset, std::size_t aux_offset,
                                                                 std::size_t tracking_offset,
-                                                                std::vector<const TSDataBinding *> element_bindings,
+                                                                std::vector<TSStorageTypeRef> element_types,
                                                                 std::vector<std::size_t> element_data_offsets)
     {
         auto &context =
-            fixed_ts_data_context(schema, plan, value_offset, aux_offset, tracking_offset, std::move(element_bindings),
+            fixed_ts_data_context(schema, plan, role, value_offset, aux_offset, tracking_offset, std::move(element_types),
                                   std::move(element_data_offsets));
         return context.ops;
     }
@@ -1776,3 +1810,11 @@ namespace hgraph::ts_data_plan_factory_detail
         fixed_ts_data_contexts().clear();
     }
 } // namespace hgraph::ts_data_plan_factory_detail
+
+namespace hgraph::detail
+{
+    const TSDataOwnershipOps *fixed_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept
+    {
+        return ts_data_plan_factory_detail::FixedTSDataContext::ownership_ops_for(ops);
+    }
+}  // namespace hgraph::detail

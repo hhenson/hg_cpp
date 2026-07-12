@@ -24,6 +24,8 @@ namespace hgraph
         class TSOutputAlternativeStore;
         struct TSInputChildProjection;
         [[nodiscard]] TSInputChildProjection input_child_projection(const TSDataView &parent, std::size_t index);
+        void attach_owned_ts_data_parents(TSDataView root);
+        void invalidate_owned_ts_data_tree(TSDataView root) noexcept;
     }
 
     template <typename DataOps = TSDataOps>
@@ -307,6 +309,8 @@ namespace hgraph
         friend detail::TSInputChildProjection detail::input_child_projection(
             const TSDataView &parent,
             std::size_t index);
+        friend void detail::attach_owned_ts_data_parents(TSDataView root);
+        friend void detail::invalidate_owned_ts_data_tree(TSDataView root) noexcept;
         friend class TSDProxy;
         friend class TSDDataView;
         friend class TSDDataMutationView;

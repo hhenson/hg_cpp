@@ -22,9 +22,9 @@ namespace hgraph
     using TSDataBinding = TypeBinding<TSValueTypeMetaData, TSDataOps>;
 
     /**
-     * One-word storage cursor identity used while scalar role records coexist
-     * with legacy composite TSData bindings. The low bit identifies a legacy
-     * binding; canonical scalar TypeRecord pointers are stored untagged.
+     * One-word storage cursor identity used while migrated role records coexist
+     * with legacy TSData bindings. The low bit identifies a legacy binding;
+     * canonical TypeRecord pointers are stored untagged.
      */
     class TSStorageTypeRef
     {
@@ -409,13 +409,13 @@ namespace hgraph
     /**
      * Field layout entry for fixed-size bundle TSData.
      *
-     * The child binding owns its own TSData ops/layout. The parent layout only
+     * The child storage type owns its own TSData ops/layout. The parent layout only
      * records where that field's data pointer starts inside the parent
      * allocation.
      */
     struct FixedTSDataFieldLayout
     {
-        const TSDataBinding *binding{nullptr};
+        TSStorageTypeRef     type{};
         const TSDataLayout  *layout{nullptr};
         std::size_t          data_offset{0};
 
@@ -453,7 +453,7 @@ namespace hgraph
      */
     struct FixedTSLDataLayout : TSDataLayout
     {
-        const TSDataBinding *element_binding{nullptr};
+        TSStorageTypeRef     element_type{};
         const TSDataLayout  *element_layout{nullptr};
         std::size_t          element_count{0};
         std::size_t          element_value_stride{0};

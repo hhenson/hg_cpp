@@ -2,6 +2,7 @@
 
 #include <hgraph/types/time_series/ts_output/view_common.h>
 
+#include <stdexcept>
 #include <utility>
 
 namespace hgraph
@@ -17,6 +18,18 @@ namespace hgraph
             }
             const auto *name = schema->fields()[index].name;
             return name != nullptr ? std::string_view{name} : std::string_view{};
+        }
+
+        [[nodiscard]] std::size_t field_index(const TSValueTypeMetaData *schema, std::string_view name)
+        {
+            if (schema != nullptr && schema->kind == TSTypeKind::TSB)
+            {
+                for (std::size_t index = 0; index < schema->field_count(); ++index)
+                {
+                    if (field_name_at(schema, index) == name) { return index; }
+                }
+            }
+            throw std::out_of_range("TSBOutputView::at: field not found");
         }
 
         [[nodiscard]] bool tsb_output_valid_child(const void *context, const void *, std::size_t index)
@@ -125,8 +138,7 @@ namespace hgraph
 
     TSOutputView TSBOutputView::at(std::size_t index) &
     {
-        auto data = data_view();
-        return TSOutputView{view_.output(), data.at(index), view_.evaluation_time()};
+        return view_.indexed_child_at(index);
     }
 
     TSOutputView TSBOutputView::at(std::size_t index) const &
@@ -146,8 +158,7 @@ namespace hgraph
 
     TSOutputView TSBOutputView::at(std::string_view name) &
     {
-        auto data = data_view();
-        return TSOutputView{view_.output(), data.at(name), view_.evaluation_time()};
+        return at(field_index(schema(), name));
     }
 
     TSOutputView TSBOutputView::at(std::string_view name) const &

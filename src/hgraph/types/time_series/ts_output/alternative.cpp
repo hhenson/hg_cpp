@@ -69,12 +69,22 @@ namespace hgraph::detail
 
         [[nodiscard]] TSStorageTypeRef checked_endpoint_storage_type(const TSEndpointSchema &endpoint_schema)
         {
-            const auto &binding = checked_endpoint_binding(endpoint_schema);
+            const auto *binding_ptr = output_data_binding_for(endpoint_schema);
+            if (binding_ptr == nullptr)
+            {
+                throw std::logic_error("TSOutput from-REF alternative could not resolve output endpoint storage");
+            }
+            const auto &binding = *binding_ptr;
             const auto *schema = binding.type_meta;
-            if (schema != nullptr && (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL))
+            if (is_migrated_ts_root_schema(schema))
             {
                 const auto type = checked_ts_role_type(
-                    intern_ts_type(*schema, TypeRole::Output, binding.checked_plan(), binding.ops_ref()),
+                    intern_ts_type(
+                        *schema, TypeRole::Output, binding.checked_plan(), binding.ops_ref(),
+                        schema->kind == TSTypeKind::TSB ||
+                                (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0)
+                            ? std::string_view{"ts.fixed.output.root"}
+                            : std::string_view{}),
                     std::integral_constant<TypeRole, TypeRole::Output>{});
                 return TSStorageTypeRef{type.as_role()};
             }
@@ -826,6 +836,47 @@ namespace hgraph::detail
             return to_ref_binding_for_kind(schema.kind)(schema);
         }
 
+        [[nodiscard]] TSData make_to_ref_data(const TSValueTypeMetaData &schema)
+        {
+            if (is_migrated_ts_root_schema(&schema))
+            {
+                return TSData{TSDataPlanFactory::instance().data_type_for(&schema)};
+            }
+            return TSData{to_ref_ts_data_binding_for(schema)};
+        }
+
+        [[nodiscard]] TSOutputTypeRef checked_to_ref_output_type(const TSData                  &data,
+                                                                 const TSValueTypeMetaData &schema)
+        {
+            const auto data_type = TSDataTypeRef::checked(data.type_ref());
+            const auto output_type = TSDataPlanFactory::instance().output_type_for(&schema);
+            if (data_type.plan() != output_type.plan())
+            {
+                throw std::logic_error("TSOutput to-REF Data owner and Output facade require the same storage plan");
+            }
+
+            const auto *data_ops = data_type.ops();
+            const auto *output_ops = output_type.ops();
+            const auto *data_layout = data_ops != nullptr && data_ops->layout_impl != nullptr
+                                          ? data_ops->layout_impl(data_ops->context)
+                                          : nullptr;
+            const auto *output_layout = output_ops != nullptr && output_ops->layout_impl != nullptr
+                                            ? output_ops->layout_impl(output_ops->context)
+                                            : nullptr;
+            const bool compatible = data_ops != nullptr && output_ops != nullptr &&
+                                    data_ops->kind == output_ops->kind && data_layout != nullptr &&
+                                    output_layout != nullptr &&
+                                    data_layout->value_offset == output_layout->value_offset &&
+                                    data_layout->tracking_offset == output_layout->tracking_offset &&
+                                    data_layout->value_binding.schema() == output_layout->value_binding.schema() &&
+                                    data_layout->delta_binding.schema() == output_layout->delta_binding.schema();
+            if (!compatible)
+            {
+                throw std::logic_error("TSOutput to-REF Data owner and Output facade require layout-compatible ops");
+            }
+            return output_type;
+        }
+
         void populate_to_ref_unsupported(const TSDataView &,
                                          const TSOutputView &,
                                          const TSValueTypeMetaData &,
@@ -945,7 +996,7 @@ namespace hgraph::detail
     {
         ToRefAlternativeState(const TSValueTypeMetaData &requested_schema, const TSOutputView &source)
             : requested_schema{&requested_schema},
-              data{to_ref_ts_data_binding_for(requested_schema)}
+              data{make_to_ref_data(requested_schema)}
         {
             rebind(source);
         }
@@ -966,9 +1017,18 @@ namespace hgraph::detail
         TSOutputHandle             source{};
         ToRefBuildContext          build_context{};
 
-        [[nodiscard]] TSOutputHandle handle(const TSOutput *output) noexcept
+        [[nodiscard]] TSOutputHandle handle(const TSOutput *output)
         {
-            return TSOutputHandle{output, data.view()};
+            if (!is_migrated_ts_root_schema(requested_schema))
+            {
+                return TSOutputHandle{output, data.view()};
+            }
+            const auto output_type = checked_to_ref_output_type(data, *requested_schema);
+            auto       owner_view = data.view();
+            return TSOutputHandle{
+                output,
+                TSDataView{output_type.as_role(), owner_view.data()},
+            };
         }
 
         void rebind(const TSOutputView &new_source)
@@ -1300,7 +1360,7 @@ namespace hgraph::detail
 
         std::size_t seed = 0;
         seed = combine(seed, key.source_output);
-        seed = combine(seed, key.source_binding);
+        seed = combine(seed, reinterpret_cast<const void *>(key.source_type.raw_bits()));
         seed = combine(seed, key.source_data);
         seed = combine(seed, key.requested_schema);
         return seed;
@@ -1312,7 +1372,7 @@ namespace hgraph::detail
     {
         return AlternativeKey{
             .source_output    = source.output(),
-            .source_binding   = source.data_view().binding(),
+            .source_type      = source.storage_type(),
             .source_data      = source.data_view().data(),
             .requested_schema = &requested_schema,
         };

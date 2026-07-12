@@ -599,10 +599,10 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, 2);
-    const auto binding  = factory.binding_for(tsl);
-    REQUIRE(binding != nullptr);
+    const auto type = factory.data_type_for(tsl);
+    REQUIRE(type);
 
-    TSData data{*binding};
+    TSData data{type};
     auto   parent = data.view();
     auto   list   = parent.as_list();
     auto   child  = list.at(0);
@@ -610,7 +610,7 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
     REQUIRE_FALSE(parent.has_parent());
     REQUIRE(child.has_parent());
     REQUIRE(child.child_id() == 0);
-    REQUIRE(child.parent_link().parent_binding() == parent.binding());
+    REQUIRE(child.parent_link().parent_storage_type() == parent.storage_type());
     REQUIRE(child.parent_link().parent_data() == parent.data());
     REQUIRE(child.parent_link().child_id == 0);
     REQUIRE(sibling.has_parent());
@@ -758,11 +758,11 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsb      = registry.tsb("PlanFactoryTSB", {{"a", ts_int}, {"b", ts_int}});
 
-    const auto binding = factory.binding_for(tsb);
-    REQUIRE(binding != nullptr);
-    REQUIRE(binding->plan()->is_named_tuple());
-    const auto *value_component = binding->plan()->find_component("value");
-    const auto *aux_component   = binding->plan()->find_component("aux");
+    const auto type = factory.data_type_for(tsb);
+    REQUIRE(type);
+    REQUIRE(type.plan()->is_named_tuple());
+    const auto *value_component = type.plan()->find_component("value");
+    const auto *aux_component   = type.plan()->find_component("aux");
     REQUIRE(value_component != nullptr);
     REQUIRE(aux_component != nullptr);
     REQUIRE(value_component->offset == 0);
@@ -771,7 +771,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     REQUIRE(aux_component->plan->find_component("field_1") != nullptr);
     REQUIRE(aux_component->plan->find_component("tracking") != nullptr);
 
-    TSData data{*binding};
+    TSData data{type};
     auto   view = data.view();
     auto   tsb_view = view.as_bundle();
     REQUIRE(tsb_view.size() == 2);
@@ -779,11 +779,11 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     REQUIRE(tsb_view.has_field("a"));
     REQUIRE_FALSE(tsb_view.has_field("missing"));
     auto first_child = tsb_view.at(0);
-    REQUIRE(tsb_view.field("a").binding() == first_child.binding());
-    REQUIRE(tsb_view["a"].binding() == first_child.binding());
-    REQUIRE(first_child.binding()->type_meta == ts_int);
-    REQUIRE(first_child.binding()->plan() == binding->plan());
-    const auto &child_ops = first_child.binding()->ops_ref();
+    REQUIRE(tsb_view.field("a").storage_type() == first_child.storage_type());
+    REQUIRE(tsb_view["a"].storage_type() == first_child.storage_type());
+    REQUIRE(first_child.schema() == ts_int);
+    REQUIRE(first_child.storage_type().plan() == type.plan());
+    const auto &child_ops = first_child.ops();
     REQUIRE(&first_child.layout() == child_ops.layout_impl(child_ops.context));
     REQUIRE(view.value().is_bundle());
     REQUIRE(view.value().binding() == ValuePlanFactory::instance().type_for(tsb->value_schema));
@@ -794,18 +794,10 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     REQUIRE_FALSE(current.at("a").has_value());
     REQUIRE_FALSE(current.at("b").has_value());
 
-    auto immutable_ops = static_cast<const IndexedTSDataOps &>(binding->ops_ref());
-    immutable_ops.allows_mutation = false;
-    TSDataBinding immutable_binding{binding->type_meta, binding->plan(), &immutable_ops};
-    TSData        immutable_data{immutable_binding};
-    auto          immutable_view   = immutable_data.view();
-    auto          immutable_bundle = immutable_view.as_bundle();
-    REQUIRE(immutable_bundle.at(0).value().checked_as<std::int32_t>() == 0);
-
     std::size_t keyed_items = 0;
     for (const auto [name, element] : tsb_view.items())
     {
-        REQUIRE(element.binding() != nullptr);
+        REQUIRE(element.storage_type());
         if (keyed_items == 0) { REQUIRE(std::string{name} == "a"); }
         if (keyed_items == 1) { REQUIRE(std::string{name} == "b"); }
         ++keyed_items;
@@ -867,11 +859,11 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, 3);
 
-    const auto binding = factory.binding_for(tsl);
-    REQUIRE(binding != nullptr);
-    REQUIRE(binding->plan()->is_named_tuple());
-    const auto *value_component = binding->plan()->find_component("value");
-    const auto *aux_component   = binding->plan()->find_component("aux");
+    const auto type = factory.data_type_for(tsl);
+    REQUIRE(type);
+    REQUIRE(type.plan()->is_named_tuple());
+    const auto *value_component = type.plan()->find_component("value");
+    const auto *aux_component   = type.plan()->find_component("aux");
     REQUIRE(value_component != nullptr);
     REQUIRE(aux_component != nullptr);
     REQUIRE(value_component->offset == 0);
@@ -887,7 +879,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
     REQUIRE(elements_component->plan->array_element_plan().find_component("tracking") != nullptr);
     REQUIRE(aux_component->plan->find_component("tracking") != nullptr);
 
-    TSData data{*binding};
+    TSData data{type};
     auto   view = data.view();
     auto   tsl_view = view.as_list();
     REQUIRE(tsl_view.size() == 3);
@@ -963,10 +955,10 @@ TEST_CASE("TSDataPlanFactory: fixed TSL owns embedded TSS child storage")
     const auto *tss_int  = registry.tss(int_meta);
     const auto *tsl      = registry.tsl(tss_int, 2);
 
-    const auto binding = factory.binding_for(tsl);
-    REQUIRE(binding != nullptr);
-    require_no_tsdata_relocation_hooks(binding->checked_plan());
-    const auto *aux_component = binding->plan()->find_component("aux");
+    const auto type = factory.data_type_for(tsl);
+    REQUIRE(type);
+    require_no_tsdata_relocation_hooks(type.checked_plan());
+    const auto *aux_component = type.plan()->find_component("aux");
     REQUIRE(aux_component != nullptr);
     const auto *elements_component = aux_component->plan->find_component("elements");
     REQUIRE(elements_component != nullptr);
@@ -974,7 +966,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSL owns embedded TSS child storage")
     REQUIRE(elements_component->plan->is_array());
     REQUIRE(&elements_component->plan->array_element_plan() == factory.plan_for(tss_int));
 
-    TSData data{*binding};
+    TSData data{type};
     auto   view = data.view();
     auto   list = view.as_list();
     REQUIRE(list.size() == 2);
@@ -1054,10 +1046,10 @@ TEST_CASE("TSDataPlanFactory: collections nest every supported non-REF TSData ki
         SECTION(std::string{"fixed TSL child "} + child.label)
         {
             const auto *parent = registry.tsl(child.schema, 2);
-            const auto binding = factory.binding_for(parent);
-            REQUIRE(binding != nullptr);
+            const auto type = factory.data_type_for(parent);
+            REQUIRE(type);
 
-            TSData data{*binding};
+            TSData data{type};
             auto   root = data.view();
             auto   list = root.as_list();
             REQUIRE(list.size() == 2);
@@ -1072,10 +1064,10 @@ TEST_CASE("TSDataPlanFactory: collections nest every supported non-REF TSData ki
         {
             const auto *parent =
                 registry.tsb(std::string{"NestedMatrixParentBundle_"} + child.label, {{"child", child.schema}});
-            const auto binding = factory.binding_for(parent);
-            REQUIRE(binding != nullptr);
+            const auto type = factory.data_type_for(parent);
+            REQUIRE(type);
 
-            TSData data{*binding};
+            TSData data{type};
             auto   root = data.view();
             auto   bundle = root.as_bundle();
             auto   nested = bundle.field("child");
@@ -1331,9 +1323,9 @@ TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child l
     const auto *tsl      = registry.tsl(ts_int, 2);
     const auto *tsb      = registry.tsb("NestedPlanFactoryTSB", {{"xs", tsl}});
 
-    const auto binding = factory.binding_for(tsb);
-    REQUIRE(binding != nullptr);
-    const auto *root_value_component = binding->plan()->find_component("value");
+    const auto type = factory.data_type_for(tsb);
+    REQUIRE(type);
+    const auto *root_value_component = type.plan()->find_component("value");
     REQUIRE(root_value_component != nullptr);
     REQUIRE(root_value_component->offset == 0);
     REQUIRE(root_value_component->plan->is_named_tuple());
@@ -1342,7 +1334,7 @@ TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child l
     REQUIRE(xs_value_component.plan->array_count() == 2);
     REQUIRE(xs_value_component.plan->array_stride() == sizeof(std::int32_t));
 
-    TSData data{*binding};
+    TSData data{type};
     auto   root = data.view();
     auto   root_tsb = root.as_bundle();
     REQUIRE(root_tsb.size() == 1);
@@ -1352,7 +1344,7 @@ TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child l
     auto item_path_probe = list_view.at(1);
     REQUIRE(item_path_probe.path_from_root() == std::vector<std::size_t>{0, 1});
     auto resolved_root = item_path_probe.root_view();
-    REQUIRE(resolved_root.binding() == root.binding());
+    REQUIRE(resolved_root.storage_type() == root.storage_type());
     REQUIRE(resolved_root.data() == root.data());
 
     const auto t1 = MIN_ST;

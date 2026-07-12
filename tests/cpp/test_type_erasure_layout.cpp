@@ -2,6 +2,8 @@
 #include <hgraph/types/metadata/type_meta_data.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/time_series/ts_data.h>
+#include <hgraph/types/time_series/ts_input.h>
+#include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/type_pointer.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value.h>
@@ -76,6 +78,26 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(sizeof(TSDDataStorageRef) == sizeof(void *) * 3);
     static_assert(sizeof(TSWDataStorageRef) == sizeof(void *) * 3);
     static_assert(sizeof(TSDataView) == sizeof(void *) * 3);
+    static_assert(sizeof(TSStorageTypeRef) == sizeof(void *));
+    static_assert(sizeof(TSDataObserverSet) == sizeof(void *));
+    static_assert(sizeof(TSData) == sizeof(void *) * 3);
+    static_assert(sizeof(TSParentLink) == sizeof(void *) * 3);
+    static_assert(sizeof(TSDataTracking) == sizeof(void *) * 5);
+    static_assert(sizeof(TSOutputHandle) == sizeof(void *) * 4);
+    static_assert(sizeof(TSOutputView) == sizeof(void *) * 5);
+    static_assert(sizeof(TSInputView) == sizeof(void *) * 10);
+    static_assert(sizeof(IndexedTSDataView) == sizeof(void *) * 3);
+    static_assert(sizeof(TSBDataView) == sizeof(void *) * 3);
+    static_assert(sizeof(TSLDataView) == sizeof(void *) * 3);
+    static_assert(sizeof(TSBOutputView) == sizeof(void *) * 5);
+    static_assert(sizeof(TSLOutputView) == sizeof(void *) * 5);
+    static_assert(sizeof(TSBInputView) == sizeof(void *) * 10);
+    static_assert(sizeof(TSLInputView) == sizeof(void *) * 10);
+    static_assert(sizeof(TSOutput) == sizeof(void *) * 5);
+    static_assert(sizeof(TSInput) == sizeof(void *) * 7);
+    static_assert(sizeof(FixedTSDataFieldLayout) == sizeof(void *) * 3);
+    static_assert(sizeof(FixedTSBDataLayout) == sizeof(void *) * 7);
+    static_assert(sizeof(FixedTSLDataLayout) == sizeof(void *) * 10);
 
     using RawHandle = MemoryUtils::StorageHandle<>;
     static_assert(sizeof(RawHandle) == sizeof(void *) * 3);

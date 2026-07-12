@@ -37,11 +37,19 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                 const MemoryUtils::StoragePlan &root_plan,
                                                                 std::size_t value_offset, std::size_t aux_offset);
 
+    [[nodiscard]] TSStorageTypeRef embedded_ts_storage_type(const TSValueTypeMetaData      &schema,
+                                                            TypeRole                         role,
+                                                            const MemoryUtils::StoragePlan &root_plan,
+                                                            std::size_t value_offset,
+                                                            std::size_t aux_offset,
+                                                            bool root_record = false);
+
     [[nodiscard]] const TSDataOps &fixed_structured_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                                 const MemoryUtils::StoragePlan &plan,
+                                                                TypeRole role,
                                                                 std::size_t value_offset, std::size_t aux_offset,
                                                                 std::size_t tracking_offset,
-                                                                std::vector<const TSDataBinding *> element_bindings,
+                                                                std::vector<TSStorageTypeRef> element_types,
                                                                 std::vector<std::size_t> element_data_offsets);
 
     [[nodiscard]] const TSDataOps &dynamic_list_ts_data_ops(const TSValueTypeMetaData      &schema,

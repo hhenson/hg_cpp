@@ -354,7 +354,7 @@ TEST_CASE("TSDProxy non-atomic owning copy preserves nested typed holes")
     const auto *bundle_schema = registry.tsb("TSDProxySparseBundle", {{"present", ts_int}, {"hole", ts_int}});
     const auto *proxy_schema = registry.tsd(int_meta, bundle_schema);
     const auto *source_binding = TSDataPlanFactory::instance().binding_for(source_schema);
-    const auto *bundle_binding = TSDataPlanFactory::instance().binding_for(bundle_schema);
+    const auto *bundle_binding = TSDataPlanFactory::instance().legacy_binding_for(bundle_schema);
     REQUIRE(source_binding != nullptr);
     REQUIRE(bundle_binding != nullptr);
 

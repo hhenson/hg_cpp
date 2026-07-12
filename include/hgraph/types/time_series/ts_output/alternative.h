@@ -63,7 +63,7 @@ namespace hgraph::detail
         struct AlternativeKey
         {
             const TSOutput              *source_output{nullptr};
-            const TSDataBinding         *source_binding{nullptr};
+            TSStorageTypeRef             source_type{};
             const void                  *source_data{nullptr};
             const TSValueTypeMetaData   *requested_schema{nullptr};
 

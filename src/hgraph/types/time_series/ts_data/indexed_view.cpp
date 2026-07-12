@@ -175,10 +175,10 @@ namespace hgraph
     {
         const auto &ops = indexed_ops();
         if (index >= ops.size_impl(ops.context, storage_.data())) { return MIN_DT; }
-        const auto *element_binding = ops.element_binding_impl(ops.context, storage_.data(), index);
+        const auto element_type = ops.element_binding_impl(ops.context, storage_.data(), index);
         const auto *element_memory  = ops.element_memory_impl(ops.context, storage_.data(), index);
-        if (element_binding == nullptr || element_memory == nullptr) { return MIN_DT; }
-        const auto &element_ops = element_binding->ops_ref();
+        if (!element_type || element_memory == nullptr) { return MIN_DT; }
+        const auto &element_ops = *element_type.ops();
         return element_ops.tracking_impl(element_ops.context, element_memory)->last_modified_time;
     }
 
@@ -189,19 +189,19 @@ namespace hgraph
         {
             throw std::out_of_range("IndexedTSDataView::at: index out of range");
         }
-        const auto *element_binding = ops.element_binding_impl(ops.context, storage_.data(), index);
-        if (element_binding == nullptr)
+        const auto element_type = ops.element_binding_impl(ops.context, storage_.data(), index);
+        if (!element_type)
         {
             throw std::logic_error("IndexedTSDataView::at: element binding is not resolved");
         }
         const auto *element_memory = ops.element_memory_impl(ops.context, storage_.data(), index);
         if (element_memory == nullptr)
         {
-            return TSDataView{element_binding, element_memory};
+            return TSDataView{element_type, element_memory};
         }
         auto parent = base();
-        if (!parent.ops().allows_mutation) { return TSDataView{element_binding, element_memory}; }
-        return TSDataView{element_binding, element_memory, parent, index};
+        if (!parent.ops().allows_mutation) { return TSDataView{element_type, element_memory}; }
+        return TSDataView{element_type, element_memory, parent, index};
     }
 
     Range<TSDataView> IndexedTSDataView::empty_values_range() noexcept

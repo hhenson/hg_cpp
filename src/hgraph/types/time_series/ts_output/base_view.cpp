@@ -2,6 +2,7 @@
 
 #include <hgraph/runtime/graph.h>
 #include <hgraph/runtime/node.h>
+#include <hgraph/types/time_series/ts_input/detail.h>
 #include <hgraph/types/time_series/ts_input/target_link.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/time_series/ts_output/view_common.h>
@@ -266,6 +267,13 @@ namespace hgraph
 
     TSOutputView TSOutputView::indexed_child_at(std::size_t index) const
     {
+        if (detail::has_input_children(data_))
+        {
+            auto projection = detail::input_child_projection(data_, index);
+            auto child = projection.target_link.valid() ? std::move(projection.target_link)
+                                                        : std::move(projection.visible);
+            return TSOutputView{output_, child, evaluation_time_};
+        }
         auto child = evaluation_time_ == MIN_DT ? data_.indexed_child_at(index)
                                                 : data_.ensure_indexed_child_at(index);
         return TSOutputView{output_, child, evaluation_time_};

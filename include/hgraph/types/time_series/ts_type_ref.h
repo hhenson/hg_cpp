@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <string_view>
 #include <type_traits>
 
 namespace hgraph
@@ -13,7 +14,7 @@ namespace hgraph
     struct TSDataOps;
     class TSStorageTypeRef;
 
-    inline constexpr std::uint16_t TS_DATA_OPS_ABI_VERSION = 1;
+    inline constexpr std::uint16_t TS_DATA_OPS_ABI_VERSION = 2;
 
     class TSRoleTypeRef
     {
@@ -50,7 +51,8 @@ namespace hgraph
         template <TypeRole> friend class BasicTSTypeRef;
         friend class TSStorageTypeRef;
         friend TSRoleTypeRef intern_ts_type(const TSValueTypeMetaData &, TypeRole,
-                                            const MemoryUtils::StoragePlan &, const TSDataOps &);
+                                            const MemoryUtils::StoragePlan &, const TSDataOps &,
+                                            std::string_view);
         explicit constexpr TSRoleTypeRef(const TypeRecord *record) noexcept : record_(record) {}
 
         const TypeRecord *record_{nullptr};
@@ -149,7 +151,9 @@ namespace hgraph
     [[nodiscard]] TSRoleTypeRef intern_ts_type(const TSValueTypeMetaData &schema,
                                                TypeRole role,
                                                const MemoryUtils::StoragePlan &plan,
-                                               const TSDataOps &ops);
+                                               const TSDataOps &ops,
+                                               std::string_view implementation_label = {});
+    [[nodiscard]] bool is_migrated_ts_root_schema(const TSValueTypeMetaData *schema) noexcept;
     [[nodiscard]] TypeCapabilities ts_type_capabilities(TypeRole role,
                                                         const MemoryUtils::StoragePlan &plan,
                                                         const TSDataOps &ops);

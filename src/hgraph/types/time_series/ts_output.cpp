@@ -171,7 +171,14 @@ namespace hgraph
     TSData TSOutput::checked_data_for(const TSDataBinding &binding)
     {
         const auto *schema = binding.type_meta;
-        if (schema != nullptr && (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL))
+        if (schema != nullptr &&
+            (schema->kind == TSTypeKind::TSB ||
+             (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0)))
+        {
+            return TSData{TSDataPlanFactory::instance().output_type_for(schema)};
+        }
+        if (schema != nullptr &&
+            (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL))
         {
             if (binding.storage_plan == nullptr || binding.ops == nullptr)
                 throw std::invalid_argument("TSOutput requires a complete scalar TSData binding");
@@ -186,7 +193,9 @@ namespace hgraph
     TSData TSOutput::checked_data_for(const TSValueTypeMetaData *schema)
     {
         if (schema == nullptr) { throw std::invalid_argument("TSOutput requires a time-series schema"); }
-        if (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL)
+        if (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL ||
+            schema->kind == TSTypeKind::TSB ||
+            (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0))
             return TSData{TSDataPlanFactory::instance().output_type_for(schema)};
         const auto *binding = TSDataPlanFactory::instance().binding_for(schema);
         if (binding == nullptr) { throw std::logic_error("TSOutput could not resolve a TSData binding"); }
@@ -199,11 +208,22 @@ namespace hgraph
         {
             throw std::invalid_argument("TSOutput requires a non-empty output endpoint schema");
         }
-        if (const auto *schema = endpoint_schema.schema();
-            (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL) && endpoint_schema.is_owned())
+        if (const auto *schema = endpoint_schema.schema(); endpoint_schema.is_owned() &&
+            (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL ||
+             schema->kind == TSTypeKind::TSB ||
+             (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0)))
+        {
             return checked_data_for(schema);
-        const auto *binding = detail::input_data_binding_for(endpoint_schema);
+        }
+        const auto *binding = detail::output_data_binding_for(endpoint_schema);
         if (binding == nullptr) { throw std::logic_error("TSOutput could not resolve an output endpoint binding"); }
+        if (const auto *schema = endpoint_schema.schema();
+            schema->kind == TSTypeKind::TSB ||
+            (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0))
+        {
+            return TSData{intern_ts_type(*schema, TypeRole::Output, binding->checked_plan(), binding->ops_ref(),
+                                         "ts.fixed.output.root")};
+        }
         return checked_data_for(*binding);
     }
 
@@ -215,17 +235,17 @@ namespace hgraph
     void TSOutput::invalidate_observers() noexcept
     {
         if (!data_.has_value()) { return; }
-        const auto type = data_.storage_type_ref();
-        const auto *ops = type.ops();
-        if (ops == nullptr || ops->mutable_tracking_impl == nullptr) { return; }
-        auto view = data_.view();
-        auto *tracking = ops->mutable_tracking_impl(ops->context, const_cast<void *>(view.data()));
-        if (tracking != nullptr) { tracking->observers.invalidate(tracking); }
+        detail::invalidate_owned_ts_data_tree(data_.view());
     }
 
     void TSOutput::attach_root_parent()
     {
-        if (has_value()) { data_view().bind_parent(*this, TS_DATA_NO_CHILD_ID); }
+        if (has_value())
+        {
+            auto root = data_view();
+            root.bind_parent(*this, TS_DATA_NO_CHILD_ID);
+            detail::attach_owned_ts_data_parents(root.borrowed_ref());
+        }
     }
 
     void TSOutput::record_child_modified(std::size_t, DateTime)

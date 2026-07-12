@@ -69,9 +69,9 @@ namespace hgraph
          */
         const TSDataBinding *binding_for(const TSValueTypeMetaData *schema);
 
-        /** Canonical scalar standalone-data role record (TS/SIGNAL only). */
+        /** Canonical standalone-data role record for migrated TS roots. */
         [[nodiscard]] TSDataTypeRef data_type_for(const TSValueTypeMetaData *schema);
-        /** Canonical scalar output role record (TS/SIGNAL only). */
+        /** Canonical output role record for migrated TS roots. */
         [[nodiscard]] TSOutputTypeRef output_type_for(const TSValueTypeMetaData *schema);
         [[nodiscard]] TSDataTypeRef find_data_type(const TSValueTypeMetaData *schema) const noexcept;
         [[nodiscard]] TSOutputTypeRef find_output_type(const TSValueTypeMetaData *schema) const noexcept;

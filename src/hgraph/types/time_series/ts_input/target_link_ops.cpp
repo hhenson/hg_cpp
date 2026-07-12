@@ -646,12 +646,13 @@ namespace hgraph::detail
                                                                       : TSDataView{};
         }
 
-        [[nodiscard]] const TSDataBinding *target_link_indexed_element_binding(const void *context,
-                                                                               const void *memory,
-                                                                               std::size_t index) noexcept
+        [[nodiscard]] TSStorageTypeRef target_link_indexed_element_binding(const void *context,
+                                                                           const void *memory,
+                                                                           std::size_t index) noexcept
         {
-            return fallback_on_exception<const TSDataBinding *>(nullptr, [&] {
-                return target_link_indexed_child(context, memory, index).binding();
+            return fallback_on_exception(TSStorageTypeRef{}, [&] {
+                auto child = target_link_indexed_child(context, memory, index);
+                return child.storage_type();
             });
         }
 
@@ -834,6 +835,20 @@ namespace hgraph::detail
 
         [[nodiscard]] TSDataOps target_link_base_ops(TSInputTargetLinkContext &context)
         {
+            const auto capture_delta = [&]() -> Value (*)(const TSInputView &) {
+                switch (context.schema->kind)
+                {
+                case TSTypeKind::SIGNAL: return &ts_data_detail::capture_delta_signal;
+                case TSTypeKind::TSW: return &ts_data_detail::capture_delta_tsw;
+                case TSTypeKind::TSS: return &ts_data_detail::capture_delta_tss;
+                case TSTypeKind::TSD: return &ts_data_detail::capture_delta_tsd;
+                case TSTypeKind::TSL: return &ts_data_detail::capture_delta_tsl;
+                case TSTypeKind::TSB: return &ts_data_detail::capture_delta_tsb;
+                case TSTypeKind::TS:
+                case TSTypeKind::REF: return &ts_data_detail::capture_delta_ts;
+                }
+                return &ts_data_detail::capture_delta_ts;
+            }();
             return TSDataOps{
                 .context                   = &context,
                 .kind                      = context.schema->kind,
@@ -848,6 +863,7 @@ namespace hgraph::detail
                 .record_child_modified_impl = &target_link_record_child_modified,
                 .copy_value_from_impl      = &target_link_copy_value_from,
                 .move_value_from_impl      = &target_link_move_value_from,
+                .capture_delta_impl        = capture_delta,
                 .delta_has_effect_impl     = &target_link_delta_has_effect_op,
                 .apply_delta_impl          = &target_link_apply_delta_op,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES

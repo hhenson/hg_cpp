@@ -116,7 +116,7 @@ namespace hgraph
             static_cast<void>(ops.mutable_element_memory_impl(ops.context, base.mutable_data(), index));
             data = base.as_list();
         }
-        return TSOutputView{view_.output(), data.at(index), view_.evaluation_time()};
+        return view_.indexed_child_at(index);
     }
 
     TSOutputView TSLOutputView::at(std::size_t index) const &

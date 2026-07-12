@@ -43,7 +43,7 @@ namespace hgraph
         [[nodiscard]] nb::object missing_delta_to_python(const void *, const void *, DateTime);
 #endif
         [[nodiscard]] std::size_t missing_indexed_size(const void *, const void *);
-        [[nodiscard]] const TSDataBinding *missing_indexed_element_binding(const void *, const void *, std::size_t);
+        [[nodiscard]] TSStorageTypeRef missing_indexed_element_binding(const void *, const void *, std::size_t);
         [[nodiscard]] const void *missing_indexed_element_memory(const void *, const void *, std::size_t);
         [[nodiscard]] void *missing_mutable_indexed_element_memory(const void *, void *, std::size_t);
         [[nodiscard]] bool noop_clear_collection(const TSDataView &, DateTime) noexcept;
@@ -155,7 +155,7 @@ namespace hgraph
                                       DateTime modified_time) = &ts_data_detail::noop_clear_collection;
         std::size_t (*indexed_child_count_impl)(const void *context,
                                                 const void *memory) = &ts_data_detail::missing_indexed_size;
-        const TSDataBinding *(*indexed_child_binding_impl)(
+        TSStorageTypeRef (*indexed_child_binding_impl)(
             const void *context,
             const void *memory,
             std::size_t index) = &ts_data_detail::missing_indexed_element_binding;
@@ -277,7 +277,7 @@ namespace hgraph
     struct IndexedTSDataOps : TSDataOps
     {
         std::size_t (*size_impl)(const void *context, const void *memory) = &ts_data_detail::missing_indexed_size;
-        const TSDataBinding *(*element_binding_impl)(
+        TSStorageTypeRef (*element_binding_impl)(
             const void *context,
             const void *memory,
             std::size_t index) = &ts_data_detail::missing_indexed_element_binding;

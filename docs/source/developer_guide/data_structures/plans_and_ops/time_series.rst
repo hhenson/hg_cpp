@@ -125,27 +125,31 @@ The implementation uses the following names consistently:
 
 ``TSDataTypeRef`` / ``TSInputTypeRef`` / ``TSOutputTypeRef``
     One-word, checked references to canonical ``TypeRecord`` instances
-    for scalar ``TS<T>`` and ``SIGNAL`` roots. The records share the
+    for scalar ``TS<T>`` / ``SIGNAL`` and fixed ``TSB`` / fixed ``TSL``
+    roots and their embedded fixed descendants. The records share the
     time-series schema but have distinct ``Data``, ``Input``, and
-    ``Output`` roles. Data and Output select the compact atomic plan and
-    mutable ops; an owned Input selects the same physical plan and ops
-    under a read-only role, while a peered Input selects target-link
-    storage and target-link ops. ``TS_DATA_OPS_ABI_VERSION`` is 1.
+    ``Output`` roles. Data and Output select mutable role-specific ops;
+    an owned Input selects the same physical fixed plan under a read-only
+    role, while peered positions select target-link storage and ops.
+    ``TS_DATA_OPS_ABI_VERSION`` is 2.
 
 ``TSDataBinding``
-    The legacy interned binding for excluded 4A shapes: ``TSB``, fixed
-    and dynamic ``TSL``, ``TSW``, ``TSS``, ``TSD``, ``REF`` and
-    alternative-store representations. Scalar descriptors embedded in
-    those legacy parents also remain bindings for now. A scalar root
-    binding is not canonical identity and normal ``binding_for`` requests
-    for ``TS`` / ``SIGNAL`` fail.
+    The legacy interned binding for excluded shapes: dynamic ``TSL``,
+    ``TSW``, ``TSS``, ``TSD``, ``REF`` and alternative-store
+    representations. A fixed subtree embedded below one of those excluded
+    roots also remains entirely binding-backed for compatibility. A legacy
+    descriptor is never canonical root identity for ``TS`` / ``SIGNAL`` /
+    ``TSB`` / fixed ``TSL``; owning root construction rejects it. Keyed,
+    set, and reference migration belongs to 4C; dynamic ``TSL`` and ``TSW``
+    belong to 4D.
 
 ``TSStorageTypeRef``
     An internal one-word tagged facade used by generic TS cursors and
-    owners during coexistence. It contains either a scalar role-record
+    owners during coexistence. It contains either a time-series role-record
     pointer or a legacy ``TSDataBinding`` pointer. It is passed and stored
     by value, never by pointer to a temporary facade. ``binding()`` is
-    consequently null on migrated scalar cursors; generic code uses
+    consequently null on migrated cursors; generic child projection returns
+    ``TSStorageTypeRef`` by value and generic code uses
     ``type_ref()``, ``schema()``, ``plan()``, and cached ``ops()`` instead.
 
 ``TSDataPlanFactory``
@@ -158,8 +162,9 @@ The implementation uses the following names consistently:
 
 ``TSOutputBuilder`` / ``TSInputBuilder``
     Reusable builders for top-level time-series endpoints. An
-    ``TSOutputBuilder`` composes a scalar Output role record or a legacy
-    binding/data plan with output endpoint state. A ``TSInputBuilder`` consumes an endpoint
+    ``TSOutputBuilder`` composes a migrated Output role record or a legacy
+    excluded-shape binding/data plan with output endpoint state. A
+    ``TSInputBuilder`` consumes an endpoint
     annotation tree compiled by ``TSInputPlanFactory`` and builds input
     endpoint storage: non-peered TSB/fixed-TSL input TSData prefixes,
     TargetLink terminal storage, activation state, and scheduling hooks.
@@ -169,7 +174,7 @@ The implementation uses the following names consistently:
 
     Scalar roots support both peered and owned input annotations. A
     non-peered scalar topology is rejected. Direct peered roots are also
-    supported for legacy structural schemas without migrating their type
+    supported for excluded binding-backed schemas without migrating their type
     descriptors. Peered roots own only target-link storage and preserve
     bind/unbind/rebind plus active/passive subscription semantics; owned
     scalar inputs own compact atomic storage but remain generically read-only.
@@ -201,8 +206,10 @@ TSData implementation families
     value as one canonical value-layer region, followed by an auxiliary
     tree containing child and parent tracking. The full memory footprint
     of the parent and all fixed children is known before allocation, and
-    child views use embedded TSData bindings whose offsets point into the
-    shared value and auxiliary regions.
+    child views use role-specific ``TSStorageTypeRef`` records whose ops carry
+    offsets into the shared root value and auxiliary regions. The compatibility
+    exception is a fixed subtree below an excluded root such as ``TSD``; that
+    whole descendant path remains legacy until the parent family migrates.
 
 ``WindowTSDataStorage``
     Used for ``TSW``. It exposes one common ``TSWDataView`` surface but
@@ -385,8 +392,11 @@ trie records boundary-relative path identity without storing an eager
 map or vector-valued path on every input view.
 
 Destroying an output or replacing its root storage invalidates published
-target links before that storage is destroyed, for both migrated scalar and
-legacy root schemas. The link state is the producer-side registration token:
+target links before that storage is destroyed, for both record-backed migrated
+roots (``TS`` / ``SIGNAL`` and fixed ``TSB`` / fixed ``TSL``) and binding-backed
+excluded roots (dynamic ``TSL``, ``TSW``, ``TSS``, ``TSD``, ``REF``, and
+alternative-store representations). The link state is the producer-side
+registration token:
 its callback never dereferences the dying producer. It first drops every
 borrowed output handle and marks output-side slot subscriptions absent, then
 notifies local slot observers after the borrowed state is empty. Input-side
@@ -394,9 +404,34 @@ active topology remains in place and producer teardown does not schedule the
 node, so a later bind reuses the existing active/passive state. Output copy
 and move operations do not transfer published bindings: assignment
 invalidates the destination, and moving also invalidates bindings to the
-source before moving its value. Structural child views, alternative roots,
-and per-key erase retain their existing lifetime rules until their 4B/4C
-migration milestones.
+source before moving its value. Locally owned fixed TSB/fixed-TSL descendants,
+composed prefixes, and their local TargetLink terminals are invalidated in
+pre-order before their storage is destroyed. Alternative roots, dynamic
+TSL/TSW, and per-key erase retain their existing lifetime rules until their
+4C/4D migration milestones.
+
+Lifecycle traversal deliberately differs from view-facing indexed traversal.
+A private, static ownership projection is selected from the concrete ops
+context: TargetLink contexts are leaves; composed input/output contexts return
+their cached local child storage types and in-plan storage addresses; regular
+fixed contexts return their cached fixed child types and local absolute
+addresses. Excluded dynamic, keyed, window, REF, and legacy alternative roots
+are leaves. The resolver checks those concrete context recognisers in that
+order and never dispatches from schema kind alone. Consequently attach,
+reparent, and invalidation cannot follow a visible TargetLink projection into
+producer-owned storage. This projection is private lifecycle infrastructure;
+it adds no field to ``TSDataOps``, no side map, and no storage-layout cost, so
+``TS_DATA_OPS_ABI_VERSION`` remains 2.
+
+Fixed to-REF alternatives are the exception to the general legacy-alternative
+rule. Their allocation is owned through the canonical Data-role record. At the
+``TSOutputHandle`` boundary the alternative checks that the Output-role record
+uses the same plan and layout-compatible ops, then publishes that Output record
+over the same allocation. Nested fixed children therefore project Output-role
+embedded records while strict checked conversion of a raw Data-role handle to
+``TSOutputTypeRef`` still fails. Migrated composed from-REF roots use their
+Output-role composed type directly; excluded alternative families remain
+binding-backed ownership leaves.
 
 Active target-link inputs also notify on live bind operations. Binding
 or rebinding an active input to an already-valid source schedules the
@@ -408,8 +443,8 @@ becoming invalid. This is the sampled-input mechanism used by nested
 operators such as ``switch_``; it writes the graph schedule table through
 the normal notification path rather than bypassing node evaluation.
 
-Non-peered input prefixes are structural TSData projections with typed
-bindings and value projections. They do not copy the bound output's
+Non-peered input prefixes are structural TSData projections with Input-role
+type records and value projections. They do not copy the bound output's
 aggregate payload; instead, their input-local erased ops project the
 current value and child TSData views from their children. This keeps the
 public surface consistent with output views while avoiding duplicate
@@ -434,8 +469,9 @@ throws; it does not fabricate bytes or invent a nullable fixed-list layout.
 Their state is recorded on the input prefix and updated by the same
 child-modified bubble-up path used for scheduling:
 
-- ``binding()`` returns the prefix's input-side TSData binding even
-  before any child target is bound;
+- ``type_ref()`` returns the prefix's Input-role record even before any child
+  target is bound; migrated fixed prefixes return ``nullptr`` from
+  ``binding()``;
 - ``valid()`` is true when any child is valid;
 - ``all_valid()`` is true only when every child is valid;
 - ``modified()`` is true when the prefix was marked at the view's
@@ -655,8 +691,8 @@ the current-value and auxiliary strides; element offsets are computed as
 For nested fixed structures the same rule is applied recursively inside
 the value region. A ``TSB`` field that is a fixed ``TSL`` points into a
 bundle field whose payload is the fixed list value plan; the child and
-grandchild TSData views use embedded bindings with offsets into the
-shared value and auxiliary regions.
+grandchild TSData views use embedded role records whose ops carry offsets
+into the shared value and auxiliary regions.
 
 **Embedded projected children.** A fixed parent may also own children
 whose storage is not just an offset into the parent's value region. This
@@ -664,8 +700,8 @@ includes slot-oriented ``TSS`` / ``TSD`` children, dynamic-list ``TSL``
 children, and window-oriented ``TSW`` children. The child's complete
 TSData storage plan is placed as that child's auxiliary node, and the
 parent indexed TSData ops return a pointer to that child storage
-subobject when the child is selected. The child binding is the normal
-binding over the child plan; slot, dynamic-list, and window ops still
+subobject when the child is selected. The child storage type is the normal
+legacy binding over the excluded child plan; slot, dynamic-list, and window ops still
 receive a pointer to their own storage object and do not know about the
 parent's root allocation. Parent notification uses the existing
 ``TSDataParentLink`` installed by child view projection.
@@ -687,7 +723,7 @@ surface.
       Root["root TSData allocation"]
       Value["value region<br/>Bundle/List value plan"]
       Aux["auxiliary region<br/>child tracking trees + parent tracking"]
-      ChildView["child TSDataView<br/>data = root base<br/>binding offsets select child value/tracking"]
+      ChildView["child TSDataView<br/>data = root base<br/>record ops select child value/tracking"]
 
       Root --> Value
       Root --> Aux
@@ -735,8 +771,9 @@ fixed ``TSL`` it exposes the documented map-shaped delta
 ``t``.
 
 Projecting a child stores a ``TSDataParentLink`` in the child node's
-tracking region. The link records the immediate parent binding/data
-identity and the parent-local field/index id. It does not point at the
+tracking region. The link records the immediate parent storage-type/data
+identity (a role record or legacy binding) and the parent-local field/index
+id. It does not point at the
 parent view object. When a child modification is first recorded in an
 evaluation cycle, the child bubbles that id to the parent; the parent then
 records its own ``last_modified_time`` for the same evaluation time and
@@ -837,8 +874,8 @@ View Handles
 ^^^^^^^^^^^^
 
 View objects are handles over TSData memory; they are not embedded
-inside the TSData allocation. A plain data view needs only the binding
-and data pointer, and exposes the common time-series operations:
+inside the TSData allocation. A plain data view needs only its one-word
+``TSStorageTypeRef`` and data pointer, and exposes the common time-series operations:
 ``binding()``, ``schema()``, current ``value()``, ``delta_value(t)``,
 ``last_modified_time()``, ``modified(t)``, ``has_current_value()``, and
 ``all_valid()``. Top-level input/output views should delegate this
@@ -854,8 +891,8 @@ transient parent view that created it:
 .. mermaid::
 
    flowchart LR
-      View["TSDataView handle<br/>binding_<br/>data_"]
-      Binding["TSDataBinding<br/>schema + plan + ops"]
+      View["TSDataView handle<br/>storage type<br/>data pointer"]
+      Type["TSStorageTypeRef<br/>TypeRecord or legacy binding"]
       Data["TSData storage allocation<br/>value + optional delta + tracking"]
       Tracking["TSDataTracking<br/>last_modified_time<br/>parent<br/>observers"]
       Link["TSDataParentLink<br/>tagged parent identity<br/>payload union<br/>child_id"]
@@ -863,7 +900,7 @@ transient parent view that created it:
       ParentData["parent TSData storage"]
       Endpoint["terminal endpoint<br/>TSOutput / TSInput"]
 
-      View -->|binding_| Binding
+      View -->|storage type| Type
       View -->|data_| Data
       Data -->|tracking_offset| Tracking
       Tracking -->|parent| Link
@@ -1063,9 +1100,9 @@ Builder Lifetime
 ----------------
 
 Time-series endpoint builders are reusable builders. A
-``TSOutputBuilder`` resolves a ``TSValueTypeMetaData`` schema to the
-``TSDataBinding`` / data plan and endpoint state needed to construct a
-top-level output. A ``TSInputBuilder`` resolves a
+``TSOutputBuilder`` resolves a ``TSValueTypeMetaData`` schema to a role record
+for migrated roots, or a legacy binding for an excluded root, plus the endpoint
+state needed to construct a top-level output. A ``TSInputBuilder`` resolves a
 ``TSInputConstructionPlan`` compiled from ``TSValueTypeMetaData`` plus
 ``TSEndpointSchema`` annotations. That plan describes the non-peered
 input tree and peered terminals needed to construct a top-level input.
@@ -1089,7 +1126,7 @@ Memory Stability Invariant
 --------------------------
 
 Every time-series value in the runtime must be memory-stable. Once an
-output's ``TSData`` and binding are published, their addresses must not
+output's ``TSData`` and storage identity are published, their addresses must not
 move for the lifetime of the owning node. Output-to-input binding is
 implemented by recording borrowed handles to output TSData positions,
 and those handles must remain valid across ticks, rebinds, and

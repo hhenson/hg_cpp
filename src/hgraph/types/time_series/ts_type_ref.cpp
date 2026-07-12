@@ -9,9 +9,11 @@ namespace hgraph
 {
     namespace
     {
-        [[nodiscard]] bool scalar_root_kind(TSTypeKind kind) noexcept
+        [[nodiscard]] bool migrated_kind(const TSValueTypeMetaData &schema) noexcept
         {
-            return kind == TSTypeKind::TS || kind == TSTypeKind::SIGNAL;
+            return schema.kind == TSTypeKind::TS || schema.kind == TSTypeKind::SIGNAL ||
+                   schema.kind == TSTypeKind::TSB ||
+                   (schema.kind == TSTypeKind::TSL && schema.fixed_size() != 0);
         }
 
         void validate_ts_record(const TypeRecord &record)
@@ -28,18 +30,23 @@ namespace hgraph
             }
             if (record.ops_abi_version != TS_DATA_OPS_ABI_VERSION)
             {
-                throw std::invalid_argument("TSRoleTypeRef requires TSData ops ABI version 1");
+                throw std::invalid_argument("TSRoleTypeRef requires TSData ops ABI version 2");
             }
             const auto *ops = static_cast<const TSDataOps *>(record.ops);
-            if (!scalar_root_kind(schema->kind) || ops == nullptr || ops->kind != schema->kind)
+            if (!migrated_kind(*schema) || ops == nullptr || ops->kind != schema->kind)
             {
-                throw std::invalid_argument("TSRoleTypeRef requires matching scalar TSData ops");
+                throw std::invalid_argument("TSRoleTypeRef requires matching migrated TSData ops");
             }
             if (record.capabilities != ts_type_capabilities(record.role, *record.plan, *ops))
             {
                 throw std::invalid_argument("TSRoleTypeRef capabilities do not match its role, plan, and ops");
             }
         }
+    }
+
+    bool is_migrated_ts_root_schema(const TSValueTypeMetaData *schema) noexcept
+    {
+        return schema != nullptr && migrated_kind(*schema);
     }
 
     TypeCapabilities ts_type_capabilities(TypeRole role,
@@ -51,6 +58,8 @@ namespace hgraph
             throw std::invalid_argument("time-series type capabilities require Data, Input, or Output role");
         }
         TypeCapabilities result = TypeCapabilities::Viewable;
+        if (ops.kind == TSTypeKind::TSB || ops.kind == TSTypeKind::TSL)
+            result |= TypeCapabilities::HasChildren;
         if (plan.can_default_construct()) result |= TypeCapabilities::Constructible;
         if (plan.trivially_destructible || plan.lifecycle.can_destroy()) result |= TypeCapabilities::Destructible;
         if (plan.can_copy_construct()) result |= TypeCapabilities::Copyable;
@@ -63,13 +72,14 @@ namespace hgraph
     TSRoleTypeRef intern_ts_type(const TSValueTypeMetaData &schema,
                                  TypeRole role,
                                  const MemoryUtils::StoragePlan &plan,
-                                 const TSDataOps &ops)
+                                 const TSDataOps &ops,
+                                 std::string_view implementation_label)
     {
         if (!schema.header.valid() || schema.header.family != TypeFamily::TimeSeries ||
             schema.header.kind != static_cast<TypeKind>(schema.kind) ||
-            !scalar_root_kind(schema.kind))
+            !migrated_kind(schema))
         {
-            throw std::invalid_argument("intern_ts_type supports only canonical TS and SIGNAL schemas");
+            throw std::invalid_argument("intern_ts_type does not support this time-series schema");
         }
         if (ops.kind != schema.kind)
         {
@@ -79,7 +89,7 @@ namespace hgraph
             .key = TypeRecordKey{.schema = &schema.header, .role = role, .plan = &plan, .ops = &ops, .debug = nullptr},
             .ops_abi_version = TS_DATA_OPS_ABI_VERSION,
             .capabilities = ts_type_capabilities(role, plan, ops),
-            .implementation_label = {},
+            .implementation_label = implementation_label,
         };
         return TSRoleTypeRef{&TypeRecordRegistry::instance().intern(definition)};
     }

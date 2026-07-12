@@ -594,8 +594,17 @@ namespace hgraph
     Value capture_delta(const TSInputView &in)
     {
         if (const auto type = in.type_ref(); type) return type.ops_ref().capture_delta_impl(in);
-        const auto &binding = ts_binding_for(&require_schema(in.schema(), "capture_delta"), "capture_delta");
-        return binding.ops_ref().capture_delta_impl(in);
+        if (const auto *binding = in.binding(); binding != nullptr)
+        {
+            return binding->ops_ref().capture_delta_impl(in);
+        }
+        const auto &data = in.data_view();
+        if (data.valid() && data.storage_type().record_backed())
+        {
+            return data.ops().capture_delta_impl(in);
+        }
+        static_cast<void>(require_schema(in.schema(), "capture_delta"));
+        throw std::logic_error("capture_delta requires input role, output projection, or legacy binding ops");
     }
 
     void apply_delta(const TSOutputView &out, const ValueView &delta)
