@@ -429,11 +429,14 @@ namespace hgraph::ts_data_plan_factory_detail
             element_data_offsets.push_back(child_type.plan() == &root_plan ? 0 : child_aux_offset);
             element_types.push_back(child_type);
         }
-        const auto &ops = fixed_structured_ts_data_ops(schema, root_plan, role, value_offset, aux_offset,
-                                                       tracking_offset, std::move(element_types),
-                                                       std::move(element_data_offsets));
+        // Pointer binding: the returned reference is to an interned long-lived context, but
+        // GCC's -Wdangling-reference heuristic flags a reference bound from a call that also
+        // receives temporaries (the moved vectors).
+        const auto *ops = &fixed_structured_ts_data_ops(schema, root_plan, role, value_offset, aux_offset,
+                                                        tracking_offset, std::move(element_types),
+                                                        std::move(element_data_offsets));
         return TSStorageTypeRef{
-            intern_ts_type(schema, role, root_plan, ops, fixed_record_label(schema, role, root_record))};
+            intern_ts_type(schema, role, root_plan, *ops, fixed_record_label(schema, role, root_record))};
     }
 
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_fixed_plan(const TSValueTypeMetaData &schema)
