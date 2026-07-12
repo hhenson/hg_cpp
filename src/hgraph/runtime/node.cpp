@@ -850,7 +850,8 @@ namespace hgraph
                 NodeTypeMetaData schema,
                 NodeCallbacks callbacks,
                 const MemoryUtils::StoragePlan &plan,
-                NodeOps ops)
+                NodeOps ops,
+                std::string_view implementation_label)
             {
                 names.push_back(std::make_unique<std::string>(
                     schema.display_name != nullptr ? std::string{schema.display_name} : std::string{}));
@@ -871,7 +872,7 @@ namespace hgraph
                 ops.context = &contexts.back();
                 ops_storage.push_back(ops);
 
-                return intern_node_type(schemas.back(), plan, ops_storage.back());
+                return intern_node_type(schemas.back(), plan, ops_storage.back(), implementation_label);
             }
 
             static void fill_default_ops(NodeOps &ops)
@@ -1329,11 +1330,13 @@ namespace hgraph
 
     NodeBuilder NodeBuilder::native(NodeTypeMetaData schema,
                                     NodeCallbacks callbacks,
-                                    TSEndpointSchema input_endpoint)
+                                    TSEndpointSchema input_endpoint,
+                                    std::string_view implementation_label)
     {
         NodeTypeDescriptor descriptor;
         descriptor.schema = std::move(schema);
         descriptor.callbacks = std::move(callbacks);
+        descriptor.implementation_label = implementation_label;
         return from_descriptor(std::move(descriptor), std::move(input_endpoint));
     }
 
@@ -1363,7 +1366,8 @@ namespace hgraph
             std::move(descriptor.schema),
             std::move(descriptor.callbacks),
             plan,
-            descriptor.ops);
+            descriptor.ops,
+            descriptor.implementation_label);
         return NodeBuilder{type, std::move(input_endpoint)};
     }
 
@@ -1446,7 +1450,8 @@ namespace hgraph
 
         const auto &plan = node_storage_plan_for(schema);
         const auto type =
-            node_runtime_registry().make_type(std::move(schema), origin.callbacks, plan, NodeOps{});
+            node_runtime_registry().make_type(std::move(schema), origin.callbacks, plan, NodeOps{},
+                                              type_.record()->implementation_name());
 
         NodeBuilder result{type, input_endpoint_};
         result.output_endpoint_ = output_endpoint_;
@@ -1498,7 +1503,8 @@ namespace hgraph
 
         const auto &plan = node_storage_plan_for(schema);
         const auto type =
-            node_runtime_registry().make_type(std::move(schema), origin.callbacks, plan, NodeOps{});
+            node_runtime_registry().make_type(std::move(schema), origin.callbacks, plan, NodeOps{},
+                                              type_.record()->implementation_name());
 
         NodeBuilder result{type, input_endpoint_};
         result.output_endpoint_ = output_endpoint_;

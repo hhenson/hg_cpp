@@ -36,6 +36,36 @@ def test_compute_nodes_mix_with_cpp_and_bind_keywords():
     check(eval_node(app, [2.5, 4.0], [10, 3]) == [51.0, 25.0], "mixed compute pipeline")
 
 
+def test_python_node_type_records_identify_bridge_implementations():
+    observed = {}
+
+    @hg.compute_node
+    def increment(value: TS[int]) -> TS[int]:
+        return value.value + 1
+
+    @hg.generator
+    def ticks() -> TS[int]:
+        yield hg.MIN_ST, 1
+
+    @graph
+    def app(value: TS[int]) -> TS[int]:
+        computed = increment(value)
+        generated = ticks()
+        observed["compute"] = computed._port.node_type_info
+        observed["generator"] = generated._port.node_type_info
+        return computed + generated
+
+    check(eval_node(app, [2]) == [4], "python record-backed nodes execute")
+    check(observed["compute"]["implementation_label"] == "hgraph.python.compute",
+          f"compute type record: {observed['compute']}")
+    check(observed["generator"]["implementation_label"] == "hgraph.python.generator",
+          f"generator type record: {observed['generator']}")
+    check(observed["compute"]["semantic_label"] == "__py_compute", "compute semantic schema label")
+    check(observed["generator"]["semantic_label"] == "__py_generator", "generator semantic schema label")
+    check(observed["compute"]["family"] == observed["generator"]["family"], "common Node family")
+    check(observed["compute"]["role"] == observed["generator"]["role"], "common Runtime role")
+
+
 def test_python_compute_consumes_and_produces_dynamic_tsl():
     # Size[0] is the current native spelling for the unbounded TSL shape.
     @hg.compute_node

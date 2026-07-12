@@ -33,6 +33,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -1800,6 +1801,7 @@ namespace hgraph
         template <typename T> concept has_start     = requires { &T::start; };
         template <typename T> concept has_stop      = requires { &T::stop; };
         template <typename T> concept has_name      = requires { T::name; };
+        template <typename T> concept has_implementation_label = requires { T::implementation_label; };
         // Optional ``static constexpr bool schedule_on_start`` attribute: when true
         // the framework schedules the node for the start cycle (see node.cpp).
         template <typename T> concept has_schedule_on_start = requires { T::schedule_on_start; };
@@ -2402,7 +2404,18 @@ namespace hgraph
             NodeTypeMetaData schema{};
             NodeCallbacks    callbacks{};
             TSEndpointSchema input_endpoint{};
+            std::string_view implementation_label{};
         };
+
+        template <typename TImplementation>
+        [[nodiscard]] constexpr std::string_view static_node_implementation_label() noexcept
+        {
+            if constexpr (has_implementation_label<TImplementation>)
+            {
+                return std::string_view{TImplementation::implementation_label};
+            }
+            return {};
+        }
 
         template <typename TImplementation>
         [[nodiscard]] NodeTypeMetaData static_node_schema_base()
@@ -2469,6 +2482,7 @@ namespace hgraph
                 .schema         = std::move(schema),
                 .callbacks      = static_node_callbacks<TImplementation>(),
                 .input_endpoint = signature::input_endpoint(),
+                .implementation_label = static_node_implementation_label<TImplementation>(),
             };
         }
 
@@ -2489,6 +2503,7 @@ namespace hgraph
                 .schema         = std::move(schema),
                 .callbacks      = static_node_callbacks<TImplementation>(),
                 .input_endpoint = signature::input_endpoint(resolution),
+                .implementation_label = static_node_implementation_label<TImplementation>(),
             };
         }
     }  // namespace static_node_detail
@@ -2499,7 +2514,8 @@ namespace hgraph
         auto parts = static_node_detail::static_node_builder_parts<TImplementation>();
         std::string saved_label{label_};
         Value       saved_scalars{std::move(scalars_)};
-        *this = NodeBuilder::native(std::move(parts.schema), std::move(parts.callbacks), std::move(parts.input_endpoint));
+        *this = NodeBuilder::native(std::move(parts.schema), std::move(parts.callbacks),
+                                    std::move(parts.input_endpoint), parts.implementation_label);
         if (!saved_label.empty()) { label(std::move(saved_label)); }
         if (saved_scalars.has_value()) { scalars(std::move(saved_scalars)); }
         return *this;
@@ -2511,7 +2527,8 @@ namespace hgraph
         auto parts = static_node_detail::static_node_builder_parts<TImplementation>(resolution);
         std::string saved_label{label_};
         Value       saved_scalars{std::move(scalars_)};
-        *this = NodeBuilder::native(std::move(parts.schema), std::move(parts.callbacks), std::move(parts.input_endpoint));
+        *this = NodeBuilder::native(std::move(parts.schema), std::move(parts.callbacks),
+                                    std::move(parts.input_endpoint), parts.implementation_label);
         if (!saved_label.empty()) { label(std::move(saved_label)); }
         if (saved_scalars.has_value()) { scalars(std::move(saved_scalars)); }
         return *this;

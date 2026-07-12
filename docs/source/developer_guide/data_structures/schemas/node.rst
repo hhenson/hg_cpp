@@ -31,6 +31,8 @@ Ops               ``NodeOps`` — the behaviour vtable: ``start``,
                   not by ``NodeOps``.
 Type record       ``TypeRecord`` — canonical interned ``Node/Runtime``
                   identity selecting the schema, plan, and ``NodeOps`` ABI.
+                  Its optional implementation label describes the selected
+                  representation without duplicating the schema label.
 Type reference    ``NodeTypeRef`` — one-word typed access to the record.
 Builder           ``NodeBuilder`` — reusable builder that wraps a
                   type reference and constructs runtime node instances from
@@ -162,6 +164,10 @@ shape as the lower layers:
     ``(NodeTypeMetaData, Runtime role, StoragePlan, NodeOps)`` record.
     ``NodePtr`` combines that record with node memory for typed runtime access;
     it widens to ``AnyPtr`` for generic diagnostics without another allocation.
+    The record's semantic label comes from ``NodeTypeMetaData::header``; its
+    implementation label is supplied by ``NodeTypeDescriptor`` or a static
+    implementation's optional ``implementation_label`` member. Builder-derived
+    variants preserve that representation label.
 
 ``NodeValue``
     Owns one node allocation. Moving a node value transfers ownership of
@@ -191,10 +197,12 @@ shape as the lower layers:
     annotations to a canonical ``NodeTypeRef``, then constructs ``NodeValue``
     instances on demand.
 
-The first C++ runtime pass supplies a native callback-backed node family
-using this structure. Static C++ nodes, Python-backed nodes, nested graph
-nodes, and richer scheduler-aware node families should become additional
-``NodeOps`` implementations rather than branches in the graph loop.
+The C++ runtime supplies callback-backed and specialised ``NodeOps``
+implementations through this structure. Python-authored compute, sink, and
+generator nodes use statically compiled C++ trampolines whose records carry
+``hgraph.python.*`` implementation labels. They remain ordinary Node/Runtime
+records and do not introduce a Python-specific family, role, pointer, or graph
+loop branch.
 
 The Node Lifecycle
 ------------------

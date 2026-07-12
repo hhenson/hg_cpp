@@ -183,12 +183,13 @@ namespace hgraph
         const MemoryUtils::StoragePlan   *storage_plan{nullptr};
         NodeCallbacks                     callbacks{};
         NodeOps                           ops{};
+        std::string                       implementation_label{};
     };
 
     /**
      * Borrowed type-erased view over a node allocation.
      *
-     * ``NodeView`` carries the interned binding and the node memory. Time-
+     * ``NodeView`` carries the interned type record and the node memory. Time-
      * sensitive lifecycle operations and input/output projections receive the
      * evaluation time explicitly. The active input notification target is
      * recovered from the node runtime memory.
@@ -306,7 +307,7 @@ namespace hgraph
     /**
      * Reusable builder for node values.
      *
-     * Builders are construction recipes. They cache a binding plus input
+     * Builders are construction recipes. They cache a node type plus input
      * endpoint annotation and can be reused to create many runtime node
      * instances.
      */
@@ -317,7 +318,8 @@ namespace hgraph
 
         [[nodiscard]] static NodeBuilder native(NodeTypeMetaData schema,
                                                 NodeCallbacks callbacks = {},
-                                                TSEndpointSchema input_endpoint = {});
+                                                TSEndpointSchema input_endpoint = {},
+                                                std::string_view implementation_label = {});
 
         [[nodiscard]] static NodeBuilder from_descriptor(NodeTypeDescriptor descriptor,
                                                          TSEndpointSchema input_endpoint = {});

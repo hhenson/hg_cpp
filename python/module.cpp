@@ -1317,6 +1317,7 @@ namespace
     struct py_compute_node
     {
         static constexpr auto name = "__py_compute";
+        static constexpr std::string_view implementation_label = "hgraph.python.compute";
 
         static void start(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
                           Scalar<"config", Str> eval_config,
@@ -1396,6 +1397,7 @@ namespace
     struct py_sink_node
     {
         static constexpr auto name = "__py_sink";
+        static constexpr std::string_view implementation_label = "hgraph.python.sink";
 
         static void start(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
                           Scalar<"config", Str> eval_config,
@@ -1514,6 +1516,7 @@ namespace
     struct py_generator_node
     {
         static constexpr auto name = "__py_generator";
+        static constexpr std::string_view implementation_label = "hgraph.python.generator";
 
         static void start(Scalar<"fn", PyNodeRef> fn, State<PyGenStateRef> state, SingleShotScheduler sched)
         {
@@ -1967,6 +1970,19 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyPort>(m, "Port")
         .def_prop_ro("ts_type", [](const PyPort &self) { return PyTsType{self.ref.schema}; })
         .def_prop_ro("is_structural", [](const PyPort &self) { return self.ref.is_structural_source(); })
+        .def_prop_ro("node_type_info", [](const PyPort &self) -> nb::object {
+            if (!self.ref.is_peered_source()) { return nb::none(); }
+            const NodeTypeRef type = self.ref.peered_node()->builder.type();
+            const TypeRecord *record = type.record();
+            nb::dict info;
+            info["family"] = static_cast<std::uint8_t>(record->classification().family);
+            info["role"] = static_cast<std::uint8_t>(record->role);
+            info["kind"] = record->classification().kind;
+            info["semantic_label"] = std::string{record->semantic_name()};
+            info["implementation_label"] = std::string{record->implementation_name()};
+            info["ops_abi_version"] = record->ops_abi_version;
+            return info;
+        })
         // True for a CHILD projection of a node output (a non-empty peered
         // path) - sub-graph terminals need whole node outputs.
         .def_prop_ro("has_path", [](const PyPort &self) { return !self.ref.peered_path_or_empty().empty(); })

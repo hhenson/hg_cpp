@@ -82,14 +82,18 @@ point — the two must agree on names and aliases.
 Hosting a Python node
 ---------------------
 
-A Python user node is hosted without a new node *kind*: ``NodeCallbacks``
-(``include/hgraph/runtime/node.h``) is already a type-erased ``std::function``
-triple, so a Python implementation produces the same ``(NodeTypeMetaData,
-NodeCallbacks, TSEndpointSchema)`` that ``NodeBuilder::native`` consumes, with
-``NodeCallbacks::evaluate`` acquiring the GIL, marshalling the ``NodeView`` to
-Python, and writing the result back through the ``TSOutputView``. This is the
-mechanism behind a Python *operator* implementation registering as an ordinary
-candidate (see *Operators > The Python implementation path*), built only under
+A Python user node is hosted without a new node family, role, or pointer type.
+The bridge defines stateless C++ compute, sink, and generator trampolines and
+builds them through the normal static-node front end. Their canonical
+Node/Runtime ``TypeRecord`` selects the same schema, storage plan, ``NodeOps``
+ABI, ``NodeTypeRef``, and ``NodePtr`` machinery as every other runtime node.
+Only the record's representation label differs
+(``hgraph.python.compute``, ``hgraph.python.sink``, or
+``hgraph.python.generator``). The callbacks acquire the GIL, project the live
+``NodeView`` into guarded Python-facing views, and write results through the
+normal ``TSOutputView``. This is the mechanism behind a Python *operator*
+implementation registering as an ordinary candidate (see *Operators > The
+Python implementation path*), built only under
 ``HGRAPH_ENABLE_PYTHON_USER_NODES``.
 
 The Bridge (Slice 1 — Landed)
@@ -244,6 +248,9 @@ Recorded divergences / gaps (the morning-summary list):
   wiring-time SCALARS ride a list-of-Any scalar, with a LAYOUT string
   (part of node identity) mapping the python call positions — any arity,
   one operator (Howard's review of the per-arity first cut).
+  The internal wiring ``Port.node_type_info`` diagnostic reports the producing
+  node record's family, role, kind, semantic label, implementation label, and
+  ops ABI without introducing Python-only metadata.
   ``STATE`` / ``CLOCK`` / ``SCHEDULER``-annotated parameters are injected
   and MUST default to ``None`` (the hgraph convention, enforced at
   decoration - graph code never supplies them):

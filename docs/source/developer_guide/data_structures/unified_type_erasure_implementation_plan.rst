@@ -333,13 +333,23 @@ Iteration 5A
    ``NodeStorageRef`` representations have been removed.  Existing
    ``NodeKind`` values describe the current compute, source/generator, sink,
    nested/system, and service implementations without adding speculative
-   sub-families.  This records implementation status only; review acceptance
-   and commit status remain open.
+   sub-families.  Review accepted and committed.
 
 Iteration 5B
    Migrate Python-authored node implementations to the same Node family and ops
    contract.  Python remains an implementation selected by the type record,
    not a separate runtime type system.
+
+   Implemented: node descriptors can supply the TypeRecord implementation
+   label, static C++ node implementations can declare it without changing the
+   common runtime, and builder-derived node variants preserve it.  The Python
+   compute, sink, and generator trampolines identify themselves as
+   ``hgraph.python.compute``, ``hgraph.python.sink``, and
+   ``hgraph.python.generator`` while retaining the common Node family, Runtime
+   role, ``NodeTypeRef``, ``NodePtr``, storage-plan, and ``NodeOps`` paths.
+   Wiring-time Python ``Port`` diagnostics expose the producing node's common
+   record fields for inspection.  This records implementation status only;
+   review acceptance and commit status remain open.
 
 Iteration 5C
    Migrate graph schemas, builders, instances, executors, and clocks in that

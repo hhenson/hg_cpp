@@ -12,6 +12,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstdint>
 
 #include <stdexcept>
@@ -44,6 +45,7 @@ namespace
     struct Sum
     {
         static constexpr auto name = "sum";
+        static constexpr std::string_view implementation_label = "test.static.sum";
 
         static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out)
         {
@@ -246,6 +248,22 @@ TEST_CASE("static node: node kind is inferred from In/Out selectors")
     CHECK(compute.view().node_kind() == NodeKind::Compute);
     CHECK(compute.view().has_input());
     CHECK(compute.view().has_output());
+}
+
+TEST_CASE("static node: implementation identity is carried by the node type record")
+{
+    using namespace hgraph;
+
+    NodeBuilder builder;
+    builder.implementation<Sum>();
+
+    REQUIRE(builder.type().valid());
+    CHECK(std::string{builder.type().record()->semantic_name()} == "sum");
+    CHECK(std::string{builder.type().record()->implementation_name()} == "test.static.sum");
+
+    const std::array<std::size_t, 1> passive{0};
+    const NodeBuilder derived = builder.with_passive_inputs(passive);
+    CHECK(std::string{derived.type().record()->implementation_name()} == "test.static.sum");
 }
 
 TEST_CASE("static node: signature detects ambiguous selector contracts")
