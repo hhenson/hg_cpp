@@ -191,6 +191,13 @@ target_link_libraries(hgraph_json_perf
 
 hgraph_enable_private_pch(hgraph_json_perf)
 
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # json_perf.cpp replaces the global operator new/delete with malloc/free
+    # to count allocations; GCC pairs an inlined replaced new with the free
+    # inside the replaced delete and reports a spurious mismatched-new-delete.
+    target_compile_options(hgraph_json_perf PRIVATE -Wno-mismatched-new-delete)
+endif()
+
 add_executable(hgraph_type_erasure_perf
     type_erasure_perf.cpp
 )

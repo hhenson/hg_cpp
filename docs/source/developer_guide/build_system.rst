@@ -18,6 +18,24 @@ Current Targets
 ``hgraph_core``
     Core runtime target. This is exported publicly as ``hgraph::core``.
 
+Third-Party Dependencies
+------------------------
+
+``simdjson`` **requires version 4.5 or newer** — ``json_impl.cpp`` uses
+``simdjson::dom::element_type::BIGINT``, which first appeared in 4.5. Wheel
+builds (``HGRAPH_BUILD_PYTHON_BINDINGS=ON``) fetch a pinned release (currently
+v4.6.4) and link it statically; the default C++ build resolves a system package
+via ``find_package(simdjson CONFIG REQUIRED)`` followed by an explicit
+``simdjson_VERSION`` check, which rejects older distro packages (Ubuntu 24.04
+ships 3.x) at configure time instead of failing mid compile. The check is
+explicit rather than a ``find_package`` version argument because simdjson's
+package version file uses same-minor compatibility (requesting 4.5 would
+reject 4.6.x). The installed ``hgraphConfig.cmake`` carries the same floor.
+
+``HGRAPH_WARNINGS_AS_ERRORS`` applies to this project's targets only;
+third-party dependencies such as simdjson build with their own flags and are
+not expected to be warning-clean under ours.
+
 Version Header
 --------------
 

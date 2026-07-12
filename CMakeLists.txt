@@ -165,7 +165,16 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS)
         $<BUILD_INTERFACE:simdjson::simdjson>
     )
 else()
+    # json_impl.cpp uses simdjson::dom::element_type::BIGINT, introduced in
+    # simdjson 4.5 (the FetchContent path above pins v4.6.4). Distro packages
+    # can be older (Ubuntu 24.04 ships 3.x), so enforce the floor here. The
+    # check is explicit because simdjson's package version file uses
+    # same-minor compatibility, which would also reject newer 4.x releases.
     find_package(simdjson CONFIG REQUIRED)
+    if(simdjson_VERSION VERSION_LESS 4.5)
+        message(FATAL_ERROR "hgraph requires simdjson >= 4.5 for "
+            "dom::element_type::BIGINT; found ${simdjson_VERSION}")
+    endif()
     target_link_libraries(hgraph_options INTERFACE simdjson::simdjson)
 endif()
 
@@ -519,6 +528,15 @@ set(_hgraph_config_dependencies
     "find_dependency(Arrow CONFIG)\n"
     "find_dependency(ArrowCompute CONFIG)\n"
     "find_dependency(spdlog CONFIG)\n"
+    # Both installed-config flavours reference simdjson::simdjson (the
+    # non-bindings export links it; the bindings config re-links it below),
+    # and the code needs dom::element_type::BIGINT from simdjson 4.5. The
+    # floor is an explicit check because simdjson's package version file
+    # uses same-minor compatibility.
+    "find_dependency(simdjson CONFIG)\n"
+    "if(simdjson_VERSION VERSION_LESS 4.5)\n"
+    "  message(FATAL_ERROR \"hgraph requires simdjson >= 4.5; found \${simdjson_VERSION}\")\n"
+    "endif()\n"
 )
 if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     if(_hgraph_use_python_stable_abi)
