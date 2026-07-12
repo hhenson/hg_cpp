@@ -11,7 +11,7 @@
 #include <hgraph/runtime/evaluation_clock.h>
 #include <hgraph/runtime/global_state.h>
 #include <hgraph/runtime/node_fwd.h>
-#include <hgraph/types/metadata/type_binding.h>
+#include <hgraph/runtime/node_type_ref.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
 #include <hgraph/types/time_series/endpoint_schema.h>
@@ -40,7 +40,7 @@ namespace hgraph
     struct ResolutionMap;  // type_resolution.h — generic-node wiring resolution
 
     /** Runtime node category used by graph construction and evaluation. */
-    enum class NodeKind
+    enum class NodeKind : std::uint8_t
     {
         Compute,
         PushSource,
@@ -58,6 +58,7 @@ namespace hgraph
      */
     struct HGRAPH_EXPORT NodeTypeMetaData
     {
+        SchemaHeader header{};
         const char *display_name{nullptr};
 
         const TSValueTypeMetaData *input_schema{nullptr};
@@ -90,6 +91,7 @@ namespace hgraph
         [[nodiscard]] bool has_scalars() const noexcept;
         [[nodiscard]] bool has_error_output() const noexcept;
         [[nodiscard]] bool has_recordable_state() const noexcept;
+        [[nodiscard]] constexpr const SchemaHeader &schema_header() const noexcept { return header; }
     };
 
     /**
@@ -195,14 +197,16 @@ namespace hgraph
     {
       public:
         NodeView() noexcept;
-        NodeView(const NodeTypeBinding *binding, void *memory) noexcept;
+        explicit NodeView(NodePtr pointer) noexcept;
+        NodeView(NodeTypeRef type, void *memory) noexcept;
         NodeView(const NodeView &) = delete;
         NodeView &operator=(const NodeView &) = delete;
         NodeView(NodeView &&) noexcept = default;
         NodeView &operator=(NodeView &&) noexcept = default;
 
         [[nodiscard]] bool valid() const noexcept;
-        [[nodiscard]] const NodeTypeBinding *binding() const noexcept;
+        [[nodiscard]] NodeTypeRef type() const noexcept;
+        [[nodiscard]] NodePtr pointer() const noexcept;
         [[nodiscard]] const NodeTypeMetaData *schema() const noexcept;
         [[nodiscard]] void *data() const noexcept;
 
@@ -243,7 +247,7 @@ namespace hgraph
             {
                 throw std::invalid_argument("NodeView::as<T> requested an unsupported node extension view");
             }
-            return T::from_node(NodeView{binding(), data()}, node_ops.extended_view_context);
+            return T::from_node(NodeView{pointer()}, node_ops.extended_view_context);
         }
 
         /** Non-throwing test of whether this node exposes the extended view ``T``. */
@@ -261,7 +265,7 @@ namespace hgraph
       private:
         [[nodiscard]] const NodeOps &ops() const;
 
-        NodeStorageRef storage_{};
+        NodePtr pointer_{};
     };
 
     /**
@@ -275,7 +279,7 @@ namespace hgraph
     class HGRAPH_EXPORT NodeValue final
     {
       public:
-        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, NodeTypeBinding>;
+        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
 
         NodeValue() noexcept;
         explicit NodeValue(const NodeBuilder &builder, std::size_t node_index = 0);
@@ -287,7 +291,7 @@ namespace hgraph
         NodeValue &operator=(NodeValue &&other) noexcept;
 
         [[nodiscard]] bool has_value() const noexcept;
-        [[nodiscard]] const NodeTypeBinding *binding() const noexcept;
+        [[nodiscard]] NodeTypeRef type() const noexcept;
         [[nodiscard]] const NodeTypeMetaData *schema() const noexcept;
 
         [[nodiscard]] NodeView view();
@@ -374,12 +378,12 @@ namespace hgraph
          */
         [[nodiscard]] NodeBuilder with_passive_inputs(std::span<const std::size_t> slots) const;
 
-        [[nodiscard]] const NodeTypeBinding &binding() const;
+        [[nodiscard]] NodeTypeRef type() const;
         [[nodiscard]] const TSEndpointSchema &input_endpoint() const noexcept;
         /**
          * Construct this node directly into caller-owned storage matching
-         * ``binding().checked_plan()``. The caller owns destruction through the
-         * same binding/plan; this is used by graph storage to colocate
+         * ``type().checked_plan()``. The caller owns destruction through the
+         * same type/plan; this is used by graph storage to colocate
          * variable-sized node payloads in the graph allocation.
          */
         void construct_node_storage(void *memory, std::size_t node_index = 0) const;
@@ -388,14 +392,19 @@ namespace hgraph
       private:
         friend class NodeValue;
 
-        NodeBuilder(const NodeTypeBinding &binding, TSEndpointSchema input_endpoint);
+        NodeBuilder(NodeTypeRef type, TSEndpointSchema input_endpoint);
 
-        const NodeTypeBinding *binding_{nullptr};
+        NodeTypeRef            type_{};
         TSEndpointSchema       input_endpoint_{};
         TSEndpointSchema       output_endpoint_{};
         std::string            label_{};
         Value                  scalars_{};
     };
+
+    /** Clear node schema/ops contexts after their common TypeRecords are reset. */
+    HGRAPH_EXPORT void clear_node_runtime_types() noexcept;
+
+    static_assert(offsetof(NodeTypeMetaData, header) == 0);
 
 }  // namespace hgraph
 

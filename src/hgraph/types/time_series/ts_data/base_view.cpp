@@ -403,7 +403,7 @@ namespace hgraph
     {
         if (!valid()) { throw std::logic_error("TSDataView child requires a live view"); }
         if (!parent.valid()) { throw std::logic_error("TSDataView node endpoint requires a live node view"); }
-        mutable_tracking().parent = TSParentLink{parent.binding(), parent.data(), port};
+        mutable_tracking().parent = TSParentLink{parent.pointer(), port};
     }
 
     void TSDataView::bind_parent(TSInput &parent, std::size_t child_id) const

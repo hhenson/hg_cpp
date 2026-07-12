@@ -541,6 +541,6 @@ TEST_CASE("push source nodes require a real-time root graph executor")
     GraphBuilder nested_builder;
     nested_builder.add_node(hgraph::testing::capturing_push_source(*ts_int, sender));
 
-    CHECK_THROWS_AS(nested_builder.make_nested_graph(NodeStorageRef{parent.binding(), parent_view.data()}),
+    CHECK_THROWS_AS(nested_builder.make_nested_graph(parent_view.pointer()),
                     std::invalid_argument);
 }

@@ -2,7 +2,7 @@
 #define HGRAPH_CPP_ROOT_GRAPH_WIRING_H
 
 #include <hgraph/runtime/graph.h>                       // GraphBuilder, GraphEdge
-#include <hgraph/runtime/node.h>                        // NodeBuilder, NodeTypeBinding
+#include <hgraph/runtime/node.h>                        // NodeBuilder, NodeTypeRef
 #include <hgraph/types/call_args.h>                     // NamedArg / arg<"name">(...)
 #include <hgraph/types/metadata/value_plan_factory.h>   // ValuePlanFactory (scalar bundle binding)
 #include <hgraph/types/static_node.h>                   // StaticNodeSignature, In/Out/State/Scalar markers
@@ -970,7 +970,7 @@ namespace hgraph
             }
 
             const WiringInstance       *node = source.peered_node();
-            const NodeTypeMetaData     *meta = node->builder.binding().type_meta;
+            const NodeTypeMetaData     *meta = node->builder.type().schema();
             const TSValueTypeMetaData  *schema = nullptr;
             switch (output_kind)
             {
@@ -2509,7 +2509,7 @@ namespace hgraph
                 NodeBuilder nb;
                 nb.implementation<X>(map);
                 nb.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-                    nb.binding().type_meta != nullptr ? nb.binding().type_meta->input_schema : nullptr,
+                    nb.type().schema() != nullptr ? nb.type().schema()->input_schema : nullptr,
                     std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
                 WiringPortRef out =
                     w.add_node(std::type_index(typeid(X)), std::move(nb), inputs, std::move(scalars));
@@ -2643,7 +2643,7 @@ namespace hgraph
 
                 NodeBuilder builder = graph_wiring_detail::build_node_builder<X>();
                 builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-                    builder.binding().type_meta != nullptr ? builder.binding().type_meta->input_schema : nullptr,
+                    builder.type().schema() != nullptr ? builder.type().schema()->input_schema : nullptr,
                     std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
                 WiringPortRef out = w.add_node(std::type_index(typeid(X)), std::move(builder), inputs, std::move(scalars));
 

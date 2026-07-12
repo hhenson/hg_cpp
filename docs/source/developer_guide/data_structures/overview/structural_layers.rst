@@ -113,7 +113,7 @@ Core elements:
     fixed-size storage plan with a graph header, a heterogeneous node-storage
     tuple, and a parallel ``DateTime`` schedule array sized from the graph
     topology. The graph binding also carries the node-location table that maps
-    ``node_index`` to ``(NodeTypeBinding, storage_offset)``. Creating a graph
+    ``node_index`` to ``(NodeTypeRef, storage_offset)``. Creating a graph
     instance therefore performs one graph storage allocation rather than
     allocating separate vectors for nodes and schedules.
 

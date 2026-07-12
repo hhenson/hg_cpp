@@ -185,7 +185,7 @@ namespace hgraph
         if (!child_graph_->has_value())
         {
             *child_graph_ = context_->spec.graph_builder.make_nested_graph(
-                NodeStorageRef{view_.binding(), view_.data()},
+                view_.pointer(),
                 MemoryUtils::advance(view_.data(), context_->graph_memory_offset),
                 context_->graph_memory_layout);
         }

@@ -131,6 +131,46 @@ namespace
     }
 }
 
+TEST_CASE("Node runtime types use canonical records and NodePtr views", "[type-erasure][node]")
+{
+    using namespace hgraph;
+
+    NodeTypeMetaData schema;
+    schema.display_name = "record-backed-compute";
+    schema.node_kind = NodeKind::Compute;
+    const NodeBuilder builder = NodeBuilder::native(std::move(schema));
+    const NodeTypeRef type = builder.type();
+
+    REQUIRE(type.valid());
+    REQUIRE(type.record()->schema == &type.schema()->header);
+    REQUIRE(type.record()->role == TypeRole::Runtime);
+    REQUIRE(type.record()->ops_abi_version == NODE_OPS_ABI_VERSION);
+    REQUIRE(type.record()->classification().family == TypeFamily::Node);
+    REQUIRE(type.record()->classification().kind == static_cast<TypeKind>(NodeKind::Compute));
+    REQUIRE(std::string{type.record()->semantic_name()} == "record-backed-compute");
+    REQUIRE(has_capability(type.capabilities(), TypeCapabilities::Viewable));
+    REQUIRE(has_capability(type.capabilities(), TypeCapabilities::Mutable));
+
+    NodeValue node = builder.make_node();
+    NodeView view = node.view();
+    NodePtr pointer = view.pointer();
+    AnyPtr generic = pointer;
+
+    REQUIRE(pointer.valid());
+    REQUIRE(pointer.record() == type.record());
+    REQUIRE(pointer.data() == view.data());
+    REQUIRE(pointer.writable_access());
+    REQUIRE(generic.family() == TypeFamily::Node);
+    REQUIRE(generic.role() == TypeRole::Runtime);
+    REQUIRE(NodeTypeRef::checked(generic) == type);
+    REQUIRE(NodePtr::checked(generic).same_state_as(pointer));
+    REQUIRE(NodeView{NodePtr::checked(generic)}.type() == type);
+
+    Value scalar{std::int32_t{1}};
+    REQUIRE_THROWS_AS(NodeTypeRef::checked(scalar.binding().read_only(scalar.view().data())),
+                      std::invalid_argument);
+}
+
 TEST_CASE("NodeValue exposes a type-erased view over node storage")
 {
     using namespace hgraph;
@@ -152,10 +192,10 @@ TEST_CASE("NodeValue exposes a type-erased view over node storage")
     auto view = node.view();
     REQUIRE(view.valid());
     REQUIRE(view.schema()->has_output());
-    REQUIRE(view.binding()->checked_plan().find_component("runtime_storage") != nullptr);
-    REQUIRE(view.binding()->checked_plan().find_component("output") != nullptr);
-    REQUIRE(view.binding()->checked_plan().find_component("input") == nullptr);
-    REQUIRE(view.binding()->checked_plan().find_component("state") == nullptr);
+    REQUIRE(view.type().checked_plan().find_component("runtime_storage") != nullptr);
+    REQUIRE(view.type().checked_plan().find_component("output") != nullptr);
+    REQUIRE(view.type().checked_plan().find_component("input") == nullptr);
+    REQUIRE(view.type().checked_plan().find_component("state") == nullptr);
     REQUIRE(std::string{view.label()} == "source");
     REQUIRE_FALSE(view.started());
 
@@ -219,10 +259,10 @@ TEST_CASE("NodeValue state is read-write value storage")
     REQUIRE(view.valid());
     REQUIRE(view.schema()->has_state());
     REQUIRE(view.has_state());
-    REQUIRE(view.binding()->checked_plan().find_component("runtime_storage") != nullptr);
-    REQUIRE(view.binding()->checked_plan().find_component("output") != nullptr);
-    REQUIRE(view.binding()->checked_plan().find_component("state") != nullptr);
-    REQUIRE(view.binding()->checked_plan().find_component("input") == nullptr);
+    REQUIRE(view.type().checked_plan().find_component("runtime_storage") != nullptr);
+    REQUIRE(view.type().checked_plan().find_component("output") != nullptr);
+    REQUIRE(view.type().checked_plan().find_component("state") != nullptr);
+    REQUIRE(view.type().checked_plan().find_component("input") == nullptr);
     REQUIRE(view.state().checked_as<std::int32_t>() == 0);
 
     view.start(t1);
@@ -250,8 +290,8 @@ TEST_CASE("NodeValue scalar configuration is read-only per-instance value storag
     REQUIRE(view.valid());
     REQUIRE(view.schema()->has_scalars());
     REQUIRE(view.has_scalars());
-    REQUIRE(view.binding()->checked_plan().find_component("scalars") != nullptr);
-    REQUIRE(view.binding()->checked_plan().find_component("state") == nullptr);
+    REQUIRE(view.type().checked_plan().find_component("scalars") != nullptr);
+    REQUIRE(view.type().checked_plan().find_component("state") == nullptr);
     REQUIRE(view.scalars().checked_as<std::int32_t>() == 7);
 
     view.start(t1);
@@ -293,15 +333,15 @@ TEST_CASE("GraphValue wires node views and evaluates scheduled notifications")
     REQUIRE(node_storage != nullptr);
     REQUIRE(node_storage->plan->is_tuple());
     REQUIRE(node_storage->plan->component_count() == 2);
-    REQUIRE(node_storage->plan->component(0).plan == graph_view.node_at(0).binding()->plan());
-    REQUIRE(node_storage->plan->component(1).plan == graph_view.node_at(1).binding()->plan());
+    REQUIRE(node_storage->plan->component(0).plan == graph_view.node_at(0).type().plan());
+    REQUIRE(node_storage->plan->component(1).plan == graph_view.node_at(1).type().plan());
     const auto *schedule_storage = graph_plan.find_component("schedule");
     REQUIRE(schedule_storage != nullptr);
     REQUIRE(schedule_storage->plan->is_array());
     REQUIRE(schedule_storage->plan->array_count() == 2);
-    REQUIRE(graph_view.node_at(1).binding()->checked_plan().find_component("input") != nullptr);
-    REQUIRE(graph_view.node_at(1).binding()->checked_plan().find_component("output") != nullptr);
-    REQUIRE(graph_view.node_at(1).binding()->checked_plan().find_component("state") == nullptr);
+    REQUIRE(graph_view.node_at(1).type().checked_plan().find_component("input") != nullptr);
+    REQUIRE(graph_view.node_at(1).type().checked_plan().find_component("output") != nullptr);
+    REQUIRE(graph_view.node_at(1).type().checked_plan().find_component("state") == nullptr);
 
     graph_view.start(t1);
     REQUIRE(graph_view.started());

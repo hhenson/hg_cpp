@@ -330,7 +330,7 @@ namespace hgraph::adaptor
             NodeBuilder builder = make_shared_output_capture_node(
                 adaptor_from_graph_path<Interface>(user_path), *input_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-                builder.binding().type_meta->input_schema,
+                builder.type().schema()->input_schema,
                 std::span<const WiringPortRef>{sources.data(), sources.size()}));
 
             WiringPortRef capture = w.add_node(std::type_index(typeid(input_capture_marker)),
@@ -386,7 +386,7 @@ namespace hgraph::adaptor
             NodeBuilder builder = make_shared_output_capture_node(
                 adaptor_to_graph_path<Interface>(user_path), *output_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-                builder.binding().type_meta->input_schema,
+                builder.type().schema()->input_schema,
                 std::span<const WiringPortRef>{sources.data(), sources.size()}));
 
             WiringPortRef capture = w.add_node(std::type_index(typeid(output_capture_marker)),

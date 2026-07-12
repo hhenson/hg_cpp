@@ -57,15 +57,15 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(alignof(ValueTypeRef) == alignof(void *));
     static_assert(std::is_standard_layout_v<ValueTypeRef>);
     static_assert(std::is_trivially_copyable_v<ValueTypeRef>);
+    static_assert(sizeof(NodeTypeRef) == sizeof(void *));
+    static_assert(std::is_trivially_copyable_v<NodeTypeRef>);
     assert_binding_layout<TSDataBinding>();
-    assert_binding_layout<NodeTypeBinding>();
     assert_binding_layout<GraphTypeBinding>();
     assert_binding_layout<GraphExecutorTypeBinding>();
     assert_binding_layout<EvaluationClockTypeBinding>();
 
     assert_storage_ref_layout<TypeRecord>();
     assert_storage_ref_layout<TSDataBinding>();
-    assert_storage_ref_layout<NodeTypeBinding>();
     assert_storage_ref_layout<GraphTypeBinding>();
     assert_storage_ref_layout<GraphExecutorTypeBinding>();
     assert_storage_ref_layout<EvaluationClockTypeBinding>();
@@ -74,6 +74,7 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(sizeof(Value) == sizeof(void *) * 3);
     static_assert(sizeof(AnyPtr) == sizeof(void *) * 2);
     static_assert(sizeof(TypedPtr<TypeFamily::Value>) == sizeof(void *) * 2);
+    static_assert(sizeof(NodePtr) == sizeof(void *) * 2);
     static_assert(sizeof(NodeView) == sizeof(void *) * 2);
     static_assert(sizeof(GraphView) == sizeof(void *) * 2);
     static_assert(sizeof(GraphExecutorView) == sizeof(void *) * 2);
@@ -123,7 +124,6 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
 
     assert_storage_handle_layout<TypeRecord>();
     assert_storage_handle_layout<TSDataBinding>();
-    assert_storage_handle_layout<NodeTypeBinding>();
     assert_storage_handle_layout<GraphTypeBinding>();
     assert_storage_handle_layout<GraphExecutorTypeBinding>();
     assert_storage_handle_layout<EvaluationClockTypeBinding>();

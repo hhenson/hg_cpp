@@ -490,7 +490,7 @@ namespace hgraph
             if (!view.started()) { return true; }
 
             const auto &typed_context = *static_cast<const SubscriptionKeySourceContext *>(
-                view.binding()->ops_ref().extended_view_context);
+                view.type().ops_ref().extended_view_context);
             auto       &storage       = source_storage_of(view, typed_context);
             if (storage.pending.empty()) { return true; }
 
@@ -517,7 +517,7 @@ namespace hgraph
         void subscription_key_source_stop(const NodeView &view, DateTime evaluation_time)
         {
             const auto *context = static_cast<const SubscriptionKeySourceContext *>(
-                view.binding()->ops_ref().extended_view_context);
+                view.type().ops_ref().extended_view_context);
             auto &storage = source_storage_of(view, *context);
 
             storage.counts.clear();
@@ -609,7 +609,7 @@ namespace hgraph
         void subscription_key_capture_stop(const NodeView &view, DateTime evaluation_time)
         {
             const auto *context = static_cast<const SubscriptionKeyCaptureContext *>(
-                view.binding()->ops_ref().extended_view_context);
+                view.type().ops_ref().extended_view_context);
             auto &storage = capture_storage_of(view, *context);
             if (!storage.has_previous) { return; }
 
@@ -622,7 +622,7 @@ namespace hgraph
         void request_input_capture_stop(const NodeView &view, DateTime evaluation_time)
         {
             const auto *context = static_cast<const RequestInputCaptureContext *>(
-                view.binding()->ops_ref().extended_view_context);
+                view.type().ops_ref().extended_view_context);
             auto &storage = capture_storage_of(view, *context);
             if (!storage.live) { return; }
 

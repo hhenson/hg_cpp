@@ -23,7 +23,7 @@ namespace
     {
         const NodeBuilder &node = builder.nodes().at(index);
         if (!node.label().empty()) { return std::string{node.label()}; }
-        const auto *meta = node.binding().type_meta;
+        const auto *meta = node.type().schema();
         return meta != nullptr && meta->display_name != nullptr ? std::string{meta->display_name} : std::string{};
     }
 

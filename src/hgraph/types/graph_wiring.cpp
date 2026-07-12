@@ -28,7 +28,7 @@ namespace hgraph
         // cannot be used as identity.)
         [[nodiscard]] WiringNodeSchema resolved_schema_of(const NodeBuilder &builder)
         {
-            const auto *tm = builder.binding().type_meta;
+            const auto *tm = builder.type().schema();
             if (tm == nullptr) { return WiringNodeSchema{}; }
             return WiringNodeSchema{tm->input_schema,
                                     tm->output_schema,
@@ -163,7 +163,7 @@ namespace hgraph
 
         [[nodiscard]] const TSValueTypeMetaData *output_schema_of(const WiringInstance &instance)
         {
-            const auto *meta = instance.builder.binding().type_meta;
+            const auto *meta = instance.builder.type().schema();
             return meta != nullptr ? meta->output_schema : nullptr;
         }
 
@@ -447,7 +447,7 @@ namespace hgraph
                     const auto &builder = instance->builder;
                     std::string label = std::string{builder.label()};
                     if (!label.empty()) { return label; }
-                    const auto *meta = builder.binding().type_meta;
+                    const auto *meta = builder.type().schema();
                     return meta != nullptr && meta->display_name != nullptr
                         ? std::string{meta->display_name}
                         : std::string{"<unnamed>"};
@@ -756,7 +756,7 @@ namespace hgraph
             if (instance == nullptr) { return std::string{"<null>"}; }
             std::string label = std::string{instance->builder.label()};
             if (!label.empty()) { return label; }
-            const auto *meta = instance->builder.binding().type_meta;
+            const auto *meta = instance->builder.type().schema();
             return meta != nullptr && meta->display_name != nullptr ? std::string{meta->display_name}
                                                                     : std::string{"<unnamed>"};
         };
@@ -1026,12 +1026,12 @@ namespace hgraph
         // The deque owns the instances (stable addresses); the const port ref
         // names one we own and may amend before finish.
         WiringInstance         &instance = const_cast<WiringInstance &>(*node);
-        const NodeTypeMetaData *meta     = instance.builder.binding().type_meta;
+        const NodeTypeMetaData *meta     = instance.builder.type().schema();
         if (meta == nullptr || meta->error_output_schema == nullptr)
         {
             instance.builder = instance.builder.with_error_capture(error_schema);
         }
-        return instance.builder.binding().type_meta->error_output_schema;
+        return instance.builder.type().schema()->error_output_schema;
     }
 
     GlobalStateView Wiring::global_state() noexcept { return impl_->global_state.view(); }

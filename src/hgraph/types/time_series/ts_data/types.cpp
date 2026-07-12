@@ -370,14 +370,10 @@ namespace hgraph
         return has_output_endpoint_parent() ? payload_.output : nullptr;
     }
 
-    const NodeTypeBinding *TSParentLink::parent_node_binding() const noexcept
+    NodePtr TSParentLink::parent_node_ptr() const noexcept
     {
-        return has_node_endpoint_parent() ? parent_.as<const NodeTypeBinding>() : nullptr;
-    }
-
-    void *TSParentLink::parent_node_data() const noexcept
-    {
-        return has_node_endpoint_parent() ? payload_.node_data : nullptr;
+        const auto *record = has_node_endpoint_parent() ? parent_.as<const TypeRecord>() : nullptr;
+        return record != nullptr ? NodeTypeRef{record}.writable(payload_.node_data) : NodePtr{};
     }
 
     TSEndpointOwnerPort TSParentLink::port() const noexcept
@@ -396,7 +392,7 @@ namespace hgraph
     NodeView TSParentLink::parent_node() const
     {
         if (!has_node_endpoint_parent()) { return NodeView{}; }
-        return NodeView{parent_node_binding(), parent_node_data()};
+        return NodeView{parent_node_ptr()};
     }
 
     GraphView TSParentLink::parent_graph() const
@@ -428,10 +424,7 @@ namespace hgraph
         {
             if (has_node_endpoint_parent())
             {
-                notify_node_endpoint_child_modified(parent_node_binding(),
-                                                    parent_node_data(),
-                                                    port(),
-                                                    mutation_time);
+                notify_node_endpoint_child_modified(parent_node_ptr(), port(), mutation_time);
                 return;
             }
             if (auto *endpoint = parent_endpoint(); endpoint != nullptr)

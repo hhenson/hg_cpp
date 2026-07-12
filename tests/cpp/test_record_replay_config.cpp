@@ -111,7 +111,7 @@ TEST_CASE("graph traits: nested graphs chain to the parent and can shadow")
 
     // A nested child with NO own traits inherits through the parent chain.
     GraphBuilder plain_child;
-    GraphValue   inherited = plain_child.make_nested_graph(NodeStorageRef{anchor.binding(), anchor.data()});
+    GraphValue   inherited = plain_child.make_nested_graph(anchor.pointer());
     CHECK(inherited.view().trait("region").checked_as<Str>() == Str{"emea"});   // bubbles to the parent
     CHECK_FALSE(inherited.view().trait_or("region").valid());                    // own level only: absent
     CHECK(record_replay::fq_recordable_id(inherited.view(), "leg") == "book.trades.leg");
@@ -119,7 +119,7 @@ TEST_CASE("graph traits: nested graphs chain to the parent and can shadow")
     // A child's own trait shadows the parent's.
     GraphBuilder shadowing_child;
     shadowing_child.trait(std::string{record_replay::RECORDABLE_ID_TRAIT}, Value{Str{"child"}});
-    GraphValue shadowed = shadowing_child.make_nested_graph(NodeStorageRef{anchor.binding(), anchor.data()});
+    GraphValue shadowed = shadowing_child.make_nested_graph(anchor.pointer());
     CHECK(record_replay::fq_recordable_id(shadowed.view(), "leg") == "child.leg");
 }
 

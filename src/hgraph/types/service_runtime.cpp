@@ -104,7 +104,7 @@ namespace hgraph
             }};
             NodeBuilder builder = make_shared_output_capture_node(path, *output_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-                builder.binding().type_meta->input_schema,
+                builder.type().schema()->input_schema,
                 std::span<const WiringPortRef>{sources.data(), sources.size()}));
             WiringPortRef capture = w.add_node(role, std::move(builder),
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
@@ -236,7 +236,7 @@ namespace hgraph
         }};
         NodeBuilder builder = make_subscription_key_capture_node(subs_path, *descriptor.key_type);
         builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-            builder.binding().type_meta->input_schema,
+            builder.type().schema()->input_schema,
             std::span<const WiringPortRef>{sources.data(), sources.size()}));
         WiringPortRef capture = w.add_node(
             std::type_index(typeid(service::detail::subscription_capture_marker)), std::move(builder),
@@ -346,7 +346,7 @@ namespace hgraph
         NodeBuilder builder =
             make_request_input_capture_node(request_path, *descriptor.request_schema, request_id);
         builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-            builder.binding().type_meta->input_schema,
+            builder.type().schema()->input_schema,
             std::span<const WiringPortRef>{sources.data(), sources.size()}));
         WiringPortRef capture = w.add_node(
             std::type_index(typeid(service::detail::request_input_capture_marker)), std::move(builder),

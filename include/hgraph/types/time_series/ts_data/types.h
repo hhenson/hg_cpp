@@ -202,11 +202,9 @@ namespace hgraph
             : TSParentLink(TSStorageTypeRef{binding}, data, parent_child_id)
         {
         }
-        constexpr TSParentLink(const NodeTypeBinding *binding,
-                               void                  *data,
-                               TSEndpointOwnerPort    port) noexcept
-            : parent_(binding, TSParentLinkKind::NodeEndpoint),
-              payload_(data),
+        TSParentLink(NodePtr node, TSEndpointOwnerPort port) noexcept
+            : parent_(node.record(), TSParentLinkKind::NodeEndpoint),
+              payload_(const_cast<void *>(node.data())),
               child_id(static_cast<std::size_t>(port))
         {
         }
@@ -264,11 +262,8 @@ namespace hgraph
         /** Output endpoint parent, or null when this link targets a different parent kind. */
         [[nodiscard]] TSOutput *parent_output() const noexcept;
 
-        /** Node binding for a node-owned endpoint parent, or null otherwise. */
-        [[nodiscard]] const NodeTypeBinding *parent_node_binding() const noexcept;
-
-        /** Node storage for a node-owned endpoint parent, or null otherwise. */
-        [[nodiscard]] void *parent_node_data() const noexcept;
+        /** Typed node pointer for a node-owned endpoint parent, or unbound otherwise. */
+        [[nodiscard]] NodePtr parent_node_ptr() const noexcept;
 
         /** Endpoint port for this endpoint parent, or Input for an empty/non-endpoint link. */
         [[nodiscard]] TSEndpointOwnerPort port() const noexcept;

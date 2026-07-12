@@ -375,12 +375,12 @@ namespace hgraph
 
         const MeshSubscribeContext &mesh_subscribe_context_of(const NodeView &view)
         {
-            const NodeTypeBinding *binding = view.binding();
-            if (binding == nullptr)
+            const NodeTypeRef type = view.type();
+            if (!type)
             {
-                throw std::logic_error("mesh_subscribe: node has no binding");
+                throw std::logic_error("mesh_subscribe: node has no type");
             }
-            const void *context = binding->ops_ref().extended_view_context;
+            const void *context = type.ops_ref().extended_view_context;
             if (context == nullptr)
             {
                 throw std::logic_error("mesh_subscribe: missing typed storage context");
@@ -396,12 +396,12 @@ namespace hgraph
 
         const MeshKeySetContext &mesh_key_set_context_of(const NodeView &view)
         {
-            const NodeTypeBinding *binding = view.binding();
-            if (binding == nullptr)
+            const NodeTypeRef type = view.type();
+            if (!type)
             {
-                throw std::logic_error("mesh_key_set: node has no binding");
+                throw std::logic_error("mesh_key_set: node has no type");
             }
-            const void *context = binding->ops_ref().extended_view_context;
+            const void *context = type.ops_ref().extended_view_context;
             if (context == nullptr)
             {
                 throw std::logic_error("mesh_key_set: missing typed storage context");
@@ -537,7 +537,7 @@ namespace hgraph
             if (!entry.graph.has_value())
             {
                 entry.graph = spec.child.graph_builder.make_nested_graph(
-                    NodeStorageRef{view.binding(), view.data()},
+                    view.pointer(),
                     storage.entries.graph_memory(slot),
                     context.graph_layout);
             }

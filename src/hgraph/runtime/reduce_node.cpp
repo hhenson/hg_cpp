@@ -413,7 +413,7 @@ namespace hgraph
                     entry = &bank.construct_at(position);
                     created.push_back(position);
                     entry->graph = context.spec.child.graph_builder.make_nested_graph(
-                        NodeStorageRef{view.binding(), view.data()},
+                        view.pointer(),
                         bank.graph_memory(position), context.graph_layout);
                 }
                 else if (!needed && entry != nullptr)

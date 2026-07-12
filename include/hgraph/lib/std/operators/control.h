@@ -175,7 +175,7 @@ namespace hgraph::stdlib
 
             NodeBuilder builder = make_feedback_sink_node(*s.schema);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-                builder.binding().type_meta != nullptr ? builder.binding().type_meta->input_schema : nullptr,
+                builder.type().schema() != nullptr ? builder.type().schema()->input_schema : nullptr,
                 std::span<const WiringPortRef>{sources.data(), sources.size()}));
 
             (void)w.add_node(std::type_index(typeid(feedback_detail::feedback_sink_node_tag)),

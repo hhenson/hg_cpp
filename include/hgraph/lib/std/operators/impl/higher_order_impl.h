@@ -697,7 +697,7 @@ namespace hgraph::stdlib
 
             const NestedGraphEndpoint &source = spec.output_binding->source;
             NodeBuilder &terminal = spec.graph_builder.node_at(source.node);
-            const NodeTypeMetaData *terminal_meta = terminal.binding().type_meta;
+            const NodeTypeMetaData *terminal_meta = terminal.type().schema();
             const auto *terminal_schema = terminal_meta != nullptr ? terminal_meta->output_schema : nullptr;
             const auto *branch_output_schema = switch_branch_output_schema_at(terminal_schema, source.path);
 
@@ -1155,7 +1155,7 @@ namespace hgraph::stdlib
                 NodeBuilder &terminal =
                     spec.child.graph_builder.node_at(spec.child.output_binding->source.node);
                 const TSEndpointSchema &terminal_override = terminal.output_endpoint();
-                const NodeTypeMetaData *terminal_meta = terminal.binding().type_meta;
+                const NodeTypeMetaData *terminal_meta = terminal.type().schema();
                 const TSEndpointSchema &terminal_declared =
                     terminal_meta != nullptr ? terminal_meta->output_endpoint_schema : terminal_override;
                 const TSEndpointSchema &terminal_endpoint =

@@ -29,10 +29,11 @@ Ops               ``NodeOps`` — the behaviour vtable: ``start``,
                   runtime memory/view. Construction and destruction are
                   handled by the bound ``StoragePlan`` lifecycle hooks,
                   not by ``NodeOps``.
-Binding           ``NodeTypeBinding`` — interned ``(schema, plan, ops)``
-                  triple.
+Type record       ``TypeRecord`` — canonical interned ``Node/Runtime``
+                  identity selecting the schema, plan, and ``NodeOps`` ABI.
+Type reference    ``NodeTypeRef`` — one-word typed access to the record.
 Builder           ``NodeBuilder`` — reusable builder that wraps a
-                  binding and constructs runtime node instances from
+                  type reference and constructs runtime node instances from
                   graph contexts.
 Value             ``NodeValue`` — the standalone owning runtime node
                   instance used by focused tests and direct node
@@ -40,7 +41,8 @@ Value             ``NodeValue`` — the standalone owning runtime node
                   directly in graph storage and expose them through
                   ``NodeView``.
 View              ``NodeView`` — a borrowed type-erased cursor over a
-                  node allocation. It carries the node binding, data
+                  node allocation. It carries a two-word ``NodePtr`` (record
+                  plus data),
                   pointer, and no cycle-local state. Evaluation time is
                   passed explicitly to lifecycle operations and
                   input/output projection methods. Active input
@@ -49,7 +51,7 @@ View              ``NodeView`` — a borrowed type-erased cursor over a
 ================  ==========================================================
 
 ``NodeBuilder`` is a reusable builder, not a value-builder-style scratch
-object. Once the node schema has been resolved to a binding, the builder can
+object. Once the node schema has been resolved to a type record, the builder can
 be cached and used to construct many node instances. The instance-specific
 inputs are the graph context, node position, boundary bindings, and any
 per-node configuration captured by the graph schema.
@@ -152,13 +154,14 @@ A ``NodeTypeMetaData`` carries:
 Runtime Value/View
 ------------------
 
-The runtime node follows the same plan / ops / binding / value / view
+The runtime node follows the same schema / type-record / plan / ops / owner / pointer
 shape as the lower layers:
 
-``NodeTypeBinding``
-    Interned ``(NodeTypeMetaData, StoragePlan, NodeOps)`` identity. The
-    binding is the only object a generic node view needs in order to
-    recover schema, storage lifecycle, and runtime behaviour.
+``NodeTypeRef`` / ``NodePtr``
+    ``NodeTypeRef`` is the one-word canonical identity for an interned
+    ``(NodeTypeMetaData, Runtime role, StoragePlan, NodeOps)`` record.
+    ``NodePtr`` combines that record with node memory for typed runtime access;
+    it widens to ``AnyPtr`` for generic diagnostics without another allocation.
 
 ``NodeValue``
     Owns one node allocation. Moving a node value transfers ownership of
@@ -179,14 +182,14 @@ shape as the lower layers:
     evaluation independent of concrete node implementation classes. The
     state view is writable-capable when the node declares ``state_schema``;
     callers still open mutation explicitly with ``ValueView::begin_mutation``.
-    ``NodeView`` itself is timeless: callers pass ``DateTime`` to
+    ``NodeView`` wraps ``NodePtr`` and is itself timeless: callers pass ``DateTime`` to
     lifecycle operations and to time-series endpoint projections such as
     ``input(evaluation_time)`` and ``output(evaluation_time)``.
 
 ``NodeBuilder``
     Cached construction recipe. It resolves the node schema and endpoint
-    annotations to a binding, then constructs ``NodeValue`` instances on
-    demand.
+    annotations to a canonical ``NodeTypeRef``, then constructs ``NodeValue``
+    instances on demand.
 
 The first C++ runtime pass supplies a native callback-backed node family
 using this structure. Static C++ nodes, Python-backed nodes, nested graph
@@ -266,8 +269,8 @@ Resolution is **implemented at the wiring layer**
 The node's *callbacks* never see ``T`` — they read the resolved endpoints
 from the ``NodeView`` at eval time — so one closure over ``&eval`` serves
 every resolution. Different resolutions build distinct concrete
-``NodeTypeMetaData`` instances before binding; any sharing happens through the
-normal ``NodeTypeBinding`` pointer-triple interning described below, not through
+``NodeTypeMetaData`` instances before record interning; any sharing happens through the
+normal ``TypeRecord`` key described below, not through
 an unresolved generic schema stored on the node metadata. This is the C++
 counterpart of Python type-variable resolution and the seed for generic
 ``map_`` / ``reduce`` / ``switch_``.
@@ -275,16 +278,19 @@ counterpart of Python type-variable resolution and the seed for generic
 Interning Key
 -------------
 
-Node bindings use the same ``TypeBinding`` mechanism as values and time-series
-data. The intern key is the pointer triple:
+Node types use the common ``TypeRecordRegistry``. The intern key is:
 
-- ``NodeTypeMetaData *``,
+- the ``SchemaHeader *`` at offset zero in ``NodeTypeMetaData``,
+- ``TypeRole::Runtime``,
 - ``StoragePlan *``,
-- ``NodeOps *``.
+- ``NodeOps *``,
+- optional debug metadata.
 
 The default ``NodeRuntimeRegistry`` owns stable schema, context, and ops storage,
-fills missing default ops, builds the storage plan, and then interns the binding
-for that concrete triple. It does not currently deduplicate ``NodeTypeMetaData``
+fills missing default ops, builds the storage plan, and then interns the common
+record for that concrete key. ``NodeTypeMetaData::header`` supplies the common
+family, kind, and semantic label; ``node_kind`` remains its typed mirror and is
+validated against the header during interning. The registry does not currently deduplicate ``NodeTypeMetaData``
 structurally by field value; schema identity is the stable pointer owned by the
 registry.
 

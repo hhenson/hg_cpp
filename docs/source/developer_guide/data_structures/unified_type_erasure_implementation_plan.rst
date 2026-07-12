@@ -277,7 +277,7 @@ Iteration 4D
    unchanged.
 
    Implemented: dynamic ``TSL`` and tick/duration ``TSW`` expose canonical
-   ABI-2 Data, Input, and Output records. Role-specific root and embedded
+   ABI-3 Data, Input, and Output records. Role-specific root and embedded
    labels share one physical plan per schema. Dynamic-list storage binds its
    one-word element type on first growth, remains grow-only, and invalidates
    owned descendants before their handles are destroyed. Owned and peered
@@ -324,6 +324,17 @@ Iteration 5A
    Migrate node schemas, factories, builders, and runtime pointers.  Native
    compute, sink, generator, service, and system nodes use ``NodePtr`` on typed
    paths and ``AnyPtr`` only at genuinely generic boundaries.
+
+   Implemented: ``NodeTypeMetaData`` carries the common node schema header;
+   ``NodeTypeRef`` is the one-word canonical Runtime-role identity; and
+   ``NodeView`` carries ``NodePtr``.  ``NodeBuilder``, graph node-location
+   tables, nested graph parents, and node-owned endpoint parent links use the
+   typed record/pointer contract directly.  The former ``NodeTypeBinding`` and
+   ``NodeStorageRef`` representations have been removed.  Existing
+   ``NodeKind`` values describe the current compute, source/generator, sink,
+   nested/system, and service implementations without adding speculative
+   sub-families.  This records implementation status only; review acceptance
+   and commit status remain open.
 
 Iteration 5B
    Migrate Python-authored node implementations to the same Node family and ops

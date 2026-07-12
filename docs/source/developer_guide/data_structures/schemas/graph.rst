@@ -55,7 +55,7 @@ and nodes:
     Owns graph storage. The graph storage plan contains a flattened
     heterogeneous node-storage tuple and a schedule entry per node. The graph
     binding carries a node-location table, so ``node_at(index)`` resolves to
-    a ``NodeView`` by combining the node's binding with the indexed storage
+    a ``NodeView`` by combining the node's type record with the indexed storage
     offset. When graph storage is moved, child node parent links are reattached
     so input notifications continue to schedule through the owning graph.
 
@@ -118,7 +118,7 @@ index-based:
            |   +-- schedule_offset
            |   +-- schedule_stride
            +-- node_locations[0..N)
-               +-- binding: NodeTypeBinding*
+               +-- type: NodeTypeRef
                +-- offset:  byte offset from GraphValue storage
 
 ``GraphView::node_at(index)`` is a lightweight indexed projection:
@@ -128,7 +128,7 @@ index-based:
    location = graph_context.node_locations[index]
 
    NodeView {
-       binding = location.binding
+       pointer = location.type.writable(node_memory)
        data    = graph_storage_base + location.offset
    }
 
@@ -142,14 +142,14 @@ Accessing node ``i`` therefore has two parts:
 
 .. code-block:: text
 
-   // binding/context metadata, shared by graph instances
+   // graph context metadata, shared by graph instances
    context  = graph.binding.ops.context
    location = context.node_locations[i]
 
    // instance storage, unique to this GraphValue
    node_memory = graph.storage_base + location.offset
 
-   view = NodeView(location.binding, node_memory)
+   view = NodeView(location.type, node_memory)
 
 The schedule table is different because it is homogeneous:
 
@@ -190,8 +190,8 @@ on the node schema and specialised node builder:
    +-- error_output       TSOutput                optional
    +-- recordable_state   TSOutput                optional
 
-The node's ``NodeTypeBinding`` supplies both the storage plan and the
-``NodeOps`` table. Graph evaluation therefore does not need to know the
+The node's ``NodeTypeRef`` supplies both the storage plan and the
+``NodeOps`` table through its common record. Graph evaluation therefore does not need to know the
 concrete node type or switch on node shape. It resolves ``NodeView`` by index,
 then calls ``start``, ``evaluate``, ``stop``, or ``cleanup_delta`` through the
 node ops.

@@ -97,7 +97,7 @@ The node storage already reserves an error-output ``TSOutput`` when
   plan are immutable and shared), so a node cannot be mutated in place to gain
   an error output. ``exception_time_series(port)`` therefore **re-binds** the
   producing node: ``NodeBuilder::with_error_capture(error_schema)`` clones the
-  node's binding with ``error_output_schema = TS[NodeError]`` and
+  node's type record with ``error_output_schema = TS[NodeError]`` and
   ``captures_errors = true`` (reusing the original native callbacks; only
   supported for native nodes — a custom-ops node such as ``map_`` raises a clear
   error), and ``Wiring`` swaps the instance's builder before ``finish``. The

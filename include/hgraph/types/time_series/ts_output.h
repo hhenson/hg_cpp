@@ -88,10 +88,9 @@ namespace hgraph
       private:
         friend class TSOutputMutationView;
         friend struct TSParentLink;
-        friend void notify_node_endpoint_child_modified(const NodeTypeBinding *node_binding,
-                                                        void                  *node_data,
-                                                        TSEndpointOwnerPort    port,
-                                                        DateTime               mutation_time);
+        friend void notify_node_endpoint_child_modified(NodePtr             node,
+                                                        TSEndpointOwnerPort port,
+                                                        DateTime            mutation_time);
 
         static TSData checked_data_for(const TSDataBinding &binding);
         static TSData checked_data_for(const TSValueTypeMetaData *schema);

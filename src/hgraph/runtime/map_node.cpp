@@ -286,7 +286,7 @@ namespace hgraph
             if (!entry.graph.has_value())
             {
                 entry.graph = spec.child.graph_builder.make_nested_graph(
-                    NodeStorageRef{view.binding(), view.data()},
+                    view.pointer(),
                     storage.entries.graph_memory(slot),
                     context.graph_layout);
             }

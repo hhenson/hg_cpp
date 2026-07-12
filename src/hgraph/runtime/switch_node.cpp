@@ -212,7 +212,7 @@ namespace hgraph
             storage.graphs[next_slot] = GraphValue{};
             storage.previous_slot.reset();
             storage.graphs[next_slot] = spec.graph_builder.make_nested_graph(
-                NodeStorageRef{view.binding(), view.data()},
+                view.pointer(),
                 switch_graph_memory(view, context, next_slot),
                 context.graph_slot_layout);
 

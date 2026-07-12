@@ -3,6 +3,7 @@
 #include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/graph.h>
 #include <hgraph/runtime/node_error.h>
+#include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/notifiable.h>
 #include <hgraph/runtime/node_scheduler.h>
@@ -843,88 +844,9 @@ namespace hgraph
             return true;
         }
 
-        void default_attach_graph_impl(const void *, void *, GraphValue *, std::size_t) {}
-        GraphValue *default_graph_impl(const void *, const void *) noexcept { return nullptr; }
-        std::size_t default_node_index_impl(const void *, const void *) noexcept { return 0; }
-        std::string_view default_label_impl(const void *, const void *) noexcept { return {}; }
-        bool default_started_impl(const void *, const void *) noexcept { return false; }
-
-        void default_start_impl(const void *, const NodeView &, DateTime)
-        {
-            throw std::logic_error("NodeView::start requires a live node");
-        }
-
-        void default_stop_impl(const void *, const NodeView &, DateTime)
-        {
-            throw std::logic_error("NodeView::stop requires a live node");
-        }
-
-        bool default_evaluate_impl(const void *, const NodeView &, DateTime)
-        {
-            throw std::logic_error("NodeView::evaluate requires a live node");
-        }
-
-        bool default_has_input_impl(const void *, const void *) noexcept { return false; }
-        bool default_has_output_impl(const void *, const void *) noexcept { return false; }
-        bool default_has_state_impl(const void *, const void *) noexcept { return false; }
-        bool default_has_scalars_impl(const void *, const void *) noexcept { return false; }
-        bool default_has_scheduler_impl(const void *, const void *) noexcept { return false; }
-        bool default_has_error_output_impl(const void *, const void *) noexcept { return false; }
-        bool default_has_recordable_state_impl(const void *, const void *) noexcept { return false; }
-
-        TSInputView default_input_view_impl(const void *, void *, DateTime)
-        {
-            throw std::logic_error("NodeView::input requires a live node");
-        }
-
-        TSOutputView default_output_view_impl(const void *, void *, DateTime)
-        {
-            throw std::logic_error("NodeView::output requires a live node");
-        }
-
-        ValueView default_state_view_impl(const void *, void *)
-        {
-            throw std::logic_error("NodeView::state requires a live node");
-        }
-
-        void default_replace_state_impl(const void *, void *, Value)
-        {
-            throw std::logic_error("NodeView::replace_state requires a live node");
-        }
-
-        ValueView default_scalars_view_impl(const void *, void *)
-        {
-            throw std::logic_error("NodeView::scalars requires a live node");
-        }
-
-        NodeSchedulerState *default_scheduler_state_impl(const void *, void *)
-        {
-            throw std::logic_error("NodeView::scheduler_state requires a live node");
-        }
-
-        GlobalStateView default_global_state_view_impl(const void *, void *)
-        {
-            throw std::logic_error("NodeView::global_state requires a live node");
-        }
-
-        EvaluationClockStorageRef default_evaluation_clock_ref_impl(const void *, void *) noexcept
-        {
-            return EvaluationClockStorageRef{};
-        }
-
-        TSOutputView default_error_output_view_impl(const void *, void *, DateTime)
-        {
-            throw std::logic_error("NodeView::error_output requires a live node");
-        }
-
-        TSOutputView default_recordable_state_view_impl(const void *, void *, DateTime)
-        {
-            throw std::logic_error("NodeView::recordable_state requires a live node");
-        }
-
         struct NodeRuntimeRegistry
         {
-            const NodeTypeBinding &make_binding(
+            NodeTypeRef make_type(
                 NodeTypeMetaData schema,
                 NodeCallbacks callbacks,
                 const MemoryUtils::StoragePlan &plan,
@@ -933,6 +855,11 @@ namespace hgraph
                 names.push_back(std::make_unique<std::string>(
                     schema.display_name != nullptr ? std::string{schema.display_name} : std::string{}));
                 if (!names.back()->empty()) { schema.display_name = names.back()->c_str(); }
+                schema.header = SchemaHeader{TypeFamily::Node,
+                                             static_cast<TypeKind>(schema.node_kind),
+                                             schema.display_name != nullptr && schema.display_name[0] != '\0'
+                                                 ? schema.display_name
+                                                 : "node"};
 
                 contexts.push_back(NodeRuntimeContext{
                     .callbacks = std::move(callbacks),
@@ -944,7 +871,7 @@ namespace hgraph
                 ops.context = &contexts.back();
                 ops_storage.push_back(ops);
 
-                return NodeTypeBinding::intern(schemas.back(), plan, ops_storage.back());
+                return intern_node_type(schemas.back(), plan, ops_storage.back());
             }
 
             static void fill_default_ops(NodeOps &ops)
@@ -985,6 +912,14 @@ namespace hgraph
                 }
             }
 
+            void clear() noexcept
+            {
+                ops_storage.clear();
+                contexts.clear();
+                schemas.clear();
+                names.clear();
+            }
+
             std::deque<NodeTypeMetaData>                 schemas{};
             std::deque<NodeRuntimeContext>               contexts{};
             std::deque<NodeOps>                          ops_storage{};
@@ -997,61 +932,129 @@ namespace hgraph
             return registry;
         }
 
-        const NodeOps &default_node_ops()
-        {
-            static const NodeOps table{
-                .context = nullptr,
-                .attach_graph_impl = &default_attach_graph_impl,
-                .graph_impl = &default_graph_impl,
-                .node_index_impl = &default_node_index_impl,
-                .label_impl = &default_label_impl,
-                .started_impl = &default_started_impl,
-                .start_impl = &default_start_impl,
-                .stop_impl = &default_stop_impl,
-                .evaluate_impl = &default_evaluate_impl,
-                .has_input_impl = &default_has_input_impl,
-                .has_output_impl = &default_has_output_impl,
-                .has_state_impl = &default_has_state_impl,
-                .has_scalars_impl = &default_has_scalars_impl,
-                .has_scheduler_impl = &default_has_scheduler_impl,
-                .has_error_output_impl = &default_has_error_output_impl,
-                .has_recordable_state_impl = &default_has_recordable_state_impl,
-                .input_view_impl = &default_input_view_impl,
-                .output_view_impl = &default_output_view_impl,
-                .state_view_impl = &default_state_view_impl,
-                .replace_state_impl = &default_replace_state_impl,
-                .scalars_view_impl = &default_scalars_view_impl,
-                .scheduler_state_impl = &default_scheduler_state_impl,
-                .global_state_view_impl = &default_global_state_view_impl,
-                .evaluation_clock_ref_impl = &default_evaluation_clock_ref_impl,
-                .error_output_view_impl = &default_error_output_view_impl,
-                .recordable_state_view_impl = &default_recordable_state_view_impl,
-                .extended_view_type_id = nullptr,
-                .extended_view_context = nullptr,
-            };
-            return table;
-        }
+    }  // namespace
 
-        const NodeTypeBinding &default_node_binding()
+    namespace
+    {
+        void validate_node_record(const TypeRecord &record)
         {
-            static const NodeTypeMetaData meta{};
-            static const NodeTypeBinding binding{
-                .type_meta = &meta,
-                .storage_plan = &MemoryUtils::plan_for<std::byte>(),
-                .ops = &default_node_ops(),
-            };
-            return binding;
+            if (!record.valid() || record.schema->family != TypeFamily::Node ||
+                record.role != TypeRole::Runtime)
+            {
+                throw std::invalid_argument("NodeTypeRef requires a Node/Runtime TypeRecord");
+            }
+            const auto *schema = reinterpret_cast<const NodeTypeMetaData *>(record.schema);
+            if (record.schema->kind != static_cast<TypeKind>(schema->node_kind))
+            {
+                throw std::invalid_argument("NodeTypeRef requires matching common and node schema kinds");
+            }
+            if (record.ops_abi_version != NODE_OPS_ABI_VERSION || record.ops == nullptr)
+            {
+                throw std::invalid_argument("NodeTypeRef requires node ops ABI version 1");
+            }
+            if (record.capabilities != node_type_capabilities(*record.plan))
+            {
+                throw std::invalid_argument("NodeTypeRef capabilities do not match its storage plan");
+            }
         }
     }  // namespace
 
-    void notify_node_endpoint_child_modified(const NodeTypeBinding *node_binding,
-                                             void                  *node_data,
-                                             TSEndpointOwnerPort    port,
-                                             DateTime               mutation_time)
+    TypeCapabilities node_type_capabilities(const MemoryUtils::StoragePlan &plan)
     {
-        if (node_binding == nullptr || node_data == nullptr) { return; }
+        TypeCapabilities result = TypeCapabilities::Viewable | TypeCapabilities::Mutable;
+        if (plan.can_default_construct()) result |= TypeCapabilities::Constructible;
+        if (plan.trivially_destructible || plan.lifecycle.can_destroy())
+            result |= TypeCapabilities::Destructible;
+        if (plan.can_copy_construct()) result |= TypeCapabilities::Copyable;
+        if (plan.can_move_construct()) result |= TypeCapabilities::Movable;
+        return result;
+    }
 
-        const auto &runtime = runtime_context(node_binding->ops_ref().context);
+    NodeTypeRef intern_node_type(const NodeTypeMetaData &schema,
+                                 const MemoryUtils::StoragePlan &plan,
+                                 const NodeOps &ops,
+                                 std::string_view implementation_label)
+    {
+        if (!schema.header.valid() || schema.header.family != TypeFamily::Node ||
+            schema.header.kind != static_cast<TypeKind>(schema.node_kind))
+        {
+            throw std::invalid_argument("intern_node_type requires a valid node schema header");
+        }
+        const TypeRecordDefinition definition{
+            .key = TypeRecordKey{.schema = &schema.header,
+                                 .role = TypeRole::Runtime,
+                                 .plan = &plan,
+                                 .ops = &ops,
+                                 .debug = nullptr},
+            .ops_abi_version = NODE_OPS_ABI_VERSION,
+            .capabilities = node_type_capabilities(plan),
+            .implementation_label = implementation_label,
+        };
+        return NodeTypeRef{&TypeRecordRegistry::instance().intern(definition)};
+    }
+
+    NodeTypeRef NodeTypeRef::checked(AnyPtr pointer)
+    {
+        if (pointer.is_unbound()) return {};
+        if (!pointer.well_formed() || pointer.record() == nullptr)
+            throw std::invalid_argument("NodeTypeRef requires a well-formed pointer");
+        validate_node_record(*pointer.record());
+        return NodeTypeRef{pointer.record()};
+    }
+
+    bool NodeTypeRef::valid() const noexcept
+    {
+        if (record_ == nullptr) return false;
+        try { validate_node_record(*record_); return true; }
+        catch (...) { return false; }
+    }
+
+    const NodeTypeMetaData *NodeTypeRef::schema() const noexcept
+    {
+        return record_ != nullptr ? reinterpret_cast<const NodeTypeMetaData *>(record_->schema) : nullptr;
+    }
+
+    const MemoryUtils::StoragePlan &NodeTypeRef::checked_plan() const
+    {
+        if (plan() == nullptr) throw std::logic_error("NodeTypeRef is unbound");
+        return *plan();
+    }
+
+    const NodeOps *NodeTypeRef::ops() const noexcept
+    {
+        return record_ != nullptr ? static_cast<const NodeOps *>(record_->ops) : nullptr;
+    }
+
+    const NodeOps &NodeTypeRef::ops_ref() const
+    {
+        if (ops() == nullptr) throw std::logic_error("NodeTypeRef is unbound");
+        return *ops();
+    }
+
+    NodePtr NodeTypeRef::typed_null() const noexcept
+    {
+        return NodePtr{AnyPtr{record_, nullptr, AccessMode::ReadOnly}, NodePtr::UncheckedTag{}};
+    }
+
+    NodePtr NodeTypeRef::read_only(const void *data) const noexcept
+    {
+        return NodePtr{AnyPtr{record_, data, AccessMode::ReadOnly}, NodePtr::UncheckedTag{}};
+    }
+
+    NodePtr NodeTypeRef::writable(void *data) const noexcept
+    {
+        return NodePtr{AnyPtr{record_, data, AccessMode::Writable}, NodePtr::UncheckedTag{}};
+    }
+
+    void notify_node_endpoint_child_modified(NodePtr             node,
+                                             TSEndpointOwnerPort port,
+                                             DateTime            mutation_time)
+    {
+        if (!node.valid()) { return; }
+
+        const auto type = NodeView{node}.type();
+        const auto &runtime = runtime_context(type.ops_ref().context);
+        void *node_data = const_cast<void *>(node.data());
         switch (port)
         {
             case TSEndpointOwnerPort::Input: return;
@@ -1125,27 +1128,23 @@ namespace hgraph
     bool NodeTypeMetaData::has_error_output() const noexcept { return error_output_schema != nullptr; }
     bool NodeTypeMetaData::has_recordable_state() const noexcept { return recordable_state_schema != nullptr; }
 
-    NodeView::NodeView() noexcept
-        : storage_(NodeStorageRef::empty(default_node_binding()))
+    NodeView::NodeView() noexcept = default;
+
+    NodeView::NodeView(NodePtr pointer) noexcept : pointer_(pointer) {}
+
+    NodeView::NodeView(NodeTypeRef type, void *memory) noexcept
+        : pointer_(type && memory != nullptr ? type.writable(memory) : NodePtr{})
     {
     }
 
-    NodeView::NodeView(const NodeTypeBinding *binding, void *memory) noexcept
-        : storage_(binding != nullptr && memory != nullptr ? binding : &default_node_binding(),
-                   binding != nullptr && memory != nullptr ? memory : nullptr)
-    {
-    }
-
-    bool NodeView::valid() const noexcept { return storage_.has_value(); }
-    const NodeTypeBinding *NodeView::binding() const noexcept
-    {
-        return storage_.binding();
-    }
+    bool NodeView::valid() const noexcept { return pointer_.valid(); }
+    NodeTypeRef NodeView::type() const noexcept { return NodeTypeRef{pointer_.record()}; }
+    NodePtr NodeView::pointer() const noexcept { return pointer_; }
     const NodeTypeMetaData *NodeView::schema() const noexcept
     {
-        return binding()->type_meta;
+        return type().schema();
     }
-    void *NodeView::data() const noexcept { return storage_.data(); }
+    void *NodeView::data() const noexcept { return const_cast<void *>(pointer_.data()); }
 
     std::string_view NodeView::label() const noexcept
     {
@@ -1154,7 +1153,7 @@ namespace hgraph
 
     NodeKind NodeView::node_kind() const noexcept
     {
-        return storage_.binding()->type_meta->node_kind;
+        return schema() != nullptr ? schema()->node_kind : NodeKind::Compute;
     }
 
     bool NodeView::started() const noexcept
@@ -1276,15 +1275,15 @@ namespace hgraph
     }
     const NodeOps &NodeView::ops() const
     {
-        return storage_.binding()->ops_ref();
+        return type().ops_ref();
     }
 
     NodeValue::NodeValue() noexcept = default;
 
     NodeValue::NodeValue(const NodeBuilder &builder, std::size_t node_index)
     {
-        const auto &binding = builder.binding();
-        storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
+        const auto type = builder.type();
+        storage_ = storage_type::owning_constructed(*type.record(), [&](void *dst) {
             builder.construct_node_storage(dst, node_index);
         });
     }
@@ -1303,26 +1302,26 @@ namespace hgraph
     }
 
     bool NodeValue::has_value() const noexcept { return storage_.has_value(); }
-    const NodeTypeBinding *NodeValue::binding() const noexcept { return storage_.binding(); }
+    NodeTypeRef NodeValue::type() const noexcept { return NodeTypeRef{storage_.binding()}; }
     const NodeTypeMetaData *NodeValue::schema() const noexcept
     {
-        return binding() != nullptr ? binding()->type_meta : nullptr;
+        return type().schema();
     }
 
     NodeView NodeValue::view()
     {
-        return NodeView{binding(), storage_.data()};
+        return NodeView{type(), storage_.data()};
     }
 
     NodeView NodeValue::view() const
     {
-        return NodeView{binding(), const_cast<void *>(storage_.data())};
+        return NodeView{type(), const_cast<void *>(storage_.data())};
     }
 
     void NodeValue::attach_graph(GraphValue *graph, std::size_t node_index)
     {
         if (!has_value()) { return; }
-        const auto &table = binding()->ops_ref();
+        const auto &table = type().ops_ref();
         table.attach_graph_impl(table.context, storage_.data(), graph, node_index);
     }
 
@@ -1360,16 +1359,16 @@ namespace hgraph
         const auto &plan = descriptor.storage_plan != nullptr
                                ? *descriptor.storage_plan
                                : node_storage_plan_for(descriptor.schema);
-        const auto &binding = node_runtime_registry().make_binding(
+        const auto type = node_runtime_registry().make_type(
             std::move(descriptor.schema),
             std::move(descriptor.callbacks),
             plan,
             descriptor.ops);
-        return NodeBuilder{binding, std::move(input_endpoint)};
+        return NodeBuilder{type, std::move(input_endpoint)};
     }
 
-    NodeBuilder::NodeBuilder(const NodeTypeBinding &binding, TSEndpointSchema input_endpoint)
-        : binding_(&binding),
+    NodeBuilder::NodeBuilder(NodeTypeRef type, TSEndpointSchema input_endpoint)
+        : type_(type),
           input_endpoint_(std::move(input_endpoint))
     {
     }
@@ -1387,13 +1386,14 @@ namespace hgraph
 
     NodeBuilder &NodeBuilder::input_endpoint(TSEndpointSchema endpoint)
     {
-        if (binding_ == nullptr)
+        if (!type_)
         {
             if (!endpoint.empty()) { throw std::logic_error("NodeBuilder has no binding"); }
         }
         else
         {
-            const auto *schema = binding_->type_meta != nullptr ? binding_->type_meta->input_schema : nullptr;
+            const auto *node_schema = type_.schema();
+            const auto *schema = node_schema != nullptr ? node_schema->input_schema : nullptr;
             if (schema != nullptr && !endpoint.empty() && !time_series_schema_equivalent(schema, endpoint.schema()))
             {
                 throw std::invalid_argument("NodeBuilder input endpoint schema does not match node input schema");
@@ -1418,18 +1418,18 @@ namespace hgraph
         return scalars_;
     }
 
-    const NodeTypeBinding &NodeBuilder::binding() const
+    NodeTypeRef NodeBuilder::type() const
     {
-        if (binding_ == nullptr) { throw std::logic_error("NodeBuilder has no binding"); }
-        return *binding_;
+        if (!type_) { throw std::logic_error("NodeBuilder has no type"); }
+        return type_;
     }
 
     NodeBuilder NodeBuilder::with_error_capture(const TSValueTypeMetaData *error_schema) const
     {
-        if (binding_ == nullptr) { throw std::logic_error("NodeBuilder has no binding"); }
+        if (!type_) { throw std::logic_error("NodeBuilder has no type"); }
         if (error_schema == nullptr) { throw std::invalid_argument("with_error_capture requires an error schema"); }
 
-        const NodeOps &node_ops = binding_->ops_ref();
+        const NodeOps &node_ops = type_.ops_ref();
         // Error capture reuses the standard runtime evaluate (which wraps the
         // user callback in try/catch). A custom-ops node (nested/map/switch)
         // runs its own evaluate and is not supported through this path.
@@ -1440,15 +1440,15 @@ namespace hgraph
         }
         const auto &origin = *static_cast<const NodeRuntimeContext *>(node_ops.context);
 
-        NodeTypeMetaData schema = *binding_->type_meta;
+        NodeTypeMetaData schema = *type_.schema();
         schema.error_output_schema = error_schema;
         schema.captures_errors     = true;
 
         const auto &plan = node_storage_plan_for(schema);
-        const auto &binding =
-            node_runtime_registry().make_binding(std::move(schema), origin.callbacks, plan, NodeOps{});
+        const auto type =
+            node_runtime_registry().make_type(std::move(schema), origin.callbacks, plan, NodeOps{});
 
-        NodeBuilder result{binding, input_endpoint_};
+        NodeBuilder result{type, input_endpoint_};
         result.output_endpoint_ = output_endpoint_;
         result.label_           = label_;
         result.scalars_         = scalars_;
@@ -1457,10 +1457,10 @@ namespace hgraph
 
     NodeBuilder NodeBuilder::with_passive_inputs(std::span<const std::size_t> slots) const
     {
-        if (binding_ == nullptr) { throw std::logic_error("NodeBuilder has no binding"); }
+        if (!type_) { throw std::logic_error("NodeBuilder has no type"); }
         if (slots.empty()) { return *this; }
 
-        const NodeOps &node_ops = binding_->ops_ref();
+        const NodeOps &node_ops = type_.ops_ref();
         // Same constraint as error capture: the rebind reuses the native
         // runtime context; custom-ops nodes (nested/map/switch) manage their
         // own activation.
@@ -1470,7 +1470,7 @@ namespace hgraph
         }
         const auto &origin = *static_cast<const NodeRuntimeContext *>(node_ops.context);
 
-        NodeTypeMetaData schema = *binding_->type_meta;
+        NodeTypeMetaData schema = *type_.schema();
         const std::size_t input_count =
             schema.input_schema != nullptr && schema.input_schema->kind == TSTypeKind::TSB
                 ? schema.input_schema->field_count()
@@ -1497,10 +1497,10 @@ namespace hgraph
         schema.active_inputs = std::move(active);
 
         const auto &plan = node_storage_plan_for(schema);
-        const auto &binding =
-            node_runtime_registry().make_binding(std::move(schema), origin.callbacks, plan, NodeOps{});
+        const auto type =
+            node_runtime_registry().make_type(std::move(schema), origin.callbacks, plan, NodeOps{});
 
-        NodeBuilder result{binding, input_endpoint_};
+        NodeBuilder result{type, input_endpoint_};
         result.output_endpoint_ = output_endpoint_;
         result.label_           = label_;
         result.scalars_         = scalars_;
@@ -1514,7 +1514,7 @@ namespace hgraph
 
     NodeBuilder &NodeBuilder::output_endpoint(TSEndpointSchema endpoint)
     {
-        const auto *type_meta = binding_ != nullptr ? binding_->type_meta : nullptr;
+        const auto *type_meta = type_.schema();
         if (type_meta == nullptr || type_meta->output_schema == nullptr)
         {
             throw std::invalid_argument("NodeBuilder output endpoint requires a node output schema");
@@ -1536,23 +1536,28 @@ namespace hgraph
     {
         if (memory == nullptr) { throw std::logic_error("NodeBuilder::construct_node_storage requires memory"); }
 
-        const auto &binding = this->binding();
-        const auto &runtime = runtime_context(binding.ops_ref().context);
+        const auto type = this->type();
+        const auto &runtime = runtime_context(type.ops_ref().context);
         construct_node_storage_impl(runtime,
-                                    *binding.type_meta,
+                                    *type.schema(),
                                     input_endpoint(),
                                     output_endpoint(),
                                     std::string{label()},
                                     scalars(),
                                     memory);
 
-        const auto &table = binding.ops_ref();
+        const auto &table = type.ops_ref();
         table.attach_graph_impl(table.context, memory, nullptr, node_index);
     }
 
     NodeValue NodeBuilder::make_node(std::size_t node_index) const
     {
         return NodeValue{*this, node_index};
+    }
+
+    void clear_node_runtime_types() noexcept
+    {
+        node_runtime_registry().clear();
     }
 
 }  // namespace hgraph

@@ -2,6 +2,7 @@
 #include <hgraph/types/value/table_codec.h>
 #include <hgraph/types/registry_reset.h>
 
+#include <hgraph/runtime/node.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/metadata/type_binding.h>
@@ -41,6 +42,7 @@ namespace hgraph
         // factories. Their cached handles are trivial and are not dereferenced
         // while those factories are subsequently cleared.
         TypeRecordRegistry::instance().reset();
+        clear_node_runtime_types();
         TSInputBuilderFactory::reset();
         TSDataPlanFactory::instance().reset();
         ValuePlanFactory::instance().reset();

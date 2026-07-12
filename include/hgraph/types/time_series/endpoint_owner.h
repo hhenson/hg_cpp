@@ -18,10 +18,9 @@ namespace hgraph
         RecordableState,
     };
 
-    void HGRAPH_EXPORT notify_node_endpoint_child_modified(const NodeTypeBinding *node_binding,
-                                                           void                  *node_data,
-                                                           TSEndpointOwnerPort    port,
-                                                           DateTime               mutation_time);
+    void HGRAPH_EXPORT notify_node_endpoint_child_modified(NodePtr             node,
+                                                           TSEndpointOwnerPort port,
+                                                           DateTime            mutation_time);
 
 }  // namespace hgraph
 

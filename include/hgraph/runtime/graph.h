@@ -294,7 +294,7 @@ struct HGRAPH_EXPORT GraphEdge
 
         GraphValue() noexcept;
         GraphValue(const GraphBuilder &builder, GraphExecutorStorageRef root_executor);
-        GraphValue(const GraphBuilder &builder, NodeStorageRef parent_node);
+        GraphValue(const GraphBuilder &builder, NodePtr parent_node);
         ~GraphValue();
 
         GraphValue(const GraphValue &) = delete;
@@ -314,7 +314,7 @@ struct HGRAPH_EXPORT GraphEdge
         void schedule_node(std::size_t node_index, DateTime when);
 
       private:
-        GraphValue(const GraphBuilder &builder, NodeStorageRef parent_node,
+        GraphValue(const GraphBuilder &builder, NodePtr parent_node,
                    void *external_memory, MemoryUtils::StorageLayout available_layout);
         void reset() noexcept;
         void attach_nodes();
@@ -366,9 +366,9 @@ struct HGRAPH_EXPORT GraphEdge
         /** Storage required by one nested instance of this graph. */
         [[nodiscard]] MemoryUtils::StorageLayout nested_storage_layout() const;
         [[nodiscard]] GraphValue make_root_graph(GraphExecutorStorageRef root_executor) const;
-        [[nodiscard]] GraphValue make_nested_graph(NodeStorageRef parent_node) const;
+        [[nodiscard]] GraphValue make_nested_graph(NodePtr parent_node) const;
         /** Construct a nested graph in caller-owned, suitably aligned storage. */
-        [[nodiscard]] GraphValue make_nested_graph(NodeStorageRef parent_node,
+        [[nodiscard]] GraphValue make_nested_graph(NodePtr parent_node,
                                                    void *external_memory,
                                                    MemoryUtils::StorageLayout available_layout) const;
 

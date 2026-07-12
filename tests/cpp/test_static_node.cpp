@@ -527,13 +527,13 @@ TEST_CASE("static node: EvaluationClockView cache storage is allocated only when
 
     NodeBuilder clock_builder;
     clock_builder.implementation<ClockProbe>();
-    CHECK(clock_builder.binding().type_meta->uses_evaluation_clock);
-    CHECK(clock_builder.binding().checked_plan().find_component("evaluation_clock") != nullptr);
+    CHECK(clock_builder.type().schema()->uses_evaluation_clock);
+    CHECK(clock_builder.type().checked_plan().find_component("evaluation_clock") != nullptr);
 
     NodeBuilder ordinary_builder;
     ordinary_builder.implementation<Counter>();
-    CHECK_FALSE(ordinary_builder.binding().type_meta->uses_evaluation_clock);
-    CHECK(ordinary_builder.binding().checked_plan().find_component("evaluation_clock") == nullptr);
+    CHECK_FALSE(ordinary_builder.type().schema()->uses_evaluation_clock);
+    CHECK(ordinary_builder.type().checked_plan().find_component("evaluation_clock") == nullptr);
 }
 
 TEST_CASE("static node: GlobalStateView cache storage is allocated only when injected")
@@ -542,13 +542,13 @@ TEST_CASE("static node: GlobalStateView cache storage is allocated only when inj
 
     NodeBuilder state_builder;
     state_builder.implementation<GlobalStateProbe>();
-    CHECK(state_builder.binding().type_meta->uses_global_state);
-    CHECK(state_builder.binding().checked_plan().find_component("global_state") != nullptr);
+    CHECK(state_builder.type().schema()->uses_global_state);
+    CHECK(state_builder.type().checked_plan().find_component("global_state") != nullptr);
 
     NodeBuilder ordinary_builder;
     ordinary_builder.implementation<Counter>();
-    CHECK_FALSE(ordinary_builder.binding().type_meta->uses_global_state);
-    CHECK(ordinary_builder.binding().checked_plan().find_component("global_state") == nullptr);
+    CHECK_FALSE(ordinary_builder.type().schema()->uses_global_state);
+    CHECK(ordinary_builder.type().checked_plan().find_component("global_state") == nullptr);
 }
 
 TEST_CASE("graph executor graph is constructed as a root graph")
@@ -592,7 +592,7 @@ TEST_CASE("static node: RecordableState<TSB> is hidden output-backed state")
     REQUIRE(view.has_recordable_state());
     REQUIRE(view.schema()->recordable_state_schema == schema_descriptor<LastSeenState>::ts_meta());
     REQUIRE(view.schema()->output_schema == schema_descriptor<TS<Int>>::ts_meta());
-    REQUIRE(view.binding()->checked_plan().find_component("recordable_state") != nullptr);
+    REQUIRE(view.type().checked_plan().find_component("recordable_state") != nullptr);
 
     source.view().start(t1);
     view.start(t1);

@@ -1374,7 +1374,7 @@ namespace hgraph
             Value scalars = operator_dispatch_detail::assemble_scalars<Impl>(map, args);
             std::vector<WiringPortRef> inputs = operator_dispatch_detail::collect_node_inputs<Impl>(w, map, args);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-                builder.binding().type_meta != nullptr ? builder.binding().type_meta->input_schema : nullptr,
+                builder.type().schema() != nullptr ? builder.type().schema()->input_schema : nullptr,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
             WiringPortRef out = w.add_node(std::type_index(typeid(Impl)), std::move(builder), inputs, std::move(scalars));
             if constexpr (sig::has_output()) { return OperatorWireResult{true, Port<void>{w, std::move(out)}}; }

@@ -110,7 +110,7 @@ namespace hgraph
         {
             for (const NodeBuilder &node : builder.nodes())
             {
-                if (node.binding().type_meta->node_kind == NodeKind::PushSource) { return true; }
+                if (node.type().schema()->node_kind == NodeKind::PushSource) { return true; }
             }
             return false;
         }

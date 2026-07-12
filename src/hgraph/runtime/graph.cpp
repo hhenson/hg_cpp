@@ -179,10 +179,10 @@ namespace hgraph
 
             [[nodiscard]] NodeView parent_node()
             {
-                return NodeView{parent_node_ref.binding(), parent_node_ref.data()};
+                return NodeView{parent_node_ptr};
             }
 
-            NodeStorageRef parent_node_ref{};
+            NodePtr parent_node_ptr{};
         };
 
         inline constexpr std::string_view graph_header_field_name{"header"};
@@ -191,8 +191,8 @@ namespace hgraph
 
         struct GraphNodeRuntimeLocation
         {
-            const NodeTypeBinding *binding{nullptr};
-            std::size_t            offset{0};
+            NodeTypeRef type{};
+            std::size_t offset{0};
         };
 
         struct GraphRuntimeStorageLayout
@@ -222,7 +222,7 @@ namespace hgraph
             builder.reserve(nodes.size());
             for (const NodeBuilder &node : nodes)
             {
-                builder.add_plan(node.binding().checked_plan());
+                builder.add_plan(node.type().checked_plan());
             }
             return builder.build();
         }
@@ -272,14 +272,14 @@ namespace hgraph
             context.node_locations.reserve(node_builders.size());
             for (std::size_t index = 0; index < node_builders.size(); ++index)
             {
-                const auto &node_binding = node_builders[index].binding();
+                const auto node_type = node_builders[index].type();
                 const auto &node_component = node_storage.plan->component(index);
-                if (node_component.plan != node_binding.plan())
+                if (node_component.plan != node_type.plan())
                 {
-                    throw std::logic_error("Graph storage plan node component does not match node binding");
+                    throw std::logic_error("Graph storage plan node component does not match node type");
                 }
                 context.node_locations.push_back(GraphNodeRuntimeLocation{
-                    .binding = &node_binding,
+                    .type = node_type,
                     .offset = node_storage.offset + node_component.offset,
                 });
             }
@@ -306,7 +306,7 @@ namespace hgraph
         [[nodiscard]] NodeView graph_node_view(const GraphRuntimeContext &context, void *memory, std::size_t index)
         {
             const auto &location = context.node_locations[index];
-            return NodeView{location.binding, MemoryUtils::advance(memory, location.offset)};
+            return NodeView{location.type, MemoryUtils::advance(memory, location.offset)};
         }
 
         [[nodiscard]] DateTime &graph_schedule(const GraphRuntimeContext &context, void *memory, std::size_t index)
@@ -416,7 +416,7 @@ namespace hgraph
             for (std::size_t index = constructed_nodes; index > 0; --index)
             {
                 const auto &location = context.node_locations[index - 1];
-                location.binding->destroy_at(MemoryUtils::advance(memory, location.offset));
+                location.type.destroy_at(MemoryUtils::advance(memory, location.offset));
             }
 
             if (header_constructed)
@@ -482,7 +482,7 @@ namespace hgraph
 
             for (const NodeBuilder &node : builder.nodes())
             {
-                const NodeKind kind = node.binding().type_meta->node_kind;
+                const NodeKind kind = node.type().schema()->node_kind;
                 if (kind == NodeKind::PushSource)
                 {
                     if (seen_non_push_source)
@@ -508,7 +508,7 @@ namespace hgraph
             for (std::size_t index = 0; index < runtime.layout.node_count; ++index)
             {
                 auto       node = graph_node_view(runtime, memory, index);
-                const auto &ops = node.binding()->ops_ref();
+                const auto &ops = node.type().ops_ref();
                 ops.attach_graph_impl(ops.context, node.data(), graph, index);
             }
         }
@@ -983,7 +983,7 @@ namespace hgraph
                 meta.nodes.reserve(builder.nodes().size());
                 for (std::size_t index = 0; index < builder.nodes().size(); ++index)
                 {
-                    meta.nodes.push_back(GraphNodeEntry{builder.nodes()[index].binding().type_meta, index});
+                    meta.nodes.push_back(GraphNodeEntry{builder.nodes()[index].type().schema(), index});
                 }
                 meta.edges = builder.edges();
                 meta.push_source_nodes_end = compute_push_source_nodes_end(builder);
@@ -1363,7 +1363,7 @@ namespace hgraph
         attach_nodes();
     }
 
-    GraphValue::GraphValue(const GraphBuilder &builder, NodeStorageRef parent_node)
+    GraphValue::GraphValue(const GraphBuilder &builder, NodePtr parent_node)
     {
         const auto &binding = builder.nested_binding();
         storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
@@ -1377,17 +1377,17 @@ namespace hgraph
                     {
                         throw std::invalid_argument("Nested graph construction requires a live node parent");
                     }
-                    state.parent_node_ref = parent_node;
+                    state.parent_node_ptr = parent_node;
                     // One hop to the parent graph's own cached pointer (already populated
                     // during its construction) — O(1) regardless of nesting depth.
                     state.lifecycle_observers =
-                        &NodeView{parent_node.binding(), parent_node.data()}.graph().lifecycle_observers();
+                        &NodeView{parent_node}.graph().lifecycle_observers();
                 });
         });
         attach_nodes();
     }
 
-    GraphValue::GraphValue(const GraphBuilder &builder, NodeStorageRef parent_node,
+    GraphValue::GraphValue(const GraphBuilder &builder, NodePtr parent_node,
                            void *external_memory, MemoryUtils::StorageLayout available_layout)
     {
         const auto &binding = builder.nested_binding();
@@ -1412,9 +1412,9 @@ namespace hgraph
                 {
                     throw std::invalid_argument("Nested graph construction requires a live node parent");
                 }
-                state.parent_node_ref = parent_node;
+                state.parent_node_ptr = parent_node;
                 state.lifecycle_observers =
-                    &NodeView{parent_node.binding(), parent_node.data()}.graph().lifecycle_observers();
+                    &NodeView{parent_node}.graph().lifecycle_observers();
             });
         auto rollback = make_scope_exit([&]() noexcept { binding.destroy_at(external_memory); });
         storage_ = storage_type::reference(binding, external_memory);
@@ -1597,12 +1597,12 @@ namespace hgraph
         return GraphValue{*this, root_executor};
     }
 
-    GraphValue GraphBuilder::make_nested_graph(NodeStorageRef parent_node) const
+    GraphValue GraphBuilder::make_nested_graph(NodePtr parent_node) const
     {
         return GraphValue{*this, parent_node};
     }
 
-    GraphValue GraphBuilder::make_nested_graph(NodeStorageRef parent_node,
+    GraphValue GraphBuilder::make_nested_graph(NodePtr parent_node,
                                                void *external_memory,
                                                MemoryUtils::StorageLayout available_layout) const
     {
