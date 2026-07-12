@@ -28,9 +28,13 @@ data address. Expanding it exposes the canonical record and then its schema,
 plan, ops, and optional debug descriptor pointers.
 
 They only inspect debug-info fields and memory; they do not call methods in the
-stopped process. Deep payload traversal is intentionally unavailable until the
-record carries a stable data-only debug descriptor. The printers do not infer a
-payload layout from C++ template names or private container fields.
+stopped process. Records carrying a stable data-only debug descriptor expose
+bool, signed/unsigned integer, and 32/64-bit floating-point payloads directly.
+Fixed tuples and bundles expand into child ``AnyPtr`` values using descriptor
+offsets; unset fields appear typed-null through the published validity bitmap.
+Other atomic and dynamic layouts remain explicitly opaque. The printers do not
+infer a payload layout from semantic labels, C++ template names, or private
+container fields.
 
 Build with debug information enabled for reliable output. Optimized builds may
 hide or fold the private fields that the summaries read.

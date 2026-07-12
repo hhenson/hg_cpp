@@ -1,3 +1,4 @@
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -112,6 +113,36 @@ TEST_CASE("type record common enums and capability operations are fixed", "[type
     REQUIRE((capabilities & TypeCapabilities::Viewable) == TypeCapabilities::Viewable);
     capabilities |= TypeCapabilities::Mutable;
     REQUIRE(has_capability(capabilities, TypeCapabilities::Mutable));
+}
+
+TEST_CASE("debug descriptor common enums and layouts are fixed", "[type-erasure][debug-descriptor]")
+{
+    using namespace hgraph;
+
+    STATIC_REQUIRE(DEBUG_DESCRIPTOR_MAGIC == 0x48474444u);
+    STATIC_REQUIRE(DEBUG_DESCRIPTOR_ABI_VERSION == 1);
+    STATIC_REQUIRE(sizeof(DebugLayoutKind) == sizeof(std::uint8_t));
+    STATIC_REQUIRE(sizeof(DebugAtomicKind) == sizeof(std::uint8_t));
+    STATIC_REQUIRE(sizeof(DebugDescriptorFlags) == sizeof(std::uint32_t));
+    STATIC_REQUIRE(sizeof(DebugFieldFlags) == sizeof(std::uint32_t));
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugLayoutKind::Opaque) == 0);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugLayoutKind::Atomic) == 1);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugLayoutKind::FixedComposite) == 2);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugAtomicKind::Opaque) == 0);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugAtomicKind::Boolean) == 1);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugAtomicKind::SignedInteger) == 2);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugAtomicKind::UnsignedInteger) == 3);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugAtomicKind::FloatingPoint) == 4);
+
+    DebugDescriptor descriptor{
+        .magic = DEBUG_DESCRIPTOR_MAGIC,
+        .abi_version = DEBUG_DESCRIPTOR_ABI_VERSION,
+        .layout = DebugLayoutKind::Atomic,
+        .atomic_kind = DebugAtomicKind::SignedInteger,
+    };
+    REQUIRE(descriptor.valid());
+    descriptor.reserved0 = 1;
+    REQUIRE_FALSE(descriptor.valid());
 }
 
 TEST_CASE("type record common layouts are fixed", "[type-erasure][type-record]")

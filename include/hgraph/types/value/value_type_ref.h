@@ -67,7 +67,7 @@ namespace hgraph
 
       private:
         friend ValueTypeRef intern_value_type(const ValueTypeMetaData &, const MemoryUtils::StoragePlan &,
-                                              const ValueOps &);
+                                              const ValueOps &, const DebugDescriptor *);
         friend class Value;
         friend class ValueView;
 
@@ -81,7 +81,8 @@ namespace hgraph
                                                            const ValueOps &ops);
     [[nodiscard]] ValueTypeRef intern_value_type(const ValueTypeMetaData &schema,
                                                  const MemoryUtils::StoragePlan &plan,
-                                                 const ValueOps &ops);
+                                                 const ValueOps &ops,
+                                                 const DebugDescriptor *debug = nullptr);
 
     static_assert(sizeof(ValueTypeRef) == sizeof(void *));
     static_assert(alignof(ValueTypeRef) == alignof(void *));

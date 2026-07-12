@@ -584,7 +584,8 @@ namespace hgraph
         // ``Value(T{...})`` and ``scalar_type<T>()`` resolve uniformly.
         // ``ops_for<T>`` lives in ``value_ops.h``; we forward-declare the
         // helper to avoid a circular header dependency.
-        ValuePlanFactory::instance().register_atomic(meta, &MemoryUtils::plan_for<T>(), &ops_for<T>());
+        ValuePlanFactory::instance().register_atomic(meta, &MemoryUtils::plan_for<T>(), &ops_for<T>(),
+                                                     debug_atomic_kind_for<T>());
         return meta;
     }
 

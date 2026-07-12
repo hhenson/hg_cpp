@@ -1,5 +1,6 @@
 #include <hgraph/types/value/value_type_ref.h>
 
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/value/value_ops.h>
 
@@ -71,18 +72,20 @@ namespace hgraph
 
     ValueTypeRef intern_value_type(const ValueTypeMetaData &schema,
                                    const MemoryUtils::StoragePlan &plan,
-                                   const ValueOps &ops)
+                                   const ValueOps &ops,
+                                   const DebugDescriptor *debug)
     {
         if (ops.kind <= ValueOpsKind::Invalid || ops.kind > ValueOpsKind::MutableMap)
         {
             throw std::invalid_argument("intern_value_type requires a valid ValueOps kind");
         }
+        if (debug == nullptr) { debug = find_value_debug_descriptor(schema, plan); }
         const TypeRecordDefinition definition{
             .key = TypeRecordKey{.schema = &schema.header,
                                  .role = TypeRole::Instance,
                                  .plan = &plan,
                                  .ops = &ops,
-                                 .debug = nullptr},
+                                 .debug = debug},
             .ops_abi_version = VALUE_OPS_ABI_VERSION,
             .capabilities = value_type_capabilities(schema, plan, ops),
             .implementation_label = {},

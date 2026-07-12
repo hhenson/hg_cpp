@@ -817,11 +817,25 @@ namespace hgraph
         return *factory;
     }
 
-    void ValuePlanFactory::register_atomic(const ValueTypeMetaData *schema, const MemoryUtils::StoragePlan *plan,
+    void ValuePlanFactory::register_atomic(const ValueTypeMetaData *schema,
+                                           const MemoryUtils::StoragePlan *plan,
                                            const ValueOps *ops)
     {
+        const DebugDescriptor *existing = schema != nullptr && plan != nullptr
+                                              ? find_value_debug_descriptor(*schema, *plan)
+                                              : nullptr;
+        register_atomic(schema, plan, ops,
+                        existing != nullptr ? existing->atomic_kind : DebugAtomicKind::Opaque);
+    }
+
+    void ValuePlanFactory::register_atomic(const ValueTypeMetaData *schema,
+                                           const MemoryUtils::StoragePlan *plan,
+                                           const ValueOps *ops,
+                                           DebugAtomicKind atomic_kind)
+    {
         if (schema == nullptr || plan == nullptr || ops == nullptr) { return; }
-        const ValueTypeRef type = intern_value_type(*schema, *plan, *ops);
+        const auto &debug = intern_atomic_debug_descriptor(*schema, *plan, atomic_kind);
+        const ValueTypeRef type = intern_value_type(*schema, *plan, *ops, &debug);
 
         std::lock_guard<std::mutex> lock(mutex_);
         if (const auto it = cache_.find(schema); it != cache_.end())
@@ -915,6 +929,7 @@ namespace hgraph
         cache_.clear();
         type_cache_.clear();
         clear_structured_indexed_ops();
+        clear_value_debug_descriptors();
     }
 
     const MemoryUtils::StoragePlan *ValuePlanFactory::synthesise(const ValueTypeMetaData *schema)
@@ -1043,7 +1058,8 @@ namespace hgraph
                 }
                 const MemoryUtils::StoragePlan *plan = plan_for(schema);
                 if (plan == nullptr) { throw std::logic_error("ValuePlanFactory: composite has no resolvable plan"); }
-                type = intern_value_type(*schema, *plan, composite_indexed_ops(*schema, *plan));
+                const auto &debug = intern_fixed_composite_debug_descriptor(*schema, *plan);
+                type = intern_value_type(*schema, *plan, composite_indexed_ops(*schema, *plan), &debug);
                 break;
             }
 

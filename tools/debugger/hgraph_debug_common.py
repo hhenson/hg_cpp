@@ -1,10 +1,14 @@
 """Debugger-independent formatting for hgraph's common type-erasure ABI."""
 
+import struct
+
 SCHEMA_HEADER_MAGIC = 0x48475348
 TYPE_RECORD_MAGIC = 0x48475452
 SCHEMA_HEADER_ABI_VERSION = 1
 TYPE_RECORD_ABI_VERSION = 1
 TYPE_KIND_NONE = 0xFF
+DEBUG_DESCRIPTOR_MAGIC = 0x48474444
+DEBUG_DESCRIPTOR_ABI_VERSION = 1
 
 FAMILY_NAMES = {
     0: "Invalid",
@@ -88,6 +92,29 @@ ALLOWED_ROLES = {
     5: (3,),
     6: (3,),
 }
+
+DEBUG_LAYOUT_NAMES = {
+    0: "Opaque",
+    1: "Atomic",
+    2: "FixedComposite",
+    3: "Sequence",
+    4: "KeyedSlots",
+    5: "Node",
+    6: "Graph",
+}
+
+DEBUG_ATOMIC_NAMES = {
+    0: "Opaque",
+    1: "Boolean",
+    2: "SignedInteger",
+    3: "UnsignedInteger",
+    4: "FloatingPoint",
+}
+
+DEBUG_DESCRIPTOR_HAS_VALIDITY = 1 << 0
+KNOWN_DEBUG_DESCRIPTOR_FLAGS = DEBUG_DESCRIPTOR_HAS_VALIDITY
+
+_MISSING = object()
 
 
 def pointer_text(address):
@@ -185,7 +212,99 @@ def record_summary(snapshot):
     )
 
 
-def pointer_summary(type_name, record_address, data_address, access, record=None):
+def debug_layout_text(layout):
+    return DEBUG_LAYOUT_NAMES.get(layout, "unknown({})".format(layout))
+
+
+def debug_atomic_text(atomic_kind):
+    return DEBUG_ATOMIC_NAMES.get(atomic_kind, "unknown({})".format(atomic_kind))
+
+
+def debug_descriptor_valid(snapshot):
+    flags = snapshot.get("flags", 0)
+    field_count = snapshot.get("field_count", 0)
+    fields = snapshot.get("fields", 0)
+    has_validity = bool(flags & DEBUG_DESCRIPTOR_HAS_VALIDITY)
+    return (
+        snapshot.get("magic") == DEBUG_DESCRIPTOR_MAGIC
+        and snapshot.get("abi_version") == DEBUG_DESCRIPTOR_ABI_VERSION
+        and snapshot.get("layout") in DEBUG_LAYOUT_NAMES
+        and snapshot.get("atomic_kind") in DEBUG_ATOMIC_NAMES
+        and (flags & ~KNOWN_DEBUG_DESCRIPTOR_FLAGS) == 0
+        and (field_count == 0) == (fields == 0)
+        and snapshot.get("reserved0", 0) == 0
+        and (
+            (
+                has_validity
+                and snapshot.get("layout") == 2
+                and snapshot.get("validity_word_size") == 8
+            )
+            or (
+                not has_validity
+                and snapshot.get("validity_offset", 0) == 0
+                and snapshot.get("validity_word_size", 0) == 0
+            )
+        )
+    )
+
+
+def debug_descriptor_summary(snapshot):
+    state = "valid" if debug_descriptor_valid(snapshot) else "invalid"
+    return (
+        "DebugDescriptor{{{} layout={} atomic={} fields={} validity_offset={} "
+        "validity_word_size={} key={} element={} dynamic={}}}"
+    ).format(
+        state,
+        debug_layout_text(snapshot.get("layout", 0)),
+        debug_atomic_text(snapshot.get("atomic_kind", 0)),
+        snapshot.get("field_count", 0),
+        snapshot.get("validity_offset", 0),
+        snapshot.get("validity_word_size", 0),
+        pointer_text(snapshot.get("key_type", 0)),
+        pointer_text(snapshot.get("element_type", 0)),
+        pointer_text(snapshot.get("dynamic_layout", 0)),
+    )
+
+
+def debug_field_summary(snapshot):
+    name = snapshot.get("name")
+    return 'DebugField{{name="{}" offset={} type={} validity_bit={} flags=0x{:x}}}'.format(
+        name if name is not None else "",
+        snapshot.get("offset", 0),
+        pointer_text(snapshot.get("type", 0)),
+        snapshot.get("validity_bit", 0),
+        snapshot.get("flags", 0),
+    )
+
+
+def decode_atomic(atomic_kind, payload, byte_order):
+    if atomic_kind == 0 or payload is None:
+        return _MISSING
+    if atomic_kind == 1:
+        return bool(payload[0]) if len(payload) == 1 else _MISSING
+    if atomic_kind in (2, 3) and len(payload) in (1, 2, 4, 8):
+        return int.from_bytes(payload, byteorder=byte_order, signed=atomic_kind == 2)
+    if atomic_kind == 4 and len(payload) in (4, 8):
+        prefix = "<" if byte_order == "little" else ">"
+        return struct.unpack(prefix + ("f" if len(payload) == 4 else "d"), payload)[0]
+    return _MISSING
+
+
+def field_is_set(validity_payload, validity_bit, word_size, byte_order):
+    if word_size <= 0:
+        return True
+    bits_per_word = word_size * 8
+    word_index = validity_bit // bits_per_word
+    bit_index = validity_bit % bits_per_word
+    start = word_index * word_size
+    end = start + word_size
+    if validity_payload is None or end > len(validity_payload):
+        return False
+    word = int.from_bytes(validity_payload[start:end], byteorder=byte_order, signed=False)
+    return bool(word & (1 << bit_index))
+
+
+def pointer_summary(type_name, record_address, data_address, access, record=None, atomic_value=_MISSING):
     if record_address == 0 and data_address == 0:
         return "{}{{unbound}}".format(type_name)
     if record_address == 0 or access not in ACCESS_NAMES:
@@ -208,9 +327,8 @@ def pointer_summary(type_name, record_address, data_address, access, record=None
         )
         semantic = schema.get("label") or ""
         implementation = record.get("implementation_label") or "<semantic>"
-    return (
-        '{}{{{} {} access={} semantic="{}" implementation="{}" record={} data={}}}'
-    ).format(
+    value_text = " value={!r}".format(atomic_value) if atomic_value is not _MISSING else ""
+    return '{}{{{} {} access={} semantic="{}" implementation="{}" record={} data={}{}'.format(
         type_name,
         state,
         classification,
@@ -219,4 +337,5 @@ def pointer_summary(type_name, record_address, data_address, access, record=None
         implementation,
         pointer_text(record_address),
         pointer_text(data_address),
-    )
+        value_text,
+    ) + "}"

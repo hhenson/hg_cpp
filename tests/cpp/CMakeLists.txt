@@ -22,6 +22,23 @@ target_link_libraries(hgraph_header_compile_check
 hgraph_enable_private_pch(hgraph_header_compile_check)
 add_test(NAME hgraph.header_compile_check COMMAND hgraph_header_compile_check)
 
+add_executable(hgraph_debugger_fixture
+    ../debugger/debugger_fixture.cpp
+)
+
+target_link_libraries(hgraph_debugger_fixture
+    PRIVATE
+        hgraph::core
+)
+
+hgraph_enable_private_pch(hgraph_debugger_fixture)
+if(MSVC)
+    target_compile_options(hgraph_debugger_fixture PRIVATE /Od /Zi)
+else()
+    target_compile_options(hgraph_debugger_fixture PRIVATE -O0 -g)
+endif()
+add_test(NAME hgraph.debugger_fixture COMMAND hgraph_debugger_fixture)
+
 # Catch2 for the utility test suites.
 find_package(Catch2 3 CONFIG QUIET)
 if(NOT Catch2_FOUND)

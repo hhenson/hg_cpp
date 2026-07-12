@@ -1,6 +1,7 @@
 #ifndef HGRAPH_CPP_ROOT_VALUE_PLAN_FACTORY_H
 #define HGRAPH_CPP_ROOT_VALUE_PLAN_FACTORY_H
 
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value_ops.h>
@@ -64,7 +65,13 @@ namespace hgraph
          * the same plan is a no-op; re-registration with a different plan
          * throws.
          */
-        void register_atomic(const ValueTypeMetaData *schema, const MemoryUtils::StoragePlan *plan, const ValueOps *ops);
+        void register_atomic(const ValueTypeMetaData *schema,
+                             const MemoryUtils::StoragePlan *plan,
+                             const ValueOps *ops);
+        void register_atomic(const ValueTypeMetaData *schema,
+                             const MemoryUtils::StoragePlan *plan,
+                             const ValueOps *ops,
+                             DebugAtomicKind atomic_kind);
 
         /**
          * Register the canonical binding for ``binding.type_meta``.

@@ -19,9 +19,12 @@ implementation labels, record address, and data address. Expanding it exposes
 the canonical `TypeRecord`, then its `SchemaHeader`, plan, ops, and optional
 debug descriptor pointers.
 
-Deep payload traversal is deliberately not inferred from C++ template names or
-private container layouts. It will be enabled only for records carrying the
-stable data-only debug descriptors introduced by the deeper printer milestones.
+Records carrying stable data-only debug descriptors expose bool,
+signed/unsigned integer, and 32/64-bit floating-point payloads directly. Fixed
+tuples and bundles expand into child `AnyPtr` values using descriptor offsets;
+unset fields appear typed-null through the published validity bitmap. Other
+atomic and dynamic layouts remain explicitly opaque. No payload is inferred
+from semantic labels, C++ template names, or private container layouts.
 
 ## LLDB
 

@@ -78,8 +78,11 @@ namespace hgraph
 
     TypeRecordRegistry &TypeRecordRegistry::instance()
     {
-        static TypeRecordRegistry registry;
-        return registry;
+        // Records are retained by Values and runtime handles that may be
+        // destroyed during static teardown. Match the immortal schema/plan
+        // registries so those handles never observe a destructed record table.
+        static auto *registry = new TypeRecordRegistry();
+        return *registry;
     }
 
     TypeRecordRegistry::Entry::Entry(const TypeRecordDefinition &definition)

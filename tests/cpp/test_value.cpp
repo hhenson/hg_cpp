@@ -8,8 +8,10 @@
 #include <cstdint>
 
 #include <hgraph/types/metadata/type_binding.h>
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/types/time_series/ts_delta.h>
 #include <hgraph/types/type_resolution.h>
@@ -36,6 +38,54 @@ namespace
     {
         std::int32_t value{0};
     };
+}
+
+TEST_CASE("Value TypeRecords carry atomic and fixed-composite debug descriptors",
+          "[type-erasure][debug-descriptor]")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    const auto *int_schema = registry.register_scalar<std::int32_t>("int32");
+    const auto *bool_schema = registry.register_scalar<bool>("bool");
+    const auto *string_schema = registry.register_scalar<std::string>("str");
+
+    const ValueTypeRef int_type = ValuePlanFactory::instance().type_for(int_schema);
+    const ValueTypeRef bool_type = ValuePlanFactory::instance().type_for(bool_schema);
+    const ValueTypeRef string_type = ValuePlanFactory::instance().type_for(string_schema);
+
+    REQUIRE(int_type.record()->debug != nullptr);
+    REQUIRE(int_type.record()->debug->valid());
+    REQUIRE(int_type.record()->debug->layout == DebugLayoutKind::Atomic);
+    REQUIRE(int_type.record()->debug->atomic_kind == DebugAtomicKind::SignedInteger);
+    REQUIRE(bool_type.record()->debug->atomic_kind == DebugAtomicKind::Boolean);
+    REQUIRE(string_type.record()->debug->atomic_kind == DebugAtomicKind::Opaque);
+
+    const auto *bundle_schema = registry.bundle(
+        "DebugDescriptorPair", {{"number", int_schema}, {"enabled", bool_schema}});
+    const ValueTypeRef bundle_type = ValuePlanFactory::instance().type_for(bundle_schema);
+    const DebugDescriptor *debug = bundle_type.record()->debug;
+    REQUIRE(debug != nullptr);
+    REQUIRE(debug->valid());
+    REQUIRE(debug->layout == DebugLayoutKind::FixedComposite);
+    REQUIRE(debug->atomic_kind == DebugAtomicKind::Opaque);
+    REQUIRE(debug->field_count == 2);
+    REQUIRE(debug->fields != nullptr);
+    REQUIRE(has_flag(debug->flags, DebugDescriptorFlags::HasValidityBitmap));
+    REQUIRE(debug->validity_word_size == sizeof(std::uint64_t));
+
+    const auto components = bundle_type.plan()->components();
+    REQUIRE(components.size() == 3);
+    REQUIRE(std::string{debug->fields[0].name} == "number");
+    REQUIRE(debug->fields[0].offset == components[0].offset);
+    REQUIRE(debug->fields[0].type == int_type.record());
+    REQUIRE(debug->fields[0].validity_bit == 0);
+    REQUIRE(has_flag(debug->fields[0].flags, DebugFieldFlags::Optional));
+    REQUIRE(std::string{debug->fields[1].name} == "enabled");
+    REQUIRE(debug->fields[1].offset == components[1].offset);
+    REQUIRE(debug->fields[1].type == bool_type.record());
+    REQUIRE(debug->fields[1].validity_bit == 1);
+    REQUIRE(debug->validity_offset == components[2].offset);
 }
 
 TEST_CASE("ValueOps: ops_for<T> returns a stable canonical vtable")

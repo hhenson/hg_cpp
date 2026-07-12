@@ -408,41 +408,64 @@ The common record guarantees shallow inspection of every erased pointer:
 * capabilities and whether deeper navigation is available.
 
 Deeper inspection is described by an immutable ``DebugDescriptor`` produced by
-the same factory that resolves the type record.  One possible form is:
+the same factory that resolves the type record. The version-one ABI is:
 
 .. code-block:: cpp
 
    enum class DebugLayoutKind : std::uint8_t {
        Opaque,
        Atomic,
-       Composite,
+       FixedComposite,
        Sequence,
        KeyedSlots,
        Node,
        Graph,
    };
 
+   enum class DebugAtomicKind : std::uint8_t {
+       Opaque,
+       Boolean,
+       SignedInteger,
+       UnsignedInteger,
+       FloatingPoint,
+   };
+
    struct DebugField {
        const char *name;
        std::size_t offset;
        const TypeRecord *type;
+       std::uint32_t validity_bit;
        DebugFieldFlags flags;
    };
 
    struct DebugDescriptor {
+       std::uint32_t magic;
+       std::uint16_t abi_version;
        DebugLayoutKind layout;
-       const DebugField *fields;
+       DebugAtomicKind atomic_kind;
+       DebugDescriptorFlags flags;
        std::uint32_t field_count;
+       const DebugField *fields;
+       std::size_t validity_offset;
+       std::uint32_t validity_word_size;
+       std::uint32_t reserved0;
        const TypeRecord *key_type;
        const TypeRecord *element_type;
        const DebugDynamicLayout *dynamic_layout;
    };
 
-Composite fields connect semantic child type records to physical plan offsets.
-This is information a storage plan alone cannot always provide.  Dynamic
-layouts describe stable facts such as size, capacity, slot state, key storage,
-and element storage offsets.  They should not expose a long list of private C++
-member names which changes whenever a container is refactored.
+The descriptor is 64 bytes and each fixed field is 32 bytes on supported
+64-bit platforms. Atomic representation is selected from the registered C++
+type, never inferred from a semantic label: bool, signed/unsigned integers, and
+32/64-bit floating point values can be decoded directly; other atomic storage
+remains explicitly opaque. Fixed-composite fields connect semantic child type
+records to physical plan offsets. Tuple and bundle descriptors also publish the
+validity-word offset and one bit index per field, so an unset child is displayed
+as typed-null rather than reading uninitialised payload bytes.
+
+Dynamic layouts describe stable facts such as size, capacity, slot state, key
+storage, and element storage offsets. They should not expose a long list of
+private C++ member names which changes whenever a container is refactored.
 
 Pretty printers first validate magic and ABI, mask pointer tags, then dispatch
 on numeric family and layout values.  They must never infer the payload type

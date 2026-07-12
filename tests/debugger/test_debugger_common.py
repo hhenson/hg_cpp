@@ -41,6 +41,26 @@ def node_record(**overrides):
     return snapshot
 
 
+def atomic_descriptor(**overrides):
+    snapshot = {
+        "magic": common.DEBUG_DESCRIPTOR_MAGIC,
+        "abi_version": common.DEBUG_DESCRIPTOR_ABI_VERSION,
+        "layout": 1,
+        "atomic_kind": 2,
+        "flags": 0,
+        "field_count": 0,
+        "fields": 0,
+        "validity_offset": 0,
+        "validity_word_size": 0,
+        "reserved0": 0,
+        "key_type": 0,
+        "element_type": 0,
+        "dynamic_layout": 0,
+    }
+    snapshot.update(overrides)
+    return snapshot
+
+
 class CommonDebuggerFormattingTest(unittest.TestCase):
     def test_schema_summary_uses_common_classification(self):
         self.assertTrue(common.schema_valid(node_schema()))
@@ -92,6 +112,41 @@ class CommonDebuggerFormattingTest(unittest.TestCase):
         self.assertEqual(common.kind_text(3, 0), "Compute(0)")
         self.assertEqual(common.kind_text(5, 0), "Simulation(0)")
         self.assertEqual(common.kind_text(4, common.TYPE_KIND_NONE), "none")
+
+    def test_debug_descriptor_validation_and_summary_are_data_only(self):
+        descriptor = atomic_descriptor()
+        self.assertTrue(common.debug_descriptor_valid(descriptor))
+        summary = common.debug_descriptor_summary(descriptor)
+        self.assertIn("valid layout=Atomic atomic=SignedInteger", summary)
+        self.assertFalse(common.debug_descriptor_valid(atomic_descriptor(abi_version=2)))
+        self.assertFalse(common.debug_descriptor_valid(atomic_descriptor(flags=4)))
+        self.assertTrue(
+            common.debug_descriptor_valid(
+                atomic_descriptor(
+                    layout=2,
+                    atomic_kind=0,
+                    flags=common.DEBUG_DESCRIPTOR_HAS_VALIDITY,
+                    field_count=2,
+                    fields=0x5000,
+                    validity_offset=24,
+                    validity_word_size=8,
+                )
+            )
+        )
+
+    def test_atomic_decoding_obeys_descriptor_kind_size_and_byte_order(self):
+        self.assertEqual(common.decode_atomic(1, b"\x01", "little"), True)
+        self.assertEqual(common.decode_atomic(2, b"\xfe\xff", "little"), -2)
+        self.assertEqual(common.decode_atomic(3, b"\x01\x00", "big"), 256)
+        self.assertAlmostEqual(common.decode_atomic(4, b"\x00\x00\xc0\x3f", "little"), 1.5)
+        self.assertIs(common.decode_atomic(2, b"\x00" * 3, "little"), common._MISSING)
+
+    def test_fixed_field_validity_uses_word_and_bit_indices(self):
+        words = (1 | (1 << 63)).to_bytes(8, "little") + (1 << 1).to_bytes(8, "little")
+        self.assertTrue(common.field_is_set(words, 0, 8, "little"))
+        self.assertTrue(common.field_is_set(words, 63, 8, "little"))
+        self.assertFalse(common.field_is_set(words, 64, 8, "little"))
+        self.assertTrue(common.field_is_set(words, 65, 8, "little"))
 
 
 if __name__ == "__main__":

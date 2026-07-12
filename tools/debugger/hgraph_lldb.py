@@ -110,6 +110,109 @@ def record_at(value, address):
     return target.CreateValueFromAddress("record", target.ResolveLoadAddress(address), record_type)
 
 
+def descriptor_at(value, address):
+    if address == 0 or not valid(value):
+        return lldb.SBValue()
+    target = value.GetTarget()
+    descriptor_type = target.FindFirstType("hgraph::DebugDescriptor")
+    if not descriptor_type.IsValid():
+        return lldb.SBValue()
+    return target.CreateValueFromAddress(
+        "debug_descriptor", target.ResolveLoadAddress(address), descriptor_type
+    )
+
+
+def descriptor_snapshot(value):
+    return {
+        "magic": integer(child(value, "magic")),
+        "abi_version": integer(child(value, "abi_version")),
+        "layout": integer(child(value, "layout")),
+        "atomic_kind": integer(child(value, "atomic_kind")),
+        "flags": integer(child(value, "flags")),
+        "field_count": integer(child(value, "field_count")),
+        "fields": pointer(child(value, "fields")),
+        "validity_offset": integer(child(value, "validity_offset")),
+        "validity_word_size": integer(child(value, "validity_word_size")),
+        "reserved0": integer(child(value, "reserved0")),
+        "key_type": pointer(child(value, "key_type")),
+        "element_type": pointer(child(value, "element_type")),
+        "dynamic_layout": pointer(child(value, "dynamic_layout")),
+    }
+
+
+def debug_field_snapshot(value):
+    return {
+        "name": c_string(child(value, "name")),
+        "offset": integer(child(value, "offset")),
+        "type": pointer(child(value, "type")),
+        "validity_bit": integer(child(value, "validity_bit")),
+        "flags": integer(child(value, "flags")),
+    }
+
+
+def descriptor_fields(value, snapshot):
+    target = value.GetTarget()
+    field_type = target.FindFirstType("hgraph::DebugField")
+    if not field_type.IsValid():
+        return
+    base = snapshot["fields"]
+    for index in range(snapshot["field_count"]):
+        field_value = target.CreateValueFromAddress(
+            "field",
+            target.ResolveLoadAddress(base + index * field_type.GetByteSize()),
+            field_type,
+        )
+        if not valid(field_value):
+            return
+        yield index, field_value, debug_field_snapshot(field_value)
+
+
+def target_byte_order(value):
+    return "big" if value.GetTarget().GetByteOrder() == lldb.eByteOrderBig else "little"
+
+
+def read_memory(value, address, size):
+    if not valid(value) or address == 0 or size <= 0:
+        return None
+    error = lldb.SBError()
+    payload = value.GetProcess().ReadMemory(address, size, error)
+    return payload if error.Success() else None
+
+
+def record_plan_size(record_value):
+    plan = dereference(child(record_value, "plan"))
+    return integer(child(child(plan, "layout"), "size")) if valid(plan) else 0
+
+
+def atomic_value(record_value, data_address):
+    try:
+        descriptor_value = descriptor_at(record_value, pointer(child(record_value, "debug")))
+        if not valid(descriptor_value):
+            return common._MISSING
+        snapshot = descriptor_snapshot(descriptor_value)
+        if not common.debug_descriptor_valid(snapshot) or snapshot["layout"] != 1:
+            return common._MISSING
+        payload = read_memory(record_value, data_address, record_plan_size(record_value))
+        return common.decode_atomic(snapshot["atomic_kind"], payload, target_byte_order(record_value))
+    except Exception:
+        return common._MISSING
+
+
+def make_any_pointer(value, name, record_address, data_address, access):
+    target = value.GetTarget()
+    pointer_size = target.GetAddressByteSize()
+    byte_order = target.GetByteOrder()
+    words = [record_address | access, data_address]
+    if pointer_size == 8:
+        data = lldb.SBData.CreateDataFromUInt64Array(byte_order, pointer_size, words)
+    elif pointer_size == 4:
+        data = lldb.SBData.CreateDataFromUInt32Array(byte_order, pointer_size, words)
+    else:
+        return lldb.SBValue()
+    pointer_type = target.FindFirstType("hgraph::AnyPtr")
+    return target.CreateValueFromData(name, data, pointer_type) if pointer_type.IsValid() else lldb.SBValue()
+
+
 def any_pointer_value(value):
     type_name = raw(value).GetType().GetCanonicalType().GetName() or ""
     if "TypedPtr<" in type_name:
@@ -141,13 +244,32 @@ def type_record_summary(value, _internal_dict, _options):
         return "TypeRecord{<printer error: %s>}" % exc
 
 
+def debug_descriptor_summary(value, _internal_dict, _options):
+    try:
+        return common.debug_descriptor_summary(descriptor_snapshot(value))
+    except Exception as exc:
+        return "DebugDescriptor{<printer error: %s>}" % exc
+
+
+def debug_field_summary(value, _internal_dict, _options):
+    try:
+        return common.debug_field_summary(debug_field_snapshot(value))
+    except Exception as exc:
+        return "DebugField{<printer error: %s>}" % exc
+
+
 def type_pointer_summary(value, _internal_dict, _options):
     try:
         record_address, data_address, access = pointer_state(value)
         record_value = record_at(value, record_address)
         snapshot = record_snapshot(record_value) if valid(record_value) else None
+        payload = (
+            atomic_value(record_value, data_address)
+            if valid(record_value) and data_address
+            else common._MISSING
+        )
         return common.pointer_summary(
-            display_type_name(value), record_address, data_address, access, snapshot
+            display_type_name(value), record_address, data_address, access, snapshot, payload
         )
     except Exception as exc:
         return "TypePointer{<printer error: %s>}" % exc
@@ -195,6 +317,11 @@ class TypeRecordSyntheticProvider(SyntheticProvider):
         schema_pointer = child(self.value, "schema")
         self.add(values, "schema", dereference(schema_pointer))
         self.add(values, "schema_ptr", schema_pointer)
+        self.add(
+            values,
+            "debug_descriptor",
+            descriptor_at(self.value, pointer(child(self.value, "debug"))),
+        )
         for name in (
             "role",
             "capabilities",
@@ -210,13 +337,90 @@ class TypeRecordSyntheticProvider(SyntheticProvider):
         return values
 
 
+class DebugDescriptorSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        snapshot = descriptor_snapshot(self.value)
+        for index, field_value, field_snapshot in descriptor_fields(self.value, snapshot):
+            self.add(values, field_snapshot["name"] or "[{}]".format(index), field_value)
+        for name in (
+            "layout",
+            "atomic_kind",
+            "flags",
+            "validity_offset",
+            "validity_word_size",
+            "key_type",
+            "element_type",
+            "dynamic_layout",
+            "magic",
+            "abi_version",
+        ):
+            self.add(values, name, child(self.value, name))
+        return values
+
+
+class DebugFieldSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        self.add(values, "type_record", record_at(self.value, pointer(child(self.value, "type"))))
+        for name in ("name", "offset", "type", "validity_bit", "flags"):
+            self.add(values, name, child(self.value, name))
+        return values
+
+
 class TypePointerSyntheticProvider(SyntheticProvider):
     def build_children(self):
         values = []
         try:
-            record_address, _, _ = pointer_state(self.value)
-            self.add(values, "record", record_at(self.value, record_address))
+            record_address, data_address, access = pointer_state(self.value)
+            record_value = record_at(self.value, record_address)
+            self.add(values, "record", record_value)
             self.add(values, "data", child(any_pointer_value(self.value), "data_"))
+            if (
+                not valid(record_value)
+                or record_address == 0
+                or data_address == 0
+                or access not in common.ACCESS_NAMES
+            ):
+                return values
+
+            descriptor_value = descriptor_at(record_value, pointer(child(record_value, "debug")))
+            if not valid(descriptor_value):
+                return values
+            snapshot = descriptor_snapshot(descriptor_value)
+            if not common.debug_descriptor_valid(snapshot) or snapshot["layout"] != 2:
+                return values
+
+            validity = None
+            if snapshot["flags"] & common.DEBUG_DESCRIPTOR_HAS_VALIDITY:
+                bits_per_word = snapshot["validity_word_size"] * 8
+                word_count = (snapshot["field_count"] + bits_per_word - 1) // bits_per_word
+                validity = read_memory(
+                    self.value,
+                    data_address + snapshot["validity_offset"],
+                    word_count * snapshot["validity_word_size"],
+                )
+            for index, _, field_snapshot in descriptor_fields(descriptor_value, snapshot):
+                name = field_snapshot["name"] or "[{}]".format(index)
+                is_set = common.field_is_set(
+                    validity,
+                    field_snapshot["validity_bit"],
+                    snapshot["validity_word_size"]
+                    if snapshot["flags"] & common.DEBUG_DESCRIPTOR_HAS_VALIDITY
+                    else 0,
+                    target_byte_order(self.value),
+                )
+                self.add(
+                    values,
+                    name,
+                    make_any_pointer(
+                        self.value,
+                        name,
+                        field_snapshot["type"],
+                        data_address + field_snapshot["offset"] if is_set else 0,
+                        access if is_set else 0,
+                    ),
+                )
         except Exception:
             pass
         return values
@@ -226,11 +430,15 @@ def __lldb_init_module(debugger, _internal_dict):
     summaries = (
         (r"^hgraph::SchemaHeader$", "hgraph_lldb.schema_header_summary"),
         (r"^hgraph::TypeRecord$", "hgraph_lldb.type_record_summary"),
+        (r"^hgraph::DebugDescriptor$", "hgraph_lldb.debug_descriptor_summary"),
+        (r"^hgraph::DebugField$", "hgraph_lldb.debug_field_summary"),
         (r"^hgraph::AnyPtr$", "hgraph_lldb.type_pointer_summary"),
         (r"^hgraph::TypedPtr<.*>$", "hgraph_lldb.type_pointer_summary"),
     )
     synthetics = (
         (r"^hgraph::TypeRecord$", "hgraph_lldb.TypeRecordSyntheticProvider"),
+        (r"^hgraph::DebugDescriptor$", "hgraph_lldb.DebugDescriptorSyntheticProvider"),
+        (r"^hgraph::DebugField$", "hgraph_lldb.DebugFieldSyntheticProvider"),
         (r"^hgraph::AnyPtr$", "hgraph_lldb.TypePointerSyntheticProvider"),
         (r"^hgraph::TypedPtr<.*>$", "hgraph_lldb.TypePointerSyntheticProvider"),
     )

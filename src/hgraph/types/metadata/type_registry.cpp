@@ -431,7 +431,8 @@ namespace hgraph
         // Pair with the Int plan + this enum's ops so Value/TS machinery
         // resolves uniformly (the register_scalar pattern for a nominal type).
         const auto &plan = MemoryUtils::plan_for<Int>();
-        ValuePlanFactory::instance().register_atomic(&meta, &plan, &enum_ops_for(&meta));
+        ValuePlanFactory::instance().register_atomic(&meta, &plan, &enum_ops_for(&meta),
+                                                     DebugAtomicKind::SignedInteger);
         return &meta;
     }
 

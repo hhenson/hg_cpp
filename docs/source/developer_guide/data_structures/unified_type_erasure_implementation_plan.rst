@@ -423,6 +423,17 @@ Iteration 6B
    Define the stable data-only ``DebugDescriptor`` and implement atomic and
    fixed-composite navigation.
 
+   Implemented: the versioned 64-byte descriptor distinguishes opaque, atomic,
+   fixed-composite, and reserved dynamic layouts. Atomic representation tags
+   come from C++ registration traits rather than labels. Fixed fields carry a
+   child ``TypeRecord``, physical plan offset, and validity bit; tuple/bundle
+   descriptors publish the validity-word location. The value plan factory owns
+   pointer-stable descriptors and attaches them to canonical records. GDB and
+   LLDB decode supported atomics and synthesize child ``AnyPtr`` values without
+   inferior calls. A debugger fixture covers recursive children, unset fields,
+   and static teardown. This records implementation status only; review
+   acceptance and commit status remain open.
+
 Iteration 6C
    Add sequences, keyed slots, nodes, graphs, and nested-graph navigation.
    Unknown or unsupported representations remain labeled opaque values rather
