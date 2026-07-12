@@ -2259,6 +2259,25 @@ class record_replay_scope:
         return False
 
 
+_COMPONENT_IDS_BY_ROOT = {}
+
+
+def _claim_component_id(fq):
+    """One component instance per recordable id within a wiring (hgraph
+    parity: a duplicate id in one graph build raises)."""
+    if not _wiring_stack:
+        return
+    root = id(_wiring_stack[0])
+    ids = _COMPONENT_IDS_BY_ROOT.setdefault(root, set())
+    if fq in ids:
+        raise RuntimeError(f"duplicate component recordable id '{fq}' in one graph")
+    ids.add(fq)
+
+
+def _release_component_ids(wiring):
+    _COMPONENT_IDS_BY_ROOT.pop(id(wiring), None)
+
+
 class _Component:
     """@component: Python's component decorator over the C++ wrapping
     rules (the design record's mode set). Consults the ambient mode scope;
@@ -2269,9 +2288,17 @@ class _Component:
         self.fn = fn
         self.__name__ = fn.__name__
         self.recordable_id = recordable_id or fn.__name__
-        self._params = list(inspect.signature(fn).parameters.values())
+        self._signature = inspect.signature(fn)
+        self._params = list(self._signature.parameters.values())
+        # eval_node/introspection must see the USER signature, not __call__'s.
+        self.__signature__ = self._signature
 
-    def __call__(self, *ports):
+    @staticmethod
+    def _is_ts(param, value):
+        return isinstance(value, WiringPort) or isinstance(
+            param.annotation, (_TsExpr, _GenericTsExpr, _TypeVarSentinel))
+
+    def __call__(self, *args, **kwargs):
         mode, ambient_id = _hgraph.current_record_replay_mode()
         fq = f"{ambient_id}.{self.recordable_id}" if ambient_id else self.recordable_id
         if mode != _RecordReplayModes.NONE and not fq:
@@ -2281,9 +2308,14 @@ class _Component:
         ):
             raise ValueError("component cannot recover and replay at the same time")
 
-        wrapped = []
-        for param, port in zip(self._params, ports):
+        _claim_component_id(fq)
+        bound = self._signature.bind(*args, **kwargs)
+        call_args = dict(bound.arguments)
+        for param in self._params:
             key = param.name
+            if key not in call_args or not self._is_ts(param, call_args[key]):
+                continue   # scalar parameters pass through unwrapped
+            port = call_args[key]
             if mode & (_RecordReplayModes.REPLAY | _RecordReplayModes.COMPARE):
                 port = wire("replay", key, recordable_id=fq,
                             output_type=param.annotation if isinstance(param.annotation, _TsExpr) else None)
@@ -2291,10 +2323,10 @@ class _Component:
                 port = wire("__recovering_pass_through", port, f"{fq}.{key}")
             if mode & _RecordReplayModes.RECORD:
                 wire("record", port, key, recordable_id=fq)
-            wrapped.append(port)
+            call_args[key] = port
 
         with record_replay_scope(mode, fq):
-            out = self.fn(*wrapped)
+            out = self.fn(**call_args)
 
         if out is None:
             return None
@@ -2315,6 +2347,41 @@ def component(fn=None, *, recordable_id=None):
     if fn is None:
         return lambda f: _Component(f, recordable_id)
     return _Component(fn)
+
+
+class RecordReplayContext(record_replay_scope):
+    """hgraph parity: the upstream name for the mode scope context manager
+    (``with RecordReplayContext(mode=RecordReplayEnum.RECORD): ...``)."""
+
+    def __init__(self, mode=None, recordable_id=""):
+        super().__init__(mode if mode is not None else _RecordReplayModes.NONE, recordable_id)
+
+
+def set_record_replay_model(model):
+    """hgraph parity alias for set_record_replay_config."""
+    set_record_replay_config(model)
+
+
+class _RecordableStateMarker:
+    """RECORDABLE_STATE[Schema]: importable placeholder - the recordable
+    state injectable lands with the recorded-state increment."""
+
+    def __getitem__(self, item):
+        raise NotImplementedError("gap: RECORDABLE_STATE lands with the recorded-state increment")
+
+
+RECORDABLE_STATE = _RecordableStateMarker()
+
+
+class _TsOutMarker:
+    """TS_OUT[X]: importable placeholder (upstream's output-typed state
+    field annotation) - lands with the recorded-state increment."""
+
+    def __getitem__(self, item):
+        raise NotImplementedError("gap: TS_OUT lands with the recorded-state increment")
+
+
+TS_OUT = _TsOutMarker()
 
 
 def comparison_summary(fq_key):
@@ -2529,6 +2596,7 @@ def run_graph(graph_fn, *args, start_time=None, end_time=None,
                     realtime=run_mode == EvaluationMode.REAL_TIME)
     finally:
         w._release_seed_context()
+        _release_component_ids(_wiring_stack[-1])
         _wiring_stack.pop()
     if out is None:
         return None
@@ -2749,6 +2817,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         run = w.run(start_time=__start_time__, end_time=__end_time__)
     finally:
         w._release_seed_context()
+        _release_component_ids(_wiring_stack[-1])
         _wiring_stack.pop()
     if __elide__:
         # hgraph parity: elide keeps only the ticked cycles, in order (the

@@ -141,6 +141,8 @@ namespace hgraph::stdlib
             throw std::invalid_argument("component<G>: cannot recover and replay at the same time");
         }
 
+        if (!fq.empty()) { w.claim_component_id(fq); }
+
         auto input_tuple = std::make_tuple(std::move(inputs)...);
         auto wrapped     = [&]<std::size_t... I>(std::index_sequence<I...>) {
             return std::make_tuple(component_detail::wrap_input(

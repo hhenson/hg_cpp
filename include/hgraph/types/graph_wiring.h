@@ -756,6 +756,11 @@ namespace hgraph
             std::optional<WiringPortRef> output,
             std::vector<const TSValueTypeMetaData *> input_schemas) &&;
 
+        /** Claim a component's fully-qualified recordable id for this wiring;
+            a second claim of the same id throws (one component instance per
+            id per graph build - python parity). */
+        void claim_component_id(std::string_view fq_recordable_id);
+
       private:
         void apply_service_rank_dependencies();
         void validate_same_cycle_pairs(

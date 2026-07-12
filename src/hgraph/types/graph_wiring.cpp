@@ -570,6 +570,8 @@ namespace hgraph
 
     struct Wiring::Impl
     {
+        std::unordered_set<std::string> component_ids;   // claimed recordable ids
+
         explicit Impl(WiringKind wiring_kind)
             : kind(wiring_kind)
         {
@@ -616,6 +618,15 @@ namespace hgraph
     };
 
     Wiring::Wiring(WiringKind kind) : impl_(std::make_unique<Impl>(kind)) {}
+    void Wiring::claim_component_id(std::string_view fq_recordable_id)
+    {
+        if (!impl_->component_ids.emplace(std::string{fq_recordable_id}).second)
+        {
+            throw std::invalid_argument("component: duplicate recordable id '" +
+                                        std::string{fq_recordable_id} + "' in one wiring");
+        }
+    }
+
     Wiring::~Wiring()                              = default;
     Wiring::Wiring(Wiring &&) noexcept             = default;
     Wiring &Wiring::operator=(Wiring &&) noexcept  = default;

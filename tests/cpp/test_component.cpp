@@ -286,3 +286,29 @@ TEST_CASE("compare: a one-sided value is recorded as a mismatch")
     CHECK(summary.compared == 3);
     CHECK(summary.mismatches == 2);
 }
+
+namespace
+{
+    /** Two components claiming the SAME recordable id in one wiring. */
+    struct DuplicateIdHarness
+    {
+        [[maybe_unused]] static constexpr auto name = "component_duplicate_id_harness";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            auto first  = stdlib::component<SumGraph>(w, "calc", lhs, rhs);
+            auto second = stdlib::component<SumGraph>(w, "calc", lhs, rhs);
+            return wire<stdlib::add_>(w, first, second).template as<TS<Int>>();
+        }
+    };
+}  // namespace
+
+TEST_CASE("component: a duplicate recordable id in one wiring throws (python parity)")
+{
+    stdlib::register_standard_operators();
+    GlobalContext context;
+    // Mode-independent: the id claim is structural, not a record/replay
+    // concern (upstream raises on the duplicate wiring itself).
+    CHECK_THROWS_AS((void)eval_node<DuplicateIdHarness>(values<Int>(1), values<Int>(2)),
+                    std::invalid_argument);
+}
