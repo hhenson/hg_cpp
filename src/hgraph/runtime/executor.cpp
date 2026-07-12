@@ -1,5 +1,6 @@
 #include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/lifecycle_observer.h>
+#include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/util/scope.h>
 
 #include <algorithm>
@@ -24,9 +25,9 @@ namespace hgraph
         struct SimulationExecutorStorage
         {
             SimulationExecutorStorage(const GraphExecutorBuilder &builder,
-                                      const GraphExecutorTypeBinding &binding,
+                                      ExecutorTypeRef type,
                                       void *executor_memory)
-                : graph(builder.graph_builder().make_root_graph(GraphExecutorStorageRef{binding, executor_memory})),
+                : graph(builder.graph_builder().make_root_graph(type.writable(executor_memory))),
                   start_time(builder.start_time()),
                   end_time(builder.end_time()),
                   evaluation_time(builder.start_time()),
@@ -53,9 +54,9 @@ namespace hgraph
         struct RealTimeExecutorStorage
         {
             RealTimeExecutorStorage(const GraphExecutorBuilder &builder,
-                                    const GraphExecutorTypeBinding &binding,
+                                    ExecutorTypeRef type,
                                     void *executor_memory)
-                : graph(builder.graph_builder().make_root_graph(GraphExecutorStorageRef{binding, executor_memory})),
+                : graph(builder.graph_builder().make_root_graph(type.writable(executor_memory))),
                   start_time(builder.start_time()),
                   end_time(builder.end_time()),
                   evaluation_time(builder.start_time())
@@ -187,36 +188,24 @@ namespace hgraph
             return table;
         }
 
-        [[nodiscard]] const EvaluationClockTypeBinding &simulation_clock_binding() noexcept
+        struct ExecutorRuntimeContext
         {
-            static const EvaluationClockTypeMetaData meta{.display_name = "simulation_clock"};
-            static const EvaluationClockTypeBinding binding{
-                .type_meta = &meta,
-                .storage_plan = &MemoryUtils::plan_for<SimulationExecutorStorage>(),
-                .ops = &simulation_clock_ops(),
-            };
-            return binding;
+            ClockTypeRef clock_type{};
+        };
+
+        [[nodiscard]] const ExecutorRuntimeContext &executor_context(const void *context) noexcept
+        {
+            return *static_cast<const ExecutorRuntimeContext *>(context);
         }
 
-        [[nodiscard]] const EvaluationClockTypeBinding &realtime_clock_binding() noexcept
+        [[nodiscard]] ClockPtr simulation_clock_ptr_impl(const void *context, void *memory) noexcept
         {
-            static const EvaluationClockTypeMetaData meta{.display_name = "realtime_clock"};
-            static const EvaluationClockTypeBinding binding{
-                .type_meta = &meta,
-                .storage_plan = &MemoryUtils::plan_for<RealTimeExecutorStorage>(),
-                .ops = &realtime_clock_ops(),
-            };
-            return binding;
+            return executor_context(context).clock_type.read_only(memory);
         }
 
-        [[nodiscard]] EvaluationClockStorageRef simulation_clock_ref_impl(const void *, void *memory) noexcept
+        [[nodiscard]] ClockPtr realtime_clock_ptr_impl(const void *context, void *memory) noexcept
         {
-            return EvaluationClockStorageRef{simulation_clock_binding(), memory};
-        }
-
-        [[nodiscard]] EvaluationClockStorageRef realtime_clock_ref_impl(const void *, void *memory) noexcept
-        {
-            return EvaluationClockStorageRef{realtime_clock_binding(), memory};
+            return executor_context(context).clock_type.read_only(memory);
         }
 
         void simulation_mark_push_update_pending_impl(const void *, void *)
@@ -441,69 +430,99 @@ namespace hgraph
             return &realtime_storage(memory).lifecycle_observers;
         }
 
-        [[nodiscard]] const GraphExecutorOps &simulation_executor_ops()
+        [[nodiscard]] GraphExecutorOps simulation_executor_ops(const ExecutorRuntimeContext *context)
         {
-            static const GraphExecutorOps table{
-                .context = nullptr,
+            return GraphExecutorOps{
+                .context = context,
                 .run_impl = &simulation_run_impl,
                 .request_stop_impl = &simulation_request_stop_impl,
                 .stop_requested_impl = &simulation_stop_requested_impl,
                 .start_time_impl = &simulation_start_time_impl,
                 .end_time_impl = &simulation_end_time_impl,
                 .graph_impl = &simulation_graph_impl,
-                .evaluation_clock_ref_impl = &simulation_clock_ref_impl,
+                .evaluation_clock_ptr_impl = &simulation_clock_ptr_impl,
                 .mark_push_update_pending_impl = &simulation_mark_push_update_pending_impl,
                 .is_push_update_pending_impl = &simulation_is_push_update_pending_impl,
                 .reset_push_update_pending_impl = &simulation_reset_push_update_pending_impl,
                 .lifecycle_observers_impl = &simulation_lifecycle_observers_impl,
             };
-            return table;
         }
 
-        [[nodiscard]] const GraphExecutorOps &realtime_executor_ops()
+        [[nodiscard]] GraphExecutorOps realtime_executor_ops(const ExecutorRuntimeContext *context)
         {
-            static const GraphExecutorOps table{
-                .context = nullptr,
+            return GraphExecutorOps{
+                .context = context,
                 .run_impl = &realtime_run_impl,
                 .request_stop_impl = &realtime_request_stop_impl,
                 .stop_requested_impl = &realtime_stop_requested_impl,
                 .start_time_impl = &realtime_start_time_impl,
                 .end_time_impl = &realtime_end_time_impl,
                 .graph_impl = &realtime_graph_impl,
-                .evaluation_clock_ref_impl = &realtime_clock_ref_impl,
+                .evaluation_clock_ptr_impl = &realtime_clock_ptr_impl,
                 .mark_push_update_pending_impl = &realtime_mark_push_update_pending_impl,
                 .is_push_update_pending_impl = &realtime_is_push_update_pending_impl,
                 .reset_push_update_pending_impl = &realtime_reset_push_update_pending_impl,
                 .lifecycle_observers_impl = &realtime_lifecycle_observers_impl,
             };
-            return table;
         }
 
         struct ExecutorRuntimeRegistry
         {
-            const GraphExecutorTypeBinding &make_binding(const GraphExecutorBuilder &builder)
+            struct Entry
             {
-                GraphExecutorTypeMetaData meta;
-                names.push_back(std::make_unique<std::string>(std::string{builder.label()}));
-                if (!names.back()->empty()) { meta.display_name = names.back()->c_str(); }
-                meta.mode = builder.mode();
+                GraphExecutorTypeMetaData schema{};
+                ExecutorRuntimeContext    context{};
+                GraphExecutorOps          ops{};
+                ExecutorTypeRef           type{};
+            };
 
-                schemas.push_back(meta);
+            ExecutorTypeRef make_type(const GraphExecutorBuilder &builder)
+            {
+                names.push_back(std::make_unique<std::string>(std::string{builder.label()}));
+                entries.push_back({});
+                auto &entry = entries.back();
+                if (!names.back()->empty()) { entry.schema.display_name = names.back()->c_str(); }
+                entry.schema.mode = builder.mode();
+                entry.schema.header = SchemaHeader{
+                    TypeFamily::Executor,
+                    static_cast<TypeKind>(entry.schema.mode),
+                    entry.schema.display_name != nullptr && entry.schema.display_name[0] != '\0'
+                        ? entry.schema.display_name
+                        : "graph_executor"};
+
                 switch (builder.mode())
                 {
-                    case GraphExecutorMode::Simulation:
-                        return GraphExecutorTypeBinding::intern(schemas.back(),
-                                                                MemoryUtils::plan_for<SimulationExecutorStorage>(),
-                                                                simulation_executor_ops());
-                    case GraphExecutorMode::RealTime:
-                        return GraphExecutorTypeBinding::intern(schemas.back(),
-                                                                MemoryUtils::plan_for<RealTimeExecutorStorage>(),
-                                                                realtime_executor_ops());
+                    case GraphExecutorMode::Simulation: {
+                        const auto &plan = MemoryUtils::plan_for<SimulationExecutorStorage>();
+                        entry.context.clock_type = intern_clock_type(
+                            detail::evaluation_clock_schema(), plan, simulation_clock_ops(),
+                            "hgraph.clock.simulation");
+                        entry.ops = simulation_executor_ops(&entry.context);
+                        entry.type = intern_executor_type(entry.schema, plan, entry.ops,
+                                                          "hgraph.executor.simulation");
+                        return entry.type;
+                    }
+                    case GraphExecutorMode::RealTime: {
+                        const auto &plan = MemoryUtils::plan_for<RealTimeExecutorStorage>();
+                        entry.context.clock_type = intern_clock_type(
+                            detail::evaluation_clock_schema(), plan, realtime_clock_ops(),
+                            "hgraph.clock.realtime");
+                        entry.ops = realtime_executor_ops(&entry.context);
+                        entry.type = intern_executor_type(entry.schema, plan, entry.ops,
+                                                          "hgraph.executor.realtime");
+                        return entry.type;
+                    }
                 }
                 throw std::logic_error("Unknown graph executor mode");
             }
 
-            std::deque<GraphExecutorTypeMetaData>      schemas{};
+            void clear() noexcept
+            {
+                entries.clear();
+                names.clear();
+            }
+
+            std::deque<Entry>                          entries{};
             std::vector<std::unique_ptr<std::string>>  names{};
         };
 
@@ -513,171 +532,216 @@ namespace hgraph
             return registry;
         }
 
-        void default_run_impl(const void *, const GraphExecutorView &)
+    }  // namespace
+
+    namespace
+    {
+        void validate_executor_record(const TypeRecord &record)
         {
-            throw std::logic_error("GraphExecutorView::run requires a live executor");
-        }
-
-        void default_request_stop_impl(const void *, void *) noexcept {}
-
-        bool default_stop_requested_impl(const void *, const void *) noexcept { return false; }
-        DateTime default_start_time_impl(const void *, const void *) noexcept { return MIN_ST; }
-        DateTime default_end_time_impl(const void *, const void *) noexcept { return MAX_ET; }
-
-        GraphView default_graph_impl(const void *, void *)
-        {
-            return GraphView{};
-        }
-
-        EvaluationClockStorageRef default_evaluation_clock_ref_impl(const void *, void *) noexcept
-        {
-            return EvaluationClockStorageRef{};
-        }
-
-        void default_mark_push_update_pending_impl(const void *, void *)
-        {
-            throw std::logic_error("PushQueueEngineView::mark_push_update_pending requires a live real-time graph executor");
-        }
-
-        bool default_is_push_update_pending_impl(const void *, void *) noexcept
-        {
-            return false;
-        }
-
-        bool default_reset_push_update_pending_impl(const void *, void *) noexcept
-        {
-            return false;
-        }
-
-        const GraphExecutorOps &default_executor_ops()
-        {
-            static const GraphExecutorOps table{
-                .context = nullptr,
-                .run_impl = &default_run_impl,
-                .request_stop_impl = &default_request_stop_impl,
-                .stop_requested_impl = &default_stop_requested_impl,
-                .start_time_impl = &default_start_time_impl,
-                .end_time_impl = &default_end_time_impl,
-                .graph_impl = &default_graph_impl,
-                .evaluation_clock_ref_impl = &default_evaluation_clock_ref_impl,
-                .mark_push_update_pending_impl = &default_mark_push_update_pending_impl,
-                .is_push_update_pending_impl = &default_is_push_update_pending_impl,
-                .reset_push_update_pending_impl = &default_reset_push_update_pending_impl,
-            };
-            return table;
-        }
-
-        const GraphExecutorTypeBinding &default_executor_binding()
-        {
-            static const GraphExecutorTypeMetaData meta{};
-            static const GraphExecutorTypeBinding binding{
-                .type_meta = &meta,
-                .storage_plan = &MemoryUtils::plan_for<std::byte>(),
-                .ops = &default_executor_ops(),
-            };
-            return binding;
+            if (!record.valid() || record.schema->family != TypeFamily::Executor ||
+                record.role != TypeRole::Runtime)
+            {
+                throw std::invalid_argument("ExecutorTypeRef requires an Executor/Runtime TypeRecord");
+            }
+            const auto *schema = reinterpret_cast<const GraphExecutorTypeMetaData *>(record.schema);
+            if (record.schema->kind != static_cast<TypeKind>(schema->mode))
+            {
+                throw std::invalid_argument("ExecutorTypeRef requires matching common and executor schema kinds");
+            }
+            if (record.ops_abi_version != EXECUTOR_OPS_ABI_VERSION || record.ops == nullptr)
+            {
+                throw std::invalid_argument("ExecutorTypeRef requires executor ops ABI version 1");
+            }
+            if (record.capabilities != executor_type_capabilities(*record.plan))
+            {
+                throw std::invalid_argument("ExecutorTypeRef capabilities do not match its storage plan");
+            }
         }
     }  // namespace
+
+    TypeCapabilities executor_type_capabilities(const MemoryUtils::StoragePlan &plan)
+    {
+        TypeCapabilities result = TypeCapabilities::Viewable | TypeCapabilities::Mutable;
+        if (plan.can_default_construct()) result |= TypeCapabilities::Constructible;
+        if (plan.trivially_destructible || plan.lifecycle.can_destroy())
+            result |= TypeCapabilities::Destructible;
+        if (plan.can_copy_construct()) result |= TypeCapabilities::Copyable;
+        if (plan.can_move_construct()) result |= TypeCapabilities::Movable;
+        return result;
+    }
+
+    ExecutorTypeRef intern_executor_type(const GraphExecutorTypeMetaData &schema,
+                                         const MemoryUtils::StoragePlan &plan,
+                                         const GraphExecutorOps &ops,
+                                         std::string_view implementation_label)
+    {
+        if (!schema.header.valid() || schema.header.family != TypeFamily::Executor ||
+            schema.header.kind != static_cast<TypeKind>(schema.mode))
+        {
+            throw std::invalid_argument("intern_executor_type requires a valid executor schema header");
+        }
+        const TypeRecordDefinition definition{
+            .key = TypeRecordKey{.schema = &schema.header,
+                                 .role = TypeRole::Runtime,
+                                 .plan = &plan,
+                                 .ops = &ops,
+                                 .debug = nullptr},
+            .ops_abi_version = EXECUTOR_OPS_ABI_VERSION,
+            .capabilities = executor_type_capabilities(plan),
+            .implementation_label = implementation_label,
+        };
+        return ExecutorTypeRef{&TypeRecordRegistry::instance().intern(definition)};
+    }
+
+    ExecutorTypeRef ExecutorTypeRef::checked(AnyPtr pointer)
+    {
+        if (pointer.is_unbound()) return {};
+        if (!pointer.well_formed() || pointer.record() == nullptr)
+            throw std::invalid_argument("ExecutorTypeRef requires a well-formed pointer");
+        validate_executor_record(*pointer.record());
+        return ExecutorTypeRef{pointer.record()};
+    }
+
+    bool ExecutorTypeRef::valid() const noexcept
+    {
+        if (record_ == nullptr) return false;
+        try { validate_executor_record(*record_); return true; }
+        catch (...) { return false; }
+    }
+
+    const GraphExecutorTypeMetaData *ExecutorTypeRef::schema() const noexcept
+    {
+        return record_ != nullptr ? reinterpret_cast<const GraphExecutorTypeMetaData *>(record_->schema) : nullptr;
+    }
+
+    const MemoryUtils::StoragePlan &ExecutorTypeRef::checked_plan() const
+    {
+        if (plan() == nullptr) throw std::logic_error("ExecutorTypeRef is unbound");
+        return *plan();
+    }
+
+    const GraphExecutorOps *ExecutorTypeRef::ops() const noexcept
+    {
+        return record_ != nullptr ? static_cast<const GraphExecutorOps *>(record_->ops) : nullptr;
+    }
+
+    const GraphExecutorOps &ExecutorTypeRef::ops_ref() const
+    {
+        if (ops() == nullptr) throw std::logic_error("ExecutorTypeRef is unbound");
+        return *ops();
+    }
+
+    ExecutorPtr ExecutorTypeRef::typed_null() const noexcept
+    {
+        return ExecutorPtr{AnyPtr{record_, nullptr, AccessMode::ReadOnly}, ExecutorPtr::UncheckedTag{}};
+    }
+
+    ExecutorPtr ExecutorTypeRef::read_only(const void *data) const noexcept
+    {
+        return ExecutorPtr{AnyPtr{record_, data, AccessMode::ReadOnly}, ExecutorPtr::UncheckedTag{}};
+    }
+
+    ExecutorPtr ExecutorTypeRef::writable(void *data) const noexcept
+    {
+        return ExecutorPtr{AnyPtr{record_, data, AccessMode::Writable}, ExecutorPtr::UncheckedTag{}};
+    }
 
     std::string_view GraphExecutorTypeMetaData::name() const noexcept
     {
         return display_name != nullptr ? std::string_view{display_name} : std::string_view{};
     }
 
-    PushQueueEngineView::PushQueueEngineView() noexcept
-        : storage_(GraphExecutorStorageRef::empty(default_executor_binding()))
-    {
-    }
+    PushQueueEngineView::PushQueueEngineView() noexcept = default;
 
-    PushQueueEngineView::PushQueueEngineView(GraphExecutorStorageRef storage) noexcept
-        : storage_(storage.bound() ? storage : GraphExecutorStorageRef::empty(default_executor_binding()))
-    {
-    }
+    PushQueueEngineView::PushQueueEngineView(ExecutorPtr pointer) noexcept : pointer_(pointer) {}
 
     bool PushQueueEngineView::valid() const noexcept
     {
-        return storage_.has_value();
+        return pointer_.has_value();
     }
 
     bool PushQueueEngineView::is_push_update_pending() const noexcept
     {
-        return ops().is_push_update_pending_impl(ops().context, storage_.data());
+        if (!valid()) return false;
+        return ops().is_push_update_pending_impl(ops().context, const_cast<void *>(pointer_.data()));
     }
 
     void PushQueueEngineView::mark_push_update_pending() const
     {
-        ops().mark_push_update_pending_impl(ops().context, storage_.data());
+        if (!valid())
+            throw std::logic_error("PushQueueEngineView::mark_push_update_pending requires a live executor");
+        if (!pointer_.writable_access())
+            throw std::logic_error("PushQueueEngineView requires writable executor access");
+        ops().mark_push_update_pending_impl(ops().context, const_cast<void *>(pointer_.data()));
     }
 
     bool PushQueueEngineView::reset_push_update_pending() const noexcept
     {
-        return ops().reset_push_update_pending_impl(ops().context, storage_.data());
+        if (!valid() || !pointer_.writable_access()) return false;
+        return ops().reset_push_update_pending_impl(ops().context, const_cast<void *>(pointer_.data()));
     }
 
     const GraphExecutorOps &PushQueueEngineView::ops() const
     {
-        return storage_.binding()->ops_ref();
+        return ExecutorTypeRef{pointer_.record()}.ops_ref();
     }
 
-    GraphExecutorView::GraphExecutorView() noexcept
-        : storage_(GraphExecutorStorageRef::empty(default_executor_binding()))
+    GraphExecutorView::GraphExecutorView() noexcept = default;
+
+    GraphExecutorView::GraphExecutorView(ExecutorPtr pointer) noexcept : pointer_(pointer) {}
+
+    GraphExecutorView::GraphExecutorView(ExecutorTypeRef type, void *memory) noexcept
+        : pointer_(type && memory != nullptr ? type.writable(memory) : ExecutorPtr{})
     {
     }
 
-    GraphExecutorView::GraphExecutorView(const GraphExecutorTypeBinding *binding, void *memory) noexcept
-        : storage_(binding != nullptr && memory != nullptr ? binding : &default_executor_binding(),
-                   binding != nullptr && memory != nullptr ? memory : nullptr)
-    {
-    }
-
-    bool GraphExecutorView::valid() const noexcept { return storage_.has_value(); }
-    const GraphExecutorTypeBinding *GraphExecutorView::binding() const noexcept
-    {
-        return storage_.binding();
-    }
+    bool GraphExecutorView::valid() const noexcept { return pointer_.valid(); }
+    ExecutorTypeRef GraphExecutorView::type() const noexcept { return ExecutorTypeRef{pointer_.record()}; }
+    ExecutorPtr GraphExecutorView::pointer() const noexcept { return pointer_; }
     const GraphExecutorTypeMetaData *GraphExecutorView::schema() const noexcept
     {
-        return binding()->type_meta;
+        return type().schema();
     }
-    void *GraphExecutorView::data() const noexcept { return storage_.data(); }
+    void *GraphExecutorView::data() const noexcept { return const_cast<void *>(pointer_.data()); }
 
     DateTime GraphExecutorView::start_time() const noexcept
     {
-        return ops().start_time_impl(ops().context, data());
+        return valid() ? ops().start_time_impl(ops().context, data()) : MIN_ST;
     }
 
     DateTime GraphExecutorView::end_time() const noexcept
     {
-        return ops().end_time_impl(ops().context, data());
+        return valid() ? ops().end_time_impl(ops().context, data()) : MAX_ET;
     }
 
     bool GraphExecutorView::stop_requested() const noexcept
     {
-        return ops().stop_requested_impl(ops().context, data());
+        return valid() && ops().stop_requested_impl(ops().context, data());
     }
 
     GraphView GraphExecutorView::graph() const
     {
-        return ops().graph_impl(ops().context, data());
+        return valid() ? ops().graph_impl(ops().context, data()) : GraphView{};
     }
 
-    EvaluationClockStorageRef GraphExecutorView::evaluation_clock_ref() const noexcept
+    ClockPtr GraphExecutorView::evaluation_clock_ptr() const noexcept
     {
-        return ops().evaluation_clock_ref_impl(ops().context, data());
+        return valid() ? ops().evaluation_clock_ptr_impl(ops().context, data()) : ClockPtr{};
     }
 
     EvaluationClockView GraphExecutorView::evaluation_clock() const noexcept
     {
-        return EvaluationClockView{evaluation_clock_ref()};
+        return EvaluationClockView{evaluation_clock_ptr()};
     }
 
     PushQueueEngineView GraphExecutorView::push_queue_engine() const noexcept
     {
-        return PushQueueEngineView{storage_};
+        return PushQueueEngineView{pointer_};
     }
 
     LifecycleObserverList &GraphExecutorView::lifecycle_observers() const
     {
+        if (!valid()) { throw std::logic_error("Graph executor is missing its lifecycle observer list"); }
         auto *list =
             ops().lifecycle_observers_impl == nullptr ? nullptr : ops().lifecycle_observers_impl(ops().context, data());
         if (list == nullptr) { throw std::logic_error("Graph executor is missing its lifecycle observer list"); }
@@ -686,17 +750,18 @@ namespace hgraph
 
     void GraphExecutorView::run() const
     {
+        if (!valid()) { throw std::logic_error("GraphExecutorView::run requires a live executor"); }
         ops().run_impl(ops().context, *this);
     }
 
     void GraphExecutorView::request_stop() const noexcept
     {
-        ops().request_stop_impl(ops().context, data());
+        if (valid() && pointer_.writable_access()) ops().request_stop_impl(ops().context, data());
     }
 
     const GraphExecutorOps &GraphExecutorView::ops() const
     {
-        return storage_.binding()->ops_ref();
+        return type().ops_ref();
     }
 
     GraphExecutorValue::GraphExecutorValue() noexcept = default;
@@ -708,15 +773,15 @@ namespace hgraph
             throw std::invalid_argument("Push source nodes require a real-time graph executor");
         }
 
-        const auto &binding = builder.binding();
-        storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
+        const auto type = builder.type();
+        storage_ = storage_type::owning_constructed(*type.record(), [&](void *dst) {
             switch (builder.mode())
             {
                 case GraphExecutorMode::Simulation:
-                    std::construct_at(MemoryUtils::cast<SimulationExecutorStorage>(dst), builder, binding, dst);
+                    std::construct_at(MemoryUtils::cast<SimulationExecutorStorage>(dst), builder, type, dst);
                     return;
                 case GraphExecutorMode::RealTime:
-                    std::construct_at(MemoryUtils::cast<RealTimeExecutorStorage>(dst), builder, binding, dst);
+                    std::construct_at(MemoryUtils::cast<RealTimeExecutorStorage>(dst), builder, type, dst);
                     return;
             }
             throw std::logic_error("Unknown graph executor mode");
@@ -729,12 +794,12 @@ namespace hgraph
 
     GraphExecutorView GraphExecutorValue::view()
     {
-        return GraphExecutorView{storage_.binding(), storage_.data()};
+        return GraphExecutorView{ExecutorTypeRef{storage_.binding()}, storage_.data()};
     }
 
     GraphExecutorView GraphExecutorValue::view() const
     {
-        return GraphExecutorView{storage_.binding(), const_cast<void *>(storage_.data())};
+        return GraphExecutorView{ExecutorTypeRef{storage_.binding()}, const_cast<void *>(storage_.data())};
     }
 
     GraphExecutorBuilder::GraphExecutorBuilder() = default;
@@ -742,18 +807,21 @@ namespace hgraph
     GraphExecutorBuilder &GraphExecutorBuilder::label(std::string label)
     {
         label_ = std::move(label);
+        type_ = {};
         return *this;
     }
 
     GraphExecutorBuilder &GraphExecutorBuilder::graph_builder(GraphBuilder graph_builder)
     {
         graph_builder_ = std::move(graph_builder);
+        type_ = {};
         return *this;
     }
 
     GraphExecutorBuilder &GraphExecutorBuilder::mode(GraphExecutorMode mode) noexcept
     {
         mode_ = mode;
+        type_ = {};
         return *this;
     }
 
@@ -805,19 +873,25 @@ namespace hgraph
         return lifecycle_observers_;
     }
 
-    const GraphTypeBinding &GraphExecutorBuilder::graph_binding() const
+    GraphTypeRef GraphExecutorBuilder::graph_type() const
     {
-        return graph_builder_.binding();
+        return graph_builder_.type();
     }
 
-    const GraphExecutorTypeBinding &GraphExecutorBuilder::binding() const
+    ExecutorTypeRef GraphExecutorBuilder::type() const
     {
-        return executor_runtime_registry().make_binding(*this);
+        if (!type_) { type_ = executor_runtime_registry().make_type(*this); }
+        return type_;
     }
 
     GraphExecutorValue GraphExecutorBuilder::make_executor() const
     {
         return GraphExecutorValue{*this};
+    }
+
+    void clear_executor_runtime_types() noexcept
+    {
+        executor_runtime_registry().clear();
     }
 
 }  // namespace hgraph

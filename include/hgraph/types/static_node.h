@@ -1757,7 +1757,7 @@ namespace hgraph
                 GraphValue *graph = view.graph_value();
                 if (graph == nullptr) { return TraitsView{}; }
                 GraphView graph_view = graph->view();
-                return TraitsView{GraphStorageRef{graph_view.binding(), graph_view.data()}};
+                return TraitsView{graph_view.pointer()};
             }
         };
 

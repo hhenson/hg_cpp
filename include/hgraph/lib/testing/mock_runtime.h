@@ -21,11 +21,11 @@ namespace hgraph::testing
         struct MockGraphExecutorStorage
         {
             MockGraphExecutorStorage(const GraphBuilder &builder,
-                                     const GraphExecutorTypeBinding &binding,
+                                     ExecutorTypeRef type,
                                      void *executor_memory,
                                      DateTime start,
                                      DateTime end)
-                : graph_value(builder.make_root_graph(GraphExecutorStorageRef{binding, executor_memory})),
+                : graph_value(builder.make_root_graph(type.writable(executor_memory))),
                   start_time(start),
                   end_time(end),
                   evaluation_time(start),
@@ -104,15 +104,15 @@ namespace hgraph::testing
             return table;
         }
 
-        [[nodiscard]] inline const EvaluationClockTypeBinding &mock_clock_binding() noexcept
+        struct MockRuntimeContext
         {
-            static const EvaluationClockTypeMetaData meta{.display_name = "mock_executor_clock"};
-            static const EvaluationClockTypeBinding binding{
-                .type_meta = &meta,
-                .storage_plan = &MemoryUtils::plan_for<MockGraphExecutorStorage>(),
-                .ops = &mock_clock_ops(),
-            };
-            return binding;
+            ClockTypeRef clock_type{};
+        };
+
+        [[nodiscard]] inline MockRuntimeContext &mock_runtime_context() noexcept
+        {
+            static MockRuntimeContext context;
+            return context;
         }
 
         inline void run_impl(const void *, const GraphExecutorView &)
@@ -145,9 +145,9 @@ namespace hgraph::testing
             return mock_executor_storage(memory).graph();
         }
 
-        [[nodiscard]] inline EvaluationClockStorageRef evaluation_clock_ref_impl(const void *, void *memory) noexcept
+        [[nodiscard]] inline ClockPtr evaluation_clock_ptr_impl(const void *context, void *memory) noexcept
         {
-            return EvaluationClockStorageRef{mock_clock_binding(), memory};
+            return static_cast<const MockRuntimeContext *>(context)->clock_type.read_only(memory);
         }
 
         [[nodiscard]] inline LifecycleObserverList *lifecycle_observers_impl(const void *, void *memory) noexcept
@@ -158,38 +158,39 @@ namespace hgraph::testing
         [[nodiscard]] inline const GraphExecutorOps &mock_executor_ops() noexcept
         {
             static const GraphExecutorOps table{
-                .context = nullptr,
+                .context = &mock_runtime_context(),
                 .run_impl = &run_impl,
                 .request_stop_impl = &request_stop_impl,
                 .stop_requested_impl = &stop_requested_impl,
                 .start_time_impl = &start_time_impl,
                 .end_time_impl = &end_time_impl,
                 .graph_impl = &graph_impl,
-                .evaluation_clock_ref_impl = &evaluation_clock_ref_impl,
+                .evaluation_clock_ptr_impl = &evaluation_clock_ptr_impl,
                 .lifecycle_observers_impl = &lifecycle_observers_impl,
             };
             return table;
         }
 
-        [[nodiscard]] inline const GraphExecutorTypeBinding &mock_executor_binding() noexcept
+        [[nodiscard]] inline ExecutorTypeRef mock_executor_type()
         {
             static const GraphExecutorTypeMetaData meta{
+                .header = SchemaHeader{TypeFamily::Executor,
+                                       static_cast<TypeKind>(GraphExecutorMode::Simulation),
+                                       "mock_graph_executor"},
                 .display_name = "mock_graph_executor",
                 .mode = GraphExecutorMode::Simulation,
             };
-            static const GraphExecutorTypeBinding binding{
-                .type_meta = &meta,
-                .storage_plan = &MemoryUtils::plan_for<MockGraphExecutorStorage>(),
-                .ops = &mock_executor_ops(),
-            };
-            return binding;
+            const auto &plan = MemoryUtils::plan_for<MockGraphExecutorStorage>();
+            mock_runtime_context().clock_type = intern_clock_type(
+                ::hgraph::detail::evaluation_clock_schema(), plan, mock_clock_ops(), "hgraph.clock.mock");
+            return intern_executor_type(meta, plan, mock_executor_ops(), "hgraph.executor.mock");
         }
     }  // namespace mock_runtime_detail
 
     class MockGraphExecutor
     {
       public:
-        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, GraphExecutorTypeBinding>;
+        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
 
         MockGraphExecutor() noexcept = default;
 
@@ -197,12 +198,13 @@ namespace hgraph::testing
                                    DateTime start_time = MIN_ST,
                                    DateTime end_time = MAX_ET)
         {
-            const auto &binding = mock_runtime_detail::mock_executor_binding();
-            storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
+            const auto type = mock_runtime_detail::mock_executor_type();
+            type_ = type;
+            storage_ = storage_type::owning_constructed(*type.record(), [&](void *dst) {
                 std::construct_at(
                     MemoryUtils::cast<mock_runtime_detail::MockGraphExecutorStorage>(dst),
                     builder,
-                    binding,
+                    type,
                     dst,
                     start_time,
                     end_time);
@@ -213,12 +215,12 @@ namespace hgraph::testing
 
         [[nodiscard]] GraphExecutorView view() noexcept
         {
-            return GraphExecutorView{storage_.binding(), storage_.data()};
+            return GraphExecutorView{type_, storage_.data()};
         }
 
         [[nodiscard]] GraphExecutorView view() const noexcept
         {
-            return GraphExecutorView{storage_.binding(), const_cast<void *>(storage_.data())};
+            return GraphExecutorView{type_, const_cast<void *>(storage_.data())};
         }
 
         void set_evaluation_time(DateTime value) noexcept
@@ -227,6 +229,7 @@ namespace hgraph::testing
         }
 
       private:
+        ExecutorTypeRef type_{};
         storage_type storage_{};
     };
 

@@ -8,6 +8,7 @@
 #ifndef HGRAPH_RUNTIME_EXECUTOR_H
 #define HGRAPH_RUNTIME_EXECUTOR_H
 
+#include <hgraph/runtime/executor_type_ref.h>
 #include <hgraph/runtime/graph.h>
 
 namespace hgraph
@@ -20,7 +21,7 @@ namespace hgraph
     class PushQueueEngineView;
 
     /** Engine execution mode for the first-pass graph executor. */
-    enum class GraphExecutorMode
+    enum class GraphExecutorMode : std::uint8_t
     {
         Simulation,
         RealTime,
@@ -29,6 +30,7 @@ namespace hgraph
     /** Schema/config descriptor for a graph executor. */
     struct HGRAPH_EXPORT GraphExecutorTypeMetaData
     {
+        SchemaHeader header{};
         const char *display_name{nullptr};
         GraphExecutorMode mode{GraphExecutorMode::Simulation};
 
@@ -46,8 +48,7 @@ namespace hgraph
         DateTime (*start_time_impl)(const void *context, const void *memory) noexcept = nullptr;
         DateTime (*end_time_impl)(const void *context, const void *memory) noexcept = nullptr;
         GraphView (*graph_impl)(const void *context, void *memory) = nullptr;
-        EvaluationClockStorageRef (*evaluation_clock_ref_impl)(const void *context,
-                                                                             void *memory) noexcept = nullptr;
+        ClockPtr (*evaluation_clock_ptr_impl)(const void *context, void *memory) noexcept = nullptr;
         void (*mark_push_update_pending_impl)(const void *context, void *memory) = nullptr;
         bool (*is_push_update_pending_impl)(const void *context, void *memory) noexcept = nullptr;
         bool (*reset_push_update_pending_impl)(const void *context, void *memory) noexcept = nullptr;
@@ -60,7 +61,7 @@ namespace hgraph
     {
       public:
         PushQueueEngineView() noexcept;
-        explicit PushQueueEngineView(GraphExecutorStorageRef storage) noexcept;
+        explicit PushQueueEngineView(ExecutorPtr pointer) noexcept;
 
         [[nodiscard]] bool valid() const noexcept;
         [[nodiscard]] bool is_push_update_pending() const noexcept;
@@ -71,7 +72,7 @@ namespace hgraph
       private:
         [[nodiscard]] const GraphExecutorOps &ops() const;
 
-        GraphExecutorStorageRef storage_{};
+        ExecutorPtr pointer_{};
     };
 
     /** Borrowed type-erased executor view. */
@@ -79,14 +80,16 @@ namespace hgraph
     {
       public:
         GraphExecutorView() noexcept;
-        GraphExecutorView(const GraphExecutorTypeBinding *binding, void *memory) noexcept;
+        explicit GraphExecutorView(ExecutorPtr pointer) noexcept;
+        GraphExecutorView(ExecutorTypeRef type, void *memory) noexcept;
         GraphExecutorView(const GraphExecutorView &) = delete;
         GraphExecutorView &operator=(const GraphExecutorView &) = delete;
         GraphExecutorView(GraphExecutorView &&) noexcept = default;
         GraphExecutorView &operator=(GraphExecutorView &&) noexcept = default;
 
         [[nodiscard]] bool valid() const noexcept;
-        [[nodiscard]] const GraphExecutorTypeBinding *binding() const noexcept;
+        [[nodiscard]] ExecutorTypeRef type() const noexcept;
+        [[nodiscard]] ExecutorPtr pointer() const noexcept;
         [[nodiscard]] const GraphExecutorTypeMetaData *schema() const noexcept;
         [[nodiscard]] void *data() const noexcept;
 
@@ -94,7 +97,7 @@ namespace hgraph
         [[nodiscard]] DateTime end_time() const noexcept;
         [[nodiscard]] bool stop_requested() const noexcept;
         [[nodiscard]] GraphView graph() const;
-        [[nodiscard]] EvaluationClockStorageRef evaluation_clock_ref() const noexcept;
+        [[nodiscard]] ClockPtr evaluation_clock_ptr() const noexcept;
         [[nodiscard]] EvaluationClockView evaluation_clock() const noexcept;
         [[nodiscard]] PushQueueEngineView push_queue_engine() const noexcept;
 
@@ -113,14 +116,14 @@ namespace hgraph
       private:
         [[nodiscard]] const GraphExecutorOps &ops() const;
 
-        GraphExecutorStorageRef storage_{};
+        ExecutorPtr pointer_{};
     };
 
     /** Owning graph executor value. */
     class HGRAPH_EXPORT GraphExecutorValue
     {
       public:
-        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, GraphExecutorTypeBinding>;
+        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
 
         GraphExecutorValue() noexcept;
         explicit GraphExecutorValue(const GraphExecutorBuilder &builder);
@@ -159,8 +162,8 @@ namespace hgraph
         [[nodiscard]] DateTime start_time() const noexcept;
         [[nodiscard]] DateTime end_time() const noexcept;
         [[nodiscard]] const std::vector<LifecycleObserver *> &lifecycle_observers() const noexcept;
-        [[nodiscard]] const GraphTypeBinding &graph_binding() const;
-        [[nodiscard]] const GraphExecutorTypeBinding &binding() const;
+        [[nodiscard]] GraphTypeRef graph_type() const;
+        [[nodiscard]] ExecutorTypeRef type() const;
         [[nodiscard]] GraphExecutorValue make_executor() const;
 
       private:
@@ -172,7 +175,12 @@ namespace hgraph
         DateTime                        end_time_{MAX_ET};
         GraphExecutorMode               mode_{GraphExecutorMode::Simulation};
         std::vector<LifecycleObserver *> lifecycle_observers_{};
+        mutable ExecutorTypeRef          type_{};
     };
+
+    HGRAPH_EXPORT void clear_executor_runtime_types() noexcept;
+
+    static_assert(offsetof(GraphExecutorTypeMetaData, header) == 0);
 
 }  // namespace hgraph
 

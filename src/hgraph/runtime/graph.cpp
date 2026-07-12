@@ -2,6 +2,7 @@
 
 #include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/lifecycle_observer.h>
+#include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/util/scope.h>
 
@@ -166,11 +167,11 @@ namespace hgraph
 
             [[nodiscard]] GraphExecutorView root_executor() noexcept
             {
-                return GraphExecutorView{root_executor_ref.binding(), root_executor_ref.data()};
+                return GraphExecutorView{root_executor_ptr};
             }
 
-            GlobalState             global_state{};
-            GraphExecutorStorageRef root_executor_ref{};
+            GlobalState global_state{};
+            ExecutorPtr root_executor_ptr{};
         };
 
         struct NestedGraphRuntimeStorage : GraphRuntimeBaseStorage
@@ -427,13 +428,13 @@ namespace hgraph
         }
 
         template <typename Header, typename InitHeader>
-        void construct_graph_storage(const GraphTypeBinding &binding,
+        void construct_graph_storage(GraphTypeRef type,
                                      const GraphBuilder &builder,
                                      void *memory,
                                      InitHeader &&init_header)
         {
-            const auto &context = graph_context(binding.ops_ref().context);
-            const auto &plan = binding.checked_plan();
+            const auto &context = graph_context(type.ops_ref().context);
+            const auto &plan = type.checked_plan();
             bool        graph_complete = false;
             bool        header_constructed = false;
             std::size_t constructed_nodes = 0;
@@ -601,7 +602,7 @@ namespace hgraph
 
         RootGraphView root_graph_root_impl(const void *, const GraphView &graph)
         {
-            return RootGraphView{GraphView{graph.binding(), graph.data()}};
+            return RootGraphView{GraphView{graph.pointer()}};
         }
 
         RootGraphView nested_graph_root_impl(const void *context, const GraphView &graph)
@@ -609,59 +610,6 @@ namespace hgraph
             auto parent = graph_header<NestedGraphRuntimeStorage>(graph_context(context), graph.data()).parent_node();
             if (!parent.valid()) { throw std::logic_error("Nested graph is missing its parent node"); }
             return parent.graph().root();
-        }
-
-        void default_attach_nodes_impl(const void *, void *, GraphValue *) {}
-
-        void default_start_impl(const void *, const GraphView &, DateTime)
-        {
-            throw std::logic_error("GraphView::start requires a live graph");
-        }
-
-        void default_stop_impl(const void *, const GraphView &)
-        {
-            throw std::logic_error("GraphView::stop requires a live graph");
-        }
-
-        bool default_evaluate_impl(const void *, const GraphView &, DateTime)
-        {
-            throw std::logic_error("GraphView::evaluate requires a live graph");
-        }
-
-        void default_schedule_node_impl(const void *, const GraphView &, std::size_t, DateTime)
-        {
-            throw std::logic_error("GraphView::schedule_node requires a live graph");
-        }
-
-        bool default_started_impl(const void *, const void *) noexcept { return false; }
-        bool default_evaluating_impl(const void *, const void *) noexcept { return false; }
-        DateTime default_evaluation_time_impl(const void *, const void *) noexcept { return MIN_DT; }
-        DateTime default_next_scheduled_time_impl(const void *, const void *) noexcept { return MAX_DT; }
-        std::size_t default_node_count_impl(const void *, const void *) noexcept { return 0; }
-
-        NodeView default_node_at_impl(const void *, void *, std::size_t)
-        {
-            throw std::logic_error("GraphView::node_at requires a live graph");
-        }
-
-        GlobalStateView default_global_state_impl(const void *, void *)
-        {
-            throw std::logic_error("GraphView::global_state requires a live graph");
-        }
-
-        GraphExecutorView default_graph_executor_impl(const void *, void *)
-        {
-            throw std::logic_error("GraphView::executor requires a live graph");
-        }
-
-        RootGraphView default_root_impl(const void *, const GraphView &)
-        {
-            throw std::logic_error("GraphView::root requires a live graph");
-        }
-
-        NodeView default_parent_node_impl(const void *, void *)
-        {
-            throw std::logic_error("GraphView::as_nested requires a live nested graph");
         }
 
         template <typename Storage>
@@ -970,8 +918,18 @@ namespace hgraph
             struct Entry
             {
                 GraphTypeMetaData   schema{};
-                GraphRuntimeContext context{};
-                GraphOps            ops{};
+                GraphRuntimeContext root_context{};
+                GraphRuntimeContext nested_context{};
+                GraphOps            root_ops{};
+                GraphOps            nested_ops{};
+                GraphTypeRef        root_type{};
+                GraphTypeRef        nested_type{};
+            };
+
+            struct Types
+            {
+                GraphTypeRef root{};
+                GraphTypeRef nested{};
             };
 
             GraphTypeMetaData make_meta(const GraphBuilder &builder)
@@ -979,6 +937,10 @@ namespace hgraph
                 GraphTypeMetaData meta;
                 names.push_back(std::make_unique<std::string>(std::string{builder.label()}));
                 if (!names.back()->empty()) { meta.display_name = names.back()->c_str(); }
+                meta.header = SchemaHeader{TypeFamily::Graph, TYPE_KIND_NONE,
+                                           meta.display_name != nullptr && meta.display_name[0] != '\0'
+                                               ? meta.display_name
+                                               : "graph"};
 
                 meta.nodes.reserve(builder.nodes().size());
                 for (std::size_t index = 0; index < builder.nodes().size(); ++index)
@@ -991,37 +953,29 @@ namespace hgraph
                 return meta;
             }
 
-            const GraphTypeBinding &make_root_binding(const GraphBuilder &builder)
+            Types make_types(const GraphBuilder &builder)
             {
-                auto meta = make_meta(builder);
-                const auto &plan = graph_storage_plan_for<RootGraphRuntimeStorage>(builder.nodes());
-
                 entries.push_back({});
                 auto &entry = entries.back();
-                entry.schema = std::move(meta);
-                entry.context = graph_runtime_context_for(plan, builder.nodes());
-                entry.ops = root_ops(&entry.context);
-                return GraphTypeBinding::intern(entry.schema, plan, entry.ops);
-            }
+                entry.schema = make_meta(builder);
 
-            const GraphTypeBinding &make_nested_binding(const GraphBuilder &builder)
-            {
-                auto meta = make_meta(builder);
-                if (meta.push_source_nodes_end > 0)
+                const auto &root_plan = graph_storage_plan_for<RootGraphRuntimeStorage>(builder.nodes());
+                entry.root_context = graph_runtime_context_for(root_plan, builder.nodes());
+                entry.root_ops = make_root_ops(&entry.root_context);
+                entry.root_type = intern_graph_type(entry.schema, root_plan, entry.root_ops, "hgraph.graph.root");
+
+                if (entry.schema.push_source_nodes_end == 0)
                 {
-                    throw std::invalid_argument("Nested graphs do not support push source nodes");
+                    const auto &nested_plan = graph_storage_plan_for<NestedGraphRuntimeStorage>(builder.nodes());
+                    entry.nested_context = graph_runtime_context_for(nested_plan, builder.nodes());
+                    entry.nested_ops = make_nested_ops(&entry.nested_context);
+                    entry.nested_type =
+                        intern_graph_type(entry.schema, nested_plan, entry.nested_ops, "hgraph.graph.nested");
                 }
-                const auto &plan = graph_storage_plan_for<NestedGraphRuntimeStorage>(builder.nodes());
-
-                entries.push_back({});
-                auto &entry = entries.back();
-                entry.schema = std::move(meta);
-                entry.context = graph_runtime_context_for(plan, builder.nodes());
-                entry.ops = nested_ops(&entry.context);
-                return GraphTypeBinding::intern(entry.schema, plan, entry.ops);
+                return Types{entry.root_type, entry.nested_type};
             }
 
-            static GraphOps root_ops(const GraphRuntimeContext *context)
+            static GraphOps make_root_ops(const GraphRuntimeContext *context)
             {
                 return GraphOps{
                     .context = context,
@@ -1047,7 +1001,7 @@ namespace hgraph
                 };
             }
 
-            static GraphOps nested_ops(const GraphRuntimeContext *context)
+            static GraphOps make_nested_ops(const GraphRuntimeContext *context)
             {
                 return GraphOps{
                     .context = context,
@@ -1075,6 +1029,12 @@ namespace hgraph
 
             std::deque<Entry>                         entries{};
             std::vector<std::unique_ptr<std::string>> names{};
+
+            void clear() noexcept
+            {
+                entries.clear();
+                names.clear();
+            }
         };
 
         GraphRuntimeRegistry &graph_runtime_registry()
@@ -1083,82 +1043,151 @@ namespace hgraph
             return registry;
         }
 
-        const GraphOps &default_graph_ops()
-        {
-            static const GraphOps table{
-                .context = nullptr,
-                .parent_kind = GraphParentKind::Root,
-                .attach_nodes_impl = &default_attach_nodes_impl,
-                .start_impl = &default_start_impl,
-                .stop_impl = &default_stop_impl,
-                .evaluate_impl = &default_evaluate_impl,
-                .schedule_node_impl = &default_schedule_node_impl,
-                .started_impl = &default_started_impl,
-                .evaluating_impl = &default_evaluating_impl,
-                .evaluation_time_impl = &default_evaluation_time_impl,
-                .next_scheduled_time_impl = &default_next_scheduled_time_impl,
-                .node_count_impl = &default_node_count_impl,
-                .node_at_impl = &default_node_at_impl,
-                .global_state_impl = &default_global_state_impl,
-                .root_impl = &default_root_impl,
-                .graph_executor_impl = &default_graph_executor_impl,
-                .parent_node_impl = &default_parent_node_impl,
-            };
-            return table;
-        }
+    }  // namespace
 
-        const GraphTypeBinding &default_graph_binding()
+    namespace
+    {
+        void validate_graph_record(const TypeRecord &record)
         {
-            static const GraphTypeMetaData meta{};
-            static const GraphTypeBinding binding{
-                .type_meta = &meta,
-                .storage_plan = &MemoryUtils::plan_for<std::byte>(),
-                .ops = &default_graph_ops(),
-            };
-            return binding;
+            if (!record.valid() || record.schema->family != TypeFamily::Graph ||
+                record.role != TypeRole::Runtime || record.schema->kind != TYPE_KIND_NONE)
+            {
+                throw std::invalid_argument("GraphTypeRef requires a Graph/Runtime TypeRecord");
+            }
+            if (record.ops_abi_version != GRAPH_OPS_ABI_VERSION || record.ops == nullptr)
+            {
+                throw std::invalid_argument("GraphTypeRef requires graph ops ABI version 1");
+            }
+            if (record.capabilities != graph_type_capabilities(*record.plan))
+            {
+                throw std::invalid_argument("GraphTypeRef capabilities do not match its storage plan");
+            }
         }
     }  // namespace
+
+    TypeCapabilities graph_type_capabilities(const MemoryUtils::StoragePlan &plan)
+    {
+        TypeCapabilities result = TypeCapabilities::Viewable | TypeCapabilities::Mutable;
+        if (plan.can_default_construct()) result |= TypeCapabilities::Constructible;
+        if (plan.trivially_destructible || plan.lifecycle.can_destroy())
+            result |= TypeCapabilities::Destructible;
+        if (plan.can_copy_construct()) result |= TypeCapabilities::Copyable;
+        if (plan.can_move_construct()) result |= TypeCapabilities::Movable;
+        return result;
+    }
+
+    GraphTypeRef intern_graph_type(const GraphTypeMetaData &schema,
+                                   const MemoryUtils::StoragePlan &plan,
+                                   const GraphOps &ops,
+                                   std::string_view implementation_label)
+    {
+        if (!schema.header.valid() || schema.header.family != TypeFamily::Graph ||
+            schema.header.kind != TYPE_KIND_NONE)
+        {
+            throw std::invalid_argument("intern_graph_type requires a valid graph schema header");
+        }
+        const TypeRecordDefinition definition{
+            .key = TypeRecordKey{.schema = &schema.header,
+                                 .role = TypeRole::Runtime,
+                                 .plan = &plan,
+                                 .ops = &ops,
+                                 .debug = nullptr},
+            .ops_abi_version = GRAPH_OPS_ABI_VERSION,
+            .capabilities = graph_type_capabilities(plan),
+            .implementation_label = implementation_label,
+        };
+        return GraphTypeRef{&TypeRecordRegistry::instance().intern(definition)};
+    }
+
+    GraphTypeRef GraphTypeRef::checked(AnyPtr pointer)
+    {
+        if (pointer.is_unbound()) return {};
+        if (!pointer.well_formed() || pointer.record() == nullptr)
+            throw std::invalid_argument("GraphTypeRef requires a well-formed pointer");
+        validate_graph_record(*pointer.record());
+        return GraphTypeRef{pointer.record()};
+    }
+
+    bool GraphTypeRef::valid() const noexcept
+    {
+        if (record_ == nullptr) return false;
+        try { validate_graph_record(*record_); return true; }
+        catch (...) { return false; }
+    }
+
+    const GraphTypeMetaData *GraphTypeRef::schema() const noexcept
+    {
+        return record_ != nullptr ? reinterpret_cast<const GraphTypeMetaData *>(record_->schema) : nullptr;
+    }
+
+    const MemoryUtils::StoragePlan &GraphTypeRef::checked_plan() const
+    {
+        if (plan() == nullptr) throw std::logic_error("GraphTypeRef is unbound");
+        return *plan();
+    }
+
+    const GraphOps *GraphTypeRef::ops() const noexcept
+    {
+        return record_ != nullptr ? static_cast<const GraphOps *>(record_->ops) : nullptr;
+    }
+
+    const GraphOps &GraphTypeRef::ops_ref() const
+    {
+        if (ops() == nullptr) throw std::logic_error("GraphTypeRef is unbound");
+        return *ops();
+    }
+
+    GraphPtr GraphTypeRef::typed_null() const noexcept
+    {
+        return GraphPtr{AnyPtr{record_, nullptr, AccessMode::ReadOnly}, GraphPtr::UncheckedTag{}};
+    }
+
+    GraphPtr GraphTypeRef::read_only(const void *data) const noexcept
+    {
+        return GraphPtr{AnyPtr{record_, data, AccessMode::ReadOnly}, GraphPtr::UncheckedTag{}};
+    }
+
+    GraphPtr GraphTypeRef::writable(void *data) const noexcept
+    {
+        return GraphPtr{AnyPtr{record_, data, AccessMode::Writable}, GraphPtr::UncheckedTag{}};
+    }
 
     std::string_view GraphTypeMetaData::name() const noexcept
     {
         return display_name != nullptr ? std::string_view{display_name} : std::string_view{};
     }
 
-    GraphView::GraphView() noexcept
-        : storage_(GraphStorageRef::empty(default_graph_binding()))
+    GraphView::GraphView() noexcept = default;
+
+    GraphView::GraphView(GraphPtr pointer) noexcept : pointer_(pointer) {}
+
+    GraphView::GraphView(GraphTypeRef type, void *memory) noexcept
+        : pointer_(type && memory != nullptr ? type.writable(memory) : GraphPtr{})
     {
     }
 
-    GraphView::GraphView(const GraphTypeBinding *binding, void *memory) noexcept
-        : storage_(binding != nullptr && memory != nullptr ? binding : &default_graph_binding(),
-                   binding != nullptr && memory != nullptr ? memory : nullptr)
-    {
-    }
-
-    bool GraphView::valid() const noexcept { return storage_.has_value(); }
-    const GraphTypeBinding *GraphView::binding() const noexcept
-    {
-        return storage_.binding();
-    }
+    bool GraphView::valid() const noexcept { return pointer_.valid(); }
+    GraphTypeRef GraphView::type() const noexcept { return GraphTypeRef{pointer_.record()}; }
+    GraphPtr GraphView::pointer() const noexcept { return pointer_; }
     const GraphTypeMetaData *GraphView::schema() const noexcept
     {
-        return binding()->type_meta;
+        return type().schema();
     }
-    void *GraphView::data() const noexcept { return storage_.data(); }
+    void *GraphView::data() const noexcept { return const_cast<void *>(pointer_.data()); }
 
-    bool GraphView::started() const noexcept { return ops().started_impl(ops().context, data()); }
-    bool GraphView::evaluating() const noexcept { return ops().evaluating_impl(ops().context, data()); }
+    bool GraphView::started() const noexcept { return valid() && ops().started_impl(ops().context, data()); }
+    bool GraphView::evaluating() const noexcept { return valid() && ops().evaluating_impl(ops().context, data()); }
     DateTime GraphView::evaluation_time() const noexcept
     {
-        return ops().evaluation_time_impl(ops().context, data());
+        return valid() ? ops().evaluation_time_impl(ops().context, data()) : MIN_DT;
     }
     DateTime GraphView::next_scheduled_time() const noexcept
     {
-        return ops().next_scheduled_time_impl(ops().context, data());
+        return valid() ? ops().next_scheduled_time_impl(ops().context, data()) : MAX_DT;
     }
     std::size_t GraphView::node_count() const noexcept
     {
-        return ops().node_count_impl(ops().context, data());
+        return valid() ? ops().node_count_impl(ops().context, data()) : 0;
     }
 
     NodeView GraphView::node_at(std::size_t index) const
@@ -1208,7 +1237,7 @@ namespace hgraph
     ValueView GraphView::trait_or(std::string_view name) const noexcept
     {
         // This graph's OWN entry only (Python get_trait_or) — no bubbling.
-        if (ops().trait_impl == nullptr) { return ValueView{}; }
+        if (!valid() || ops().trait_impl == nullptr) { return ValueView{}; }
         return ops().trait_impl(ops().context, data(), name);
     }
 
@@ -1254,12 +1283,12 @@ namespace hgraph
 
     RootGraphView GraphView::as_root() const
     {
-        return RootGraphView{GraphView{binding(), data()}};
+        return RootGraphView{GraphView{pointer()}};
     }
 
     NestedGraphView GraphView::as_nested() const
     {
-        return NestedGraphView{GraphView{binding(), data()}};
+        return NestedGraphView{GraphView{pointer()}};
     }
 
     GraphExecutorView GraphView::executor() const
@@ -1291,7 +1320,7 @@ namespace hgraph
 
     const GraphOps &GraphView::ops() const
     {
-        return storage_.binding()->ops_ref();
+        return type().ops_ref();
     }
 
     RootGraphView::RootGraphView() noexcept
@@ -1300,7 +1329,7 @@ namespace hgraph
     }
 
     RootGraphView::RootGraphView(GraphView graph)
-        : GraphView(graph.binding(), graph.data())
+        : GraphView(graph.pointer())
     {
         if (!graph.valid()) { throw std::logic_error("GraphView::as_root requires a live graph"); }
         if (graph.parent_kind() != GraphParentKind::Root)
@@ -1322,7 +1351,7 @@ namespace hgraph
     }
 
     NestedGraphView::NestedGraphView(GraphView graph)
-        : GraphView(graph.binding(), graph.data())
+        : GraphView(graph.pointer())
     {
         if (!graph.valid()) { throw std::logic_error("GraphView::as_nested requires a live graph"); }
         if (graph.parent_kind() != GraphParentKind::Nested)
@@ -1338,14 +1367,14 @@ namespace hgraph
 
     GraphValue::GraphValue() noexcept = default;
 
-    GraphValue::GraphValue(const GraphBuilder &builder, GraphExecutorStorageRef root_executor)
+    GraphValue::GraphValue(const GraphBuilder &builder, ExecutorPtr root_executor)
     {
-        const auto &binding = builder.root_binding();
-        storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
+        const auto type = builder.root_type();
+        storage_ = storage_type::owning_constructed(*type.record(), [&](void *dst) {
             // GraphValue is a friend of GraphBuilder, so we read the owning
             // GlobalState directly to seed this graph's copy.
             construct_graph_storage<RootGraphRuntimeStorage>(
-                binding,
+                type,
                 builder,
                 dst,
                 [&](RootGraphRuntimeStorage &state) {
@@ -1355,9 +1384,9 @@ namespace hgraph
                     }
                     state.global_state = builder.global_state_;
                     state.traits = builder.traits_;
-                    state.root_executor_ref = root_executor;
+                    state.root_executor_ptr = root_executor;
                     state.lifecycle_observers =
-                        &GraphExecutorView{root_executor.binding(), root_executor.data()}.lifecycle_observers();
+                        &GraphExecutorView{root_executor}.lifecycle_observers();
                 });
         });
         attach_nodes();
@@ -1365,10 +1394,10 @@ namespace hgraph
 
     GraphValue::GraphValue(const GraphBuilder &builder, NodePtr parent_node)
     {
-        const auto &binding = builder.nested_binding();
-        storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
+        const auto type = builder.nested_type();
+        storage_ = storage_type::owning_constructed(*type.record(), [&](void *dst) {
             construct_graph_storage<NestedGraphRuntimeStorage>(
-                binding,
+                type,
                 builder,
                 dst,
                 [&](NestedGraphRuntimeStorage &state) {
@@ -1390,8 +1419,8 @@ namespace hgraph
     GraphValue::GraphValue(const GraphBuilder &builder, NodePtr parent_node,
                            void *external_memory, MemoryUtils::StorageLayout available_layout)
     {
-        const auto &binding = builder.nested_binding();
-        const auto required = binding.checked_plan().layout;
+        const auto type = builder.nested_type();
+        const auto required = type.checked_plan().layout;
         if (external_memory == nullptr)
         {
             throw std::invalid_argument("Nested graph external storage requires live memory");
@@ -1403,7 +1432,7 @@ namespace hgraph
         }
 
         construct_graph_storage<NestedGraphRuntimeStorage>(
-            binding,
+            type,
             builder,
             external_memory,
             [&](NestedGraphRuntimeStorage &state) {
@@ -1416,8 +1445,8 @@ namespace hgraph
                 state.lifecycle_observers =
                     &NodeView{parent_node}.graph().lifecycle_observers();
             });
-        auto rollback = make_scope_exit([&]() noexcept { binding.destroy_at(external_memory); });
-        storage_ = storage_type::reference(binding, external_memory);
+        auto rollback = make_scope_exit([&]() noexcept { type.destroy_at(external_memory); });
+        storage_ = storage_type::reference(*type.record(), external_memory);
         external_payload_ = true;
         attach_nodes();
         rollback.release();
@@ -1447,7 +1476,7 @@ namespace hgraph
         }
         if (external_payload_ && storage_.has_value())
         {
-            storage_.binding()->destroy_at(storage_.data());
+            type().destroy_at(storage_.data());
         }
         storage_.reset();
         external_payload_ = false;
@@ -1474,20 +1503,20 @@ namespace hgraph
 
     bool GraphValue::has_value() const noexcept { return storage_.has_value(); }
     bool GraphValue::uses_external_storage() const noexcept { return external_payload_; }
-    const GraphTypeBinding *GraphValue::binding() const noexcept { return storage_.binding(); }
+    GraphTypeRef GraphValue::type() const noexcept { return GraphTypeRef{storage_.binding()}; }
     const GraphTypeMetaData *GraphValue::schema() const noexcept
     {
-        return binding() != nullptr ? binding()->type_meta : nullptr;
+        return type().schema();
     }
 
     GraphView GraphValue::view()
     {
-        return GraphView{binding(), storage_.data()};
+        return GraphView{type(), storage_.data()};
     }
 
     GraphView GraphValue::view() const
     {
-        return GraphView{binding(), const_cast<void *>(storage_.data())};
+        return GraphView{type(), const_cast<void *>(storage_.data())};
     }
 
     void GraphValue::schedule_node(std::size_t node_index, DateTime when)
@@ -1498,7 +1527,7 @@ namespace hgraph
     void GraphValue::attach_nodes()
     {
         if (!has_value()) { return; }
-        const auto &table = binding()->ops_ref();
+        const auto &table = type().ops_ref();
         table.attach_nodes_impl(table.context, storage_.data(), this);
     }
 
@@ -1510,18 +1539,21 @@ namespace hgraph
     GraphBuilder &GraphBuilder::label(std::string label)
     {
         label_ = std::move(label);
+        invalidate_types();
         return *this;
     }
 
     GraphBuilder &GraphBuilder::add_node(NodeBuilder node)
     {
         nodes_.push_back(std::move(node));
+        invalidate_types();
         return *this;
     }
 
     GraphBuilder &GraphBuilder::add_edge(GraphEdge edge)
     {
         edges_.push_back(std::move(edge));
+        invalidate_types();
         return *this;
     }
 
@@ -1529,14 +1561,14 @@ namespace hgraph
 
     ValueView TraitsView::trait(std::string_view name) const noexcept
     {
-        if (graph_.binding() == nullptr) { return ValueView{}; }
-        return GraphView{graph_.binding(), graph_.data()}.trait(name);
+        if (!graph_.bound()) { return ValueView{}; }
+        return GraphView{graph_}.trait(name);
     }
 
     ValueView TraitsView::trait_or(std::string_view name) const noexcept
     {
-        if (graph_.binding() == nullptr) { return ValueView{}; }
-        return GraphView{graph_.binding(), graph_.data()}.trait_or(name);
+        if (!graph_.bound()) { return ValueView{}; }
+        return GraphView{graph_}.trait_or(name);
     }
 
     GraphBuilder &GraphBuilder::trait(std::string_view name, const ValueView &value)
@@ -1569,30 +1601,50 @@ namespace hgraph
     NodeBuilder &GraphBuilder::node_at(std::size_t index)
     {
         if (index >= nodes_.size()) { throw std::out_of_range("GraphBuilder node index is out of range"); }
+        invalidate_types();
         return nodes_[index];
     }
 
-    const GraphTypeBinding &GraphBuilder::binding() const
+    GraphTypeRef GraphBuilder::type() const
     {
-        return root_binding();
+        return root_type();
     }
 
     MemoryUtils::StorageLayout GraphBuilder::nested_storage_layout() const
     {
-        return nested_binding().checked_plan().layout;
+        return nested_type().checked_plan().layout;
     }
 
-    const GraphTypeBinding &GraphBuilder::root_binding() const
+    GraphTypeRef GraphBuilder::root_type() const
     {
-        return graph_runtime_registry().make_root_binding(*this);
+        if (!types_compiled_)
+        {
+            const auto types = graph_runtime_registry().make_types(*this);
+            root_type_ = types.root;
+            nested_type_ = types.nested;
+            types_compiled_ = true;
+        }
+        return root_type_;
     }
 
-    const GraphTypeBinding &GraphBuilder::nested_binding() const
+    GraphTypeRef GraphBuilder::nested_type() const
     {
-        return graph_runtime_registry().make_nested_binding(*this);
+        static_cast<void>(root_type());
+        if (!nested_type_)
+        {
+            throw std::invalid_argument("Nested graphs do not support push source nodes");
+        }
+        return nested_type_;
     }
 
-    GraphValue GraphBuilder::make_root_graph(GraphExecutorStorageRef root_executor) const
+    void GraphBuilder::invalidate_types() noexcept
+    {
+        root_type_ = {};
+        nested_type_ = {};
+        types_compiled_ = false;
+    }
+
+    GraphValue GraphBuilder::make_root_graph(ExecutorPtr root_executor) const
     {
         return GraphValue{*this, root_executor};
     }
@@ -1607,6 +1659,11 @@ namespace hgraph
                                                MemoryUtils::StorageLayout available_layout) const
     {
         return GraphValue{*this, parent_node, external_memory, available_layout};
+    }
+
+    void clear_graph_runtime_types() noexcept
+    {
+        graph_runtime_registry().clear();
     }
 
 }  // namespace hgraph

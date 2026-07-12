@@ -587,10 +587,10 @@ TEST_CASE("graph executor graph is constructed as a root graph")
     CHECK(graph.is_root());
     CHECK_FALSE(graph.is_nested());
     REQUIRE(graph_executor.valid());
-    CHECK(graph_executor.binding() == executor_view.binding());
+    CHECK(graph_executor.type() == executor_view.type());
     CHECK(graph_executor.data() == executor_view.data());
     CHECK_THROWS_AS(graph.as_nested(), std::logic_error);
-    CHECK_THROWS_AS(GraphBuilder{}.make_root_graph(GraphExecutorStorageRef{}), std::invalid_argument);
+    CHECK_THROWS_AS(GraphBuilder{}.make_root_graph(ExecutorPtr{}), std::invalid_argument);
 }
 
 TEST_CASE("static node: RecordableState<TSB> is hidden output-backed state")

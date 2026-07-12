@@ -171,6 +171,74 @@ TEST_CASE("Node runtime types use canonical records and NodePtr views", "[type-e
                       std::invalid_argument);
 }
 
+TEST_CASE("Graph executor and clock runtime families use canonical records", "[type-erasure][runtime]")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder;
+    graph_builder.label("record-backed-graph");
+    const GraphTypeRef root_type = graph_builder.root_type();
+    const GraphTypeRef nested_type = graph_builder.nested_type();
+
+    REQUIRE(root_type.valid());
+    REQUIRE(nested_type.valid());
+    REQUIRE(root_type != nested_type);
+    REQUIRE(root_type.schema() == nested_type.schema());
+    REQUIRE(root_type.record()->schema == &root_type.schema()->header);
+    REQUIRE(root_type.record()->classification().family == TypeFamily::Graph);
+    REQUIRE(root_type.record()->role == TypeRole::Runtime);
+    REQUIRE(std::string{root_type.record()->semantic_name()} == "record-backed-graph");
+    REQUIRE(std::string{root_type.record()->implementation_name()} == "hgraph.graph.root");
+    REQUIRE(std::string{nested_type.record()->implementation_name()} == "hgraph.graph.nested");
+    REQUIRE(root_type.ops_ref().parent_kind == GraphParentKind::Root);
+    REQUIRE(nested_type.ops_ref().parent_kind == GraphParentKind::Nested);
+    REQUIRE(graph_builder.root_type() == root_type);
+    REQUIRE(graph_builder.nested_type() == nested_type);
+
+    GraphExecutorBuilder simulation_builder;
+    simulation_builder.label("record-backed-executor")
+        .graph_builder(graph_builder)
+        .mode(GraphExecutorMode::Simulation);
+    const ExecutorTypeRef simulation_type = simulation_builder.type();
+    GraphExecutorValue simulation = simulation_builder.make_executor();
+    GraphExecutorView simulation_view = simulation.view();
+    EvaluationClockView simulation_clock = simulation_view.evaluation_clock();
+
+    REQUIRE(simulation_type.valid());
+    REQUIRE(simulation_view.type() == simulation_type);
+    REQUIRE(simulation_view.pointer().record() == simulation_type.record());
+    REQUIRE(simulation_type.record()->classification().family == TypeFamily::Executor);
+    REQUIRE(simulation_type.record()->classification().kind ==
+            static_cast<TypeKind>(GraphExecutorMode::Simulation));
+    REQUIRE(std::string{simulation_type.record()->implementation_name()} ==
+            "hgraph.executor.simulation");
+    REQUIRE(simulation_clock.type().valid());
+    REQUIRE(simulation_clock.pointer().record() == simulation_clock.type().record());
+    REQUIRE(simulation_clock.type().record()->classification().family == TypeFamily::Clock);
+    REQUIRE(simulation_clock.type().capabilities() == TypeCapabilities::Viewable);
+    REQUIRE(std::string{simulation_clock.type().record()->implementation_name()} ==
+            "hgraph.clock.simulation");
+
+    GraphExecutorBuilder realtime_builder;
+    realtime_builder.graph_builder(graph_builder).mode(GraphExecutorMode::RealTime);
+    GraphExecutorValue realtime = realtime_builder.make_executor();
+    EvaluationClockView realtime_clock = realtime.view().evaluation_clock();
+
+    REQUIRE(realtime.view().type() != simulation_type);
+    REQUIRE(realtime_clock.type() != simulation_clock.type());
+    REQUIRE(realtime_clock.type().schema() == simulation_clock.type().schema());
+    REQUIRE(std::string{realtime_clock.type().record()->implementation_name()} ==
+            "hgraph.clock.realtime");
+
+    const AnyPtr generic_graph = simulation_view.graph().pointer();
+    const AnyPtr generic_executor = simulation_view.pointer();
+    const AnyPtr generic_clock = simulation_clock.pointer();
+    REQUIRE(GraphTypeRef::checked(generic_graph) == simulation_view.graph().type());
+    REQUIRE(ExecutorTypeRef::checked(generic_executor) == simulation_type);
+    REQUIRE(ClockTypeRef::checked(generic_clock) == simulation_clock.type());
+    REQUIRE_THROWS_AS(GraphTypeRef::checked(generic_executor), std::invalid_argument);
+}
+
 TEST_CASE("NodeValue exposes a type-erased view over node storage")
 {
     using namespace hgraph;
@@ -328,7 +396,7 @@ TEST_CASE("GraphValue wires node views and evaluates scheduled notifications")
     REQUIRE(graph_view.valid());
     REQUIRE(graph_view.schema()->nodes.size() == 2);
     REQUIRE(graph_view.node_count() == 2);
-    const auto &graph_plan = graph_view.binding()->checked_plan();
+    const auto &graph_plan = graph_view.type().checked_plan();
     const auto *node_storage = graph_plan.find_component("nodes");
     REQUIRE(node_storage != nullptr);
     REQUIRE(node_storage->plan->is_tuple());

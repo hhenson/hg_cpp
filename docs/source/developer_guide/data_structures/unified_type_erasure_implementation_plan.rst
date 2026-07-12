@@ -348,13 +348,25 @@ Iteration 5B
    ``hgraph.python.generator`` while retaining the common Node family, Runtime
    role, ``NodeTypeRef``, ``NodePtr``, storage-plan, and ``NodeOps`` paths.
    Wiring-time Python ``Port`` diagnostics expose the producing node's common
-   record fields for inspection.  This records implementation status only;
-   review acceptance and commit status remain open.
+   record fields for inspection.  Review accepted and committed.
 
 Iteration 5C
    Migrate graph schemas, builders, instances, executors, and clocks in that
    order.  Keep distinct families only where the ops ABI and lifecycle are
    genuinely distinct.
+
+   Implemented: Graph, Executor, and Clock remain distinct common families
+   because their ops and lifecycle contracts differ. ``GraphTypeRef``,
+   ``ExecutorTypeRef``, and ``ClockTypeRef`` are one-word canonical identities;
+   their views carry the corresponding two-word typed pointers and their owners
+   store ``TypeRecord`` directly. Root and nested graph records are compiled
+   together over one semantic graph schema and differ only by plan, ops, and
+   implementation label. Graph and executor builders cache their compiled
+   records and invalidate them when type-shaping configuration changes.
+   Simulation, realtime, and mock clocks are read-only projections over
+   executor storage sharing one clock schema. The former graph, executor, and
+   clock ``TypeBinding`` / ``StorageRef`` identities have been removed. Review
+   accepted and committed.
 
 Acceptance
    Mixed native/Python graph construction and execution tests pass for compute,

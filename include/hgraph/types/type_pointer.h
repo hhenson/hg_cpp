@@ -15,6 +15,9 @@ namespace hgraph
 {
     class ValueTypeRef;
     class NodeTypeRef;
+    class GraphTypeRef;
+    class ExecutorTypeRef;
+    class ClockTypeRef;
     enum class AccessMode : std::uintptr_t
     {
         ReadOnly = 0,
@@ -96,6 +99,9 @@ namespace hgraph
         template <TypeFamily Family, TypeRole Role> friend class TypedPtr;
         friend class ValueTypeRef;
         friend class NodeTypeRef;
+        friend class GraphTypeRef;
+        friend class ExecutorTypeRef;
+        friend class ClockTypeRef;
         friend struct detail::TypePointerLayoutAccess;
 
         constexpr AnyPtr(const TypeRecord *record, const void *data, AccessMode access) noexcept
@@ -216,6 +222,9 @@ namespace hgraph
     private:
         friend class ValueTypeRef;
         friend class NodeTypeRef;
+        friend class GraphTypeRef;
+        friend class ExecutorTypeRef;
+        friend class ClockTypeRef;
 
         struct UncheckedTag
         {

@@ -109,10 +109,10 @@ Core elements:
     Runtime bindings for graph inputs, outputs, nested graph boundaries, and parent/child graph communication.
 
 ``GraphStorage``
-    Memory owned by the graph instance. A compiled graph binding carries a
+    Memory owned by the graph instance. A compiled graph type record carries a
     fixed-size storage plan with a graph header, a heterogeneous node-storage
     tuple, and a parallel ``DateTime`` schedule array sized from the graph
-    topology. The graph binding also carries the node-location table that maps
+    topology. The graph record's ops context also carries the node-location table that maps
     ``node_index`` to ``(NodeTypeRef, storage_offset)``. Creating a graph
     instance therefore performs one graph storage allocation rather than
     allocating separate vectors for nodes and schedules.

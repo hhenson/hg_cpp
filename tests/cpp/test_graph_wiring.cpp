@@ -1254,7 +1254,7 @@ TEST_CASE("graph wiring: nested node binds outer input into child graph input")
     CHECK(parent_node.data() == nested_node.data());
 
     auto root_graph = child_graph.root();
-    CHECK(root_graph.binding() == graph.binding());
+    CHECK(root_graph.type() == graph.type());
     CHECK(root_graph.data() == graph.data());
     CHECK(root_graph.executor().data() == executor.view().data());
 

@@ -137,8 +137,7 @@ namespace hgraph
         ValueView (*scalars_view_impl)(const void *context, void *memory) = nullptr;
         NodeSchedulerState *(*scheduler_state_impl)(const void *context, void *memory) = nullptr;
         GlobalStateView (*global_state_view_impl)(const void *context, void *memory) = nullptr;
-        EvaluationClockStorageRef (*evaluation_clock_ref_impl)(const void *context,
-                                                                             void *memory) = nullptr;
+        ClockPtr (*evaluation_clock_ptr_impl)(const void *context, void *memory) = nullptr;
         TSOutputView (*error_output_view_impl)(const void *context, void *memory,
                                                              DateTime evaluation_time) = nullptr;
         TSOutputView (*recordable_state_view_impl)(const void *context, void *memory,
@@ -234,7 +233,7 @@ namespace hgraph
         /** Borrow this node's persistent scheduler state (only valid when ``has_scheduler``). */
         [[nodiscard]] NodeSchedulerState &scheduler_state() const;
         [[nodiscard]] GlobalStateView global_state() const;
-        [[nodiscard]] EvaluationClockStorageRef evaluation_clock_ref() const;
+        [[nodiscard]] ClockPtr evaluation_clock_ptr() const;
         [[nodiscard]] EvaluationClockView evaluation_clock() const;
         [[nodiscard]] TSOutputView error_output(DateTime evaluation_time) const;
         [[nodiscard]] TSOutputView recordable_state(DateTime evaluation_time) const;

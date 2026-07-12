@@ -21,8 +21,10 @@ Ops               ``GraphOps`` — graph-level behaviour vtable:
                   ``start``, ``evaluate``, ``stop``. Construction and
                   destruction are handled by the plan's
                   ``LifecycleOps``, not by ``GraphOps``.
-Binding           ``GraphTypeBinding`` — interned ``(schema, plan,
-                  ops)`` triple.
+Type record       ``TypeRecord`` — canonical ``Graph/Runtime`` identity
+                  selecting schema, plan, ``GraphOps`` ABI, capabilities,
+                  and the root or nested implementation label.
+Type reference    ``GraphTypeRef`` — one-word typed access to the record.
 Builder           ``GraphBuilder`` — reusable builder that turns a
                   schema into runtime ``Graph`` instances, recursively
                   building member nodes and (for nested graphs) child
@@ -48,13 +50,20 @@ Runtime Value/View
 Graphs use the same type-erased runtime shape as values, time-series data,
 and nodes:
 
-``GraphTypeBinding``
-    Interned ``(GraphTypeMetaData, GraphPlan, GraphOps)`` identity.
+``GraphTypeRef`` / ``GraphPtr``
+    ``GraphTypeRef`` is the one-word typed identity for a canonical
+    Graph/Runtime record. ``GraphPtr`` combines that record with graph memory
+    for borrowed runtime access and widens freely to ``AnyPtr``.
+
+    A builder compiles its root and nested records together. Both records point
+    at the same semantic ``GraphTypeMetaData``; root versus nested is
+    representation detail selected by distinct plans, ``GraphOps`` tables, and
+    ``hgraph.graph.root`` / ``hgraph.graph.nested`` implementation labels.
 
 ``GraphValue``
     Owns graph storage. The graph storage plan contains a flattened
     heterogeneous node-storage tuple and a schedule entry per node. The graph
-    binding carries a node-location table, so ``node_at(index)`` resolves to
+    record's ops context carries a node-location table, so ``node_at(index)`` resolves to
     a ``NodeView`` by combining the node's type record with the indexed storage
     offset. When graph storage is moved, child node parent links are reattached
     so input notifications continue to schedule through the owning graph.
@@ -68,10 +77,19 @@ and nodes:
     and callers pass time explicitly when projecting node input/output views.
 
 ``GraphExecutorValue`` / ``GraphExecutorView``
-    The executor layer is also type-erased. The first pass provides a
-    simulation executor that starts the graph, advances through scheduled
-    times, evaluates graph cycles, and stops the graph when no work remains
-    or the configured end time is reached.
+    The executor layer uses its own Executor/Runtime record because its run,
+    stop, push-queue, and lifecycle-observer ABI is distinct from ``GraphOps``.
+    ``ExecutorTypeRef`` and ``ExecutorPtr`` retain that known family on typed
+    paths. Simulation and realtime modes are executor schema kinds and select
+    separate plans and implementation records.
+
+``EvaluationClockView``
+    A read-only ``ClockPtr`` projection over executor storage. Simulation,
+    realtime, and test clocks share one semantic clock schema while their
+    records select different clock ops and implementation labels. The clock
+    record does not own or separately allocate the executor memory and therefore
+    advertises only the ``Viewable`` capability, even though its plan describes
+    the executor allocation that the pointer projects.
 
 The first graph implementation intentionally keeps edge binding in the
 builder path. Runtime evaluation does not switch on node kinds; it walks the
@@ -81,7 +99,7 @@ Runtime Storage Layout
 ----------------------
 
 A graph instance is one owning ``GraphValue`` storage allocation described by
-the graph binding's ``StoragePlan``. The plan is a named tuple whose fields are:
+the graph type record's ``StoragePlan``. The plan is a named tuple whose fields are:
 
 .. code-block:: text
 
@@ -96,12 +114,12 @@ node with input/output, a node with local state, and a nested-graph node all
 have different storage plans. The graph plan therefore colocates each node's
 actual node storage plan in a tuple and records where each payload starts.
 
-The graph binding carries the lookup information needed to keep node access
+The graph record carries the lookup information needed to keep node access
 index-based:
 
 .. code-block:: text
 
-   GraphTypeBinding
+   TypeRecord (Graph / Runtime)
    +-- GraphTypeMetaData
    |   +-- nodes[0..N)                  schema and rank-order identity
    |   +-- edges[0..M)                  source/target paths
@@ -133,8 +151,8 @@ index-based:
    }
 
 The ``node_locations`` table is part of ``GraphRuntimeContext``, reached through
-the graph binding's ``GraphOps.context``. It is compiled once for a graph shape
-and shared by all graph instances with that binding. The per-instance
+the graph record's ``GraphOps.context``. It is compiled once for a graph shape
+and shared by all graph instances with that record. The per-instance
 ``GraphValue`` storage does not contain this index table; it contains only the
 header, node payload bytes, and schedule array.
 
@@ -143,7 +161,7 @@ Accessing node ``i`` therefore has two parts:
 .. code-block:: text
 
    // graph context metadata, shared by graph instances
-   context  = graph.binding.ops.context
+   context  = graph.type.ops.context
    location = context.node_locations[i]
 
    // instance storage, unique to this GraphValue

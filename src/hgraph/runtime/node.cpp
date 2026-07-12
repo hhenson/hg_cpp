@@ -147,10 +147,10 @@ namespace hgraph
                 node_component(memory, context.layout.global_state_offset));
         }
 
-        [[nodiscard]] EvaluationClockStorageRef &node_evaluation_clock_ref(const NodeRuntimeContext &context,
-                                                                           void *memory)
+        [[nodiscard]] ClockPtr &node_evaluation_clock_ptr(const NodeRuntimeContext &context,
+                                                          void *memory)
         {
-            return *MemoryUtils::cast<EvaluationClockStorageRef>(
+            return *MemoryUtils::cast<ClockPtr>(
                 node_component(memory, context.layout.evaluation_clock_offset));
         }
 
@@ -395,7 +395,7 @@ namespace hgraph
             {
                 const auto *component = plan.find_component("evaluation_clock");
                 if (component == nullptr) { throw std::logic_error("Node storage plan is missing evaluation_clock"); }
-                std::construct_at(MemoryUtils::cast<EvaluationClockStorageRef>(
+                std::construct_at(MemoryUtils::cast<ClockPtr>(
                                       MemoryUtils::advance(memory, component->offset)));
                 constructed.push_back(component);
             }
@@ -707,7 +707,7 @@ namespace hgraph
             return *cached;
         }
 
-        EvaluationClockStorageRef evaluation_clock_ref_impl(const void *context, void *memory)
+        ClockPtr evaluation_clock_ptr_impl(const void *context, void *memory)
         {
             const auto &runtime = runtime_context(context);
             auto       &state   = node_storage(runtime, memory);
@@ -717,17 +717,17 @@ namespace hgraph
                 {
                     throw std::logic_error("Node evaluation clock requires an attached graph");
                 }
-                return state.graph->view().executor().evaluation_clock_ref();
+                return state.graph->view().executor().evaluation_clock_ptr();
             }
 
-            auto &cached = node_evaluation_clock_ref(runtime, memory);
+            auto &cached = node_evaluation_clock_ptr(runtime, memory);
             if (!cached.has_value())
             {
                 if (state.graph == nullptr)
                 {
                     throw std::logic_error("Node evaluation clock cache requires an attached graph");
                 }
-                cached = state.graph->view().executor().evaluation_clock_ref();
+                cached = state.graph->view().executor().evaluation_clock_ptr();
             }
             return cached;
         }
@@ -902,9 +902,9 @@ namespace hgraph
                 if (ops.scalars_view_impl == nullptr) { ops.scalars_view_impl = &scalars_view_impl; }
                 if (ops.scheduler_state_impl == nullptr) { ops.scheduler_state_impl = &scheduler_state_impl; }
                 if (ops.global_state_view_impl == nullptr) { ops.global_state_view_impl = &global_state_view_impl; }
-                if (ops.evaluation_clock_ref_impl == nullptr)
+                if (ops.evaluation_clock_ptr_impl == nullptr)
                 {
-                    ops.evaluation_clock_ref_impl = &evaluation_clock_ref_impl;
+                    ops.evaluation_clock_ptr_impl = &evaluation_clock_ptr_impl;
                 }
                 if (ops.error_output_view_impl == nullptr) { ops.error_output_view_impl = &error_output_view_impl; }
                 if (ops.recordable_state_view_impl == nullptr)
@@ -1104,7 +1104,7 @@ namespace hgraph
         }
         if (schema.uses_evaluation_clock)
         {
-            builder.add_field("evaluation_clock", MemoryUtils::plan_for<EvaluationClockStorageRef>());
+            builder.add_field("evaluation_clock", MemoryUtils::plan_for<ClockPtr>());
         }
         if (schema.error_output_schema != nullptr)
         {
@@ -1248,14 +1248,14 @@ namespace hgraph
         return ops().global_state_view_impl(ops().context, data());
     }
 
-    EvaluationClockStorageRef NodeView::evaluation_clock_ref() const
+    ClockPtr NodeView::evaluation_clock_ptr() const
     {
-        return ops().evaluation_clock_ref_impl(ops().context, data());
+        return ops().evaluation_clock_ptr_impl(ops().context, data());
     }
 
     EvaluationClockView NodeView::evaluation_clock() const
     {
-        return EvaluationClockView{evaluation_clock_ref()};
+        return EvaluationClockView{evaluation_clock_ptr()};
     }
 
     TSOutputView NodeView::error_output(DateTime evaluation_time) const

@@ -9,6 +9,7 @@
 
 #include <hgraph/runtime/evaluation_clock.h>
 #include <hgraph/runtime/global_state.h>
+#include <hgraph/runtime/graph_type_ref.h>
 #include <hgraph/runtime/node.h>
 
 #include <cstddef>
@@ -27,12 +28,6 @@ namespace hgraph
     class NestedGraphView;
     class RootGraphView;
     class GraphView;
-    struct GraphExecutorOps;
-    struct GraphExecutorTypeMetaData;
-
-    using GraphExecutorTypeBinding = TypeBinding<GraphExecutorTypeMetaData, GraphExecutorOps>;
-    using GraphExecutorStorageRef  = MemoryUtils::StorageRef<GraphExecutorTypeBinding>;
-
     /** Parent role for a graph runtime allocation. */
     enum class GraphParentKind : std::uint8_t
     {
@@ -112,6 +107,7 @@ struct HGRAPH_EXPORT GraphEdge
     /** Interned graph schema descriptor. */
     struct HGRAPH_EXPORT GraphTypeMetaData
     {
+        SchemaHeader header{};
         const char *display_name{nullptr};
         std::vector<GraphNodeEntry> nodes{};
         std::vector<GraphEdge> edges{};
@@ -154,22 +150,21 @@ struct HGRAPH_EXPORT GraphEdge
         LifecycleObserverList *(*lifecycle_observers_impl)(const void *context, const void *memory) noexcept = nullptr;
     };
 
-    using GraphTypeBinding = TypeBinding<GraphTypeMetaData, GraphOps>;
-    using GraphStorageRef  = MemoryUtils::StorageRef<GraphTypeBinding>;
-
     /** Borrowed type-erased view over graph runtime storage. */
     class HGRAPH_EXPORT GraphView
     {
       public:
         GraphView() noexcept;
-        GraphView(const GraphTypeBinding *binding, void *memory) noexcept;
+        explicit GraphView(GraphPtr pointer) noexcept;
+        GraphView(GraphTypeRef type, void *memory) noexcept;
         GraphView(const GraphView &) = delete;
         GraphView &operator=(const GraphView &) = delete;
         GraphView(GraphView &&) noexcept = default;
         GraphView &operator=(GraphView &&) noexcept = default;
 
         [[nodiscard]] bool valid() const noexcept;
-        [[nodiscard]] const GraphTypeBinding *binding() const noexcept;
+        [[nodiscard]] GraphTypeRef type() const noexcept;
+        [[nodiscard]] GraphPtr pointer() const noexcept;
         [[nodiscard]] const GraphTypeMetaData *schema() const noexcept;
         [[nodiscard]] void *data() const noexcept;
 
@@ -241,7 +236,7 @@ struct HGRAPH_EXPORT GraphEdge
         [[nodiscard]] const GraphOps &ops() const;
 
       private:
-        GraphStorageRef storage_{};
+        GraphPtr pointer_{};
     };
 
     /** Root-specific graph view. A root graph has a graph executor parent. */
@@ -277,23 +272,23 @@ struct HGRAPH_EXPORT GraphEdge
     {
       public:
         TraitsView() noexcept = default;
-        explicit TraitsView(GraphStorageRef graph) noexcept : graph_(graph) {}
+        explicit TraitsView(GraphPtr graph) noexcept : graph_(graph) {}
 
         [[nodiscard]] ValueView trait(std::string_view name) const noexcept;
         [[nodiscard]] ValueView trait_or(std::string_view name) const noexcept;
 
       private:
-        GraphStorageRef graph_{};   // borrowed (binding, memory) cursor — the standard value-instance reference
+        GraphPtr graph_{};
     };
 
     /** Owning graph value. */
     class HGRAPH_EXPORT GraphValue
     {
       public:
-        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, GraphTypeBinding>;
+        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
 
         GraphValue() noexcept;
-        GraphValue(const GraphBuilder &builder, GraphExecutorStorageRef root_executor);
+        GraphValue(const GraphBuilder &builder, ExecutorPtr root_executor);
         GraphValue(const GraphBuilder &builder, NodePtr parent_node);
         ~GraphValue();
 
@@ -305,7 +300,7 @@ struct HGRAPH_EXPORT GraphEdge
         [[nodiscard]] bool has_value() const noexcept;
         /** True when the graph payload is constructed in caller-owned storage. */
         [[nodiscard]] bool uses_external_storage() const noexcept;
-        [[nodiscard]] const GraphTypeBinding *binding() const noexcept;
+        [[nodiscard]] GraphTypeRef type() const noexcept;
         [[nodiscard]] const GraphTypeMetaData *schema() const noexcept;
 
         [[nodiscard]] GraphView view();
@@ -362,10 +357,12 @@ struct HGRAPH_EXPORT GraphEdge
         /** Mutable access to a wired node builder (nested operators adjust per-instance endpoints). */
         [[nodiscard]] NodeBuilder &node_at(std::size_t index);
         [[nodiscard]] const std::vector<GraphEdge> &edges() const noexcept;
-        [[nodiscard]] const GraphTypeBinding &binding() const;
+        [[nodiscard]] GraphTypeRef type() const;
+        [[nodiscard]] GraphTypeRef root_type() const;
+        [[nodiscard]] GraphTypeRef nested_type() const;
         /** Storage required by one nested instance of this graph. */
         [[nodiscard]] MemoryUtils::StorageLayout nested_storage_layout() const;
-        [[nodiscard]] GraphValue make_root_graph(GraphExecutorStorageRef root_executor) const;
+        [[nodiscard]] GraphValue make_root_graph(ExecutorPtr root_executor) const;
         [[nodiscard]] GraphValue make_nested_graph(NodePtr parent_node) const;
         /** Construct a nested graph in caller-owned, suitably aligned storage. */
         [[nodiscard]] GraphValue make_nested_graph(NodePtr parent_node,
@@ -375,15 +372,21 @@ struct HGRAPH_EXPORT GraphEdge
       private:
         friend class GraphValue;
 
-        [[nodiscard]] const GraphTypeBinding &root_binding() const;
-        [[nodiscard]] const GraphTypeBinding &nested_binding() const;
+        void invalidate_types() noexcept;
 
         std::string                   label_{};
         std::vector<NodeBuilder>      nodes_{};
         std::vector<GraphEdge>        edges_{};
         GlobalState                   global_state_{};
         GlobalState                   traits_{};   // trait store: same value-layer Map<string, Any> shape
+        mutable GraphTypeRef          root_type_{};
+        mutable GraphTypeRef          nested_type_{};
+        mutable bool                  types_compiled_{false};
     };
+
+    HGRAPH_EXPORT void clear_graph_runtime_types() noexcept;
+
+    static_assert(offsetof(GraphTypeMetaData, header) == 0);
 
 }  // namespace hgraph
 
