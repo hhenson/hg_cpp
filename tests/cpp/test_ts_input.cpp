@@ -1,9 +1,11 @@
+#include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/value/value.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstdint>
 #include <ostream>
 #include <stdexcept>
@@ -1176,4 +1178,144 @@ TEST_CASE("TSInput shape casts return endpoint views for slot collections")
 
     active_set.make_passive();
     active_dict_child.make_passive();
+}
+
+TEST_CASE("TSW input removed value is limited to the current evaluation cycle")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *window_schema = registry.tsw(integer, 1, 1);
+    TSOutput output{window_schema};
+    TSInput input{TSInputBuilderFactory::checked_builder_for(
+        *window_schema, TSEndpointSchema::peered(window_schema))};
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
+    auto binding_view = input.view(nullptr, t1);
+    binding_view.bind_output(output.view(t1));
+
+    Value one{std::int32_t{1}};
+    Value two{std::int32_t{2}};
+    {
+        auto output_view = output.data_view();
+        auto window = output_view.as_window();
+        auto mutation = window.begin_mutation(t1);
+        mutation.push(one.view());
+    }
+    auto first_input = input.view(nullptr, t1);
+    auto first_window = first_input.as_window();
+    REQUIRE_FALSE(first_window.has_removed_value());
+    {
+        auto output_view = output.data_view();
+        auto window = output_view.as_window();
+        auto mutation = window.begin_mutation(t2);
+        mutation.push(two.view());
+    }
+
+    auto current_input = input.view(nullptr, t2);
+    auto current = current_input.as_window();
+    REQUIRE(current.has_removed_value());
+    REQUIRE(current.removed_value().checked_as<std::int32_t>() == 1);
+
+    auto no_tick_input = input.view(nullptr, t3);
+    auto no_tick = no_tick_input.as_window();
+    REQUIRE_FALSE(no_tick.has_removed_value());
+    REQUIRE_THROWS_AS(no_tick.removed_value(), std::logic_error);
+    REQUIRE(no_tick.back().checked_as<std::int32_t>() == 2);
+}
+
+TEST_CASE("TSW ranges use stable ops contexts across data and endpoint roles")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory = TSDataPlanFactory::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("tsw_range_context_int32");
+    const auto *schema = registry.tsw(integer, 3, 1);
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
+    const auto t4 = t3 + TimeDelta{1};
+
+    const auto populate = [&](TSWDataView window) {
+        for (const auto [time, raw] : std::array{
+                 std::pair{t1, std::int32_t{11}},
+                 std::pair{t2, std::int32_t{22}},
+                 std::pair{t3, std::int32_t{33}},
+             })
+        {
+            Value value{raw};
+            auto mutation = window.begin_mutation(time);
+            mutation.push(value.view());
+        }
+    };
+
+    const auto require_ranges = [&](TSWDataView window) {
+        const auto *ops = &static_cast<const TSWDataOps &>(window.base().ops());
+        const auto values = window.values();
+        const auto time_values = window.time_values();
+        const auto times = window.value_times();
+        REQUIRE(values.context == ops);
+        REQUIRE(time_values.context == ops);
+        REQUIRE(times.context == ops);
+
+        std::vector<std::int32_t> observed_values;
+        for (const auto value : values) observed_values.push_back(value.checked_as<std::int32_t>());
+        REQUIRE(observed_values == std::vector<std::int32_t>{11, 22, 33});
+
+        std::vector<DateTime> observed_times;
+        for (const auto time : times) observed_times.push_back(time);
+        REQUIRE(observed_times == std::vector<DateTime>{t1, t2, t3});
+
+        std::vector<DateTime> observed_time_values;
+        for (const auto value : time_values) observed_time_values.push_back(value.checked_as<DateTime>());
+        REQUIRE(observed_time_values == observed_times);
+    };
+
+    TSData data{factory.data_type_for(schema)};
+    auto data_view = data.view();
+    populate(data_view.as_window());
+    require_ranges(data_view.as_window());
+
+    TSOutput output{schema};
+    auto output_data = output.data_view();
+    populate(output_data.as_window());
+    auto output_root = output.view(t3);
+    auto output_window = output_root.as_window();
+    require_ranges(output_window.data_view());
+    REQUIRE(range_size(output_window.values()) == 3);
+    REQUIRE(range_size(output_window.time_values()) == 3);
+    REQUIRE(range_size(output_window.value_times()) == 3);
+
+    TSInput owned{TSInputBuilderFactory::checked_builder_for(
+        *schema, TSEndpointSchema::owned(schema))};
+    auto owned_root = owned.view(nullptr, t3);
+    auto owned_window = owned_root.as_window();
+    auto owned_data = owned_window.data_view();
+    TSDataView owned_writable{factory.output_type_for(schema).as_role(),
+                              const_cast<void *>(owned_data.base().data())};
+    populate(owned_writable.as_window());
+    auto populated_owned_root = owned.view(nullptr, t3);
+    auto populated_owned_window = populated_owned_root.as_window();
+    require_ranges(populated_owned_window.data_view());
+    REQUIRE(range_size(populated_owned_window.values()) == 3);
+    REQUIRE_THROWS_AS(populated_owned_window.data_view().base().begin_mutation(t4), std::logic_error);
+
+    TSInput peered{TSInputBuilderFactory::checked_builder_for(
+        *schema, TSEndpointSchema::peered(schema))};
+    auto peered_binding = peered.view(nullptr, t3);
+    peered_binding.bind_output(output.view(t3));
+    auto peered_root = peered.view(nullptr, t3);
+    auto peered_window = peered_root.as_window();
+    require_ranges(peered_window.data_view());
+    REQUIRE(range_size(peered_window.values()) == 3);
+
+    const auto *legacy = factory.legacy_binding_for(schema);
+    REQUIRE(legacy != nullptr);
+    auto data_base = data.view();
+    TSDataView legacy_view{legacy, const_cast<void *>(data_base.data())};
+    REQUIRE(legacy_view.storage_type().legacy_backed());
+    require_ranges(legacy_view.as_window());
 }

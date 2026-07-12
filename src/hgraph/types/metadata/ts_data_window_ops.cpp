@@ -1405,6 +1405,8 @@ namespace hgraph::ts_data_plan_factory_detail
             const MemoryUtils::StoragePlan *plan{nullptr};
             std::size_t                     value_offset{0};
             std::size_t                     tracking_offset{0};
+            TypeRole                        role{TypeRole::Invalid};
+            bool                            embedded{false};
 
             [[nodiscard]] bool operator==(const TSWContextKey &) const noexcept = default;
         };
@@ -1417,6 +1419,8 @@ namespace hgraph::ts_data_plan_factory_detail
                                          std::hash<const MemoryUtils::StoragePlan *>{}(key.plan));
                 seed = combine_hash(seed, key.value_offset);
                 seed = combine_hash(seed, key.tracking_offset);
+                seed = combine_hash(seed, static_cast<std::size_t>(key.role));
+                seed = combine_hash(seed, key.embedded);
                 return seed;
             }
         };
@@ -1518,7 +1522,9 @@ namespace hgraph::ts_data_plan_factory_detail
     [[nodiscard]] const TSDataOps &window_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                       const MemoryUtils::StoragePlan &plan,
                                                       std::size_t value_offset,
-                                                      std::size_t tracking_offset)
+                                                      std::size_t tracking_offset,
+                                                      TypeRole role,
+                                                      bool embedded)
     {
         const auto element_binding = ValuePlanFactory::instance().type_for(schema.value_type);
         if (!element_binding)
@@ -1529,7 +1535,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
         std::lock_guard<std::mutex> lock(window_context_mutex());
         auto                       &contexts = window_contexts();
-        const TSWContextKey         key{&schema, &plan, value_offset, tracking_offset};
+        const TSWContextKey         key{&schema, &plan, value_offset, tracking_offset, role, embedded};
         if (const auto it = contexts.find(key); it != contexts.end()) { return it->second->ops; }
 
         const auto *window_component = plan.find_component("window");

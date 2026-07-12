@@ -38,6 +38,43 @@ namespace hgraph
             return {};
         }
 
+        [[nodiscard]] std::string_view standalone_label(const TSValueTypeMetaData &schema,
+                                                        TypeRole role,
+                                                        bool embedded)
+        {
+            if (schema.kind == TSTypeKind::TSL && schema.fixed_size() == 0)
+            {
+                if (embedded)
+                    return role == TypeRole::Data ? "ts.tsl.dynamic.data.embedded"
+                         : role == TypeRole::Input ? "ts.tsl.dynamic.input.embedded"
+                                                   : "ts.tsl.dynamic.output.embedded";
+                return role == TypeRole::Data ? "ts.tsl.dynamic.data.root"
+                     : role == TypeRole::Input ? "ts.tsl.dynamic.input.owned"
+                                               : "ts.tsl.dynamic.output.root";
+            }
+            if (schema.kind == TSTypeKind::TSW)
+            {
+                if (embedded)
+                {
+                    if (schema.is_duration_based())
+                        return role == TypeRole::Data ? "ts.tsw.duration.data.embedded"
+                             : role == TypeRole::Input ? "ts.tsw.duration.input.embedded"
+                                                       : "ts.tsw.duration.output.embedded";
+                    return role == TypeRole::Data ? "ts.tsw.tick.data.embedded"
+                         : role == TypeRole::Input ? "ts.tsw.tick.input.embedded"
+                                                   : "ts.tsw.tick.output.embedded";
+                }
+                if (schema.is_duration_based())
+                    return role == TypeRole::Data ? "ts.tsw.duration.data.root"
+                         : role == TypeRole::Input ? "ts.tsw.duration.input.owned"
+                                                   : "ts.tsw.duration.output.root";
+                return role == TypeRole::Data ? "ts.tsw.tick.data.root"
+                     : role == TypeRole::Input ? "ts.tsw.tick.input.owned"
+                                               : "ts.tsw.tick.output.root";
+            }
+            return {};
+        }
+
         [[nodiscard]] bool migrated_root(const TSValueTypeMetaData *schema) noexcept
         {
             return is_migrated_ts_root_schema(schema);
@@ -50,6 +87,97 @@ namespace hgraph
                 fmt::format("TSDataPlanFactory: slot-oriented TSData storage is not implemented for kind {}", kind));
         }
     } // namespace
+
+    namespace ts_data_plan_factory_detail
+    {
+        TSStorageTypeRef standalone_ts_storage_type(const TSValueTypeMetaData &schema,
+                                                    TypeRole role,
+                                                    bool embedded)
+        {
+            if (role != TypeRole::Data && role != TypeRole::Input && role != TypeRole::Output)
+                throw std::invalid_argument("standalone TSData storage requires a time-series role");
+            if (!is_migrated_ts_root_schema(&schema))
+                throw std::invalid_argument("standalone TSData storage requires a migrated schema");
+
+            auto &factory = TSDataPlanFactory::instance();
+            const auto *plan = factory.plan_for(&schema);
+            if (plan == nullptr) throw std::logic_error("standalone TSData storage plan is not resolved");
+
+            if (is_dynamic_list_ts_data(schema))
+            {
+                const auto *element_schema = schema.element_ts();
+                if (element_schema == nullptr)
+                    throw std::logic_error("dynamic TSL element schema is not resolved");
+                const bool element_embedded = is_dynamic_list_ts_data(*element_schema) ||
+                                              is_window_ts_data(*element_schema);
+                const auto element_type = standalone_ts_storage_type(*element_schema, role, element_embedded);
+                const auto &ops = dynamic_list_ts_data_ops(schema, *plan, 0, element_type, role, embedded);
+                return TSStorageTypeRef{
+                    intern_ts_type(schema, role, *plan, ops, standalone_label(schema, role, embedded))};
+            }
+
+            if (is_window_ts_data(schema))
+            {
+                const auto *window = plan->find_component("window");
+                const auto *tracking = plan->find_component("tracking");
+                if (window == nullptr || tracking == nullptr)
+                    throw std::logic_error("standalone TSW storage components are not resolved");
+                const auto &ops = window_ts_data_ops(schema, *plan, window->offset, tracking->offset,
+                                                     role, embedded);
+                return TSStorageTypeRef{
+                    intern_ts_type(schema, role, *plan, ops, standalone_label(schema, role, embedded))};
+            }
+
+            if (is_fixed_structured_ts_data(schema))
+            {
+                const auto *value = plan->find_component("value");
+                const auto *aux = plan->find_component("aux");
+                if (value == nullptr || aux == nullptr)
+                    throw std::logic_error("standalone fixed TSData components are not resolved");
+                return embedded_ts_storage_type(schema, role, *plan, value->offset, aux->offset, !embedded);
+            }
+
+            if (is_slot_ts_data(schema))
+            {
+                const auto &ops = slot_ts_data_ops(schema, *plan, 0, role, embedded);
+                const auto label = schema.kind == TSTypeKind::TSS
+                                       ? embedded
+                                             ? role == TypeRole::Data ? "ts.tss.data.embedded"
+                                               : role == TypeRole::Input ? "ts.tss.input.embedded"
+                                                                         : "ts.tss.output.embedded"
+                                             : role == TypeRole::Data ? "ts.tss.data.root"
+                                               : role == TypeRole::Input ? "ts.tss.input.owned"
+                                                                         : "ts.tss.output.root"
+                                       : embedded
+                                             ? role == TypeRole::Data ? "ts.tsd.data.embedded"
+                                               : role == TypeRole::Input ? "ts.tsd.input.embedded"
+                                                                         : "ts.tsd.output.embedded"
+                                             : role == TypeRole::Data ? "ts.tsd.data.root"
+                                               : role == TypeRole::Input ? "ts.tsd.input.owned"
+                                                                         : "ts.tsd.output.root";
+                return TSStorageTypeRef{intern_ts_type(schema, role, *plan, ops, label)};
+            }
+
+            const auto *value = plan->find_component("value");
+            const auto *tracking = plan->find_component("tracking");
+            if (value == nullptr || tracking == nullptr)
+                throw std::logic_error("standalone scalar TSData components are not resolved");
+            if (embedded)
+                return embedded_ts_storage_type(schema, role, *plan, value->offset, tracking->offset, false);
+            const auto value_type = ValuePlanFactory::instance().type_for(schema.value_schema);
+            const auto delta_type = ValuePlanFactory::instance().type_for(schema.delta_value_schema);
+            if (!value_type || !delta_type)
+                throw std::logic_error("standalone scalar TSData value types are not resolved");
+            const auto &ops = atomic_ts_data_ops(schema.kind, value_type, delta_type, *plan,
+                                                 value->offset, tracking->offset);
+            const auto label = schema.kind == TSTypeKind::REF
+                                   ? role == TypeRole::Data ? std::string_view{"ts.ref.data.root"}
+                                     : role == TypeRole::Input ? std::string_view{"ts.ref.input.owned"}
+                                                               : std::string_view{"ts.ref.output.root"}
+                                   : std::string_view{};
+            return TSStorageTypeRef{intern_ts_type(schema, role, *plan, ops, label)};
+        }
+    }  // namespace ts_data_plan_factory_detail
 
     TSDataPlanFactory &TSDataPlanFactory::instance()
     {
@@ -139,6 +267,13 @@ namespace hgraph
             std::lock_guard<std::mutex> lock(mutex_);
             if (const auto it = data_type_cache_.find(schema); it != data_type_cache_.end()) return it->second;
         }
+        if (plan_detail::is_dynamic_list_ts_data(*schema) || plan_detail::is_window_ts_data(*schema))
+        {
+            const auto storage_type = plan_detail::standalone_ts_storage_type(*schema, TypeRole::Data);
+            const auto type = TSDataTypeRef::checked(storage_type.type_ref());
+            std::lock_guard<std::mutex> lock(mutex_);
+            return data_type_cache_.try_emplace(schema, type).first->second;
+        }
         const auto *plan = plan_for(schema);
         if (slot_root(schema))
         {
@@ -183,6 +318,13 @@ namespace hgraph
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (const auto it = output_type_cache_.find(schema); it != output_type_cache_.end()) return it->second;
+        }
+        if (plan_detail::is_dynamic_list_ts_data(*schema) || plan_detail::is_window_ts_data(*schema))
+        {
+            const auto storage_type = plan_detail::standalone_ts_storage_type(*schema, TypeRole::Output);
+            const auto type = TSOutputTypeRef::checked(storage_type.type_ref());
+            std::lock_guard<std::mutex> lock(mutex_);
+            return output_type_cache_.try_emplace(schema, type).first->second;
         }
         if (fixed_root(schema))
         {
@@ -336,7 +478,8 @@ namespace hgraph
                 throw std::logic_error("TSDataPlanFactory: dynamic TSL plan is not resolvable");
             }
 
-            const auto &ops = plan_detail::dynamic_list_ts_data_ops(*schema, *plan, 0);
+            const auto type = plan_detail::standalone_ts_storage_type(*schema, TypeRole::Data);
+            const auto &ops = type.ops_ref();
             const auto &binding = TSDataBinding::intern(*schema, *plan, ops);
 
             std::lock_guard<std::mutex> lock(mutex_);
@@ -410,8 +553,8 @@ namespace hgraph
                 throw std::logic_error("TSDataPlanFactory: TSW TSData plan is missing required components");
             }
 
-            const auto &ops =
-                plan_detail::window_ts_data_ops(*schema, *plan, window_component->offset, tracking_component->offset);
+            const auto type = plan_detail::standalone_ts_storage_type(*schema, TypeRole::Data);
+            const auto &ops = type.ops_ref();
             const auto &binding = TSDataBinding::intern(*schema, *plan, ops);
 
             std::lock_guard<std::mutex> lock(mutex_);

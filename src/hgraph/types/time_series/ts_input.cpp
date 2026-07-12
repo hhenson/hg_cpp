@@ -81,9 +81,13 @@ namespace hgraph
                                          endpoint_schema.is_owned();
                 const bool owned_keyed = (schema->kind == TSTypeKind::TSS || schema->kind == TSTypeKind::TSD) &&
                                          endpoint_schema.is_owned();
+                const bool owned_dynamic = ((schema->kind == TSTypeKind::TSL && schema->fixed_size() == 0) ||
+                                            schema->kind == TSTypeKind::TSW) &&
+                                           endpoint_schema.is_owned();
                 const bool structural_root = (schema->kind == TSTypeKind::TSB || schema->kind == TSTypeKind::TSD) &&
                                              endpoint_schema.is_non_peered();
-                if (!direct_peered && !owned_scalar && !owned_fixed && !owned_keyed && !structural_root)
+                if (!direct_peered && !owned_scalar && !owned_fixed && !owned_keyed && !owned_dynamic &&
+                    !structural_root)
                 {
                     throw std::invalid_argument(
                         "TSInput root must be peered, owned, or a supported non-peered composite");
@@ -2142,7 +2146,9 @@ namespace hgraph
                                 schema->kind == TSTypeKind::REF;
             const bool fixed = fixed_migrated_schema(schema);
             const bool keyed = schema->kind == TSTypeKind::TSS || schema->kind == TSTypeKind::TSD;
-            if (!scalar && !fixed && !keyed)
+            const bool dynamic_list = schema->kind == TSTypeKind::TSL && schema->fixed_size() == 0;
+            const bool window = schema->kind == TSTypeKind::TSW;
+            if (!scalar && !fixed && !keyed && !dynamic_list && !window)
                 return TSStorageTypeRef{
                     input_data_binding_for(endpoint_schema, root_plan, storage_offset, storage_role)};
 
@@ -2153,6 +2159,8 @@ namespace hgraph
                 const auto role = storage_role == TypeRole::Output ? TypeRole::Output : TypeRole::Input;
                 const auto label = schema->kind == TSTypeKind::TSS ? std::string_view{"ts.tss.input.target"}
                                  : schema->kind == TSTypeKind::TSD ? std::string_view{"ts.tsd.input.target"}
+                                 : dynamic_list ? std::string_view{"ts.tsl.dynamic.input.target"}
+                                 : window ? std::string_view{"ts.tsw.input.target"}
                                  : schema->kind == TSTypeKind::REF ? std::string_view{"ts.ref.input.target"}
                                  : role == TypeRole::Output
                                        ? std::string_view{"ts.fixed.output.embedded"}
@@ -2165,6 +2173,9 @@ namespace hgraph
             if (endpoint_schema.is_owned())
             {
                 const auto &local_plan = input_storage_plan(endpoint_schema);
+                if (dynamic_list || window)
+                    return ts_data_plan_factory_detail::standalone_ts_storage_type(
+                        *schema, storage_role, !root_record);
                 if (keyed)
                 {
                     const auto &keyed_plan = root_record ? root_plan : local_plan;
@@ -2225,6 +2236,9 @@ namespace hgraph
                 return TSStorageTypeRef{intern_ts_type(
                     *schema, storage_role, root_plan, ops, label)};
             }
+
+            if (dynamic_list || window)
+                throw std::invalid_argument("non-peered dynamic TSL and TSW inputs are not supported");
 
             const auto *binding = input_data_binding_for(
                 endpoint_schema, root_plan, storage_offset, storage_role);
@@ -2503,10 +2517,14 @@ namespace hgraph
         const bool owned_keyed = schema != nullptr &&
                                  (schema->kind == TSTypeKind::TSS || schema->kind == TSTypeKind::TSD) &&
                                  plan.endpoint_schema().is_owned();
+        const bool owned_dynamic = schema != nullptr &&
+                                   ((schema->kind == TSTypeKind::TSL && schema->fixed_size() == 0) ||
+                                    schema->kind == TSTypeKind::TSW) &&
+                                   plan.endpoint_schema().is_owned();
         const bool structural_root = schema != nullptr &&
                                      (schema->kind == TSTypeKind::TSB || schema->kind == TSTypeKind::TSD) &&
                                      plan.endpoint_schema().is_non_peered();
-        if (!direct_peered && !owned_scalar && !owned_fixed && !owned_keyed && !structural_root)
+        if (!direct_peered && !owned_scalar && !owned_fixed && !owned_keyed && !owned_dynamic && !structural_root)
         {
             return nullptr;
         }

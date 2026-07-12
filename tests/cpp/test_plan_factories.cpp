@@ -45,6 +45,13 @@ namespace
         [[nodiscard]] auto operator<=>(const MoveAssignableOnlyScalar &) const = default;
     };
 
+    struct ThrowsOnDynamicChildDefault
+    {
+        ThrowsOnDynamicChildDefault() { throw std::runtime_error("dynamic child construction failed"); }
+        [[nodiscard]] bool operator==(const ThrowsOnDynamicChildDefault &) const = default;
+        [[nodiscard]] auto operator<=>(const ThrowsOnDynamicChildDefault &) const = default;
+    };
+
     void mutate_supported_ts_child(hgraph::TSDataView child, hgraph::DateTime modified_time, std::int32_t seed)
     {
         using namespace hgraph;
@@ -1107,17 +1114,18 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tsw      = registry.tsw(int_meta, 3, 2);
 
-    const auto binding = factory.binding_for(tsw);
-    REQUIRE(binding != nullptr);
-    REQUIRE(binding->plan()->is_named_tuple());
-    const auto *window_component   = binding->plan()->find_component("window");
-    const auto *tracking_component = binding->plan()->find_component("tracking");
+    const auto type = factory.data_type_for(tsw);
+    REQUIRE(type);
+    REQUIRE_THROWS_AS(factory.binding_for(tsw), std::logic_error);
+    REQUIRE(type.plan()->is_named_tuple());
+    const auto *window_component   = type.plan()->find_component("window");
+    const auto *tracking_component = type.plan()->find_component("tracking");
     REQUIRE(window_component != nullptr);
     REQUIRE(tracking_component != nullptr);
     REQUIRE(window_component->offset == 0);
     REQUIRE(tracking_component->plan == &MemoryUtils::plan_for<TSDataTracking>());
 
-    TSData data{*binding};
+    TSData data{type};
     auto   view = data.view();
     auto   window = view.as_window();
     REQUIRE(window.size_based());
@@ -1206,6 +1214,10 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     REQUIRE(window.value().as_list().at(2).checked_as<std::int32_t>() == 4);
     REQUIRE(window.delta_value(t4).checked_as<std::int32_t>() == 4);
     REQUIRE_FALSE(window.delta_value(t3).has_value());
+    REQUIRE(window.has_removed_value(t4));
+    REQUIRE(window.removed_value(t4).checked_as<std::int32_t>() == 1);
+    REQUIRE_FALSE(window.has_removed_value(t4 + TimeDelta{1}));
+    REQUIRE_THROWS_AS(window.removed_value(t4 + TimeDelta{1}), std::logic_error);
 
     Value duplicate{5};
     auto  duplicate_mutation = window.begin_mutation(t4);
@@ -1213,10 +1225,10 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
 
     const auto *move_assign_meta = registry.register_scalar<MoveAssignableOnlyScalar>("move_assign_only");
     const auto *move_assign_tsw  = registry.tsw(move_assign_meta, 1, 1);
-    const auto move_binding     = factory.binding_for(move_assign_tsw);
-    REQUIRE(move_binding != nullptr);
+    const auto move_type = factory.data_type_for(move_assign_tsw);
+    REQUIRE(move_type);
 
-    TSData move_data{*move_binding};
+    TSData move_data{move_type};
     auto   move_view   = move_data.view();
     auto   move_window = move_view.as_window();
     Value  first_custom{MoveAssignableOnlyScalar{1}};
@@ -1242,12 +1254,13 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tsw      = registry.tsw_duration(int_meta, TimeDelta{10}, TimeDelta{5});
 
-    const auto binding = factory.binding_for(tsw);
-    REQUIRE(binding != nullptr);
-    const auto *window_component = binding->plan()->find_component("window");
+    const auto type = factory.data_type_for(tsw);
+    REQUIRE(type);
+    REQUIRE_THROWS_AS(factory.binding_for(tsw), std::logic_error);
+    const auto *window_component = type.plan()->find_component("window");
     REQUIRE(window_component != nullptr);
 
-    TSData data{*binding};
+    TSData data{type};
     auto   view = data.view();
     auto   window = view.as_window();
     REQUIRE(window.time_based());
@@ -1310,6 +1323,10 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     REQUIRE(window.value().as_list().at(1).checked_as<std::int32_t>() == 3);
     REQUIRE(window.delta_value(t3).checked_as<std::int32_t>() == 3);
     REQUIRE_FALSE(window.delta_value(t2).has_value());
+    REQUIRE(window.has_removed_value(t3));
+    REQUIRE(window.removed_value(t3).checked_as<std::int32_t>() == 1);
+    REQUIRE_FALSE(window.has_removed_value(t3 + TimeDelta{1}));
+    REQUIRE_THROWS_AS(window.removed_value(t3 + TimeDelta{1}), std::logic_error);
 }
 
 TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child layouts")
@@ -1638,12 +1655,13 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, 0);
 
-    const auto binding = factory.binding_for(tsl);
-    REQUIRE(binding != nullptr);
-    REQUIRE(factory.plan_for(tsl) == binding->plan());
-    require_no_tsdata_relocation_hooks(binding->checked_plan());
+    const auto type = factory.data_type_for(tsl);
+    REQUIRE(type);
+    REQUIRE_THROWS_AS(factory.binding_for(tsl), std::logic_error);
+    REQUIRE(factory.plan_for(tsl) == type.plan());
+    require_no_tsdata_relocation_hooks(type.checked_plan());
 
-    TSData data{*binding};
+    TSData data{type};
     auto   view = data.view();
     REQUIRE(view.as_list().empty());
     REQUIRE(view.value().binding().ops_ref().kind == ValueOpsKind::Indexed);
@@ -1699,6 +1717,13 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     REQUIRE(grown_t1_delta.contains(key_two.view()));
     REQUIRE(grown_t1_delta.at(key_two.view()).checked_as<std::int32_t>() == 44);
 
+    const auto *float_meta = registry.register_scalar<double>("double");
+    const auto *float_tsl = registry.tsl(registry.ts(float_meta), 0);
+    const auto float_type = factory.data_type_for(float_tsl);
+    TSDataView mismatched{TSStorageTypeRef{float_type.as_role()}, view.mutable_data()};
+    REQUIRE_THROWS_AS(mismatched.ensure_indexed_child_at(3), std::logic_error);
+    REQUIRE(view.as_list().size() == 3);
+
     {
         Value updated{33};
         auto  child = list.at(1);
@@ -1720,6 +1745,46 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     }
     REQUIRE_FALSE(view.modified(t3));
     REQUIRE(view.as_list().size() == 3);
+}
+
+TEST_CASE("TSDataPlanFactory: failed first dynamic TSL growth restores unbound element identity")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory = TSDataPlanFactory::instance();
+    const auto *throwing = registry.register_scalar<ThrowsOnDynamicChildDefault>(
+        "throws_on_dynamic_child_default");
+    const auto *throwing_list = registry.tsl(registry.ts(throwing), 0);
+    const auto throwing_type = factory.data_type_for(throwing_list);
+    const auto *integer = registry.register_scalar<std::int32_t>("dynamic_growth_rebind_int32");
+    const auto integer_type = factory.data_type_for(registry.tsl(registry.ts(integer), 0));
+    const auto &throwing_plan = throwing_type.checked_plan();
+    const auto &integer_plan = integer_type.checked_plan();
+    REQUIRE(throwing_plan.layout.size == integer_plan.layout.size);
+    REQUIRE(throwing_plan.layout.alignment == integer_plan.layout.alignment);
+    REQUIRE(throwing_plan.lifecycle.construct == integer_plan.lifecycle.construct);
+    REQUIRE(throwing_plan.lifecycle.destroy == integer_plan.lifecycle.destroy);
+    REQUIRE(throwing_plan.lifecycle.copy_construct == integer_plan.lifecycle.copy_construct);
+    REQUIRE(throwing_plan.lifecycle.move_construct == integer_plan.lifecycle.move_construct);
+    REQUIRE(throwing_plan.lifecycle.copy_assign == integer_plan.lifecycle.copy_assign);
+    REQUIRE(throwing_plan.lifecycle.move_assign == integer_plan.lifecycle.move_assign);
+    REQUIRE(throwing_plan.lifecycle_context == integer_plan.lifecycle_context);
+    REQUIRE(throwing_plan.composite_kind_tag == integer_plan.composite_kind_tag);
+    REQUIRE(throwing_plan.trivially_destructible == integer_plan.trivially_destructible);
+    REQUIRE(throwing_plan.trivially_copyable == integer_plan.trivially_copyable);
+    REQUIRE(throwing_plan.trivially_move_constructible == integer_plan.trivially_move_constructible);
+
+    TSData storage{integer_type};
+    auto owner_view = storage.view();
+    TSDataView failing{throwing_type.as_role(), owner_view.mutable_data()};
+    REQUIRE_THROWS_AS(failing.ensure_indexed_child_at(0), std::runtime_error);
+    REQUIRE(owner_view.indexed_child_count() == 0);
+
+    auto child = owner_view.ensure_indexed_child_at(0);
+    REQUIRE(child.valid());
+    REQUIRE(owner_view.indexed_child_count() == 1);
+    REQUIRE(child.schema() == registry.ts(integer));
 }
 
 TEST_CASE("TSDataPlanFactory::find returns null and null schemas return null")

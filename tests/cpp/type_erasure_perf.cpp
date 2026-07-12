@@ -429,6 +429,93 @@ int main()
             }
         });
 
+    const auto *dynamic_list_meta = registry.tsl(ts_int, 0);
+    ListBuilder dynamic_source_builder{ValuePlanFactory::instance().type_for(int_meta)};
+    for (const Int value : {Int{59}, Int{60}, Int{61}, Int{62}})
+        dynamic_source_builder.push_back(value);
+    Value dynamic_source = dynamic_source_builder.build();
+    TSOutput dynamic_output{dynamic_list_meta};
+    {
+        auto mutation = dynamic_output.begin_mutation(MIN_ST);
+        if (!mutation.copy_value_from(dynamic_source.view()))
+            throw std::runtime_error("dynamic TSL setup failed");
+    }
+    run_benchmark(
+        "dynamic_tsl_pregrown_child_read", 50000, samples, warmup,
+        [&] {
+            auto output_view = dynamic_output.view(MIN_ST);
+            auto list = output_view.as_list();
+            return static_cast<std::uint64_t>(list.at(0).value().checked_as<Int>());
+        },
+        [](std::uint64_t value) {
+            if (value != 59) throw std::runtime_error("dynamic TSL child read failed");
+        });
+    std::uint64_t dynamic_construct_time = 0;
+    run_benchmark(
+        "dynamic_tsl_construct_grow_four", 1000, samples, warmup,
+        [&] {
+            TSOutput output{dynamic_list_meta};
+            auto mutation = output.begin_mutation(
+                MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(++dynamic_construct_time)});
+            if (!mutation.copy_value_from(dynamic_source.view()))
+                throw std::runtime_error("dynamic TSL construct/grow failed");
+            return static_cast<std::uint64_t>(output.data_view().indexed_child_count());
+        },
+        [](std::uint64_t value) {
+            if (value != 4) throw std::runtime_error("dynamic TSL construct/grow size mismatch");
+        });
+
+    Value tick_value{Int{61}};
+    const auto *tick_window_meta = registry.tsw(int_meta, 4, 1);
+    TSOutput tick_window{tick_window_meta};
+    std::uint64_t tick_time = 0;
+    for (std::size_t index = 0; index < 4; ++index)
+    {
+        auto window_data = tick_window.data_view();
+        auto window = window_data.as_window();
+        auto mutation = window.begin_mutation(
+            MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(++tick_time)});
+        mutation.push(tick_value.view());
+    }
+    run_benchmark(
+        "tsw_tick_steady_push_evict", 20000, samples, warmup,
+        [&] {
+            auto window_data = tick_window.data_view();
+            auto window = window_data.as_window();
+            auto mutation = window.begin_mutation(
+                MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(++tick_time)});
+            mutation.push(tick_value.view());
+            return static_cast<std::uint64_t>(mutation.back().checked_as<Int>());
+        },
+        [](std::uint64_t value) {
+            if (value != 61) throw std::runtime_error("tick TSW steady eviction failed");
+        });
+
+    Value duration_value{Int{67}};
+    const auto *duration_window_meta = registry.tsw_duration(int_meta, TimeDelta{10}, TimeDelta{0});
+    TSOutput duration_window{duration_window_meta};
+    std::uint64_t duration_time = 0;
+    {
+        auto window_data = duration_window.data_view();
+        auto window = window_data.as_window();
+        auto mutation = window.begin_mutation(
+            MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(duration_time += 11)});
+        mutation.push(duration_value.view());
+    }
+    run_benchmark(
+        "tsw_duration_steady_push_evict", 20000, samples, warmup,
+        [&] {
+            auto window_data = duration_window.data_view();
+            auto window = window_data.as_window();
+            auto mutation = window.begin_mutation(
+                MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(duration_time += 11)});
+            mutation.push(duration_value.view());
+            return static_cast<std::uint64_t>(mutation.back().checked_as<Int>());
+        },
+        [](std::uint64_t value) {
+            if (value != 67) throw std::runtime_error("duration TSW steady eviction failed");
+        });
+
     std::uint64_t node_evaluations = 0;
     NodeTypeMetaData node_schema;
     node_schema.display_name = "type_erasure_perf_node";

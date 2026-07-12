@@ -144,17 +144,18 @@ namespace hgraph
         return base().all_valid();
     }
 
-    bool TSWDataView::has_removed_value() const
+    bool TSWDataView::has_removed_value(DateTime evaluation_time) const
     {
         const auto &ops = window_ops();
         if (ops.evicted_element_impl == nullptr || ops.evicted_time_impl == nullptr) { return false; }
-        return ops.evicted_time_impl(ops.context, storage_.data()) == base().last_modified_time() &&
+        return evaluation_time != MIN_DT &&
+               ops.evicted_time_impl(ops.context, storage_.data()) == evaluation_time &&
                ops.evicted_element_impl(ops.context, storage_.data()) != nullptr;
     }
 
-    ValueView TSWDataView::removed_value() const
+    ValueView TSWDataView::removed_value(DateTime evaluation_time) const
     {
-        if (!has_removed_value())
+        if (!has_removed_value(evaluation_time))
         {
             throw std::logic_error("TSWDataView::removed_value: nothing was evicted this cycle");
         }
@@ -208,7 +209,7 @@ namespace hgraph
     Range<ValueView> TSWDataView::values() const
     {
         return Range<ValueView>{
-            .context   = binding(),
+            .context   = &window_ops(),
             .memory    = storage_.data(),
             .limit     = size(),
             .predicate = nullptr,
@@ -219,7 +220,7 @@ namespace hgraph
     Range<ValueView> TSWDataView::time_values() const
     {
         return Range<ValueView>{
-            .context   = binding(),
+            .context   = &window_ops(),
             .memory    = storage_.data(),
             .limit     = size(),
             .predicate = nullptr,
@@ -230,7 +231,7 @@ namespace hgraph
     Range<DateTime> TSWDataView::value_times() const
     {
         return Range<DateTime>{
-            .context   = binding(),
+            .context   = &window_ops(),
             .memory    = storage_.data(),
             .limit     = size(),
             .predicate = nullptr,
@@ -260,17 +261,22 @@ namespace hgraph
 
     ValueView TSWDataView::project_value(const void *context, const void *memory, std::size_t index)
     {
-        return TSWDataView{TSDataView{static_cast<const TSDataBinding *>(context), memory}}.at(index);
+        const auto &ops = *static_cast<const TSWDataOps *>(context);
+        const auto &layout = *static_cast<const TSWDataLayout *>(ops.layout_impl(ops.context));
+        return ValueView{layout.element_binding, ops.element_at_impl(ops.context, memory, index)};
     }
 
     ValueView TSWDataView::project_time_value(const void *context, const void *memory, std::size_t index)
     {
-        return TSWDataView{TSDataView{static_cast<const TSDataBinding *>(context), memory}}.time_value_at(index);
+        const auto &ops = *static_cast<const TSWDataOps *>(context);
+        const auto &layout = *static_cast<const TSWDataLayout *>(ops.layout_impl(ops.context));
+        return ValueView{layout.time_binding, ops.time_element_at_impl(ops.context, memory, index)};
     }
 
     DateTime TSWDataView::project_time(const void *context, const void *memory, std::size_t index)
     {
-        return TSWDataView{TSDataView{static_cast<const TSDataBinding *>(context), memory}}.time_at(index);
+        const auto &ops = *static_cast<const TSWDataOps *>(context);
+        return ops.time_at_impl(ops.context, memory, index);
     }
 
     TSWDataMutationView::TSWDataMutationView(TSDataView view, DateTime evaluation_time)

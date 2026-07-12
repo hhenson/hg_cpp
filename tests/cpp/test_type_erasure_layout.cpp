@@ -1,5 +1,6 @@
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/metadata/type_meta_data.h>
+#include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/time_series/ts_data.h>
 #include <hgraph/types/time_series/ts_input.h>
@@ -10,6 +11,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
+#include <bit>
 #include <cstddef>
 #include <type_traits>
 
@@ -38,6 +41,12 @@ namespace
         static_assert(sizeof(Handle) == sizeof(void *) * 3);
         static_assert(alignof(Handle) == alignof(void *));
     }
+
+    template <typename View>
+    concept HasNoArgumentRemovedValue = requires(const View &view) {
+        view.has_removed_value();
+        view.removed_value();
+    };
 }  // namespace
 
 TEST_CASE("current type-erasure records retain their baseline layouts")
@@ -77,6 +86,8 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(sizeof(TSSDataStorageRef) == sizeof(void *) * 3);
     static_assert(sizeof(TSDDataStorageRef) == sizeof(void *) * 3);
     static_assert(sizeof(TSWDataStorageRef) == sizeof(void *) * 3);
+    static_assert(!HasNoArgumentRemovedValue<TSWDataView>);
+    static_assert(HasNoArgumentRemovedValue<TSWInputView>);
     static_assert(sizeof(TSDataView) == sizeof(void *) * 3);
     static_assert(sizeof(TSStorageTypeRef) == sizeof(void *));
     static_assert(sizeof(TSDataObserverSet) == sizeof(void *));
@@ -118,6 +129,89 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     assert_storage_handle_layout<EvaluationClockTypeBinding>();
 
     SUCCEED("compile-time type-erasure layout assertions passed");
+}
+
+TEST_CASE("dynamic TSL and TSW physical plans retain their baseline layouts")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *integer  = registry.register_scalar<std::int32_t>("type_erasure_layout_int32");
+    const auto *ts       = registry.ts(integer);
+
+    const auto *dynamic_schema = registry.tsl(ts, 0);
+    const auto *tick_schema = registry.tsw(integer, 3, 1);
+    const auto *duration_schema = registry.tsw_duration(integer, TimeDelta{3}, TimeDelta{1});
+    const std::array schemas{dynamic_schema, tick_schema, duration_schema};
+
+    for (const auto *schema : schemas)
+    {
+        const auto data = factory.data_type_for(schema);
+        const auto output = factory.output_type_for(schema);
+        TSInput owned{TSInputBuilderFactory::checked_builder_for(
+            *schema, TSEndpointSchema::owned(schema))};
+        const auto input = owned.type_ref();
+        const auto &plan = data.checked_plan();
+
+        REQUIRE(data.plan() == output.plan());
+        REQUIRE(data.plan() == input.plan());
+        REQUIRE(plan.layout.valid());
+        REQUIRE(plan.layout.size > 0);
+        REQUIRE(std::has_single_bit(plan.layout.alignment));
+        REQUIRE(plan.layout.size % plan.layout.alignment == 0);
+
+        const std::array role_types{data.as_role(), input.as_role(), output.as_role()};
+        for (const auto role_type : role_types)
+        {
+            const auto &ops = role_type.ops_ref();
+            const auto *common = ops.layout_impl(ops.context);
+            REQUIRE(common != nullptr);
+            REQUIRE(common->value_binding);
+            REQUIRE(common->delta_binding);
+            REQUIRE(common->value_offset < plan.layout.size);
+            REQUIRE(common->tracking_offset < plan.layout.size);
+
+            if (schema->kind == TSTypeKind::TSL)
+            {
+                const auto &layout = static_cast<const FixedTSLDataLayout &>(*common);
+                REQUIRE(layout.element_type.record_backed());
+                REQUIRE(layout.element_type.type_ref().role() == role_type.role());
+                REQUIRE(layout.element_layout != nullptr);
+                REQUIRE(layout.element_count == 0);
+            }
+            else
+            {
+                const auto &layout = static_cast<const TSWDataLayout &>(*common);
+                REQUIRE(layout.element_binding);
+                REQUIRE(layout.time_binding);
+                if (schema->is_duration_based())
+                {
+                    const auto &duration = static_cast<const TimeTSWDataLayout &>(layout);
+                    REQUIRE(duration.time_range == TimeDelta{3});
+                    REQUIRE(duration.min_time_range == TimeDelta{1});
+                }
+                else
+                {
+                    const auto &tick = static_cast<const SizeTSWDataLayout &>(layout);
+                    REQUIRE(tick.period == 3);
+                    REQUIRE(tick.min_period == 1);
+                }
+            }
+        }
+    }
+
+#if defined(__APPLE__) && defined(__aarch64__)
+    const auto &dynamic = factory.data_type_for(dynamic_schema).checked_plan();
+    const auto &tick = factory.data_type_for(tick_schema).checked_plan();
+    const auto &duration = factory.data_type_for(duration_schema).checked_plan();
+    REQUIRE(dynamic.layout.size == 96);
+    REQUIRE(dynamic.layout.alignment == 8);
+    REQUIRE(tick.layout.size == 136);
+    REQUIRE(tick.layout.alignment == 8);
+    REQUIRE(duration.layout.size == 136);
+    REQUIRE(duration.layout.alignment == 8);
+#endif
 }
 
 TEST_CASE("value ops discriminator has a fixed byte ABI at offset zero")

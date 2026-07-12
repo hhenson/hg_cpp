@@ -8,6 +8,8 @@
 #include <hgraph/types/value/value.h>
 #include <hgraph/types/value/value_builder.h>
 
+#include "../time_series/ts_data/ownership.h"
+
 #include <fmt/format.h>
 
 #include <algorithm>
@@ -47,15 +49,12 @@ namespace hgraph::ts_data_plan_factory_detail
         };
 
         using TSDataStorageHandle =
-            MemoryUtils::StorageHandle<HeapOnlyTSDataStoragePolicy, TSDataBinding>;
+            MemoryUtils::StorageHandle<HeapOnlyTSDataStoragePolicy, TypeRecord>;
 
         class DynamicTSLStorage
         {
           public:
-            explicit DynamicTSLStorage(const TSDataBinding &element_binding)
-                : element_binding_(&element_binding)
-            {
-            }
+            DynamicTSLStorage() = default;
 
             DynamicTSLStorage(const DynamicTSLStorage &)            = delete;
             DynamicTSLStorage &operator=(const DynamicTSLStorage &) = delete;
@@ -63,7 +62,7 @@ namespace hgraph::ts_data_plan_factory_detail
             DynamicTSLStorage &operator=(DynamicTSLStorage &&)      = delete;
             ~DynamicTSLStorage() = default;
 
-            [[nodiscard]] const TSDataBinding &element_binding() const { return *element_binding_; }
+            [[nodiscard]] TSStorageTypeRef element_type() const noexcept { return element_type_; }
             [[nodiscard]] const TSDataTracking &tracking() const noexcept { return tracking_; }
             [[nodiscard]] TSDataTracking &mutable_tracking() noexcept { return tracking_; }
             [[nodiscard]] std::size_t size() const noexcept { return elements_.size(); }
@@ -83,20 +82,32 @@ namespace hgraph::ts_data_plan_factory_detail
                 return ordinal_keys_.at(index);
             }
 
-            void ensure_size(std::size_t size)
+            void ensure_size(std::size_t size, TSStorageTypeRef element_type)
             {
+                if (element_type.legacy_backed() || element_type.record() == nullptr)
+                    throw std::logic_error("dynamic TSL elements require canonical TypeRecords");
+                if (element_type.schema() == nullptr || element_type.plan() == nullptr)
+                    throw std::logic_error("dynamic TSL element type is not resolved");
+                if (element_type_ && element_type_ != element_type)
+                    throw std::logic_error("dynamic TSL element type cannot change after growth");
+                const bool newly_bound = !element_type_ && size > elements_.size();
+                if (newly_bound) { element_type_ = element_type; }
+                auto binding_rollback = UnwindCleanupGuard([&] {
+                    if (newly_bound && elements_.empty()) { element_type_ = {}; }
+                });
                 while (elements_.size() < size)
                 {
                     const auto index = elements_.size();
-                    elements_.emplace_back(element_binding());
+                    elements_.emplace_back(*element_type.record());
                     auto rollback = UnwindCleanupGuard([&] { elements_.pop_back(); });
                     ordinal_keys_.push_back(static_cast<std::int64_t>(index));
                     rollback.release();
                 }
+                binding_rollback.release();
             }
 
           private:
-            const TSDataBinding              *element_binding_{nullptr};
+            TSStorageTypeRef                   element_type_{};
             TSDataTracking                    tracking_{};
             // Handles may move as the vector grows, but the child TSData bytes
             // must not. The heap-only policy above keeps published child
@@ -105,25 +116,9 @@ namespace hgraph::ts_data_plan_factory_detail
             std::vector<std::int64_t>         ordinal_keys_{};
         };
 
-        struct DynamicListStoragePlanContext
+        void dynamic_list_storage_construct(void *dst, const void *)
         {
-            const TSDataBinding *element_binding{nullptr};
-        };
-
-        [[nodiscard]] const DynamicListStoragePlanContext &dynamic_list_plan_context(const void *context)
-        {
-            if (context == nullptr) { throw std::logic_error("dynamic TSL storage requires lifecycle context"); }
-            return *static_cast<const DynamicListStoragePlanContext *>(context);
-        }
-
-        void dynamic_list_storage_construct(void *dst, const void *context)
-        {
-            const auto &state = dynamic_list_plan_context(context);
-            if (state.element_binding == nullptr)
-            {
-                throw std::logic_error("dynamic TSL element binding is not resolved");
-            }
-            std::construct_at(static_cast<DynamicTSLStorage *>(dst), *state.element_binding);
+            std::construct_at(static_cast<DynamicTSLStorage *>(dst));
         }
 
         void dynamic_list_storage_destroy(void *memory, const void *) noexcept
@@ -133,7 +128,6 @@ namespace hgraph::ts_data_plan_factory_detail
 
         struct DynamicListPlanEntry
         {
-            DynamicListStoragePlanContext          context{};
             std::unique_ptr<MemoryUtils::StoragePlan> storage_plan{};
             const MemoryUtils::StoragePlan        *root_plan{nullptr};
         };
@@ -151,15 +145,6 @@ namespace hgraph::ts_data_plan_factory_detail
             return mutex;
         }
 
-        [[nodiscard]] const TSDataBinding &dynamic_element_binding_for(const TSValueTypeMetaData &schema)
-        {
-            const auto *element_schema = schema.element_ts();
-            if (element_schema == nullptr) { throw std::logic_error("dynamic TSL element TS schema is not resolved"); }
-            const auto *binding = TSDataPlanFactory::instance().legacy_binding_for(element_schema);
-            if (binding == nullptr) { throw std::logic_error("dynamic TSL element TSData binding is not resolved"); }
-            return *binding;
-        }
-
         [[nodiscard]] const DynamicTSLStorage &storage(const void *memory)
         {
             if (memory == nullptr) { throw std::logic_error("dynamic TSL TSData requires live storage"); }
@@ -172,7 +157,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return *MemoryUtils::cast<DynamicTSLStorage>(memory);
         }
 
-        [[nodiscard]] const TSDataOps &child_ops(const TSDataBinding &child)
+        [[nodiscard]] const TSDataOps &child_ops(TSStorageTypeRef child)
         {
             return child.ops_ref();
         }
@@ -186,7 +171,9 @@ namespace hgraph::ts_data_plan_factory_detail
             IndexedValueOps                 value_list_ops{};
             MapValueOps                     delta_map_ops{};
             SetValueOps                     delta_key_set_ops{};
-            const TSDataBinding            *element_binding{nullptr};
+            TSStorageTypeRef                 element_type{};
+            TypeRole                        role{TypeRole::Invalid};
+            bool                            embedded{false};
             ValueTypeRef element_value_binding{nullptr};
             ValueTypeRef element_delta_binding{nullptr};
             ValueTypeRef ordinal_key_binding{nullptr};
@@ -194,10 +181,12 @@ namespace hgraph::ts_data_plan_factory_detail
 
             DynamicTSLContext(const TSValueTypeMetaData &schema_,
                               const MemoryUtils::StoragePlan &plan_,
-                              const TSDataBinding &element_binding_)
-                : schema(&schema_), plan(&plan_), element_binding(&element_binding_)
+                              TSStorageTypeRef element_type_,
+                              TypeRole role_,
+                              bool embedded_)
+                : schema(&schema_), plan(&plan_), element_type(element_type_), role(role_), embedded(embedded_)
             {
-                const auto &element_ops = child_ops(element_binding_);
+                const auto &element_ops = child_ops(element_type);
                 const auto *element_layout = element_ops.layout_impl(element_ops.context);
                 if (element_layout == nullptr)
                 {
@@ -211,7 +200,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     throw std::logic_error("dynamic TSL element value/delta bindings are not resolved");
                 }
 
-                list_layout.element_type = TSStorageTypeRef{element_binding_};
+                list_layout.element_type   = element_type;
                 list_layout.element_layout  = element_layout;
                 list_layout.element_count   = 0;
                 list_layout.value_offset    = 0;
@@ -244,6 +233,32 @@ namespace hgraph::ts_data_plan_factory_detail
                 const auto *key_set_schema = TypeRegistry::instance().set(delta_schema->key_type);
                 delta_key_set_binding = intern_value_type(*key_set_schema, *plan, delta_key_set_ops);
                 list_layout.delta_binding = intern_value_type(*delta_schema, *plan, delta_map_ops);
+            }
+
+            [[nodiscard]] static bool recognises(const TSDataOps *candidate) noexcept
+            {
+                return candidate != nullptr && candidate->layout_impl == &dynamic_layout;
+            }
+
+            [[nodiscard]] static std::size_t owned_child_count(const void *, const void *memory) noexcept
+            {
+                return memory != nullptr ? storage(memory).size() : 0;
+            }
+
+            [[nodiscard]] static detail::TSDataOwnedChild owned_child_at(const void *context,
+                                                                         void *memory,
+                                                                         std::size_t index) noexcept
+            {
+                if (context == nullptr || memory == nullptr) { return {}; }
+                const auto *state = ctx(context);
+                auto &store = storage(memory);
+                if (index >= store.size()) { return {}; }
+                return detail::TSDataOwnedChild{
+                    .type = state->element_type,
+                    .data = store.child_memory(index),
+                    .parent_child_id = index,
+                    .attach_parent = true,
+                };
             }
 
           private:
@@ -366,7 +381,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 const auto *state = ctx(context);
                 const auto &store = storage(memory);
-                const auto &ops   = child_ops(*state->element_binding);
+                const auto &ops   = child_ops(state->element_type);
                 for (std::size_t index = 0; index < store.size(); ++index)
                 {
                     if (!ops.all_valid_impl(ops.context, store.child_memory(index))) { return false; }
@@ -398,7 +413,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                             const void *memory,
                                                             std::size_t index)
             {
-                const auto &ops = child_ops(*state->element_binding);
+                const auto &ops = child_ops(state->element_type);
                 const auto *data = storage(memory).child_memory(index);
                 return ValueView{state->element_value_binding, ops.value_memory_impl(ops.context, data)};
             }
@@ -407,7 +422,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                             const void *memory,
                                                             std::size_t index)
             {
-                const auto &ops = child_ops(*state->element_binding);
+                const auto &ops = child_ops(state->element_type);
                 const auto *data = storage(memory).child_memory(index);
                 const auto  parent_time = storage(memory).tracking().last_modified_time;
                 const auto *child_tracking = ops.tracking_impl(ops.context, data);
@@ -439,7 +454,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                                    const void *,
                                                                                    std::size_t) noexcept
             {
-                return TSStorageTypeRef{ctx(context)->element_binding};
+                return ctx(context)->element_type;
             }
 
             [[nodiscard]] static const void *dynamic_indexed_element_memory(const void *,
@@ -451,12 +466,12 @@ namespace hgraph::ts_data_plan_factory_detail
                 return store.child_memory(index);
             }
 
-            [[nodiscard]] static void *dynamic_mutable_indexed_element_memory(const void *,
+            [[nodiscard]] static void *dynamic_mutable_indexed_element_memory(const void *context,
                                                                               void *memory,
                                                                               std::size_t index)
             {
                 auto &store = storage(memory);
-                store.ensure_size(index + 1);
+                store.ensure_size(index + 1, ctx(context)->element_type);
                 return store.child_memory(index);
             }
 
@@ -627,7 +642,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                      const void *memory,
                                                                      std::size_t index) noexcept
             {
-                const auto &ops = child_ops(*state->element_binding);
+                const auto &ops = child_ops(state->element_type);
                 const auto *data = storage(memory).child_memory(index);
                 const auto  time = storage(memory).tracking().last_modified_time;
                 const auto *child_tracking = ops.tracking_impl(ops.context, data);
@@ -1063,9 +1078,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
 
                 const bool first_for_parent = target.tracking().last_modified_time != modified_time;
-                target.ensure_size(source_values.size());
+                target.ensure_size(source_values.size(), state->element_type);
 
-                const auto &ops = child_ops(*state->element_binding);
+                const auto &ops = child_ops(state->element_type);
                 for (std::size_t index = 0; index < source_values.size(); ++index)
                 {
                     void *data = target.child_memory(index);
@@ -1115,7 +1130,7 @@ namespace hgraph::ts_data_plan_factory_detail
                         "dynamic TSL move cannot shrink because TSL delta has no removal surface");
                 }
 
-                const auto &ops = child_ops(*state->element_binding);
+                const auto &ops = child_ops(state->element_type);
                 if (ops.move_value_from_impl == &ts_data_detail::missing_move_value_from)
                 {
                     throw std::logic_error("dynamic TSL move requires the child to support move_value_from");
@@ -1130,7 +1145,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
 
                 const bool first_for_parent = target.tracking().last_modified_time != modified_time;
-                target.ensure_size(source_values.size());
+                target.ensure_size(source_values.size(), state->element_type);
 
                 for (std::size_t index = 0; index < source_values.size(); ++index)
                 {
@@ -1159,6 +1174,9 @@ namespace hgraph::ts_data_plan_factory_detail
             const TSValueTypeMetaData      *schema{nullptr};
             const MemoryUtils::StoragePlan *plan{nullptr};
             std::size_t                     storage_offset{0};
+            std::uintptr_t                  element_type{0};
+            TypeRole                        role{TypeRole::Invalid};
+            bool                            embedded{false};
 
             [[nodiscard]] bool operator==(const DynamicListContextKey &) const noexcept = default;
         };
@@ -1170,6 +1188,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 auto seed = dynamic_combine_hash(std::hash<const TSValueTypeMetaData *>{}(key.schema),
                                                  std::hash<const MemoryUtils::StoragePlan *>{}(key.plan));
                 seed = dynamic_combine_hash(seed, key.storage_offset);
+                seed = dynamic_combine_hash(seed, key.element_type);
+                seed = dynamic_combine_hash(seed, static_cast<std::size_t>(key.role));
+                seed = dynamic_combine_hash(seed, key.embedded);
                 return seed;
             }
         };
@@ -1205,14 +1226,11 @@ namespace hgraph::ts_data_plan_factory_detail
             throw std::logic_error("TSDataPlanFactory: dynamic list storage requires dynamic TSL schema");
         }
 
-        const auto &element_binding = dynamic_element_binding_for(schema);
-
         std::lock_guard<std::recursive_mutex> lock(dynamic_list_plan_mutex());
         auto                                 &entries = dynamic_list_plan_entries();
         if (const auto it = entries.find(&schema); it != entries.end()) { return it->second->root_plan; }
 
         auto entry = std::make_unique<DynamicListPlanEntry>();
-        entry->context = DynamicListStoragePlanContext{.element_binding = &element_binding};
         entry->storage_plan = std::make_unique<MemoryUtils::StoragePlan>(MemoryUtils::StoragePlan{
             .layout                       = MemoryUtils::layout_for<DynamicTSLStorage>(),
             .lifecycle                    = {.construct      = &dynamic_list_storage_construct,
@@ -1221,7 +1239,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                              .move_construct = nullptr,
                                              .copy_assign    = nullptr,
                                              .move_assign    = nullptr},
-            .lifecycle_context            = &entry->context,
+            .lifecycle_context            = nullptr,
             .composite_kind_tag           = MemoryUtils::CompositeKind::None,
             .trivially_destructible       = false,
             .trivially_copyable           = false,
@@ -1236,19 +1254,27 @@ namespace hgraph::ts_data_plan_factory_detail
 
     [[nodiscard]] const TSDataOps &dynamic_list_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                             const MemoryUtils::StoragePlan &plan,
-                                                            std::size_t storage_offset)
+                                                            std::size_t storage_offset,
+                                                            TSStorageTypeRef element_type,
+                                                            TypeRole role,
+                                                            bool embedded)
     {
         if (storage_offset != 0)
         {
             throw std::logic_error("dynamic TSL currently expects the storage object at the root");
         }
+        if (element_type.legacy_backed() || element_type.record() == nullptr ||
+            element_type.schema() != schema.element_ts())
+            throw std::invalid_argument("dynamic TSL ops require the canonical element TypeRecord");
+        if (element_type.type_ref().role() != role)
+            throw std::invalid_argument("dynamic TSL element role must match the parent role");
 
         std::lock_guard<std::recursive_mutex> lock(dynamic_list_context_mutex());
         auto                                 &contexts = dynamic_list_contexts();
-        const DynamicListContextKey           key{&schema, &plan, storage_offset};
+        const DynamicListContextKey           key{&schema, &plan, storage_offset, element_type.raw_bits(), role, embedded};
         if (const auto it = contexts.find(key); it != contexts.end()) { return it->second->ops; }
 
-        auto context = std::make_unique<DynamicTSLContext>(schema, plan, dynamic_element_binding_for(schema));
+        auto context = std::make_unique<DynamicTSLContext>(schema, plan, element_type, role, embedded);
         auto *result = context.get();
         contexts.emplace(key, std::move(context));
         result->bind_surfaces();
@@ -1266,4 +1292,23 @@ namespace hgraph::ts_data_plan_factory_detail
             dynamic_list_plan_entries().clear();
         }
     }
+
+    [[nodiscard]] const detail::TSDataOwnershipOps *dynamic_list_ownership_ops_for_impl(
+        const TSDataOps *ops) noexcept
+    {
+        if (!DynamicTSLContext::recognises(ops)) { return nullptr; }
+        static const detail::TSDataOwnershipOps ownership_ops{
+            .child_count = &DynamicTSLContext::owned_child_count,
+            .child_at = &DynamicTSLContext::owned_child_at,
+        };
+        return &ownership_ops;
+    }
 }  // namespace hgraph::ts_data_plan_factory_detail
+
+namespace hgraph::detail
+{
+    const TSDataOwnershipOps *dynamic_list_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept
+    {
+        return ts_data_plan_factory_detail::dynamic_list_ownership_ops_for_impl(ops);
+    }
+}  // namespace hgraph::detail

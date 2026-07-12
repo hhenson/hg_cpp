@@ -45,6 +45,8 @@ namespace hgraph
             if (const auto *composed = composed_input_ownership_ops_for(ops); composed != nullptr) { return composed; }
             if (const auto *proxy = proxy_ts_data_ownership_ops_for(ops); proxy != nullptr) { return proxy; }
             if (const auto *slot = slot_ts_data_ownership_ops_for(ops); slot != nullptr) { return slot; }
+            if (const auto *dynamic = dynamic_list_ts_data_ownership_ops_for(ops); dynamic != nullptr)
+                return dynamic;
             return fixed_ts_data_ownership_ops_for(ops);
         }
 

@@ -14,7 +14,7 @@ namespace hgraph
             return schema.kind == TSTypeKind::TS || schema.kind == TSTypeKind::SIGNAL ||
                    schema.kind == TSTypeKind::TSS || schema.kind == TSTypeKind::TSD ||
                    schema.kind == TSTypeKind::REF || schema.kind == TSTypeKind::TSB ||
-                   (schema.kind == TSTypeKind::TSL && schema.fixed_size() != 0);
+                   schema.kind == TSTypeKind::TSL || schema.kind == TSTypeKind::TSW;
         }
 
         void validate_ts_record(const TypeRecord &record)

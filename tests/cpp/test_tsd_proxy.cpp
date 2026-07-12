@@ -1205,11 +1205,11 @@ TEST_CASE("TSDProxy non-atomic maps project child value and delta storage")
     const auto *window_schema = registry.tsw(int_meta, 1, 1);
     const auto *proxy_schema = registry.tsd(int_meta, window_schema);
     const auto source_type = TSDataPlanFactory::instance().data_type_for(source_schema);
-    const auto *window_binding = TSDataPlanFactory::instance().binding_for(window_schema);
-    REQUIRE(window_binding != nullptr);
+    const auto window_type = TSDataPlanFactory::instance().data_type_for(window_schema);
+    REQUIRE(window_type);
 
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*proxy_schema, TSStorageTypeRef{window_binding})};
+    TSData proxy{tsd_proxy_data_type_for(*proxy_schema, TSStorageTypeRef{window_type.as_role()})};
     Value key{7};
     const auto t1 = MIN_ST + TimeDelta{1};
     {

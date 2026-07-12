@@ -246,7 +246,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 throw std::logic_error("TSDataPlanFactory: dynamic TSL TSData plan is not resolved");
             }
-            const auto &ops = dynamic_list_ts_data_ops(schema, *plan, 0);
+            const auto type = standalone_ts_storage_type(schema, TypeRole::Data, true);
+            const auto &ops = type.ops_ref();
             return &TSDataBinding::intern(schema, *plan, ops);
         }
         if (is_window_ts_data(schema))
@@ -262,8 +263,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 throw std::logic_error("TSDataPlanFactory: TSW TSData plan is missing required components");
             }
-            const auto &ops =
-                window_ts_data_ops(schema, *plan, window_component->offset, tracking_component->offset);
+            const auto type = standalone_ts_storage_type(schema, TypeRole::Data, true);
+            const auto &ops = type.ops_ref();
             return &TSDataBinding::intern(schema, *plan, ops);
         }
 
@@ -388,6 +389,9 @@ namespace hgraph::ts_data_plan_factory_detail
             return TSStorageTypeRef{intern_ts_type(
                 schema, role, *plan, ops, fixed_record_label(schema, role, false))};
         }
+
+        if (is_dynamic_list_ts_data(schema) || is_window_ts_data(schema))
+            return standalone_ts_storage_type(schema, role, true);
 
         const bool scalar = schema.kind == TSTypeKind::TS || schema.kind == TSTypeKind::SIGNAL ||
                             schema.kind == TSTypeKind::REF;

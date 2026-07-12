@@ -5,7 +5,7 @@ import threading
 import time
 
 import hgraph as hg
-from hgraph import TS, TSD, TSS, graph, eval_node, run_graph
+from hgraph import Size, TS, TSD, TSL, TSS, TSW, WindowSize, graph, eval_node, run_graph
 
 
 def check(condition, message):
@@ -34,6 +34,35 @@ def test_compute_nodes_mix_with_cpp_and_bind_keywords():
         return python_value + hg.const(1.0, tp=TS[float])
 
     check(eval_node(app, [2.5, 4.0], [10, 3]) == [51.0, 25.0], "mixed compute pipeline")
+
+
+def test_python_compute_consumes_and_produces_dynamic_tsl():
+    # Size[0] is the current native spelling for the unbounded TSL shape.
+    @hg.compute_node
+    def increment_modified(values: TSL[TS[int], Size[0]]) -> TSL[TS[int], Size[0]]:
+        return {index: child.value + 10 for index, child in enumerate(values.values()) if child.modified}
+
+    @graph
+    def app(values: TSL[TS[int], Size[0]]) -> TSL[TS[int], Size[0]]:
+        return increment_modified(values)
+
+    result = eval_node(app, [{0: 1}, {1: 2}, {0: 3}])
+    check(result == [{0: 11}, {1: 12}, {0: 13}], f"dynamic TSL: {result}")
+
+
+def test_python_compute_produces_tick_and_duration_tsw():
+    @hg.compute_node
+    def tick_window(value: TS[int]) -> TSW[int, WindowSize[3], WindowSize[1]]:
+        return value.value
+
+    @hg.compute_node
+    def duration_window(
+        value: TS[int],
+    ) -> TSW[int, WindowSize[hg.MIN_TD * 3], WindowSize[hg.MIN_TD]]:
+        return value.value
+
+    check(eval_node(tick_window, [1, 2, 3, 4]) == [1, 2, 3, 4], "tick TSW output")
+    check(eval_node(duration_window, [1, 2, 3, 4]) == [None, 2, 3, 4], "duration TSW output")
 
 
 def test_compute_validity_optional_inputs_and_no_tick():

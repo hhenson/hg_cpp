@@ -276,6 +276,17 @@ Iteration 4D
    lifetime semantics, and keep window storage and eviction behaviour
    unchanged.
 
+   Implemented: dynamic ``TSL`` and tick/duration ``TSW`` expose canonical
+   ABI-2 Data, Input, and Output records. Role-specific root and embedded
+   labels share one physical plan per schema. Dynamic-list storage binds its
+   one-word element type on first growth, remains grow-only, and invalidates
+   owned descendants before their handles are destroyed. Owned and peered
+   dynamic roots are supported; non-peered dynamic structural prefixes remain
+   rejected. Window removal queries at the data layer require an explicit
+   evaluation time, while input endpoints supply the current cycle. Window
+   buffer and eviction algorithms are unchanged. This records implementation
+   status only; review acceptance and commit status remain open.
+
 Technical model
    TS, TSS, TSL, TSB, TSD, and REF remain schema kinds.  Data, Input, and Output
    remain type-record roles.  Role-specific ops accessors validate both family

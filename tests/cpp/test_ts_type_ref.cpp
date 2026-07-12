@@ -344,10 +344,12 @@ TEST_CASE("fixed structured role records preserve semantic identity and embedded
     auto mixed_root = mixed_output.data_view();
     auto mixed_bundle = mixed_root.as_bundle();
     REQUIRE(mixed_bundle.field("value").storage_type().record_backed());
-    REQUIRE(mixed_bundle.field("window").storage_type().legacy_backed());
+    REQUIRE(mixed_bundle.field("window").storage_type().record_backed());
+    REQUIRE(std::string{mixed_bundle.field("window").type_ref().record()->implementation_name()} ==
+            "ts.tsw.tick.output.embedded");
 }
 
-TEST_CASE("migrated roots reject legacy ownership while excluded dynamic parents remain compatible")
+TEST_CASE("migrated roots reject legacy ownership including dynamic TSL and TSW")
 {
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
@@ -373,13 +375,13 @@ TEST_CASE("migrated roots reject legacy ownership while excluded dynamic parents
     REQUIRE(factory.data_type_for(dict));
 
     const auto *dynamic_list = registry.tsl(named, 0);
-    for (const auto *schema : {dynamic_list})
+    const auto *window = registry.tsw(integer, 2, 1);
+    for (const auto *schema : {dynamic_list, window})
     {
         const auto *legacy = factory.legacy_binding_for(schema);
         REQUIRE(legacy != nullptr);
-        TSData excluded_root{*legacy};
-        REQUIRE(excluded_root.binding() == legacy);
-        REQUIRE(excluded_root.type_ref() == TSRoleTypeRef{});
+        REQUIRE_THROWS_AS(TSData{*legacy}, std::invalid_argument);
+        REQUIRE(factory.data_type_for(schema));
     }
 }
 
@@ -891,6 +893,180 @@ TEST_CASE("keyed projection ops caches release and reseed every role without sta
     REQUIRE(second == first);
 }
 
+TEST_CASE("dynamic TSL and TSW role records are canonical distinct and exactly labelled")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    auto &factory = TSDataPlanFactory::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts = registry.ts(integer);
+    const auto *dynamic = registry.tsl(ts, 0);
+    const auto *tick = registry.tsw(integer, 3, 1);
+    const auto *duration = registry.tsw_duration(integer, TimeDelta{10}, TimeDelta{2});
+
+    struct RoleCase
+    {
+        const TSValueTypeMetaData *schema;
+        const char *data_label;
+        const char *input_label;
+        const char *output_label;
+        bool has_children;
+    };
+    const std::array cases{
+        RoleCase{dynamic, "ts.tsl.dynamic.data.root", "ts.tsl.dynamic.input.owned",
+                 "ts.tsl.dynamic.output.root", true},
+        RoleCase{tick, "ts.tsw.tick.data.root", "ts.tsw.tick.input.owned",
+                 "ts.tsw.tick.output.root", false},
+        RoleCase{duration, "ts.tsw.duration.data.root", "ts.tsw.duration.input.owned",
+                 "ts.tsw.duration.output.root", false},
+    };
+
+    REQUIRE_THROWS_AS(TSEndpointSchema::non_peered(dynamic, {}), std::invalid_argument);
+    REQUIRE_THROWS_AS(TSEndpointSchema::non_peered(tick, {}), std::invalid_argument);
+
+    for (const auto &item : cases)
+    {
+        const auto data = factory.data_type_for(item.schema);
+        const auto output = factory.output_type_for(item.schema);
+        TSInput owned{TSInputBuilderFactory::checked_builder_for(
+            *item.schema, TSEndpointSchema::owned(item.schema))};
+        TSInput target{TSInputBuilderFactory::checked_builder_for(
+            *item.schema, TSEndpointSchema::peered(item.schema))};
+
+        REQUIRE(data.record() != output.record());
+        REQUIRE(data.record() != owned.type_ref().record());
+        REQUIRE(output.record() != owned.type_ref().record());
+        REQUIRE(data.plan() == output.plan());
+        REQUIRE(data.plan() == owned.type_ref().plan());
+        REQUIRE(data.record()->ops_abi_version == TS_DATA_OPS_ABI_VERSION);
+        REQUIRE(output.record()->ops_abi_version == TS_DATA_OPS_ABI_VERSION);
+        REQUIRE(owned.type_ref().record()->ops_abi_version == TS_DATA_OPS_ABI_VERSION);
+        REQUIRE(has_capability(data.capabilities(), TypeCapabilities::Mutable));
+        REQUIRE(has_capability(output.capabilities(), TypeCapabilities::Mutable));
+        REQUIRE_FALSE(has_capability(owned.type_ref().capabilities(), TypeCapabilities::Mutable));
+        REQUIRE_FALSE(has_capability(target.type_ref().capabilities(), TypeCapabilities::Mutable));
+        REQUIRE(std::string{data.record()->implementation_name()} == item.data_label);
+        REQUIRE(std::string{owned.type_ref().record()->implementation_name()} == item.input_label);
+        REQUIRE(std::string{output.record()->implementation_name()} == item.output_label);
+        REQUIRE(std::string{target.type_ref().record()->implementation_name()} ==
+                (item.schema->kind == TSTypeKind::TSL ? "ts.tsl.dynamic.input.target"
+                                                      : "ts.tsw.input.target"));
+        REQUIRE(has_capability(data.capabilities(), TypeCapabilities::HasChildren) == item.has_children);
+        REQUIRE(has_capability(output.capabilities(), TypeCapabilities::HasChildren) == item.has_children);
+        TSData input_storage{owned.type_ref()};
+        REQUIRE_THROWS_AS(input_storage.view().begin_mutation(MIN_ST), std::logic_error);
+        REQUIRE_THROWS_AS(factory.binding_for(item.schema), std::logic_error);
+        const auto *legacy = factory.legacy_binding_for(item.schema);
+        REQUIRE(legacy != nullptr);
+        REQUIRE_THROWS_AS(TSData{*legacy}, std::invalid_argument);
+        REQUIRE(factory.data_type_for(item.schema).record() == data.record());
+        REQUIRE(factory.output_type_for(item.schema).record() == output.record());
+    }
+}
+
+TEST_CASE("dynamic TSL and TSW records preserve roles through fixed parents")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts = registry.ts(integer);
+    const auto *dynamic = registry.tsl(ts, 0);
+    const auto *tick = registry.tsw(integer, 3, 1);
+    const auto *duration = registry.tsw_duration(integer, TimeDelta{10}, TimeDelta{2});
+    const auto *root = registry.tsb("DynamicRoleParent", {
+        {"dynamic", dynamic}, {"tick", tick}, {"duration", duration}});
+
+    TSData data{TSDataPlanFactory::instance().data_type_for(root)};
+    TSOutput output{root};
+    TSInput input{TSInputBuilderFactory::checked_builder_for(*root, TSEndpointSchema::owned(root))};
+
+    struct ParentCase
+    {
+        TSDataView view;
+        TypeRole role;
+        std::array<const char *, 3> labels;
+    };
+    std::array parents{
+        ParentCase{data.view(), TypeRole::Data,
+                   {"ts.tsl.dynamic.data.embedded", "ts.tsw.tick.data.embedded",
+                    "ts.tsw.duration.data.embedded"}},
+        ParentCase{output.data_view(), TypeRole::Output,
+                   {"ts.tsl.dynamic.output.embedded", "ts.tsw.tick.output.embedded",
+                    "ts.tsw.duration.output.embedded"}},
+        ParentCase{input.view().data_view().borrowed_ref(), TypeRole::Input,
+                   {"ts.tsl.dynamic.input.embedded", "ts.tsw.tick.input.embedded",
+                    "ts.tsw.duration.input.embedded"}},
+    };
+
+    for (auto &parent : parents)
+    {
+        auto bundle = parent.view.as_bundle();
+        std::array children{bundle.field("dynamic"), bundle.field("tick"), bundle.field("duration")};
+        for (std::size_t index = 0; index < children.size(); ++index)
+        {
+            REQUIRE(children[index].type_ref().role() == parent.role);
+            REQUIRE(std::string{children[index].type_ref().record()->implementation_name()} == parent.labels[index]);
+            REQUIRE(children[index].type_ref().plan() ==
+                    TSDataPlanFactory::instance().plan_for(children[index].schema()));
+        }
+        auto dynamic_child = bundle.field("dynamic");
+        auto dynamic_list = dynamic_child.as_list();
+        const auto &dynamic_layout = static_cast<const FixedTSLDataLayout &>(dynamic_list.layout());
+        REQUIRE(dynamic_layout.element_type.type_ref().role() == parent.role);
+    }
+}
+
+TEST_CASE("dynamic TSL and TSW output records are thread stable")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    auto &factory = TSDataPlanFactory::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *dynamic = registry.tsl(registry.ts(integer), 0);
+    const auto *window = registry.tsw(integer, 3, 1);
+
+    for (const auto *schema : {dynamic, window})
+    {
+        const auto expected = factory.output_type_for(schema);
+        std::array<const TypeRecord *, 8> records{};
+        std::array<std::thread, 8> threads{};
+        for (std::size_t index = 0; index < threads.size(); ++index)
+            threads[index] = std::thread([&, index] { records[index] = factory.output_type_for(schema).record(); });
+        for (auto &thread : threads) thread.join();
+        for (const auto *record : records) REQUIRE(record == expected.record());
+    }
+}
+
+TEST_CASE("dynamic TSL teardown invalidates nested TSData before child storage destruction")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *ts = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+    const auto *bundle_schema = registry.tsb("DynamicOwnedChild", {{"value", ts}});
+    const auto *dynamic = registry.tsl(bundle_schema, 0);
+
+    InvalidationRecorder child_observer;
+    InvalidationRecorder leaf_observer;
+    const TSDataTracking *child_tracking = nullptr;
+    const TSDataTracking *leaf_tracking = nullptr;
+    {
+        auto output = std::make_unique<TSOutput>(dynamic);
+        auto root = output->data_view();
+        auto child = root.ensure_indexed_child_at(0);
+        auto bundle = child.as_bundle();
+        auto leaf = bundle.field("value");
+        child_tracking = &child.tracking();
+        leaf_tracking = &leaf.tracking();
+        child.subscribe(&child_observer);
+        leaf.subscribe(&leaf_observer);
+    }
+
+    REQUIRE(child_observer.invalidations == 1);
+    REQUIRE(leaf_observer.invalidations == 1);
+    REQUIRE(child_observer.invalidated_source == child_tracking);
+    REQUIRE(leaf_observer.invalidated_source == leaf_tracking);
+}
+
 TEST_CASE("scalar output and peered input preserve binding, timing, and subscriptions")
 {
     using namespace hgraph;
@@ -1358,6 +1534,48 @@ TEST_CASE("scalar role caches reset after owners are destroyed and reseed cleanl
     REQUIRE(output.valid());
     REQUIRE(data.schema() == schema);
     REQUIRE(output.schema() == schema);
+}
+
+TEST_CASE("dynamic TSL and TSW role contexts reset and reseed without stale records")
+{
+    using namespace hgraph;
+    const auto exercise_generation = [] {
+        auto &registry = TypeRegistry::instance();
+        auto &factory = TSDataPlanFactory::instance();
+        const auto *integer = registry.register_scalar<std::int32_t>("int32");
+        const auto *dynamic = registry.tsl(registry.ts(integer), 0);
+        const auto *tick = registry.tsw(integer, 2, 1);
+        const auto *duration = registry.tsw_duration(integer, TimeDelta{10}, TimeDelta{2});
+        const auto *parent = registry.tsb("DynamicResetParent", {
+            {"dynamic", dynamic}, {"tick", tick}, {"duration", duration}});
+
+        std::vector<std::string> labels;
+        for (const auto *schema : {dynamic, tick, duration})
+        {
+            TSData data{factory.data_type_for(schema)};
+            TSOutput output{schema};
+            TSInput owned{TSInputBuilderFactory::checked_builder_for(
+                *schema, TSEndpointSchema::owned(schema))};
+            TSInput target{TSInputBuilderFactory::checked_builder_for(
+                *schema, TSEndpointSchema::peered(schema))};
+            labels.emplace_back(data.type_ref().record()->implementation_name());
+            labels.emplace_back(output.type_ref().record()->implementation_name());
+            labels.emplace_back(owned.type_ref().record()->implementation_name());
+            labels.emplace_back(target.type_ref().record()->implementation_name());
+        }
+
+        TSOutput parent_output{parent};
+        auto parent_data = parent_output.data_view();
+        auto parent_bundle = parent_data.as_bundle();
+        for (const auto *name : {"dynamic", "tick", "duration"})
+            labels.emplace_back(parent_bundle.field(name).type_ref().record()->implementation_name());
+        return labels;
+    };
+
+    const auto first = exercise_generation();
+    reset_all_registries();
+    const auto second = exercise_generation();
+    REQUIRE(second == first);
 }
 
 TEST_CASE("fixed role caches reset after owners are destroyed and reseed cleanly")

@@ -521,9 +521,10 @@ Time-Series Dictionary
 record uses ``TimeSeries/Data/TSD`` and selects the slot-store plan and TSD
 data ops. Separate canonical records describe its key-set and element
 projections, and Input/Output roles select their own topology records without
-duplicating the schema. Scalar ``TS``/``SIGNAL``, fixed ``TSB``/``TSL``, and
-keyed/reference roots are record-backed; dynamic ``TSL``/``TSW`` retain the
-coexistence binding path until 4D.
+duplicating the schema. Scalar ``TS``/``SIGNAL``, fixed and dynamic ``TSL``,
+``TSB``, ``TSW``, and keyed/reference roots are record-backed. Legacy
+``TSDataBinding`` descriptors remain internal compatibility metadata, not
+outward identity for migrated roots.
 
 The keyed-slots debug descriptor identifies key records, slot state, and child
 type records.  A debugger can distinguish live, stopped/deleted, and erased

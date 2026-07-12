@@ -27,6 +27,7 @@ namespace hgraph::detail
     };
 
     [[nodiscard]] const TSDataOwnershipOps *composed_input_ownership_ops_for(const TSDataOps *ops) noexcept;
+    [[nodiscard]] const TSDataOwnershipOps *dynamic_list_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept;
     [[nodiscard]] const TSDataOwnershipOps *fixed_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept;
     [[nodiscard]] const TSDataOwnershipOps *slot_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept;
     [[nodiscard]] const TSDataOwnershipOps *proxy_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept;
