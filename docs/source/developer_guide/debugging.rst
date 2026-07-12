@@ -19,14 +19,18 @@ Load GDB support with:
 When installed through CMake, the scripts are copied to
 ``share/hgraph/debugger`` under the install prefix.
 
-The printers cover ``Value``, ``ValueView``, value and time-series metadata,
-``TypeBinding``, ``StoragePlan``, ``TSDataView``, ``TSInputView``, and
-``TSOutputView``. Expanding those objects exposes bindings, schemas, storage
-plans, ops pointers, payload/data pointers, and metadata field arrays where
-available.
+The printers cover the common ``SchemaHeader`` and ``TypeRecord`` structures,
+``AnyPtr``, and every ``TypedPtr<Family, Role>`` specialization (including the
+public value, time-series, node, graph, executor, and clock pointer aliases).
+A pointer summary shows its live/typed-null/unbound state, access mode,
+family/role/kind, semantic label, implementation label, record address, and
+data address. Expanding it exposes the canonical record and then its schema,
+plan, ops, and optional debug descriptor pointers.
 
-They only inspect debug-info fields and decode simple scalar payloads from
-memory; they do not call methods in the stopped process.
+They only inspect debug-info fields and memory; they do not call methods in the
+stopped process. Deep payload traversal is intentionally unavailable until the
+record carries a stable data-only debug descriptor. The printers do not infer a
+payload layout from C++ template names or private container fields.
 
 Build with debug information enabled for reliable output. Optimized builds may
 hide or fold the private fields that the summaries read.

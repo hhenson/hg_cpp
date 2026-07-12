@@ -513,6 +513,7 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/tools/debugger")
         FILES_MATCHING
             PATTERN "*.py"
             PATTERN "README.md"
+            PATTERN "__pycache__" EXCLUDE
     )
 endif()
 

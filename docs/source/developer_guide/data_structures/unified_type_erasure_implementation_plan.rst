@@ -387,6 +387,17 @@ or role values which have no distinct schema or ops ABI.  Confirm that a typed
 ``NodePtr`` or ``GraphPtr`` provides the navigation Alex needs without storing
 additional words.
 
+Completed review
+   Value, TimeSeries, Node, Graph, Executor, and Clock each have a distinct
+   schema layout and ops ABI. Executor and Clock remain separate because the
+   former owns mutable run lifecycle while the latter is a read-only projection
+   over that storage. Root/nested graphs and executor modes remain records or
+   kinds within their existing families. Roles are limited to the implemented
+   Instance, Data/Input/Output, and Runtime storage contracts. Generic family
+   checks occur at ``AnyPtr`` narrowing and registry validation; typed runtime
+   navigation follows the record directly. ``NodePtr`` and ``GraphPtr`` remain
+   two words with no cached schema or ops pointer.
+
 Milestone 6: Debug Metadata And Pretty Printers
 -----------------------------------------------
 
@@ -398,6 +409,15 @@ Iteration 6A
    Add shallow GDB and LLDB support for ``SchemaHeader``, ``TypeRecord``,
    ``AnyPtr``, and typed pointers.  Display validity, access, semantic label,
    implementation label, family, role, kind, ABIs, plan, ops, and data address.
+
+   Implemented: GDB and LLDB adapters read the common ABI without inferior
+   calls and share debugger-independent validation and formatting. Summaries
+   distinguish invalid, unbound, typed-null, live, and malformed state; pointer
+   expansion navigates to the record and schema. The prior binding-specific
+   payload guesses have been removed pending descriptor-backed deep traversal.
+   Snapshot tests cover corruption and overlapping family-specific kinds, and
+   the adapter is exercised against live C++ objects on macOS. Review accepted
+   and committed.
 
 Iteration 6B
    Define the stable data-only ``DebugDescriptor`` and implement atomic and

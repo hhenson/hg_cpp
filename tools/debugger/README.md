@@ -3,22 +3,25 @@
 This directory contains opt-in debugger summaries and expandable navigation for
 hgraph's type-erased runtime data structures.
 
-The printers currently cover:
+The printers currently cover the common type-erasure ABI:
 
-- `hgraph::Value`
-- `hgraph::ValueView`
-- `hgraph::ValueTypeMetaData`
-- `hgraph::TSValueTypeMetaData`
-- `hgraph::TypeMetaData`
-- `hgraph::TypeBinding<...>`
-- `hgraph::MemoryUtils::StoragePlan`
-- `hgraph::TSDataView`
-- `hgraph::TSInputView`
-- `hgraph::TSOutputView`
+- `hgraph::SchemaHeader`
+- `hgraph::TypeRecord`
+- `hgraph::AnyPtr`
+- every `hgraph::TypedPtr<Family, Role>` specialization, including the public
+  `ValuePtr`, time-series pointer, `NodePtr`, `GraphPtr`, `ExecutorPtr`, and
+  `ClockPtr` aliases
 
-They are intentionally read-only. They inspect fields from debug info, expose
-the main erased pointers as expandable children, and decode common scalar
-payloads directly from memory, but do not call methods in the debugged process.
+They are intentionally read-only. They inspect fields from debug info and
+inferior memory but never call methods in the debugged process. A pointer
+summary includes its state and access mode, family/role/kind, semantic and
+implementation labels, record address, and data address. Expanding it exposes
+the canonical `TypeRecord`, then its `SchemaHeader`, plan, ops, and optional
+debug descriptor pointers.
+
+Deep payload traversal is deliberately not inferred from C++ template names or
+private container layouts. It will be enabled only for records carrying the
+stable data-only debug descriptors introduced by the deeper printer milestones.
 
 ## LLDB
 
@@ -55,10 +58,7 @@ From an installed CMake package:
 
 - Build with debug information enabled. Optimized builds may remove or fold
   fields that the printers inspect.
-- The scalar payload decoder is best-effort for common registered scalar names
-  such as `bool`, `int`, `float`, `int32`, `datetime`, `timedelta`, and `time`.
-- Expanding a value or view exposes its binding, schema, storage plan, ops
-  pointer, storage/data pointer, and metadata field arrays where available.
-- Composite values are still summarized by schema and storage state. Traversing
-  live composite payload contents safely through ops tables can be added later
-  as an explicit debugger command if needed.
+- Family-specific kind values are decoded only after reading the family from
+  the common schema header, so overlapping numeric kind values are unambiguous.
+- Invalid magic, ABI, family, role, access, and required pointers are reported
+  as invalid or malformed instead of being cast to a guessed representation.
