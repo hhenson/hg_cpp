@@ -22,8 +22,11 @@
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/wired_fn.h>
 
+#include "../../src/hgraph/runtime/mapped_key_source.h"
+
 #include <catch2/catch_test_macros.hpp>
 
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -35,6 +38,12 @@ namespace
     using namespace hgraph;
     using namespace hgraph::testing;
     using namespace std::string_literals;
+
+    struct MappedLifetimeNotifier final : Notifiable
+    {
+        void notify(DateTime modified_time) override { notifications.push_back(modified_time); }
+        std::vector<DateTime> notifications{};
+    };
 
     struct AddOneG
     {
@@ -248,6 +257,94 @@ TEST_CASE("map_: keys add, update, and remove drive per-key children and the TSD
                  values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}, {"b"s, 3}}),
                                dict_delta<Str, TS<Int>>({{"a"s, 11}}),
                                dict_delta<Str, TS<Int>>({}, {"b"s})));
+}
+
+TEST_CASE("mapped key sources expose their exact Output role record")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *key_schema = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts_key = registry.ts(key_schema);
+    Value key{std::int32_t{17}};
+    const auto time = MIN_ST + TimeDelta{17};
+
+    runtime_detail::MappedKeySource source;
+    source.bind(*ts_key, key, time);
+    auto view = source.view(time);
+    const auto type = view.type_ref();
+
+    REQUIRE(view.bound());
+    REQUIRE(view.binding() == nullptr);
+    REQUIRE(type);
+    REQUIRE(type.valid());
+    REQUIRE(type.record()->role == TypeRole::Output);
+    REQUIRE(type.schema() == ts_key);
+    REQUIRE(type.plan() == &MemoryUtils::plan_for<runtime_detail::MappedKeySourceStorage>());
+    REQUIRE(type.ops() == view.storage_type().ops());
+    REQUIRE(view.handle().type_ref() == type);
+    REQUIRE(view.valid());
+    REQUIRE(view.modified());
+    REQUIRE(view.value().checked_as<std::int32_t>() == 17);
+    REQUIRE(view.delta_value().checked_as<std::int32_t>() == 17);
+}
+
+TEST_CASE("mapped key source teardown invalidates passive and active direct inputs")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *ts_key = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+    Value key{std::int32_t{17}};
+    const auto time = MIN_ST + TimeDelta{17};
+
+    for (const bool active : {false, true})
+    {
+        CAPTURE(active);
+        TSInput input{
+            TSInputBuilderFactory::checked_builder_for(*ts_key, TSEndpointSchema::peered(ts_key))};
+        MappedLifetimeNotifier scheduling;
+        auto in = input.view(&scheduling, time);
+        std::optional<runtime_detail::MappedKeySource> source;
+        source.emplace();
+        source->bind(*ts_key, key, time);
+        in.bind_output(source->view(time));
+        if (active) { in.make_active(); }
+
+        REQUIRE(in.bound());
+        REQUIRE(in.active() == active);
+        REQUIRE(source->view(time).data_view().observer_count() == (active ? 2 : 1));
+        scheduling.notifications.clear();
+
+        source.reset();
+        REQUIRE_FALSE(in.bound());
+        REQUIRE(in.active() == active);
+        REQUIRE(scheduling.notifications.empty());
+    }
+}
+
+TEST_CASE("mapped key source has no observers after input-first teardown")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *ts_key = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+    Value key{std::int32_t{23}};
+    const auto time = MIN_ST + TimeDelta{23};
+    runtime_detail::MappedKeySource source;
+    source.bind(*ts_key, key, time);
+
+    for (const bool active : {false, true})
+    {
+        CAPTURE(active);
+        {
+            TSInput input{
+                TSInputBuilderFactory::checked_builder_for(*ts_key, TSEndpointSchema::peered(ts_key))};
+            MappedLifetimeNotifier scheduling;
+            auto in = input.view(&scheduling, time);
+            in.bind_output(source.view(time));
+            if (active) { in.make_active(); }
+            REQUIRE(source.view(time).data_view().observer_count() == (active ? 2 : 1));
+        }
+        REQUIRE(source.view(time).data_view().observer_count() == 0);
+    }
 }
 
 TEST_CASE("map_: each key owns an isolated child instance (independent state)")

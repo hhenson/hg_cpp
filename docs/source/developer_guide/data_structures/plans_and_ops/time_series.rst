@@ -84,7 +84,11 @@ The implementation uses the following names consistently:
     the outermost notification pass completes; normal removal outside
     notification remains swap-with-back and pop. Observers added during a
     notification pass are appended but are not notified for the already
-    in-flight modification.
+    in-flight modification. Producer invalidation is a distinct detached
+    traversal: the set becomes empty before callbacks run, callbacks receive
+    ``source_invalidated``, and the detached storage is reclaimed after the
+    outermost pass. This path performs no allocation and observers must not
+    use ordinary unsubscribe against the invalidating source.
 
 ``TSDataLayout``
     The common layout prefix for every TSData kind. It records only the
@@ -119,12 +123,30 @@ The implementation uses the following names consistently:
     dynamic ``TSL`` therefore share ``TSLDataView`` but do not have to
     share the same layout or mutation implementation.
 
+``TSDataTypeRef`` / ``TSInputTypeRef`` / ``TSOutputTypeRef``
+    One-word, checked references to canonical ``TypeRecord`` instances
+    for scalar ``TS<T>`` and ``SIGNAL`` roots. The records share the
+    time-series schema but have distinct ``Data``, ``Input``, and
+    ``Output`` roles. Data and Output select the compact atomic plan and
+    mutable ops; an owned Input selects the same physical plan and ops
+    under a read-only role, while a peered Input selects target-link
+    storage and target-link ops. ``TS_DATA_OPS_ABI_VERSION`` is 1.
+
 ``TSDataBinding``
-    The interned binding for a ``TSData`` implementation: the
-    ``TSValueTypeMetaData`` schema, the data ``StoragePlan``, and the
-    ``TSDataOps`` table. The schema is the time-series schema rather
-    than the scalar value schema because delta shape and mutation
-    behaviour depend on the time-series kind.
+    The legacy interned binding for excluded 4A shapes: ``TSB``, fixed
+    and dynamic ``TSL``, ``TSW``, ``TSS``, ``TSD``, ``REF`` and
+    alternative-store representations. Scalar descriptors embedded in
+    those legacy parents also remain bindings for now. A scalar root
+    binding is not canonical identity and normal ``binding_for`` requests
+    for ``TS`` / ``SIGNAL`` fail.
+
+``TSStorageTypeRef``
+    An internal one-word tagged facade used by generic TS cursors and
+    owners during coexistence. It contains either a scalar role-record
+    pointer or a legacy ``TSDataBinding`` pointer. It is passed and stored
+    by value, never by pointer to a temporary facade. ``binding()`` is
+    consequently null on migrated scalar cursors; generic code uses
+    ``type_ref()``, ``schema()``, ``plan()``, and cached ``ops()`` instead.
 
 ``TSDataPlanFactory``
     The schema → data-plan resolver for ``TSData``. It chooses the
@@ -136,14 +158,21 @@ The implementation uses the following names consistently:
 
 ``TSOutputBuilder`` / ``TSInputBuilder``
     Reusable builders for top-level time-series endpoints. An
-    ``TSOutputBuilder`` composes a ``TSDataBinding`` / data plan with
-    output endpoint state. A ``TSInputBuilder`` consumes an endpoint
+    ``TSOutputBuilder`` composes a scalar Output role record or a legacy
+    binding/data plan with output endpoint state. A ``TSInputBuilder`` consumes an endpoint
     annotation tree compiled by ``TSInputPlanFactory`` and builds input
     endpoint storage: non-peered TSB/fixed-TSL input TSData prefixes,
     TargetLink terminal storage, activation state, and scheduling hooks.
     It does not allocate an independent output-payload copy for the
     visible input value.
     These builders are cached by node and graph construction code.
+
+    Scalar roots support both peered and owned input annotations. A
+    non-peered scalar topology is rejected. Direct peered roots are also
+    supported for legacy structural schemas without migrating their type
+    descriptors. Peered roots own only target-link storage and preserve
+    bind/unbind/rebind plus active/passive subscription semantics; owned
+    scalar inputs own compact atomic storage but remain generically read-only.
 
 ``TSEndpointSchema``
     The generic annotation layer over a canonical
@@ -354,6 +383,20 @@ bound output. The scheduling notifier is installed through the active
 trie only for active input paths and forwards to the owning node. The
 trie records boundary-relative path identity without storing an eager
 map or vector-valued path on every input view.
+
+Destroying an output or replacing its root storage invalidates published
+target links before that storage is destroyed, for both migrated scalar and
+legacy root schemas. The link state is the producer-side registration token:
+its callback never dereferences the dying producer. It first drops every
+borrowed output handle and marks output-side slot subscriptions absent, then
+notifies local slot observers after the borrowed state is empty. Input-side
+active topology remains in place and producer teardown does not schedule the
+node, so a later bind reuses the existing active/passive state. Output copy
+and move operations do not transfer published bindings: assignment
+invalidates the destination, and moving also invalidates bindings to the
+source before moving its value. Structural child views, alternative roots,
+and per-key erase retain their existing lifetime rules until their 4B/4C
+migration milestones.
 
 Active target-link inputs also notify on live bind operations. Binding
 or rebinding an active input to an already-valid source schedules the

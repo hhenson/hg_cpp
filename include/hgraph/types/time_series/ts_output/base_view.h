@@ -40,6 +40,8 @@ namespace hgraph
 
         /** Binding and schema for the borrowed TSData. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;
+        [[nodiscard]] TSStorageTypeRef storage_type() const noexcept;
+        [[nodiscard]] TSOutputTypeRef type_ref() const;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
 
         /** True when both output identity and TSData cursor are present. */
@@ -92,6 +94,8 @@ namespace hgraph
 
         /** Binding and schema for the borrowed TSData. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;
+        [[nodiscard]] TSStorageTypeRef storage_type() const noexcept;
+        [[nodiscard]] TSOutputTypeRef type_ref() const;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
 
         /** Current and delta value projections. */

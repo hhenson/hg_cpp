@@ -308,6 +308,14 @@ namespace hgraph::testing
             // The canonical per-tick delta, rebuilt as an owned value-layer Value (the
             // runtime's transient delta storage omits copy hooks).
             Value delta = capture_delta(ts.base());
+            const auto *schema = ts.base().schema();
+            if (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0 && delta.view().as_map().empty())
+            {
+                // A fixed structural list can remain historically valid after every
+                // routed REF leaf silently unbinds. Its parent may be scheduled, but
+                // the empty map is not a tick and must remain a dense-buffer hole.
+                return;
+            }
             if (sparse.value())
             {
                 // SPARSE (the harness's __elide__): TYPED (time, delta)

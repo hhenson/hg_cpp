@@ -2746,7 +2746,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             const auto *element_schema = schema.element_ts();
             if (element_schema == nullptr) { throw std::logic_error("TSD element TS schema is not resolved"); }
-            const auto *binding = TSDataPlanFactory::instance().binding_for(element_schema);
+            const auto *binding = TSDataPlanFactory::instance().legacy_binding_for(element_schema);
             if (binding == nullptr) { throw std::logic_error("TSD element TSData binding is not resolved"); }
             return *binding;
         }

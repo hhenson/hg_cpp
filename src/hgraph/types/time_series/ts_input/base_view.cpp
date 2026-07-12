@@ -46,10 +46,19 @@ namespace hgraph
         if (is_target_position())
         {
             const auto &target = resolved_value_data();
-            if (target.valid()) { return target.binding(); }
+            if (target.valid() && target.binding() != nullptr) { return target.binding(); }
+            const auto *schema = target_path_schema();
+            if (raw_data.type_ref() && schema != nullptr &&
+                (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL))
+                return nullptr;
             return detail::regular_ts_data_binding_for(target_path_schema());
         }
         return value_data.binding();
+    }
+
+    TSStorageTypeRef TSInputView::InputDataCursor::storage_type() const noexcept
+    {
+        return is_target_position() ? raw_data.storage_type() : value_data.storage_type();
     }
 
     const TSValueTypeMetaData *TSInputView::InputDataCursor::schema() const noexcept
@@ -245,6 +254,12 @@ namespace hgraph
     const TSDataBinding *TSInputView::binding() const noexcept
     {
         return data_.binding();
+    }
+
+    TSInputTypeRef TSInputView::type_ref() const
+    {
+        const auto type = data_.storage_type().type_ref();
+        return type ? TSInputTypeRef::checked(type) : TSInputTypeRef{};
     }
 
     const TSValueTypeMetaData *TSInputView::schema() const noexcept
@@ -533,12 +548,12 @@ namespace hgraph
         auto projection = detail::input_child_projection(parent, index);
         if (projection.target_link.valid())
         {
-            projection.target_link = TSDataView{projection.target_link.binding(), projection.target_link.data(),
+            projection.target_link = TSDataView{projection.target_link.storage_type(), projection.target_link.data(),
                                                 parent, index};
         }
         else if (projection.visible.valid())
         {
-            projection.visible = TSDataView{projection.visible.binding(), projection.visible.data(), parent, index};
+            projection.visible = TSDataView{projection.visible.storage_type(), projection.visible.data(), parent, index};
         }
         return child_from_projection(std::move(projection), index);
     }
@@ -548,12 +563,12 @@ namespace hgraph
         auto projection = detail::input_child_projection(parent, index);
         if (projection.target_link.valid())
         {
-            projection.target_link = TSDataView{projection.target_link.binding(), projection.target_link.data(),
+            projection.target_link = TSDataView{projection.target_link.storage_type(), projection.target_link.data(),
                                                 parent, index};
         }
         else if (projection.visible.valid())
         {
-            projection.visible = TSDataView{projection.visible.binding(), projection.visible.data(), parent, index};
+            projection.visible = TSDataView{projection.visible.storage_type(), projection.visible.data(), parent, index};
         }
         return child_from_projection(std::move(projection), index);
     }

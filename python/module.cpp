@@ -1923,8 +1923,8 @@ NB_MODULE(_hgraph, m)
             return stdlib::json_tree::is_json_ts(self.meta);
         })
         .def("__repr__", [](const PyTsType &self) {
-            return std::string{self.meta != nullptr && self.meta->display_name != nullptr ? self.meta->display_name
-                                                                                          : "<ts?>"};
+            return self.meta != nullptr && !self.meta->name().empty() ? std::string{self.meta->name()}
+                                                                      : std::string{"<ts?>"};
         });
     nb::class_<PyScalarPattern>(m, "ScalarPattern")
         .def("__repr__", [](const PyScalarPattern &self) {

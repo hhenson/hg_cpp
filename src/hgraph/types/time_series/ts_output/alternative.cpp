@@ -49,7 +49,7 @@ namespace hgraph::detail
 
         [[nodiscard]] const TSDataBinding &checked_ts_data_binding(const TSValueTypeMetaData &schema)
         {
-            const auto *binding = TSDataPlanFactory::instance().binding_for(&schema);
+            const auto *binding = TSDataPlanFactory::instance().legacy_binding_for(&schema);
             if (binding == nullptr)
             {
                 throw std::logic_error("TSOutput to-REF alternative could not resolve requested TSData binding");
@@ -65,6 +65,20 @@ namespace hgraph::detail
                 throw std::logic_error("TSOutput from-REF alternative could not resolve endpoint TSData binding");
             }
             return *binding;
+        }
+
+        [[nodiscard]] TSStorageTypeRef checked_endpoint_storage_type(const TSEndpointSchema &endpoint_schema)
+        {
+            const auto &binding = checked_endpoint_binding(endpoint_schema);
+            const auto *schema = binding.type_meta;
+            if (schema != nullptr && (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL))
+            {
+                const auto type = checked_ts_role_type(
+                    intern_ts_type(*schema, TypeRole::Output, binding.checked_plan(), binding.ops_ref()),
+                    std::integral_constant<TypeRole, TypeRole::Output>{});
+                return TSStorageTypeRef{type.as_role()};
+            }
+            return TSStorageTypeRef{&binding};
         }
 
         [[nodiscard]] bool field_name_equal(const TSFieldMetaData &lhs, const TSFieldMetaData &rhs) noexcept
@@ -994,7 +1008,7 @@ namespace hgraph::detail
         RefLinkAlternativeState(const TSValueTypeMetaData &requested_schema, const TSOutputView &source)
             : requested_schema{&requested_schema},
               endpoint_schema{from_ref_endpoint_schema_for(&requested_schema)},
-              data{checked_endpoint_binding(endpoint_schema)},
+              data{checked_endpoint_storage_type(endpoint_schema)},
               notifier{*this}
         {
             rebind(source);
@@ -1357,7 +1371,7 @@ namespace hgraph::detail
                                                                 const TSDataView &child,
                                                                 std::size_t child_id)
     {
-        return TSDataView{child.binding(), child.data(), parent, child_id};
+        return TSDataView{child.storage_type(), child.data(), parent, child_id};
     }
 
     TSOutputHandle TSOutputAlternativeStore::to_ref_binding(const AlternativeKey &key,

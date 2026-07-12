@@ -268,7 +268,8 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     const auto t2 = t1 + TimeDelta{1};
 
     auto initial = output.view(t1);
-    REQUIRE(initial.binding() != nullptr);
+    REQUIRE(initial.binding() == nullptr);
+    REQUIRE(initial.type_ref().record() == output.type_ref().record());
     REQUIRE(initial.bound());
     REQUIRE(initial.evaluation_time() == t1);
     REQUIRE_FALSE(initial.valid());

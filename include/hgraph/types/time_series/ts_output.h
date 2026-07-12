@@ -50,6 +50,7 @@ namespace hgraph
 
         /** Root TSData binding and schema, or null when unbound. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;
+        [[nodiscard]] TSOutputTypeRef type_ref() const;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
 
         /** Borrowed root TSData view. */
@@ -92,10 +93,12 @@ namespace hgraph
                                                         TSEndpointOwnerPort    port,
                                                         DateTime               mutation_time);
 
-        static const TSDataBinding &checked_binding_for(const TSValueTypeMetaData *schema);
-        static const TSDataBinding &checked_binding_for(const TSEndpointSchema &endpoint_schema);
+        static TSData checked_data_for(const TSDataBinding &binding);
+        static TSData checked_data_for(const TSValueTypeMetaData *schema);
+        static TSData checked_data_for(const TSEndpointSchema &endpoint_schema);
         static const TSData &copyable_data(const TSOutput &other);
 
+        void invalidate_observers() noexcept;
         void attach_root_parent();
         void record_child_modified(std::size_t child_id, DateTime mutation_time) override;
 

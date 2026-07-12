@@ -796,19 +796,15 @@ namespace hgraph::detail
 
         [[nodiscard]] bool target_link_delta_has_effect_op(const TSOutputView &out, const ValueView &delta)
         {
-            const auto *binding = out.binding();
-            if (binding == nullptr) { throw std::logic_error("target-link delta ops require a bound output"); }
-            auto        target        = target_link_delta_target(binding->ops_ref().context, out);
-            const auto *target_binding = target.binding();
-            if (target_binding == nullptr) { throw std::logic_error("target-link delta target has no binding"); }
-            return target_binding->ops_ref().delta_has_effect_impl(target, delta);
+            const auto &out_ops = out.data_view().ops();
+            auto target = target_link_delta_target(out_ops.context, out);
+            return target.data_view().ops().delta_has_effect_impl(target, delta);
         }
 
         void target_link_apply_delta_op(const TSOutputView &out, const ValueView &delta)
         {
-            const auto *binding = out.binding();
-            if (binding == nullptr) { throw std::logic_error("target-link delta ops require a bound output"); }
-            ::hgraph::apply_delta(target_link_delta_target(binding->ops_ref().context, out), delta);
+            const auto &out_ops = out.data_view().ops();
+            ::hgraph::apply_delta(target_link_delta_target(out_ops.context, out), delta);
         }
 
         /**
@@ -889,23 +885,20 @@ namespace hgraph::detail
         template <typename Context>
         void initialise_target_link_context(Context &context,
                                             const TSValueTypeMetaData &schema,
-                                            std::size_t storage_offset,
-                                            const TSDataBinding &regular_binding)
+                                            std::size_t storage_offset)
         {
             context.schema = &schema;
             context.storage_offset = storage_offset;
-            context.regular_binding = &regular_binding;
         }
 
         [[nodiscard]] std::unique_ptr<TSInputTargetLinkContext>
         make_base_target_link_context(const TSValueTypeMetaData &schema,
                                       const MemoryUtils::StoragePlan &,
                                       std::size_t storage_offset,
-                                      const TSDataBinding &regular_binding,
                                       const TSDataLayout &regular_layout)
         {
             auto context = std::make_unique<TargetLinkContextFor<TSDataLayout, TSDataOps>>();
-            initialise_target_link_context(*context, schema, storage_offset, regular_binding);
+            initialise_target_link_context(*context, schema, storage_offset);
             context->layout = regular_layout;
             context->layout.tracking_offset = storage_offset;
             context->ops = target_link_base_ops(*context);
@@ -918,11 +911,10 @@ namespace hgraph::detail
         make_set_target_link_context(const TSValueTypeMetaData &schema,
                                      const MemoryUtils::StoragePlan &,
                                      std::size_t storage_offset,
-                                     const TSDataBinding &regular_binding,
                                      const TSDataLayout &regular_layout)
         {
             auto context = std::make_unique<TargetLinkContextFor<TSSDataLayout, TSSDataOps>>();
-            initialise_target_link_context(*context, schema, storage_offset, regular_binding);
+            initialise_target_link_context(*context, schema, storage_offset);
             context->layout = static_cast<const TSSDataLayout &>(regular_layout);
             context->layout.tracking_offset = storage_offset;
             context->ops = TSSDataOps{};
@@ -939,11 +931,10 @@ namespace hgraph::detail
         make_dict_target_link_context(const TSValueTypeMetaData &schema,
                                       const MemoryUtils::StoragePlan &root_plan,
                                       std::size_t storage_offset,
-                                      const TSDataBinding &regular_binding,
                                       const TSDataLayout &regular_layout)
         {
             auto context = std::make_unique<TargetLinkDictContext>();
-            initialise_target_link_context(*context, schema, storage_offset, regular_binding);
+            initialise_target_link_context(*context, schema, storage_offset);
             context->slot_access = &target_link_dict_key_access;
 
             context->dict_layout = static_cast<const TSDDataLayout &>(regular_layout);
@@ -993,11 +984,10 @@ namespace hgraph::detail
         make_indexed_target_link_context(const TSValueTypeMetaData &schema,
                                          const MemoryUtils::StoragePlan &,
                                          std::size_t storage_offset,
-                                         const TSDataBinding &regular_binding,
                                          const TSDataLayout &regular_layout)
         {
             auto context = std::make_unique<TargetLinkContextFor<TSDataLayout, IndexedTSDataOps>>();
-            initialise_target_link_context(*context, schema, storage_offset, regular_binding);
+            initialise_target_link_context(*context, schema, storage_offset);
             context->layout = regular_layout;
             context->layout.tracking_offset = storage_offset;
             context->ops = IndexedTSDataOps{};
@@ -1024,13 +1014,12 @@ namespace hgraph::detail
         make_window_target_link_context(const TSValueTypeMetaData &schema,
                                         const MemoryUtils::StoragePlan &,
                                         std::size_t storage_offset,
-                                        const TSDataBinding &regular_binding,
                                         const TSDataLayout &regular_layout)
         {
             if (schema.is_duration_based())
             {
                 auto context = std::make_unique<TargetLinkContextFor<TimeTSWDataLayout, TSWDataOps>>();
-                initialise_target_link_context(*context, schema, storage_offset, regular_binding);
+                initialise_target_link_context(*context, schema, storage_offset);
                 context->layout = static_cast<const TimeTSWDataLayout &>(regular_layout);
                 context->layout.tracking_offset = storage_offset;
                 context->ops = TSWDataOps{};
@@ -1048,7 +1037,7 @@ namespace hgraph::detail
             }
 
             auto context = std::make_unique<TargetLinkContextFor<SizeTSWDataLayout, TSWDataOps>>();
-            initialise_target_link_context(*context, schema, storage_offset, regular_binding);
+            initialise_target_link_context(*context, schema, storage_offset);
             context->layout = static_cast<const SizeTSWDataLayout &>(regular_layout);
             context->layout.tracking_offset = storage_offset;
             context->ops = TSWDataOps{};

@@ -44,6 +44,7 @@ set(HGRAPH_RUNTIME_SOURCES
     hgraph/types/time_series/ts_data/types.cpp
     hgraph/types/time_series/ts_data/window_view.cpp
     hgraph/types/time_series/ts_delta.cpp
+    hgraph/types/time_series/ts_type_ref.cpp
     hgraph/types/time_series/ts_input.cpp
     hgraph/types/time_series/ts_input/base_view.cpp
     hgraph/types/time_series/ts_input/bundle_view.cpp

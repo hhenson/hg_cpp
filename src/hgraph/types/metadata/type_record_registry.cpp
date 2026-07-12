@@ -17,7 +17,7 @@ namespace hgraph
             case TypeFamily::Value:
                 return role == TypeRole::Instance;
             case TypeFamily::TimeSeries:
-                return role == TypeRole::Data;
+                return role == TypeRole::Data || role == TypeRole::Input || role == TypeRole::Output;
             case TypeFamily::Node:
             case TypeFamily::Graph:
             case TypeFamily::Executor:

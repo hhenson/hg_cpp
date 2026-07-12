@@ -189,12 +189,12 @@ can construct a compact classification from the schema and record:
    };
 
    enum class TypeRole : std::uint8_t {
-       Invalid,
-       Instance,
-       Data,
-       Input,
-       Output,
-       Runtime,
+       Invalid = 0,
+       Instance = 1,
+       Data = 2,
+       Runtime = 3,
+       Input = 4,
+       Output = 5,
    };
 
    struct TypeClassification {
@@ -514,14 +514,15 @@ type record selects the compact value plan and integer value ops.  ``AnyPtr``
 prints ``int64``, ``Value/Instance/Atomic``, its address, and its layout.  A
 ``ValuePtr`` adds the value API without changing the two-word representation.
 
-Time-Series Dictionary
-~~~~~~~~~~~~~~~~~~~~~~
+Time-Series Dictionary (post-4A target)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``TSD[str, TS[int64]]`` has one semantic time-series schema.  Its data type
-record uses ``TimeSeries/Data/TSD`` and selects the slot-store plan and TSD data
-ops.  Its input and output records reuse the schema but select their respective
-roles, plans, and ops.  A generic pointer identifies all three safely.  A
-``TSDDataPtr`` exposes keyed data methods after validation.
+``TSD[str, TS[int64]]`` will have one semantic time-series schema. Its data
+type record will use ``TimeSeries/Data/TSD`` and select the slot-store plan and
+TSD data ops. Milestone 4A deliberately migrates only scalar ``TS`` and
+``SIGNAL`` roots; TSD and the other composite/keyed/reference shapes still use
+``TSDataBinding`` until 4B/4C. This example describes the intended later state,
+not the current 4A representation.
 
 The keyed-slots debug descriptor identifies key records, slot state, and child
 type records.  A debugger can distinguish live, stopped/deleted, and erased

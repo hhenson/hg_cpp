@@ -22,6 +22,21 @@ namespace hgraph
     {
     }
 
+    TSDataView::TSDataView(TSStorageTypeRef type, void *data) noexcept
+        : storage_(type, data)
+    {
+    }
+
+    TSDataView::TSDataView(TSStorageTypeRef type, const void *data) noexcept
+        : storage_(type, data)
+    {
+    }
+
+    TSDataView::TSDataView(TSRoleTypeRef type, void *data) noexcept
+        : storage_(type, data)
+    {
+    }
+
     TSDataView::TSDataView(TSDataStorageRef<> storage) noexcept
         : storage_(storage)
     {
@@ -52,10 +67,19 @@ namespace hgraph
         return storage_.binding();
     }
 
+    TSStorageTypeRef TSDataView::storage_type() const noexcept
+    {
+        return storage_.storage_type();
+    }
+
+    TSRoleTypeRef TSDataView::type_ref() const noexcept
+    {
+        return storage_.type_ref();
+    }
+
     const TSValueTypeMetaData *TSDataView::schema() const noexcept
     {
-        const auto *bound = binding();
-        return bound != nullptr ? bound->type_meta : nullptr;
+        return storage_.schema();
     }
 
     const void *TSDataView::data() const noexcept
@@ -100,7 +124,7 @@ namespace hgraph
             const auto &link = current.parent_link();
             if (link.has_endpoint_parent()) { return link; }
             if (!link.has_ts_data_parent()) { return {}; }
-            current = TSDataView{link.parent_binding(), link.parent_data()};
+            current = TSDataView{link.parent_storage_type(), link.parent_data()};
         }
         return {};
     }
@@ -117,6 +141,9 @@ namespace hgraph
 
     void *TSDataView::mutable_data() const
     {
+        const auto type = type_ref();
+        if (type && !has_capability(type.capabilities(), TypeCapabilities::Mutable))
+            throw std::logic_error("TSDataView::mutable_data requires a mutable time-series role");
         if (!ops().allows_mutation) { throw std::logic_error("TSDataView::mutable_data requires mutable TSData ops"); }
         return storage_.data();
     }
@@ -337,6 +364,18 @@ namespace hgraph
         bind_parent(parent, child_id);
     }
 
+    TSDataView::TSDataView(TSStorageTypeRef type, void *data, const TSDataView &parent, std::size_t child_id)
+        : storage_(type, data)
+    {
+        bind_parent(parent, child_id);
+    }
+
+    TSDataView::TSDataView(TSStorageTypeRef type, const void *data, const TSDataView &parent, std::size_t child_id)
+        : storage_(type, data)
+    {
+        bind_parent(parent, child_id);
+    }
+
     void TSDataView::require_live(const char *what) const
     {
         if (!valid()) { throw std::logic_error(std::string{what} + " requires a live view"); }
@@ -357,7 +396,7 @@ namespace hgraph
         {
             throw std::logic_error("TSDataView child requires mutable parent TSData ops");
         }
-        mutable_tracking().parent = TSParentLink{parent.binding(), parent.data(), child_id};
+        mutable_tracking().parent = TSParentLink{parent.storage_type(), parent.data(), child_id};
     }
 
     void TSDataView::bind_parent(const NodeView &parent, TSEndpointOwnerPort port) const

@@ -124,7 +124,7 @@ namespace hgraph
     template <TypeFamily Family, TypeRole Role = TypeRole::Invalid> class TypedPtr
     {
         static_assert(Family != TypeFamily::Invalid, "TypedPtr requires a concrete family");
-        static_assert(Role >= TypeRole::Invalid && Role <= TypeRole::Runtime, "TypedPtr requires a known role");
+        static_assert(Role >= TypeRole::Invalid && Role <= TypeRole::Output, "TypedPtr requires a known role");
 
     public:
         constexpr TypedPtr() noexcept = default;
@@ -225,6 +225,8 @@ namespace hgraph
 
     using ValuePtr = TypedPtr<TypeFamily::Value, TypeRole::Instance>;
     using TSDataPtr = TypedPtr<TypeFamily::TimeSeries, TypeRole::Data>;
+    using TSInputPtr = TypedPtr<TypeFamily::TimeSeries, TypeRole::Input>;
+    using TSOutputPtr = TypedPtr<TypeFamily::TimeSeries, TypeRole::Output>;
     using NodePtr = TypedPtr<TypeFamily::Node, TypeRole::Runtime>;
     using GraphPtr = TypedPtr<TypeFamily::Graph, TypeRole::Runtime>;
     using ExecutorPtr = TypedPtr<TypeFamily::Executor, TypeRole::Runtime>;
@@ -232,6 +234,8 @@ namespace hgraph
 
     static_assert(sizeof(ValuePtr) == 2 * sizeof(void *));
     static_assert(sizeof(TSDataPtr) == 2 * sizeof(void *));
+    static_assert(sizeof(TSInputPtr) == 2 * sizeof(void *));
+    static_assert(sizeof(TSOutputPtr) == 2 * sizeof(void *));
     static_assert(sizeof(NodePtr) == 2 * sizeof(void *));
     static_assert(sizeof(GraphPtr) == 2 * sizeof(void *));
     static_assert(sizeof(ExecutorPtr) == 2 * sizeof(void *));

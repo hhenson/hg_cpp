@@ -3,6 +3,7 @@
 
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/time_series/ts_data.h>
+#include <hgraph/types/time_series/ts_type_ref.h>
 #include <hgraph/types/utils/memory_utils.h>
 
 #include <mutex>
@@ -68,6 +69,20 @@ namespace hgraph
          */
         const TSDataBinding *binding_for(const TSValueTypeMetaData *schema);
 
+        /** Canonical scalar standalone-data role record (TS/SIGNAL only). */
+        [[nodiscard]] TSDataTypeRef data_type_for(const TSValueTypeMetaData *schema);
+        /** Canonical scalar output role record (TS/SIGNAL only). */
+        [[nodiscard]] TSOutputTypeRef output_type_for(const TSValueTypeMetaData *schema);
+        [[nodiscard]] TSDataTypeRef find_data_type(const TSValueTypeMetaData *schema) const noexcept;
+        [[nodiscard]] TSOutputTypeRef find_output_type(const TSValueTypeMetaData *schema) const noexcept;
+
+        /**
+         * Explicit legacy binding synthesis for composite internals. Scalar
+         * results are compatibility descriptors only and are never canonical
+         * root identity.
+         */
+        const TSDataBinding *legacy_binding_for(const TSValueTypeMetaData *schema);
+
         /** Binding lookup only; never synthesises. Returns ``nullptr`` when missing. */
         const TSDataBinding *find_binding(const TSValueTypeMetaData *schema) const;
 
@@ -86,6 +101,8 @@ namespace hgraph
         mutable std::mutex                                                                mutex_;
         std::unordered_map<const TSValueTypeMetaData *, const MemoryUtils::StoragePlan *> cache_;
         std::unordered_map<const TSValueTypeMetaData *, const TSDataBinding *>             binding_cache_;
+        std::unordered_map<const TSValueTypeMetaData *, TSDataTypeRef>                     data_type_cache_;
+        std::unordered_map<const TSValueTypeMetaData *, TSOutputTypeRef>                   output_type_cache_;
     };
 }  // namespace hgraph
 

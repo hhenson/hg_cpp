@@ -119,6 +119,8 @@ namespace hgraph
 
         [[nodiscard]] bool has_value() const noexcept;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
+        [[nodiscard]] const TSDataBinding *binding() const noexcept;
+        [[nodiscard]] TSInputTypeRef type_ref() const;
 
         /** Node owner for this endpoint, if it is attached to a runtime graph. */
         [[nodiscard]] NodeView owner_node() const;

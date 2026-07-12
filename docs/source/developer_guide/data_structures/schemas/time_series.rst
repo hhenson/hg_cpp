@@ -9,6 +9,15 @@ top of a value-layer payload. The schema is represented at runtime by
 live on the matching plan and are described in
 :doc:`../plans_and_ops/time_series`.
 
+``TSValueTypeMetaData`` is a standard-layout unified schema. Its first
+field, at offset zero, is ``SchemaHeader``; it does not inherit from the
+older ``TypeMetaData`` base. The header owns the immutable canonical
+diagnostic label and records ``TypeFamily::TimeSeries`` plus the numeric
+kind ABI. The kind values are fixed as ``TS=0``, ``TSS=1``, ``TSD=2``,
+``TSL=3``, ``TSW=4``, ``TSB=5``, ``REF=6``, and ``SIGNAL=7``. Named and
+structural TSB identity remains represented by ``wrapped_un_named``;
+both forms still have valid, non-empty header labels.
+
 This chapter describes:
 
 - the eight time-series kinds and what they wrap,

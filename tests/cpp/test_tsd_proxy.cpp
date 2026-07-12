@@ -78,7 +78,7 @@ TEST_CASE("TSDProxy constructs builder-created values from source key slots")
     const auto *tsd_int  = registry.tsd(int_meta, ts_int);
 
     const auto *source_binding = TSDataPlanFactory::instance().binding_for(tsd_int);
-    const auto *element_binding = TSDataPlanFactory::instance().binding_for(ts_int);
+    const auto *element_binding = TSDataPlanFactory::instance().legacy_binding_for(ts_int);
     REQUIRE(source_binding != nullptr);
     REQUIRE(element_binding != nullptr);
 
@@ -175,7 +175,7 @@ TEST_CASE("TSDProxy projected values preserve canonical hash equality comparison
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsd_int  = registry.tsd(int_meta, ts_int);
     const auto *source_binding = TSDataPlanFactory::instance().binding_for(tsd_int);
-    const auto *element_binding = TSDataPlanFactory::instance().binding_for(ts_int);
+    const auto *element_binding = TSDataPlanFactory::instance().legacy_binding_for(ts_int);
     REQUIRE(source_binding != nullptr);
     REQUIRE(element_binding != nullptr);
 

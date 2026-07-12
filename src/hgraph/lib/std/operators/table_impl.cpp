@@ -117,7 +117,7 @@ namespace hgraph::stdlib
                 }
                 throw std::invalid_argument(
                     fmt::format("to_table: unsupported leaf time-series kind for '{}'",
-                                ts->display_name != nullptr ? ts->display_name : "?"));
+                                ts != nullptr && !ts->name().empty() ? ts->name() : std::string_view{"?"}));
             }
 
             [[nodiscard]] bool is_frame_meta(const ValueTypeMetaData *meta)

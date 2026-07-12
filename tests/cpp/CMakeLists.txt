@@ -124,6 +124,7 @@ hgraph_add_test_objects(hgraph_value_test_objects
     test_ts_delta.cpp
     test_ts_input.cpp
     test_ts_output.cpp
+    test_ts_type_ref.cpp
     test_ts_schemas.cpp
     test_type_erasure_layout.cpp
     test_type_record.cpp

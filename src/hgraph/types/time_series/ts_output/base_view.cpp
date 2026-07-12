@@ -39,10 +39,17 @@ namespace hgraph
         return data_.binding();
     }
 
+    TSStorageTypeRef TSOutputHandle::storage_type() const noexcept { return data_.storage_type(); }
+
+    TSOutputTypeRef TSOutputHandle::type_ref() const
+    {
+        const auto type = data_.type_ref();
+        return type ? TSOutputTypeRef::checked(type) : TSOutputTypeRef{};
+    }
+
     const TSValueTypeMetaData *TSOutputHandle::schema() const noexcept
     {
-        const auto *bound = data_.binding();
-        return bound != nullptr ? bound->type_meta : nullptr;
+        return data_.schema();
     }
 
     bool TSOutputHandle::bound() const noexcept
@@ -52,7 +59,7 @@ namespace hgraph
 
     bool TSOutputHandle::same_as(const TSOutputHandle &other) const noexcept
     {
-        return output_ == other.output_ && data_.binding() == other.data_.binding() &&
+        return output_ == other.output_ && data_.storage_type() == other.data_.storage_type() &&
                data_.data() == other.data_.data();
     }
 
@@ -133,6 +140,14 @@ namespace hgraph
     const TSDataBinding *TSOutputView::binding() const noexcept
     {
         return data_.binding();
+    }
+
+    TSStorageTypeRef TSOutputView::storage_type() const noexcept { return data_.storage_type(); }
+
+    TSOutputTypeRef TSOutputView::type_ref() const
+    {
+        const auto type = data_.type_ref();
+        return type ? TSOutputTypeRef::checked(type) : TSOutputTypeRef{};
     }
 
     const TSValueTypeMetaData *TSOutputView::schema() const noexcept

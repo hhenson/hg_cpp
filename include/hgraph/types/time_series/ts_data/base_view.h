@@ -31,7 +31,6 @@ namespace hgraph
     {
       public:
         TSDataStorageRef() noexcept
-            : storage_(nullptr, static_cast<void *>(nullptr))
         {
             if constexpr (std::same_as<DataOps, TSDataOps>)
             {
@@ -41,8 +40,26 @@ namespace hgraph
 
         constexpr TSDataStorageRef(const TSDataBinding *binding, void *data) noexcept
             requires std::same_as<DataOps, TSDataOps>
-            : storage_(binding, data),
-              ops_(binding != nullptr && data != nullptr ? binding->ops : &ts_data_detail::default_ts_data_ops())
+            : TSDataStorageRef(TSStorageTypeRef{binding}, data)
+        {
+        }
+
+        constexpr TSDataStorageRef(TSStorageTypeRef type, void *data) noexcept
+            requires std::same_as<DataOps, TSDataOps>
+            : type_(type), data_(data),
+              ops_(type.ops() != nullptr && data != nullptr ? type.ops() : &ts_data_detail::default_ts_data_ops())
+        {
+        }
+
+        constexpr TSDataStorageRef(TSStorageTypeRef type, const void *data) noexcept
+            requires std::same_as<DataOps, TSDataOps>
+            : TSDataStorageRef(type, const_cast<void *>(data))
+        {
+        }
+
+        constexpr TSDataStorageRef(TSRoleTypeRef type, void *data) noexcept
+            requires std::same_as<DataOps, TSDataOps>
+            : TSDataStorageRef(TSStorageTypeRef{type}, data)
         {
         }
 
@@ -54,13 +71,13 @@ namespace hgraph
 
         TSDataStorageRef(TSDataStorageRef<> storage, TSTypeKind expected_kind)
             requires(!std::same_as<DataOps, TSDataOps>)
-            : storage_(storage.storage_),
+            : type_(storage.type_), data_(storage.data_),
               ops_(typed_ops(storage, expected_kind))
         {
         }
 
         /** True when both the binding and data pointer are present. */
-        [[nodiscard]] constexpr bool has_value() const noexcept { return storage_.has_value(); }
+        [[nodiscard]] constexpr bool has_value() const noexcept { return type_.bound() && data_ != nullptr; }
         [[nodiscard]] constexpr bool valid() const noexcept
         {
             if constexpr (std::same_as<DataOps, TSDataOps>)
@@ -75,21 +92,19 @@ namespace hgraph
         [[nodiscard]] constexpr explicit operator bool() const noexcept { return valid(); }
 
         /** True when the reference carries a binding, even without data. */
-        [[nodiscard]] constexpr bool bound() const noexcept { return storage_.bound(); }
+        [[nodiscard]] constexpr bool bound() const noexcept { return type_.bound(); }
 
         /** Bound TSData binding, schema, and memory. */
-        [[nodiscard]] constexpr const TSDataBinding *binding() const noexcept { return storage_.binding(); }
-        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept
-        {
-            const auto *bound = binding();
-            return bound != nullptr ? bound->type_meta : nullptr;
-        }
-        [[nodiscard]] constexpr void *data() const noexcept { return storage_.data(); }
+        [[nodiscard]] const TSDataBinding *binding() const noexcept { return type_.legacy_binding(); }
+        [[nodiscard]] constexpr TSStorageTypeRef storage_type() const noexcept { return type_; }
+        [[nodiscard]] TSRoleTypeRef type_ref() const noexcept { return type_.type_ref(); }
+        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return type_.schema(); }
+        [[nodiscard]] constexpr void *data() const noexcept { return data_; }
 
         /** Generic storage identity over the same binding and memory. */
         [[nodiscard]] constexpr TSDataStorageRef<> storage_ref() const noexcept
         {
-            return TSDataStorageRef<>{binding(), data()};
+            return TSDataStorageRef<>{type_, data_};
         }
 
         /** Checked access to the ops table with the ref's requested type. */
@@ -101,7 +116,8 @@ namespace hgraph
 
         void reset() noexcept
         {
-            storage_.reset();
+            type_ = {};
+            data_ = nullptr;
             if constexpr (std::same_as<DataOps, TSDataOps>)
             {
                 ops_ = &ts_data_detail::default_ts_data_ops();
@@ -126,7 +142,8 @@ namespace hgraph
             return &static_cast<const DataOps &>(base_ops);
         }
 
-        MemoryUtils::StorageRef<TSDataBinding> storage_{};
+        TSStorageTypeRef                    type_{};
+        void                               *data_{nullptr};
         const DataOps                         *ops_{nullptr};
 
         template <typename>
@@ -145,6 +162,9 @@ namespace hgraph
 
         TSDataView(const TSDataBinding *binding, void *data) noexcept;
         TSDataView(const TSDataBinding *binding, const void *data) noexcept;
+        TSDataView(TSStorageTypeRef type, void *data) noexcept;
+        TSDataView(TSStorageTypeRef type, const void *data) noexcept;
+        TSDataView(TSRoleTypeRef type, void *data) noexcept;
         explicit TSDataView(TSDataStorageRef<> storage) noexcept;
 
         TSDataView(const TSDataView &) = delete;
@@ -164,6 +184,8 @@ namespace hgraph
 
         /** Type-erased binding that describes this TSData memory region. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;
+        [[nodiscard]] TSStorageTypeRef storage_type() const noexcept;
+        [[nodiscard]] TSRoleTypeRef type_ref() const noexcept;
 
         /** Time-series schema associated with the binding, or null when unbound. */
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
@@ -291,6 +313,8 @@ namespace hgraph
 
         TSDataView(const TSDataBinding *binding, void *data, const TSDataView &parent, std::size_t child_id);
         TSDataView(const TSDataBinding *binding, const void *data, const TSDataView &parent, std::size_t child_id);
+        TSDataView(TSStorageTypeRef type, void *data, const TSDataView &parent, std::size_t child_id);
+        TSDataView(TSStorageTypeRef type, const void *data, const TSDataView &parent, std::size_t child_id);
 
         void require_live(const char *what) const;
         [[nodiscard]] TSDataTracking &mutable_tracking() const;

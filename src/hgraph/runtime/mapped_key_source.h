@@ -138,10 +138,12 @@ namespace hgraph::runtime_detail
             return *result;
         }
 
-        [[nodiscard]] inline const TSDataBinding &binding_for(const TSValueTypeMetaData &schema)
+        [[nodiscard]] inline TSOutputTypeRef type_for(const TSValueTypeMetaData &schema)
         {
             const Context &context = context_for(schema);
-            return TSDataBinding::intern(schema, MemoryUtils::plan_for<MappedKeySourceStorage>(), context.ops);
+            return checked_ts_role_type(
+                intern_ts_type(schema, TypeRole::Output, MemoryUtils::plan_for<MappedKeySourceStorage>(), context.ops),
+                std::integral_constant<TypeRole, TypeRole::Output>{});
         }
     }  // namespace mapped_key_source_detail
 
@@ -149,6 +151,10 @@ namespace hgraph::runtime_detail
     {
       public:
         MappedKeySource() = default;
+        ~MappedKeySource() noexcept
+        {
+            storage_.tracking.observers.invalidate(&storage_.tracking);
+        }
 
         MappedKeySource(const MappedKeySource &)            = delete;
         MappedKeySource &operator=(const MappedKeySource &) = delete;
@@ -166,33 +172,34 @@ namespace hgraph::runtime_detail
                 throw std::invalid_argument("mapped key source requires a concrete evaluation time");
             }
 
-            const TSDataBinding &binding = mapped_key_source_detail::binding_for(schema);
-            const auto          *layout  = binding.ops_ref().layout_impl(binding.ops_ref().context);
+            const TSOutputTypeRef type = mapped_key_source_detail::type_for(schema);
+            const auto           &ops = type.ops_ref();
+            const auto           *layout = ops.layout_impl(ops.context);
             if (layout == nullptr || key.binding() != layout->value_binding)
             {
                 throw std::invalid_argument("mapped key source key schema does not match TS<K>");
             }
 
-            binding_ = &binding;
+            type_ = type;
             storage_.key = &key;
             storage_.tracking.last_modified_time = evaluation_time;
         }
 
         [[nodiscard]] bool bound() const noexcept
         {
-            return binding_ != nullptr && storage_.key != nullptr && storage_.key->has_value();
+            return type_ && storage_.key != nullptr && storage_.key->has_value();
         }
 
         [[nodiscard]] TSOutputView view(DateTime evaluation_time) const
         {
             if (!bound()) { return {}; }
-            return TSOutputView{&owner_, TSDataView{binding_, &storage_}, evaluation_time};
+            return TSOutputView{&owner_, TSDataView{type_.as_role(), &storage_}, evaluation_time};
         }
 
       private:
         TSOutput               owner_{};
         MappedKeySourceStorage storage_{};
-        const TSDataBinding   *binding_{nullptr};
+        TSOutputTypeRef        type_{};
     };
 }  // namespace hgraph::runtime_detail
 

@@ -14,6 +14,11 @@ namespace hgraph
 
     namespace
     {
+        [[nodiscard]] bool scalar_root(const TSValueTypeMetaData *schema) noexcept
+        {
+            return schema != nullptr && (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL);
+        }
+
         [[noreturn]] void unsupported(const TSValueTypeMetaData *schema)
         {
             const auto kind = schema == nullptr ? -1 : static_cast<int>(schema->kind);
@@ -64,6 +69,8 @@ namespace hgraph
         std::lock_guard<std::mutex> lock(mutex_);
         cache_.clear();
         binding_cache_.clear();
+        data_type_cache_.clear();
+        output_type_cache_.clear();
         plan_detail::clear_atomic_ts_data_ops();
         plan_detail::clear_fixed_ts_data_contexts();
         plan_detail::clear_dynamic_list_ts_data_contexts();
@@ -74,11 +81,11 @@ namespace hgraph
 
     const TSDataBinding *TSDataPlanFactory::binding_for(const TSValueTypeMetaData *schema)
     {
-        if (schema == nullptr)
+        if (schema == nullptr) return nullptr;
+        if (scalar_root(schema))
         {
-            return nullptr;
+            throw std::logic_error("TSDataPlanFactory: scalar root identity is a TypeRecord, not TSDataBinding");
         }
-
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (const auto it = binding_cache_.find(schema); it != binding_cache_.end())
@@ -90,9 +97,70 @@ namespace hgraph
         return synthesise_binding(schema);
     }
 
+    const TSDataBinding *TSDataPlanFactory::legacy_binding_for(const TSValueTypeMetaData *schema)
+    {
+        if (schema == nullptr) return nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (const auto it = binding_cache_.find(schema); it != binding_cache_.end()) return it->second;
+        }
+        return synthesise_binding(schema);
+    }
+
+    TSDataTypeRef TSDataPlanFactory::data_type_for(const TSValueTypeMetaData *schema)
+    {
+        if (!scalar_root(schema)) throw std::invalid_argument("data_type_for requires TS or SIGNAL schema");
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (const auto it = data_type_cache_.find(schema); it != data_type_cache_.end()) return it->second;
+        }
+        const auto *plan = plan_for(schema);
+        const auto value_type = ValuePlanFactory::instance().type_for(schema->value_schema);
+        const auto delta_type = ValuePlanFactory::instance().type_for(schema->delta_value_schema);
+        const auto *value = plan != nullptr ? plan->find_component("value") : nullptr;
+        const auto *tracking = plan != nullptr ? plan->find_component("tracking") : nullptr;
+        if (plan == nullptr || !value_type || !delta_type || value == nullptr || tracking == nullptr)
+            throw std::logic_error("data_type_for could not resolve scalar storage");
+        const auto &ops = plan_detail::atomic_ts_data_ops(schema->kind, value_type, delta_type, *plan,
+                                                          value->offset, tracking->offset);
+        const auto type = checked_ts_role_type(intern_ts_type(*schema, TypeRole::Data, *plan, ops),
+                                               std::integral_constant<TypeRole, TypeRole::Data>{});
+        std::lock_guard<std::mutex> lock(mutex_);
+        return data_type_cache_.try_emplace(schema, type).first->second;
+    }
+
+    TSOutputTypeRef TSDataPlanFactory::output_type_for(const TSValueTypeMetaData *schema)
+    {
+        if (!scalar_root(schema)) throw std::invalid_argument("output_type_for requires TS or SIGNAL schema");
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (const auto it = output_type_cache_.find(schema); it != output_type_cache_.end()) return it->second;
+        }
+        const auto data_type = data_type_for(schema);
+        const auto type = checked_ts_role_type(
+            intern_ts_type(*schema, TypeRole::Output, data_type.checked_plan(), data_type.ops_ref()),
+            std::integral_constant<TypeRole, TypeRole::Output>{});
+        std::lock_guard<std::mutex> lock(mutex_);
+        return output_type_cache_.try_emplace(schema, type).first->second;
+    }
+
+    TSDataTypeRef TSDataPlanFactory::find_data_type(const TSValueTypeMetaData *schema) const noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = data_type_cache_.find(schema);
+        return it == data_type_cache_.end() ? TSDataTypeRef{} : it->second;
+    }
+
+    TSOutputTypeRef TSDataPlanFactory::find_output_type(const TSValueTypeMetaData *schema) const noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = output_type_cache_.find(schema);
+        return it == output_type_cache_.end() ? TSOutputTypeRef{} : it->second;
+    }
+
     const TSDataBinding *TSDataPlanFactory::find_binding(const TSValueTypeMetaData *schema) const
     {
-        if (schema == nullptr)
+        if (schema == nullptr || scalar_root(schema))
         {
             return nullptr;
         }

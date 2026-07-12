@@ -498,7 +498,7 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified
     const auto *ts_int   = registry.ts(int_meta);
 
     const auto *plan    = factory.plan_for(ts_int);
-    const auto binding = factory.binding_for(ts_int);
+    const auto type = factory.data_type_for(ts_int);
 
     REQUIRE(plan != nullptr);
     REQUIRE(plan->is_named_tuple());
@@ -510,11 +510,14 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified
     REQUIRE(plan->component("tracking").plan == &MemoryUtils::plan_for<TSDataTracking>());
     REQUIRE(plan->component("tracking").offset != plan->component("value").offset);
 
-    REQUIRE(binding != nullptr);
-    REQUIRE(binding->type_meta == ts_int);
-    REQUIRE(binding->plan() == plan);
-    REQUIRE(binding->ops_ref().allows_mutation);
-    TSData data{*binding};
+    REQUIRE(type);
+    REQUIRE(type.schema() == ts_int);
+    REQUIRE(type.plan() == plan);
+    REQUIRE(type.ops_ref().allows_mutation);
+    REQUIRE_THROWS_AS(factory.binding_for(ts_int), std::logic_error);
+    TSData data{type};
+    REQUIRE(data.binding() == nullptr);
+    REQUIRE(data.type_ref().record() == type.record());
     REQUIRE(data.view().layout().value_binding == registry.scalar_type<std::int32_t>());
     REQUIRE(data.view().layout().delta_binding == registry.scalar_type<std::int32_t>());
     REQUIRE_FALSE(data.view().parent_link().has_parent());
@@ -527,14 +530,11 @@ TEST_CASE("TSDataView: mutation capability is supplied by TSDataOps")
     auto       &factory  = TSDataPlanFactory::instance();
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
-    const auto binding  = factory.binding_for(ts_int);
-    REQUIRE(binding != nullptr);
-
-    TSDataOps immutable_ops = binding->ops_ref();
-    immutable_ops.allows_mutation = false;
-    TSDataBinding immutable_binding{binding->type_meta, binding->plan(), &immutable_ops};
-
-    TSData immutable_data{immutable_binding};
+    const auto data_type = factory.data_type_for(ts_int);
+    const auto input_type = checked_ts_role_type(
+        intern_ts_type(*ts_int, TypeRole::Input, data_type.checked_plan(), data_type.ops_ref()),
+        std::integral_constant<TypeRole, TypeRole::Input>{});
+    TSData immutable_data{input_type};
     auto   immutable_view = immutable_data.view();
     REQUIRE_THROWS_AS(immutable_view.mutable_data(), std::logic_error);
     REQUIRE_THROWS_AS(immutable_view.begin_mutation(MIN_ST), std::logic_error);
@@ -547,10 +547,10 @@ TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified ti
     auto       &factory  = TSDataPlanFactory::instance();
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
-    const auto binding  = factory.binding_for(ts_int);
-    REQUIRE(binding != nullptr);
+    const auto type = factory.data_type_for(ts_int);
+    REQUIRE(type);
 
-    TSData data{*binding};
+    TSData data{type};
     auto   view = data.view();
     REQUIRE(view.value().checked_as<std::int32_t>() == 0);
     REQUIRE(view.last_modified_time() == MIN_DT);
@@ -744,7 +744,8 @@ TEST_CASE("TSDataPlanFactory: REF and SIGNAL use compact atomic TSData")
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
-    REQUIRE(factory.binding_for(registry.signal()) != nullptr);
+    REQUIRE(factory.data_type_for(registry.signal()));
+    REQUIRE_THROWS_AS(factory.binding_for(registry.signal()), std::logic_error);
     REQUIRE(factory.binding_for(registry.ref(ts_int)) != nullptr);
 }
 

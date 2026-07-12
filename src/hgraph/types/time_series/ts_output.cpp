@@ -16,27 +16,33 @@ namespace hgraph
     TSOutput::TSOutput() noexcept = default;
 
     TSOutput::TSOutput(const TSDataBinding &binding)
-        : data_(binding)
+        : data_(checked_data_for(binding))
     {
         attach_root_parent();
     }
 
     TSOutput::TSOutput(const TSValueTypeMetaData &schema)
-        : TSOutput(checked_binding_for(&schema))
+        : data_(checked_data_for(&schema))
     {
+        attach_root_parent();
     }
 
     TSOutput::TSOutput(const TSValueTypeMetaData *schema)
-        : TSOutput(checked_binding_for(schema))
+        : data_(checked_data_for(schema))
     {
+        attach_root_parent();
     }
 
     TSOutput::TSOutput(const TSEndpointSchema &endpoint_schema)
-        : TSOutput(checked_binding_for(endpoint_schema))
+        : data_(checked_data_for(endpoint_schema))
     {
+        attach_root_parent();
     }
 
-    TSOutput::~TSOutput() noexcept = default;
+    TSOutput::~TSOutput() noexcept
+    {
+        invalidate_observers();
+    }
 
     TSOutput::TSOutput(const TSOutput &other)
         : data_(copyable_data(other))
@@ -48,17 +54,19 @@ namespace hgraph
     {
         if (this != &other)
         {
-            data_ = other.data_;
+            invalidate_observers();
             alternatives_.reset();
+            data_ = other.data_;
             attach_root_parent();
         }
         return *this;
     }
 
     TSOutput::TSOutput(TSOutput &&other) noexcept
-        : data_(std::move(other.data_))
     {
+        other.invalidate_observers();
         other.alternatives_.reset();
+        data_ = std::move(other.data_);
         attach_root_parent();
     }
 
@@ -66,9 +74,11 @@ namespace hgraph
     {
         if (this != &other)
         {
-            data_ = std::move(other.data_);
+            invalidate_observers();
+            other.invalidate_observers();
             alternatives_.reset();
             other.alternatives_.reset();
+            data_ = std::move(other.data_);
             attach_root_parent();
         }
         return *this;
@@ -82,6 +92,12 @@ namespace hgraph
     const TSDataBinding *TSOutput::binding() const noexcept
     {
         return data_.binding();
+    }
+
+    TSOutputTypeRef TSOutput::type_ref() const
+    {
+        const auto type = data_.type_ref();
+        return type ? TSOutputTypeRef::checked(type) : TSOutputTypeRef{};
     }
 
     const TSValueTypeMetaData *TSOutput::schema() const noexcept
@@ -152,28 +168,59 @@ namespace hgraph
         if (alternatives_) { alternatives_->release_subscriptions(release_time); }
     }
 
-    const TSDataBinding &TSOutput::checked_binding_for(const TSValueTypeMetaData *schema)
+    TSData TSOutput::checked_data_for(const TSDataBinding &binding)
     {
-        if (schema == nullptr) { throw std::invalid_argument("TSOutput requires a time-series schema"); }
-        const auto *binding = TSDataPlanFactory::instance().binding_for(schema);
-        if (binding == nullptr) { throw std::logic_error("TSOutput could not resolve a TSData binding"); }
-        return *binding;
+        const auto *schema = binding.type_meta;
+        if (schema != nullptr && (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL))
+        {
+            if (binding.storage_plan == nullptr || binding.ops == nullptr)
+                throw std::invalid_argument("TSOutput requires a complete scalar TSData binding");
+            const auto type = checked_ts_role_type(
+                intern_ts_type(*schema, TypeRole::Output, *binding.storage_plan, *binding.ops),
+                std::integral_constant<TypeRole, TypeRole::Output>{});
+            return TSData{type};
+        }
+        return TSData{binding};
     }
 
-    const TSDataBinding &TSOutput::checked_binding_for(const TSEndpointSchema &endpoint_schema)
+    TSData TSOutput::checked_data_for(const TSValueTypeMetaData *schema)
+    {
+        if (schema == nullptr) { throw std::invalid_argument("TSOutput requires a time-series schema"); }
+        if (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL)
+            return TSData{TSDataPlanFactory::instance().output_type_for(schema)};
+        const auto *binding = TSDataPlanFactory::instance().binding_for(schema);
+        if (binding == nullptr) { throw std::logic_error("TSOutput could not resolve a TSData binding"); }
+        return TSData{*binding};
+    }
+
+    TSData TSOutput::checked_data_for(const TSEndpointSchema &endpoint_schema)
     {
         if (endpoint_schema.empty() || endpoint_schema.schema() == nullptr)
         {
             throw std::invalid_argument("TSOutput requires a non-empty output endpoint schema");
         }
+        if (const auto *schema = endpoint_schema.schema();
+            (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL) && endpoint_schema.is_owned())
+            return checked_data_for(schema);
         const auto *binding = detail::input_data_binding_for(endpoint_schema);
         if (binding == nullptr) { throw std::logic_error("TSOutput could not resolve an output endpoint binding"); }
-        return *binding;
+        return checked_data_for(*binding);
     }
 
     const TSData &TSOutput::copyable_data(const TSOutput &other)
     {
         return other.data_;
+    }
+
+    void TSOutput::invalidate_observers() noexcept
+    {
+        if (!data_.has_value()) { return; }
+        const auto type = data_.storage_type_ref();
+        const auto *ops = type.ops();
+        if (ops == nullptr || ops->mutable_tracking_impl == nullptr) { return; }
+        auto view = data_.view();
+        auto *tracking = ops->mutable_tracking_impl(ops->context, const_cast<void *>(view.data()));
+        if (tracking != nullptr) { tracking->observers.invalidate(tracking); }
     }
 
     void TSOutput::attach_root_parent()

@@ -1,5 +1,7 @@
 #include <hgraph/types/time_series/ts_input/target_link.h>
 
+#include "target_link_ops.h"
+
 #include <hgraph/types/time_series/ts_input/detail.h>
 
 #include <hgraph/util/scope.h>
@@ -249,6 +251,11 @@ namespace hgraph::detail
         if (owner != nullptr) { owner->record_target_modified(modified_time); }
     }
 
+    void TSInputTargetLinkState::source_invalidated(const TSDataTracking *source) noexcept
+    {
+        if (owner != nullptr) { owner->source_invalidated(source); }
+    }
+
     TSInputTargetActiveNode *TSInputTargetLinkState::active_root() const noexcept
     {
         return active_root_node.get();
@@ -398,6 +405,22 @@ namespace hgraph::detail
         }
         if (state_.active_root_node) { unsubscribe_tree_noexcept(*state_.active_root_node, state_.scheduling_notifier); }
         unsubscribe_handle_noexcept(state_.target, &state_);
+    }
+
+    void TSInputTargetLinkStorage::source_invalidated(const TSDataTracking *source) noexcept
+    {
+        static_cast<void>(source);
+        const bool notify_slot_clear = slot_observers_subscribed_;
+        slot_observers_subscribed_ = false;
+        state_.clear_active_observed();
+        state_.target.reset();
+        if (notify_slot_clear)
+        {
+            static_cast<void>(fallback_on_exception(false, [&] {
+                slot_observers_.notify_clear();
+                return true;
+            }));
+        }
     }
 
     void TSInputTargetLinkStorage::add_slot_observer(SlotObserver *observer)
@@ -553,7 +576,7 @@ namespace hgraph::detail
 
     bool is_target_link_view(const TSDataView &view) noexcept
     {
-        return is_target_link_binding(view.binding()) && view.data() != nullptr;
+        return target_link_context_for_ops(view.storage_type().ops()) != nullptr && view.data() != nullptr;
     }
 
     bool target_link_bound(const TSDataView &view) noexcept

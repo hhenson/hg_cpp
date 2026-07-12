@@ -521,8 +521,8 @@ namespace hgraph
         {
             case TypePattern::Kind::Var: return "~" + pattern.name;
             case TypePattern::Kind::Concrete:
-                return (pattern.meta != nullptr && pattern.meta->display_name != nullptr)
-                           ? std::string{pattern.meta->display_name}
+                return (pattern.meta != nullptr && !pattern.meta->name().empty())
+                           ? std::string{pattern.meta->name()}
                            : std::string{"TS"};
             case TypePattern::Kind::TS: return fmt::format("TS[{}]", scalar_pattern_to_string(pattern.scalar));
             case TypePattern::Kind::TSS: return fmt::format("TSS[{}]", scalar_pattern_to_string(pattern.scalar));

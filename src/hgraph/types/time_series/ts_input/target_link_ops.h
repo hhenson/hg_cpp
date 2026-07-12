@@ -19,7 +19,6 @@ namespace hgraph::detail
 
         const TSValueTypeMetaData *schema{nullptr};
         std::size_t                storage_offset{0};
-        const TSDataBinding       *regular_binding{nullptr};
         const TSDataLayout        *active_layout{nullptr};
         const TSDataOps           *active_ops{nullptr};
         const TSInputTargetLinkSlotAccess *slot_access{nullptr};
@@ -30,7 +29,6 @@ namespace hgraph::detail
         const TSValueTypeMetaData &schema,
         const MemoryUtils::StoragePlan &root_plan,
         std::size_t storage_offset,
-        const TSDataBinding &regular_binding,
         const TSDataLayout &regular_layout);
 
     [[nodiscard]] const TSInputTargetLinkStorage *target_link_storage_at(

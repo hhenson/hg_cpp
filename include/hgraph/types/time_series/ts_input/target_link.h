@@ -49,6 +49,7 @@ namespace hgraph::detail
 
         void move_from(TSInputTargetLinkState &other) noexcept;
         void notify(DateTime modified_time) override;
+        void source_invalidated(const TSDataTracking *source) noexcept override;
         [[nodiscard]] TSInputTargetActiveNode *active_root() const noexcept;
         [[nodiscard]] TSInputTargetActiveNode &ensure_active_root();
         void try_prune_active_root();
@@ -74,6 +75,7 @@ namespace hgraph::detail
         void bind(const TSValueTypeMetaData &schema, const TSOutputView &output);
         void unbind();
         void unbind_noexcept() noexcept;
+        void source_invalidated(const TSDataTracking *source) noexcept;
         void record_target_modified(DateTime modified_time);
         [[nodiscard]] TSInputTargetActiveNode &root_node();
         [[nodiscard]] TSInputTargetActiveNode &child_node(TSInputTargetActiveNode *parent, std::size_t slot);

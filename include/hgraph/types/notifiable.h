@@ -6,6 +6,8 @@
 
 namespace hgraph
 {
+    struct TSDataTracking;
+
     /**
      * Runtime notification target used by time-series observers.
      *
@@ -21,6 +23,9 @@ namespace hgraph
 
         /** Receive a time-series modification notification. */
         virtual void notify(DateTime modified_time) = 0;
+
+        /** The observed TSData tracking record is about to be destroyed. */
+        virtual void source_invalidated(const TSDataTracking *) noexcept {}
     };
 }  // namespace hgraph
 

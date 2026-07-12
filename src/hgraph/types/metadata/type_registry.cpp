@@ -186,6 +186,20 @@ namespace hgraph
             return meta == nullptr || meta->name().empty() ? std::string{"<unresolved>"} : std::string{meta->name()};
         }
 
+        [[nodiscard]] std::string ts_label(const TSValueTypeMetaData *meta)
+        {
+            return meta == nullptr || meta->name().empty() ? std::string{"<unresolved>"} : std::string{meta->name()};
+        }
+
+        [[nodiscard]] std::string ts_unary_label(std::string_view family, const TSValueTypeMetaData *element)
+        {
+            std::string label{family};
+            label.push_back('[');
+            label.append(ts_label(element));
+            label.push_back(']');
+            return label;
+        }
+
         [[nodiscard]] std::string unary_label(std::string_view family, const ValueTypeMetaData *element_type)
         {
             std::string label{family};
@@ -560,10 +574,6 @@ namespace hgraph
         }
 
         ts_name_cache_.emplace(std::move(key), meta);
-        if (!meta->display_name)
-        {
-            const_cast<TSValueTypeMetaData *>(meta)->display_name = store_name_interned(name);
-        }
     }
 
     const ValueTypeMetaData *TypeRegistry::register_scalar_impl(std::type_index type_key,
@@ -947,7 +957,8 @@ namespace hgraph
     {
         const std::lock_guard lock(mutex_);
         const TSValueTypeMetaData &meta = ts_cache_.intern(value_type, [&]() {
-            TSValueTypeMetaData m(TSTypeKind::TS, value_type);
+            TSValueTypeMetaData m(TSTypeKind::TS, value_type,
+                                  store_name_interned(unary_label("TS", value_type)));
             populate_ts_schemas(m);
             return m;
         });
@@ -958,7 +969,8 @@ namespace hgraph
     {
         const std::lock_guard lock(mutex_);
         const TSValueTypeMetaData &meta = tss_cache_.intern(element_type, [&]() {
-            TSValueTypeMetaData m(TSTypeKind::TSS, element_type ? set(element_type) : nullptr);
+            TSValueTypeMetaData m(TSTypeKind::TSS, element_type ? set(element_type) : nullptr,
+                                  store_name_interned(unary_label("TSS", element_type)));
             populate_ts_schemas(m);
             return m;
         });
@@ -970,8 +982,14 @@ namespace hgraph
         const std::lock_guard lock(mutex_);
         const TSDictKey key{key_type, value_ts};
         const TSValueTypeMetaData &meta = tsd_cache_.intern(key, [&]() {
-            TSValueTypeMetaData m(
-                TSTypeKind::TSD, key_type && value_ts ? map(key_type, value_ts->value_schema) : nullptr);
+            std::string label{"TSD["};
+            label.append(value_label(key_type));
+            label.push_back(',');
+            label.append(ts_label(value_ts));
+            label.push_back(']');
+            TSValueTypeMetaData m(TSTypeKind::TSD,
+                                  key_type && value_ts ? map(key_type, value_ts->value_schema) : nullptr,
+                                  store_name_interned(label));
             m.set_tsd(key_type, value_ts);
             populate_ts_schemas(m);
             return m;
@@ -984,9 +1002,18 @@ namespace hgraph
         const std::lock_guard lock(mutex_);
         const TSListKey key{element_ts, fixed_size};
         const TSValueTypeMetaData &meta = tsl_cache_.intern(key, [&]() {
-            TSValueTypeMetaData m(
-                TSTypeKind::TSL,
-                element_ts && element_ts->value_schema ? list(element_ts->value_schema, fixed_size) : nullptr);
+            std::string label{"TSL["};
+            label.append(ts_label(element_ts));
+            if (fixed_size != 0)
+            {
+                label.push_back(',');
+                label.append(std::to_string(fixed_size));
+            }
+            label.push_back(']');
+            TSValueTypeMetaData m(TSTypeKind::TSL,
+                                  element_ts && element_ts->value_schema ? list(element_ts->value_schema, fixed_size)
+                                                                         : nullptr,
+                                  store_name_interned(label));
             m.set_tsl(element_ts, fixed_size);
             populate_ts_schemas(m);
             return m;
@@ -999,7 +1026,14 @@ namespace hgraph
         const std::lock_guard lock(mutex_);
         const TSWindowKey key{value_type, false, static_cast<std::int64_t>(period), static_cast<std::int64_t>(min_period)};
         const TSValueTypeMetaData &meta = tsw_cache_.intern(key, [&]() {
-            TSValueTypeMetaData m(TSTypeKind::TSW, value_type);
+            std::string label{"TSW["};
+            label.append(value_label(value_type));
+            label.push_back(',');
+            label.append(std::to_string(period));
+            label.push_back(',');
+            label.append(std::to_string(min_period));
+            label.push_back(']');
+            TSValueTypeMetaData m(TSTypeKind::TSW, value_type, store_name_interned(label));
             m.set_tsw_tick(period, min_period);
             populate_ts_schemas(m);
             return m;
@@ -1014,7 +1048,14 @@ namespace hgraph
         const std::lock_guard lock(mutex_);
         const TSWindowKey key{value_type, true, time_range.count(), min_time_range.count()};
         const TSValueTypeMetaData &meta = tsw_cache_.intern(key, [&]() {
-            TSValueTypeMetaData m(TSTypeKind::TSW, value_type);
+            std::string label{"TSW["};
+            label.append(value_label(value_type));
+            label.append(",duration=");
+            label.append(std::to_string(time_range.count()));
+            label.append(",min=");
+            label.append(std::to_string(min_time_range.count()));
+            label.push_back(']');
+            TSValueTypeMetaData m(TSTypeKind::TSW, value_type, store_name_interned(label));
             m.set_tsw_duration(time_range, min_time_range);
             populate_ts_schemas(m);
             return m;
@@ -1051,7 +1092,16 @@ namespace hgraph
             TSFieldMetaData *fields_ptr = stored_fields ? store_ts_fields(std::move(stored_fields)) : nullptr;
 
             // Un-named TSB: value-side bundle is the matching un-named Bundle.
-            TSValueTypeMetaData m(TSTypeKind::TSB, un_named_bundle(value_fields), nullptr);
+            std::string label{"TSB{"};
+            for (std::size_t index = 0; index < fields.size(); ++index)
+            {
+                if (index != 0) { label.append(", "); }
+                label.append(fields[index].first);
+                label.append(": ");
+                label.append(ts_label(fields[index].second));
+            }
+            label.push_back('}');
+            TSValueTypeMetaData m(TSTypeKind::TSB, un_named_bundle(value_fields), store_name_interned(label));
             m.set_tsb(fields_ptr, fields.size(), nullptr, /*wrapped_un_named=*/nullptr);
             populate_ts_schemas(m);
             return m;
@@ -1124,7 +1174,8 @@ namespace hgraph
                 // delta_value_schema points at this canonical metadata.
                 time_series_reference_meta_ = register_scalar<TimeSeriesReference>("TimeSeriesReference");
             }
-            TSValueTypeMetaData m(TSTypeKind::REF, time_series_reference_meta_);
+            TSValueTypeMetaData m(TSTypeKind::REF, time_series_reference_meta_,
+                                  store_name_interned(ts_unary_label("REF", referenced_ts)));
             m.set_ref(referenced_ts);
             populate_ts_schemas(m);
             return m;

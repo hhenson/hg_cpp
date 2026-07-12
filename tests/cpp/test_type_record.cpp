@@ -84,6 +84,8 @@ TEST_CASE("type record common enums and capability operations are fixed", "[type
     STATIC_REQUIRE(static_cast<std::uint8_t>(TypeRole::Instance) == 1);
     STATIC_REQUIRE(static_cast<std::uint8_t>(TypeRole::Data) == 2);
     STATIC_REQUIRE(static_cast<std::uint8_t>(TypeRole::Runtime) == 3);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(TypeRole::Input) == 4);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(TypeRole::Output) == 5);
     STATIC_REQUIRE(TYPE_KIND_NONE == 0xff);
     STATIC_REQUIRE(SCHEMA_HEADER_MAGIC == 0x48475348u);
     STATIC_REQUIRE(TYPE_RECORD_MAGIC == 0x48475452u);
@@ -222,14 +224,18 @@ TEST_CASE("type record registry rejects every unapproved family and role pair", 
     using namespace hgraph;
     static constexpr std::array families{TypeFamily::Value, TypeFamily::TimeSeries, TypeFamily::Node,
                                          TypeFamily::Graph, TypeFamily::Executor,   TypeFamily::Clock};
-    static constexpr std::array roles{TypeRole::Invalid, TypeRole::Instance, TypeRole::Data, TypeRole::Runtime};
+    static constexpr std::array roles{TypeRole::Invalid, TypeRole::Instance, TypeRole::Data,
+                                      TypeRole::Runtime, TypeRole::Input, TypeRole::Output};
     MockOps ops{1};
 
     for (TypeFamily family : families)
     {
         for (TypeRole role : roles)
         {
-            if (role == allowed_role(family))
+            const bool allowed = family == TypeFamily::TimeSeries
+                                     ? (role == TypeRole::Data || role == TypeRole::Input || role == TypeRole::Output)
+                                     : role == allowed_role(family);
+            if (allowed)
             {
                 continue;
             }

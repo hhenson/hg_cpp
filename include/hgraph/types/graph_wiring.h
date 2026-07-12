@@ -336,7 +336,7 @@ namespace hgraph
         [[nodiscard]] inline std::string_view metadata_name(const TSValueTypeMetaData *meta)
         {
             if (meta == nullptr) { return "<unresolved>"; }
-            return meta->display_name != nullptr ? std::string_view{meta->display_name} : std::string_view{"<unnamed>"};
+            return meta->name().empty() ? std::string_view{"<unnamed>"} : meta->name();
         }
 
         template <typename T>

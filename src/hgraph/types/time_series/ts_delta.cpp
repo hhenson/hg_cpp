@@ -32,7 +32,7 @@ namespace hgraph
 
         [[nodiscard]] const TSDataBinding &ts_binding_for(const TSValueTypeMetaData *schema, const char *fn)
         {
-            const auto *binding = TSDataPlanFactory::instance().binding_for(schema);
+            const auto *binding = TSDataPlanFactory::instance().legacy_binding_for(schema);
             if (binding == nullptr) { throw std::logic_error(fmt::format("{}: unresolved TSData binding", fn)); }
             return *binding;
         }
@@ -593,14 +593,17 @@ namespace hgraph
 
     Value capture_delta(const TSInputView &in)
     {
+        if (const auto type = in.type_ref(); type) return type.ops_ref().capture_delta_impl(in);
         const auto &binding = ts_binding_for(&require_schema(in.schema(), "capture_delta"), "capture_delta");
         return binding.ops_ref().capture_delta_impl(in);
     }
 
     void apply_delta(const TSOutputView &out, const ValueView &delta)
     {
-        const auto &binding = require_binding(out.binding(), "apply_delta");
-        const auto &ops     = binding.ops_ref();
+        const TSDataOps *ops_ptr = nullptr;
+        if (const auto type = out.type_ref(); type) ops_ptr = type.ops();
+        else ops_ptr = &require_binding(out.binding(), "apply_delta").ops_ref();
+        const auto &ops = *ops_ptr;
         if (!ops.delta_has_effect_impl(out, delta)) { return; }
         ops.apply_delta_impl(out, delta);
     }

@@ -177,7 +177,9 @@ namespace hgraph
             --entries->notify_depth;
             if (entries->notify_depth == 0 && entries->compact_pending)
             {
-                const_cast<TSDataObserverSet *>(this)->compact_many(*entries);
+                auto *self = const_cast<TSDataObserverSet *>(this);
+                if (self->many() == entries) { self->compact_many(*entries); }
+                else { delete entries; }
             }
         });
 
@@ -187,6 +189,34 @@ namespace hgraph
             auto *observer = entries->entries[index];
             if (observer != nullptr) { observer->notify(modified_time); }
         }
+    }
+
+    void TSDataObserverSet::invalidate(const TSDataTracking *source) noexcept
+    {
+        ObserverStorage detached = std::exchange(observers_, ObserverStorage{});
+        if (detached.empty()) { return; }
+
+        if (auto *observer = detached.get<Notifiable>(); observer != nullptr)
+        {
+            observer->source_invalidated(source);
+            return;
+        }
+
+        auto *entries = detached.get<ObserverList>();
+        if (entries == nullptr) { return; }
+
+        ++entries->notify_depth;
+        const auto limit = entries->entries.size();
+        for (std::size_t index = 0; index < limit; ++index)
+        {
+            auto *observer = entries->entries[index];
+            if (observer != nullptr) { observer->source_invalidated(source); }
+        }
+        --entries->notify_depth;
+
+        std::ranges::fill(entries->entries, nullptr);
+        entries->compact_pending = true;
+        if (entries->notify_depth == 0) { delete entries; }
     }
 
     void TSDataObserverSet::clear() noexcept
@@ -280,7 +310,8 @@ namespace hgraph
 
     bool TSParentLink::has_ts_data_parent() const noexcept
     {
-        return kind() == TSParentLinkKind::TSData && parent_.ptr() != nullptr && payload_.ts_data != nullptr;
+        return (kind() == TSParentLinkKind::TSData || kind() == TSParentLinkKind::TSDataRecord) &&
+               parent_.ptr() != nullptr && payload_.ts_data != nullptr;
     }
 
     bool TSParentLink::has_endpoint_parent() const noexcept
@@ -306,7 +337,15 @@ namespace hgraph
 
     const TSDataBinding *TSParentLink::parent_binding() const noexcept
     {
-        return has_ts_data_parent() ? parent_.as<const TSDataBinding>() : nullptr;
+        return parent_storage_type().legacy_binding();
+    }
+
+    TSStorageTypeRef TSParentLink::parent_storage_type() const noexcept
+    {
+        if (!has_ts_data_parent()) return {};
+        auto bits = reinterpret_cast<std::uintptr_t>(parent_.ptr());
+        if (kind() == TSParentLinkKind::TSData) bits |= std::uintptr_t{1};
+        return TSStorageTypeRef::from_raw_bits(bits);
     }
 
     const void *TSParentLink::parent_data() const noexcept
@@ -369,16 +408,16 @@ namespace hgraph
     const TSDataTracking &TSParentLink::parent_tracking() const
     {
         if (!has_ts_data_parent()) { throw std::logic_error("TSParentLink requires a TSData parent"); }
-        const auto *binding = parent_binding();
-        const auto &table   = binding->ops_ref();
+        const auto type = parent_storage_type();
+        const auto &table = *type.ops();
         return *table.tracking_impl(table.context, parent_data());
     }
 
     TSDataTracking &TSParentLink::mutable_parent_tracking() const
     {
         if (!has_ts_data_parent()) { throw std::logic_error("TSParentLink requires a TSData parent"); }
-        const auto *binding = parent_binding();
-        const auto &table   = binding->ops_ref();
+        const auto type = parent_storage_type();
+        const auto &table = *type.ops();
         auto       *memory  = const_cast<void *>(parent_data());
         return *table.mutable_tracking_impl(table.context, memory);
     }
@@ -402,8 +441,8 @@ namespace hgraph
             return;
         }
 
-        const auto *binding = parent_binding();
-        const auto &table   = binding->ops_ref();
+        const auto type = parent_storage_type();
+        const auto &table = *type.ops();
         auto       *memory  = const_cast<void *>(parent_data());
         table.record_child_modified_impl(table.context, memory, child_id, mutation_time);
 
@@ -431,18 +470,18 @@ namespace hgraph
     {
         if (!has_ts_data_parent()) { return TSDataView{}; }
 
-        const TSDataBinding *root_binding = parent_binding();
-        const void          *root_data    = parent_data();
-        auto                 current      = *this;
+        TSStorageTypeRef root_type = parent_storage_type();
+        const void      *root_data = parent_data();
+        auto             current = *this;
         while (current.has_ts_data_parent())
         {
-            root_binding = current.parent_binding();
+            root_type = current.parent_storage_type();
             root_data    = current.parent_data();
             const auto &next = current.parent_tracking().parent;
             if (!next.has_ts_data_parent()) { break; }
             current = next;
         }
-        return TSDataView{root_binding, root_data};
+        return TSDataView{root_type, root_data};
     }
 
     ValueTypeRef FixedTSDataFieldLayout::value_binding() const noexcept

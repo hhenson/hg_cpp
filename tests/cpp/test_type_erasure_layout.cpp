@@ -124,9 +124,17 @@ TEST_CASE("value schemas expose the unified schema header as their standard-layo
     static_assert(!std::is_base_of_v<TypeMetaData, ValueTypeMetaData>);
     static_assert(!std::is_convertible_v<const ValueTypeMetaData *, const TypeMetaData *>);
 
-    static_assert(std::is_base_of_v<TypeMetaData, TSValueTypeMetaData>);
-    static_assert(std::is_convertible_v<const TSValueTypeMetaData *, const TypeMetaData *>);
-    static_assert(sizeof(void *) != 8 || sizeof(TSValueTypeMetaData) == 80);
+    static_assert(std::is_standard_layout_v<TSValueTypeMetaData>);
+    static_assert(offsetof(TSValueTypeMetaData, header) == 0);
+    static_assert(!std::is_base_of_v<TypeMetaData, TSValueTypeMetaData>);
+    static_assert(!std::is_convertible_v<const TSValueTypeMetaData *, const TypeMetaData *>);
+    static_assert(sizeof(TSRoleTypeRef) == sizeof(void *));
+    static_assert(sizeof(TSDataTypeRef) == sizeof(void *));
+    static_assert(sizeof(TSInputTypeRef) == sizeof(void *));
+    static_assert(sizeof(TSOutputTypeRef) == sizeof(void *));
+    static_assert(sizeof(TSDataPtr) == sizeof(void *) * 2);
+    static_assert(sizeof(TSInputPtr) == sizeof(void *) * 2);
+    static_assert(sizeof(TSOutputPtr) == sizeof(void *) * 2);
 
     static_assert(static_cast<std::uint8_t>(ValueTypeKind::Atomic) == 0);
     static_assert(static_cast<std::uint8_t>(ValueTypeKind::Tuple) == 1);
@@ -137,6 +145,14 @@ TEST_CASE("value schemas expose the unified schema header as their standard-layo
     static_assert(static_cast<std::uint8_t>(ValueTypeKind::CyclicBuffer) == 6);
     static_assert(static_cast<std::uint8_t>(ValueTypeKind::Queue) == 7);
     static_assert(static_cast<std::uint8_t>(ValueTypeKind::Any) == 8);
+    static_assert(static_cast<std::uint8_t>(TSTypeKind::TS) == 0);
+    static_assert(static_cast<std::uint8_t>(TSTypeKind::TSS) == 1);
+    static_assert(static_cast<std::uint8_t>(TSTypeKind::TSD) == 2);
+    static_assert(static_cast<std::uint8_t>(TSTypeKind::TSL) == 3);
+    static_assert(static_cast<std::uint8_t>(TSTypeKind::TSW) == 4);
+    static_assert(static_cast<std::uint8_t>(TSTypeKind::TSB) == 5);
+    static_assert(static_cast<std::uint8_t>(TSTypeKind::REF) == 6);
+    static_assert(static_cast<std::uint8_t>(TSTypeKind::SIGNAL) == 7);
 
     const auto *meta = TypeRegistry::instance().value_type("int");
     REQUIRE(meta != nullptr);

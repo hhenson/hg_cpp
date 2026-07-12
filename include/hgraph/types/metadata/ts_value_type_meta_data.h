@@ -6,11 +6,12 @@
 #define HGRAPH_CPP_ROOT_TS_VALUE_TYPE_META_DATA_H
 
 #include <hgraph/util/date_time.h>
-#include <hgraph/types/metadata/type_meta_data.h>
+#include <hgraph/types/metadata/type_record.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 namespace hgraph
 {
@@ -31,14 +32,14 @@ namespace hgraph
      */
     enum class TSTypeKind : uint8_t
     {
-        TS,
-        TSS,
-        TSD,
-        TSL,
-        TSW,
-        TSB,
-        REF,
-        SIGNAL,
+        TS = 0,
+        TSS = 1,
+        TSD = 2,
+        TSL = 3,
+        TSW = 4,
+        TSB = 5,
+        REF = 6,
+        SIGNAL = 7,
     };
 
     /**
@@ -72,7 +73,7 @@ namespace hgraph
      * value-layer schema where one applies (``TS``, ``TSS``, ``TSD`` key,
      * ``TSW``).
      */
-    struct TSValueTypeMetaData final : TypeMetaData
+    struct TSValueTypeMetaData final
     {
         /** Window-size parameters: tick-based or duration-based. */
         union WindowParams
@@ -164,21 +165,20 @@ namespace hgraph
         };
 
         /** Default construct an empty descriptor (kind defaults to ``SIGNAL``). */
-        constexpr TSValueTypeMetaData() noexcept
-            : TypeMetaData(MetaCategory::TimeSeries)
-        {
-        }
+        constexpr TSValueTypeMetaData() noexcept = default;
 
         /** Construct with kind, optional underlying value type, and optional name. */
         constexpr TSValueTypeMetaData(TSTypeKind kind_,
                                       const ValueTypeMetaData *value_type_ = nullptr,
-                                      const char *display_name_ = nullptr) noexcept
-            : TypeMetaData(MetaCategory::TimeSeries, display_name_)
+                                      const char *label_ = nullptr) noexcept
+            : header(TypeFamily::TimeSeries, static_cast<TypeKind>(kind_), label_)
             , kind(kind_)
             , value_type(value_type_)
         {
         }
 
+        /** Common family/kind/label prefix shared by all unified schemas. */
+        SchemaHeader header{};
         /** Kind discriminator for ``data``. */
         TSTypeKind kind{TSTypeKind::SIGNAL};
         /**
@@ -231,6 +231,15 @@ namespace hgraph
          * - ``SIGNAL``    — ``bool``
          */
         const ValueTypeMetaData *delta_value_schema{nullptr};
+
+        /** Registry-owned canonical diagnostic label. */
+        [[nodiscard]] constexpr std::string_view name() const noexcept
+        {
+            return header.label == nullptr ? std::string_view{} : std::string_view{header.label};
+        }
+
+        /** Common schema prefix. */
+        [[nodiscard]] constexpr const SchemaHeader &schema_header() const noexcept { return header; }
 
         /** Populate ``data.tsd`` for a ``TSD`` descriptor. */
         constexpr void set_tsd(const ValueTypeMetaData *key_type, const TSValueTypeMetaData *value_ts) noexcept
@@ -363,12 +372,12 @@ namespace hgraph
         /** True when this TS metadata is a named TSB (carries a name). */
         [[nodiscard]] constexpr bool is_named_tsb() const noexcept
         {
-            return kind == TSTypeKind::TSB && display_name != nullptr;
+            return kind == TSTypeKind::TSB && data.tsb.wrapped_un_named != nullptr;
         }
         /** True when this TS metadata is a structural (un-named) TSB. */
         [[nodiscard]] constexpr bool is_un_named_tsb() const noexcept
         {
-            return kind == TSTypeKind::TSB && display_name == nullptr;
+            return kind == TSTypeKind::TSB && data.tsb.wrapped_un_named == nullptr;
         }
 
         /** Schema referenced by a ``REF``; null for other kinds. */

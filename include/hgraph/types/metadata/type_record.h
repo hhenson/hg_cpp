@@ -29,6 +29,8 @@ namespace hgraph
         Instance = 1,
         Data = 2,
         Runtime = 3,
+        Input = 4,
+        Output = 5,
     };
 
     using TypeKind = std::uint8_t;

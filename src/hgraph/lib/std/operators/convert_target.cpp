@@ -26,7 +26,7 @@ namespace hgraph::stdlib
 
         [[nodiscard]] std::string schema_name(const TSValueTypeMetaData *schema)
         {
-            return schema != nullptr && schema->display_name != nullptr ? std::string{schema->display_name}
+            return schema != nullptr && !schema->name().empty() ? std::string{schema->name()}
                                                                         : std::string{"<null>"};
         }
 

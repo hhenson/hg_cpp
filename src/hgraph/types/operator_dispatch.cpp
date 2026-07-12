@@ -332,9 +332,7 @@ namespace hgraph
             {
                 if (!output_ts_pattern_match(impl.output, expected_output, map))
                 {
-                    why = fmt::format("output does not match requested {}", expected_output->display_name != nullptr
-                                                                               ? expected_output->display_name
-                                                                               : "time-series");
+                    why = fmt::format("output does not match requested {}", expected_output->name());
                     return false;
                 }
             }
@@ -365,9 +363,8 @@ namespace hgraph
                     if (!input_ts_pattern_match(param.ts, arg.port.schema, tail_scope))
                     {
                         why = fmt::format("variadic argument {} (a {}) does not match {}", i,
-                                          arg.port.schema != nullptr && arg.port.schema->display_name != nullptr
-                                              ? arg.port.schema->display_name
-                                              : "time-series",
+                                          arg.port.schema != nullptr ? arg.port.schema->name()
+                                                                     : std::string_view{"time-series"},
                                           ts_pattern_to_string(param.ts));
                         return false;
                     }
@@ -387,9 +384,8 @@ namespace hgraph
                         if (!input_ts_pattern_match(param.ts, arg.port.schema, map))
                         {
                             why = fmt::format("argument {} (a {}) does not match {}", i,
-                                              arg.port.schema != nullptr && arg.port.schema->display_name != nullptr
-                                                  ? arg.port.schema->display_name
-                                                  : "time-series",
+                                              arg.port.schema != nullptr ? arg.port.schema->name()
+                                                                         : std::string_view{"time-series"},
                                               ts_pattern_to_string(param.ts));
                             return false;
                         }

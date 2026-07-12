@@ -402,7 +402,8 @@ TEST_CASE("TypeRegistry: un_named_tsb and tsb distinguish structural vs nominal 
     REQUIRE(u1 == u2);
     REQUIRE(u1->is_un_named_tsb());
     REQUIRE_FALSE(u1->is_named_tsb());
-    REQUIRE(u1->display_name == nullptr);
+    REQUIRE(u1->schema_header().valid());
+    REQUIRE_FALSE(u1->name().empty());
     REQUIRE(u1->wrapped_un_named_tsb() == nullptr);
     // The un-named TSB's value-side bundle is the matching un-named Bundle.
     REQUIRE(u1->value_type != nullptr);
