@@ -169,14 +169,13 @@ namespace hgraph::ts_data_plan_factory_detail
                                                    : static_cast<const TSDataLayout *>(&list_layout);
         }
 
-        [[nodiscard]] static const detail::TSDataOwnershipOps *ownership_ops_for(const TSDataOps *candidate) noexcept
+        [[nodiscard]] static const detail::TSDataOwnershipOps &ownership_ops() noexcept
         {
-            if (candidate == nullptr || candidate->layout_impl != &fixed_layout) { return nullptr; }
             static const detail::TSDataOwnershipOps ops{
                 .child_count = &owned_child_count,
                 .child_at = &owned_child_at,
             };
-            return &ops;
+            return ops;
         }
 
       private:
@@ -233,8 +232,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 return bundle_layout.fields[index].layout;
             }
             const auto type = element_type(index);
-            const auto *ops = type.ops();
-            return ops->layout_impl(ops->context);
+            const auto *element_ops = type.ops();
+            return element_ops->layout_impl(element_ops->context);
         }
 
         [[nodiscard]] ValueTypeRef element_value_binding(std::size_t index) const
@@ -257,6 +256,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 .context                   = this,
                 .kind                      = schema->kind,
                 .allows_mutation           = true,
+                .ownership_ops             = &ownership_ops(),
                 .layout_impl               = &fixed_layout,
                 .tracking_impl             = &fixed_tracking,
                 .mutable_tracking_impl     = &fixed_mutable_tracking,
@@ -1810,11 +1810,3 @@ namespace hgraph::ts_data_plan_factory_detail
         fixed_ts_data_contexts().clear();
     }
 } // namespace hgraph::ts_data_plan_factory_detail
-
-namespace hgraph::detail
-{
-    const TSDataOwnershipOps *fixed_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept
-    {
-        return ts_data_plan_factory_detail::FixedTSDataContext::ownership_ops_for(ops);
-    }
-}  // namespace hgraph::detail

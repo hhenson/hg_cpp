@@ -295,8 +295,8 @@ TEST_CASE("fixed structured role records preserve semantic identity and embedded
         REQUIRE(data.schema() == schema);
         REQUIRE(output.schema() == schema);
         REQUIRE(data.record() != output.record());
-        REQUIRE(data.record()->ops_abi_version == 2);
-        REQUIRE(output.record()->ops_abi_version == 2);
+        REQUIRE(data.record()->ops_abi_version == TS_DATA_OPS_ABI_VERSION);
+        REQUIRE(output.record()->ops_abi_version == TS_DATA_OPS_ABI_VERSION);
         REQUIRE(std::string{data.record()->implementation_name()} == "ts.fixed.data.root");
         REQUIRE(std::string{output.record()->implementation_name()} == "ts.fixed.output.root");
         REQUIRE(has_capability(data.capabilities(), TypeCapabilities::Viewable));

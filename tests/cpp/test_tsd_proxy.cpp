@@ -269,11 +269,14 @@ TEST_CASE("TSDProxy source invalidation clears live and pending children once an
     const auto *tsd = registry.tsd(integer, ts);
     const auto source_type = TSDataPlanFactory::instance().data_type_for(tsd);
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
+    const auto proxy_type = tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()});
+
+    REQUIRE(source_type.ops_ref().ownership_ops != nullptr);
+    REQUIRE(proxy_type.ops_ref().ownership_ops != nullptr);
+    REQUIRE(proxy_type.ops_ref().ownership_ops != source_type.ops_ref().ownership_ops);
 
     std::optional<TSData> source{std::in_place, source_type};
-    std::optional<TSData> proxy{
-        std::in_place,
-        tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()})};
+    std::optional<TSData> proxy{std::in_place, proxy_type};
     Value key_one{1};
     Value key_two{2};
     Value key_three{3};

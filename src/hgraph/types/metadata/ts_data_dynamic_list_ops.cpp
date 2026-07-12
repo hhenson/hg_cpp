@@ -235,9 +235,13 @@ namespace hgraph::ts_data_plan_factory_detail
                 list_layout.delta_binding = intern_value_type(*delta_schema, *plan, delta_map_ops);
             }
 
-            [[nodiscard]] static bool recognises(const TSDataOps *candidate) noexcept
+            [[nodiscard]] static const detail::TSDataOwnershipOps &ownership_ops() noexcept
             {
-                return candidate != nullptr && candidate->layout_impl == &dynamic_layout;
+                static const detail::TSDataOwnershipOps ops{
+                    .child_count = &owned_child_count,
+                    .child_at = &owned_child_at,
+                };
+                return ops;
             }
 
             [[nodiscard]] static std::size_t owned_child_count(const void *, const void *memory) noexcept
@@ -270,6 +274,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     .context                   = this,
                     .kind                      = TSTypeKind::TSL,
                     .allows_mutation           = true,
+                    .ownership_ops             = &ownership_ops(),
                     .layout_impl               = &dynamic_layout,
                     .tracking_impl             = &dynamic_tracking,
                     .mutable_tracking_impl     = &dynamic_mutable_tracking,
@@ -1293,22 +1298,4 @@ namespace hgraph::ts_data_plan_factory_detail
         }
     }
 
-    [[nodiscard]] const detail::TSDataOwnershipOps *dynamic_list_ownership_ops_for_impl(
-        const TSDataOps *ops) noexcept
-    {
-        if (!DynamicTSLContext::recognises(ops)) { return nullptr; }
-        static const detail::TSDataOwnershipOps ownership_ops{
-            .child_count = &DynamicTSLContext::owned_child_count,
-            .child_at = &DynamicTSLContext::owned_child_at,
-        };
-        return &ownership_ops;
-    }
 }  // namespace hgraph::ts_data_plan_factory_detail
-
-namespace hgraph::detail
-{
-    const TSDataOwnershipOps *dynamic_list_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept
-    {
-        return ts_data_plan_factory_detail::dynamic_list_ownership_ops_for_impl(ops);
-    }
-}  // namespace hgraph::detail

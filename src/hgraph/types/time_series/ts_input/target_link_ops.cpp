@@ -1,4 +1,5 @@
 #include "target_link_ops.h"
+#include "../ts_data/ownership.h"
 #include <hgraph/types/time_series/ts_delta.h>
 
 #include <hgraph/types/metadata/type_registry.h>
@@ -31,6 +32,8 @@ namespace hgraph::detail
 
     namespace
     {
+        [[nodiscard]] const TSDataOwnershipOps &target_link_ownership_ops() noexcept;
+
         template <typename Layout, typename Ops>
         struct TargetLinkContextFor final : TSInputTargetLinkContext
         {
@@ -853,6 +856,7 @@ namespace hgraph::detail
                 .context                   = &context,
                 .kind                      = context.schema->kind,
                 .allows_mutation           = true,
+                .ownership_ops             = &target_link_ownership_ops(),
                 .layout_impl               = &target_link_layout,
                 .tracking_impl             = &target_link_tracking,
                 .mutable_tracking_impl     = &target_link_mutable_tracking,
@@ -1084,9 +1088,27 @@ namespace hgraph::detail
         return MemoryUtils::cast<TSInputTargetLinkStorage>(advance(memory, context.storage_offset));
     }
 
+    namespace
+    {
+        [[nodiscard]] const TSDataOwnershipOps &target_link_ownership_ops() noexcept
+        {
+            static const TSDataOwnershipOps ops{
+                .child_count = [](const void *, const void *) noexcept { return std::size_t{0}; },
+                .child_at = [](const void *, void *, std::size_t) noexcept { return TSDataOwnedChild{}; },
+                .stop = [](const void *context, void *memory) noexcept {
+                    const auto *target_context = static_cast<const TSInputTargetLinkContext *>(context);
+                    if (target_context == nullptr || memory == nullptr) { return; }
+                    if (auto *link = target_link_storage_at(*target_context, memory); link != nullptr)
+                        link->unbind_noexcept();
+                },
+            };
+            return ops;
+        }
+    }  // namespace
+
     const TSInputTargetLinkContext *target_link_context_for_ops(const TSDataOps *ops) noexcept
     {
-        return ops != nullptr && ops->layout_impl == &target_link_layout
+        return ops != nullptr && ops->ownership_ops == &target_link_ownership_ops()
                    ? static_cast<const TSInputTargetLinkContext *>(ops->context)
                    : nullptr;
     }

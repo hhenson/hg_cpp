@@ -65,9 +65,11 @@ The implementation uses the following names consistently:
     current-value validity, recursive ``all_valid`` checks, read/write
     memory access, delta reset, copy/move value assignment, canonical delta construction,
     erased delta capture/apply, and the per-kind hook used when a child
-    time-series value reports that it modified. The table is deliberately
-    passive; generic mutation sequencing and propagation rules live on ``TSDataView`` /
-    ``TSDataMutationView``. For a real bound ``TSData``
+    time-series value reports that it modified. Implementations that own
+    nested TSData also publish a private ``ownership_ops`` lifecycle projection;
+    this is distinct from the visible indexed or keyed view projection. The
+    table is deliberately passive; generic mutation sequencing and propagation
+    rules live on ``TSDataView`` / ``TSDataMutationView``. For a real bound ``TSData``
     implementation the table is total: required entries are never null,
     empty optional behaviours use no-op thunks, and unsupported
     operations are explicit throwing thunks rather than missing
@@ -132,7 +134,7 @@ The implementation uses the following names consistently:
     ``Output`` roles. Data and Output select mutable role-specific ops; an
     owned Input selects the corresponding physical plan under a read-only
     role, while peered positions select target-link storage and ops.
-    ``TS_DATA_OPS_ABI_VERSION`` is 2.
+    ``TS_DATA_OPS_ABI_VERSION`` is 3.
 
 ``TSDataBinding``
     An internal compatibility descriptor retained for implementation paths
@@ -436,18 +438,19 @@ Keyed descendants retain their delayed delete/erase lifetime through the slot
 observer protocol; a window has no owned time-series descendants to traverse.
 
 Lifecycle traversal deliberately differs from view-facing indexed traversal.
-A private, static ownership projection is selected from the concrete ops
-context: TargetLink contexts are leaves; composed input/output contexts return
+Each concrete implementation publishes its private, static ownership projection
+directly through ``TSDataOps::ownership_ops``: TargetLink contexts are leaves;
+composed input/output contexts return
 their cached local child storage types and in-plan storage addresses; regular
 fixed contexts return their cached fixed child types and local absolute
 addresses. Dynamic lists expose their owned child handles to this traversal;
 windows and TargetLinks are leaves. Keyed shapes coordinate child destruction
-through their slot stores. The resolver checks concrete context recognisers
-and never dispatches from schema kind alone. Consequently attach,
+through their slot stores. No function address or schema kind is used as a
+runtime implementation identifier. Consequently attach,
 reparent, and invalidation cannot follow a visible TargetLink projection into
 producer-owned storage. This projection is private lifecycle infrastructure;
-it adds no field to ``TSDataOps``, no side map, and no storage-layout cost, so
-``TS_DATA_OPS_ABI_VERSION`` remains 2.
+it adds no storage-layout cost, and its ops-table ABI contribution is tracked by
+``TS_DATA_OPS_ABI_VERSION``, currently 3.
 
 Fixed to-REF alternatives are the exception to the general legacy-alternative
 rule. Their allocation is owned through the canonical Data-role record. At the

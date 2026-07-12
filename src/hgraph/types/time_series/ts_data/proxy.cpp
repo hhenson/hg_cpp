@@ -235,6 +235,7 @@ namespace hgraph
                 TSDataOps &dict_base = dict_ops;
                 dict_base.kind = TSTypeKind::TSD;
                 dict_base.context = this;
+                dict_base.ownership_ops = &ownership_ops();
                 dict_base.empty_delta_impl = &ts_data_detail::empty_delta_tsd;
                 dict_base.capture_delta_impl = &ts_data_detail::capture_delta_tsd;
                 dict_base.delta_has_effect_impl = &ts_data_detail::delta_has_effect_tsd;
@@ -502,6 +503,47 @@ namespace hgraph
             }
 
           public:
+            [[nodiscard]] static const detail::TSDataOwnershipOps &ownership_ops() noexcept
+            {
+                static const detail::TSDataOwnershipOps ops{
+                    .child_count = [](const void *, const void *memory) noexcept {
+                        if (memory == nullptr) return std::size_t{0};
+                        const auto &proxy = proxy_storage(memory);
+                        std::size_t count = 1;
+                        for (std::size_t slot = 0; slot < proxy.child_capacity(); ++slot)
+                            count += proxy.has_child(slot) ? 1U : 0U;
+                        return count;
+                    },
+                    .child_at = [](const void *context, void *memory, std::size_t index) noexcept {
+                        if (context == nullptr || memory == nullptr) return detail::TSDataOwnedChild{};
+                        const auto *state = static_cast<const TSDProxyContext *>(context);
+                        if (index == 0)
+                            return detail::TSDataOwnedChild{
+                                .type = state->key_set_type,
+                                .data = memory,
+                                .attach_parent = false,
+                            };
+                        auto &proxy = proxy_storage(memory);
+                        std::size_t seen = 1;
+                        for (std::size_t slot = 0; slot < proxy.child_capacity(); ++slot)
+                        {
+                            if (!proxy.has_child(slot)) { continue; }
+                            if (seen++ == index)
+                                return detail::TSDataOwnedChild{
+                                    .type = proxy.element_type(),
+                                    .data = proxy.owned_child_memory(slot),
+                                    .parent_child_id = slot,
+                                };
+                        }
+                        return detail::TSDataOwnedChild{};
+                    },
+                    .stop = [](const void *, void *memory) noexcept {
+                        if (memory != nullptr) proxy_storage(memory).stop();
+                    },
+                };
+                return ops;
+            }
+
             [[nodiscard]] static const TSDataLayout *ts_layout(const void *context) noexcept
             {
                 return &ctx(context)->layout;
@@ -1224,50 +1266,6 @@ namespace hgraph
         }
     }  // namespace
 
-    [[nodiscard]] const detail::TSDataOwnershipOps *proxy_ownership_ops_for(const TSDataOps *candidate) noexcept
-    {
-        if (candidate == nullptr || candidate->layout_impl != &TSDProxyContext::ts_layout) { return nullptr; }
-        const auto *context = static_cast<const TSDProxyContext *>(candidate->context);
-        if (context == nullptr || candidate != static_cast<const TSDataOps *>(&context->dict_ops)) { return nullptr; }
-        static const detail::TSDataOwnershipOps ops{
-            .child_count = [](const void *, const void *memory) noexcept {
-                if (memory == nullptr) return std::size_t{0};
-                const auto &proxy = proxy_storage(memory);
-                std::size_t count = 1;
-                for (std::size_t slot = 0; slot < proxy.child_capacity(); ++slot)
-                    count += proxy.has_child(slot) ? 1U : 0U;
-                return count;
-            },
-            .child_at = [](const void *context, void *memory, std::size_t index) noexcept {
-                if (context == nullptr || memory == nullptr) return detail::TSDataOwnedChild{};
-                const auto *state = static_cast<const TSDProxyContext *>(context);
-                if (index == 0)
-                    return detail::TSDataOwnedChild{
-                        .type = state->key_set_type,
-                        .data = memory,
-                        .attach_parent = false,
-                    };
-                auto &proxy = proxy_storage(memory);
-                std::size_t seen = 1;
-                for (std::size_t slot = 0; slot < proxy.child_capacity(); ++slot)
-                {
-                    if (!proxy.has_child(slot)) { continue; }
-                    if (seen++ == index)
-                        return detail::TSDataOwnedChild{
-                            .type = proxy.element_type(),
-                            .data = proxy.owned_child_memory(slot),
-                            .parent_child_id = slot,
-                        };
-                }
-                return detail::TSDataOwnedChild{};
-            },
-            .stop = [](const void *, void *memory) noexcept {
-                if (memory != nullptr) proxy_storage(memory).stop();
-            },
-        };
-        return &ops;
-    }
-
     TSDProxySlotSync::TSDProxySlotSync(TSDProxy &owner) noexcept
         : owner_(&owner)
     {
@@ -1920,11 +1918,3 @@ namespace hgraph
                      builder_context, modified_time, child_refresh);
     }
 }  // namespace hgraph
-
-namespace hgraph::detail
-{
-    const TSDataOwnershipOps *proxy_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept
-    {
-        return ::hgraph::proxy_ownership_ops_for(ops);
-    }
-}

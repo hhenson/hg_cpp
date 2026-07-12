@@ -26,11 +26,6 @@ namespace hgraph::detail
         stop_fn        stop{nullptr};
     };
 
-    [[nodiscard]] const TSDataOwnershipOps *composed_input_ownership_ops_for(const TSDataOps *ops) noexcept;
-    [[nodiscard]] const TSDataOwnershipOps *dynamic_list_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept;
-    [[nodiscard]] const TSDataOwnershipOps *fixed_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept;
-    [[nodiscard]] const TSDataOwnershipOps *slot_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept;
-    [[nodiscard]] const TSDataOwnershipOps *proxy_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept;
     void attach_owned_ts_data_parents(TSDataView root);
     void attach_owned_ts_data_parent(TSDataView child, const TSDataView &parent, std::size_t child_id);
     void stop_owned_ts_data_tree(TSDataView root) noexcept;

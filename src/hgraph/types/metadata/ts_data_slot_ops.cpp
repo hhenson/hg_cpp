@@ -1719,6 +1719,44 @@ namespace hgraph::ts_data_plan_factory_detail
             const TSDataOps &ops_ref() const noexcept override { return dict_ops; }
             TSStorageTypeRef key_set_type() const noexcept override { return key_set_ts_type; }
 
+            [[nodiscard]] static const detail::TSDataOwnershipOps &ownership_ops() noexcept
+            {
+                static const detail::TSDataOwnershipOps ops{
+                    .child_count = [](const void *, const void *memory) noexcept {
+                        if (memory == nullptr) { return std::size_t{0}; }
+                        const auto &store = storage<TSDSlotStorage>(memory);
+                        std::size_t count = 1;
+                        for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
+                            count += store.slot_occupied(slot) ? 1U : 0U;
+                        return count;
+                    },
+                    .child_at = [](const void *context, void *memory, std::size_t index) noexcept {
+                        if (context == nullptr || memory == nullptr) return detail::TSDataOwnedChild{};
+                        const auto *state = static_cast<const TSDContext *>(context);
+                        if (index == 0)
+                            return detail::TSDataOwnedChild{
+                                .type = state->key_set_ts_type,
+                                .data = memory,
+                                .attach_parent = false,
+                            };
+                        auto &store = storage<TSDSlotStorage>(memory);
+                        std::size_t seen = 1;
+                        for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
+                        {
+                            if (!store.slot_occupied(slot)) { continue; }
+                            if (seen++ == index)
+                                return detail::TSDataOwnedChild{
+                                    .type = state->dict_layout.element_type,
+                                    .data = store.child_memory_for_write(slot),
+                                    .parent_child_id = slot,
+                                };
+                        }
+                        return detail::TSDataOwnedChild{};
+                    },
+                };
+                return ops;
+            }
+
           private:
             void initialise_tsd(const TSValueTypeMetaData &schema_,
                                 const MemoryUtils::StoragePlan &plan_,
@@ -1770,6 +1808,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 base_ops.kind = TSTypeKind::TSD;
                 base_ops.context = this;
                 base_ops.allows_mutation = true;
+                base_ops.ownership_ops = &ownership_ops();
                 base_ops.layout_impl = &tsd_layout;
                 base_ops.tracking_impl = &tsd_tracking;
                 base_ops.mutable_tracking_impl = &tsd_mutable_tracking;
@@ -2973,57 +3012,6 @@ namespace hgraph::ts_data_plan_factory_detail
         }
     } // namespace
 
-    [[nodiscard]] const detail::TSDataOwnershipOps *slot_ownership_ops_for(const TSDataOps *candidate) noexcept
-    {
-        if (candidate == nullptr) { return nullptr; }
-        if (candidate->layout_impl == &TSSContextBase<TSSSlotStorage>::tss_layout)
-        {
-            static const detail::TSDataOwnershipOps tss_ops{
-                .child_count = [](const void *, const void *) noexcept { return std::size_t{0}; },
-                .child_at = [](const void *, void *, std::size_t) noexcept {
-                    return detail::TSDataOwnedChild{};
-                },
-            };
-            return &tss_ops;
-        }
-        if (candidate->layout_impl != &TSDContext::tsd_layout) { return nullptr; }
-
-        static const detail::TSDataOwnershipOps tsd_ops{
-            .child_count = [](const void *, const void *memory) noexcept {
-                if (memory == nullptr) { return std::size_t{0}; }
-                const auto &store = storage<TSDSlotStorage>(memory);
-                std::size_t count = 1;
-                for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
-                    count += store.slot_occupied(slot) ? 1U : 0U;
-                return count;
-            },
-            .child_at = [](const void *context, void *memory, std::size_t index) noexcept {
-                if (context == nullptr || memory == nullptr) return detail::TSDataOwnedChild{};
-                const auto *state = static_cast<const TSDContext *>(context);
-                if (index == 0)
-                    return detail::TSDataOwnedChild{
-                        .type = state->key_set_ts_type,
-                        .data = memory,
-                        .attach_parent = false,
-                    };
-                auto &store = storage<TSDSlotStorage>(memory);
-                std::size_t seen = 1;
-                for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
-                {
-                    if (!store.slot_occupied(slot)) { continue; }
-                    if (seen++ == index)
-                        return detail::TSDataOwnedChild{
-                            .type = state->dict_layout.element_type,
-                            .data = store.child_memory_for_write(slot),
-                            .parent_child_id = slot,
-                        };
-                }
-                return detail::TSDataOwnedChild{};
-            },
-        };
-        return &tsd_ops;
-    }
-
     [[nodiscard]] bool is_slot_ts_data(const TSValueTypeMetaData &schema) noexcept
     {
         switch (schema.kind)
@@ -3207,11 +3195,3 @@ namespace hgraph::ts_data_plan_factory_detail
         }
     }
 } // namespace hgraph::ts_data_plan_factory_detail
-
-namespace hgraph::detail
-{
-    const TSDataOwnershipOps *slot_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept
-    {
-        return ts_data_plan_factory_detail::slot_ownership_ops_for(ops);
-    }
-}

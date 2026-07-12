@@ -31,7 +31,7 @@ namespace hgraph
             }
             if (record.ops_abi_version != TS_DATA_OPS_ABI_VERSION)
             {
-                throw std::invalid_argument("TSRoleTypeRef requires TSData ops ABI version 2");
+                throw std::invalid_argument("TSRoleTypeRef requires TSData ops ABI version 3");
             }
             const auto *ops = static_cast<const TSDataOps *>(record.ops);
             if (!migrated_kind(*schema) || ops == nullptr || ops->kind != schema->kind)

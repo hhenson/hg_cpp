@@ -15,6 +15,11 @@ namespace hgraph
     class TSOutputView;
     class Value;
 
+    namespace detail
+    {
+        struct TSDataOwnershipOps;
+    }
+
     namespace ts_data_detail
     {
         /** Throw the standard missing-operation exception used by default ops thunks. */
@@ -115,6 +120,7 @@ namespace hgraph
         const void *context{nullptr};
         TSTypeKind  kind{TSTypeKind::TS};
         bool        allows_mutation{false};
+        const detail::TSDataOwnershipOps *ownership_ops{nullptr};
 
         const TSDataLayout *(*layout_impl)(const void *context) = &ts_data_detail::missing_layout;
         const TSDataTracking *(*tracking_impl)(const void *context,

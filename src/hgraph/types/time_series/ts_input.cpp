@@ -816,6 +816,15 @@ namespace hgraph
             };
         }
 
+        [[nodiscard]] const detail::TSDataOwnershipOps &input_ownership_ops() noexcept
+        {
+            static const detail::TSDataOwnershipOps ops{
+                .child_count = &input_owned_child_count,
+                .child_at = &input_owned_child_at,
+            };
+            return ops;
+        }
+
         [[nodiscard]] void *input_mutable_element_memory(const void *context,
                                                          void *memory,
                                                          std::size_t index) noexcept
@@ -2017,6 +2026,7 @@ namespace hgraph
                 .context = context.get(),
                 .kind = context->schema->kind,
                 .allows_mutation = true,
+                .ownership_ops = &input_ownership_ops(),
                 .layout_impl = &input_layout,
                 .tracking_impl = &input_tracking,
                 .mutable_tracking_impl = &input_mutable_tracking,
@@ -2050,7 +2060,7 @@ namespace hgraph
 
         [[nodiscard]] const InputBindingContext *input_context_for(const TSDataOps *ops) noexcept
         {
-            return ops != nullptr && ops->layout_impl == &input_layout
+            return ops != nullptr && ops->ownership_ops == &input_ownership_ops()
                        ? static_cast<const InputBindingContext *>(ops->context)
                        : nullptr;
         }
@@ -2271,16 +2281,6 @@ namespace hgraph
 
     namespace detail
     {
-        const TSDataOwnershipOps *composed_input_ownership_ops_for(const TSDataOps *ops) noexcept
-        {
-            if (::hgraph::input_context_for(ops) == nullptr) { return nullptr; }
-            static const TSDataOwnershipOps ownership_ops{
-                .child_count = &::hgraph::input_owned_child_count,
-                .child_at = &::hgraph::input_owned_child_at,
-            };
-            return &ownership_ops;
-        }
-
         bool output_view_bound(const TSOutputView &output) noexcept
         {
             return ::hgraph::output_view_bound(output);
