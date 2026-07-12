@@ -40,12 +40,12 @@ There are two distinct to-``REF`` shapes involving ``TSD``:
        source:    TSD[K, TSB/TSL/TSD[..., V]]
        requested: TSD[K, TSB/TSL/TSD[..., REF[V]]]
 
-In the direct value conversion, the proxy element binding is the
+In the direct value conversion, the proxy element storage type is the
 requested ``REF[V]`` child and the builder materialises a
 ``TimeSeriesReference`` for each source slot.
 
 In the keyed path conversion, the ``TSD`` is only a structural prefix
-on the path to the ``REF`` leaf. The proxy element binding is the
+on the path to the ``REF`` leaf. The proxy element storage type is the
 normal requested child structure, such as a ``TSB`` or fixed ``TSL``.
 The proxy exists to keep the dynamic key slots aligned; population then
 continues through that child structure until the ``REF`` leaf is
@@ -56,23 +56,24 @@ Main Participants
 -----------------
 
 ``TSOutputAlternativeStore``
-    Root-owned cache of alternative output bindings. A to-``REF``
+    Root-owned cache of alternative output representations. A to-``REF``
     alternative is keyed by the starting output view and requested
     schema.
 
 ``ToRefAlternativeState``
     Owns the alternative ``TSData`` instance for one requested schema.
-    Its ``TSData`` is constructed with normal TSData bindings; when the
+    Its ``TSData`` is constructed with a role-specific type record; when the
     requested shape contains a ``TSD`` on the path to the first
-    ``REF``, that binding uses ``TSDProxy`` storage.
+    ``REF``, that alternative's role record selects ``TSDProxy`` storage.
 
 ``TSDProxy``
     TSData storage for a proxy dictionary. It stores the borrowed
     source view, an inline ``ValueSlotStore`` for proxy children,
     normal TSData tracking, and a slot-observer set for downstream
     proxy users. The store itself is allocated and constructed through
-    the same ``TSDataBinding`` / ``StoragePlan`` path as other TSData
-    storage.
+    a proxy ``TypeRecord`` and ``StoragePlan``. Its key-set and value
+    projections use the normal ``ts.tsd.key-set.*`` and ``ts.tsd.value.*``
+    records.
 
 ``TSDProxySlotSync``
     Slot-event adapter owned inline by ``TSDProxy``. This is the object
@@ -82,13 +83,17 @@ Main Participants
     so the proxy can process added/removed slots once an evaluation time is
     available.
 
-``ValueBuilder``
-    Function pointer called by ``TSDProxy`` to materialise a proxy child
-    at a source slot when the proxy processes an added or removed source
-    slot. The to-``REF`` builder creates ``REF`` leaves as
+``TSDProxyValueOps``
+    Static operation table borrowed by ``TSDProxy``. Its required build
+    operation materialises a proxy child at a source slot. Its optional,
+    read-only identity operation checks whether an existing child still
+    represents the current source child without allocating or mutating
+    either tree. The to-``REF`` builder creates ``REF`` leaves as
     ``TimeSeriesReference`` values, recursively creates nested proxy
     dictionaries, and walks static ``TSB`` / fixed ``TSL`` structures
-    directly.
+    directly. The operation-table pointer replaces the former builder
+    pointer, so it does not enlarge each proxy instance or require a
+    registry; the existing builder-context pointer is unchanged.
 
 Code Navigation Map
 -------------------
@@ -111,9 +116,10 @@ code, start at the level that matches the question being investigated:
      - ``src/hgraph/types/time_series/ts_output/alternative.cpp``
      - ``is_to_ref_shape`` and
        ``schema_equivalent_after_dereference``
-   * - How is a proxy-backed ``TSD`` binding created?
+   * - How is a proxy-backed ``TSD`` type created?
      - ``src/hgraph/types/time_series/ts_data/proxy.cpp``
-     - ``tsd_proxy_binding_for`` and ``TSDProxyContext``
+     - ``tsd_proxy_data_type_for`` / ``tsd_proxy_output_type_for`` and
+       ``TSDProxyContext``
    * - Which ops make the proxy look like a normal ``TSD``?
      - ``src/hgraph/types/time_series/ts_data/proxy.cpp``
      - ``TSDProxyContext::configure_ts_ops``,
@@ -144,7 +150,7 @@ Public Usage: Binding an Output as a REF-Shaped View
 ----------------------------------------------------
 
 Normal callers should not construct ``TSDProxy`` directly. They ask an
-output view for binding data in the schema expected by an input. If the
+output view for the representation expected by an input. If the
 requested schema is a to-``REF`` representation of the source schema,
 the alternative store creates the proxy machinery internally.
 
@@ -180,7 +186,7 @@ The essential usage shape is:
    TimeSeriesReference ref =
        view.at(key.view()).value().checked_as<TimeSeriesReference>();
 
-The binding handle returned here points at alternative data owned by
+The output handle returned here points at alternative data owned by
 the output. If the source dictionary later adds or removes keys, the
 proxy receives slot events from the source ``TSS`` / ``TSD`` ops and
 keeps the alternative dictionary aligned.
@@ -189,7 +195,7 @@ Internal Usage: Building a Generic TSDProxy
 -------------------------------------------
 
 ``TSDProxy`` is also a reusable internal component. The caller provides
-the proxy TSData binding, source dictionary, and a value builder. This
+the proxy TSData type, source dictionary, and a value builder. This
 is useful for tests and for future alternative representations that
 need to mirror a source ``TSD`` but own transformed values.
 
@@ -216,13 +222,14 @@ need to mirror a source ``TSD`` but own transformed values.
 
    const auto *proxy_schema   = source_schema;
    const auto *element_schema = proxy_schema->element_ts();
-   const auto *source_binding =
-       TSDataPlanFactory::instance().binding_for(source_schema);
-   const auto *element_binding =
-       TSDataPlanFactory::instance().binding_for(element_schema);
+   const auto source_type =
+       TSDataPlanFactory::instance().data_type_for(source_schema);
+   const auto element_type =
+       TSDataPlanFactory::instance().data_type_for(element_schema);
 
-   TSData source{*source_binding};
-   TSData proxy{tsd_proxy_binding_for(*proxy_schema, *element_binding)};
+   TSData source{source_type};
+   TSData proxy{tsd_proxy_data_type_for(*proxy_schema,
+                                        TSStorageTypeRef{element_type.as_role()})};
 
    bind_tsd_proxy(proxy.view(),
                   source.view().as_dict(),
@@ -232,7 +239,7 @@ need to mirror a source ``TSD`` but own transformed values.
 
 The direct proxy API should only be used by infrastructure code that
 knows the source and proxy schemas are compatible. Public input/output
-binding should continue to go through ``TSOutputView::binding_for`` so
+endpoint negotiation should continue to go through ``TSOutputView::binding_for`` so
 the alternative store can validate the requested schema and reuse
 cached alternative state.
 
@@ -287,20 +294,20 @@ time is known.
 Creation Flow
 -------------
 
-The creation path starts when an input asks an output for binding data
+The creation path starts when an input asks an output for a requested schema
 in a requested schema. If the requested schema is a to-``REF`` view of
 the source schema, the output allocates or reuses an alternative state.
 
 .. mermaid::
 
    flowchart TD
-      A["Input binding requests schema"]
-      B["TSOutputView asks for binding"]
+      A["Input requests schema"]
+      B["TSOutputView negotiates representation"]
       C["Alternative store builds cache key"]
       D["Alternative store validates to REF shape"]
       E["Create or rebind ToRefAlternativeState"]
-      F["Resolve alternative TSData binding"]
-      G["Use TSDProxy binding for dynamic TSD"]
+      F["Resolve alternative TSData type"]
+      G["Use TSDProxy type for keyed TSD"]
       H["Construct alternative TSData"]
       I["Populate alternative data"]
       J["Bind TSDProxy to source dictionary"]
@@ -309,7 +316,7 @@ the source schema, the output allocates or reuses an alternative state.
       M["Ensure proxy child at slot"]
       N["Run value builder"]
       O["Return alternative output handle"]
-      P["Return binding handle to input"]
+      P["Return output handle to input"]
 
       A --> B
       B --> C
@@ -336,7 +343,7 @@ immediately:
 - ``TSD`` binds a ``TSDProxy`` and then lets the proxy mirror the
   source key slots.
 
-The ``TSD`` binding chosen here depends on where the first ``REF``
+The ``TSD`` type chosen here depends on where the first ``REF``
 appears below the dictionary. For ``TSD[K, REF[V]]`` the proxy child is
 the ``REF[V]`` leaf and the builder writes a reference token directly.
 For ``TSD[K, TSB/TSL/TSD[..., REF[V]]]`` the proxy child is the
@@ -368,11 +375,11 @@ requested view.
 
       subgraph Proxy["TSDProxy storage"]
          Sync["TSDProxySlotSync<br/>source slot adapter"]
-         SourceHandle["source_ TSDataView<br/>binding + memory"]
+         SourceHandle["source_ TSDataView<br/>storage type + memory"]
          ProxyValues["ValueSlotStore<br/>slot -> proxy child TSData"]
          ProxyTracking["TSDataTracking<br/>last_modified_time + parent"]
          ProxyObservers["SlotObserverList<br/>for downstream proxy users"]
-         Builder["ValueBuilder<br/>materialise child"]
+         Builder["TSDProxyValueOps<br/>build + optional identity match"]
       end
 
       Keys --> SourceValues
@@ -410,24 +417,24 @@ The relevant call stack for creating a dynamic to-``REF`` dictionary is:
      TSOutputAlternativeStore::binding_for(source_view, requested_schema)
        TSOutputAlternativeStore::to_ref_binding(...)
          ToRefAlternativeState::ToRefAlternativeState(...)
-           to_ref_ts_data_binding_for(requested_schema)
-             tsd_proxy_binding_for(tsd_schema, element_binding)
+           to_ref_ts_data_type_for(requested_schema)
+             tsd_proxy_data_type_for(tsd_schema, element_type)
                TSDProxyContext::configure_ts_ops()
                TSDProxyContext::configure_value_ops()
                TSDProxyContext::bind_surfaces()
            ToRefAlternativeState::rebind(source_view)
              ToRefAlternativeState::refresh(evaluation_time)
                populate_to_ref_data(target, source_view, requested_schema)
-                 bind_tsd_proxy(target, source_view.data_view().as_dict(), builder)
+                 bind_tsd_proxy(target, source_view.data_view().as_dict(), value_ops)
                    TSDProxy::bind(...)
                      TSDProxy::sync_from_source(...)
                        TSDProxy::ensure_child_at_slot(slot)
-                         ValueBuilder(...)
+                         TSDProxyValueOps::build(...)
                      TSDProxy::subscribe_source()
                        source.key_set().subscribe_slot_observer(source_sync_)
                        source.subscribe(source_sync_)
 
-The binding factory work is shape-level and cached. ``TSDProxyContext``
+The type factory work is shape-level and cached. ``TSDProxyContext``
 builds the type-erased ops that make the proxy look like a normal
 ``TSD`` to callers:
 
@@ -483,12 +490,22 @@ that normal requested child and continues population below it. If the
 requested child is itself a ``TSD``, the builder creates a nested
 ``TSDProxy`` for that source child.
 
-Key Remove and Physical Erase
------------------------------
+Key Remove, Resurrection, and Physical Erase
+--------------------------------------------
 
-Logical removal and physical erase are separate. Removal constructs or
-retains the proxy child while the source key is still inspectable.
-Physical erase later destroys the proxy value slot.
+Logical removal and physical erase are separate. On removal the proxy
+stops the child tree, retains its stable value-slot address, clears the
+slot's built stamp, and emits ``remove``. It does not invalidate or
+destroy the child. Physical erase performs invalidation and destruction.
+
+If the source reinserts the same key before physical erase, the proxy
+resurrects the retained child in place. The builder rebinds the stopped
+tree at the current lifecycle time before the proxy emits ``insert``.
+This ordering means downstream observers never see an inserted but stale
+child. It also preserves the child address and allocated slot capacity.
+An erase followed by insertion in the same delta therefore cancels the
+source added/removed delta bits while still producing exactly one
+``remove`` and one ``insert`` lifecycle event.
 
 .. mermaid::
 
@@ -497,7 +514,7 @@ Physical erase later destroys the proxy value slot.
       B["source TSDSlotStorage remove key"]
       C["KeySlotStore notifies remove"]
       D["TSDProxySlotSync forwards remove"]
-      E["TSDProxy retains proxy child slot"]
+      E["TSDProxy stops and retains proxy child slot"]
       F["proxy slot observers notify remove"]
       G["source TSData marks modified"]
       H["proxy scans source removed slots"]
@@ -522,24 +539,91 @@ Physical erase later destroys the proxy value slot.
       L --> M
       M --> N
 
-The removed proxy child is kept until the source slot is physically
-erased so the proxy can still expose the removed value during the
-current delta.
+If eager resurrection fails, the builder exception propagates, no
+``insert`` event is emitted, and the build stamp retains its insert debt. A later
+source notification can retry the rebind before normal child-tick
+processing. Removed or pending slots are never restarted merely because
+the source root ticks. The same rule applies when an alternative cache hit
+rebinds and resynchronises the proxy: an occupied but non-live source slot
+retains its stopped child without running the builder or emitting
+``insert``. Storage existence and the active build stamp are separate
+facts; a pending stamp does not mean the value slot is unconstructed.
+
+``built_times`` uses two sentinel tags so lifecycle debt survives source
+delta rollover without another side table. ``MIN_DT`` means a build is
+pending but ``insert`` was already announced; this is the state created by a
+new slot callback. ``MAX_DT`` means a build is pending and ``insert`` is
+still owed; initial unannounced materialisation and stopped removal /
+resurrection use this state. Values in ``[MIN_ST, MAX_ET]`` are concrete
+successful build times. No code compares source and build times until both
+have been classified as concrete.
+
+Every retry preserves its sentinel if the builder throws. On success it
+stores the concrete build time before notifying observers, then emits
+``insert`` only for ``MAX_DT``. This covers same-time coalesced root
+notifications, cache-hit resynchronisation, and retries after a later delta
+has cleared ``slot_added`` / ``slot_removed`` without inferring lifecycle
+debt from those transient surfaces.
+
+``TSDProxy::bind`` validates its lifecycle time against
+``[MIN_ST, MAX_ET]`` before changing configuration or subscriptions. This
+applies even when the source is empty or has no child to build, so neither
+``MIN_DT`` nor ``MAX_DT`` can partially configure a proxy or enter tracking
+state.
+
+Source Invalidation and Rebind
+------------------------------
+
+The source view is borrowed, so destruction of the source must invalidate
+the proxy immediately. The root invalidation callback first marks the
+subscription inactive, removes the key-set slot observer while the source
+storage is still live, and then releases the source cursor. It does not
+attempt to unsubscribe the root observer from inside that observer's
+invalidation callback.
+
+The proxy then stops and invalidates every constructed child tree,
+invalidates its own root observers, emits one key-set ``clear``, destroys
+the value slots, and resets built/delta-window state. Nested proxies receive
+the same invalidation synchronously, so no descendant retains a cursor into
+dead source storage. Source-dependent views report unavailable/empty after
+this point rather than dereferencing the expired source.
+
+The proxy retains its type, builder context, and allocated slot capacity.
+A later ``bind`` can therefore attach it to a replacement source without
+allocating a second state object. Normal stop or rebind removes both root
+and slot subscriptions before releasing the source cursor. A later stop or
+destructor after source invalidation is idempotent and does not emit another
+``clear``.
+
+Invalidation also uses the existing child-refresh byte as an internal
+``Invalidating`` sentinel. The sentinel is installed only after the callback
+identity has been validated and remains active through child stop and
+invalidation, root-observer callbacks, slot ``clear`` callbacks, and child
+destruction. A callback that attempts to rebind the same proxy receives a
+``logic_error`` before any proxy state changes. The prior refresh policy is
+restored on exit, including exceptional exit, so a later non-reentrant bind
+remains valid. No additional per-instance guard or ownership state is needed.
 
 Source Child Update Flow
 ------------------------
 
-A source child update is not a key-set structural event. It may mark
-the source ``TSD`` modified and set the source modified-slot surface,
-but it does not construct or destroy proxy slots. The current
-to-``REF`` proxy does not rebuild children for ordinary source value
-ticks because the ``TimeSeriesReference`` stored in the proxy still
-points at the same source child.
+A source child update is not a key-set structural event. It may mark the
+source ``TSD`` modified and set the source modified-slot surface, but it does
+not construct or destroy proxy slots. Each live proxy child records the
+evaluation time at which its value was built. A later source time rebuilds
+the child. At the same source time, ``StructureOnly`` proxies keep the
+existing child, while ``OnChildTick`` proxies call their required read-only
+identity operation. A match performs no build; a mismatch rebuilds once at
+that evaluation time. Repeated reads therefore compare identities without
+rebuilding an already reconciled child.
 
-If a future alternative needs value-refresh semantics, that behaviour
-should be introduced explicitly in the value builder / alternative ops
-rather than by extending the structural slot observer with update
-events.
+The from-``REF`` identity operation compares peered target links using
+``TSOutputHandle::same_as``. It also handles empty or unbound references,
+recurses through fixed bundle/list shapes, and delegates nested dynamic
+dictionaries to their proxy source cursor and child identities. This catches
+erase/reinsert plus reference rewrites that occur at one evaluation time,
+without relying on timestamps precise enough to distinguish the two source
+identities.
 
 Nested Proxy Flow
 -----------------
@@ -570,35 +654,16 @@ inner source ``TSD`` slot ops.
 Cleanup Flow
 ------------
 
-Cleanup is delegated through normal TSData cleanup paths. The proxy
-cleans children that ticked at the cleanup time, then drops proxy
-slots whose source slot is no longer occupied.
+The source storage owns delta cleanup and pending-slot reclamation. When
+it advances the delta window, ``KeySlotStore`` emits ``erase`` before it
+physically reuses a pending slot. ``TSDProxySlotSync`` forwards that event,
+and the proxy invalidates and destroys the retained child at the same slot.
 
-.. mermaid::
-
-   flowchart TD
-      Start["TSDProxy::cleanup_delta(time)"]
-      Children["for each constructed proxy child"]
-      ChildTicked{"child.last_modified_time == time?"}
-      CleanupChild["child ops.cleanup_delta(child, time)"]
-      SourceSlots["read source_dict().slot_occupied(slot)"]
-      Destroy{"source slot not occupied?"}
-      DestroySlot["values_.destroy_at(slot)"]
-      Done["done"]
-
-      Start --> Children
-      Children --> ChildTicked
-      ChildTicked -- yes --> CleanupChild
-      ChildTicked -- no --> SourceSlots
-      CleanupChild --> SourceSlots
-      SourceSlots --> Destroy
-      Destroy -- yes --> DestroySlot
-      Destroy -- no --> Done
-      DestroySlot --> Done
-
-The source storage is responsible for classifying delta state and
-emitting erase events before it physically removes pending slots. The
-proxy cleanup only handles proxy-owned child payload cleanup.
+The proxy does not independently scan source occupancy during cleanup.
+Doing so would bypass the slot observer protocol and could destroy retained
+storage before downstream users have processed the removal. Child payload
+delta cleanup remains the responsibility of each child's normal TSData
+operations.
 
 Design Constraints
 ------------------

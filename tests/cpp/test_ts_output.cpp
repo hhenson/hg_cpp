@@ -182,8 +182,10 @@ namespace
         static inline std::size_t move_construct_count{0};
         static inline std::size_t copy_assign_count{0};
         static inline std::size_t move_assign_count{0};
+        static inline std::size_t default_construct_count{0};
+        static inline std::size_t destroy_count{0};
 
-        MoveTrackedScalar() = default;
+        MoveTrackedScalar() { ++default_construct_count; }
         explicit MoveTrackedScalar(std::int32_t v) : value{v} {}
 
         MoveTrackedScalar(const MoveTrackedScalar &other) : value(other.value)
@@ -212,6 +214,8 @@ namespace
             return *this;
         }
 
+        ~MoveTrackedScalar() { ++destroy_count; }
+
         [[nodiscard]] friend bool operator==(const MoveTrackedScalar &lhs,
                                              const MoveTrackedScalar &rhs) noexcept
         {
@@ -230,6 +234,8 @@ namespace
             move_construct_count = 0;
             copy_assign_count = 0;
             move_assign_count = 0;
+            default_construct_count = 0;
+            destroy_count = 0;
         }
     };
 }
@@ -592,6 +598,8 @@ TEST_CASE("TSOutput non-peered TSD can hold forwarding value slots")
 
     const auto t1 = MIN_ST;
     const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
+    const auto t4 = t3 + TimeDelta{1};
     Value      key{std::string{"a"}};
     Value      one{1};
     Value      two{2};
@@ -609,10 +617,13 @@ TEST_CASE("TSOutput non-peered TSD can hold forwarding value slots")
 
     auto dict_at_t1 = forwarding_dict.view(t1);
     auto element = dict_at_t1.as_dict().at(key.view());
+    const auto slot = dict_at_t1.as_dict().find_slot(key.view());
+    const auto *element_address = element.data_view().data();
     REQUIRE(element.forwarding());
     element.bind_forwarding_target(source.view(t1));
     REQUIRE(element.valid());
     REQUIRE(element.value().checked_as<std::int32_t>() == 1);
+    const auto subscribed_count = source.data_view().observer_count();
 
     {
         auto mutation = source.begin_mutation(t2);
@@ -623,6 +634,79 @@ TEST_CASE("TSOutput non-peered TSD can hold forwarding value slots")
     auto after = dict_at_t2.as_dict().at(key.view());
     REQUIRE(after.valid());
     REQUIRE(after.value().checked_as<std::int32_t>() == 2);
+
+    {
+        auto dict_view = forwarding_dict.view(t3);
+        auto mutation = dict_view.as_dict().begin_mutation(t3);
+        REQUIRE(mutation.erase(key.view()));
+    }
+    auto removed_view = forwarding_dict.view(t3);
+    auto removed_dict = removed_view.as_dict();
+    REQUIRE_FALSE(removed_dict.slot_live(slot));
+    REQUIRE(removed_dict.slot_occupied(slot));
+    auto removed_child = removed_dict.at_slot(slot);
+    REQUIRE(removed_child.data_view().data() == element_address);
+    REQUIRE_FALSE(removed_child.data_view().has_current_value());
+    REQUIRE(source.data_view().observer_count() < subscribed_count);
+
+    {
+        auto dict_view = forwarding_dict.view(t4);
+        auto mutation = dict_view.as_dict().begin_mutation(t4);
+        auto resurrected = mutation.at(key.view());
+        REQUIRE(resurrected.data() == element_address);
+        REQUIRE(resurrected.child_id() == slot);
+        REQUIRE_FALSE(resurrected.has_current_value());
+    }
+    auto resurrected_view = forwarding_dict.view(t4);
+    auto resurrected_dict = resurrected_view.as_dict();
+    REQUIRE(resurrected_dict.slot_live(slot));
+    REQUIRE(resurrected_dict.slot_occupied(slot));
+}
+
+TEST_CASE("TSOutput TSD same-cycle resurrection does not reconstruct element storage")
+{
+    using namespace hgraph;
+
+    auto       &registry   = TypeRegistry::instance();
+    const auto *key_meta   = registry.register_scalar<std::string>("string");
+    const auto *value_meta = registry.register_scalar<MoveTrackedScalar>("MoveTrackedScalar");
+    const auto *ts_value   = registry.ts(value_meta);
+    const auto *tsd_value  = registry.tsd(key_meta, ts_value);
+
+    TSOutput output{*tsd_value};
+    Value    key{std::string{"a"}};
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + TimeDelta{1};
+
+    const void *child_address = nullptr;
+    std::size_t child_slot = TS_DATA_NO_CHILD_ID;
+    std::size_t capacity = 0;
+    {
+        auto view = output.view(t1);
+        auto mutation = view.as_dict().begin_mutation(t1);
+        auto child = mutation.at(key.view());
+        child_address = child.data();
+        child_slot = child.child_id();
+        capacity = mutation.slot_capacity();
+    }
+
+    const auto constructions = MoveTrackedScalar::default_construct_count;
+    const auto destructions = MoveTrackedScalar::destroy_count;
+    {
+        auto view = output.view(t2);
+        auto mutation = view.as_dict().begin_mutation(t2);
+        REQUIRE(mutation.erase(key.view()));
+        REQUIRE_FALSE(mutation.slot_live(child_slot));
+        REQUIRE(mutation.slot_occupied(child_slot));
+
+        auto resurrected = mutation.at(key.view());
+        REQUIRE(resurrected.data() == child_address);
+        REQUIRE(resurrected.child_id() == child_slot);
+        REQUIRE(mutation.slot_capacity() == capacity);
+    }
+
+    REQUIRE(MoveTrackedScalar::default_construct_count == constructions);
+    REQUIRE(MoveTrackedScalar::destroy_count == destructions);
 }
 
 TEST_CASE("TSOutput REF stores TimeSeriesReference as value and delta")

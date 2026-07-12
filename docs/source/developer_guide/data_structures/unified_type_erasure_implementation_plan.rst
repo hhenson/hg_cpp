@@ -267,6 +267,9 @@ Iteration 4B
 Iteration 4C
    Migrate keyed and reference types, including TSD, TSS, and REF restrictions.
    Preserve subscription, unsubscription, delete, and erase semantics.
+   Implemented with role-specific root, embedded, key-set, value, proxy, and
+   reference-alternative records. Slot removal stops and retains storage;
+   erase performs destruction after observers have processed the removal.
 
 Iteration 4D
    Migrate dynamic TSL and TSW. Preserve dynamic-list growth and element

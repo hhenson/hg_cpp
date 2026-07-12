@@ -125,23 +125,20 @@ The implementation uses the following names consistently:
 
 ``TSDataTypeRef`` / ``TSInputTypeRef`` / ``TSOutputTypeRef``
     One-word, checked references to canonical ``TypeRecord`` instances
-    for scalar ``TS<T>`` / ``SIGNAL`` and fixed ``TSB`` / fixed ``TSL``
-    roots and their embedded fixed descendants. The records share the
-    time-series schema but have distinct ``Data``, ``Input``, and
-    ``Output`` roles. Data and Output select mutable role-specific ops;
-    an owned Input selects the same physical fixed plan under a read-only
+    for scalar ``TS<T>`` / ``SIGNAL``, fixed ``TSB`` / fixed ``TSL``,
+    keyed ``TSS`` / ``TSD``, and ``REF`` roots and descendants. The records
+    share the time-series schema but have distinct ``Data``, ``Input``, and
+    ``Output`` roles. Data and Output select mutable role-specific ops; an
+    owned Input selects the corresponding physical plan under a read-only
     role, while peered positions select target-link storage and ops.
     ``TS_DATA_OPS_ABI_VERSION`` is 2.
 
 ``TSDataBinding``
-    The legacy interned binding for excluded shapes: dynamic ``TSL``,
-    ``TSW``, ``TSS``, ``TSD``, ``REF`` and alternative-store
-    representations. A fixed subtree embedded below one of those excluded
-    roots also remains entirely binding-backed for compatibility. A legacy
-    descriptor is never canonical root identity for ``TS`` / ``SIGNAL`` /
-    ``TSB`` / fixed ``TSL``; owning root construction rejects it. Keyed,
-    set, and reference migration belongs to 4C; dynamic ``TSL`` and ``TSW``
-    belong to 4D.
+    The legacy interned binding retained during coexistence for dynamic
+    ``TSL`` and ``TSW`` representations and compatible descendants below
+    those roots. A legacy descriptor is never canonical root identity for a
+    migrated shape; owning root construction rejects it. Dynamic ``TSL`` and
+    ``TSW`` migrate in 4D.
 
 ``TSStorageTypeRef``
     An internal one-word tagged facade used by generic TS cursors and
@@ -162,8 +159,8 @@ The implementation uses the following names consistently:
 
 ``TSOutputBuilder`` / ``TSInputBuilder``
     Reusable builders for top-level time-series endpoints. An
-    ``TSOutputBuilder`` composes a migrated Output role record or a legacy
-    excluded-shape binding/data plan with output endpoint state. A
+    ``TSOutputBuilder`` composes an Output role record, or a legacy
+    dynamic-list/window binding and data plan, with output endpoint state. A
     ``TSInputBuilder`` consumes an endpoint
     annotation tree compiled by ``TSInputPlanFactory`` and builds input
     endpoint storage: non-peered TSB/fixed-TSL input TSData prefixes,
@@ -172,12 +169,12 @@ The implementation uses the following names consistently:
     visible input value.
     These builders are cached by node and graph construction code.
 
-    Scalar roots support both peered and owned input annotations. A
-    non-peered scalar topology is rejected. Direct peered roots are also
-    supported for excluded binding-backed schemas without migrating their type
-    descriptors. Peered roots own only target-link storage and preserve
-    bind/unbind/rebind plus active/passive subscription semantics; owned
-    scalar inputs own compact atomic storage but remain generically read-only.
+    Migrated roots support peered and, where the schema has an owning plan,
+    owned input annotations. Direct peered roots own only target-link storage
+    and preserve bind/unbind/rebind plus active/passive subscription semantics.
+    Owned inputs use read-only Input-role records over their physical storage.
+    A non-peered ``TSD`` input may also be a composite structural prefix whose
+    element topology is compiled independently.
 
 ``TSEndpointSchema``
     The generic annotation layer over a canonical
@@ -208,8 +205,8 @@ TSData implementation families
     of the parent and all fixed children is known before allocation, and
     child views use role-specific ``TSStorageTypeRef`` records whose ops carry
     offsets into the shared root value and auxiliary regions. The compatibility
-    exception is a fixed subtree below an excluded root such as ``TSD``; that
-    whole descendant path remains legacy until the parent family migrates.
+    exception is a fixed subtree below a still-legacy dynamic-list or window
+    root.
 
 ``WindowTSDataStorage``
     Used for ``TSW``. It exposes one common ``TSWDataView`` surface but
@@ -236,12 +233,25 @@ TSData implementation families
     surface) expose it for exactly the cycle it fell out.
 
 ``SlotTSDataStorage``
-    Used for keyed or dynamically-sized collection time-series data
-    such as ``TSS`` and ``TSD``. The data store is slot-oriented:
+    Used for keyed collection time-series data such as ``TSS`` and ``TSD``.
+    The data store is slot-oriented:
     every child or element has a stable slot id and the current payload,
     validity, and delta information are aligned by that slot id.
     Collection mutation changes slot state instead of compacting or
     relocating already-published child addresses.
+
+    Root, embedded, key-set, and TSD value projections have distinct canonical
+    role records. In particular the projections are named
+    ``ts.tsd.key-set.{data,input,output}`` and
+    ``ts.tsd.value.{data,input,output}``, so a debugger can identify topology
+    without inferring it from an ops pointer.
+
+    Slot lifetime follows the observer protocol. Removing a key stops its
+    owned child tree and marks the slot not live, but retains the constructed
+    key and child for the rest of the engine cycle. Reinsertion during that
+    interval resurrects the same slot without allocating or reconstructing its
+    payload. The later erase notification precedes child and key destruction;
+    only then may the slot be reused.
 
 ``DynamicTSLStorage``
     Used for ``TSL<C, 0>``. It is indexed, homogeneous child TSData
@@ -311,8 +321,10 @@ case where every fixed-list index has the same annotation.
 ``TSInputPlanFactory`` validates the annotation against the schema and
 compiles the input construction plan. For TSInput, the root must be a
 non-peered ``TSB``. Under that root the current implementation permits
-one or more non-peered ``TSB`` / fixed-size ``TSL`` prefixes followed
-by a ``peered`` terminal. Once traversal reaches ``peered``, the
+one or more non-peered ``TSB`` / fixed-size ``TSL`` prefixes, and a
+non-peered ``TSD`` composite prefix, followed by a ``peered`` terminal.
+Owned keyed or reference roots are also valid where the annotation selects
+owned storage. Once traversal reaches ``peered``, the
 subtree from that point downward is associated with one output peering;
 the TSInput implementation represents that peering with TargetLink
 storage inside the input data plan.
@@ -329,7 +341,7 @@ endpoint views from the public API. For a target-bound dynamic ``TSL``,
 
    flowchart TD
       Root["TSInput root<br/>non-peered TSB"]
-      Prefix["planned input TSData prefix<br/>TSB / fixed TSL"]
+      Prefix["planned input TSData prefix<br/>TSB / fixed TSL / TSD"]
       Link["peered terminal<br/>TargetLink storage"]
       Output["TSOutputView"]
       Data["output-owned TSData"]
@@ -525,8 +537,8 @@ the raw TSData surface it uses the specialised endpoint view's
 ``data_view()`` method explicitly; when it needs the value-layer shape
 it uses ``value().as_set()``, ``value().as_map()``,
 ``value().as_bundle()``, or ``value().as_list()`` as appropriate.
-``TSOutputView::bound()`` reports whether the view carries a live output
-TSData binding, which is distinct from ``valid()``; an output can be
+``TSOutputView::bound()`` reports whether the view carries live output
+storage, which is distinct from ``valid()``; an output can be
 bound before its time-series value has ever been set.
 
 TSData Memory Layout and Delta Tracking
@@ -905,12 +917,12 @@ transient parent view that created it:
       Data -->|tracking_offset| Tracking
       Tracking -->|parent| Link
       Tracking -->|observers| Observers
-      Link -->|TSData: binding + data| ParentData
+      Link -->|TSData: TSStorageTypeRef + data| ParentData
       Link -.endpoint: endpoint pointer.-> Endpoint
       Link -.child_id belongs to parent.-> ParentData
 
 The parent identity is tagged so the link carries exactly one parent
-kind. For a TSData parent it stores ``binding + data``; for an endpoint
+kind. For a TSData parent it stores ``TSStorageTypeRef + data``; for an endpoint
 parent it stores the endpoint pointer in the same payload slot. Because
 each TSData parent also stores its own ``TSDataParentLink``, a child link
 can walk back to the root TSData without retaining transient views. The

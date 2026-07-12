@@ -31,7 +31,7 @@ namespace hgraph::ts_data_plan_factory_detail
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_plan(const TSValueTypeMetaData &schema);
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_tsd_plan(
         const TSValueTypeMetaData &schema,
-        const TSDataBinding       &element_binding);
+        TSStorageTypeRef           element_type);
 
     [[nodiscard]] const TSDataBinding *embedded_ts_data_binding(const TSValueTypeMetaData      &schema,
                                                                 const MemoryUtils::StoragePlan &root_plan,
@@ -63,11 +63,18 @@ namespace hgraph::ts_data_plan_factory_detail
 
     [[nodiscard]] const TSDataOps &slot_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                     const MemoryUtils::StoragePlan &plan,
-                                                    std::size_t storage_offset);
+                                                    std::size_t storage_offset,
+                                                    TypeRole role = TypeRole::Data,
+                                                    bool embedded = false);
     [[nodiscard]] const TSDataOps &slot_tsd_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                         const MemoryUtils::StoragePlan &plan,
                                                         std::size_t storage_offset,
-                                                        const TSDataBinding            &element_binding);
+                                                        TSStorageTypeRef                element_type,
+                                                        TypeRole role,
+                                                        bool embedded = false,
+                                                        bool composite = false);
+    [[nodiscard]] TSStorageTypeRef tsd_value_projection_type(TSStorageTypeRef element_type,
+                                                             TypeRole role);
 
     void clear_fixed_ts_data_contexts() noexcept;
     void clear_dynamic_list_ts_data_contexts() noexcept;

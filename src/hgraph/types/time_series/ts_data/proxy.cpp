@@ -1,10 +1,13 @@
 #include <hgraph/types/time_series/ts_data/proxy.h>
 
+#include "ownership.h"
+
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
 #include <nanobind/nanobind.h>
 #endif
 
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/utils/value_slot_store.h>
 #include <hgraph/types/value/specialized_views.h>
@@ -14,6 +17,7 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -57,10 +61,35 @@ namespace hgraph
             throw std::logic_error("TSDProxy requires live storage");
         }
 
+        [[nodiscard]] bool pending_announced(DateTime stamp) noexcept
+        {
+            return stamp == MIN_DT;
+        }
+
+        [[nodiscard]] bool pending_owed(DateTime stamp) noexcept
+        {
+            return stamp == MAX_DT;
+        }
+
+        [[nodiscard]] bool built(DateTime stamp) noexcept
+        {
+            if (pending_announced(stamp) || pending_owed(stamp)) { return false; }
+            return stamp >= MIN_ST && stamp <= MAX_ET;
+        }
+
+        void require_concrete_build_time(DateTime modified_time)
+        {
+            if (!built(modified_time))
+            {
+                throw std::invalid_argument("TSDProxy build time must be in [MIN_ST, MAX_ET]");
+            }
+        }
+
         struct TSDProxyContextKey
         {
             const TSValueTypeMetaData *schema{nullptr};
-            const TSDataBinding      *element_binding{nullptr};
+            TSStorageTypeRef           element_type{};
+            TypeRole                   role{TypeRole::Invalid};
 
             [[nodiscard]] bool operator==(const TSDProxyContextKey &) const noexcept = default;
         };
@@ -70,9 +99,9 @@ namespace hgraph
             [[nodiscard]] std::size_t operator()(const TSDProxyContextKey &key) const noexcept
             {
                 std::size_t seed = std::hash<const void *>{}(key.schema);
-                const auto  h    = std::hash<const void *>{}(key.element_binding);
+                const auto  h    = std::hash<std::uintptr_t>{}(key.element_type.raw_bits());
                 seed ^= h + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
-                return seed;
+                return combine_hash(seed, static_cast<std::size_t>(key.role));
             }
         };
 
@@ -89,16 +118,19 @@ namespace hgraph
             MapValueOps                     value_map_ops{};
             MapValueOps                     modified_map_ops{};
             IndexedValueOps                 delta_bundle_ops{};
-            const TSDataBinding            *element_binding{nullptr};
+            TSStorageTypeRef                 element_type{};
+            TSStorageTypeRef                 key_set_type{};
+            TypeRole                         role{TypeRole::Invalid};
             ValueTypeRef key_set_value_binding{nullptr};
             ValueTypeRef added_set_binding{nullptr};
             ValueTypeRef removed_set_binding{nullptr};
             ValueTypeRef modified_map_binding{nullptr};
 
-            TSDProxyContext(const TSValueTypeMetaData &schema_, const TSDataBinding &element_binding_)
+            TSDProxyContext(const TSValueTypeMetaData &schema_, TSStorageTypeRef element_type_, TypeRole role_)
                 : schema(&schema_),
                   plan(&MemoryUtils::plan_for<TSDProxy>()),
-                  element_binding(&element_binding_)
+                  element_type(ts_data_plan_factory_detail::tsd_value_projection_type(element_type_, role_)),
+                  role(role_)
             {
                 if (schema->kind != TSTypeKind::TSD)
                 {
@@ -108,12 +140,12 @@ namespace hgraph
                 {
                     throw std::logic_error("TSDProxy schema is incomplete");
                 }
-                if (element_binding->type_meta != schema->element_ts())
+                if (element_type.schema() != schema->element_ts())
                 {
                     throw std::logic_error("TSDProxy element binding does not match the TSD element schema");
                 }
 
-                const auto &element_ops    = element_binding->ops_ref();
+                const auto &element_ops    = element_type.ops_ref();
                 const auto *element_layout = element_ops.layout_impl(element_ops.context);
                 if (element_layout == nullptr)
                 {
@@ -121,7 +153,7 @@ namespace hgraph
                 }
 
                 layout.key_binding           = ValuePlanFactory::instance().type_for(schema->key_type());
-                layout.element_binding       = element_binding;
+                layout.element_type          = element_type;
                 layout.element_layout        = element_layout;
                 layout.element_value_binding = element_layout->value_binding;
                 layout.element_delta_binding = element_layout->delta_binding;
@@ -250,7 +282,12 @@ namespace hgraph
                 layout.delta_binding = intern_value_type(*schema->delta_value_schema, *plan, delta_bundle_ops);
 
                 key_set_value_binding = intern_value_type(*set_schema, *plan, key_set_value_ops);
-                layout.key_set_binding = &TSDataBinding::intern(*key_set_ts_schema, *plan, key_set_ts_ops);
+                const auto label = role == TypeRole::Data
+                                       ? std::string_view{"ts.tsd.key-set.data"}
+                                       : std::string_view{"ts.tsd.key-set.output"};
+                key_set_type = TSStorageTypeRef{intern_ts_type(
+                    *key_set_ts_schema, role, *plan, key_set_ts_ops, label)};
+                layout.key_set_type = key_set_type;
             }
 
             template <TSDProxySetSurface Surface>
@@ -464,6 +501,7 @@ namespace hgraph
                 return builder.build_storage();
             }
 
+          public:
             [[nodiscard]] static const TSDataLayout *ts_layout(const void *context) noexcept
             {
                 return &ctx(context)->layout;
@@ -481,7 +519,8 @@ namespace hgraph
 
             [[nodiscard]] static bool has_current_value(const void *, const void *memory) noexcept
             {
-                return proxy_storage(memory).tracking().last_modified_time != MIN_DT;
+                const auto &proxy = proxy_storage(memory);
+                return proxy.source_available() && proxy.tracking().last_modified_time != MIN_DT;
             }
 
             [[nodiscard]] static bool all_valid(const void *context, const void *memory) noexcept
@@ -489,7 +528,7 @@ namespace hgraph
                 return fallback_on_exception(false, [&] {
                     if (!has_current_value(context, memory)) { return false; }
                     const auto *state = ctx(context);
-                    const auto &ops   = state->element_binding->ops_ref();
+                    const auto &ops   = state->element_type.ops_ref();
                     const auto &store = proxy_storage(memory);
                     auto        dict  = store.source_dict();
                     for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
@@ -543,9 +582,15 @@ namespace hgraph
                 return proxy_storage(memory).source_dict();
             }
 
+            [[nodiscard]] static bool source_available(const void *memory) noexcept
+            {
+                return memory != nullptr && proxy_storage(memory).source_available();
+            }
+
             template <TSDProxySetSurface Surface>
             [[nodiscard]] static bool slot_in_set_surface(const void *, const void *memory, std::size_t slot)
             {
+                if (!source_available(memory)) { return false; }
                 auto dict = source_dict(memory);
                 if constexpr (Surface == TSDProxySetSurface::Live) { return dict.slot_live(slot); }
                 else if constexpr (Surface == TSDProxySetSurface::Added) { return dict.slot_added(slot); }
@@ -555,10 +600,11 @@ namespace hgraph
             [[nodiscard]] static bool slot_modified(const void *context, const void *memory, std::size_t slot)
             {
                 const auto &store = proxy_storage(memory);
-                if (!store.has_child(slot) || !source_dict(memory).slot_live(slot)) { return false; }
+                if (!source_available(memory) || !store.has_child(slot) || !source_dict(memory).slot_live(slot))
+                    return false;
                 if (store.child_updated(slot)) { return true; }
                 const auto *state          = ctx(context);
-                const auto &ops            = state->element_binding->ops_ref();
+                const auto &ops            = state->element_type.ops_ref();
                 const auto *child_tracking = ops.tracking_impl(ops.context, store.child_at_slot(slot));
                 return child_tracking != nullptr &&
                        child_tracking->last_modified_time == store.tracking().last_modified_time;
@@ -571,27 +617,27 @@ namespace hgraph
 
             [[nodiscard]] static bool slot_occupied(const void *, const void *memory, std::size_t slot)
             {
-                return source_dict(memory).slot_occupied(slot);
+                return source_available(memory) && source_dict(memory).slot_occupied(slot);
             }
 
             [[nodiscard]] static bool slot_live(const void *, const void *memory, std::size_t slot)
             {
-                return source_dict(memory).slot_live(slot);
+                return source_available(memory) && source_dict(memory).slot_live(slot);
             }
 
             [[nodiscard]] static bool slot_added(const void *, const void *memory, std::size_t slot)
             {
-                return source_dict(memory).slot_added(slot);
+                return source_available(memory) && source_dict(memory).slot_added(slot);
             }
 
             [[nodiscard]] static bool slot_removed(const void *, const void *memory, std::size_t slot)
             {
-                return source_dict(memory).slot_removed(slot);
+                return source_available(memory) && source_dict(memory).slot_removed(slot);
             }
 
             [[nodiscard]] static std::size_t slot_capacity(const void *, const void *memory)
             {
-                return source_dict(memory).slot_capacity();
+                return source_available(memory) ? source_dict(memory).slot_capacity() : 0;
             }
 
             template <TSDProxySetSurface Surface>
@@ -614,18 +660,21 @@ namespace hgraph
 
             [[nodiscard]] static const void *key_at_slot(const void *, const void *memory, std::size_t slot)
             {
+                if (!source_available(memory))
+                    throw std::logic_error("TSDProxy source is unavailable");
                 return source_dict(memory).key_at_slot(slot).data();
             }
 
             [[nodiscard]] static bool set_contains(const void *context, const void *memory, const ValueView &key)
             {
                 if (key.binding() != ctx(context)->layout.key_binding) { return false; }
-                return source_dict(memory).contains(key);
+                return source_available(memory) && source_dict(memory).contains(key);
             }
 
             template <TSDProxySetSurface Surface>
             [[nodiscard]] static bool set_contains_raw(const void *context, const void *memory, const void *key)
             {
+                if (!source_available(memory)) { return false; }
                 const auto slot = source_dict(memory).find_slot(ValueView{ctx(context)->layout.key_binding, key});
                 return slot != TS_DATA_NO_CHILD_ID && slot_in_set_surface<Surface>(context, memory, slot);
             }
@@ -633,7 +682,7 @@ namespace hgraph
             [[nodiscard]] static std::size_t find_slot(const void *context, const void *memory, const ValueView &key)
             {
                 if (key.binding() != ctx(context)->layout.key_binding) { return TS_DATA_NO_CHILD_ID; }
-                return source_dict(memory).find_slot(key);
+                return source_available(memory) ? source_dict(memory).find_slot(key) : TS_DATA_NO_CHILD_ID;
             }
 
             template <TSDProxySetSurface Surface>
@@ -736,6 +785,7 @@ namespace hgraph
             template <TSDProxyMapSurface Surface>
             [[nodiscard]] static bool map_slot_in_surface(const void *context, const void *memory, std::size_t slot)
             {
+                if (!source_available(memory)) { return false; }
                 if constexpr (Surface == TSDProxyMapSurface::Live)
                 {
                     return source_dict(memory).slot_live(slot);
@@ -787,6 +837,7 @@ namespace hgraph
             template <TSDProxyMapSurface Surface>
             [[nodiscard]] static bool map_contains_raw(const void *context, const void *memory, const void *key)
             {
+                if (!source_available(memory)) { return false; }
                 const auto slot = source_dict(memory).find_slot(ValueView{ctx(context)->layout.key_binding, key});
                 return slot != TS_DATA_NO_CHILD_ID && map_slot_in_surface<Surface>(context, memory, slot);
             }
@@ -837,7 +888,7 @@ namespace hgraph
                                                                std::size_t slot)
             {
                 const auto *state = ctx(context);
-                const auto &child_ops = state->element_binding->ops_ref();
+                const auto &child_ops = state->element_type.ops_ref();
                 const auto *child_memory = proxy_storage(memory).child_at_slot(slot);
                 if constexpr (Surface == TSDProxyMapSurface::Live)
                 {
@@ -852,6 +903,7 @@ namespace hgraph
             template <TSDProxyMapSurface Surface>
             [[nodiscard]] static const void *map_value_at(const void *context, const void *memory, const void *key)
             {
+                if (!source_available(memory)) { return nullptr; }
                 const auto slot = source_dict(memory).find_slot(ValueView{ctx(context)->layout.key_binding, key});
                 if (slot == TS_DATA_NO_CHILD_ID || !map_slot_in_surface<Surface>(context, memory, slot))
                 {
@@ -910,7 +962,7 @@ namespace hgraph
                                                                const void *memory,
                                                                std::size_t slot)
             {
-                return TSDataView{ctx(context)->layout.element_binding, proxy_storage(memory).child_at_slot(slot)};
+                return TSDataView{ctx(context)->layout.element_type, proxy_storage(memory).child_at_slot(slot)};
             }
 
             [[nodiscard]] static std::pair<ValueView, TSDataView> ts_kv_projector(const void *context,
@@ -1157,19 +1209,64 @@ namespace hgraph
         }
 
         [[nodiscard]] const TSDProxyContext &tsd_proxy_context_for(const TSValueTypeMetaData &schema,
-                                                                   const TSDataBinding      &element_binding)
+                                                                   TSStorageTypeRef element_type,
+                                                                   TypeRole role)
         {
             std::lock_guard<std::recursive_mutex> lock(tsd_proxy_context_mutex());
             auto &contexts = tsd_proxy_contexts();
-            const TSDProxyContextKey key{&schema, &element_binding};
+            const TSDProxyContextKey key{&schema, element_type, role};
             if (const auto it = contexts.find(key); it != contexts.end()) { return *it->second; }
 
-            auto context = std::make_unique<TSDProxyContext>(schema, element_binding);
+            auto context = std::make_unique<TSDProxyContext>(schema, element_type, role);
             const auto *result = context.get();
             contexts.emplace(key, std::move(context));
             return *result;
         }
     }  // namespace
+
+    [[nodiscard]] const detail::TSDataOwnershipOps *proxy_ownership_ops_for(const TSDataOps *candidate) noexcept
+    {
+        if (candidate == nullptr || candidate->layout_impl != &TSDProxyContext::ts_layout) { return nullptr; }
+        const auto *context = static_cast<const TSDProxyContext *>(candidate->context);
+        if (context == nullptr || candidate != static_cast<const TSDataOps *>(&context->dict_ops)) { return nullptr; }
+        static const detail::TSDataOwnershipOps ops{
+            .child_count = [](const void *, const void *memory) noexcept {
+                if (memory == nullptr) return std::size_t{0};
+                const auto &proxy = proxy_storage(memory);
+                std::size_t count = 1;
+                for (std::size_t slot = 0; slot < proxy.child_capacity(); ++slot)
+                    count += proxy.has_child(slot) ? 1U : 0U;
+                return count;
+            },
+            .child_at = [](const void *context, void *memory, std::size_t index) noexcept {
+                if (context == nullptr || memory == nullptr) return detail::TSDataOwnedChild{};
+                const auto *state = static_cast<const TSDProxyContext *>(context);
+                if (index == 0)
+                    return detail::TSDataOwnedChild{
+                        .type = state->key_set_type,
+                        .data = memory,
+                        .attach_parent = false,
+                    };
+                auto &proxy = proxy_storage(memory);
+                std::size_t seen = 1;
+                for (std::size_t slot = 0; slot < proxy.child_capacity(); ++slot)
+                {
+                    if (!proxy.has_child(slot)) { continue; }
+                    if (seen++ == index)
+                        return detail::TSDataOwnedChild{
+                            .type = proxy.element_type(),
+                            .data = proxy.owned_child_memory(slot),
+                            .parent_child_id = slot,
+                        };
+                }
+                return detail::TSDataOwnedChild{};
+            },
+            .stop = [](const void *, void *memory) noexcept {
+                if (memory != nullptr) proxy_storage(memory).stop();
+            },
+        };
+        return &ops;
+    }
 
     TSDProxySlotSync::TSDProxySlotSync(TSDProxy &owner) noexcept
         : owner_(&owner)
@@ -1208,6 +1305,11 @@ namespace hgraph
         owner_->on_source_modified(modified_time);
     }
 
+    void TSDProxySlotSync::source_invalidated(const TSDataTracking *source) noexcept
+    {
+        owner_->on_source_invalidated(source);
+    }
+
     TSDProxy::TSDProxy() noexcept
         : source_sync_(*this)
     {
@@ -1218,43 +1320,58 @@ namespace hgraph
         unsubscribe_source(false);
     }
 
-    void TSDProxy::bind(const TSDataBinding &self_binding,
-                        const TSDataBinding &element_binding,
+    void TSDProxy::bind(TSStorageTypeRef     self_type,
+                        TSStorageTypeRef     element_type,
                         const TSDDataView   &source,
-                        ValueBuilder         builder,
+                        const TSDProxyValueOps *value_ops,
                         const void          *builder_context,
                         DateTime        modified_time,
                         TSDProxyChildRefresh child_refresh)
     {
-        child_refresh_ = child_refresh;
+        if (child_refresh_ == TSDProxyChildRefresh::Invalidating)
+        {
+            throw std::logic_error("TSDProxy cannot bind while source invalidation is in progress");
+        }
+        if (child_refresh == TSDProxyChildRefresh::Invalidating)
+        {
+            throw std::invalid_argument("TSDProxy Invalidating refresh policy is internal");
+        }
+        require_concrete_build_time(modified_time);
         if (source.schema() == nullptr || source.schema()->kind != TSTypeKind::TSD)
         {
             throw std::invalid_argument("TSDProxy requires a TSD source view");
         }
-        if (builder == nullptr)
+        if (value_ops == nullptr || value_ops->build == nullptr)
         {
-            throw std::invalid_argument("TSDProxy requires a value builder");
+            throw std::invalid_argument("TSDProxy requires value ops with a build function");
+        }
+        if ((child_refresh == TSDProxyChildRefresh::StructureOnly) !=
+            (value_ops->source_identity_matches == nullptr))
+        {
+            throw std::invalid_argument("TSDProxy refresh policy and identity matcher do not agree");
         }
 
-        const auto &element_plan = element_binding.checked_plan();
+        child_refresh_ = child_refresh;
+        const auto &element_plan = element_type.checked_plan();
         const bool reconfigure =
-            self_binding_ != &self_binding ||
-            element_binding_ != &element_binding ||
-            source_storage_.binding() != source.binding() ||
+            self_type_ != self_type ||
+            element_type_ != element_type ||
+            source_storage_.storage_type() != source.base().storage_type() ||
             source_storage_.data() != source.base().data() ||
-            value_builder_ != builder ||
+            value_ops_ != value_ops ||
             value_builder_context_ != builder_context;
 
         if (reconfigure)
         {
             unsubscribe_source();
-            self_binding_          = &self_binding;
-            element_binding_       = &element_binding;
+            if (element_type_ && has_constructed_children()) on_slots_cleared();
+            else values_.destroy_all();
+            self_type_             = self_type;
+            element_type_          = element_type;
             source_storage_        = TSDDataStorageRef{source.base().storage_ref(), TSTypeKind::TSD};
-            value_builder_         = builder;
+            value_ops_             = value_ops;
             value_builder_context_ = builder_context;
             values_.bind_plan(element_plan);
-            values_.destroy_all();
         }
         else
         {
@@ -1277,6 +1394,19 @@ namespace hgraph
 
     void TSDProxy::on_slot_inserted(std::size_t slot)
     {
+        if (has_child(slot))
+        {
+            const auto state = slot < built_times_.size() ? built_times_[slot] : MIN_DT;
+            if (!pending_owed(state))
+            {
+                throw std::logic_error("TSDProxy retained insertion requires insert-owed state");
+            }
+            const auto modified_time = current_lifecycle_time(slot);
+            static_cast<void>(retry_pending_child_at_slot(slot, modified_time));
+            mark_modified(modified_time);
+            return;
+        }
+
         construct_child_at_slot(slot);
         if (slot < built_times_.size()) { built_times_[slot] = MIN_DT; }
         slot_observers_.notify_insert(slot);
@@ -1284,49 +1414,84 @@ namespace hgraph
 
     void TSDProxy::on_slot_removed(std::size_t slot)
     {
-        construct_child_at_slot(slot);
+        if (has_child(slot))
+        {
+            detail::stop_owned_ts_data_tree(TSDataView{element_type_, values_.value_memory(slot)});
+            if (slot >= built_times_.size()) { built_times_.resize(slot + 1, MIN_DT); }
+            built_times_[slot] = MAX_DT;
+        }
+        else if (slot < built_times_.size()) { built_times_[slot] = MIN_DT; }
         slot_observers_.notify_remove(slot);
     }
 
     void TSDProxy::on_slot_erased(std::size_t slot)
     {
-        values_.destroy_at(slot);
+        if (values_.has_slot(slot))
+            detail::invalidate_owned_ts_data_tree(TSDataView{element_type_, values_.value_memory(slot)});
         if (slot < built_times_.size()) { built_times_[slot] = MIN_DT; }
         slot_observers_.notify_erase(slot);
+        values_.destroy_at(slot);
     }
 
     void TSDProxy::on_slots_cleared()
     {
-        values_.destroy_all();
+        for (std::size_t slot = 0; slot < values_.slot_capacity(); ++slot)
+        {
+            if (values_.has_slot(slot))
+                detail::invalidate_owned_ts_data_tree(TSDataView{element_type_, values_.value_memory(slot)});
+        }
         built_times_.assign(built_times_.size(), MIN_DT);
         slot_observers_.notify_clear();
+        values_.destroy_all();
     }
 
     void TSDProxy::on_source_modified(DateTime modified_time)
     {
-        if (modified_time == MIN_DT || !source_storage_.valid() || value_builder_ == nullptr) { return; }
+        if (!source_storage_.valid() || value_ops_ == nullptr) { return; }
+        require_concrete_build_time(modified_time);
 
         auto dict = source_dict();
         bool touched = false;
         for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
         {
-            if (dict.slot_added(slot) || dict.slot_removed(slot))
+            const bool live = dict.slot_live(slot);
+            if (dict.slot_removed(slot))
             {
-                ensure_child_at_slot(slot, modified_time);
                 touched = true;
                 continue;
             }
+            if (!live) { continue; }
+
+            if (!has_child(slot))
+            {
+                construct_child_at_slot(slot);
+                if (slot >= built_times_.size()) { built_times_.resize(slot + 1, MIN_DT); }
+                built_times_[slot] = MAX_DT;
+                static_cast<void>(retry_pending_child_at_slot(slot, modified_time));
+                touched = true;
+                continue;
+            }
+
+            const auto state = slot < built_times_.size() ? built_times_[slot] : MIN_DT;
+            if (pending_announced(state) || pending_owed(state))
+            {
+                static_cast<void>(retry_pending_child_at_slot(slot, modified_time));
+                touched = true;
+                continue;
+            }
+            if (!built(state)) { throw std::logic_error("TSDProxy child has an invalid build stamp"); }
+            if (dict.slot_added(slot)) { touched = true; }
+
             // OnChildTick proxies (from-REF): a LIVE slot whose source child
             // ticked re-runs the builder so links rebind on a retarget. The
             // proxy only marks itself modified when the child actually
             // recorded at this time, so same-reference re-publication stays
             // silent. StructureOnly proxies (to-REF) never rebuild on value
             // ticks - the materialised identity did not change.
-            if (child_refresh_ == TSDProxyChildRefresh::OnChildTick && dict.slot_live(slot) &&
-                dict.slot_modified(slot) && has_child(slot))
+            if (child_refresh_ == TSDProxyChildRefresh::OnChildTick)
             {
-                refresh_child_at_slot(slot, modified_time);
-                auto child = TSDataView{element_binding_, values_.value_memory(slot)};
+                refresh_stale_child(slot);
+                auto child = TSDataView{element_type_, values_.value_memory(slot)};
                 if (child.tracking().last_modified_time == modified_time) { touched = true; }
             }
         }
@@ -1403,29 +1568,64 @@ namespace hgraph
 
     void TSDProxy::unsubscribe_source(bool strict) noexcept
     {
-        if (!subscribed_ || !source_storage_.valid()) { return; }
-        if (!strict)
+        if (!source_storage_.valid())
         {
-            auto source = source_view();
-            if (!source.valid() || !source.tracking().observers.contains(&source_sync_))
-            {
-                subscribed_ = false;
-                return;
-            }
+            subscribed_ = false;
+            return;
         }
-        FirstExceptionRecorder cleanup_errors;
-        cleanup_errors.capture([&] {
-            source_view().unsubscribe(&source_sync_);
-        });
-        cleanup_errors.capture([&] {
-            source_dict().key_set().unsubscribe_slot_observer(&source_sync_);
-        });
+        auto source = source_view();
+        if (subscribed_)
+        {
+            FirstExceptionRecorder cleanup_errors;
+            if (strict || (source.valid() && source.tracking().observers.contains(&source_sync_)))
+                cleanup_errors.capture([&] { source.unsubscribe(&source_sync_); });
+            cleanup_errors.capture([&] {
+                source.as_dict().key_set().unsubscribe_slot_observer(&source_sync_);
+            });
+        }
         subscribed_ = false;
+        source_storage_ = {};
+    }
+
+    void TSDProxy::on_source_invalidated(const TSDataTracking *source) noexcept
+    {
+        if (!subscribed_ || source == nullptr || !source_storage_.valid()) { return; }
+        auto current = source_view();
+        if (!current.valid() || &current.tracking() != source) { return; }
+
+        const auto prior_refresh = child_refresh_;
+        child_refresh_ = TSDProxyChildRefresh::Invalidating;
+        auto restore_refresh = make_scope_exit([&]() noexcept { child_refresh_ = prior_refresh; });
+        subscribed_ = false;
+        static_cast<void>(fallback_on_exception(false, [&] {
+            current.as_dict().key_set().unsubscribe_slot_observer(&source_sync_);
+            return true;
+        }));
+        source_storage_ = {};
+
+        for (std::size_t slot = 0; slot < values_.slot_capacity(); ++slot)
+        {
+            if (!values_.has_slot(slot)) { continue; }
+            detail::stop_owned_ts_data_tree(TSDataView{element_type_, values_.value_memory(slot)});
+        }
+        for (std::size_t slot = 0; slot < values_.slot_capacity(); ++slot)
+        {
+            if (!values_.has_slot(slot)) { continue; }
+            detail::invalidate_owned_ts_data_tree(TSDataView{element_type_, values_.value_memory(slot)});
+        }
+        tracking_.observers.invalidate(&tracking_);
+        static_cast<void>(fallback_on_exception(false, [&] {
+            slot_observers_.notify_clear();
+            return true;
+        }));
+        values_.destroy_all();
+        std::ranges::fill(built_times_, MIN_DT);
+        updated_window_ = MIN_DT;
     }
 
     void TSDProxy::sync_from_source(DateTime modified_time, bool force_modified)
     {
-        if (element_binding_ == nullptr || !source_storage_.valid() || value_builder_ == nullptr)
+        if (!element_type_ || !source_storage_.valid() || value_ops_ == nullptr)
         {
             return;
         }
@@ -1435,27 +1635,39 @@ namespace hgraph
         if (built_times_.size() < dict.slot_capacity()) { built_times_.resize(dict.slot_capacity(), MIN_DT); }
 
         bool changed = force_modified;
-        for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+        const auto limit = std::max(dict.slot_capacity(), values_.slot_capacity());
+        for (std::size_t slot = 0; slot < limit; ++slot)
         {
-            if (dict.slot_live(slot) || dict.slot_removed(slot))
+            if (slot < dict.slot_capacity() && dict.slot_live(slot))
             {
-                // Only NEVER-MATERIALISED slots run the builder here. A
-                // re-sync of an already-bound proxy (an outer refresh
-                // re-applying a nested dictionary) must not rebuild live
-                // children - their storage is address-stable and rebuilding
-                // force-marks whole subtrees as updated (phantom deltas).
-                const bool materialised =
-                    has_child(slot) && slot < built_times_.size() && built_times_[slot] != MIN_DT;
-                if (!materialised)
+                if (!has_child(slot))
                 {
-                    ensure_child_at_slot(slot, modified_time);
+                    construct_child_at_slot(slot);
+                    if (slot >= built_times_.size()) { built_times_.resize(slot + 1, MIN_DT); }
+                    built_times_[slot] = MAX_DT;
+                }
+
+                const auto state = slot < built_times_.size() ? built_times_[slot] : MIN_DT;
+                if (pending_announced(state) || pending_owed(state))
+                {
+                    static_cast<void>(retry_pending_child_at_slot(slot, modified_time));
                     changed = true;
                 }
+                else if (!built(state)) { throw std::logic_error("TSDProxy child has an invalid build stamp"); }
                 continue;
             }
 
+            // Pending removal retains constructed, stopped storage at its
+            // stable address. The source's physical erase callback owns its
+            // eventual invalidation and destruction.
+            if (slot < dict.slot_capacity() && dict.slot_occupied(slot)) { continue; }
+
             if (has_child(slot))
             {
+                detail::invalidate_owned_ts_data_tree(
+                    TSDataView{element_type_, values_.value_memory(slot)});
+                if (slot < built_times_.size()) { built_times_[slot] = MIN_DT; }
+                slot_observers_.notify_erase(slot);
                 values_.destroy_at(slot);
                 changed = true;
             }
@@ -1466,7 +1678,7 @@ namespace hgraph
 
     void TSDProxy::construct_child_at_slot(std::size_t slot)
     {
-        if (self_binding_ == nullptr || element_binding_ == nullptr)
+        if (!self_type_ || !element_type_)
         {
             throw std::logic_error("TSDProxy is not initialised");
         }
@@ -1474,36 +1686,66 @@ namespace hgraph
         if (values_.has_slot(slot)) { return; }
 
         values_.construct_at(slot);
-        auto target = TSDataView{element_binding_, values_.value_memory(slot)};
-        target.mutable_tracking().parent = TSParentLink{self_binding_, this, slot};
+        auto target = TSDataView{element_type_, values_.value_memory(slot)};
+        target.mutable_tracking().parent = TSParentLink{self_type_, this, slot};
+        detail::attach_owned_ts_data_parents(target.borrowed_ref());
     }
 
-    void TSDProxy::ensure_child_at_slot(std::size_t slot, DateTime modified_time)
+    bool TSDProxy::retry_pending_child_at_slot(std::size_t slot, DateTime modified_time)
     {
-        if (value_builder_ == nullptr)
+        if (!has_child(slot) || value_ops_ == nullptr || !source_available())
         {
-            throw std::logic_error("TSDProxy is not initialised");
+            throw std::logic_error("TSDProxy pending build requires a live child and source");
+        }
+        auto dict = source_dict();
+        if (!dict.slot_live(slot)) { throw std::logic_error("TSDProxy cannot build a non-live source slot"); }
+
+        const auto state = slot < built_times_.size() ? built_times_[slot] : MIN_DT;
+        const bool owes_insert = pending_owed(state);
+        if (!pending_announced(state) && !owes_insert)
+        {
+            if (built(state)) { return false; }
+            throw std::logic_error("TSDProxy child has an invalid pending build stamp");
         }
 
-        construct_child_at_slot(slot);
-        auto target = TSDataView{element_binding_, values_.value_memory(slot)};
-        value_builder_(*this, slot, target, source_child_at_slot(slot), modified_time, value_builder_context_);
-        stamp_built(slot, modified_time);
+        require_concrete_build_time(modified_time);
+        refresh_child_at_slot(slot, modified_time);
+        if (owes_insert) { slot_observers_.notify_insert(slot); }
+        return true;
+    }
+
+    DateTime TSDProxy::current_lifecycle_time(std::size_t slot) const
+    {
+        if (built(tracking_.last_modified_time)) { return tracking_.last_modified_time; }
+        if (source_available())
+        {
+            auto dict = source_dict();
+            if (dict.slot_live(slot))
+            {
+                const auto source_child_time = dict.at_slot(slot).tracking().last_modified_time;
+                if (built(source_child_time)) { return source_child_time; }
+            }
+            const auto source_time = source_view().tracking().last_modified_time;
+            if (built(source_time)) { return source_time; }
+        }
+        throw std::logic_error("TSDProxy pending build requires a concrete lifecycle time");
     }
 
     void TSDProxy::refresh_child_at_slot(std::size_t slot, DateTime modified_time)
     {
-        if (element_binding_ == nullptr || value_builder_ == nullptr)
+        if (!element_type_ || value_ops_ == nullptr)
         {
             throw std::logic_error("TSDProxy is not initialised");
         }
-        auto target = TSDataView{element_binding_, values_.value_memory(slot)};
-        value_builder_(*this, slot, target, source_child_at_slot(slot), modified_time, value_builder_context_);
+        auto target = TSDataView{element_type_, values_.value_memory(slot)};
+        value_ops_->build(*this, slot, target, source_child_at_slot(slot), modified_time,
+                          value_builder_context_);
         stamp_built(slot, modified_time);
     }
 
     void TSDProxy::stamp_built(std::size_t slot, DateTime modified_time)
     {
+        require_concrete_build_time(modified_time);
         // Capacity is managed by the slot-observer callbacks (aligned with
         // ``values_`` and the source keyset); sync_from_source pre-reserves
         // for the initial bind, so this only defends against a stale call.
@@ -1511,26 +1753,76 @@ namespace hgraph
         built_times_[slot] = modified_time;
     }
 
+    bool TSDProxy::has_constructed_children() const noexcept
+    {
+        for (std::size_t slot = 0; slot < values_.slot_capacity(); ++slot)
+        {
+            if (values_.has_slot(slot)) { return true; }
+        }
+        return false;
+    }
+
+    bool TSDProxy::source_identities_match() const
+    {
+        if (!source_available() || value_ops_ == nullptr) { return false; }
+        if (value_ops_->source_identity_matches == nullptr)
+            return child_refresh_ == TSDProxyChildRefresh::StructureOnly;
+
+        auto dict = source_dict();
+        for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+        {
+            if (!dict.slot_live(slot)) { continue; }
+            if (!has_child(slot)) { return false; }
+            const auto state = slot < built_times_.size() ? built_times_[slot] : MIN_DT;
+            if (!built(state)) { return false; }
+            const auto target = TSDataView{element_type_, values_.value_memory(slot)};
+            if (!value_ops_->source_identity_matches(*this, slot, target, dict.at_slot(slot),
+                                                     value_builder_context_))
+                return false;
+        }
+        return true;
+    }
+
     void TSDProxy::refresh_stale_child(std::size_t slot) const
     {
-        if (!has_child(slot) || value_builder_ == nullptr || !source_storage_.valid()) { return; }
-        auto source_child = source_child_at_slot(slot);
-        if (!source_child.valid() || source_child.binding() == nullptr) { return; }
-        const auto source_time = source_child.tracking().last_modified_time;
-        const auto built_time  = slot < built_times_.size() ? built_times_[slot] : MIN_DT;
-        if (source_time == MIN_DT || source_time < built_time) { return; }
-        if (source_time == built_time)
-        {
-            // Same-time writes are indistinguishable by stamp (insert + write
-            // in one mutation share the evaluation time). Re-run the builder
-            // only for a child that never materialised - the builder saw the
-            // pre-write source; materialised children keep run-once semantics.
-            auto child = TSDataView{element_binding_, values_.value_memory(slot)};
-            if (child.has_current_value()) { return; }
-        }
-        // Deliberate interior mutability: derived state catching up with its
-        // source on read (see refresh_stale_child in the header).
+        if (!has_child(slot) || value_ops_ == nullptr || !source_storage_.valid()) { return; }
+        auto dict = source_dict();
+        if (!dict.slot_live(slot)) { return; }
+        auto source_child = dict.at_slot(slot);
+        if (!source_child.valid()) { return; }
         auto *self = const_cast<TSDProxy *>(this);
+        auto built_time = slot < built_times_.size() ? built_times_[slot] : MIN_DT;
+        if (pending_announced(built_time) || pending_owed(built_time))
+        {
+            static_cast<void>(self->retry_pending_child_at_slot(slot, current_lifecycle_time(slot)));
+            built_time = built_times_[slot];
+        }
+        if (!built(built_time)) { throw std::logic_error("TSDProxy child has an invalid build stamp"); }
+
+        const auto source_time = source_child.tracking().last_modified_time;
+        if (pending_owed(source_time))
+        {
+            throw std::logic_error("TSDProxy source child has an invalid modified time");
+        }
+        if (pending_announced(source_time)) { return; }
+        if (!built(source_time)) { throw std::logic_error("TSDProxy source child time is out of range"); }
+        if (source_time < built_time) { return; }
+        if (source_time > built_time)
+        {
+            self->refresh_child_at_slot(slot, source_time);
+            return;
+        }
+
+        if (child_refresh_ == TSDProxyChildRefresh::StructureOnly) { return; }
+        if (child_refresh_ != TSDProxyChildRefresh::OnChildTick ||
+            value_ops_->source_identity_matches == nullptr)
+            throw std::logic_error("TSDProxy identity reconciliation requires a matcher");
+
+        const auto target = TSDataView{element_type_, values_.value_memory(slot)};
+        if (value_ops_->source_identity_matches(*this, slot, target, source_child,
+                                                value_builder_context_))
+            return;
+
         self->refresh_child_at_slot(slot, source_time);
     }
 
@@ -1541,7 +1833,7 @@ namespace hgraph
 
     void TSDProxy::record_child_modified(std::size_t slot, DateTime modified_time)
     {
-        if (!has_child(slot)) { return; }
+        if (!has_child(slot) || !source_available()) { return; }
         // LAZY delta-window roll: updated bits describe the CURRENT window
         // only - a record at a new time clears the previous window's bits
         // (they otherwise over-report the Modified surface forever).
@@ -1567,11 +1859,25 @@ namespace hgraph
         slot_observers_.remove(observer);
     }
 
-    const TSDataBinding &tsd_proxy_binding_for(const TSValueTypeMetaData &schema,
-                                               const TSDataBinding      &element_binding)
+    void TSDProxy::stop() noexcept
     {
-        const auto &context = tsd_proxy_context_for(schema, element_binding);
-        return TSDataBinding::intern(schema, *context.plan, context.dict_ops);
+        unsubscribe_source(false);
+    }
+
+    TSDataTypeRef tsd_proxy_data_type_for(const TSValueTypeMetaData &schema,
+                                          TSStorageTypeRef element_type)
+    {
+        const auto &context = tsd_proxy_context_for(schema, element_type, TypeRole::Data);
+        return TSDataTypeRef::checked(intern_ts_type(
+            schema, TypeRole::Data, *context.plan, context.dict_ops, "ts.tsd.proxy.data"));
+    }
+
+    TSOutputTypeRef tsd_proxy_output_type_for(const TSValueTypeMetaData &schema,
+                                              TSStorageTypeRef element_type)
+    {
+        const auto &context = tsd_proxy_context_for(schema, element_type, TypeRole::Output);
+        return TSOutputTypeRef::checked(intern_ts_type(
+            schema, TypeRole::Output, *context.plan, context.dict_ops, "ts.tsd.proxy.output"));
     }
 
     void clear_tsd_proxy_contexts() noexcept
@@ -1582,7 +1888,7 @@ namespace hgraph
 
     void bind_tsd_proxy(const TSDataView       &proxy,
                         const TSDDataView      &source,
-                        TSDProxy::ValueBuilder  builder,
+                        const TSDProxyValueOps *value_ops,
                         const void             *builder_context,
                         DateTime modified_time,
                         TSDProxyChildRefresh child_refresh)
@@ -1592,7 +1898,7 @@ namespace hgraph
         {
             throw std::invalid_argument("bind_tsd_proxy requires a TSD proxy schema");
         }
-        if (&proxy.binding()->checked_plan() != &MemoryUtils::plan_for<TSDProxy>())
+        if (proxy.storage_type().plan() != &MemoryUtils::plan_for<TSDProxy>())
         {
             throw std::invalid_argument("bind_tsd_proxy requires storage backed by TSDProxy");
         }
@@ -1604,12 +1910,21 @@ namespace hgraph
 
         const auto &dict   = proxy.as_dict();
         const auto &layout = dict.layout();
-        if (layout.element_binding == nullptr)
+        if (!layout.element_type)
         {
             throw std::logic_error("bind_tsd_proxy requires an element binding");
         }
 
         auto &storage = proxy_storage(const_cast<void *>(proxy.data()));
-        storage.bind(*proxy.binding(), *layout.element_binding, source, builder, builder_context, modified_time, child_refresh);
+        storage.bind(proxy.storage_type(), layout.element_type, source, value_ops,
+                     builder_context, modified_time, child_refresh);
     }
 }  // namespace hgraph
+
+namespace hgraph::detail
+{
+    const TSDataOwnershipOps *proxy_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept
+    {
+        return ::hgraph::proxy_ownership_ops_for(ops);
+    }
+}

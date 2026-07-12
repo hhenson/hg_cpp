@@ -988,8 +988,9 @@ namespace hgraph::detail
             {
                 throw std::logic_error("TSInput target-link TSD key-set schema is not resolved");
             }
-            context->dict_layout.key_set_binding =
-                &TSDataBinding::intern(*key_set_schema, root_plan, context->key_set_ops);
+            context->dict_layout.key_set_type = TSStorageTypeRef{intern_ts_type(
+                *key_set_schema, TypeRole::Input, root_plan, context->key_set_ops,
+                std::string_view{"ts.tsd.key-set.input"})};
 
             context->active_layout = &context->dict_layout;
             context->active_ops = &context->dict_ops;

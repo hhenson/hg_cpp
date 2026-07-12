@@ -4,6 +4,7 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/time_series/endpoint_schema.h>
+#include "../time_series/ts_data/ownership.h"
 #include <hgraph/types/utils/key_slot_store.h>
 #include <hgraph/types/utils/value_slot_store.h>
 #include <hgraph/types/value/specialized_views.h>
@@ -259,11 +260,11 @@ namespace hgraph::ts_data_plan_factory_detail
         class TSDSlotStorage
         {
           public:
-            TSDSlotStorage(const ValueTypeRef &key_binding, const TSDataBinding &element_binding)
+            TSDSlotStorage(const ValueTypeRef &key_binding, TSStorageTypeRef element_type)
                 : key_binding_(key_binding),
-                  element_binding_(&element_binding),
+                  element_type_(element_type),
                   keys_(key_binding.checked_plan(), key_store_ops(key_binding)),
-                  values_(keys_, element_binding.checked_plan())
+                  values_(keys_, element_type.checked_plan())
             {}
 
             // A TSD publishes both key slots and child TSData slots. Children
@@ -276,7 +277,7 @@ namespace hgraph::ts_data_plan_factory_detail
             ~TSDSlotStorage() = default;
 
             [[nodiscard]] ValueTypeRef key_binding() const { return key_binding_; }
-            [[nodiscard]] const TSDataBinding &element_binding() const { return *element_binding_; }
+            [[nodiscard]] TSStorageTypeRef element_type() const noexcept { return element_type_; }
             [[nodiscard]] const TSDataTracking &tracking() const noexcept { return tracking_; }
             [[nodiscard]] TSDataTracking &mutable_tracking() noexcept { return tracking_; }
             /**
@@ -376,6 +377,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 const auto slot = keys_.find_slot(key.data());
                 if (slot == KeySlotStore::npos) { return {.slot = TS_DATA_NO_CHILD_ID, .changed = false}; }
+                detail::stop_owned_ts_data_tree(TSDataView{element_type_, values_.value_memory(slot)});
                 if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
 
                 ensure_delta_capacity();
@@ -395,6 +397,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     return {.slot = slot, .changed = false};
                 }
+                detail::stop_owned_ts_data_tree(TSDataView{element_type_, values_.value_memory(slot)});
                 if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
 
                 ensure_delta_capacity();
@@ -466,6 +469,12 @@ namespace hgraph::ts_data_plan_factory_detail
                     return;
                 }
 
+                for (std::size_t slot = 0; slot < keys_.slot_capacity(); ++slot)
+                {
+                    if (!keys_.slot_pending_erase(slot)) { continue; }
+                    detail::invalidate_owned_ts_data_tree(
+                        TSDataView{element_type_, values_.value_memory(slot)});
+                }
                 keys_.erase_pending();
                 reset_delta();
                 delta_time_ = modified_time;
@@ -486,7 +495,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             ValueTypeRef key_binding_{nullptr};
-            const TSDataBinding        *element_binding_{nullptr};
+            TSStorageTypeRef             element_type_{};
             TSDataTracking              tracking_{};
             TSDataTracking          key_set_tracking_{};
             KeySlotStore                keys_;
@@ -497,6 +506,11 @@ namespace hgraph::ts_data_plan_factory_detail
             DateTime               delta_time_{MIN_DT};
         };
 
+#if defined(__APPLE__) && defined(__aarch64__)
+        static_assert(sizeof(TSSSlotStorage) <= 392);
+        static_assert(sizeof(TSDSlotStorage) <= 680);
+#endif
+
         struct TSSStoragePlanContext
         {
             ValueTypeRef key_binding{nullptr};
@@ -505,7 +519,7 @@ namespace hgraph::ts_data_plan_factory_detail
         struct TSDStoragePlanContext
         {
             ValueTypeRef key_binding{nullptr};
-            const TSDataBinding    *element_binding{nullptr};
+            TSStorageTypeRef element_type{};
         };
 
         [[nodiscard]] const TSSStoragePlanContext &tss_plan_context(const void *context)
@@ -531,8 +545,8 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             const auto &state = tsd_plan_context(context);
             if (state.key_binding == nullptr) { throw std::logic_error("TSD key binding is not resolved"); }
-            if (state.element_binding == nullptr) { throw std::logic_error("TSD element binding is not resolved"); }
-            std::construct_at(static_cast<TSDSlotStorage *>(dst), state.key_binding, *state.element_binding);
+            if (!state.element_type) { throw std::logic_error("TSD element type is not resolved"); }
+            std::construct_at(static_cast<TSDSlotStorage *>(dst), state.key_binding, state.element_type);
         }
 
         template <typename Storage>
@@ -552,7 +566,7 @@ namespace hgraph::ts_data_plan_factory_detail
         struct TSDSlotPlanKey
         {
             const TSValueTypeMetaData *schema{nullptr};
-            const TSDataBinding       *element_binding{nullptr};
+            TSStorageTypeRef           element_type{};
 
             [[nodiscard]] bool operator==(const TSDSlotPlanKey &) const noexcept = default;
         };
@@ -562,7 +576,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] std::size_t operator()(const TSDSlotPlanKey &key) const noexcept
             {
                 auto seed = std::hash<const TSValueTypeMetaData *>{}(key.schema);
-                return combine_hash(seed, std::hash<const TSDataBinding *>{}(key.element_binding));
+                return combine_hash(seed, std::hash<std::uintptr_t>{}(key.element_type.raw_bits()));
             }
         };
 
@@ -692,6 +706,120 @@ namespace hgraph::ts_data_plan_factory_detail
             Modified,
         };
 
+        struct ProjectionKey
+        {
+            std::uintptr_t type_bits{0};
+            const TSDataOps *source_ops{nullptr};
+            const TSValueTypeMetaData *schema{nullptr};
+            TypeRole role{TypeRole::Invalid};
+            [[nodiscard]] bool operator==(const ProjectionKey &) const noexcept = default;
+        };
+
+        struct ProjectionKeyHash
+        {
+            [[nodiscard]] std::size_t operator()(const ProjectionKey &key) const noexcept
+            {
+                auto seed = combine_hash(std::hash<std::uintptr_t>{}(key.type_bits),
+                                         std::hash<const TSDataOps *>{}(key.source_ops));
+                seed = combine_hash(seed, std::hash<const TSValueTypeMetaData *>{}(key.schema));
+                return combine_hash(seed, static_cast<std::size_t>(key.role));
+            }
+        };
+
+        [[nodiscard]] std::recursive_mutex &projection_mutex() noexcept
+        {
+            static std::recursive_mutex mutex;
+            return mutex;
+        }
+
+        using OwnedProjectionOps = std::unique_ptr<TSDataOps, void (*)(TSDataOps *)>;
+
+        template <typename Ops>
+        [[nodiscard]] OwnedProjectionOps copy_projection_ops(const Ops &ops)
+        {
+            return OwnedProjectionOps{
+                new Ops{ops},
+                [](TSDataOps *value) noexcept { delete static_cast<Ops *>(value); }};
+        }
+
+        [[nodiscard]] OwnedProjectionOps copy_projection_ops(const TSDataOps &ops)
+        {
+            switch (ops.kind)
+            {
+            case TSTypeKind::TSS:
+                return copy_projection_ops(static_cast<const TSSDataOps &>(ops));
+            case TSTypeKind::TSD:
+                return copy_projection_ops(static_cast<const TSDDataOps &>(ops));
+            case TSTypeKind::TSL:
+            case TSTypeKind::TSB:
+                return copy_projection_ops(static_cast<const IndexedTSDataOps &>(ops));
+            case TSTypeKind::TSW:
+                return copy_projection_ops(static_cast<const TSWDataOps &>(ops));
+            default:
+                return copy_projection_ops<TSDataOps>(ops);
+            }
+        }
+
+        [[nodiscard]] auto &projection_ops_cache() noexcept
+        {
+            static std::unordered_map<ProjectionKey, OwnedProjectionOps, ProjectionKeyHash> cache;
+            return cache;
+        }
+
+        [[nodiscard]] TSStorageTypeRef intern_tsd_value_projection_type(TSStorageTypeRef element_type,
+                                                                         TypeRole role)
+        {
+            const auto *schema = element_type.schema();
+            if (schema == nullptr || !is_migrated_ts_root_schema(schema)) { return element_type; }
+            const auto label = role == TypeRole::Data
+                                   ? std::string_view{"ts.tsd.value.data"}
+                                   : role == TypeRole::Input
+                                         ? std::string_view{"ts.tsd.value.input"}
+                                         : std::string_view{"ts.tsd.value.output"};
+            if (const auto *record = element_type.record();
+                record != nullptr && record->role == role && record->implementation_name() == label)
+                return element_type;
+            const auto &source_ops = element_type.ops_ref();
+            const ProjectionKey key{element_type.raw_bits(), &source_ops, schema, role};
+            std::lock_guard<std::recursive_mutex> lock(projection_mutex());
+            const TSDataOps *projection_ops = nullptr;
+            auto &cache = projection_ops_cache();
+            if (const auto it = cache.find(key); it != cache.end())
+                projection_ops = it->second.get();
+            if (projection_ops == nullptr)
+            {
+                auto owned_ops = copy_projection_ops(source_ops);
+                projection_ops = owned_ops.get();
+                cache.emplace(key, std::move(owned_ops));
+            }
+            return TSStorageTypeRef{intern_ts_type(
+                *schema, role, element_type.checked_plan(), *projection_ops, label)};
+        }
+
+        [[nodiscard]] std::string_view keyed_root_label(TSTypeKind kind, TypeRole role,
+                                                        bool embedded, bool composite = false)
+        {
+            if (composite && kind == TSTypeKind::TSD && role == TypeRole::Input)
+                return "ts.tsd.input.composite";
+            if (embedded)
+            {
+                if (kind == TSTypeKind::TSS)
+                    return role == TypeRole::Data ? "ts.tss.data.embedded"
+                         : role == TypeRole::Input ? "ts.tss.input.embedded"
+                                                   : "ts.tss.output.embedded";
+                return role == TypeRole::Data ? "ts.tsd.data.embedded"
+                     : role == TypeRole::Input ? "ts.tsd.input.embedded"
+                                               : "ts.tsd.output.embedded";
+            }
+            if (kind == TSTypeKind::TSS)
+                return role == TypeRole::Data ? "ts.tss.data.root"
+                     : role == TypeRole::Input ? "ts.tss.input.owned"
+                                               : "ts.tss.output.root";
+            return role == TypeRole::Data ? "ts.tsd.data.root"
+                 : role == TypeRole::Input ? "ts.tsd.input.owned"
+                                           : "ts.tsd.output.root";
+        }
+
         struct SlotContextBase
         {
             const TSValueTypeMetaData      *schema{nullptr};
@@ -704,10 +832,11 @@ namespace hgraph::ts_data_plan_factory_detail
             SetValueOps                     removed_set_ops{};
             ValueTypeRef added_set_binding{nullptr};
             ValueTypeRef removed_set_binding{nullptr};
+            TSStorageTypeRef root_type{};
 
             virtual ~SlotContextBase() = default;
             virtual const TSDataOps &ops_ref() const noexcept = 0;
-            virtual const TSDataBinding *key_set_binding() const noexcept { return nullptr; }
+            virtual TSStorageTypeRef key_set_type() const noexcept { return {}; }
         };
 
         template <typename Storage>
@@ -951,6 +1080,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 plan.copy_assign(dst, bundle.view().data());
             }
 
+          public:
             [[nodiscard]] static const TSDataLayout *tss_layout(const void *context) noexcept
             {
                 return &ctx(context)->set_layout;
@@ -1208,18 +1338,46 @@ namespace hgraph::ts_data_plan_factory_detail
                 return storage<Storage>(memory).find_slot(key);
             }
 
-            [[nodiscard]] static SlotTSDataMutationResult tss_insert_key(const void *, void *memory,
+            [[nodiscard]] static SlotTSDataMutationResult tss_insert_key(const void *context, void *memory,
                                                                          const ValueView &key,
                                                                          DateTime modified_time)
             {
-                return storage<Storage>(memory).insert_key(key, modified_time);
+                auto &store = storage<Storage>(memory);
+                if constexpr (std::is_same_v<Storage, TSDSlotStorage>)
+                {
+                    const bool existing = store.keys().find_stored_slot(key.data()) != KeySlotStore::npos;
+                    const auto result = store.insert_key(key, modified_time);
+                    if (result.changed && !existing)
+                    {
+                        const auto *state = ctx(context);
+                        TSDataView child{store.element_type(), store.child_memory_for_write(result.slot)};
+                        detail::attach_owned_ts_data_parent(
+                            child.borrowed_ref(), TSDataView{state->root_type, memory}, result.slot);
+                    }
+                    return result;
+                }
+                return store.insert_key(key, modified_time);
             }
 
-            [[nodiscard]] static SlotTSDataMutationResult tss_insert_key_move(const void *, void *memory,
+            [[nodiscard]] static SlotTSDataMutationResult tss_insert_key_move(const void *context, void *memory,
                                                                               const ValueView &key,
                                                                               DateTime modified_time)
             {
-                return storage<Storage>(memory).insert_key_move(key, modified_time);
+                auto &store = storage<Storage>(memory);
+                if constexpr (std::is_same_v<Storage, TSDSlotStorage>)
+                {
+                    const bool existing = store.keys().find_stored_slot(key.data()) != KeySlotStore::npos;
+                    const auto result = store.insert_key_move(key, modified_time);
+                    if (result.changed && !existing)
+                    {
+                        const auto *state = ctx(context);
+                        TSDataView child{store.element_type(), store.child_memory_for_write(result.slot)};
+                        detail::attach_owned_ts_data_parent(
+                            child.borrowed_ref(), TSDataView{state->root_type, memory}, result.slot);
+                    }
+                    return result;
+                }
+                return store.insert_key_move(key, modified_time);
             }
 
             [[nodiscard]] static SlotTSDataMutationResult tss_remove_key(const void *, void *memory,
@@ -1511,15 +1669,20 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             TSSContext(const TSValueTypeMetaData &schema,
                        const MemoryUtils::StoragePlan &plan,
-                       const ValueTypeRef &key_binding)
+                       const ValueTypeRef &key_binding,
+                       TypeRole role,
+                       bool embedded)
             {
                 initialise_tss_common(schema, plan, key_binding, true);
+                root_type = TSStorageTypeRef{intern_ts_type(
+                    schema, role, plan, set_ops, keyed_root_label(schema.kind, role, embedded))};
             }
         };
 
         struct TSDContext final : TSSContextBase<TSDSlotStorage>
         {
             const TSValueTypeMetaData *dict_schema{nullptr};
+            TypeRole                  role{TypeRole::Invalid};
             TSDDataOps              dict_ops{};
             TSSDataOps              key_set_ts_ops{};
             TSDDataLayout           dict_layout{};
@@ -1529,33 +1692,40 @@ namespace hgraph::ts_data_plan_factory_detail
             IndexedValueOps          dict_delta_bundle_ops{};
             ValueTypeRef modified_map_binding{nullptr};
             ValueTypeRef key_set_value_binding{nullptr};
-            const TSDataBinding    *key_set_ts_binding{nullptr};
+            TSStorageTypeRef          key_set_ts_type{};
 
             TSDContext(const TSValueTypeMetaData &schema,
                        const MemoryUtils::StoragePlan &plan,
                        const ValueTypeRef &key_binding,
-                       const TSDataBinding &element_binding)
+                       TSStorageTypeRef element_type,
+                       TypeRole role_,
+                       bool embedded,
+                       bool composite)
             {
                 dict_schema = &schema;
+                role = role_;
+                element_type = intern_tsd_value_projection_type(element_type, role);
                 const auto *key_set_schema = TypeRegistry::instance().tss(schema.key_type());
                 if (key_set_schema == nullptr)
                 {
                     throw std::logic_error("TSD key-set schema is not resolved");
                 }
                 initialise_tss_common(*key_set_schema, plan, key_binding, false);
-                initialise_tsd(schema, plan, key_binding, element_binding);
+                initialise_tsd(schema, plan, key_binding, element_type);
+                root_type = TSStorageTypeRef{intern_ts_type(
+                    schema, role, plan, dict_ops, keyed_root_label(schema.kind, role, embedded, composite))};
             }
 
             const TSDataOps &ops_ref() const noexcept override { return dict_ops; }
-            const TSDataBinding *key_set_binding() const noexcept override { return key_set_ts_binding; }
+            TSStorageTypeRef key_set_type() const noexcept override { return key_set_ts_type; }
 
           private:
             void initialise_tsd(const TSValueTypeMetaData &schema_,
                                 const MemoryUtils::StoragePlan &plan_,
                                 const ValueTypeRef &key_binding,
-                                const TSDataBinding &element_binding)
+                                TSStorageTypeRef element_type)
             {
-                const auto &element_ops = element_binding.ops_ref();
+                const auto &element_ops = element_type.ops_ref();
                 const auto *element_layout = element_ops.layout_impl(element_ops.context);
                 if (element_layout == nullptr)
                 {
@@ -1563,7 +1733,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
 
                 dict_layout.key_binding           = key_binding;
-                dict_layout.element_binding       = &element_binding;
+                dict_layout.element_type          = element_type;
                 dict_layout.element_layout        = element_layout;
                 dict_layout.element_value_binding = element_layout->value_binding;
                 dict_layout.element_delta_binding = element_layout->delta_binding;
@@ -1748,9 +1918,15 @@ namespace hgraph::ts_data_plan_factory_detail
                     key_set_ts_ops.remove_slot_impl = read_only_set.remove_slot_impl;
                     key_set_ts_ops.touch_impl      = read_only_set.touch_impl;
                 }
-                key_set_ts_binding = &TSDataBinding::intern(*TypeRegistry::instance().tss(schema_.key_type()),
-                                                            plan_, key_set_ts_ops);
-                dict_layout.key_set_binding = key_set_ts_binding;
+                const auto *key_set_schema = TypeRegistry::instance().tss(schema_.key_type());
+                const auto role_label = role == TypeRole::Data
+                                            ? std::string_view{"ts.tsd.key-set.data"}
+                                            : role == TypeRole::Input
+                                                  ? std::string_view{"ts.tsd.key-set.input"}
+                                                  : std::string_view{"ts.tsd.key-set.output"};
+                key_set_ts_type = TSStorageTypeRef{intern_ts_type(
+                    *key_set_schema, role, plan_, key_set_ts_ops, role_label)};
+                dict_layout.key_set_type = key_set_ts_type;
             }
 
             template <SlotMapSurface Surface>
@@ -1882,6 +2058,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 plan.copy_assign(dst, bundle.view().data());
             }
 
+          public:
             [[nodiscard]] static const TSDataLayout *tsd_layout(const void *context) noexcept
             {
                 return &ctxd(context)->dict_layout;
@@ -1908,7 +2085,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 const auto *state = ctxd(context);
                 const auto &store = storage<TSDSlotStorage>(memory);
-                const auto &child_ops = state->dict_layout.element_binding->ops_ref();
+                const auto &child_ops = state->dict_layout.element_type.ops_ref();
                 for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
                 {
                     if (!store.slot_live(slot)) { continue; }
@@ -2027,7 +2204,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                 if (result.changed) { static_cast<void>(target.remove_key(key.view(), modified_time)); }
                             });
 
-                            const auto &child_ops    = state->dict_layout.element_binding->ops_ref();
+                            const auto &child_ops    = state->dict_layout.element_type.ops_ref();
                             void       *child_memory = target.child_memory_for_write(result.slot);
                             if (!child_ops.from_python_impl(child_ops.context, child_memory, value_source,
                                                             modified_time))
@@ -2066,7 +2243,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 for (const auto &[key, value_source] : entries)
                 {
                     const auto result = target.insert_key(key.view(), modified_time);
-                    const auto &child_ops = state->dict_layout.element_binding->ops_ref();
+                    const auto &child_ops = state->dict_layout.element_type.ops_ref();
                     void       *child_memory = target.child_memory_for_write(result.slot);
                     if (child_ops.from_python_impl(child_ops.context, child_memory, value_source, modified_time))
                     {
@@ -2120,7 +2297,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 const auto *state = ctxd(context);
                 const auto &store = storage<TSDSlotStorage>(memory);
                 if (!store.slot_live(slot)) { return false; }
-                const auto &child_ops = state->dict_layout.element_binding->ops_ref();
+                const auto &child_ops = state->dict_layout.element_type.ops_ref();
                 const auto *child_memory = store.child_at_slot(slot);
                 return child_ops.tracking_impl(child_ops.context, child_memory)->last_modified_time != MIN_DT;
             }
@@ -2154,7 +2331,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                std::size_t slot)
             {
                 const auto *state = ctxd(context);
-                return TSDataView{state->dict_layout.element_binding,
+                return TSDataView{state->dict_layout.element_type,
                                   storage<TSDSlotStorage>(memory).child_at_slot(slot)};
             }
 
@@ -2165,7 +2342,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 const auto *state = ctxd(context);
                 const auto &store = storage<TSDSlotStorage>(memory);
                 return {ValueView{state->dict_layout.key_binding, store.key_at_slot(slot)},
-                        TSDataView{state->dict_layout.element_binding, store.child_at_slot(slot)}};
+                        TSDataView{state->dict_layout.element_type, store.child_at_slot(slot)}};
             }
 
             [[nodiscard]] static Range<TSDataView> tsd_ts_values_range(const void *context, const void *memory)
@@ -2377,7 +2554,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctxd(context);
                 const auto &store = storage<TSDSlotStorage>(memory);
-                const auto &child_ops = state->dict_layout.element_binding->ops_ref();
+                const auto &child_ops = state->dict_layout.element_type.ops_ref();
                 const auto *child_memory = store.child_at_slot(slot);
                 if constexpr (Surface == SlotMapSurface::Live)
                 {
@@ -2696,6 +2873,10 @@ namespace hgraph::ts_data_plan_factory_detail
             const TSValueTypeMetaData      *schema{nullptr};
             const MemoryUtils::StoragePlan *plan{nullptr};
             std::size_t                     storage_offset{0};
+            TSStorageTypeRef                element_type{};
+            TypeRole                        role{TypeRole::Invalid};
+            bool                            embedded{false};
+            bool                            composite{false};
 
             [[nodiscard]] bool operator==(const SlotContextKey &) const noexcept = default;
         };
@@ -2706,7 +2887,11 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 auto seed = combine_hash(std::hash<const TSValueTypeMetaData *>{}(key.schema),
                                          std::hash<const MemoryUtils::StoragePlan *>{}(key.plan));
-                return combine_hash(seed, key.storage_offset);
+                seed = combine_hash(seed, key.storage_offset);
+                seed = combine_hash(seed, std::hash<std::uintptr_t>{}(key.element_type.raw_bits()));
+                seed = combine_hash(seed, static_cast<std::size_t>(key.role));
+                seed = combine_hash(seed, key.embedded ? 1U : 0U);
+                return combine_hash(seed, key.composite ? 1U : 0U);
             }
         };
 
@@ -2742,22 +2927,30 @@ namespace hgraph::ts_data_plan_factory_detail
             return binding;
         }
 
-        [[nodiscard]] const TSDataBinding &element_binding_for(const TSValueTypeMetaData &schema)
+        [[nodiscard]] TSStorageTypeRef element_type_for(const TSValueTypeMetaData &schema, TypeRole role)
         {
             const auto *element_schema = schema.element_ts();
             if (element_schema == nullptr) { throw std::logic_error("TSD element TS schema is not resolved"); }
-            const auto *binding = TSDataPlanFactory::instance().legacy_binding_for(element_schema);
-            if (binding == nullptr) { throw std::logic_error("TSD element TSData binding is not resolved"); }
-            return *binding;
+            auto &factory = TSDataPlanFactory::instance();
+            if (is_migrated_ts_root_schema(element_schema))
+            {
+                if (role == TypeRole::Output)
+                    return TSStorageTypeRef{factory.output_type_for(element_schema).as_role()};
+                const auto data = factory.data_type_for(element_schema);
+                return TSStorageTypeRef{data.as_role()};
+            }
+            const auto *binding = factory.legacy_binding_for(element_schema);
+            if (binding == nullptr) { throw std::logic_error("TSD element TSData type is not resolved"); }
+            return TSStorageTypeRef{binding};
         }
 
         [[nodiscard]] std::unique_ptr<SlotPlanEntry> make_tsd_slot_plan_entry(
             const ValueTypeRef &key_binding,
-            const TSDataBinding    &element_binding)
+            TSStorageTypeRef element_type)
         {
             auto entry = std::make_unique<SlotPlanEntry>();
             entry->tsd_context = TSDStoragePlanContext{.key_binding = key_binding,
-                                                       .element_binding = &element_binding};
+                                                       .element_type = element_type};
             // Deliberately no copy/move lifecycle hooks: TSD values expose
             // stable child TSData addresses, so assignment is expressed as
             // in-place key/child mutation through TSDDataMutationView.
@@ -2779,6 +2972,57 @@ namespace hgraph::ts_data_plan_factory_detail
             return entry;
         }
     } // namespace
+
+    [[nodiscard]] const detail::TSDataOwnershipOps *slot_ownership_ops_for(const TSDataOps *candidate) noexcept
+    {
+        if (candidate == nullptr) { return nullptr; }
+        if (candidate->layout_impl == &TSSContextBase<TSSSlotStorage>::tss_layout)
+        {
+            static const detail::TSDataOwnershipOps tss_ops{
+                .child_count = [](const void *, const void *) noexcept { return std::size_t{0}; },
+                .child_at = [](const void *, void *, std::size_t) noexcept {
+                    return detail::TSDataOwnedChild{};
+                },
+            };
+            return &tss_ops;
+        }
+        if (candidate->layout_impl != &TSDContext::tsd_layout) { return nullptr; }
+
+        static const detail::TSDataOwnershipOps tsd_ops{
+            .child_count = [](const void *, const void *memory) noexcept {
+                if (memory == nullptr) { return std::size_t{0}; }
+                const auto &store = storage<TSDSlotStorage>(memory);
+                std::size_t count = 1;
+                for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
+                    count += store.slot_occupied(slot) ? 1U : 0U;
+                return count;
+            },
+            .child_at = [](const void *context, void *memory, std::size_t index) noexcept {
+                if (context == nullptr || memory == nullptr) return detail::TSDataOwnedChild{};
+                const auto *state = static_cast<const TSDContext *>(context);
+                if (index == 0)
+                    return detail::TSDataOwnedChild{
+                        .type = state->key_set_ts_type,
+                        .data = memory,
+                        .attach_parent = false,
+                    };
+                auto &store = storage<TSDSlotStorage>(memory);
+                std::size_t seen = 1;
+                for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
+                {
+                    if (!store.slot_occupied(slot)) { continue; }
+                    if (seen++ == index)
+                        return detail::TSDataOwnedChild{
+                            .type = state->dict_layout.element_type,
+                            .data = store.child_memory_for_write(slot),
+                            .parent_child_id = slot,
+                        };
+                }
+                return detail::TSDataOwnedChild{};
+            },
+        };
+        return &tsd_ops;
+    }
 
     [[nodiscard]] bool is_slot_ts_data(const TSValueTypeMetaData &schema) noexcept
     {
@@ -2831,8 +3075,7 @@ namespace hgraph::ts_data_plan_factory_detail
         }
         else
         {
-            const auto &element_binding = element_binding_for(schema);
-            entry = make_tsd_slot_plan_entry(key_binding, element_binding);
+            entry = make_tsd_slot_plan_entry(key_binding, element_type_for(schema, TypeRole::Data));
         }
 
         entry->root_plan = entry->storage_plan.get();
@@ -2843,28 +3086,28 @@ namespace hgraph::ts_data_plan_factory_detail
 
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_tsd_plan(
         const TSValueTypeMetaData &schema,
-        const TSDataBinding       &element_binding)
+        TSStorageTypeRef           element_type)
     {
         if (!is_slot_ts_data(schema) || schema.kind != TSTypeKind::TSD)
         {
             throw std::logic_error("TSDataPlanFactory: custom slot TSD storage requires a TSD schema");
         }
-        if (!time_series_schema_equivalent(schema.element_ts(), element_binding.type_meta))
+        if (!time_series_schema_equivalent(schema.element_ts(), element_type.schema()))
         {
             throw std::logic_error("TSDataPlanFactory: custom slot TSD element binding has the wrong schema");
         }
 
-        const auto &canonical_element = element_binding_for(schema);
-        if (&element_binding == &canonical_element) { return synthesise_slot_plan(schema); }
+        const auto canonical_element = element_type_for(schema, TypeRole::Data);
+        if (element_type == canonical_element) { return synthesise_slot_plan(schema); }
 
         const auto &key_binding = key_binding_for(schema);
-        const TSDSlotPlanKey key{&schema, &element_binding};
+        const TSDSlotPlanKey key{&schema, element_type};
 
         std::lock_guard<std::recursive_mutex> lock(slot_plan_mutex());
         auto &entries = custom_tsd_slot_plan_entries();
         if (const auto it = entries.find(key); it != entries.end()) { return it->second->root_plan; }
 
-        auto entry = make_tsd_slot_plan_entry(key_binding, element_binding);
+        auto entry = make_tsd_slot_plan_entry(key_binding, element_type);
         const auto *result = entry->root_plan;
         entries.emplace(key, std::move(entry));
         return result;
@@ -2872,7 +3115,9 @@ namespace hgraph::ts_data_plan_factory_detail
 
     [[nodiscard]] const TSDataOps &slot_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                     const MemoryUtils::StoragePlan &plan,
-                                                    std::size_t storage_offset)
+                                                    std::size_t storage_offset,
+                                                    TypeRole role,
+                                                    bool embedded)
     {
         if (storage_offset != 0)
         {
@@ -2881,18 +3126,20 @@ namespace hgraph::ts_data_plan_factory_detail
 
         std::lock_guard<std::recursive_mutex> lock(slot_context_mutex());
         auto                       &contexts = slot_contexts();
-        const SlotContextKey        key{&schema, &plan, storage_offset};
+        const auto element_type = schema.kind == TSTypeKind::TSD ? element_type_for(schema, role)
+                                                                 : TSStorageTypeRef{};
+        const SlotContextKey key{&schema, &plan, storage_offset, element_type, role, embedded, false};
         if (const auto it = contexts.find(key); it != contexts.end()) { return it->second->ops_ref(); }
 
         const auto &key_binding = key_binding_for(schema);
         std::unique_ptr<SlotContextBase> context;
         if (schema.kind == TSTypeKind::TSS)
         {
-            context = std::make_unique<TSSContext>(schema, plan, key_binding);
+            context = std::make_unique<TSSContext>(schema, plan, key_binding, role, embedded);
         }
         else if (schema.kind == TSTypeKind::TSD)
         {
-            context = std::make_unique<TSDContext>(schema, plan, key_binding, element_binding_for(schema));
+            context = std::make_unique<TSDContext>(schema, plan, key_binding, element_type, role, embedded, false);
         }
         else
         {
@@ -2907,7 +3154,10 @@ namespace hgraph::ts_data_plan_factory_detail
     [[nodiscard]] const TSDataOps &slot_tsd_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                         const MemoryUtils::StoragePlan &plan,
                                                         std::size_t storage_offset,
-                                                        const TSDataBinding            &element_binding)
+                                                        TSStorageTypeRef                element_type,
+                                                        TypeRole storage_role,
+                                                        bool embedded,
+                                                        bool composite)
     {
         if (schema.kind != TSTypeKind::TSD)
         {
@@ -2917,20 +3167,27 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             throw std::logic_error("slot TSD currently expects the storage object at the root");
         }
-        if (!time_series_schema_equivalent(schema.element_ts(), element_binding.type_meta))
+        if (!time_series_schema_equivalent(schema.element_ts(), element_type.schema()))
         {
             throw std::logic_error("slot TSD element binding has the wrong schema");
         }
 
         std::lock_guard<std::recursive_mutex> lock(slot_context_mutex());
         auto                &contexts = slot_contexts();
-        const SlotContextKey key{&schema, &plan, storage_offset};
+        const SlotContextKey key{
+            &schema, &plan, storage_offset, element_type, storage_role, embedded, composite};
         if (const auto it = contexts.find(key); it != contexts.end()) { return it->second->ops_ref(); }
 
-        auto context = std::make_unique<TSDContext>(schema, plan, key_binding_for(schema), element_binding);
+        auto context = std::make_unique<TSDContext>(
+            schema, plan, key_binding_for(schema), element_type, storage_role, embedded, composite);
         auto *result = context.get();
         contexts.emplace(key, std::move(context));
         return result->ops_ref();
+    }
+
+    TSStorageTypeRef tsd_value_projection_type(TSStorageTypeRef element_type, TypeRole role)
+    {
+        return intern_tsd_value_projection_type(element_type, role);
     }
 
     void clear_slot_ts_data_contexts() noexcept
@@ -2944,5 +3201,17 @@ namespace hgraph::ts_data_plan_factory_detail
             slot_plan_entries().clear();
             custom_tsd_slot_plan_entries().clear();
         }
+        {
+            std::lock_guard<std::recursive_mutex> lock(projection_mutex());
+            projection_ops_cache().clear();
+        }
     }
 } // namespace hgraph::ts_data_plan_factory_detail
+
+namespace hgraph::detail
+{
+    const TSDataOwnershipOps *slot_ts_data_ownership_ops_for(const TSDataOps *ops) noexcept
+    {
+        return ts_data_plan_factory_detail::slot_ownership_ops_for(ops);
+    }
+}

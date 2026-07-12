@@ -12,7 +12,8 @@ namespace hgraph
         [[nodiscard]] bool migrated_kind(const TSValueTypeMetaData &schema) noexcept
         {
             return schema.kind == TSTypeKind::TS || schema.kind == TSTypeKind::SIGNAL ||
-                   schema.kind == TSTypeKind::TSB ||
+                   schema.kind == TSTypeKind::TSS || schema.kind == TSTypeKind::TSD ||
+                   schema.kind == TSTypeKind::REF || schema.kind == TSTypeKind::TSB ||
                    (schema.kind == TSTypeKind::TSL && schema.fixed_size() != 0);
         }
 
@@ -58,7 +59,7 @@ namespace hgraph
             throw std::invalid_argument("time-series type capabilities require Data, Input, or Output role");
         }
         TypeCapabilities result = TypeCapabilities::Viewable;
-        if (ops.kind == TSTypeKind::TSB || ops.kind == TSTypeKind::TSL)
+        if (ops.kind == TSTypeKind::TSB || ops.kind == TSTypeKind::TSL || ops.kind == TSTypeKind::TSD)
             result |= TypeCapabilities::HasChildren;
         if (plan.can_default_construct()) result |= TypeCapabilities::Constructible;
         if (plan.trivially_destructible || plan.lifecycle.can_destroy()) result |= TypeCapabilities::Destructible;

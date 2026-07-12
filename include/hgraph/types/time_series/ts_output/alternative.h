@@ -95,6 +95,8 @@ namespace hgraph::detail
         std::unordered_map<AlternativeKey, std::unique_ptr<InteriorFromRefAlternativeState>, AlternativeKeyHash>
             interior_from_ref_alternatives_{};
     };
+
+    void clear_ts_output_alternative_type_cache() noexcept;
 }  // namespace hgraph::detail
 
 namespace std

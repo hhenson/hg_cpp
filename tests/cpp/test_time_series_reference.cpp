@@ -9,12 +9,14 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/registry_reset.h>
 #include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/time_series_reference.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value.h>
 
+#include <algorithm>
 #include <array>
 #include <initializer_list>
 #include <string>
@@ -100,6 +102,82 @@ namespace
         auto          child = mutation.at(key_value.view());
         REQUIRE(child.begin_mutation(time).copy_value_from(stored.view()));
     }
+
+    struct ReferenceSlotObserver final : hgraph::SlotObserver
+    {
+        std::vector<std::string> events;
+
+        void on_capacity(std::size_t, std::size_t) override {}
+        void on_insert(std::size_t slot) override { events.emplace_back("insert:" + std::to_string(slot)); }
+        void on_remove(std::size_t slot) override { events.emplace_back("remove:" + std::to_string(slot)); }
+        void on_erase(std::size_t slot) override { events.emplace_back("erase:" + std::to_string(slot)); }
+        void on_clear() override { events.emplace_back("clear"); }
+    };
+
+    struct ReferenceInvalidationObserver final : hgraph::Notifiable
+    {
+        std::size_t invalidations{0};
+        const hgraph::TSDataTracking *source{nullptr};
+
+        void notify(hgraph::DateTime) override {}
+        void source_invalidated(const hgraph::TSDataTracking *invalidated) noexcept override
+        {
+            ++invalidations;
+            source = invalidated;
+        }
+    };
+}
+
+TEST_CASE("TimeSeriesReference: alternative ops caches release and reseed all routes")
+{
+    using namespace hgraph;
+
+    const auto exercise_generation = [] {
+        auto &registry = TypeRegistry::instance();
+        const auto *integer = registry.register_scalar<std::int32_t>("int32");
+        const auto *ts = registry.ts(integer);
+        const auto *ref = registry.ref(ts);
+        const auto *dict = registry.tsd(integer, ts);
+        const auto *ref_dict = registry.ref(dict);
+        const auto *dict_of_ref = registry.tsd(integer, ref);
+        const auto *source_bundle = registry.tsb("AlternativeResetSource", {{"value", ts}});
+        const auto *requested_bundle = registry.tsb("AlternativeResetRequested", {{"value", ref}});
+
+        TSOutput scalar_source{ts};
+        TSOutput bundle_source{source_bundle};
+        TSOutput scalar_ref_source{ref};
+        TSOutput dict_ref_source{ref_dict};
+        TSOutput interior_source{dict_of_ref};
+
+        std::vector<std::string> labels;
+        std::unordered_set<const void *> ops;
+        const auto capture = [&](const TSOutputHandle &handle) {
+            const auto type = handle.type_ref();
+            REQUIRE(type.valid());
+            labels.emplace_back(type.record()->implementation_name());
+            ops.insert(type.record()->ops);
+        };
+
+        capture(scalar_source.view(MIN_ST).binding_for(*ref));
+        capture(bundle_source.view(MIN_ST).binding_for(*requested_bundle));
+        capture(scalar_ref_source.view(MIN_ST).binding_for(*ts));
+        capture(dict_ref_source.view(MIN_ST).binding_for(*dict));
+        capture(interior_source.view(MIN_ST).binding_for(*dict));
+        REQUIRE(ops.size() == labels.size());
+        return labels;
+    };
+
+    const auto first = exercise_generation();
+    REQUIRE(first == std::vector<std::string>{
+                         "ts.alternative.to-ref.output",
+                         "ts.alternative.to-ref.output",
+                         "ts.alternative.from-ref.output",
+                         "ts.alternative.from-ref.output",
+                         "ts.alternative.interior-ref.output"});
+
+    reset_all_registries();
+    const auto second = exercise_generation();
+    REQUIRE(second == first);
 }
 
 TEST_CASE("TimeSeriesReference: default-constructed is empty with no target schema")
@@ -519,7 +597,8 @@ TEST_CASE("TimeSeriesReference: fixed to-REF owns Data storage behind an Output 
     REQUIRE(handle.binding() == nullptr);
     REQUIRE(handle.type_ref().as_role().role() == TypeRole::Output);
     REQUIRE(handle.type_ref().plan() == data_type.plan());
-    REQUIRE(std::string{handle.type_ref().record()->implementation_name()} == "ts.fixed.output.root");
+    REQUIRE(std::string{handle.type_ref().record()->implementation_name()} ==
+            "ts.alternative.to-ref.output");
 
     auto projected = handle.view(MIN_ST);
     REQUIRE(projected.type_ref() == handle.type_ref());
@@ -921,6 +1000,8 @@ TEST_CASE("TimeSeriesReference: elementwise from-REF dict alternative follows pe
     }
 
     auto handle       = source.view(t2).binding_for(*requested_schema);
+    REQUIRE(std::string{handle.type_ref().record()->implementation_name()} ==
+            "ts.alternative.interior-ref.output");
     auto dereferenced = handle.view(t2);
     auto dict         = dereferenced.as_dict();
     REQUIRE(dereferenced.valid());
@@ -968,6 +1049,430 @@ TEST_CASE("TimeSeriesReference: elementwise from-REF dict alternative follows pe
     REQUIRE(grown_dict.at(key_two.view()).value().checked_as<std::int32_t>() == 12);
 }
 
+TEST_CASE("TimeSeriesReference: same-cycle interior-REF resurrection eagerly restores retained links")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts = registry.ts(integer);
+    const auto *ref = registry.ref(ts);
+    const auto *source_schema = registry.tsd(integer, ref);
+    const auto *requested_schema = registry.tsd(integer, ts);
+
+    TSOutput target_a{ts};
+    TSOutput target_b{ts};
+    TSOutput source{source_schema};
+    const auto [t1, t2, t3, t4, t5] = sequential_times<5>();
+    Value key{1};
+    set_output_value(target_a, 11, t1);
+    set_output_value(target_b, 21, t1);
+    {
+        auto source_data = source.data_view();
+        auto mutation = source_data.as_dict().begin_mutation(t1);
+        auto child = mutation.at(key.view());
+        Value reference{TimeSeriesReference{target_a.view(t1)}};
+        REQUIRE(child.begin_mutation(t1).copy_value_from(reference.view()));
+    }
+
+    auto handle = source.view(t1).binding_for(*requested_schema);
+    auto initial = handle.view(t1);
+    auto initial_dict = initial.as_dict();
+    const auto slot = initial_dict.find_slot(key.view());
+    const auto child_address = initial_dict.at_slot(slot).data_view().data();
+    const auto capacity = initial_dict.slot_capacity();
+    REQUIRE(initial_dict.at(key.view()).value().checked_as<std::int32_t>() == 11);
+
+    ReferenceSlotObserver observer;
+    initial_dict.key_set().data_view().as_set().subscribe_slot_observer(&observer);
+    {
+        auto source_data = source.data_view();
+        auto mutation = source_data.as_dict().begin_mutation(t2);
+        REQUIRE(mutation.erase(key.view()));
+        auto retained = mutation.at(key.view());
+        REQUIRE(retained.has_current_value());
+    }
+
+    auto resurrected_view = handle.view(t2);
+    auto resurrected = resurrected_view.as_dict();
+    REQUIRE(resurrected.contains(key.view()));
+    REQUIRE(resurrected.at_slot(slot).data_view().data() == child_address);
+    REQUIRE(resurrected.slot_capacity() == capacity);
+    REQUIRE_FALSE(resurrected.slot_added(slot));
+    REQUIRE_FALSE(resurrected.slot_removed(slot));
+    REQUIRE(resurrected.at(key.view()).value().checked_as<std::int32_t>() == 11);
+    REQUIRE(observer.events == std::vector<std::string>{
+                                   "remove:" + std::to_string(slot),
+                                   "insert:" + std::to_string(slot)});
+
+    set_output_value(target_a, 12, t3);
+    auto after_old_target_tick = handle.view(t3);
+    REQUIRE(after_old_target_tick.as_dict().at(key.view()).value().checked_as<std::int32_t>() == 12);
+
+    {
+        auto source_data = source.data_view();
+        auto child = source_data.as_dict().at(key.view());
+        Value reference{TimeSeriesReference{target_b.view(t4)}};
+        REQUIRE(child.begin_mutation(t4).copy_value_from(reference.view()));
+    }
+    auto after_retarget = handle.view(t4);
+    REQUIRE(after_retarget.as_dict().at(key.view()).value().checked_as<std::int32_t>() == 21);
+    set_output_value(target_b, 22, t5);
+    auto after_new_target_tick = handle.view(t5);
+    REQUIRE(after_new_target_tick.as_dict().at(key.view()).value().checked_as<std::int32_t>() == 22);
+    REQUIRE(std::ranges::count(observer.events, "insert:" + std::to_string(slot)) == 1);
+    after_new_target_tick.as_dict().key_set().data_view().as_set().unsubscribe_slot_observer(&observer);
+}
+
+TEST_CASE("TimeSeriesReference: same-time resurrected REF identity reconciles before target forwarding")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts = registry.ts(integer);
+    const auto *ref = registry.ref(ts);
+    const auto *source_schema = registry.tsd(integer, ref);
+    const auto *requested_schema = registry.tsd(integer, ts);
+    TSOutput target_a{ts};
+    TSOutput target_b{ts};
+    TSOutput source{source_schema};
+    const auto [t1, t2, t3, t4, t5, t6] = sequential_times<6>();
+    Value key{1};
+    Value rollover_key{2};
+    set_output_value(target_a, 11, t1);
+    set_output_value(target_b, 21, t1);
+    {
+        auto source_data = source.data_view();
+        auto mutation = source_data.as_dict().begin_mutation(t1);
+        auto child = mutation.at(key.view());
+        Value reference{TimeSeriesReference{target_a.view(t1)}};
+        REQUIRE(child.begin_mutation(t1).copy_value_from(reference.view()));
+    }
+
+    auto handle = source.view(t1).binding_for(*requested_schema);
+    REQUIRE(target_a.data_view().observer_count() == 1);
+    REQUIRE(target_b.data_view().observer_count() == 0);
+    {
+        auto source_data = source.data_view();
+        auto mutation = source_data.as_dict().begin_mutation(t2);
+        REQUIRE(mutation.erase(key.view()));
+        auto child = mutation.at(key.view());
+        Value reference{TimeSeriesReference{target_b.view(t2)}};
+        REQUIRE(child.begin_mutation(t2).copy_value_from(reference.view()));
+    }
+
+    auto reconciled_view = handle.view(t2);
+    auto reconciled = reconciled_view.as_dict();
+    REQUIRE(reconciled.at(key.view()).value().checked_as<std::int32_t>() == 21);
+    REQUIRE(target_a.data_view().observer_count() == 0);
+    REQUIRE(target_b.data_view().observer_count() == 1);
+    const auto reconciled_time = reconciled.at(key.view()).last_modified_time();
+    REQUIRE(reconciled.at(key.view()).value().checked_as<std::int32_t>() == 21);
+    REQUIRE(reconciled.at(key.view()).last_modified_time() == reconciled_time);
+
+    set_output_value(target_a, 12, t3);
+    auto after_old_tick_view = handle.view(t3);
+    REQUIRE(after_old_tick_view.as_dict().at(key.view()).value().checked_as<std::int32_t>() == 21);
+    set_output_value(target_b, 22, t4);
+    auto after_new_tick_view = handle.view(t4);
+    REQUIRE(after_new_tick_view.as_dict().at(key.view()).value().checked_as<std::int32_t>() == 22);
+
+    // Repeat the same-time retarget, but advance the source delta before the
+    // first projected read. Reconciliation must not depend on slot_modified.
+    {
+        auto source_data = source.data_view();
+        auto mutation = source_data.as_dict().begin_mutation(t5);
+        REQUIRE(mutation.erase(key.view()));
+        auto child = mutation.at(key.view());
+        Value reference{TimeSeriesReference{target_a.view(t5)}};
+        REQUIRE(child.begin_mutation(t5).copy_value_from(reference.view()));
+    }
+    {
+        auto source_data = source.data_view();
+        auto mutation = source_data.as_dict().begin_mutation(t6);
+        auto child = mutation.at(rollover_key.view());
+        Value reference{TimeSeriesReference{target_a.view(t6)}};
+        REQUIRE(child.begin_mutation(t6).copy_value_from(reference.view()));
+    }
+    REQUIRE(target_a.data_view().observer_count() == 1);
+    REQUIRE(target_b.data_view().observer_count() == 0);
+    auto after_rollover_view = handle.view(t6);
+    REQUIRE(after_rollover_view.as_dict().at(key.view()).value().checked_as<std::int32_t>() == 12);
+}
+
+TEST_CASE("TimeSeriesReference: cached to-REF sync does not repeat inserts for same-time new keys")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts = registry.ts(integer);
+    const auto *ref = registry.ref(ts);
+    const auto *source_schema = registry.tsd(integer, ts);
+    const auto *requested_schema = registry.tsd(integer, ref);
+
+    TSOutput source{source_schema};
+    const auto [t1, t2, t3] = sequential_times<3>();
+    Value key_one{1};
+    Value key_two{2};
+    auto handle = source.view(t1).binding_for(*requested_schema);
+    auto empty_view = handle.view(t1);
+    auto empty = empty_view.as_dict();
+    ReferenceSlotObserver lifecycle;
+    empty.key_set().data_view().as_set().subscribe_slot_observer(&lifecycle);
+
+    {
+        auto source_data = source.data_view();
+        auto mutation = source_data.as_dict().begin_mutation(t2);
+        auto one = mutation.at(key_one.view());
+        Value first{11};
+        REQUIRE(one.begin_mutation(t2).copy_value_from(first.view()));
+        auto two = mutation.at(key_two.view());
+        Value second{21};
+        REQUIRE(two.begin_mutation(t2).copy_value_from(second.view()));
+    }
+
+    auto source_after_insert = source.view(t2);
+    auto source_dict = source_after_insert.as_dict();
+    const auto slot_one = source_dict.find_slot(key_one.view());
+    const auto slot_two = source_dict.find_slot(key_two.view());
+    REQUIRE(lifecycle.events == std::vector<std::string>{
+                                    "insert:" + std::to_string(slot_one),
+                                    "insert:" + std::to_string(slot_two)});
+
+    // The second child write shared the root's evaluation time, so its root
+    // notification was coalesced. The cache hit completes any deferred build
+    // but both structural inserts have already been announced.
+    auto cache_hit = source.view(t2).binding_for(*requested_schema);
+    REQUIRE(cache_hit.data_view().data() == handle.data_view().data());
+    auto cached_view = cache_hit.view(t2);
+    auto cached = cached_view.as_dict();
+    REQUIRE(lifecycle.events.size() == 2);
+    REQUIRE(cached.at(key_one.view()).value().checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_dict.at(key_one.view())});
+    REQUIRE(cached.at(key_two.view()).value().checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_dict.at(key_two.view())});
+    auto reference = cached.at(key_two.view()).value().checked_as<TimeSeriesReference>();
+    const auto second_built_time = cached.at(key_two.view()).last_modified_time();
+
+    auto repeat_hit = source.view(t2).binding_for(*requested_schema);
+    REQUIRE(repeat_hit.data_view().data() == handle.data_view().data());
+    auto repeated_view = repeat_hit.view(t2);
+    auto repeated = repeated_view.as_dict();
+    REQUIRE(lifecycle.events.size() == 2);
+    REQUIRE(repeated.at(key_two.view()).last_modified_time() == second_built_time);
+
+    {
+        auto source_data = source.data_view();
+        auto child = source_data.as_dict().at(key_two.view());
+        Value next{22};
+        REQUIRE(child.begin_mutation(t3).copy_value_from(next.view()));
+    }
+    REQUIRE(reference.target_output().view(t3).value().checked_as<std::int32_t>() == 22);
+    REQUIRE(lifecycle.events.size() == 2);
+    repeated.key_set().data_view().as_set().unsubscribe_slot_observer(&lifecycle);
+}
+
+TEST_CASE("TimeSeriesReference: cached nested to-REF bind retains pending children until resurrection or erase")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts = registry.ts(integer);
+    const auto *ref = registry.ref(ts);
+    const auto *source_inner = registry.tsd(integer, ts);
+    const auto *requested_inner = registry.tsd(integer, ref);
+    const auto *source_schema = registry.tsd(integer, source_inner);
+    const auto *requested_schema = registry.tsd(integer, requested_inner);
+
+    TSOutput source{source_schema};
+    const auto [t1, t2, t3] = sequential_times<3>();
+    Value erased_key{1};
+    Value resurrected_key{2};
+    Value inner_key{10};
+    {
+        auto source_data = source.data_view();
+        auto outer = source_data.as_dict().begin_mutation(t1);
+        const auto add_outer_child = [&](const Value &key) {
+            auto inner = outer.at(key.view());
+            auto inner_mutation = inner.as_dict().begin_mutation(t1);
+            auto leaf = inner_mutation.at(inner_key.view());
+            Value value{11};
+            REQUIRE(leaf.begin_mutation(t1).copy_value_from(value.view()));
+        };
+        add_outer_child(erased_key);
+        add_outer_child(resurrected_key);
+    }
+
+    auto handle = source.view(t1).binding_for(*requested_schema);
+    auto initial_view = handle.view(t1);
+    auto initial = initial_view.as_dict();
+    const auto erased_slot = initial.find_slot(erased_key.view());
+    const auto resurrected_slot = initial.find_slot(resurrected_key.view());
+    const auto capacity = initial.slot_capacity();
+    auto erased_child = initial.at_slot(erased_slot);
+    auto resurrected_child = initial.at_slot(resurrected_slot);
+    const auto erased_address = erased_child.data_view().data();
+    const auto resurrected_address = resurrected_child.data_view().data();
+
+    ReferenceSlotObserver outer_lifecycle;
+    ReferenceInvalidationObserver erased_invalidation;
+    initial.key_set().data_view().as_set().subscribe_slot_observer(&outer_lifecycle);
+    erased_child.data_view().subscribe(&erased_invalidation);
+    const auto *erased_tracking = &erased_child.data_view().tracking();
+
+    {
+        auto source_data = source.data_view();
+        auto mutation = source_data.as_dict().begin_mutation(t2);
+        REQUIRE(mutation.erase(erased_key.view()));
+        REQUIRE(mutation.erase(resurrected_key.view()));
+    }
+
+    auto pending_view = handle.view(t2);
+    auto pending = pending_view.as_dict();
+    REQUIRE_FALSE(pending.slot_live(erased_slot));
+    REQUIRE(pending.slot_removed(erased_slot));
+    REQUIRE(pending.slot_occupied(erased_slot));
+    REQUIRE_FALSE(pending.slot_live(resurrected_slot));
+    REQUIRE(pending.slot_removed(resurrected_slot));
+    REQUIRE(pending.slot_occupied(resurrected_slot));
+    auto pending_erased_child = pending.at_slot(erased_slot);
+    auto pending_resurrected_child = pending.at_slot(resurrected_slot);
+    REQUIRE(pending_erased_child.data_view().data() == erased_address);
+    REQUIRE(pending_resurrected_child.data_view().data() == resurrected_address);
+    REQUIRE(pending.slot_capacity() == capacity);
+    REQUIRE(outer_lifecycle.events == std::vector<std::string>{
+                                          "remove:" + std::to_string(erased_slot),
+                                          "remove:" + std::to_string(resurrected_slot)});
+    REQUIRE(erased_invalidation.invalidations == 0);
+
+    // This is a cache hit and re-enters populate_to_ref_dict/bind_tsd_proxy.
+    // Pending slots must remain stopped and must not emit insert.
+    auto cache_hit = source.view(t2).binding_for(*requested_schema);
+    REQUIRE(cache_hit.data_view().data() == handle.data_view().data());
+    auto after_cache_hit_view = cache_hit.view(t2);
+    auto after_cache_hit = after_cache_hit_view.as_dict();
+    auto cached_erased_child = after_cache_hit.at_slot(erased_slot);
+    auto cached_resurrected_child = after_cache_hit.at_slot(resurrected_slot);
+    REQUIRE(cached_erased_child.data_view().data() == erased_address);
+    REQUIRE(cached_resurrected_child.data_view().data() == resurrected_address);
+    REQUIRE(after_cache_hit.slot_capacity() == capacity);
+    REQUIRE_FALSE(after_cache_hit.slot_live(erased_slot));
+    REQUIRE(after_cache_hit.slot_removed(erased_slot));
+    REQUIRE(after_cache_hit.slot_occupied(erased_slot));
+    REQUIRE(outer_lifecycle.events.size() == 2);
+    REQUIRE(erased_invalidation.invalidations == 0);
+
+    {
+        auto source_data = source.data_view();
+        auto mutation = source_data.as_dict().begin_mutation(t2);
+        auto retained = mutation.at(resurrected_key.view());
+        REQUIRE(retained.has_current_value());
+    }
+
+    auto resurrected_view = cache_hit.view(t2);
+    auto resurrected = resurrected_view.as_dict();
+    REQUIRE(resurrected.slot_live(resurrected_slot));
+    REQUIRE_FALSE(resurrected.slot_removed(resurrected_slot));
+    REQUIRE(resurrected.at_slot(resurrected_slot).data_view().data() == resurrected_address);
+    REQUIRE(resurrected.slot_capacity() == capacity);
+    REQUIRE(std::ranges::count(outer_lifecycle.events,
+                               "insert:" + std::to_string(resurrected_slot)) == 1);
+    auto resurrected_child_view = resurrected.at_slot(resurrected_slot);
+    auto resurrected_inner = resurrected_child_view.as_dict();
+    auto reference = resurrected_inner.at(inner_key.view()).value().checked_as<TimeSeriesReference>();
+
+    {
+        auto source_data = source.data_view();
+        auto outer = source_data.as_dict().begin_mutation(t3);
+        auto inner = outer.at(resurrected_key.view());
+        auto inner_mutation = inner.as_dict().begin_mutation(t3);
+        auto leaf = inner_mutation.at(inner_key.view());
+        Value value{12};
+        REQUIRE(leaf.begin_mutation(t3).copy_value_from(value.view()));
+    }
+
+    auto after_erase_view = cache_hit.view(t3);
+    auto after_erase = after_erase_view.as_dict();
+    REQUIRE_FALSE(after_erase.slot_occupied(erased_slot));
+    REQUIRE(std::ranges::count(outer_lifecycle.events,
+                               "erase:" + std::to_string(erased_slot)) == 1);
+    REQUIRE(erased_invalidation.invalidations == 1);
+    REQUIRE(erased_invalidation.source == erased_tracking);
+    REQUIRE(reference.target_output().view(t3).value().checked_as<std::int32_t>() == 12);
+
+    after_erase.key_set().data_view().as_set().unsubscribe_slot_observer(&outer_lifecycle);
+}
+
+TEST_CASE("TimeSeriesReference: nested interior-REF resurrection rebinds retained proxy storage")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts = registry.ts(integer);
+    const auto *ref = registry.ref(ts);
+    const auto *source_inner = registry.tsd(integer, ref);
+    const auto *requested_inner = registry.tsd(integer, ts);
+    const auto *source_schema = registry.tsd(integer, source_inner);
+    const auto *requested_schema = registry.tsd(integer, requested_inner);
+
+    TSOutput target{ts};
+    TSOutput source{source_schema};
+    const auto [t1, t2, t3] = sequential_times<3>();
+    Value outer_key{1};
+    Value inner_key{2};
+    set_output_value(target, 11, t1);
+    {
+        auto source_data = source.data_view();
+        auto outer_mutation = source_data.as_dict().begin_mutation(t1);
+        auto inner = outer_mutation.at(outer_key.view());
+        auto inner_mutation = inner.as_dict().begin_mutation(t1);
+        auto leaf = inner_mutation.at(inner_key.view());
+        Value reference{TimeSeriesReference{target.view(t1)}};
+        REQUIRE(leaf.begin_mutation(t1).copy_value_from(reference.view()));
+    }
+
+    auto handle = source.view(t1).binding_for(*requested_schema);
+    auto initial = handle.view(t1);
+    auto outer = initial.as_dict();
+    const auto outer_slot = outer.find_slot(outer_key.view());
+    const auto outer_address = outer.at_slot(outer_slot).data_view().data();
+    const auto outer_capacity = outer.slot_capacity();
+    auto inner_output = outer.at(outer_key.view());
+    auto inner_dict = inner_output.as_dict();
+    const auto inner_slot = inner_dict.find_slot(inner_key.view());
+    const auto inner_address = inner_dict.at_slot(inner_slot).data_view().data();
+    const auto inner_capacity = inner_dict.slot_capacity();
+    REQUIRE(inner_dict.at(inner_key.view()).value().checked_as<std::int32_t>() == 11);
+
+    {
+        auto source_data = source.data_view();
+        auto mutation = source_data.as_dict().begin_mutation(t2);
+        REQUIRE(mutation.erase(outer_key.view()));
+        auto retained = mutation.at(outer_key.view());
+        REQUIRE(retained.has_current_value());
+    }
+
+    auto resurrected_view = handle.view(t2);
+    auto resurrected_outer = resurrected_view.as_dict();
+    auto resurrected_inner_output = resurrected_outer.at(outer_key.view());
+    auto resurrected_inner = resurrected_inner_output.as_dict();
+    REQUIRE(resurrected_outer.at_slot(outer_slot).data_view().data() == outer_address);
+    REQUIRE(resurrected_outer.slot_capacity() == outer_capacity);
+    REQUIRE(resurrected_inner.at_slot(inner_slot).data_view().data() == inner_address);
+    REQUIRE(resurrected_inner.slot_capacity() == inner_capacity);
+    REQUIRE(resurrected_inner.at(inner_key.view()).value().checked_as<std::int32_t>() == 11);
+
+    set_output_value(target, 12, t3);
+    auto after_tick = handle.view(t3);
+    auto after_tick_outer = after_tick.as_dict();
+    auto after_tick_inner_output = after_tick_outer.at(outer_key.view());
+    REQUIRE(after_tick_inner_output.as_dict().at(inner_key.view()).value().checked_as<std::int32_t>() == 12);
+}
+
 TEST_CASE("TimeSeriesReference: from-REF dict alternative rebinds target links")
 {
     using namespace hgraph;
@@ -989,6 +1494,8 @@ TEST_CASE("TimeSeriesReference: from-REF dict alternative rebinds target links")
     set_output_reference(ref_output, TimeSeriesReference{first_target.view(t1)}, t2);
 
     auto handle       = ref_output.view(t2).binding_for(*dict_schema);
+    REQUIRE(std::string{handle.type_ref().record()->implementation_name()} ==
+            "ts.alternative.from-ref.output");
     auto dereferenced = handle.view(t2);
     auto dict         = dereferenced.as_dict();
     REQUIRE(dereferenced.valid());

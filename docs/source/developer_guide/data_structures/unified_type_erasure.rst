@@ -514,15 +514,16 @@ type record selects the compact value plan and integer value ops.  ``AnyPtr``
 prints ``int64``, ``Value/Instance/Atomic``, its address, and its layout.  A
 ``ValuePtr`` adds the value API without changing the two-word representation.
 
-Time-Series Dictionary (post-4C target)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Time-Series Dictionary
+~~~~~~~~~~~~~~~~~~~~~~
 
-``TSD[str, TS[int64]]`` will have one semantic time-series schema. Its data
-type record will use ``TimeSeries/Data/TSD`` and select the slot-store plan and
-TSD data ops. Scalar ``TS``/``SIGNAL`` and fixed ``TSB``/``TSL`` roots are
-record-backed; keyed/reference shapes and dynamic ``TSL``/``TSW`` still use
-``TSDataBinding`` until 4C/4D. This TSD example describes that intended later
-state.
+``TSD[str, TS[int64]]`` has one semantic time-series schema. Its data type
+record uses ``TimeSeries/Data/TSD`` and selects the slot-store plan and TSD
+data ops. Separate canonical records describe its key-set and element
+projections, and Input/Output roles select their own topology records without
+duplicating the schema. Scalar ``TS``/``SIGNAL``, fixed ``TSB``/``TSL``, and
+keyed/reference roots are record-backed; dynamic ``TSL``/``TSW`` retain the
+coexistence binding path until 4D.
 
 The keyed-slots debug descriptor identifies key records, slot state, and child
 type records.  A debugger can distinguish live, stopped/deleted, and erased

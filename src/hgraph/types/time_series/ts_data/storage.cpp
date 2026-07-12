@@ -3,6 +3,7 @@
 #include "ownership.h"
 #include "../ts_input/target_link_ops.h"
 
+#include <hgraph/types/time_series/ts_input/target_link.h>
 #include <hgraph/util/scope.h>
 
 #include <stdexcept>
@@ -30,12 +31,20 @@ namespace hgraph
             if (target_link_context_for_ops(ops) != nullptr)
             {
                 static const TSDataOwnershipOps target_link_leaf{
-                    .child_count = [](const void *) noexcept { return std::size_t{0}; },
+                    .child_count = [](const void *, const void *) noexcept { return std::size_t{0}; },
                     .child_at = [](const void *, void *, std::size_t) noexcept { return TSDataOwnedChild{}; },
+                    .stop = [](const void *context, void *memory) noexcept {
+                        const auto *target_context = static_cast<const TSInputTargetLinkContext *>(context);
+                        if (target_context == nullptr || memory == nullptr) { return; }
+                        if (auto *link = target_link_storage_at(*target_context, memory); link != nullptr)
+                            link->unbind_noexcept();
+                    },
                 };
                 return &target_link_leaf;
             }
             if (const auto *composed = composed_input_ownership_ops_for(ops); composed != nullptr) { return composed; }
+            if (const auto *proxy = proxy_ts_data_ownership_ops_for(ops); proxy != nullptr) { return proxy; }
+            if (const auto *slot = slot_ts_data_ownership_ops_for(ops); slot != nullptr) { return slot; }
             return fixed_ts_data_ownership_ops_for(ops);
         }
 
@@ -45,15 +54,44 @@ namespace hgraph
             const auto &ops = root.ops();
             const auto *ownership = ownership_ops_for(&ops);
             if (ownership == nullptr) { return; }
-            const auto count = ownership->child_count(ops.context);
+            const auto count = ownership->child_count(ops.context, root.data());
             for (std::size_t index = 0; index < count; ++index)
             {
                 const auto owned = ownership->child_at(ops.context, const_cast<void *>(root.data()), index);
                 if (!owned.type || owned.data == nullptr) { continue; }
                 TSDataView child{owned.type, owned.data};
-                child.bind_parent(root, index);
+                if (owned.attach_parent)
+                    child.bind_parent(root, owned.parent_child_id == TS_DATA_NO_CHILD_ID
+                                                ? index
+                                                : owned.parent_child_id);
                 attach_owned_ts_data_parents(child.borrowed_ref());
             }
+        }
+
+        void attach_owned_ts_data_parent(TSDataView child, const TSDataView &parent, std::size_t child_id)
+        {
+            child.bind_parent(parent, child_id);
+            attach_owned_ts_data_parents(child.borrowed_ref());
+        }
+
+        void stop_owned_ts_data_tree(TSDataView root) noexcept
+        {
+            if (!root.valid()) { return; }
+            static_cast<void>(fallback_on_exception(false, [&] {
+                const auto &ops = root.ops();
+                const auto *ownership = ownership_ops_for(&ops);
+                if (ownership == nullptr) { return true; }
+                if (ownership->stop != nullptr)
+                    ownership->stop(ops.context, const_cast<void *>(root.data()));
+                const auto count = ownership->child_count(ops.context, root.data());
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    const auto owned = ownership->child_at(ops.context, const_cast<void *>(root.data()), index);
+                    if (!owned.type || owned.data == nullptr) { continue; }
+                    stop_owned_ts_data_tree(TSDataView{owned.type, owned.data});
+                }
+                return true;
+            }));
         }
 
         void invalidate_owned_ts_data_tree(TSDataView root) noexcept
@@ -65,7 +103,9 @@ namespace hgraph
                 const auto &ops = root.ops();
                 const auto *ownership = ownership_ops_for(&ops);
                 if (ownership == nullptr) { return true; }
-                const auto count = ownership->child_count(ops.context);
+                if (ownership->stop != nullptr)
+                    ownership->stop(ops.context, const_cast<void *>(root.data()));
+                const auto count = ownership->child_count(ops.context, root.data());
                 for (std::size_t index = 0; index < count; ++index)
                 {
                     const auto owned = ownership->child_at(ops.context, const_cast<void *>(root.data()), index);

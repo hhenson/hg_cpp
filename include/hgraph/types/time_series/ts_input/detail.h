@@ -29,6 +29,7 @@ namespace hgraph::detail
     [[nodiscard]] const TSInputEndpointOps &input_endpoint_ops_for(const TSValueTypeMetaData *schema);
     [[nodiscard]] const TSDataBinding *input_data_binding_for(const TSEndpointSchema &endpoint_schema);
     [[nodiscard]] const TSDataBinding *output_data_binding_for(const TSEndpointSchema &endpoint_schema);
+    [[nodiscard]] TSStorageTypeRef output_data_storage_type_for(const TSEndpointSchema &endpoint_schema);
     [[nodiscard]] const TSDataBinding *regular_ts_data_binding_for(const TSValueTypeMetaData *schema);
 
     [[nodiscard]] TSInputChildProjection input_child_projection(const TSDataView &parent, std::size_t index);

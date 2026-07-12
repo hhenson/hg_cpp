@@ -401,10 +401,10 @@ There are two important keyed to-``REF`` shapes:
        source:    TSD[K, TSB/TSL/TSD[..., V]]
        requested: TSD[K, TSB/TSL/TSD[..., REF[V]]]
 
-In the direct value conversion, the proxy's child binding is the
+In the direct value conversion, the proxy's child storage type is the
 ``REF[V]`` leaf, so each mirrored source slot materialises a
 ``TimeSeriesReference`` directly. In the keyed path conversion, the
-proxy's child binding is the normal requested structural child. The
+proxy's child storage type is the normal requested structural child. The
 proxy still exists because the key slots are dynamic and must remain
 aligned with the source, but the child is populated by walking the
 requested structure until the first ``REF`` leaf is reached. Any

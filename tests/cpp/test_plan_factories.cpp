@@ -692,10 +692,9 @@ TEST_CASE("TSDataView: child parent link is stored in TSData tracking")
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsd      = registry.tsd(int_meta, ts_int);
-    const auto binding  = factory.binding_for(tsd);
-    REQUIRE(binding != nullptr);
+    const auto type = factory.data_type_for(tsd);
 
-    TSData data{*binding};
+    TSData data{type};
     Value  key{7};
     Value  initial{1};
     Value  updated{12};
@@ -715,14 +714,14 @@ TEST_CASE("TSDataView: child parent link is stored in TSData tracking")
         auto dict = view.as_dict();
         child = dict.at(key.view());
         REQUIRE(child.has_parent());
-        REQUIRE(child.parent_link().parent_binding() == dict.binding());
+        REQUIRE(child.parent_link().parent_storage_type() == dict.base().storage_type());
         REQUIRE(child.parent_link().parent_data() == dict.base().data());
     }
 
     REQUIRE(child.has_parent());
     REQUIRE(child.path_from_root() == std::vector<std::size_t>{child.child_id()});
     auto root = child.root_view();
-    REQUIRE(root.binding() == data.binding());
+    REQUIRE(root.storage_type() == data.storage_type_ref());
     REQUIRE(root.data() == data.view().data());
     {
         auto mutation = child.begin_mutation(t2);
@@ -746,7 +745,8 @@ TEST_CASE("TSDataPlanFactory: REF and SIGNAL use compact atomic TSData")
 
     REQUIRE(factory.data_type_for(registry.signal()));
     REQUIRE_THROWS_AS(factory.binding_for(registry.signal()), std::logic_error);
-    REQUIRE(factory.binding_for(registry.ref(ts_int)) != nullptr);
+    REQUIRE(factory.data_type_for(registry.ref(ts_int)));
+    REQUIRE_THROWS_AS(factory.binding_for(registry.ref(ts_int)), std::logic_error);
 }
 
 TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child tracking")
@@ -1080,10 +1080,9 @@ TEST_CASE("TSDataPlanFactory: collections nest every supported non-REF TSData ki
         SECTION(std::string{"TSD child "} + child.label)
         {
             const auto *parent = registry.tsd(int_meta, child.schema);
-            const auto binding = factory.binding_for(parent);
-            REQUIRE(binding != nullptr);
+            const auto type = factory.data_type_for(parent);
 
-            TSData data{*binding};
+            TSData data{type};
             auto   root = data.view();
             auto   dict = root.as_dict();
             Value  key{seed++};
@@ -1373,11 +1372,10 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tss      = registry.tss(int_meta);
 
-    const auto binding = factory.binding_for(tss);
-    REQUIRE(binding != nullptr);
-    require_no_tsdata_relocation_hooks(binding->checked_plan());
+    const auto type = factory.data_type_for(tss);
+    require_no_tsdata_relocation_hooks(type.checked_plan());
 
-    TSData data{*binding};
+    TSData data{type};
     auto   view = data.view();
     auto   set  = view.as_set();
     REQUIRE(set.empty());
@@ -1446,11 +1444,10 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsd      = registry.tsd(int_meta, ts_int);
 
-    const auto binding = factory.binding_for(tsd);
-    REQUIRE(binding != nullptr);
-    require_no_tsdata_relocation_hooks(binding->checked_plan());
+    const auto type = factory.data_type_for(tsd);
+    require_no_tsdata_relocation_hooks(type.checked_plan());
 
-    TSData data{*binding};
+    TSData data{type};
     auto   view = data.view();
     auto   dict = view.as_dict();
     REQUIRE(dict.empty());
@@ -1478,14 +1475,15 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     REQUIRE(dict.at(key.view()).value().checked_as<std::int32_t>() == 42);
     REQUIRE(view.value().as_map().at(key.view()).checked_as<std::int32_t>() == 42);
 
-    auto immutable_ops = static_cast<const TSDDataOps &>(binding->ops_ref());
+    auto immutable_ops = static_cast<const TSDDataOps &>(type.ops_ref());
     immutable_ops.allows_mutation = false;
-    TSDataBinding immutable_binding{binding->type_meta, binding->plan(), &immutable_ops};
-    auto          immutable_view = TSDataView{&immutable_binding, view.data()};
+    const auto immutable_type = intern_ts_type(*tsd, TypeRole::Data, type.checked_plan(), immutable_ops,
+                                               "test.tsd.read-only");
+    auto immutable_view = TSDataView{immutable_type, view.data()};
     auto          immutable_child = immutable_view.as_dict().at(key.view());
     REQUIRE(immutable_child.value().checked_as<std::int32_t>() == 42);
     REQUIRE(immutable_child.has_parent());
-    REQUIRE(immutable_child.parent_link().parent_binding() == binding);
+    REQUIRE(immutable_child.parent_link().parent_storage_type() == TSStorageTypeRef{type.as_role()});
     REQUIRE(immutable_child.root_view().data() == view.data());
 
     REQUIRE(dict.key_set().contains(key.view()));
@@ -1513,7 +1511,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
         REQUIRE(it != values.end());
         auto child = *it;
         REQUIRE(child.has_parent());
-        REQUIRE(child.parent_link().parent_binding() == dict.binding());
+        REQUIRE(child.parent_link().parent_storage_type() == dict.base().storage_type());
         REQUIRE(child.parent_link().parent_data() == dict.base().data());
         REQUIRE(child.child_id() == dict.find_slot(key.view()));
         auto mutation = child.begin_mutation(t2);
@@ -1573,7 +1571,7 @@ TEST_CASE("TSDataPlanFactory: empty collection copy still marks the collection m
     const auto t1 = MIN_ST;
 
     Value  empty_set = stdlib::make_set<std::int32_t>({});
-    TSData set_data{*factory.binding_for(tss)};
+    TSData set_data{factory.data_type_for(tss)};
     auto   set_view = set_data.view();
     auto   set      = set_view.as_set();
     {
@@ -1589,7 +1587,7 @@ TEST_CASE("TSDataPlanFactory: empty collection copy still marks the collection m
     REQUIRE(set_delta.at("removed").as_set().empty());
 
     Value  empty_map = stdlib::make_map<std::int32_t, std::int32_t>({});
-    TSData dict_data{*factory.binding_for(tsd)};
+    TSData dict_data{factory.data_type_for(tsd)};
     auto   dict_view = dict_data.view();
     auto   dict      = dict_view.as_dict();
     {
@@ -1615,10 +1613,10 @@ TEST_CASE("TSDataPlanFactory: nested TSD rejects whole-child move replacement")
     const auto *inner_tsd    = registry.tsd(int_meta, ts_int);
     const auto *outer_tsd    = registry.tsd(int_meta, inner_tsd);
     const auto key_binding   = registry.scalar_type<std::int32_t>();
-    const auto dict_binding = factory.binding_for(outer_tsd);
+    const auto dict_type = factory.data_type_for(outer_tsd);
     REQUIRE(key_binding != nullptr);
-    REQUIRE(dict_binding != nullptr);
-    require_no_tsdata_relocation_hooks(dict_binding->checked_plan());
+    REQUIRE(dict_type);
+    require_no_tsdata_relocation_hooks(dict_type.checked_plan());
 
     Value inner_map = stdlib::make_map<std::int32_t, std::int32_t>({{2, 3}});
     Value outer_key{1};
@@ -1626,7 +1624,7 @@ TEST_CASE("TSDataPlanFactory: nested TSD rejects whole-child move replacement")
     outer_builder.set_item_copy(outer_key.view().data(), inner_map.view().data());
     Value source = outer_builder.build();
 
-    TSData data{*dict_binding};
+    TSData data{dict_type};
     auto   mutation = data.view().begin_mutation(MIN_ST);
     REQUIRE_THROWS_AS(mutation.move_value_from(std::move(source)), std::logic_error);
 }

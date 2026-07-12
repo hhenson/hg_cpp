@@ -6,6 +6,7 @@
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/time_series/ts_input/detail.h>
+#include <hgraph/types/time_series/ts_data/proxy.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/value/value.h>
 
@@ -18,6 +19,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 namespace
@@ -345,7 +347,7 @@ TEST_CASE("fixed structured role records preserve semantic identity and embedded
     REQUIRE(mixed_bundle.field("window").storage_type().legacy_backed());
 }
 
-TEST_CASE("migrated fixed roots reject legacy ownership while excluded parents remain compatible")
+TEST_CASE("migrated roots reject legacy ownership while excluded dynamic parents remain compatible")
 {
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
@@ -365,8 +367,13 @@ TEST_CASE("migrated fixed roots reject legacy ownership while excluded parents r
     }
 
     const auto *dict = registry.tsd(string, named);
+    const auto *dict_legacy = factory.legacy_binding_for(dict);
+    REQUIRE(dict_legacy != nullptr);
+    REQUIRE_THROWS_AS(TSData{*dict_legacy}, std::invalid_argument);
+    REQUIRE(factory.data_type_for(dict));
+
     const auto *dynamic_list = registry.tsl(named, 0);
-    for (const auto *schema : {dict, dynamic_list})
+    for (const auto *schema : {dynamic_list})
     {
         const auto *legacy = factory.legacy_binding_for(schema);
         REQUIRE(legacy != nullptr);
@@ -684,7 +691,7 @@ TEST_CASE("fixed ownership traversal has the same local boundary for Data Input 
     verify(output.data_view(), TypeRole::Output);
 }
 
-TEST_CASE("ownership traversal treats excluded keyed roots as leaves")
+TEST_CASE("ownership traversal invalidates keyed children")
 {
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
@@ -707,7 +714,7 @@ TEST_CASE("ownership traversal treats excluded keyed roots as leaves")
     }
 
     REQUIRE(root_observer.invalidations == 1);
-    REQUIRE(child_observer.invalidations == 0);
+    REQUIRE(child_observer.invalidations == 1);
 }
 
 TEST_CASE("fixed structured role caches are canonical and thread stable")
@@ -768,6 +775,120 @@ TEST_CASE("fixed input records describe owned target composite and embedded topo
     auto items = bundle.field("items");
     auto item_list = items.as_list();
     REQUIRE(item_list[0].type_ref().as_role().role() == TypeRole::Input);
+}
+
+TEST_CASE("keyed and reference role records preserve root input and projection topology")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    auto &factory = TSDataPlanFactory::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts = registry.ts(integer);
+    const auto *tss = registry.tss(integer);
+    const auto *tsd = registry.tsd(integer, ts);
+    const auto *ref = registry.ref(ts);
+
+    const auto label = [](auto type) {
+        REQUIRE(type);
+        return std::string{type.record()->implementation_name()};
+    };
+
+    REQUIRE(label(factory.data_type_for(tss).as_role()) == "ts.tss.data.root");
+    REQUIRE(label(factory.output_type_for(tss).as_role()) == "ts.tss.output.root");
+    REQUIRE(label(factory.data_type_for(tsd).as_role()) == "ts.tsd.data.root");
+    REQUIRE(label(factory.output_type_for(tsd).as_role()) == "ts.tsd.output.root");
+    REQUIRE(label(factory.data_type_for(ref).as_role()) == "ts.ref.data.root");
+    REQUIRE(label(factory.output_type_for(ref).as_role()) == "ts.ref.output.root");
+
+    TSData dict_data{factory.data_type_for(tsd)};
+    auto dict_view = dict_data.view();
+    auto dict = dict_view.as_dict();
+    REQUIRE(label(dict.key_set().base().type_ref()) == "ts.tsd.key-set.data");
+    REQUIRE(label(dict.layout().element_type.type_ref()) == "ts.tsd.value.data");
+
+    TSOutput dict_output{tsd};
+    auto output_view = dict_output.data_view();
+    auto output_dict = output_view.as_dict();
+    REQUIRE(label(output_dict.key_set().base().type_ref()) == "ts.tsd.key-set.output");
+    REQUIRE(label(output_dict.layout().element_type.type_ref()) == "ts.tsd.value.output");
+
+    for (const auto &[schema, owned_label, target_label] : std::array{
+             std::tuple{tss, "ts.tss.input.owned", "ts.tss.input.target"},
+             std::tuple{tsd, "ts.tsd.input.owned", "ts.tsd.input.target"},
+             std::tuple{ref, "ts.ref.input.owned", "ts.ref.input.target"}})
+    {
+        TSInput owned{TSInputBuilderFactory::checked_builder_for(*schema, TSEndpointSchema::owned(schema))};
+        TSInput target{TSInputBuilderFactory::checked_builder_for(*schema, TSEndpointSchema::peered(schema))};
+        REQUIRE(label(owned.type_ref()) == owned_label);
+        REQUIRE(label(target.type_ref()) == target_label);
+    }
+
+    const auto composite_schema = TSEndpointSchema::non_peered(
+        tsd, {TSEndpointSchema::peered(ts)});
+    TSInput composite{TSInputBuilderFactory::checked_builder_for(*tsd, composite_schema)};
+    REQUIRE(label(composite.type_ref()) == "ts.tsd.input.composite");
+    auto composite_dict = composite.view().data_view().as_dict();
+    REQUIRE(label(composite_dict.key_set().base().type_ref()) == "ts.tsd.key-set.input");
+    REQUIRE(label(composite_dict.layout().element_type.type_ref()) == "ts.tsd.value.input");
+
+    const auto proxy_data = tsd_proxy_data_type_for(
+        *tsd, TSStorageTypeRef{factory.data_type_for(ts).as_role()});
+    const auto proxy_output = tsd_proxy_output_type_for(
+        *tsd, TSStorageTypeRef{factory.output_type_for(ts).as_role()});
+    REQUIRE(label(proxy_data.as_role()) == "ts.tsd.proxy.data");
+    REQUIRE(label(proxy_output.as_role()) == "ts.tsd.proxy.output");
+}
+
+TEST_CASE("keyed projection ops caches release and reseed every role without stale records")
+{
+    using namespace hgraph;
+
+    const auto exercise_generation = [] {
+        auto &registry = TypeRegistry::instance();
+        auto &factory = TSDataPlanFactory::instance();
+        const auto *integer = registry.register_scalar<std::int32_t>("int32");
+        const auto *ts = registry.ts(integer);
+        const auto *tss = registry.tss(integer);
+        const auto *inner_tsd = registry.tsd(integer, ts);
+        const auto *bundle = registry.tsb("ProjectionResetBundle", {{"value", ts}});
+        const auto *ref = registry.ref(ts);
+
+        std::vector<std::string> labels;
+        for (const auto *element : std::array{ts, tss, inner_tsd, bundle, ref})
+        {
+            const auto *outer = registry.tsd(integer, element);
+
+            TSData data{factory.data_type_for(outer)};
+            auto data_view = data.view();
+            auto data_dict = data_view.as_dict();
+            const auto data_element_type = data_dict.layout().element_type.type_ref();
+            labels.emplace_back(data_element_type.record()->implementation_name());
+            REQUIRE(data_element_type.role() == TypeRole::Data);
+
+            TSOutput output{outer};
+            auto output_data = output.data_view();
+            auto output_dict = output_data.as_dict();
+            const auto output_element_type = output_dict.layout().element_type.type_ref();
+            labels.emplace_back(output_element_type.record()->implementation_name());
+            REQUIRE(output_element_type.role() == TypeRole::Output);
+
+            const auto endpoint = TSEndpointSchema::non_peered(
+                outer, {TSEndpointSchema::peered(element)});
+            TSInput input{TSInputBuilderFactory::checked_builder_for(*outer, endpoint)};
+            auto input_view = input.view();
+            auto input_dict = input_view.data_view().as_dict();
+            const auto input_element_type = input_dict.layout().element_type.type_ref();
+            labels.emplace_back(input_element_type.record()->implementation_name());
+            REQUIRE(input_element_type.role() == TypeRole::Input);
+        }
+        return labels;
+    };
+
+    const auto first = exercise_generation();
+    REQUIRE(first.size() == 15);
+    reset_all_registries();
+    const auto second = exercise_generation();
+    REQUIRE(second == first);
 }
 
 TEST_CASE("scalar output and peered input preserve binding, timing, and subscriptions")

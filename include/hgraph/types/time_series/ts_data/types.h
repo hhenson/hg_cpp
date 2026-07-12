@@ -66,12 +66,24 @@ namespace hgraph
             const auto *binding = legacy_binding();
             return binding != nullptr ? binding->plan() : nullptr;
         }
+        [[nodiscard]] const MemoryUtils::StoragePlan &checked_plan() const
+        {
+            const auto *storage_plan = plan();
+            if (storage_plan == nullptr) throw std::logic_error("time-series storage type is unbound");
+            return *storage_plan;
+        }
         [[nodiscard]] const TSDataOps *ops() const noexcept
         {
             if (const auto *record_ptr = record(); record_ptr != nullptr)
                 return static_cast<const TSDataOps *>(record_ptr->ops);
             const auto *binding = legacy_binding();
             return binding != nullptr ? binding->ops : nullptr;
+        }
+        [[nodiscard]] const TSDataOps &ops_ref() const
+        {
+            const auto *table = ops();
+            if (table == nullptr) throw std::logic_error("time-series storage type is unbound");
+            return *table;
         }
         [[nodiscard]] TSRoleTypeRef type_ref() const noexcept
         {
@@ -147,7 +159,7 @@ namespace hgraph
      * This is stored in the child node's value-owned tracking region. It
      * carries a type-erased handle plus a small tag that says which view type
      * can interpret that handle. TSData and node parents both use the same
-     * binding + data pattern as the rest of the runtime.
+     * ``TSStorageTypeRef + data`` pattern as the rest of the runtime.
      */
     struct TSParentLink
     {
@@ -234,7 +246,7 @@ namespace hgraph
         /** True when this child bubbles directly to a node-owned endpoint parent. */
         [[nodiscard]] bool has_node_endpoint_parent() const noexcept;
 
-        /** Parent TSData binding, or null when this link does not target TSData. */
+        /** Legacy parent TSData binding, or null for record-backed and non-TSData parents. */
         [[nodiscard]] const TSDataBinding *parent_binding() const noexcept;
 
         /** Mixed parent storage identity; scalar parents are record-backed. */
@@ -477,12 +489,15 @@ namespace hgraph
 
     struct TSDDataLayout : TSSDataLayout
     {
-        const TSDataBinding    *element_binding{nullptr};
+        TSStorageTypeRef        element_type{};
         const TSDataLayout     *element_layout{nullptr};
-        const TSDataBinding    *key_set_binding{nullptr};
+        TSStorageTypeRef        key_set_type{};
         ValueTypeRef element_value_binding{nullptr};
         ValueTypeRef element_delta_binding{nullptr};
     };
+
+    static_assert(sizeof(TSSDataLayout) == sizeof(void *) * 5);
+    static_assert(sizeof(TSDDataLayout) == sizeof(void *) * 10);
 
     struct SlotTSDataMutationResult
     {

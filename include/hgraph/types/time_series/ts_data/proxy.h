@@ -13,6 +13,17 @@ namespace hgraph
 {
     class TSDProxy;
 
+    struct TSDProxyValueOps
+    {
+        using BuildFn = void (*)(TSDProxy &, std::size_t, const TSDataView &, const TSDataView &,
+                                 DateTime, const void *);
+        using SourceIdentityMatchesFn = bool (*)(const TSDProxy &, std::size_t, const TSDataView &,
+                                                 const TSDataView &, const void *);
+
+        BuildFn build{nullptr};
+        SourceIdentityMatchesFn source_identity_matches{nullptr};
+    };
+
     /** Slot-event adapter that drives one proxy storage from its source TSD. */
     class TSDProxySlotSync final : public SlotObserver, public Notifiable
     {
@@ -30,6 +41,7 @@ namespace hgraph
         void on_erase(std::size_t slot) override;
         void on_clear() override;
         void notify(DateTime modified_time) override;
+        void source_invalidated(const TSDataTracking *source) noexcept override;
 
       private:
         TSDProxy *owner_{nullptr};
@@ -39,8 +51,9 @@ namespace hgraph
      * Read-only proxy over a source ``TSD``.
      *
      * ``TSDProxy`` mirrors the source dictionary's key-set and stable slot ids,
-     * but owns its value slots. A caller-provided value builder constructs each
-     * proxy value from the source child at the same slot. Structural slot
+     * but owns its value slots. A caller-provided static value-ops table
+     * constructs each proxy value from the source child at the same slot and
+     * may compare source identity for equal-time refreshes. Structural slot
      * callbacks construct and destroy the parallel value slots; source TSData
      * modification notification supplies the evaluation time used to materialise
      * added/removed proxy children.
@@ -54,18 +67,12 @@ namespace hgraph
     {
         StructureOnly,
         OnChildTick,
+        Invalidating,  // Internal guard while source invalidation is running.
     };
 
     class TSDProxy final
     {
       public:
-        using ValueBuilder = void (*)(TSDProxy       &proxy,
-                                      std::size_t     slot,
-                                      const TSDataView &target,
-                                      const TSDataView &source,
-                                      DateTime   modified_time,
-                                      const void     *context);
-
         TSDProxy() noexcept;
         TSDProxy(const TSDProxy &) = delete;
         TSDProxy &operator=(const TSDProxy &) = delete;
@@ -76,20 +83,20 @@ namespace hgraph
         /**
          * Bind this proxy storage to ``source``.
          *
-         * ``self_binding`` is the proxy TSData binding that owns this storage.
-         * ``element_binding`` is the binding used for each constructed proxy
-         * value. ``builder`` is called when a slot value first needs to be
-         * materialised.
+         * ``self_type`` describes the proxy storage itself. ``element_type``
+         * describes each constructed proxy value. ``value_ops->build`` is
+         * called when a slot value first needs to be materialised.
          */
-        void bind(const TSDataBinding &self_binding,
-                  const TSDataBinding &element_binding,
+        void bind(TSStorageTypeRef     self_type,
+                  TSStorageTypeRef     element_type,
                   const TSDDataView   &source,
-                  ValueBuilder         builder,
+                  const TSDProxyValueOps *value_ops,
                   const void          *builder_context,
                   DateTime        modified_time,
                   TSDProxyChildRefresh child_refresh = TSDProxyChildRefresh::StructureOnly);
 
         [[nodiscard]] TSDataView source_view() const noexcept;
+        [[nodiscard]] bool source_available() const noexcept { return source_storage_.valid(); }
         [[nodiscard]] TSDDataView source_dict() const;
         [[nodiscard]] TSDataView source_child_at_slot(std::size_t slot) const;
 
@@ -99,6 +106,10 @@ namespace hgraph
         [[nodiscard]] bool child_updated(std::size_t slot) const noexcept;
         [[nodiscard]] const void *child_at_slot(std::size_t slot) const;
         [[nodiscard]] void *child_at_slot(std::size_t slot);
+        [[nodiscard]] void *owned_child_memory(std::size_t slot) noexcept
+        {
+            return has_child(slot) ? values_.value_memory(slot) : nullptr;
+        }
 
         /**
          * LAZY re-materialisation (single-threaded runtime): a key inserted
@@ -115,6 +126,11 @@ namespace hgraph
         void subscribe_slot_observer(SlotObserver *observer);
         void unsubscribe_slot_observer(SlotObserver *observer);
 
+        [[nodiscard]] TSStorageTypeRef element_type() const noexcept { return element_type_; }
+        [[nodiscard]] std::size_t child_capacity() const noexcept { return values_.slot_capacity(); }
+        [[nodiscard]] bool source_identities_match() const;
+        void stop() noexcept;
+
       private:
         friend class TSDProxySlotSync;
 
@@ -125,21 +141,24 @@ namespace hgraph
         void on_slot_erased(std::size_t slot);
         void on_slots_cleared();
         void on_source_modified(DateTime modified_time);
+        void on_source_invalidated(const TSDataTracking *source) noexcept;
 
         void subscribe_source();
         void unsubscribe_source(bool strict = true) noexcept;
         void sync_from_source(DateTime modified_time, bool force_modified);
         void construct_child_at_slot(std::size_t slot);
-        void ensure_child_at_slot(std::size_t slot, DateTime modified_time);
+        bool retry_pending_child_at_slot(std::size_t slot, DateTime modified_time);
+        [[nodiscard]] DateTime current_lifecycle_time(std::size_t slot) const;
         void refresh_child_at_slot(std::size_t slot, DateTime modified_time);
         void stamp_built(std::size_t slot, DateTime modified_time);
         void mark_modified(DateTime modified_time);
+        [[nodiscard]] bool has_constructed_children() const noexcept;
 
-        const TSDataBinding          *self_binding_{nullptr};
-        const TSDataBinding          *element_binding_{nullptr};
+        TSStorageTypeRef              self_type_{};
+        TSStorageTypeRef              element_type_{};
         TSDProxySlotSync              source_sync_;
         TSDDataStorageRef             source_storage_{};
-        ValueBuilder                  value_builder_{nullptr};
+        const TSDProxyValueOps        *value_ops_{nullptr};
         const void                   *value_builder_context_{nullptr};
         ValueSlotStore                values_{};
         std::vector<DateTime>         built_times_{};
@@ -150,20 +169,19 @@ namespace hgraph
         bool                          subscribed_{false};
     };
 
-    /**
-     * Return the proxy binding for ``schema`` using ``element_binding`` for
-     * proxy value slots.
-     */
-    [[nodiscard]] const TSDataBinding &tsd_proxy_binding_for(const TSValueTypeMetaData &schema,
-                                                             const TSDataBinding      &element_binding);
+    /** Return the proxy role type for ``schema`` and ``element_type``. */
+    [[nodiscard]] TSDataTypeRef tsd_proxy_data_type_for(const TSValueTypeMetaData &schema,
+                                                        TSStorageTypeRef element_type);
+    [[nodiscard]] TSOutputTypeRef tsd_proxy_output_type_for(const TSValueTypeMetaData &schema,
+                                                            TSStorageTypeRef element_type);
 
-    /** Clear interned proxy binding contexts that borrow schema and TSData binding pointers. */
+    /** Clear interned proxy type contexts that borrow schema and role-record pointers. */
     void clear_tsd_proxy_contexts() noexcept;
 
     /** Bind a live proxy TSData view to a source dictionary. */
     void bind_tsd_proxy(const TSDataView       &proxy,
                         const TSDDataView      &source,
-                        TSDProxy::ValueBuilder  builder,
+                        const TSDProxyValueOps *value_ops,
                         const void             *builder_context,
                         DateTime           modified_time,
                         TSDProxyChildRefresh    child_refresh = TSDProxyChildRefresh::StructureOnly);

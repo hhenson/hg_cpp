@@ -330,10 +330,24 @@ namespace hgraph::ts_data_plan_factory_detail
 
     namespace
     {
-        [[nodiscard]] std::string_view fixed_record_label(TypeRole role, bool root_record)
+        [[nodiscard]] std::string_view fixed_record_label(const TSValueTypeMetaData &schema,
+                                                          TypeRole role,
+                                                          bool root_record)
         {
             if (!root_record)
             {
+                if (schema.kind == TSTypeKind::TSS)
+                    return role == TypeRole::Data ? "ts.tss.data.embedded"
+                         : role == TypeRole::Input ? "ts.tss.input.embedded"
+                                                   : "ts.tss.output.embedded";
+                if (schema.kind == TSTypeKind::TSD)
+                    return role == TypeRole::Data ? "ts.tsd.data.embedded"
+                         : role == TypeRole::Input ? "ts.tsd.input.embedded"
+                                                   : "ts.tsd.output.embedded";
+                if (schema.kind == TSTypeKind::REF)
+                    return role == TypeRole::Data ? "ts.ref.data.embedded"
+                         : role == TypeRole::Input ? "ts.ref.input.embedded"
+                                                   : "ts.ref.output.embedded";
                 switch (role)
                 {
                 case TypeRole::Data: return "ts.fixed.data.embedded";
@@ -366,7 +380,17 @@ namespace hgraph::ts_data_plan_factory_detail
         if (role != TypeRole::Data && role != TypeRole::Input && role != TypeRole::Output)
             throw std::invalid_argument("embedded TSData storage requires a time-series role");
 
-        const bool scalar = schema.kind == TSTypeKind::TS || schema.kind == TSTypeKind::SIGNAL;
+        if (is_slot_ts_data(schema))
+        {
+            const auto *plan = synthesise_slot_plan(schema);
+            if (plan == nullptr) throw std::logic_error("embedded keyed TSData plan is not resolved");
+            const auto &ops = slot_ts_data_ops(schema, *plan, 0, role, true);
+            return TSStorageTypeRef{intern_ts_type(
+                schema, role, *plan, ops, fixed_record_label(schema, role, false))};
+        }
+
+        const bool scalar = schema.kind == TSTypeKind::TS || schema.kind == TSTypeKind::SIGNAL ||
+                            schema.kind == TSTypeKind::REF;
         if (!scalar && !is_fixed_structured_ts_data(schema))
             return TSStorageTypeRef{embedded_ts_data_binding(schema, root_plan, value_offset, aux_offset)};
 
@@ -380,7 +404,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 throw std::logic_error("embedded scalar TSData value bindings are not resolved");
             const auto &ops = atomic_ts_data_ops(schema.kind, value_type, delta_type, root_plan,
                                                  value_offset, tracking_offset);
-            return TSStorageTypeRef{intern_ts_type(schema, role, root_plan, ops, fixed_record_label(role, false))};
+            return TSStorageTypeRef{intern_ts_type(
+                schema, role, root_plan, ops, fixed_record_label(schema, role, false))};
         }
 
         const auto value_type = ValuePlanFactory::instance().type_for(schema.value_schema);
@@ -408,7 +433,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                        tracking_offset, std::move(element_types),
                                                        std::move(element_data_offsets));
         return TSStorageTypeRef{
-            intern_ts_type(schema, role, root_plan, ops, fixed_record_label(role, root_record))};
+            intern_ts_type(schema, role, root_plan, ops, fixed_record_label(schema, role, root_record))};
     }
 
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_fixed_plan(const TSValueTypeMetaData &schema)

@@ -145,14 +145,14 @@ namespace hgraph
         const auto &ops = dict_ops();
         const auto *child_memory = ops.child_at_slot_impl(ops.context, storage_.data(), slot);
         auto        parent       = base();
-        if (!parent.ops().allows_mutation) { return TSDataView{layout().element_binding, child_memory}; }
-        return TSDataView{layout().element_binding, child_memory, parent, slot};
+        if (!parent.ops().allows_mutation) { return TSDataView{layout().element_type, child_memory}; }
+        return TSDataView{layout().element_type, child_memory, parent, slot};
     }
 
     TSDataView TSDDataView::at(const ValueView &key) const
     {
         const auto slot = find_slot(key);
-        if (slot == TS_DATA_NO_CHILD_ID) { return TSDataView{layout().element_binding, static_cast<const void *>(nullptr)}; }
+        if (slot == TS_DATA_NO_CHILD_ID) { return TSDataView{layout().element_type, static_cast<const void *>(nullptr)}; }
         return at_slot(slot);
     }
 
@@ -254,12 +254,12 @@ namespace hgraph
 
     TSSDataView TSDDataView::key_set() const
     {
-        const auto *key_set_binding = layout().key_set_binding;
-        if (key_set_binding == nullptr)
+        const auto key_set_type = layout().key_set_type;
+        if (!key_set_type)
         {
             throw std::logic_error("TSDDataView::key_set requires a key-set binding");
         }
-        return TSSDataView{TSDataView{key_set_binding, storage_.data()}};
+        return TSSDataView{TSDataView{key_set_type, storage_.data()}};
     }
 
     TSDDataMutationView TSDDataView::begin_mutation(DateTime evaluation_time) const
@@ -409,7 +409,7 @@ namespace hgraph
         }
 
         auto       source_map = source.as_map();
-        const auto &child_ops = layout().element_binding->ops_ref();
+        const auto &child_ops = layout().element_type.ops_ref();
         if (child_ops.move_value_from_impl == &ts_data_detail::missing_move_value_from)
         {
             throw std::logic_error(
@@ -472,6 +472,6 @@ namespace hgraph
             throw std::out_of_range("TSDDataMutationView::at_slot: slot is not occupied");
         }
         const auto *child_memory = ops.child_at_slot_impl(ops.context, mutation_.mutable_data(), slot);
-        return TSDataView{layout().element_binding, child_memory, mutation_.view(), slot};
+        return TSDataView{layout().element_type, child_memory, mutation_.view(), slot};
     }
 }  // namespace hgraph

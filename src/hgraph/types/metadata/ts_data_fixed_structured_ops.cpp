@@ -501,7 +501,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return offset == 0 ? memory : advance(memory, offset);
         }
 
-        [[nodiscard]] static std::size_t owned_child_count(const void *context) noexcept
+        [[nodiscard]] static std::size_t owned_child_count(const void *context, const void *) noexcept
         {
             return ctx(context)->element_count();
         }

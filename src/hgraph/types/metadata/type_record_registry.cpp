@@ -111,8 +111,10 @@ namespace hgraph
                 entry.record.capabilities != definition.capabilities ||
                 std::string_view{entry.implementation_label} != definition.implementation_label)
             {
-                throw std::logic_error("TypeRecordDefinition conflicts with the "
-                                       "canonical record for its key");
+                throw std::logic_error(
+                    "TypeRecordDefinition conflicts with the canonical record for its key: existing '" +
+                    entry.implementation_label + "', requested '" +
+                    std::string{definition.implementation_label} + "'");
             }
             return entry.record;
         }

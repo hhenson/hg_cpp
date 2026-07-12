@@ -83,6 +83,13 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(sizeof(TSData) == sizeof(void *) * 3);
     static_assert(sizeof(TSParentLink) == sizeof(void *) * 3);
     static_assert(sizeof(TSDataTracking) == sizeof(void *) * 5);
+    static_assert(sizeof(TimeSeriesReference) == sizeof(void *) * 6);
+#if defined(__APPLE__) && defined(__aarch64__)
+    static_assert(sizeof(KeySlotStore) <= 272);
+    static_assert(sizeof(KeyMirroredValueSlotStore) <= 208);
+    static_assert(sizeof(TSDProxySlotSync) <= 24);
+    static_assert(sizeof(TSDProxy) <= 400);
+#endif
     static_assert(sizeof(TSOutputHandle) == sizeof(void *) * 4);
     static_assert(sizeof(TSOutputView) == sizeof(void *) * 5);
     static_assert(sizeof(TSInputView) == sizeof(void *) * 10);

@@ -11,6 +11,7 @@
 
 #include <array>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -35,6 +36,92 @@ namespace hgraph::detail
             return static_cast<std::size_t>(role);
         }
 
+        struct AlternativeTypeKey
+        {
+            std::uintptr_t bits{0};
+            const TSDataOps *ops{nullptr};
+            const TSValueTypeMetaData *schema{nullptr};
+            TypeRole role{TypeRole::Invalid};
+            std::string_view label{};
+            [[nodiscard]] bool operator==(const AlternativeTypeKey &) const noexcept = default;
+        };
+
+        struct AlternativeTypeKeyHash
+        {
+            [[nodiscard]] std::size_t operator()(const AlternativeTypeKey &key) const noexcept
+            {
+                auto seed = std::hash<std::uintptr_t>{}(key.bits);
+                seed ^= std::hash<const TSDataOps *>{}(key.ops) + 0x9e3779b97f4a7c15ULL + (seed << 6U) +
+                        (seed >> 2U);
+                seed ^= std::hash<const TSValueTypeMetaData *>{}(key.schema) + 0x9e3779b97f4a7c15ULL +
+                        (seed << 6U) + (seed >> 2U);
+                seed ^= static_cast<std::size_t>(key.role) + 0x9e3779b97f4a7c15ULL + (seed << 6U) +
+                        (seed >> 2U);
+                return seed ^ std::hash<std::string_view>{}(key.label);
+            }
+        };
+
+        [[nodiscard]] std::recursive_mutex &alternative_type_mutex() noexcept
+        {
+            static std::recursive_mutex mutex;
+            return mutex;
+        }
+
+        using OwnedAlternativeOps = std::unique_ptr<TSDataOps, void (*)(TSDataOps *)>;
+
+        template <typename Ops>
+        [[nodiscard]] OwnedAlternativeOps copy_alternative_ops(const Ops &ops)
+        {
+            return OwnedAlternativeOps{
+                new Ops{ops},
+                [](TSDataOps *value) noexcept { delete static_cast<Ops *>(value); }};
+        }
+
+        [[nodiscard]] OwnedAlternativeOps copy_alternative_ops(const TSDataOps &ops)
+        {
+            switch (ops.kind)
+            {
+            case TSTypeKind::TSS:
+                return copy_alternative_ops(static_cast<const TSSDataOps &>(ops));
+            case TSTypeKind::TSD:
+                return copy_alternative_ops(static_cast<const TSDDataOps &>(ops));
+            case TSTypeKind::TSL:
+            case TSTypeKind::TSB:
+                return copy_alternative_ops(static_cast<const IndexedTSDataOps &>(ops));
+            case TSTypeKind::TSW:
+                return copy_alternative_ops(static_cast<const TSWDataOps &>(ops));
+            default:
+                return copy_alternative_ops<TSDataOps>(ops);
+            }
+        }
+
+        [[nodiscard]] auto &alternative_type_cache() noexcept
+        {
+            static std::unordered_map<AlternativeTypeKey, OwnedAlternativeOps, AlternativeTypeKeyHash> cache;
+            return cache;
+        }
+
+        [[nodiscard]] TSStorageTypeRef alternative_type_for(TSStorageTypeRef source,
+                                                             TypeRole role,
+                                                             std::string_view label)
+        {
+            const auto *schema = source.schema();
+            if (schema == nullptr || !is_migrated_ts_root_schema(schema)) { return source; }
+            const auto &source_ops = source.ops_ref();
+            const AlternativeTypeKey key{source.raw_bits(), &source_ops, schema, role, label};
+            std::lock_guard<std::recursive_mutex> lock(alternative_type_mutex());
+            auto &cache = alternative_type_cache();
+            const TSDataOps *ops = nullptr;
+            if (const auto it = cache.find(key); it != cache.end()) ops = it->second.get();
+            if (ops == nullptr)
+            {
+                auto owned_ops = copy_alternative_ops(source_ops);
+                ops = owned_ops.get();
+                cache.emplace(key, std::move(owned_ops));
+            }
+            return TSStorageTypeRef{intern_ts_type(*schema, role, source.checked_plan(), *ops, label)};
+        }
+
         [[nodiscard]] DateTime concrete_reference_time(DateTime time) noexcept
         {
             return time != MIN_DT ? time : MIN_ST;
@@ -57,38 +144,21 @@ namespace hgraph::detail
             return *binding;
         }
 
-        [[nodiscard]] const TSDataBinding &checked_endpoint_binding(const TSEndpointSchema &endpoint_schema)
-        {
-            const auto *binding = input_data_binding_for(endpoint_schema);
-            if (binding == nullptr)
-            {
-                throw std::logic_error("TSOutput from-REF alternative could not resolve endpoint TSData binding");
-            }
-            return *binding;
-        }
-
         [[nodiscard]] TSStorageTypeRef checked_endpoint_storage_type(const TSEndpointSchema &endpoint_schema)
         {
-            const auto *binding_ptr = output_data_binding_for(endpoint_schema);
-            if (binding_ptr == nullptr)
+            const auto type = output_data_storage_type_for(endpoint_schema);
+            if (!type)
             {
                 throw std::logic_error("TSOutput from-REF alternative could not resolve output endpoint storage");
             }
-            const auto &binding = *binding_ptr;
-            const auto *schema = binding.type_meta;
-            if (is_migrated_ts_root_schema(schema))
-            {
-                const auto type = checked_ts_role_type(
-                    intern_ts_type(
-                        *schema, TypeRole::Output, binding.checked_plan(), binding.ops_ref(),
-                        schema->kind == TSTypeKind::TSB ||
-                                (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0)
-                            ? std::string_view{"ts.fixed.output.root"}
-                            : std::string_view{}),
-                    std::integral_constant<TypeRole, TypeRole::Output>{});
-                return TSStorageTypeRef{type.as_role()};
-            }
-            return TSStorageTypeRef{&binding};
+            return type;
+        }
+
+        [[nodiscard]] TSStorageTypeRef checked_from_ref_storage_type(const TSEndpointSchema &endpoint_schema)
+        {
+            return alternative_type_for(
+                checked_endpoint_storage_type(endpoint_schema), TypeRole::Output,
+                "ts.alternative.from-ref.output");
         }
 
         [[nodiscard]] bool field_name_equal(const TSFieldMetaData &lhs, const TSFieldMetaData &rhs) noexcept
@@ -619,20 +689,24 @@ namespace hgraph::detail
          * leaves at (and whole-subtree links below) the source's REF
          * positions.
          */
-        [[nodiscard]] const TSDataBinding &from_ref_interior_binding_for(const TSValueTypeMetaData &requested,
-                                                                         const TSValueTypeMetaData &source)
+        [[nodiscard]] TSStorageTypeRef from_ref_interior_type_for(const TSValueTypeMetaData &requested,
+                                                                  const TSValueTypeMetaData &source)
         {
             if (requested.kind == TSTypeKind::TSD && source.kind == TSTypeKind::TSD &&
                 !time_series_schema_equivalent(&source, &requested))
             {
-                return tsd_proxy_binding_for(
-                    requested, from_ref_interior_binding_for(*requested.element_ts(), *source.element_ts()));
+                return TSStorageTypeRef{tsd_proxy_data_type_for(
+                    requested, from_ref_interior_type_for(*requested.element_ts(), *source.element_ts())).as_role()};
             }
-            return checked_endpoint_binding(from_ref_endpoint_schema_for(&requested));
+            return checked_endpoint_storage_type(from_ref_endpoint_schema_for(&requested));
         }
 
         void build_from_ref_proxy_value(TSDProxy &, std::size_t, const TSDataView &target,
                                         const TSDataView &source, DateTime modified_time, const void *context);
+        bool from_ref_proxy_source_identity_matches(const TSDProxy &, std::size_t,
+                                                    const TSDataView &, const TSDataView &,
+                                                    const void *);
+        extern const TSDProxyValueOps from_ref_proxy_value_ops;
 
         void apply_from_ref_interior(const TSDataView          &target,
                                      const TSValueTypeMetaData &requested,
@@ -653,7 +727,7 @@ namespace hgraph::detail
                                           const TSOutputView &source_view, DateTime modified_time,
                                           const FromRefBuildContext &build_context)
         {
-            bind_tsd_proxy(target.borrowed_ref(), source_view.data_view().as_dict(), &build_from_ref_proxy_value,
+            bind_tsd_proxy(target.borrowed_ref(), source_view.data_view().as_dict(), &from_ref_proxy_value_ops,
                            &build_context, modified_time, TSDProxyChildRefresh::OnChildTick);
         }
 
@@ -749,6 +823,110 @@ namespace hgraph::detail
                                                           build_context);
         }
 
+        [[nodiscard]] bool target_tree_unbound(const TSDataView &target)
+        {
+            if (const auto *link = target_link_storage(target); link != nullptr) { return !link->bound(); }
+            const auto *schema = target.schema();
+            if (schema == nullptr) { return false; }
+            const auto count = schema->kind == TSTypeKind::TSB
+                                   ? schema->field_count()
+                                   : (schema->kind == TSTypeKind::TSL ? schema->fixed_size() : 0U);
+            if (count == 0) { return false; }
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                if (!target_tree_unbound(endpoint_child_view(target, index))) { return false; }
+            }
+            return true;
+        }
+
+        [[nodiscard]] bool reference_identity_matches(const TSDataView &target,
+                                                      const TimeSeriesReference &desired)
+        {
+            if (const auto *link = target_link_storage(target); link != nullptr)
+            {
+                if (desired.is_empty()) { return !link->bound(); }
+                if (!desired.is_peered() || !link->bound()) { return false; }
+                return desired.target_output().same_as(link->target_output());
+            }
+            if (desired.is_empty()) { return target_tree_unbound(target); }
+            if (desired.is_peered()) { return false; }
+
+            const auto *schema = target.schema();
+            if (schema == nullptr) { return false; }
+            const auto count = schema->kind == TSTypeKind::TSB
+                                   ? schema->field_count()
+                                   : (schema->kind == TSTypeKind::TSL ? schema->fixed_size() : 0U);
+            if (count == 0 || desired.items().size() != count) { return false; }
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                if (!reference_identity_matches(endpoint_child_view(target, index), desired[index])) { return false; }
+            }
+            return true;
+        }
+
+        [[nodiscard]] bool from_ref_interior_identity_matches(const TSDataView &target,
+                                                               const TSValueTypeMetaData &requested,
+                                                               const TSOutputView &source_view,
+                                                               const FromRefBuildContext &build_context)
+        {
+            const auto &source_data = source_view.data_view();
+            const auto *source_schema = source_data.schema();
+            if (source_schema == nullptr || build_context.output == nullptr) { return false; }
+
+            if (source_schema->kind == TSTypeKind::REF)
+            {
+                if (!source_data.has_current_value()) { return target_tree_unbound(target); }
+                return reference_identity_matches(
+                    target, source_view.value().checked_as<TimeSeriesReference>());
+            }
+
+            if (time_series_schema_equivalent(source_schema, &requested))
+            {
+                const auto *link = target_link_storage(target);
+                return link != nullptr && link->bound() && link->target_output().same_as(source_view.handle());
+            }
+
+            if (requested.kind == TSTypeKind::TSD && source_schema->kind == TSTypeKind::TSD &&
+                target.storage_type().plan() == &MemoryUtils::plan_for<TSDProxy>())
+            {
+                const auto &nested = *static_cast<const TSDProxy *>(target.data());
+                const auto actual_source = nested.source_view();
+                return actual_source.storage_type() == source_data.storage_type() &&
+                       actual_source.data() == source_data.data() && nested.source_identities_match();
+            }
+
+            const auto count = requested.kind == TSTypeKind::TSB
+                                   ? requested.field_count()
+                                   : (requested.kind == TSTypeKind::TSL ? requested.fixed_size() : 0U);
+            if (count == 0) { return false; }
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                const auto &child_requested = requested.kind == TSTypeKind::TSB
+                                                  ? *requested.fields()[index].type
+                                                  : *requested.element_ts();
+                if (!from_ref_interior_identity_matches(
+                        endpoint_child_view(target, index), child_requested,
+                        output_child_view(source_view, *source_schema, index), build_context))
+                    return false;
+            }
+            return true;
+        }
+
+        bool from_ref_proxy_source_identity_matches(const TSDProxy &,
+                                                    std::size_t,
+                                                    const TSDataView &target,
+                                                    const TSDataView &source,
+                                                    const void *context)
+        {
+            const auto *build_context = static_cast<const FromRefBuildContext *>(context);
+            return build_context != nullptr && build_context->output != nullptr && target.schema() != nullptr &&
+                   source.valid() && from_ref_interior_identity_matches(
+                       target, *target.schema(),
+                       TSOutputView{build_context->output, source.borrowed_ref(),
+                                    source.tracking().last_modified_time},
+                       *build_context);
+        }
+
         void build_from_ref_proxy_value(TSDProxy &, std::size_t, const TSDataView &target,
                                         const TSDataView &source, DateTime modified_time, const void *context)
         {
@@ -768,7 +946,12 @@ namespace hgraph::detail
                                     modified_time, *build_context);
         }
 
-        [[nodiscard]] const TSDataBinding &to_ref_ts_data_binding_for(const TSValueTypeMetaData &schema);
+        const TSDProxyValueOps from_ref_proxy_value_ops{
+            &build_from_ref_proxy_value,
+            &from_ref_proxy_source_identity_matches,
+        };
+
+        [[nodiscard]] TSStorageTypeRef to_ref_ts_data_type_for(const TSValueTypeMetaData &schema);
         void populate_to_ref_data(const TSDataView           &target,
                                   const TSOutputView         &source_view,
                                   const TSValueTypeMetaData  &target_schema,
@@ -801,55 +984,73 @@ namespace hgraph::detail
                                  *build_context);
         }
 
-        [[nodiscard]] const TSDataBinding &to_ref_regular_binding_for(const TSValueTypeMetaData &schema)
+        const TSDProxyValueOps to_ref_proxy_value_ops{
+            &build_to_ref_proxy_value,
+            nullptr,
+        };
+
+        [[nodiscard]] TSStorageTypeRef to_ref_regular_type_for(const TSValueTypeMetaData &schema)
         {
-            return checked_ts_data_binding(schema);
+            if (is_migrated_ts_root_schema(&schema))
+                return TSStorageTypeRef{TSDataPlanFactory::instance().data_type_for(&schema).as_role()};
+            return TSStorageTypeRef{checked_ts_data_binding(schema)};
         }
 
-        [[nodiscard]] const TSDataBinding &to_ref_dict_binding_for(const TSValueTypeMetaData &schema)
+        [[nodiscard]] TSStorageTypeRef to_ref_dict_type_for(const TSValueTypeMetaData &schema)
         {
-            return tsd_proxy_binding_for(schema, to_ref_ts_data_binding_for(*schema.element_ts()));
+            return TSStorageTypeRef{tsd_proxy_data_type_for(
+                schema, to_ref_ts_data_type_for(*schema.element_ts())).as_role()};
         }
 
-        using ToRefBindingForFn = const TSDataBinding &(*)(const TSValueTypeMetaData &);
+        using ToRefTypeForFn = TSStorageTypeRef (*)(const TSValueTypeMetaData &);
 
-        [[nodiscard]] ToRefBindingForFn to_ref_binding_for_kind(TSTypeKind kind) noexcept
+        [[nodiscard]] ToRefTypeForFn to_ref_type_for_kind(TSTypeKind kind) noexcept
         {
             static constexpr std::size_t kind_count = ts_kind_index(TSTypeKind::SIGNAL) + 1U;
-            static const std::array<ToRefBindingForFn, kind_count> table{
-                &to_ref_regular_binding_for,
-                &to_ref_regular_binding_for,
-                &to_ref_dict_binding_for,
-                &to_ref_regular_binding_for,
-                &to_ref_regular_binding_for,
-                &to_ref_regular_binding_for,
-                &to_ref_regular_binding_for,
-                &to_ref_regular_binding_for,
+            static const std::array<ToRefTypeForFn, kind_count> table{
+                &to_ref_regular_type_for,
+                &to_ref_regular_type_for,
+                &to_ref_dict_type_for,
+                &to_ref_regular_type_for,
+                &to_ref_regular_type_for,
+                &to_ref_regular_type_for,
+                &to_ref_regular_type_for,
+                &to_ref_regular_type_for,
             };
 
             const auto index = ts_kind_index(kind);
-            return index < table.size() ? table[index] : &to_ref_regular_binding_for;
+            return index < table.size() ? table[index] : &to_ref_regular_type_for;
         }
 
-        [[nodiscard]] const TSDataBinding &to_ref_ts_data_binding_for(const TSValueTypeMetaData &schema)
+        [[nodiscard]] TSStorageTypeRef to_ref_ts_data_type_for(const TSValueTypeMetaData &schema)
         {
-            return to_ref_binding_for_kind(schema.kind)(schema);
+            return to_ref_type_for_kind(schema.kind)(schema);
         }
 
         [[nodiscard]] TSData make_to_ref_data(const TSValueTypeMetaData &schema)
         {
-            if (is_migrated_ts_root_schema(&schema))
-            {
-                return TSData{TSDataPlanFactory::instance().data_type_for(&schema)};
-            }
-            return TSData{to_ref_ts_data_binding_for(schema)};
+            return TSData{alternative_type_for(
+                to_ref_ts_data_type_for(schema), TypeRole::Data,
+                "ts.alternative.to-ref.data")};
         }
 
         [[nodiscard]] TSOutputTypeRef checked_to_ref_output_type(const TSData                  &data,
                                                                  const TSValueTypeMetaData &schema)
         {
             const auto data_type = TSDataTypeRef::checked(data.type_ref());
-            const auto output_type = TSDataPlanFactory::instance().output_type_for(&schema);
+            TSOutputTypeRef output_type;
+            if (data_type.plan() == &MemoryUtils::plan_for<TSDProxy>())
+            {
+                auto view = data.view();
+                output_type = tsd_proxy_output_type_for(schema, view.as_dict().layout().element_type);
+            }
+            else
+            {
+                output_type = TSDataPlanFactory::instance().output_type_for(&schema);
+            }
+            output_type = TSOutputTypeRef::checked(alternative_type_for(
+                TSStorageTypeRef{output_type.as_role()}, TypeRole::Output,
+                "ts.alternative.to-ref.output").type_ref());
             if (data_type.plan() != output_type.plan())
             {
                 throw std::logic_error("TSOutput to-REF Data owner and Output facade require the same storage plan");
@@ -894,7 +1095,7 @@ namespace hgraph::detail
         {
             bind_tsd_proxy(target.borrowed_ref(),
                            source_view.data_view().as_dict(),
-                           &build_to_ref_proxy_value,
+                           &to_ref_proxy_value_ops,
                            &build_context,
                            modified_time);
         }
@@ -992,6 +1193,12 @@ namespace hgraph::detail
         }
     }  // namespace
 
+    void clear_ts_output_alternative_type_cache() noexcept
+    {
+        std::lock_guard<std::recursive_mutex> lock(alternative_type_mutex());
+        alternative_type_cache().clear();
+    }
+
     struct TSOutputAlternativeStore::ToRefAlternativeState final
     {
         ToRefAlternativeState(const TSValueTypeMetaData &requested_schema, const TSOutputView &source)
@@ -1068,7 +1275,7 @@ namespace hgraph::detail
         RefLinkAlternativeState(const TSValueTypeMetaData &requested_schema, const TSOutputView &source)
             : requested_schema{&requested_schema},
               endpoint_schema{from_ref_endpoint_schema_for(&requested_schema)},
-              data{checked_endpoint_storage_type(endpoint_schema)},
+              data{checked_from_ref_storage_type(endpoint_schema)},
               notifier{*this}
         {
             rebind(source);
@@ -1184,7 +1391,9 @@ namespace hgraph::detail
 
         InteriorFromRefAlternativeState(const TSValueTypeMetaData &requested_schema, const TSOutputView &source)
             : requested_schema{&requested_schema},
-              data{from_ref_interior_binding_for(requested_schema, *source.schema())},
+              data{alternative_type_for(
+                  from_ref_interior_type_for(requested_schema, *source.schema()), TypeRole::Output,
+                  "ts.alternative.interior-ref.output")},
               notifier{*this}
         {
             rebind(source);

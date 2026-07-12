@@ -25,6 +25,7 @@ namespace hgraph
         struct TSInputChildProjection;
         [[nodiscard]] TSInputChildProjection input_child_projection(const TSDataView &parent, std::size_t index);
         void attach_owned_ts_data_parents(TSDataView root);
+        void attach_owned_ts_data_parent(TSDataView child, const TSDataView &parent, std::size_t child_id);
         void invalidate_owned_ts_data_tree(TSDataView root) noexcept;
     }
 
@@ -310,6 +311,8 @@ namespace hgraph
             const TSDataView &parent,
             std::size_t index);
         friend void detail::attach_owned_ts_data_parents(TSDataView root);
+        friend void detail::attach_owned_ts_data_parent(
+            TSDataView child, const TSDataView &parent, std::size_t child_id);
         friend void detail::invalidate_owned_ts_data_tree(TSDataView root) noexcept;
         friend class TSDProxy;
         friend class TSDDataView;

@@ -3,6 +3,7 @@
 #include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
 
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/time_series/ts_output/alternative.h>
 
 #include <fmt/format.h>
 
@@ -19,6 +20,22 @@ namespace hgraph
             return schema != nullptr &&
                    (schema->kind == TSTypeKind::TSB ||
                     (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0));
+        }
+
+        [[nodiscard]] bool slot_root(const TSValueTypeMetaData *schema) noexcept
+        {
+            return schema != nullptr && (schema->kind == TSTypeKind::TSS || schema->kind == TSTypeKind::TSD);
+        }
+
+        [[nodiscard]] std::string_view root_label(TSTypeKind kind, TypeRole role)
+        {
+            if (kind == TSTypeKind::TSS)
+                return role == TypeRole::Data ? "ts.tss.data.root" : "ts.tss.output.root";
+            if (kind == TSTypeKind::TSD)
+                return role == TypeRole::Data ? "ts.tsd.data.root" : "ts.tsd.output.root";
+            if (kind == TSTypeKind::REF)
+                return role == TypeRole::Data ? "ts.ref.data.root" : "ts.ref.output.root";
+            return {};
         }
 
         [[nodiscard]] bool migrated_root(const TSValueTypeMetaData *schema) noexcept
@@ -84,6 +101,7 @@ namespace hgraph
         plan_detail::clear_window_ts_data_contexts();
         plan_detail::clear_slot_ts_data_contexts();
         clear_tsd_proxy_contexts();
+        detail::clear_ts_output_alternative_type_cache();
     }
 
     const TSDataBinding *TSDataPlanFactory::binding_for(const TSValueTypeMetaData *schema)
@@ -122,6 +140,15 @@ namespace hgraph
             if (const auto it = data_type_cache_.find(schema); it != data_type_cache_.end()) return it->second;
         }
         const auto *plan = plan_for(schema);
+        if (slot_root(schema))
+        {
+            if (plan == nullptr) throw std::logic_error("data_type_for could not resolve keyed storage");
+            const auto &ops = plan_detail::slot_ts_data_ops(*schema, *plan, 0, TypeRole::Data);
+            const auto type = TSDataTypeRef::checked(intern_ts_type(
+                *schema, TypeRole::Data, *plan, ops, root_label(schema->kind, TypeRole::Data)));
+            std::lock_guard<std::mutex> lock(mutex_);
+            return data_type_cache_.try_emplace(schema, type).first->second;
+        }
         if (fixed_root(schema))
         {
             const auto *value = plan != nullptr ? plan->find_component("value") : nullptr;
@@ -142,7 +169,9 @@ namespace hgraph
             throw std::logic_error("data_type_for could not resolve scalar storage");
         const auto &ops = plan_detail::atomic_ts_data_ops(schema->kind, value_type, delta_type, *plan,
                                                           value->offset, tracking->offset);
-        const auto type = checked_ts_role_type(intern_ts_type(*schema, TypeRole::Data, *plan, ops),
+        const auto type = checked_ts_role_type(intern_ts_type(
+                                                   *schema, TypeRole::Data, *plan, ops,
+                                                   root_label(schema->kind, TypeRole::Data)),
                                                std::integral_constant<TypeRole, TypeRole::Data>{});
         std::lock_guard<std::mutex> lock(mutex_);
         return data_type_cache_.try_emplace(schema, type).first->second;
@@ -168,9 +197,20 @@ namespace hgraph
             std::lock_guard<std::mutex> lock(mutex_);
             return output_type_cache_.try_emplace(schema, type).first->second;
         }
+        if (slot_root(schema))
+        {
+            const auto *plan = plan_for(schema);
+            if (plan == nullptr) throw std::logic_error("output_type_for could not resolve keyed storage");
+            const auto &ops = plan_detail::slot_ts_data_ops(*schema, *plan, 0, TypeRole::Output);
+            const auto type = TSOutputTypeRef::checked(intern_ts_type(
+                *schema, TypeRole::Output, *plan, ops, root_label(schema->kind, TypeRole::Output)));
+            std::lock_guard<std::mutex> lock(mutex_);
+            return output_type_cache_.try_emplace(schema, type).first->second;
+        }
         const auto data_type = data_type_for(schema);
         const auto type = checked_ts_role_type(
-            intern_ts_type(*schema, TypeRole::Output, data_type.checked_plan(), data_type.ops_ref()),
+            intern_ts_type(*schema, TypeRole::Output, data_type.checked_plan(), data_type.ops_ref(),
+                           root_label(schema->kind, TypeRole::Output)),
             std::integral_constant<TypeRole, TypeRole::Output>{});
         std::lock_guard<std::mutex> lock(mutex_);
         return output_type_cache_.try_emplace(schema, type).first->second;
