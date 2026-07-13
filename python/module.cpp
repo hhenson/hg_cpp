@@ -213,6 +213,11 @@ namespace
         stdlib::SwitchCases cases{};
     };
 
+    struct PyDispatchCases
+    {
+        stdlib::DispatchCases cases{};
+    };
+
     /** hgraph's feedback: an unbound source port bound later to close a cycle. */
     struct PyFeedback
     {
@@ -256,6 +261,12 @@ namespace
             {
                 arg.kind         = WiringArg::Kind::Scalar;
                 arg.scalar_value = Value{nb::cast<PySwitchCases &>(object).cases};
+                arg.scalar_meta  = arg.scalar_value.schema();
+            }
+            else if (nb::isinstance<PyDispatchCases>(object))
+            {
+                arg.kind         = WiringArg::Kind::Scalar;
+                arg.scalar_value = Value{nb::cast<PyDispatchCases &>(object).cases};
                 arg.scalar_meta  = arg.scalar_value.schema();
             }
             else
@@ -3234,6 +3245,7 @@ NB_MODULE(_hgraph, m)
         nb::arg("has_kwargs") = false, nb::arg("positional_params") = nb::none());
 
     nb::class_<PySwitchCases>(m, "SwitchCases");
+    nb::class_<PyDispatchCases>(m, "DispatchCases");
     nb::class_<PyFeedback>(m, "Feedback")
         .def_prop_ro("port", [](const PyFeedback &fb) { return PyPort{fb.delegate}; })
         .def_prop_ro("bound", [](const PyFeedback &fb) { return fb.bound; });
@@ -3257,6 +3269,43 @@ NB_MODULE(_hgraph, m)
         }
         return PySwitchCases{std::move(result)};
     }, nb::arg("cases"), nb::arg("reload") = false);
+    m.def("dispatch_cases", [](nb::list entries, nb::list on, nb::object default_branch) {
+        const auto as_wired_fn = [](nb::handle branch) {
+            if (nb::isinstance<PyWiredFn>(branch))
+            {
+                return nb::cast<PyWiredFn &>(branch).fn;
+            }
+            const auto &table = wired_fn_table();
+            const auto found = table.find(nb::cast<std::string>(branch));
+            if (found == table.end())
+            {
+                throw nb::value_error("no wired-fn erasure for dispatch branch");
+            }
+            return found->second;
+        };
+
+        stdlib::DispatchCases result;
+        result.dispatch_args.clear();
+        for (nb::handle index : on)
+        {
+            result.dispatch_args.push_back(nb::cast<std::size_t>(index));
+        }
+        for (nb::handle item : entries)
+        {
+            nb::tuple pair = nb::cast<nb::tuple>(item);
+            nb::tuple types = nb::cast<nb::tuple>(pair[0]);
+            stdlib::DispatchCase entry;
+            entry.types.reserve(nb::len(types));
+            for (nb::handle type : types)
+            {
+                entry.types.push_back(nb::cast<PyValueType &>(type).meta);
+            }
+            entry.branch = as_wired_fn(pair[1]);
+            result.cases.push_back(std::move(entry));
+        }
+        if (!default_branch.is_none()) { result.default_branch = as_wired_fn(default_branch); }
+        return PyDispatchCases{std::move(result)};
+    }, nb::arg("entries"), nb::arg("on"), nb::arg("default_branch").none() = nb::none());
     m.def("wired_op", [](const std::string &name) {
         const auto &table = wired_fn_table();
         const auto  found = table.find(name);

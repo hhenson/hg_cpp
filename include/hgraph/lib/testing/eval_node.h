@@ -75,6 +75,50 @@ namespace hgraph::testing
         }
     };
 
+    /** Value-layer Bundles use their canonical erased ``Value`` as the test
+        element. They are scalar TS values at runtime, but unlike a C++ atomic
+        there is no plain payload type to construct or extract. */
+    template <typename S>
+    struct bundle_ts_harness
+    {
+        using element = Value;
+
+        static auto wire_replay(Wiring &w, const std::string &key)
+        {
+            return wire<replay, S>(w, key);
+        }
+
+        static void seed(const GlobalStateView &gs, std::string_view key,
+                         const std::vector<std::optional<Value>> &seq)
+        {
+            set_replay_deltas(gs, key, seq);
+        }
+
+        template <typename Port>
+        static void wire_record(Wiring &w, Port port, const std::string &key)
+        {
+            wire<record>(w, port, key);
+        }
+
+        static std::vector<std::optional<Value>> read(const GlobalStateView &gs,
+                                                      std::string_view key)
+        {
+            return get_recorded_deltas(gs, key);
+        }
+    };
+
+    template <fixed_string Name, typename... Fields>
+    struct ts_harness<TS<Bundle<Name, Fields...>>>
+        : bundle_ts_harness<TS<Bundle<Name, Fields...>>>
+    {
+    };
+
+    template <typename... Fields>
+    struct ts_harness<TS<UnNamedBundle<Fields...>>>
+        : bundle_ts_harness<TS<UnNamedBundle<Fields...>>>
+    {
+    };
+
     namespace eval_node_detail
     {
         // The node's wire-time parameters (In + Scalar, in eval order).

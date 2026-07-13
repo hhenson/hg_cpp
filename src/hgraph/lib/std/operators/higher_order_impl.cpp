@@ -12,6 +12,7 @@ namespace hgraph::stdlib
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsd_zero>();
 
         register_graph_overload<switch_, higher_order_impl_detail::switch_impl>();
+        register_graph_overload<dispatch_, higher_order_impl_detail::dispatch_impl>();
 
         register_graph_overload<map_, higher_order_impl_detail::map_impl_tsd>();
         register_graph_overload<map_, higher_order_impl_detail::map_lifted_tsl>();

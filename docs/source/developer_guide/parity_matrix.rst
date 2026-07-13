@@ -22,6 +22,18 @@ Operator states:
   gap class the erased-wiring suite caught for ``record``/``replay``).
 - **Missing** — no C++ counterpart at all.
 
+Parity acceptance rule
+----------------------
+
+A feature exposed through the Python package is complete only when it has an
+equivalent public C++ wiring surface and native C++ behavioural tests covering
+the same contracts.  The Python bridge may adapt Python syntax and values, but
+must delegate runtime behaviour to the C++ implementation wherever the value
+has a native representation.  A Python-only implementation is therefore a
+compatibility stopgap, not parity.  Bridge-specific behaviour with no C++
+meaning (for example dispatch over arbitrary Python object classes) must be
+identified explicitly and must not become runtime infrastructure.
+
 Operator catalogue
 ------------------
 
@@ -272,6 +284,18 @@ Wiring and node-authoring surface
      - Full Python call shapes (``__keys__``, key detection,
        ``pass_through``/``no_key``…). Deferred: dynamic-TSL multiplexing,
        non-associative reduce, sink maps, all-sink switches.
+   * - ``dispatch_``
+     - Full for Bundle values
+     - Native ``dispatch_cases`` / ``dispatch_case`` wiring builds a closed
+       leaf-type selection plan, inserts checked branch downcasts, and executes
+       branches through the two-slot ``switch_`` runtime.  Exact, transitive,
+       multi-argument, restricted-argument, default, no-match, and ambiguous
+       inheritance behaviour is covered across
+       ``tests/cpp/test_dispatch.cpp`` and
+       ``python/tests/test_dispatch_scalar.py``. CompoundScalar dispatch uses
+       this native path. Arbitrary Python object-class dispatch remains a
+       bridge-only compatibility path because those classes have no native
+       Bundle schema.
    * - ``feedback``
      - Full
      - One-cycle delay, sink/source pair.

@@ -129,6 +129,93 @@ namespace hgraph::stdlib
     {
     };
 
+    /** One closed-union runtime-dispatch branch.
+
+        ``types`` has one named Bundle schema for every selected dispatch
+        argument. A concrete runtime leaf matches when it derives from the
+        corresponding schema in every position. */
+    struct DispatchCase
+    {
+        std::vector<const ValueTypeMetaData *> types{};
+        WiredFn                                branch{};
+
+        [[nodiscard]] bool operator==(const DispatchCase &other) const
+        {
+            return types == other.types && branch == other.branch;
+        }
+    };
+
+    /**
+     * Closed case table for native C++ ``dispatch_``.
+     *
+     * ``dispatch_args`` contains indexes into the flattened time-series call
+     * arguments (positional arguments first, followed by named arguments in
+     * call order). It defaults to the first argument. All Bundle descendants
+     * must be registered before this value is wired so the selector can freeze
+     * an allocation-free lookup table for the graph.
+     */
+    struct DispatchCases
+    {
+        std::vector<DispatchCase> cases{};
+        std::vector<std::size_t>  dispatch_args{0};
+        std::optional<WiredFn>    default_branch{};
+
+        [[nodiscard]] DispatchCases &&on(std::initializer_list<std::size_t> indexes) &&
+        {
+            dispatch_args.assign(indexes.begin(), indexes.end());
+            return std::move(*this);
+        }
+
+        [[nodiscard]] bool operator==(const DispatchCases &other) const
+        {
+            return cases == other.cases && dispatch_args == other.dispatch_args &&
+                   default_branch == other.default_branch;
+        }
+    };
+
+    [[nodiscard]] inline DispatchCase dispatch_case(
+        std::initializer_list<const ValueTypeMetaData *> types, WiredFn branch)
+    {
+        return DispatchCase{
+            .types = std::vector<const ValueTypeMetaData *>{types},
+            .branch = branch,
+        };
+    }
+
+    [[nodiscard]] inline DispatchCase dispatch_case(
+        const ValueTypeMetaData *type, WiredFn branch)
+    {
+        return dispatch_case({type}, branch);
+    }
+
+    [[nodiscard]] inline DispatchCases dispatch_cases(std::initializer_list<DispatchCase> entries)
+    {
+        return DispatchCases{.cases = std::vector<DispatchCase>{entries}};
+    }
+
+    [[nodiscard]] inline DispatchCases dispatch_cases(std::initializer_list<DispatchCase> entries,
+                                                       WiredFn default_branch)
+    {
+        return DispatchCases{
+            .cases = std::vector<DispatchCase>{entries},
+            .default_branch = default_branch,
+        };
+    }
+
+    /**
+     * ``dispatch_`` — select a child graph from the active concrete Bundle
+     * leaf types of one or more ``TS[Bundle]`` arguments. The small native
+     * selector feeds the existing ``switch_`` runtime; branch arguments are
+     * checked-downcast to their declared case types inside the child graph.
+     */
+    struct dispatch_ : Operator<"dispatch_",
+                                Scalar<"cases", DispatchCases>,
+                                VarIn<"ts", TsVar<"TS">>,
+                                VarKwIn<"kwargs">,
+                                Out<TsVar<"O">>>
+    {
+    };
+
     /**
      * ``map_`` — apply ``func`` element-wise over a multiplexed collection,
      * one child graph instance **per key**. This is the current C++ subset of
@@ -234,6 +321,11 @@ namespace hgraph::static_schema_detail
         static constexpr std::string_view value{"switch_cases"};
     };
     template <>
+    struct scalar_name<hgraph::stdlib::DispatchCases>
+    {
+        static constexpr std::string_view value{"dispatch_cases"};
+    };
+    template <>
     struct scalar_name<hgraph::stdlib::MapCallConfig>
     {
         static constexpr std::string_view value{"map_config"};
@@ -268,6 +360,32 @@ struct std::hash<hgraph::stdlib::SwitchCases>
         }
         if (cases.default_branch.has_value()) { combine(std::hash<hgraph::WiredFn>{}(*cases.default_branch)); }
         combine(cases.reload_on_ticked ? 1 : 0);
+        return h;
+    }
+};
+
+template <>
+struct std::hash<hgraph::stdlib::DispatchCases>
+{
+    [[nodiscard]] std::size_t operator()(const hgraph::stdlib::DispatchCases &cases) const noexcept
+    {
+        std::size_t h = cases.cases.size();
+        const auto combine = [&h](std::size_t v) {
+            h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+        };
+        for (const auto &entry : cases.cases)
+        {
+            for (const auto *type : entry.types)
+            {
+                combine(std::hash<const void *>{}(type));
+            }
+            combine(std::hash<hgraph::WiredFn>{}(entry.branch));
+        }
+        for (const std::size_t index : cases.dispatch_args) { combine(index); }
+        if (cases.default_branch.has_value())
+        {
+            combine(std::hash<hgraph::WiredFn>{}(*cases.default_branch));
+        }
         return h;
     }
 };

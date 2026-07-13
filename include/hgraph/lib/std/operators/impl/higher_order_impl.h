@@ -15,8 +15,10 @@
 #include <hgraph/types/wired_fn.h>
 #include <hgraph/util/scope.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -583,6 +585,14 @@ namespace hgraph::stdlib
         {
         };
 
+        struct dispatch_switch_node_tag
+        {
+        };
+
+        struct dispatch_key_node_tag
+        {
+        };
+
         [[nodiscard]] inline const TSValueTypeMetaData *switch_branch_output_child_schema(
             const TSValueTypeMetaData &schema,
             std::size_t index)
@@ -830,6 +840,46 @@ namespace hgraph::stdlib
             return spec;
         }
 
+        /** Add the already-compiled branch set through the one switch runtime. */
+        [[nodiscard]] inline WiringPortRef add_compiled_switch(
+            Wiring &w, WiringPortRef key, std::vector<WiringPortRef> ts,
+            SwitchNodeSpec spec, const TSValueTypeMetaData *output_schema,
+            Value config, std::type_index definition, const char *display_name)
+        {
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+            fields.reserve(1 + ts.size());
+            fields.emplace_back("key", key.schema);
+            for (std::size_t i = 0; i < ts.size(); ++i)
+            {
+                fields.emplace_back(std::to_string(i), ts[i].schema);
+            }
+            const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
+
+            std::vector<WiringPortRef> inputs;
+            inputs.reserve(1 + ts.size());
+            inputs.push_back(std::move(key));
+            for (WiringPortRef &port : ts) { inputs.push_back(std::move(port)); }
+
+            WiringNodeSchema node_schema;
+            node_schema.input  = input_schema;
+            node_schema.output = output_schema;
+
+            return w.add_node(
+                definition, node_schema,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()}, std::move(config),
+                [&]() {
+                    NodeTypeMetaData meta;
+                    meta.display_name  = display_name;
+                    meta.input_schema  = input_schema;
+                    meta.output_schema = output_schema;
+
+                    NodeBuilder builder = switch_node(std::move(meta), std::move(spec));
+                    builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                        input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                    return builder;
+                });
+        }
+
         /** The shared switch wiring: compile every branch, then add one switch node. */
         [[nodiscard]] inline WiringPortRef wire_switch(Wiring &w, WiringPortRef key, const SwitchCases &cases,
                                                        std::vector<WiringPortRef> ts,
@@ -887,40 +937,9 @@ namespace hgraph::stdlib
                 configure_switch_branch_output(*spec.default_branch, output_schema);
             }
 
-            // Outer node inputs: [key, ts...].
-            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
-            fields.reserve(1 + ts.size());
-            fields.emplace_back("key", key.schema);
-            for (std::size_t i = 0; i < ts_schemas.size(); ++i)
-            {
-                fields.emplace_back(std::to_string(i), ts_schemas[i]);
-            }
-            const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
-
-            std::vector<WiringPortRef> inputs;
-            inputs.reserve(1 + ts.size());
-            inputs.push_back(std::move(key));
-            for (WiringPortRef &port : ts) { inputs.push_back(std::move(port)); }
-
-            WiringNodeSchema node_schema;
-            node_schema.input  = input_schema;
-            node_schema.output = output_schema;
-
-            WiringPortRef out = w.add_node(
-                std::type_index(typeid(switch_node_tag)), node_schema,
-                std::span<const WiringPortRef>{inputs.data(), inputs.size()}, Value{cases},
-                [&]() {
-                    NodeTypeMetaData meta;
-                    meta.display_name  = "switch_";
-                    meta.input_schema  = input_schema;
-                    meta.output_schema = output_schema;
-
-                    NodeBuilder builder = switch_node(std::move(meta), std::move(spec));
-                    builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-                        input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
-                    return builder;
-                });
-            return out;
+            return add_compiled_switch(
+                w, std::move(key), std::move(ts), std::move(spec), output_schema,
+                Value{cases}, std::type_index(typeid(switch_node_tag)), "switch_");
         }
 
         /**
@@ -988,6 +1007,552 @@ namespace hgraph::stdlib
                                    std::vector<WiringPortRef>{ts.begin(), ts.end()},
                                    std::vector<std::pair<std::string, WiringPortRef>>{kwargs.begin(),
                                                                                       kwargs.end()});
+            }
+        };
+
+        struct DispatchSelectionPlan
+        {
+            static constexpr Int no_match  = Int{-1};
+            static constexpr Int ambiguous = Int{-2};
+
+            std::vector<std::vector<const ValueTypeMetaData *>> alternatives{};
+            std::vector<Int>                                  selected_case{};
+            bool                                              has_default{false};
+        };
+
+        [[nodiscard]] inline bool dispatch_case_more_specific(
+            const DispatchCase &candidate, const DispatchCase &other)
+        {
+            bool strict = false;
+            for (std::size_t i = 0; i < candidate.types.size(); ++i)
+            {
+                if (!TypeRegistry::instance().bundle_is_a(candidate.types[i], other.types[i]))
+                {
+                    return false;
+                }
+                strict = strict || candidate.types[i] != other.types[i];
+            }
+            return strict;
+        }
+
+        [[nodiscard]] inline DispatchSelectionPlan make_dispatch_selection_plan(
+            const DispatchCases &cases,
+            std::span<const TSValueTypeMetaData *const> slot_schemas)
+        {
+            if (cases.cases.empty() && !cases.default_branch.has_value())
+            {
+                throw std::invalid_argument("dispatch_: requires at least one case");
+            }
+            if (cases.dispatch_args.empty())
+            {
+                throw std::invalid_argument("dispatch_: at least one dispatch argument is required");
+            }
+
+            DispatchSelectionPlan plan;
+            plan.has_default = cases.default_branch.has_value();
+            plan.alternatives.reserve(cases.dispatch_args.size());
+
+            std::vector<bool> selected_slots(slot_schemas.size(), false);
+            std::size_t table_size = 1;
+            for (const std::size_t slot : cases.dispatch_args)
+            {
+                if (slot >= slot_schemas.size())
+                {
+                    throw std::out_of_range("dispatch_: dispatch argument index is out of range");
+                }
+                if (selected_slots[slot])
+                {
+                    throw std::invalid_argument("dispatch_: dispatch argument indexes must be unique");
+                }
+                selected_slots[slot] = true;
+
+                const auto *schema = slot_schemas[slot];
+                const auto *declared = schema != nullptr && schema->kind == TSTypeKind::TS
+                                           ? schema->value_schema
+                                           : nullptr;
+                if (declared == nullptr || !declared->is_named_bundle())
+                {
+                    throw std::invalid_argument(
+                        "dispatch_: selected arguments must be scalar TS values over named Bundles");
+                }
+
+                auto alternatives = TypeRegistry::instance().bundle_descendants(declared);
+                if (alternatives.empty())
+                {
+                    throw std::invalid_argument(
+                        "dispatch_: a selected Bundle has no concrete alternatives");
+                }
+                if (table_size > std::numeric_limits<std::size_t>::max() / alternatives.size())
+                {
+                    throw std::length_error("dispatch_: closed alternative product is too large");
+                }
+                table_size *= alternatives.size();
+                plan.alternatives.push_back(std::move(alternatives));
+            }
+
+            for (const DispatchCase &entry : cases.cases)
+            {
+                if (!entry.branch.valid())
+                {
+                    throw std::invalid_argument(
+                        "dispatch_: every case must contain a wirable function");
+                }
+                if (entry.types.size() != cases.dispatch_args.size())
+                {
+                    throw std::invalid_argument(
+                        "dispatch_: every case must declare one type per dispatch argument");
+                }
+                for (std::size_t i = 0; i < entry.types.size(); ++i)
+                {
+                    const auto *target = entry.types[i];
+                    const auto *declared = slot_schemas[cases.dispatch_args[i]]->value_schema;
+                    if (target == nullptr || !target->is_named_bundle() ||
+                        !TypeRegistry::instance().bundle_is_a(target, declared))
+                    {
+                        throw std::invalid_argument(
+                            "dispatch_: case types must derive from their selected argument type");
+                    }
+                }
+            }
+            if (cases.default_branch.has_value() && !cases.default_branch->valid())
+            {
+                throw std::invalid_argument(
+                    "dispatch_: the default case must contain a wirable function");
+            }
+
+            const std::size_t case_count = cases.cases.size();
+            std::vector<bool> more_specific(case_count * case_count, false);
+            for (std::size_t lhs = 0; lhs < case_count; ++lhs)
+            {
+                for (std::size_t rhs = 0; rhs < case_count; ++rhs)
+                {
+                    if (lhs != rhs)
+                    {
+                        more_specific[lhs * case_count + rhs] =
+                            dispatch_case_more_specific(cases.cases[lhs], cases.cases[rhs]);
+                    }
+                }
+            }
+
+            plan.selected_case.resize(table_size, DispatchSelectionPlan::no_match);
+            std::vector<const ValueTypeMetaData *> actual(cases.dispatch_args.size());
+            std::vector<bool> matches(case_count, false);
+            for (std::size_t flat = 0; flat < table_size; ++flat)
+            {
+                std::size_t remaining = flat;
+                for (std::size_t i = plan.alternatives.size(); i-- > 0;)
+                {
+                    const auto &dimension = plan.alternatives[i];
+                    actual[i] = dimension[remaining % dimension.size()];
+                    remaining /= dimension.size();
+                }
+
+                std::fill(matches.begin(), matches.end(), false);
+                for (std::size_t c = 0; c < case_count; ++c)
+                {
+                    matches[c] = true;
+                    for (std::size_t i = 0; i < actual.size(); ++i)
+                    {
+                        if (!TypeRegistry::instance().bundle_is_a(actual[i], cases.cases[c].types[i]))
+                        {
+                            matches[c] = false;
+                            break;
+                        }
+                    }
+                }
+
+                std::size_t winner = case_count;
+                std::size_t winner_count = 0;
+                for (std::size_t c = 0; c < case_count; ++c)
+                {
+                    if (!matches[c]) { continue; }
+                    bool dominates = true;
+                    for (std::size_t other = 0; other < case_count; ++other)
+                    {
+                        if (c != other && matches[other] &&
+                            !more_specific[c * case_count + other])
+                        {
+                            dominates = false;
+                            break;
+                        }
+                    }
+                    if (dominates)
+                    {
+                        winner = c;
+                        ++winner_count;
+                    }
+                }
+                if (winner_count == 1)
+                {
+                    plan.selected_case[flat] = static_cast<Int>(winner);
+                }
+                else if (std::ranges::any_of(matches, [](bool value) { return value; }))
+                {
+                    plan.selected_case[flat] = DispatchSelectionPlan::ambiguous;
+                }
+            }
+            return plan;
+        }
+
+        [[nodiscard]] inline WiringPortRef wire_dispatch_key(
+            Wiring &w, const DispatchCases &cases,
+            std::span<const WiringPortRef> slots)
+        {
+            std::vector<WiringPortRef> selected_inputs;
+            std::vector<const TSValueTypeMetaData *> slot_schemas;
+            selected_inputs.reserve(cases.dispatch_args.size());
+            slot_schemas.reserve(slots.size());
+            for (const WiringPortRef &slot : slots) { slot_schemas.push_back(slot.schema); }
+            for (const std::size_t slot : cases.dispatch_args)
+            {
+                if (slot >= slots.size())
+                {
+                    throw std::out_of_range("dispatch_: dispatch argument index is out of range");
+                }
+                selected_inputs.push_back(slots[slot]);
+            }
+
+            DispatchSelectionPlan plan = make_dispatch_selection_plan(
+                cases, {slot_schemas.data(), slot_schemas.size()});
+            auto &registry = TypeRegistry::instance();
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+            fields.reserve(selected_inputs.size());
+            for (std::size_t i = 0; i < selected_inputs.size(); ++i)
+            {
+                fields.emplace_back(std::to_string(i), selected_inputs[i].schema);
+            }
+            const auto *input_schema = registry.un_named_tsb(fields);
+            const auto *output_schema = registry.ts(scalar_descriptor<Int>::value_meta());
+
+            NodeTypeMetaData node_schema;
+            node_schema.display_name = "dispatch_key";
+            node_schema.input_schema = input_schema;
+            node_schema.output_schema = output_schema;
+            node_schema.node_kind = NodeKind::Compute;
+            std::vector<std::size_t> required(selected_inputs.size());
+            for (std::size_t i = 0; i < required.size(); ++i) { required[i] = i; }
+            node_schema.valid_inputs = std::move(required);
+
+            NodeCallbacks callbacks;
+            callbacks.evaluate = [plan = std::move(plan)](const NodeView &view,
+                                                          DateTime evaluation_time) {
+                auto input = view.input(evaluation_time);
+                auto bundle = input.as_bundle();
+                std::size_t flat = 0;
+                for (std::size_t i = 0; i < plan.alternatives.size(); ++i)
+                {
+                    const auto concrete = bundle[i].value().concrete();
+                    const auto *actual = concrete.schema();
+                    const auto &dimension = plan.alternatives[i];
+                    const auto found = std::ranges::find(dimension, actual);
+                    if (found == dimension.end())
+                    {
+                        throw std::runtime_error(
+                            "dispatch_: active Bundle leaf was not visible when the dispatch plan was wired");
+                    }
+                    flat = flat * dimension.size() +
+                           static_cast<std::size_t>(std::distance(dimension.begin(), found));
+                }
+
+                const Int selected = plan.selected_case[flat];
+                if (selected == DispatchSelectionPlan::ambiguous)
+                {
+                    throw std::invalid_argument(
+                        "Ambiguous dispatch: active Bundle types match multiple incomparable cases");
+                }
+                if (selected == DispatchSelectionPlan::no_match && !plan.has_default)
+                {
+                    throw std::runtime_error(
+                        "No suitable overload: no dispatch case matches the active Bundle types");
+                }
+
+                auto output = view.output(evaluation_time);
+                if (!output.valid() || output.value().checked_as<Int>() != selected)
+                {
+                    auto mutation = output.begin_mutation(evaluation_time);
+                    Value value{selected};
+                    if (!mutation.move_value_from(std::move(value)))
+                    {
+                        throw std::logic_error("dispatch_: failed to publish the selected case");
+                    }
+                }
+            };
+
+            NodeBuilder builder = NodeBuilder::native(std::move(node_schema), std::move(callbacks));
+            builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                input_schema,
+                std::span<const WiringPortRef>{selected_inputs.data(), selected_inputs.size()}));
+            return w.add_node(
+                std::type_index(typeid(dispatch_key_node_tag)), std::move(builder),
+                std::span<const WiringPortRef>{selected_inputs.data(), selected_inputs.size()},
+                Value{cases});
+        }
+
+        [[nodiscard]] inline WiringPortRef wire_checked_downcast(
+            Wiring &w, WiringPortRef source, const TSValueTypeMetaData *target)
+        {
+            WiringArg arg;
+            arg.kind = WiringArg::Kind::TimeSeries;
+            arg.port = source;
+            std::array<WiringArg, 1> args{std::move(arg)};
+            ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
+                "downcast_",
+                std::span<const WiringArg>{args.data(), args.size()}, true, target);
+            OperatorWireResult result = resolved.impl->wire(
+                w, resolved.map, resolved.args, resolved.kwargs);
+            if (!result.has_output)
+            {
+                throw std::logic_error("dispatch_: checked downcast produced no output");
+            }
+            return result.output.erased();
+        }
+
+        [[nodiscard]] inline SingleNestedGraphNodeSpec compile_dispatch_branch(
+            const WiredFn &branch,
+            std::span<const ValueTypeMetaData *const> case_types,
+            std::span<const std::size_t> dispatch_slots,
+            std::span<const TSValueTypeMetaData *const> slot_schemas,
+            std::size_t positional_count,
+            std::span<const std::pair<std::string, std::size_t>> named_slots,
+            const TSValueTypeMetaData *&output_schema)
+        {
+            if (!branch.valid())
+            {
+                throw std::invalid_argument(
+                    "dispatch_: every branch must be a wirable function (fn<X>())");
+            }
+            if (!case_types.empty() && case_types.size() != dispatch_slots.size())
+            {
+                throw std::invalid_argument(
+                    "dispatch_: branch type count does not match the selected arguments");
+            }
+
+            std::vector<std::size_t> positional_slots(positional_count);
+            for (std::size_t i = 0; i < positional_count; ++i) { positional_slots[i] = i; }
+            const auto bound_slots = bind_wired_fn_args<std::size_t>(
+                "dispatch_", branch,
+                {positional_slots.data(), positional_slots.size()}, named_slots, "");
+
+            Wiring child{WiringKind::SubGraph};
+            std::vector<const TSValueTypeMetaData *> boundary_schemas;
+            std::vector<WiringPortRef> branch_ports;
+            boundary_schemas.reserve(bound_slots.ordered.size());
+            branch_ports.reserve(bound_slots.ordered.size());
+            for (std::size_t ordinal = 0; ordinal < bound_slots.ordered.size(); ++ordinal)
+            {
+                const std::size_t slot = bound_slots.ordered[ordinal];
+                const auto *schema = slot_schemas[slot];
+                boundary_schemas.push_back(schema);
+                WiringPortRef port = WiringPortRef::boundary_source(ordinal, {}, schema);
+                for (std::size_t selected = 0; selected < dispatch_slots.size(); ++selected)
+                {
+                    if (dispatch_slots[selected] != slot || case_types.empty()) { continue; }
+                    const auto *target = TypeRegistry::instance().ts(case_types[selected]);
+                    if (target != schema)
+                    {
+                        port = wire_checked_downcast(child, std::move(port), target);
+                    }
+                    break;
+                }
+                branch_ports.push_back(std::move(port));
+            }
+
+            WiringPortRef branch_output = branch.wire(
+                child, {branch_ports.data(), branch_ports.size()});
+            CompiledSubGraph compiled = std::move(child).finish_subgraph(
+                branch_output, std::move(boundary_schemas));
+            if (!compiled.captured_inputs.empty())
+            {
+                throw std::invalid_argument(
+                    "dispatch_: a branch captured outer ports");
+            }
+            if (compiled.output_schema == nullptr)
+            {
+                throw std::invalid_argument("dispatch_: every branch must produce an output");
+            }
+            if (output_schema == nullptr) { output_schema = compiled.output_schema; }
+            else if (!time_series_schema_equivalent(output_schema, compiled.output_schema))
+            {
+                auto &registry = TypeRegistry::instance();
+                if (time_series_schema_equivalent(registry.dereference(output_schema),
+                                                  registry.dereference(compiled.output_schema)))
+                {
+                    if (compiled.output_schema->kind == TSTypeKind::REF)
+                    {
+                        output_schema = compiled.output_schema;
+                    }
+                }
+                else
+                {
+                    throw std::invalid_argument(
+                        "dispatch_: all branches must produce the same output schema");
+                }
+            }
+
+            SingleNestedGraphNodeSpec spec;
+            spec.graph_builder = std::move(compiled.graph_builder);
+            spec.input_bindings = std::move(compiled.input_bindings);
+            spec.output_binding = compiled.output_binding;
+            const auto retarget_boundary_path = [&](std::vector<std::size_t> &path) {
+                if (path.empty())
+                {
+                    throw std::logic_error("dispatch_: boundary binding path is empty");
+                }
+                const std::size_t ordinal = path[0];
+                if (ordinal >= bound_slots.ordered.size())
+                {
+                    throw std::logic_error(
+                        "dispatch_: boundary binding ordinal is not mapped to an outer input");
+                }
+                path[0] = 1 + bound_slots.ordered[ordinal];
+            };
+            for (NestedGraphInputBinding &binding : spec.input_bindings)
+            {
+                retarget_boundary_path(binding.source_path);
+            }
+            if (spec.output_binding.has_value() &&
+                spec.output_binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
+            {
+                retarget_boundary_path(spec.output_binding->parent_source_path);
+                ResolutionMap resolution;
+                resolution.bind_ts("S", compiled.output_schema);
+                NodeBuilder terminal;
+                terminal.implementation<pass_through_node>(resolution);
+                const std::size_t terminal_index = spec.graph_builder.node_count();
+                spec.graph_builder.add_node(std::move(terminal));
+                spec.input_bindings.push_back(NestedGraphInputBinding{
+                    .source_path = spec.output_binding->parent_source_path,
+                    .target = NestedGraphEndpoint{.node = terminal_index, .path = {0}},
+                });
+                spec.output_binding = NestedGraphOutputBinding{
+                    .source = NestedGraphEndpoint{.node = terminal_index},
+                };
+            }
+            return spec;
+        }
+
+        [[nodiscard]] inline WiringPortRef wire_dispatch(
+            Wiring &w, const DispatchCases &cases, std::vector<WiringPortRef> ts,
+            std::vector<std::pair<std::string, WiringPortRef>> kwargs)
+        {
+            const std::size_t positional_count = ts.size();
+            std::vector<std::pair<std::string, std::size_t>> named_slots;
+            named_slots.reserve(kwargs.size());
+            for (std::size_t i = 0; i < kwargs.size(); ++i)
+            {
+                named_slots.emplace_back(kwargs[i].first, positional_count + i);
+                ts.push_back(kwargs[i].second);
+            }
+
+            std::vector<const TSValueTypeMetaData *> ts_schemas;
+            ts_schemas.reserve(ts.size());
+            for (const WiringPortRef &port : ts) { ts_schemas.push_back(port.schema); }
+            WiringPortRef key = wire_dispatch_key(
+                w, cases, std::span<const WiringPortRef>{ts.data(), ts.size()});
+
+            const TSValueTypeMetaData *output_schema = nullptr;
+            SwitchNodeSpec spec;
+            spec.branches.reserve(cases.cases.size());
+            for (std::size_t i = 0; i < cases.cases.size(); ++i)
+            {
+                const DispatchCase &entry = cases.cases[i];
+                spec.branches.push_back(SwitchBranch{
+                    .key = Value{static_cast<Int>(i)},
+                    .spec = compile_dispatch_branch(
+                        entry.branch, {entry.types.data(), entry.types.size()},
+                        {cases.dispatch_args.data(), cases.dispatch_args.size()},
+                        {ts_schemas.data(), ts_schemas.size()}, positional_count,
+                        {named_slots.data(), named_slots.size()}, output_schema),
+                });
+            }
+            if (cases.default_branch.has_value())
+            {
+                spec.default_branch = compile_dispatch_branch(
+                    *cases.default_branch, {},
+                    {cases.dispatch_args.data(), cases.dispatch_args.size()},
+                    {ts_schemas.data(), ts_schemas.size()}, positional_count,
+                    {named_slots.data(), named_slots.size()}, output_schema);
+            }
+            for (SwitchBranch &branch : spec.branches)
+            {
+                configure_switch_branch_output(branch.spec, output_schema);
+            }
+            if (spec.default_branch.has_value())
+            {
+                configure_switch_branch_output(*spec.default_branch, output_schema);
+            }
+            return add_compiled_switch(
+                w, std::move(key), std::move(ts), std::move(spec), output_schema,
+                Value{cases}, std::type_index(typeid(dispatch_switch_node_tag)), "dispatch_");
+        }
+
+        inline void resolve_dispatch_output(ResolutionMap &resolution,
+                                            OperatorCallContext context)
+        {
+            if (resolution.find_ts("__out__") != nullptr) { return; }
+            const DispatchCases *cases = context.scalar_as<DispatchCases>("cases");
+            if (cases == nullptr) { return; }
+
+            const DispatchCase *entry = !cases->cases.empty() ? &cases->cases.front() : nullptr;
+            const WiredFn *branch = entry != nullptr
+                                        ? &entry->branch
+                                        : (cases->default_branch.has_value()
+                                               ? &*cases->default_branch
+                                               : nullptr);
+            if (branch == nullptr) { return; }
+
+            std::vector<const TSValueTypeMetaData *> slot_schemas;
+            for (std::size_t i = 1; i < context.args.size(); ++i)
+            {
+                if (context.args[i].kind != WiringArg::Kind::TimeSeries) { return; }
+                slot_schemas.push_back(context.args[i].port.schema);
+            }
+            const std::size_t positional_count = slot_schemas.size();
+            std::vector<std::pair<std::string, std::size_t>> named_slots;
+            for (const auto &[name, kw_arg] : context.kwargs)
+            {
+                if (kw_arg.kind != WiringArg::Kind::TimeSeries) { continue; }
+                named_slots.emplace_back(name, slot_schemas.size());
+                slot_schemas.push_back(kw_arg.port.schema);
+            }
+
+            (void)fallback_on_exception(false, [&] {
+                (void)make_dispatch_selection_plan(
+                    *cases, {slot_schemas.data(), slot_schemas.size()});
+                const TSValueTypeMetaData *output_schema = nullptr;
+                const auto types = entry != nullptr
+                                       ? std::span<const ValueTypeMetaData *const>{
+                                             entry->types.data(), entry->types.size()}
+                                       : std::span<const ValueTypeMetaData *const>{};
+                (void)compile_dispatch_branch(
+                    *branch, types,
+                    {cases->dispatch_args.data(), cases->dispatch_args.size()},
+                    {slot_schemas.data(), slot_schemas.size()}, positional_count,
+                    {named_slots.data(), named_slots.size()}, output_schema);
+                bind_graph_output(resolution, output_schema, "O");
+                return true;
+            });
+        }
+
+        struct dispatch_impl
+        {
+            static constexpr auto name = "dispatch_impl";
+
+            static void resolve_default_types(ResolutionMap &resolution,
+                                              OperatorCallContext context)
+            {
+                resolve_dispatch_output(resolution, context);
+            }
+
+            static WiringPortRef compose(Wiring &w,
+                                         Scalar<"cases", DispatchCases> cases,
+                                         VarIn<"ts", TsVar<"TS">> ts,
+                                         VarKwIn<"kwargs"> kwargs)
+            {
+                return wire_dispatch(
+                    w, cases.value(), std::vector<WiringPortRef>{ts.begin(), ts.end()},
+                    std::vector<std::pair<std::string, WiringPortRef>>{
+                        kwargs.begin(), kwargs.end()});
             }
         };
     }  // namespace higher_order_impl_detail

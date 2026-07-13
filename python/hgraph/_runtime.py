@@ -1945,6 +1945,26 @@ def dispatch_(op, *args, __on__=None, **kwargs):
         raise WiringError(f"no dispatchable overloads found for {op.__name__}")
 
     names = list(dispatch_params)
+    compound_dispatch = all(
+        getattr(sig.parameters[name].annotation, "_cs_class", None) is not None
+        for name in names
+    )
+    if compound_dispatch:
+        from ._types import _value_type
+
+        port_names = list(port_kwargs)
+        entries = []
+        for key, branch in dispatch_map.items():
+            classes = key if isinstance(key, tuple) else (key,)
+            entries.append((tuple(_value_type(cls) for cls in classes), _as_wired(branch)))
+        erased = _hgraph.dispatch_cases(
+            entries, [port_names.index(name) for name in names]
+        )
+        return wire("dispatch_", erased, **port_kwargs)
+
+    # Python-object class dispatch has no native Bundle schema. Keep its
+    # Python type key utility while CompoundScalar dispatch uses the native
+    # closed-union selector above.
     if len(names) == 1:
         key = _dispatch_key_node()(wire("type_", call_kwargs[names[0]]),
                                    tuple(dispatch_map.keys()))
