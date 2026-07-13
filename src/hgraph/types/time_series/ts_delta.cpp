@@ -30,17 +30,11 @@ namespace hgraph
             return binding;
         }
 
-        [[nodiscard]] const TSDataBinding &ts_binding_for(const TSValueTypeMetaData *schema, const char *fn)
+        [[nodiscard]] TSRoleTypeRef ts_type_for(const TSValueTypeMetaData *schema, const char *fn)
         {
-            const auto *binding = TSDataPlanFactory::instance().legacy_binding_for(schema);
-            if (binding == nullptr) { throw std::logic_error(fmt::format("{}: unresolved TSData binding", fn)); }
-            return *binding;
-        }
-
-        [[nodiscard]] const TSDataBinding &require_binding(const TSDataBinding *binding, const char *fn)
-        {
-            if (binding == nullptr) { throw std::logic_error(fmt::format("{}: view has no TSData binding", fn)); }
-            return *binding;
+            const auto type = TSDataPlanFactory::instance().data_type_for(schema);
+            if (!type) { throw std::logic_error(fmt::format("{}: unresolved TSData type", fn)); }
+            return type.as_role();
         }
 
         [[nodiscard]] const TSValueTypeMetaData &require_schema(const TSValueTypeMetaData *schema, const char *fn)
@@ -49,9 +43,9 @@ namespace hgraph
             return *schema;
         }
 
-        void initialize_tsb_delta_defaults(const TSDataBinding &binding, BundleBuilder &builder)
+        void initialize_tsb_delta_defaults(TSRoleTypeRef type, BundleBuilder &builder)
         {
-            const auto *schema = binding.type_meta;
+            const auto *schema = type.schema();
             if (schema == nullptr || schema->kind != TSTypeKind::TSB)
             {
                 throw std::logic_error("empty_delta_tsb: binding is not a TSB schema");
@@ -62,9 +56,9 @@ namespace hgraph
                 if (child_schema == nullptr) { throw std::logic_error("empty_delta_tsb: TSB field schema is null"); }
                 if (!child_schema->is_collection()) { continue; }
 
-                const TSDataBinding &child_binding = ts_binding_for(child_schema, "empty_delta_tsb");
-                const auto          &child_ops     = child_binding.ops_ref();
-                Value                empty         = child_ops.empty_delta_impl(child_binding);
+                const auto child_type = ts_type_for(child_schema, "empty_delta_tsb");
+                const auto &child_ops = child_type.ops_ref();
+                Value empty = child_ops.empty_delta_impl(child_type);
                 builder.set(index, std::move(empty));
             }
         }
@@ -287,9 +281,9 @@ namespace hgraph
 
     namespace ts_data_detail
     {
-        [[nodiscard]] Value empty_delta_atomic(const TSDataBinding &binding)
+        [[nodiscard]] Value empty_delta_atomic(const TSRoleTypeRef &binding)
         {
-            const auto *schema = binding.type_meta;
+            const auto *schema = binding.schema();
             if (schema == nullptr || schema->delta_value_schema == nullptr)
             {
                 throw std::logic_error("empty_delta_atomic: schema is not resolved");
@@ -297,9 +291,9 @@ namespace hgraph
             return Value{*schema->delta_value_schema};
         }
 
-        [[nodiscard]] Value empty_delta_tss(const TSDataBinding &binding)
+        [[nodiscard]] Value empty_delta_tss(const TSRoleTypeRef &binding)
         {
-            const auto *schema = binding.type_meta;
+            const auto *schema = binding.schema();
             if (schema == nullptr || schema->value_schema == nullptr || schema->delta_value_schema == nullptr)
             {
                 throw std::logic_error("empty_delta_tss: schema is not resolved");
@@ -315,9 +309,9 @@ namespace hgraph
             return bundle.build();
         }
 
-        [[nodiscard]] Value empty_delta_tsd(const TSDataBinding &binding)
+        [[nodiscard]] Value empty_delta_tsd(const TSRoleTypeRef &binding)
         {
-            const auto *schema = binding.type_meta;
+            const auto *schema = binding.schema();
             if (schema == nullptr || schema->delta_value_schema == nullptr || schema->element_ts() == nullptr)
             {
                 throw std::logic_error("empty_delta_tsd: schema is not resolved");
@@ -334,9 +328,9 @@ namespace hgraph
             return bundle.build();
         }
 
-        [[nodiscard]] Value empty_delta_tsl(const TSDataBinding &binding)
+        [[nodiscard]] Value empty_delta_tsl(const TSRoleTypeRef &binding)
         {
-            const auto *schema = binding.type_meta;
+            const auto *schema = binding.schema();
             if (schema == nullptr || schema->delta_value_schema == nullptr)
             {
                 throw std::logic_error("empty_delta_tsl: schema is not resolved");
@@ -349,9 +343,9 @@ namespace hgraph
             return builder.build();
         }
 
-        [[nodiscard]] Value empty_delta_tsb(const TSDataBinding &binding)
+        [[nodiscard]] Value empty_delta_tsb(const TSRoleTypeRef &binding)
         {
-            const auto *schema = binding.type_meta;
+            const auto *schema = binding.schema();
             if (schema == nullptr || schema->delta_value_schema == nullptr)
             {
                 throw std::logic_error("empty_delta_tsb: schema is not resolved");
@@ -447,10 +441,10 @@ namespace hgraph
 
         Value capture_delta_tsb(const TSInputView &in)
         {
-            const auto &binding = ts_binding_for(&require_schema(in.schema(), "capture_delta"), "capture_delta");
-            const auto *schema  = binding.type_meta;
+            const auto type = ts_type_for(&require_schema(in.schema(), "capture_delta"), "capture_delta");
+            const auto *schema = type.schema();
             BundleBuilder builder{binding_for(schema->delta_value_schema, "capture_delta")};
-            initialize_tsb_delta_defaults(binding, builder);
+            initialize_tsb_delta_defaults(type, builder);
             auto          bundle = in.as_bundle();
             for (std::size_t index = 0; index < bundle.size(); ++index)
             {
@@ -594,25 +588,17 @@ namespace hgraph
     Value capture_delta(const TSInputView &in)
     {
         if (const auto type = in.type_ref(); type) return type.ops_ref().capture_delta_impl(in);
-        if (const auto *binding = in.binding(); binding != nullptr)
-        {
-            return binding->ops_ref().capture_delta_impl(in);
-        }
         const auto &data = in.data_view();
-        if (data.valid() && data.storage_type().record_backed())
-        {
-            return data.ops().capture_delta_impl(in);
-        }
+        if (data.valid()) return data.ops().capture_delta_impl(in);
         static_cast<void>(require_schema(in.schema(), "capture_delta"));
-        throw std::logic_error("capture_delta requires input role, output projection, or legacy binding ops");
+        throw std::logic_error("capture_delta requires a canonical input type record");
     }
 
     void apply_delta(const TSOutputView &out, const ValueView &delta)
     {
-        const TSDataOps *ops_ptr = nullptr;
-        if (const auto type = out.type_ref(); type) ops_ptr = type.ops();
-        else ops_ptr = &require_binding(out.binding(), "apply_delta").ops_ref();
-        const auto &ops = *ops_ptr;
+        const auto type = out.type_ref();
+        if (!type) throw std::logic_error("apply_delta requires a canonical output type record");
+        const auto &ops = type.ops_ref();
         if (!ops.delta_has_effect_impl(out, delta)) { return; }
         ops.apply_delta_impl(out, delta);
     }

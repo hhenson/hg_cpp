@@ -28,7 +28,6 @@ namespace hgraph
         IndexedTSDataView &operator=(IndexedTSDataView &&) noexcept = default;
 
         /** Binding and schema carried by the underlying TSData view. */
-        [[nodiscard]] const TSDataBinding *binding() const noexcept;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
 
         /** Common layout and value projections for this TSData node. */

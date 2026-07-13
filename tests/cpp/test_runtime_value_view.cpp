@@ -396,7 +396,8 @@ TEST_CASE("GraphValue wires node views and evaluates scheduled notifications")
     REQUIRE(graph_view.valid());
     REQUIRE(graph_view.schema()->nodes.size() == 2);
     REQUIRE(graph_view.node_count() == 2);
-    const auto &graph_plan = graph_view.type().checked_plan();
+    const auto graph_type = graph_view.type();
+    const auto &graph_plan = graph_type.checked_plan();
     const auto *node_storage = graph_plan.find_component("nodes");
     REQUIRE(node_storage != nullptr);
     REQUIRE(node_storage->plan->is_tuple());

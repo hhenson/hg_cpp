@@ -23,7 +23,6 @@ namespace hgraph
         TSWDataView &operator=(TSWDataView &&) noexcept = default;
 
         /** Binding, schema, layout, and value projections for the window node. */
-        [[nodiscard]] const TSDataBinding *binding() const noexcept;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
         [[nodiscard]] const TSWDataLayout &layout() const;
         [[nodiscard]] const SizeTSWDataLayout &size_layout() const;

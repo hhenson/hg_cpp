@@ -33,74 +33,41 @@ namespace hgraph
     class TSDataStorageRef
     {
       public:
-        TSDataStorageRef() noexcept
-        {
-            if constexpr (std::same_as<DataOps, TSDataOps>)
-            {
-                ops_ = &ts_data_detail::default_ts_data_ops();
-            }
-        }
+        constexpr TSDataStorageRef() noexcept = default;
 
-        constexpr TSDataStorageRef(const TSDataBinding *binding, void *data) noexcept
+        constexpr TSDataStorageRef(TSRoleTypeRef type, void *data) noexcept
             requires std::same_as<DataOps, TSDataOps>
-            : TSDataStorageRef(TSStorageTypeRef{binding}, data)
+            : type_(type), data_(data)
         {
         }
 
-        constexpr TSDataStorageRef(TSStorageTypeRef type, void *data) noexcept
-            requires std::same_as<DataOps, TSDataOps>
-            : type_(type), data_(data),
-              ops_(type.ops() != nullptr && data != nullptr ? type.ops() : &ts_data_detail::default_ts_data_ops())
-        {
-        }
-
-        constexpr TSDataStorageRef(TSStorageTypeRef type, const void *data) noexcept
+        constexpr TSDataStorageRef(TSRoleTypeRef type, const void *data) noexcept
             requires std::same_as<DataOps, TSDataOps>
             : TSDataStorageRef(type, const_cast<void *>(data))
         {
         }
 
-        constexpr TSDataStorageRef(TSRoleTypeRef type, void *data) noexcept
-            requires std::same_as<DataOps, TSDataOps>
-            : TSDataStorageRef(TSStorageTypeRef{type}, data)
-        {
-        }
-
-        constexpr TSDataStorageRef(const TSDataBinding *binding, const void *data) noexcept
-            requires std::same_as<DataOps, TSDataOps>
-            : TSDataStorageRef(binding, const_cast<void *>(data))
-        {
-        }
-
         TSDataStorageRef(TSDataStorageRef<> storage, TSTypeKind expected_kind)
             requires(!std::same_as<DataOps, TSDataOps>)
-            : type_(storage.type_), data_(storage.data_),
-              ops_(typed_ops(storage, expected_kind))
+            : type_(storage.type_), data_(storage.data_)
         {
+            validate_kind(storage, expected_kind);
         }
 
         /** True when both the binding and data pointer are present. */
         [[nodiscard]] constexpr bool has_value() const noexcept { return type_.bound() && data_ != nullptr; }
         [[nodiscard]] constexpr bool valid() const noexcept
         {
-            if constexpr (std::same_as<DataOps, TSDataOps>)
-            {
-                return has_value();
-            }
-            else
-            {
-                return has_value() && ops_ != nullptr;
-            }
+            return has_value();
         }
         [[nodiscard]] constexpr explicit operator bool() const noexcept { return valid(); }
 
         /** True when the reference carries a binding, even without data. */
         [[nodiscard]] constexpr bool bound() const noexcept { return type_.bound(); }
 
-        /** Bound TSData binding, schema, and memory. */
-        [[nodiscard]] const TSDataBinding *binding() const noexcept { return type_.legacy_binding(); }
-        [[nodiscard]] constexpr TSStorageTypeRef storage_type() const noexcept { return type_; }
-        [[nodiscard]] TSRoleTypeRef type_ref() const noexcept { return type_.type_ref(); }
+        /** Bound TSData type record, schema, and memory. */
+        [[nodiscard]] constexpr TSRoleTypeRef storage_type() const noexcept { return type_; }
+        [[nodiscard]] constexpr TSRoleTypeRef type_ref() const noexcept { return type_; }
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return type_.schema(); }
         [[nodiscard]] constexpr void *data() const noexcept { return data_; }
 
@@ -113,26 +80,28 @@ namespace hgraph
         /** Checked access to the ops table with the ref's requested type. */
         [[nodiscard]] const DataOps &ops() const
         {
-            if (ops_ == nullptr) { throw std::logic_error("TSDataStorageRef is not bound to TSData ops"); }
-            return *ops_;
+            if constexpr (std::same_as<DataOps, TSDataOps>)
+            {
+                return has_value() ? type_.ops_ref() : ts_data_detail::default_ts_data_ops();
+            }
+            else
+            {
+                if (!has_value())
+                {
+                    throw std::logic_error("specialized TSDataStorageRef requires live TSData storage");
+                }
+                return static_cast<const DataOps &>(type_.ops_ref());
+            }
         }
 
         void reset() noexcept
         {
             type_ = {};
             data_ = nullptr;
-            if constexpr (std::same_as<DataOps, TSDataOps>)
-            {
-                ops_ = &ts_data_detail::default_ts_data_ops();
-            }
-            else
-            {
-                ops_ = nullptr;
-            }
         }
 
       private:
-        [[nodiscard]] static const DataOps *typed_ops(TSDataStorageRef<> storage, TSTypeKind expected_kind)
+        static void validate_kind(TSDataStorageRef<> storage, TSTypeKind expected_kind)
             requires(!std::same_as<DataOps, TSDataOps>)
         {
             if (!storage.has_value()) { throw std::logic_error("TSDataStorageRef requires live TSData storage"); }
@@ -142,12 +111,10 @@ namespace hgraph
             {
                 throw std::invalid_argument("TSDataStorageRef requires the matching TSData ops kind");
             }
-            return &static_cast<const DataOps &>(base_ops);
         }
 
-        TSStorageTypeRef                    type_{};
-        void                               *data_{nullptr};
-        const DataOps                         *ops_{nullptr};
+        TSRoleTypeRef type_{};
+        void         *data_{nullptr};
 
         template <typename>
         friend class TSDataStorageRef;
@@ -158,16 +125,17 @@ namespace hgraph
     using TSDDataStorageRef       = TSDataStorageRef<TSDDataOps>;
     using TSWDataStorageRef       = TSDataStorageRef<TSWDataOps>;
 
+    static_assert(sizeof(TSDataStorageRef<>) == sizeof(void *) * 2);
+    static_assert(sizeof(IndexedTSDataStorageRef) == sizeof(void *) * 2);
+    static_assert(std::is_trivially_copyable_v<TSDataStorageRef<>>);
+
     class TSDataView
     {
       public:
         constexpr TSDataView() noexcept = default;
 
-        TSDataView(const TSDataBinding *binding, void *data) noexcept;
-        TSDataView(const TSDataBinding *binding, const void *data) noexcept;
-        TSDataView(TSStorageTypeRef type, void *data) noexcept;
-        TSDataView(TSStorageTypeRef type, const void *data) noexcept;
         TSDataView(TSRoleTypeRef type, void *data) noexcept;
+        TSDataView(TSRoleTypeRef type, const void *data) noexcept;
         explicit TSDataView(TSDataStorageRef<> storage) noexcept;
 
         TSDataView(const TSDataView &) = delete;
@@ -185,9 +153,8 @@ namespace hgraph
         [[nodiscard]] bool valid() const noexcept;
         explicit operator bool() const noexcept;
 
-        /** Type-erased binding that describes this TSData memory region. */
-        [[nodiscard]] const TSDataBinding *binding() const noexcept;
-        [[nodiscard]] TSStorageTypeRef storage_type() const noexcept;
+        /** Canonical type record that describes this TSData memory region. */
+        [[nodiscard]] TSRoleTypeRef storage_type() const noexcept;
         [[nodiscard]] TSRoleTypeRef type_ref() const noexcept;
 
         /** Time-series schema associated with the binding, or null when unbound. */
@@ -318,10 +285,8 @@ namespace hgraph
         friend class TSDDataView;
         friend class TSDDataMutationView;
 
-        TSDataView(const TSDataBinding *binding, void *data, const TSDataView &parent, std::size_t child_id);
-        TSDataView(const TSDataBinding *binding, const void *data, const TSDataView &parent, std::size_t child_id);
-        TSDataView(TSStorageTypeRef type, void *data, const TSDataView &parent, std::size_t child_id);
-        TSDataView(TSStorageTypeRef type, const void *data, const TSDataView &parent, std::size_t child_id);
+        TSDataView(TSRoleTypeRef type, void *data, const TSDataView &parent, std::size_t child_id);
+        TSDataView(TSRoleTypeRef type, const void *data, const TSDataView &parent, std::size_t child_id);
 
         void require_live(const char *what) const;
         [[nodiscard]] TSDataTracking &mutable_tracking() const;

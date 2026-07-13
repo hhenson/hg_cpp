@@ -9,7 +9,7 @@ namespace hgraph::detail
 {
     struct TSDataOwnedChild
     {
-        TSStorageTypeRef type{};
+        TSRoleTypeRef type{};
         void            *data{nullptr};
         std::size_t      parent_child_id{TS_DATA_NO_CHILD_ID};
         bool             attach_parent{true};

@@ -649,11 +649,11 @@ namespace hgraph::detail
                                                                       : TSDataView{};
         }
 
-        [[nodiscard]] TSStorageTypeRef target_link_indexed_element_binding(const void *context,
+        [[nodiscard]] TSRoleTypeRef target_link_indexed_element_binding(const void *context,
                                                                            const void *memory,
                                                                            std::size_t index) noexcept
         {
-            return fallback_on_exception(TSStorageTypeRef{}, [&] {
+            return fallback_on_exception(TSRoleTypeRef{}, [&] {
                 auto child = target_link_indexed_child(context, memory, index);
                 return child.storage_type();
             });
@@ -992,7 +992,7 @@ namespace hgraph::detail
             {
                 throw std::logic_error("TSInput target-link TSD key-set schema is not resolved");
             }
-            context->dict_layout.key_set_type = TSStorageTypeRef{intern_ts_type(
+            context->dict_layout.key_set_type = TSRoleTypeRef{intern_ts_type(
                 *key_set_schema, TypeRole::Input, root_plan, context->key_set_ops,
                 std::string_view{"ts.tsd.key-set.input"})};
 

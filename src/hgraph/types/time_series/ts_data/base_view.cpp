@@ -12,22 +12,7 @@
 
 namespace hgraph
 {
-    TSDataView::TSDataView(const TSDataBinding *binding, void *data) noexcept
-        : storage_(binding, data)
-    {
-    }
-
-    TSDataView::TSDataView(const TSDataBinding *binding, const void *data) noexcept
-        : storage_(binding, data)
-    {
-    }
-
-    TSDataView::TSDataView(TSStorageTypeRef type, void *data) noexcept
-        : storage_(type, data)
-    {
-    }
-
-    TSDataView::TSDataView(TSStorageTypeRef type, const void *data) noexcept
+    TSDataView::TSDataView(TSRoleTypeRef type, const void *data) noexcept
         : storage_(type, data)
     {
     }
@@ -62,12 +47,7 @@ namespace hgraph
         return valid();
     }
 
-    const TSDataBinding *TSDataView::binding() const noexcept
-    {
-        return storage_.binding();
-    }
-
-    TSStorageTypeRef TSDataView::storage_type() const noexcept
+    TSRoleTypeRef TSDataView::storage_type() const noexcept
     {
         return storage_.storage_type();
     }
@@ -168,32 +148,38 @@ namespace hgraph
     ValueView TSDataView::value() const
     {
         const auto &table = ops();
-        return ValueView{layout().value_binding, table.value_memory_impl(table.context, data())};
+        const auto *data_layout = table.layout_impl(table.context);
+        return ValueView{data_layout->value_binding, table.value_memory_impl(table.context, data())};
     }
 
     ValueView TSDataView::delta_value(DateTime evaluation_time) const
     {
-        const auto &data_layout = layout();
-        if (!modified(evaluation_time)) { return ValueView{data_layout.delta_binding, nullptr}; }
-
         const auto &table = ops();
-        return ValueView{data_layout.delta_binding, table.delta_memory_impl(table.context, data())};
+        const auto *data_layout = table.layout_impl(table.context);
+        const auto *data_tracking = table.tracking_impl(table.context, data());
+        if (evaluation_time == MIN_DT || data_tracking->last_modified_time != evaluation_time)
+        {
+            return ValueView{data_layout->delta_binding, nullptr};
+        }
+        return ValueView{data_layout->delta_binding, table.delta_memory_impl(table.context, data())};
     }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
     nb::object TSDataView::value_to_python() const
     {
-        if (!has_current_value()) { return nb::none(); }
-
         const auto &table = ops();
+        if (!table.has_current_value_impl(table.context, data())) { return nb::none(); }
         return table.to_python_impl(table.context, data());
     }
 
     nb::object TSDataView::delta_value_to_python(DateTime evaluation_time) const
     {
-        if (!modified(evaluation_time)) { return nb::none(); }
-
         const auto &table = ops();
+        if (evaluation_time == MIN_DT ||
+            table.tracking_impl(table.context, data())->last_modified_time != evaluation_time)
+        {
+            return nb::none();
+        }
         return table.delta_to_python_impl(table.context, data(), evaluation_time);
     }
 #endif
@@ -244,8 +230,8 @@ namespace hgraph
 
     bool TSDataView::all_valid() const
     {
-        if (!has_current_value()) { return false; }
         const auto &table = ops();
+        if (!table.has_current_value_impl(table.context, data())) { return false; }
         return table.all_valid_impl(table.context, data());
     }
 
@@ -273,7 +259,7 @@ namespace hgraph
         if (element_memory == nullptr) { return TSDataView{element_type, element_memory}; }
 
         auto parent = borrowed_ref();
-        if (!parent.ops().allows_mutation) { return TSDataView{element_type, element_memory}; }
+        if (!table.allows_mutation) { return TSDataView{element_type, element_memory}; }
         return TSDataView{element_type, element_memory, parent, index};
     }
 
@@ -352,25 +338,13 @@ namespace hgraph
         return TSDataMutationView{borrowed_ref(), evaluation_time};
     }
 
-    TSDataView::TSDataView(const TSDataBinding *binding, void *data, const TSDataView &parent, std::size_t child_id)
-        : storage_(binding, data)
-    {
-        bind_parent(parent, child_id);
-    }
-
-    TSDataView::TSDataView(const TSDataBinding *binding, const void *data, const TSDataView &parent, std::size_t child_id)
-        : storage_(binding, data)
-    {
-        bind_parent(parent, child_id);
-    }
-
-    TSDataView::TSDataView(TSStorageTypeRef type, void *data, const TSDataView &parent, std::size_t child_id)
+    TSDataView::TSDataView(TSRoleTypeRef type, void *data, const TSDataView &parent, std::size_t child_id)
         : storage_(type, data)
     {
         bind_parent(parent, child_id);
     }
 
-    TSDataView::TSDataView(TSStorageTypeRef type, const void *data, const TSDataView &parent, std::size_t child_id)
+    TSDataView::TSDataView(TSRoleTypeRef type, const void *data, const TSDataView &parent, std::size_t child_id)
         : storage_(type, data)
     {
         bind_parent(parent, child_id);

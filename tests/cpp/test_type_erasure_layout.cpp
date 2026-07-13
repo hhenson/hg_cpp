@@ -18,30 +18,6 @@
 
 namespace
 {
-    template <typename Binding> constexpr void assert_binding_layout()
-    {
-        static_assert(std::is_standard_layout_v<Binding>);
-        static_assert(std::is_trivially_copyable_v<Binding>);
-        static_assert(sizeof(Binding) == sizeof(void *) * 3);
-        static_assert(alignof(Binding) == alignof(void *));
-    }
-
-    template <typename Binding> constexpr void assert_storage_ref_layout()
-    {
-        using Ref = hgraph::MemoryUtils::StorageRef<Binding>;
-        static_assert(std::is_standard_layout_v<Ref>);
-        static_assert(std::is_trivially_copyable_v<Ref>);
-        static_assert(sizeof(Ref) == sizeof(void *) * 2);
-        static_assert(alignof(Ref) == alignof(void *));
-    }
-
-    template <typename Binding> constexpr void assert_erased_owner_layout()
-    {
-        using Handle = hgraph::MemoryUtils::ErasedOwner<hgraph::MemoryUtils::InlineStoragePolicy<>, Binding>;
-        static_assert(sizeof(Handle) == sizeof(void *) * 3);
-        static_assert(alignof(Handle) == alignof(void *));
-    }
-
     template <typename View>
     concept HasNoArgumentRemovedValue = requires(const View &view) {
         view.has_removed_value();
@@ -65,11 +41,6 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(std::is_trivially_copyable_v<ExecutorTypeRef>);
     static_assert(sizeof(ClockTypeRef) == sizeof(void *));
     static_assert(std::is_trivially_copyable_v<ClockTypeRef>);
-    assert_binding_layout<TSDataBinding>();
-
-    assert_storage_ref_layout<TypeRecord>();
-    assert_storage_ref_layout<TSDataBinding>();
-
     static_assert(sizeof(ValueView) == sizeof(void *) * 2);
     static_assert(sizeof(Value) == sizeof(void *) * 3);
     static_assert(sizeof(AnyPtr) == sizeof(void *) * 2);
@@ -87,39 +58,38 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(sizeof(GraphExecutorValue) == sizeof(void *) * 3);
     static_assert(GraphValue::debug_pointer_offset() == 0);
 
-    // TSData refs cache the selected ops pointer in addition to the generic
-    // binding/data cursor. This is true for both generic and specialized refs.
-    static_assert(sizeof(TSDataStorageRef<>) == sizeof(void *) * 3);
-    static_assert(sizeof(IndexedTSDataStorageRef) == sizeof(void *) * 3);
-    static_assert(sizeof(TSSDataStorageRef) == sizeof(void *) * 3);
-    static_assert(sizeof(TSDDataStorageRef) == sizeof(void *) * 3);
-    static_assert(sizeof(TSWDataStorageRef) == sizeof(void *) * 3);
+    // Every borrowed TSData cursor is the common two-word type/data pointer.
+    static_assert(sizeof(TSDataStorageRef<>) == sizeof(void *) * 2);
+    static_assert(sizeof(IndexedTSDataStorageRef) == sizeof(void *) * 2);
+    static_assert(sizeof(TSSDataStorageRef) == sizeof(void *) * 2);
+    static_assert(sizeof(TSDDataStorageRef) == sizeof(void *) * 2);
+    static_assert(sizeof(TSWDataStorageRef) == sizeof(void *) * 2);
     static_assert(!HasNoArgumentRemovedValue<TSWDataView>);
     static_assert(HasNoArgumentRemovedValue<TSWInputView>);
-    static_assert(sizeof(TSDataView) == sizeof(void *) * 3);
+    static_assert(sizeof(TSDataView) == sizeof(void *) * 2);
     static_assert(TS_DATA_OPS_ABI_VERSION == 4);
-    static_assert(sizeof(TSStorageTypeRef) == sizeof(void *));
+    static_assert(sizeof(TSRoleTypeRef) == sizeof(void *));
     static_assert(sizeof(TSDataObserverSet) == sizeof(void *));
     static_assert(sizeof(TSData) == sizeof(void *) * 3);
     static_assert(sizeof(TSParentLink) == sizeof(void *) * 3);
     static_assert(sizeof(TSDataTracking) == sizeof(void *) * 5);
-    static_assert(sizeof(TimeSeriesReference) == sizeof(void *) * 6);
+    static_assert(sizeof(TimeSeriesReference) == sizeof(void *) * 5);
 #if defined(__APPLE__) && defined(__aarch64__)
     static_assert(sizeof(KeySlotStore) <= 272);
     static_assert(sizeof(KeyMirroredValueSlotStore) <= 208);
     static_assert(sizeof(TSDProxySlotSync) <= 24);
     static_assert(sizeof(TSDProxy) <= 400);
 #endif
-    static_assert(sizeof(TSOutputHandle) == sizeof(void *) * 4);
-    static_assert(sizeof(TSOutputView) == sizeof(void *) * 5);
-    static_assert(sizeof(TSInputView) == sizeof(void *) * 10);
-    static_assert(sizeof(IndexedTSDataView) == sizeof(void *) * 3);
-    static_assert(sizeof(TSBDataView) == sizeof(void *) * 3);
-    static_assert(sizeof(TSLDataView) == sizeof(void *) * 3);
-    static_assert(sizeof(TSBOutputView) == sizeof(void *) * 5);
-    static_assert(sizeof(TSLOutputView) == sizeof(void *) * 5);
-    static_assert(sizeof(TSBInputView) == sizeof(void *) * 10);
-    static_assert(sizeof(TSLInputView) == sizeof(void *) * 10);
+    static_assert(sizeof(TSOutputHandle) == sizeof(void *) * 3);
+    static_assert(sizeof(TSOutputView) == sizeof(void *) * 4);
+    static_assert(sizeof(TSInputView) == sizeof(void *) * 8);
+    static_assert(sizeof(IndexedTSDataView) == sizeof(void *) * 2);
+    static_assert(sizeof(TSBDataView) == sizeof(void *) * 2);
+    static_assert(sizeof(TSLDataView) == sizeof(void *) * 2);
+    static_assert(sizeof(TSBOutputView) == sizeof(void *) * 4);
+    static_assert(sizeof(TSLOutputView) == sizeof(void *) * 4);
+    static_assert(sizeof(TSBInputView) == sizeof(void *) * 8);
+    static_assert(sizeof(TSLInputView) == sizeof(void *) * 8);
     static_assert(sizeof(TSOutput) == sizeof(void *) * 5);
     static_assert(sizeof(TSInput) == sizeof(void *) * 7);
     static_assert(sizeof(FixedTSDataFieldLayout) == sizeof(void *) * 3);
@@ -129,9 +99,6 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     using RawHandle = MemoryUtils::ErasedOwner<>;
     static_assert(sizeof(RawHandle) == sizeof(void *) * 3);
     static_assert(alignof(RawHandle) == alignof(void *));
-
-    assert_erased_owner_layout<TypeRecord>();
-    assert_erased_owner_layout<TSDataBinding>();
 
     SUCCEED("compile-time type-erasure layout assertions passed");
 }
@@ -180,8 +147,8 @@ TEST_CASE("dynamic TSL and TSW physical plans retain their baseline layouts")
             if (schema->kind == TSTypeKind::TSL)
             {
                 const auto &layout = static_cast<const FixedTSLDataLayout &>(*common);
-                REQUIRE(layout.element_type.record_backed());
-                REQUIRE(layout.element_type.type_ref().role() == role_type.role());
+                REQUIRE(layout.element_type.record() != nullptr);
+                REQUIRE(layout.element_type.role() == role_type.role());
                 REQUIRE(layout.element_layout != nullptr);
                 REQUIRE(layout.element_count == 0);
             }

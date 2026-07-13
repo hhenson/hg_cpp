@@ -413,9 +413,10 @@ namespace hgraph
             return ops;
         }
 
-        [[nodiscard]] const TSDataBinding *regular_ts_data_binding_for(const TSValueTypeMetaData *schema)
+        [[nodiscard]] TSRoleTypeRef regular_ts_data_type_for(const TSValueTypeMetaData *schema)
         {
-            return TSDataPlanFactory::instance().legacy_binding_for(schema);
+            return schema != nullptr ? TSDataPlanFactory::instance().data_type_for(schema).as_role()
+                                     : TSRoleTypeRef{};
         }
 
         [[nodiscard]] ValueTypeRef regular_value_binding_for(const TSValueTypeMetaData *schema)
@@ -424,12 +425,12 @@ namespace hgraph
         }
 
         [[nodiscard]] const MemoryUtils::StoragePlan &input_storage_plan(const TSEndpointSchema &endpoint_schema);
-        [[nodiscard]] const TSDataBinding *input_data_binding_for(const TSEndpointSchema &endpoint_schema);
-        [[nodiscard]] const TSDataBinding *input_data_binding_for(const TSEndpointSchema         &endpoint_schema,
-                                                                  const MemoryUtils::StoragePlan &root_plan,
-                                                                  std::size_t storage_offset,
-                                                                  TypeRole storage_role);
-        [[nodiscard]] TSStorageTypeRef input_storage_type_for(const TSEndpointSchema         &endpoint_schema,
+        [[nodiscard]] TSRoleTypeRef input_data_type_for(const TSEndpointSchema         &endpoint_schema,
+                                                        const MemoryUtils::StoragePlan &root_plan,
+                                                        std::size_t storage_offset,
+                                                        TypeRole storage_role,
+                                                        std::string_view implementation_label);
+        [[nodiscard]] TSRoleTypeRef input_storage_type_for(const TSEndpointSchema         &endpoint_schema,
                                                               const MemoryUtils::StoragePlan &root_plan,
                                                               std::size_t storage_offset,
                                                               bool root_record,
@@ -469,21 +470,9 @@ namespace hgraph
             if (endpoint_schema.is_peered()) { return MemoryUtils::plan_for<detail::TSInputTargetLinkStorage>(); }
             if (endpoint_schema.is_owned())
             {
-                if (const auto *schema = endpoint_schema.schema();
-                    is_migrated_ts_root_schema(schema))
-                {
-                    const auto type = TSDataPlanFactory::instance().data_type_for(schema);
-                    const auto *plan = type.plan();
-                    if (plan == nullptr)
-                        throw std::logic_error("TSInput owned scalar endpoint has no storage plan");
-                    return *plan;
-                }
-                const auto *binding = regular_ts_data_binding_for(endpoint_schema.schema());
-                if (binding == nullptr)
-                {
-                    throw std::logic_error("TSInput owned endpoint storage requires a regular TSData binding");
-                }
-                return binding->checked_plan();
+                const auto type = regular_ts_data_type_for(endpoint_schema.schema());
+                if (!type) throw std::logic_error("TSInput owned endpoint storage requires a TSData type");
+                return type.checked_plan();
             }
 
             const auto *schema = endpoint_schema.schema();
@@ -527,12 +516,13 @@ namespace hgraph
         struct InputChild
         {
             const TSValueTypeMetaData *schema{nullptr};
-            TSStorageTypeRef           input_type{};
-            TSStorageTypeRef           regular_type{};
+            TSRoleTypeRef           input_type{};
+            TSRoleTypeRef           regular_type{};
             ValueTypeRef regular_value_binding{nullptr};
             std::size_t                data_offset{0};
             bool                       target_link{false};
             bool                       direct_child_memory{false};
+            bool                       local_storage{false};
         };
 
         struct InputBundleDeltaSurface
@@ -692,9 +682,8 @@ namespace hgraph
         }
 
         [[nodiscard]] const InputBindingContext *input_context_for(const TSDataOps *ops) noexcept;
-        [[nodiscard]] const InputBindingContext *input_context_for(TSStorageTypeRef type) noexcept;
-        [[nodiscard]] const TargetLinkContext *target_context_for(const TSDataBinding *binding) noexcept;
-        [[nodiscard]] const TargetLinkContext *target_context_for(TSStorageTypeRef type) noexcept;
+        [[nodiscard]] const InputBindingContext *input_context_for(TSRoleTypeRef type) noexcept;
+        [[nodiscard]] const TargetLinkContext *target_context_for(TSRoleTypeRef type) noexcept;
 
         [[nodiscard]] const void *advance(const void *memory, std::size_t offset) noexcept
         {
@@ -747,7 +736,7 @@ namespace hgraph
             return MemoryUtils::cast<TSDataTracking>(advance(memory, state->layout.tracking_offset));
         }
 
-        [[nodiscard]] TSStorageTypeRef input_value_storage_type(const void *context,
+        [[nodiscard]] TSRoleTypeRef input_value_storage_type(const void *context,
                                                                 const void *memory,
                                                                 std::size_t index) noexcept
         {
@@ -769,10 +758,7 @@ namespace hgraph
             const auto &child = state->children[index];
             if (!child.target_link)
             {
-                const bool local_keyed = child.schema != nullptr &&
-                                         (child.schema->kind == TSTypeKind::TSS ||
-                                          child.schema->kind == TSTypeKind::TSD);
-                return child.direct_child_memory && (child.input_type.legacy_backed() || local_keyed) && memory != nullptr
+                return child.direct_child_memory && child.local_storage && memory != nullptr
                            ? advance(memory, child.data_offset)
                            : memory;
             }
@@ -787,14 +773,9 @@ namespace hgraph
             const auto *state = static_cast<const InputBindingContext *>(context);
             if (index >= state->children.size() || memory == nullptr) { return nullptr; }
             const auto &child = state->children[index];
-            // Record-backed children use the root plan and absolute offsets in
-            // their ops context, as do target links and composed prefixes.
-            // Only an owned legacy child expects a local storage base.
-            const bool local_keyed = child.schema != nullptr &&
-                                     (child.schema->kind == TSTypeKind::TSS ||
-                                      child.schema->kind == TSTypeKind::TSD);
-            return child.direct_child_memory && (child.input_type.legacy_backed() || local_keyed) &&
-                           child.data_offset != 0
+            // Embedded records use root-relative ops. Independently planned
+            // children use their local allocation base.
+            return child.direct_child_memory && child.local_storage && child.data_offset != 0
                        ? advance(memory, child.data_offset)
                        : memory;
         }
@@ -901,10 +882,9 @@ namespace hgraph
                 const auto &ops = *child.input_type.ops();
                 // Same validity rule for DIRECT children: an invalid child
                 // is UNSET in the assembled value, never a default.
-                const void *child_memory =
-                    child.direct_child_memory && child.input_type.legacy_backed() && memory != nullptr
-                        ? advance(memory, child.data_offset)
-                        : memory;
+                const void *child_memory = child.direct_child_memory && child.local_storage && memory != nullptr
+                                               ? advance(memory, child.data_offset)
+                                               : memory;
                 if (!ops.has_current_value_impl(ops.context, child_memory)) { return nullptr; }
                 return ops.value_memory_impl(ops.context, child_memory);
             }
@@ -1687,7 +1667,7 @@ namespace hgraph
             return result;
         }
 
-        [[nodiscard]] nb::object child_value_to_python(TSStorageTypeRef type, const void *memory)
+        [[nodiscard]] nb::object child_value_to_python(TSRoleTypeRef type, const void *memory)
         {
             if (!type || memory == nullptr) { return nb::none(); }
             const auto &ops = *type.ops();
@@ -1695,7 +1675,7 @@ namespace hgraph
             return ops.to_python_impl(ops.context, memory);
         }
 
-        [[nodiscard]] nb::object child_delta_to_python(TSStorageTypeRef type,
+        [[nodiscard]] nb::object child_delta_to_python(TSRoleTypeRef type,
                                                        const void          *memory,
                                                        DateTime        evaluation_time)
         {
@@ -1792,28 +1772,26 @@ namespace hgraph
         }
 #endif
 
-        [[nodiscard]] const TSDataBinding *make_target_link_binding(const TSEndpointSchema           &endpoint_schema,
-                                                                    const MemoryUtils::StoragePlan   &root_plan,
-                                                                    std::size_t                       storage_offset)
+        [[nodiscard]] const TSDataOps &target_link_ops_for(const TSEndpointSchema         &endpoint_schema,
+                                                           const MemoryUtils::StoragePlan &root_plan,
+                                                           std::size_t storage_offset)
         {
             const auto key = binding_cache_key(endpoint_schema, root_plan, storage_offset);
             std::lock_guard lock{target_link_context_cache_mutex()};
             auto &cache = target_link_context_cache();
             if (const auto it = cache.find(key); it != cache.end())
             {
-                return TypeBinding<TSValueTypeMetaData, TSDataOps>::find(endpoint_schema.schema(),
-                                                                          &root_plan,
-                                                                          it->second->active_ops);
+                return *it->second->active_ops;
             }
 
             const auto *schema = endpoint_schema.schema();
-            const auto *regular_binding = regular_ts_data_binding_for(schema);
-            if (schema == nullptr || regular_binding == nullptr)
+            const auto regular_type = regular_ts_data_type_for(schema);
+            if (schema == nullptr || !regular_type)
             {
-                throw std::logic_error("TSInput target-link binding requires a resolved regular TSData binding");
+                throw std::logic_error("TSInput target link requires a resolved regular TSData type");
             }
 
-            const auto &regular_ops = regular_binding->ops_ref();
+            const auto &regular_ops = regular_type.ops_ref();
             const auto *regular_layout = regular_ops.layout_impl(regular_ops.context);
             if (regular_layout == nullptr)
             {
@@ -1822,21 +1800,32 @@ namespace hgraph
 
             auto context = detail::target_link_context_builder_for(schema->kind)(
                 *schema, root_plan, storage_offset, *regular_layout);
-            const auto &binding = TSDataBinding::intern(*schema, root_plan, *context->active_ops);
+            const auto *ops = context->active_ops;
             cache.emplace(key, std::move(context));
-            return &binding;
+            return *ops;
         }
 
-        [[nodiscard]] const TSDataBinding *input_data_binding_for(const TSEndpointSchema         &endpoint_schema,
-                                                                  const MemoryUtils::StoragePlan &root_plan,
-                                                                  std::size_t storage_offset,
-                                                                  TypeRole storage_role)
+        [[nodiscard]] TSRoleTypeRef input_data_type_for(const TSEndpointSchema         &endpoint_schema,
+                                                        const MemoryUtils::StoragePlan &root_plan,
+                                                        std::size_t storage_offset,
+                                                        TypeRole storage_role,
+                                                        std::string_view implementation_label)
         {
             if (endpoint_schema.is_peered())
             {
-                return make_target_link_binding(endpoint_schema, root_plan, storage_offset);
+                const auto *schema = endpoint_schema.schema();
+                if (schema == nullptr) return {};
+                return intern_ts_type(*schema, storage_role, root_plan,
+                                      target_link_ops_for(endpoint_schema, root_plan, storage_offset),
+                                      implementation_label);
             }
-            if (endpoint_schema.is_owned()) { return regular_ts_data_binding_for(endpoint_schema.schema()); }
+            if (endpoint_schema.is_owned())
+            {
+                const auto &local_plan = input_storage_plan(endpoint_schema);
+                const bool root_record = storage_offset == 0 && &root_plan == &local_plan;
+                return input_storage_type_for(
+                    endpoint_schema, root_plan, storage_offset, root_record, storage_role);
+            }
 
             const auto *schema = endpoint_schema.schema();
             if (schema != nullptr && schema->kind == TSTypeKind::TSD)
@@ -1849,21 +1838,25 @@ namespace hgraph
                 {
                     throw std::logic_error("TSInput non-peered TSD binding currently requires root storage");
                 }
-                const auto *element_binding = input_data_binding_for(endpoint_schema.child(0));
-                if (element_binding == nullptr)
+                const auto &child_schema = endpoint_schema.child(0);
+                const auto &child_plan = input_storage_plan(child_schema);
+                const auto element_type = input_storage_type_for(
+                    child_schema, child_plan, 0, true, storage_role);
+                if (!element_type)
                 {
-                    throw std::logic_error("TSInput non-peered TSD element binding is not resolved");
+                    throw std::logic_error("TSInput non-peered TSD element type is not resolved");
                 }
                 const auto *expected_plan =
                     ts_data_plan_factory_detail::synthesise_slot_tsd_plan(
-                        *schema, TSStorageTypeRef{element_binding});
+                        *schema, element_type);
                 if (expected_plan == nullptr || expected_plan != &root_plan)
                 {
                     throw std::logic_error("TSInput non-peered TSD binding received the wrong storage plan");
                 }
                 const auto &ops = ts_data_plan_factory_detail::slot_tsd_ts_data_ops(
-                    *schema, root_plan, storage_offset, TSStorageTypeRef{element_binding}, storage_role);
-                return &TSDataBinding::intern(*schema, root_plan, ops);
+                    *schema, root_plan, storage_offset, element_type, storage_role);
+                return intern_ts_type(*schema, storage_role, root_plan, ops,
+                                      implementation_label);
             }
 
             const auto key = binding_cache_key(endpoint_schema, root_plan, storage_offset, storage_role);
@@ -1871,7 +1864,8 @@ namespace hgraph
             auto &cache = input_binding_context_cache();
             if (const auto it = cache.find(key); it != cache.end())
             {
-                return TSDataBinding::find(endpoint_schema.schema(), &root_plan, &it->second->ts_data_ops);
+                return intern_ts_type(*endpoint_schema.schema(), storage_role, root_plan,
+                                      it->second->ts_data_ops, implementation_label);
             }
 
             const auto &local_plan = input_storage_plan(endpoint_schema);
@@ -1893,19 +1887,19 @@ namespace hgraph
                 const auto child_offset = storage_offset + child_storage_offset(endpoint_schema, local_plan, index);
                 const auto child_type = input_storage_type_for(
                     child_schema, root_plan, child_offset, false, storage_role);
-                if (storage_role == TypeRole::Output && is_migrated_ts_root_schema(child_schema.schema()) &&
-                    (!child_type.record_backed() || child_type.type_ref().role() != TypeRole::Output))
+                if (storage_role == TypeRole::Output && child_type.role() != TypeRole::Output)
                 {
                     throw std::logic_error("fixed output child storage requires an Output role record");
                 }
                 context->children.push_back(InputChild{
                     .schema = child_schema.schema(),
                     .input_type = child_type,
-                    .regular_type = TSStorageTypeRef{regular_ts_data_binding_for(child_schema.schema())},
+                    .regular_type = regular_ts_data_type_for(child_schema.schema()),
                     .regular_value_binding = regular_value_binding_for(child_schema.schema()),
                     .data_offset = child_offset,
                     .target_link = child_schema.is_peered(),
                     .direct_child_memory = child_schema.is_owned(),
+                    .local_storage = child_type.plan() != &root_plan,
                 });
                 if (list_delta != nullptr)
                 {
@@ -2053,9 +2047,10 @@ namespace hgraph
             context->ts_data_ops.element_memory_impl = &input_element_memory;
             context->ts_data_ops.mutable_element_memory_impl = &input_mutable_element_memory;
 
-            const auto &binding = TSDataBinding::intern(*context->schema, root_plan, context->ts_data_ops);
+            const auto type = intern_ts_type(
+                *context->schema, storage_role, root_plan, context->ts_data_ops, implementation_label);
             cache.emplace(key, std::move(context));
-            return &binding;
+            return type;
         }
 
         [[nodiscard]] const InputBindingContext *input_context_for(const TSDataOps *ops) noexcept
@@ -2065,32 +2060,14 @@ namespace hgraph
                        : nullptr;
         }
 
-        [[nodiscard]] const InputBindingContext *input_context_for(TSStorageTypeRef type) noexcept
+        [[nodiscard]] const InputBindingContext *input_context_for(TSRoleTypeRef type) noexcept
         {
             return input_context_for(type.ops());
         }
 
-        [[nodiscard]] const TargetLinkContext *target_context_for(const TSDataBinding *binding) noexcept
-        {
-            if (binding == nullptr) { return nullptr; }
-            return detail::target_link_context_for_ops(binding->ops);
-        }
-
-        [[nodiscard]] const TargetLinkContext *target_context_for(TSStorageTypeRef type) noexcept
+        [[nodiscard]] const TargetLinkContext *target_context_for(TSRoleTypeRef type) noexcept
         {
             return detail::target_link_context_for_ops(type.ops());
-        }
-
-        [[nodiscard]] const TSDataBinding *input_data_binding_for(const TSEndpointSchema &endpoint_schema)
-        {
-            const auto &root_plan = input_storage_plan(endpoint_schema);
-            return input_data_binding_for(endpoint_schema, root_plan, 0, TypeRole::Input);
-        }
-
-        [[nodiscard]] const TSDataBinding *output_data_binding_for(const TSEndpointSchema &endpoint_schema)
-        {
-            const auto &root_plan = input_storage_plan(endpoint_schema);
-            return input_data_binding_for(endpoint_schema, root_plan, 0, TypeRole::Output);
         }
 
         [[nodiscard]] TSInputTypeRef scalar_input_type_for(const TSEndpointSchema &endpoint_schema)
@@ -2144,7 +2121,7 @@ namespace hgraph
                     (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0));
         }
 
-        [[nodiscard]] TSStorageTypeRef input_storage_type_for(const TSEndpointSchema         &endpoint_schema,
+        [[nodiscard]] TSRoleTypeRef input_storage_type_for(const TSEndpointSchema         &endpoint_schema,
                                                               const MemoryUtils::StoragePlan &root_plan,
                                                               std::size_t storage_offset,
                                                               bool root_record,
@@ -2159,13 +2136,11 @@ namespace hgraph
             const bool dynamic_list = schema->kind == TSTypeKind::TSL && schema->fixed_size() == 0;
             const bool window = schema->kind == TSTypeKind::TSW;
             if (!scalar && !fixed && !keyed && !dynamic_list && !window)
-                return TSStorageTypeRef{
-                    input_data_binding_for(endpoint_schema, root_plan, storage_offset, storage_role)};
+                throw std::invalid_argument("TSInput storage type does not support this schema kind");
 
             if (endpoint_schema.is_peered())
             {
-                const auto *binding = make_target_link_binding(endpoint_schema, root_plan, storage_offset);
-                if (binding == nullptr) throw std::logic_error("peered input storage type is not resolved");
+                const auto &ops = target_link_ops_for(endpoint_schema, root_plan, storage_offset);
                 const auto role = storage_role == TypeRole::Output ? TypeRole::Output : TypeRole::Input;
                 const auto label = schema->kind == TSTypeKind::TSS ? std::string_view{"ts.tss.input.target"}
                                  : schema->kind == TSTypeKind::TSD ? std::string_view{"ts.tsd.input.target"}
@@ -2177,7 +2152,7 @@ namespace hgraph
                                        : fixed || !root_record
                                              ? std::string_view{"ts.fixed.input.target"}
                                              : std::string_view{};
-                return TSStorageTypeRef{intern_ts_type(*schema, role, root_plan, binding->ops_ref(), label)};
+                return intern_ts_type(*schema, role, root_plan, ops, label);
             }
 
             if (endpoint_schema.is_owned())
@@ -2196,8 +2171,7 @@ namespace hgraph
                                                          : std::string_view{"ts.tss.input.embedded"}
                                            : root_record ? std::string_view{"ts.tsd.input.owned"}
                                                          : std::string_view{"ts.tsd.input.embedded"};
-                    return TSStorageTypeRef{intern_ts_type(
-                        *schema, storage_role, keyed_plan, ops, label)};
+                    return intern_ts_type(*schema, storage_role, keyed_plan, ops, label);
                 }
                 if (fixed)
                 {
@@ -2225,9 +2199,7 @@ namespace hgraph
                                                             : storage_role == TypeRole::Output
                                                                   ? std::string_view{"ts.fixed.output.embedded"}
                                                                   : std::string_view{"ts.fixed.input.embedded"};
-                return TSStorageTypeRef{intern_ts_type(
-                    *schema, storage_role, root_plan, ops,
-                    scalar_label)};
+                return intern_ts_type(*schema, storage_role, root_plan, ops, scalar_label);
             }
 
             if (schema->kind == TSTypeKind::TSD)
@@ -2243,16 +2215,12 @@ namespace hgraph
                 const auto label = storage_role == TypeRole::Output
                                        ? std::string_view{"ts.tsd.output.root"}
                                        : std::string_view{"ts.tsd.input.composite"};
-                return TSStorageTypeRef{intern_ts_type(
-                    *schema, storage_role, root_plan, ops, label)};
+                return intern_ts_type(*schema, storage_role, root_plan, ops, label);
             }
 
             if (dynamic_list || window)
                 throw std::invalid_argument("non-peered dynamic TSL and TSW inputs are not supported");
 
-            const auto *binding = input_data_binding_for(
-                endpoint_schema, root_plan, storage_offset, storage_role);
-            if (binding == nullptr) throw std::logic_error("composite input storage type is not resolved");
             const auto composite_label = schema->kind == TSTypeKind::TSD
                                              ? std::string_view{"ts.tsd.input.composite"}
                                              : root_record ? storage_role == TypeRole::Output
@@ -2261,18 +2229,19 @@ namespace hgraph
                                                            : storage_role == TypeRole::Output
                                                                  ? std::string_view{"ts.fixed.output.embedded"}
                                                                  : std::string_view{"ts.fixed.input.embedded"};
-            return TSStorageTypeRef{intern_ts_type(
-                *schema, storage_role, root_plan, binding->ops_ref(),
-                composite_label)};
+            const auto type = input_data_type_for(
+                endpoint_schema, root_plan, storage_offset, storage_role, composite_label);
+            if (!type) throw std::logic_error("composite input storage type is not resolved");
+            return type;
         }
 
-        [[nodiscard]] TSStorageTypeRef input_storage_type_for(const TSEndpointSchema &endpoint_schema)
+        [[nodiscard]] TSRoleTypeRef input_storage_type_for(const TSEndpointSchema &endpoint_schema)
         {
             const auto *schema = endpoint_schema.schema();
             if (schema != nullptr &&
                 (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL ||
                  schema->kind == TSTypeKind::REF))
-                return TSStorageTypeRef{scalar_input_type_for(endpoint_schema).as_role()};
+                return scalar_input_type_for(endpoint_schema).as_role();
             const auto &root_plan = input_storage_plan(endpoint_schema);
             return input_storage_type_for(endpoint_schema, root_plan, 0, true, TypeRole::Input);
         }
@@ -2301,31 +2270,11 @@ namespace hgraph
             return ::hgraph::input_endpoint_ops_for(schema);
         }
 
-        const TSDataBinding *input_data_binding_for(const TSEndpointSchema &endpoint_schema)
-        {
-            return ::hgraph::input_data_binding_for(endpoint_schema);
-        }
-
-        const TSDataBinding *output_data_binding_for(const TSEndpointSchema &endpoint_schema)
-        {
-            return ::hgraph::output_data_binding_for(endpoint_schema);
-        }
-
-        TSStorageTypeRef output_data_storage_type_for(const TSEndpointSchema &endpoint_schema)
+        TSRoleTypeRef output_data_storage_type_for(const TSEndpointSchema &endpoint_schema)
         {
             const auto &root_plan = ::hgraph::input_storage_plan(endpoint_schema);
             return ::hgraph::input_storage_type_for(
                 endpoint_schema, root_plan, 0, true, TypeRole::Output);
-        }
-
-        const TSDataBinding *regular_ts_data_binding_for(const TSValueTypeMetaData *schema)
-        {
-            return ::hgraph::regular_ts_data_binding_for(schema);
-        }
-
-        bool is_target_link_binding(const TSDataBinding *binding) noexcept
-        {
-            return ::hgraph::target_context_for(binding) != nullptr;
         }
 
         const TSInputTargetLinkStorage *target_link_storage(const TSDataView &view) noexcept
@@ -2419,7 +2368,7 @@ namespace hgraph
         void TSInputActiveTarget::subscribe(const TSDataView &observed_, Notifiable *target_notifier)
         {
             if (observed_.valid() && observed.valid() && observed_.data() == observed.data() &&
-                observed_.binding() == observed.binding())
+                observed_.storage_type() == observed.storage_type())
             {
                 notifier.target = target_notifier;
                 return;
@@ -2616,11 +2565,6 @@ namespace hgraph
     const TSValueTypeMetaData *TSInput::schema() const noexcept
     {
         return schema_;
-    }
-
-    const TSDataBinding *TSInput::binding() const noexcept
-    {
-        return data_.binding();
     }
 
     TSInputTypeRef TSInput::type_ref() const

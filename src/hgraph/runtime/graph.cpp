@@ -510,7 +510,8 @@ namespace hgraph
             for (std::size_t index = 0; index < runtime.layout.node_count; ++index)
             {
                 auto       node = graph_node_view(runtime, memory, index);
-                const auto &ops = node.type().ops_ref();
+                const auto node_type = node.type();
+                const auto &ops = node_type.ops_ref();
                 ops.attach_graph_impl(ops.context, node.data(), graph, index);
             }
         }
@@ -1547,7 +1548,8 @@ namespace hgraph
     void GraphValue::attach_nodes()
     {
         if (!has_value()) { return; }
-        const auto &table = type().ops_ref();
+        const auto graph_type = type();
+        const auto &table = graph_type.ops_ref();
         table.attach_nodes_impl(table.context, const_cast<void *>(pointer_.data()), this);
     }
 

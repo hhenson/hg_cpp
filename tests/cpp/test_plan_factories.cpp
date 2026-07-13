@@ -521,9 +521,7 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified
     REQUIRE(type.schema() == ts_int);
     REQUIRE(type.plan() == plan);
     REQUIRE(type.ops_ref().allows_mutation);
-    REQUIRE_THROWS_AS(factory.binding_for(ts_int), std::logic_error);
     TSData data{type};
-    REQUIRE(data.binding() == nullptr);
     REQUIRE(data.type_ref().record() == type.record());
     REQUIRE(data.view().layout().value_binding == registry.scalar_type<std::int32_t>());
     REQUIRE(data.view().layout().delta_binding == registry.scalar_type<std::int32_t>());
@@ -728,7 +726,7 @@ TEST_CASE("TSDataView: child parent link is stored in TSData tracking")
     REQUIRE(child.has_parent());
     REQUIRE(child.path_from_root() == std::vector<std::size_t>{child.child_id()});
     auto root = child.root_view();
-    REQUIRE(root.storage_type() == data.storage_type_ref());
+    REQUIRE(root.storage_type() == data.type_ref());
     REQUIRE(root.data() == data.view().data());
     {
         auto mutation = child.begin_mutation(t2);
@@ -751,9 +749,7 @@ TEST_CASE("TSDataPlanFactory: REF and SIGNAL use compact atomic TSData")
     const auto *ts_int   = registry.ts(int_meta);
 
     REQUIRE(factory.data_type_for(registry.signal()));
-    REQUIRE_THROWS_AS(factory.binding_for(registry.signal()), std::logic_error);
     REQUIRE(factory.data_type_for(registry.ref(ts_int)));
-    REQUIRE_THROWS_AS(factory.binding_for(registry.ref(ts_int)), std::logic_error);
 }
 
 TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child tracking")
@@ -1116,7 +1112,6 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
 
     const auto type = factory.data_type_for(tsw);
     REQUIRE(type);
-    REQUIRE_THROWS_AS(factory.binding_for(tsw), std::logic_error);
     REQUIRE(type.plan()->is_named_tuple());
     const auto *window_component   = type.plan()->find_component("window");
     const auto *tracking_component = type.plan()->find_component("tracking");
@@ -1256,7 +1251,6 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
 
     const auto type = factory.data_type_for(tsw);
     REQUIRE(type);
-    REQUIRE_THROWS_AS(factory.binding_for(tsw), std::logic_error);
     const auto *window_component = type.plan()->find_component("window");
     REQUIRE(window_component != nullptr);
 
@@ -1500,7 +1494,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     auto          immutable_child = immutable_view.as_dict().at(key.view());
     REQUIRE(immutable_child.value().checked_as<std::int32_t>() == 42);
     REQUIRE(immutable_child.has_parent());
-    REQUIRE(immutable_child.parent_link().parent_storage_type() == TSStorageTypeRef{type.as_role()});
+    REQUIRE(immutable_child.parent_link().parent_storage_type() == TSRoleTypeRef{type.as_role()});
     REQUIRE(immutable_child.root_view().data() == view.data());
 
     REQUIRE(dict.key_set().contains(key.view()));
@@ -1657,7 +1651,6 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
 
     const auto type = factory.data_type_for(tsl);
     REQUIRE(type);
-    REQUIRE_THROWS_AS(factory.binding_for(tsl), std::logic_error);
     REQUIRE(factory.plan_for(tsl) == type.plan());
     require_no_tsdata_relocation_hooks(type.checked_plan());
 
@@ -1720,7 +1713,7 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     const auto *float_meta = registry.register_scalar<double>("double");
     const auto *float_tsl = registry.tsl(registry.ts(float_meta), 0);
     const auto float_type = factory.data_type_for(float_tsl);
-    TSDataView mismatched{TSStorageTypeRef{float_type.as_role()}, view.mutable_data()};
+    TSDataView mismatched{TSRoleTypeRef{float_type.as_role()}, view.mutable_data()};
     REQUIRE_THROWS_AS(mismatched.ensure_indexed_child_at(3), std::logic_error);
     REQUIRE(view.as_list().size() == 3);
 

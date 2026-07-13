@@ -15,7 +15,6 @@ namespace hgraph
         [[nodiscard]] EndpointView &base() noexcept { return view_; }
 
         [[nodiscard]] DateTime evaluation_time() const noexcept { return view_.evaluation_time(); }
-        [[nodiscard]] const TSDataBinding *binding() const noexcept { return view_.binding(); }
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return view_.schema(); }
         [[nodiscard]] bool bound() const noexcept { return view_.bound(); }
         [[nodiscard]] bool valid() const { return view_.valid(); }

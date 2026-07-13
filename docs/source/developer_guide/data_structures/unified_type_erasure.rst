@@ -4,18 +4,18 @@ Unified Type Erasure
 Status
 ------
 
-This chapter is a design proposal.  It describes a target model and a
-migration path; it does not describe an API that has already been implemented.
+This chapter describes the implemented common type-erasure model. The
+historical problems and migration sequence are retained to explain the design
+constraints; :doc:`type_erasure_inventory` records the pre-migration baseline.
 
 The runtime needs type erasure because graphs contain values, time-series,
 nodes, and nested graphs whose concrete C++ types are not all known to the
-execution loop.  Type erasure itself is not the problem.  The current problem
-is that each erased family has its own descriptor shape, and the family is
-usually known only from the surrounding C++ template type.  Given an arbitrary
-descriptor pointer in a debugger, there is no reliable common header which
-says what it describes or how its other pointers should be interpreted.
+execution loop. Type erasure itself was not the problem. Before this work each
+erased family had its own descriptor shape, and the family was usually known
+only from the surrounding C++ template type. An arbitrary descriptor pointer
+therefore had no reliable common header for debugger navigation.
 
-The proposed model has two goals:
+The implemented model has two goals:
 
 * every erased runtime object points at one common, self-describing type record;
 * the pointer used on hot paths remains two machine words and can acquire a
@@ -26,10 +26,10 @@ and a data pointer travel together.  It is not intended to introduce Python
 object semantics, reference counting, heap allocation, or a single universal
 virtual interface into the C++ runtime.
 
-Problems In The Current Model
------------------------------
+Problems In The Baseline Model
+------------------------------
 
-The existing implementation already contains useful parts of this design:
+The Milestone 0 implementation already contained useful parts of this design:
 
 * ``TypeBinding<Schema, Ops>`` is consistently a schema pointer, storage plan
   pointer, and ops pointer;
@@ -40,8 +40,8 @@ The existing implementation already contains useful parts of this design:
 * value and time-series views carry their erased type information without
   requiring C++ RTTI.
 
-However, the common shape is a template convention rather than a runtime
-contract.  In particular:
+However, that common shape was a template convention rather than a runtime
+contract. In particular:
 
 * ``TypeBinding<ValueTypeMetaData, ValueOps>`` and
   ``TypeBinding<NodeSchema, NodeOps>`` have compatible-looking layouts, but an
@@ -115,12 +115,12 @@ of type metadata.
 
 The intended relationship to current structures is:
 
-.. list-table:: Current-to-proposed mapping
+.. list-table:: Historical-to-current mapping
    :header-rows: 1
    :widths: 30 30 40
 
-   * - Current concept
-     - Proposed concept
+   * - Historical concept
+     - Current concept
      - Structural effect
    * - Family metadata such as ``ValueTypeMetaData`` and ``NodeSchema``
      - ``SchemaHeader`` plus a typed schema body
@@ -600,9 +600,9 @@ record uses ``TimeSeries/Data/TSD`` and selects the slot-store plan and TSD
 data ops. Separate canonical records describe its key-set and element
 projections, and Input/Output roles select their own topology records without
 duplicating the schema. Scalar ``TS``/``SIGNAL``, fixed and dynamic ``TSL``,
-``TSB``, ``TSW``, and keyed/reference roots are record-backed. Legacy
-``TSDataBinding`` descriptors remain internal compatibility metadata, not
-outward identity for migrated roots.
+``TSB``, ``TSW``, and keyed/reference roots are record-backed. Generic and
+specialised borrowed TSData cursors are two words and recover schema, plan, and
+ops from the role record. No parallel time-series binding registry remains.
 
 The keyed-slots debug descriptor identifies key records, slot state, and child
 type records.  A debugger can distinguish live, stopped/deleted, and erased
@@ -628,15 +628,14 @@ source of truth: delete stops and disconnects an instance; erase invokes its
 destructor and makes the slot reusable.  Type erasure supplies navigable type
 information but does not replace that ownership protocol.
 
-Migration
----------
+Completed Migration
+-------------------
 
-The change can be incremental and should not initially alter object layout or
-execution behaviour:
+The implementation followed this incremental sequence:
 
 1. Introduce the family, role, kind, capability, magic, and ABI definitions,
    plus the common ``TypeRecord`` and two-word ``AnyPtr``.
-2. Adapt existing ``TypeBinding<Schema, Ops>`` instances to common records at
+2. Adapt the former ``TypeBinding<Schema, Ops>`` instances to common records at
    factory boundaries.  Add static layout and conversion tests before changing
    call sites.
 3. Give value, time-series, node, graph, executor, and clock schemas the common
@@ -644,17 +643,19 @@ execution behaviour:
 4. Make family factories intern common records, then expose typed pointer
    wrappers and migrate views to wrap those pointers.
 5. Replace template-specialized type bindings with typed accessors over
-   ``TypeRecord``.  Keep temporary aliases where they reduce source churn.
+   ``TypeRecord`` and remove the temporary aliases after migration.
 6. Split owning storage from borrowed pointers. Migrate borrowed
    ``StorageHandle`` states to typed pointers, leaving inline and allocated
    state in ``ErasedOwner``.
 7. Emit debug descriptors from factories and rewrite GDB and LLDB printers to
    start at ``AnyPtr`` and ``TypeRecord``.
-8. Retire old type-binding terminology after all factories and documentation
-   use the new model.
+8. Retire the old type-binding registry and borrowed generic storage cursor
+   after all families use the new model.
 
-Each phase should leave the runtime buildable as pure C++ and should be small
-enough to compare generated code on representative graph execution paths.
+Each phase kept the runtime buildable as pure C++ and was reviewed separately.
+The final time-series migration removed the last compatibility registry and
+reduced generic and specialised ``TSDataStorageRef`` objects from three words
+to the common two-word type/data layout.
 
 Performance And Correctness Gates
 ---------------------------------

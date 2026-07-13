@@ -34,7 +34,7 @@ namespace hgraph
     {
       public:
         TSOutput() noexcept;
-        explicit TSOutput(const TSDataBinding &binding);
+        explicit TSOutput(TSOutputTypeRef type);
         explicit TSOutput(const TSValueTypeMetaData &schema);
         explicit TSOutput(const TSValueTypeMetaData *schema);
         explicit TSOutput(const TSEndpointSchema &endpoint_schema);
@@ -48,8 +48,7 @@ namespace hgraph
         /** True when this output owns a bound TSData root. */
         [[nodiscard]] bool has_value() const noexcept;
 
-        /** Root TSData binding and schema, or null when unbound. */
-        [[nodiscard]] const TSDataBinding *binding() const noexcept;
+        /** Root TSData type record and schema. */
         [[nodiscard]] TSOutputTypeRef type_ref() const;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
 
@@ -92,7 +91,6 @@ namespace hgraph
                                                         TSEndpointOwnerPort port,
                                                         DateTime            mutation_time);
 
-        static TSData checked_data_for(const TSDataBinding &binding);
         static TSData checked_data_for(const TSValueTypeMetaData *schema);
         static TSData checked_data_for(const TSEndpointSchema &endpoint_schema);
         static const TSData &copyable_data(const TSOutput &other);

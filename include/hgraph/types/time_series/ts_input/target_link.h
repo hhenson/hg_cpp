@@ -108,7 +108,6 @@ namespace hgraph::detail
     [[nodiscard]] TSInputTargetLinkStorage *mutable_target_link_storage(const TSDataView &view);
     [[nodiscard]] const TSValueTypeMetaData *target_link_schema(const TSDataView &view) noexcept;
 
-    [[nodiscard]] bool is_target_link_binding(const TSDataBinding *binding) noexcept;
     [[nodiscard]] bool is_target_link_view(const TSDataView &view) noexcept;
     [[nodiscard]] bool target_link_bound(const TSDataView &view) noexcept;
     [[nodiscard]] TSDataView target_link_resolve(const TSDataView &view,

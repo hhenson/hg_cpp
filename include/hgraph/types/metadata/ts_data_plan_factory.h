@@ -13,7 +13,7 @@ namespace hgraph
 {
     /**
      * Factory that maps a time-series ``TSValueTypeMetaData`` schema to the
-     * canonical ``MemoryUtils::StoragePlan`` and default ``TSDataBinding``
+     * canonical ``MemoryUtils::StoragePlan`` and role-specific ``TypeRecord``
      * for the TS data component.
      *
      * ``TSOutput`` and ``TSInput`` are the top-level runtime containers for time-series
@@ -63,28 +63,12 @@ namespace hgraph
         /** Look up only; never synthesises. Returns ``nullptr`` when missing. */
         const MemoryUtils::StoragePlan *find(const TSValueTypeMetaData *schema) const;
 
-        /**
-         * Look up or synthesise the canonical default TSData binding for
-         * ``schema``. Returns ``nullptr`` when ``schema`` is null.
-         */
-        const TSDataBinding *binding_for(const TSValueTypeMetaData *schema);
-
-        /** Canonical standalone-data role record for migrated TS roots. */
+        /** Canonical standalone-data role record. */
         [[nodiscard]] TSDataTypeRef data_type_for(const TSValueTypeMetaData *schema);
-        /** Canonical output role record for migrated TS roots. */
+        /** Canonical output role record. */
         [[nodiscard]] TSOutputTypeRef output_type_for(const TSValueTypeMetaData *schema);
         [[nodiscard]] TSDataTypeRef find_data_type(const TSValueTypeMetaData *schema) const noexcept;
         [[nodiscard]] TSOutputTypeRef find_output_type(const TSValueTypeMetaData *schema) const noexcept;
-
-        /**
-         * Explicit legacy binding synthesis for composite internals. Scalar
-         * results are compatibility descriptors only and are never canonical
-         * root identity.
-         */
-        const TSDataBinding *legacy_binding_for(const TSValueTypeMetaData *schema);
-
-        /** Binding lookup only; never synthesises. Returns ``nullptr`` when missing. */
-        const TSDataBinding *find_binding(const TSValueTypeMetaData *schema) const;
 
         /**
          * Drop every cached schema → plan mapping. Test-only helper used to
@@ -96,11 +80,9 @@ namespace hgraph
         TSDataPlanFactory() = default;
 
         const MemoryUtils::StoragePlan *synthesise(const TSValueTypeMetaData *schema);
-        const TSDataBinding            *synthesise_binding(const TSValueTypeMetaData *schema);
 
         mutable std::mutex                                                                mutex_;
         std::unordered_map<const TSValueTypeMetaData *, const MemoryUtils::StoragePlan *> cache_;
-        std::unordered_map<const TSValueTypeMetaData *, const TSDataBinding *>             binding_cache_;
         std::unordered_map<const TSValueTypeMetaData *, TSDataTypeRef>                     data_type_cache_;
         std::unordered_map<const TSValueTypeMetaData *, TSOutputTypeRef>                   output_type_cache_;
     };

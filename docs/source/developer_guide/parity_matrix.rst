@@ -144,7 +144,7 @@ the close of the operator-test port; the counts come from comparing
      - 0
      - 2
      - 0
-     - *downcast_*, *downcast_ref* · equiv-API: cast_
+     - ``downcast_``, ``downcast_ref`` · equiv-API: ``cast_``
 
 Notes on the residue:
 

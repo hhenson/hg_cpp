@@ -87,8 +87,8 @@ namespace hgraph
          * describes each constructed proxy value. ``value_ops->build`` is
          * called when a slot value first needs to be materialised.
          */
-        void bind(TSStorageTypeRef     self_type,
-                  TSStorageTypeRef     element_type,
+        void bind(TSRoleTypeRef     self_type,
+                  TSRoleTypeRef     element_type,
                   const TSDDataView   &source,
                   const TSDProxyValueOps *value_ops,
                   const void          *builder_context,
@@ -126,7 +126,7 @@ namespace hgraph
         void subscribe_slot_observer(SlotObserver *observer);
         void unsubscribe_slot_observer(SlotObserver *observer);
 
-        [[nodiscard]] TSStorageTypeRef element_type() const noexcept { return element_type_; }
+        [[nodiscard]] TSRoleTypeRef element_type() const noexcept { return element_type_; }
         [[nodiscard]] std::size_t child_capacity() const noexcept { return values_.slot_capacity(); }
         [[nodiscard]] bool source_identities_match() const;
         void stop() noexcept;
@@ -154,8 +154,8 @@ namespace hgraph
         void mark_modified(DateTime modified_time);
         [[nodiscard]] bool has_constructed_children() const noexcept;
 
-        TSStorageTypeRef              self_type_{};
-        TSStorageTypeRef              element_type_{};
+        TSRoleTypeRef              self_type_{};
+        TSRoleTypeRef              element_type_{};
         TSDProxySlotSync              source_sync_;
         TSDDataStorageRef             source_storage_{};
         const TSDProxyValueOps        *value_ops_{nullptr};
@@ -171,9 +171,9 @@ namespace hgraph
 
     /** Return the proxy role type for ``schema`` and ``element_type``. */
     [[nodiscard]] TSDataTypeRef tsd_proxy_data_type_for(const TSValueTypeMetaData &schema,
-                                                        TSStorageTypeRef element_type);
+                                                        TSRoleTypeRef element_type);
     [[nodiscard]] TSOutputTypeRef tsd_proxy_output_type_for(const TSValueTypeMetaData &schema,
-                                                            TSStorageTypeRef element_type);
+                                                            TSRoleTypeRef element_type);
 
     /** Clear interned proxy type contexts that borrow schema and role-record pointers. */
     void clear_tsd_proxy_contexts() noexcept;

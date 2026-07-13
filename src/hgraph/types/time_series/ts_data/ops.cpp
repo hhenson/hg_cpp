@@ -71,7 +71,7 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("move value");
     }
 
-    Value missing_empty_delta(const TSDataBinding &)
+    Value missing_empty_delta(const TSRoleTypeRef &)
     {
         missing_ts_data_op("empty delta");
     }
@@ -164,7 +164,7 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("indexed size");
     }
 
-    TSStorageTypeRef missing_indexed_element_binding(const void *, const void *, std::size_t)
+    TSRoleTypeRef missing_indexed_element_binding(const void *, const void *, std::size_t)
     {
         missing_ts_data_op("indexed element binding");
     }

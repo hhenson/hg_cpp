@@ -57,8 +57,7 @@ namespace hgraph
         [[nodiscard]] GraphView consumer_graph() const;
         [[nodiscard]] TSEndpointOwnerPort owner_port() const noexcept;
 
-        /** Binding and schema for the input-side TSData projection. */
-        [[nodiscard]] const TSDataBinding *binding() const noexcept;
+        /** Canonical type record and schema for the input-side projection. */
         [[nodiscard]] TSInputTypeRef type_ref() const;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
         /** Underlying TSData projection; empty for unbound peered terminals. */
@@ -158,8 +157,7 @@ namespace hgraph
             [[nodiscard]] bool has_storage() const noexcept;
             [[nodiscard]] bool is_target_position() const noexcept;
             [[nodiscard]] bool target_bound() const noexcept;
-            [[nodiscard]] const TSDataBinding *binding() const noexcept;
-            [[nodiscard]] TSStorageTypeRef storage_type() const noexcept;
+            [[nodiscard]] TSRoleTypeRef storage_type() const noexcept;
             [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
             [[nodiscard]] const TSValueTypeMetaData *target_path_schema() const noexcept;
             [[nodiscard]] const TSDataView &resolved_value_data() const noexcept;

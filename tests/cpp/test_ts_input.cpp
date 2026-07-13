@@ -298,7 +298,7 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
 
     auto input_root = input.view(nullptr, t1);
     REQUIRE(input_root.evaluation_time() == t1);
-    REQUIRE(input_root.binding() == nullptr);
+    REQUIRE(input_root.type_ref().record() != nullptr);
     REQUIRE(input_root.type_ref());
     REQUIRE(std::string{input_root.type_ref().record()->implementation_name()} == "ts.fixed.input.composite");
     REQUIRE_FALSE(input_root.is_bindable());
@@ -333,7 +333,7 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
     REQUIRE(input_root.value().is_bundle());
     REQUIRE(input_root.value().binding().ops_ref().kind == ValueOpsKind::Indexed);
 
-    REQUIRE(items.binding() == nullptr);
+    REQUIRE(items.type_ref().record() != nullptr);
     REQUIRE(items.type_ref());
     REQUIRE(items.valid());
     REQUIRE_FALSE(items.all_valid());
@@ -345,7 +345,7 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
     REQUIRE(list_valid_items.size() == 1);
     REQUIRE(list_valid_items[0].first == 0);
     REQUIRE(list_valid_items[0].second.value().checked_as<std::int32_t>() == 10);
-    REQUIRE(list_view[0].binding() == nullptr);
+    REQUIRE(list_view[0].type_ref().record() != nullptr);
     REQUIRE(list_view[0].type_ref());
     REQUIRE(list_view[0].evaluation_time() == t1);
     auto list_modified_items = collect_range(list_view.modified_items());
@@ -414,7 +414,7 @@ TEST_CASE("TSInput data views project non-peered prefixes")
     auto root_data = root_view.data_view().borrowed_ref();
     REQUIRE(root_data.valid());
     REQUIRE(root_data.schema() == input.schema());
-    REQUIRE(root_data.binding() == root_view.binding());
+    REQUIRE(root_data.type_ref().record() == root_view.type_ref().record());
     REQUIRE(root_data.has_current_value());
     REQUIRE_FALSE(root_data.all_valid());
     REQUIRE(root_data.modified(t1));
@@ -803,7 +803,7 @@ TEST_CASE("TSInput output binding levels expose values and data views from root 
     REQUIRE(root_view.valid());
     REQUIRE(root_view.all_valid());
     REQUIRE(root_view.data_view().schema() == root);
-    REQUIRE(root_view.data_view().binding() == root_view.binding());
+    REQUIRE(root_view.data_view().type_ref().record() == root_view.type_ref().record());
 
     REQUIRE(leaf.valid());
     REQUIRE(leaf.value().checked_as<std::int32_t>() == 7);
@@ -1312,10 +1312,6 @@ TEST_CASE("TSW ranges use stable ops contexts across data and endpoint roles")
     require_ranges(peered_window.data_view());
     REQUIRE(range_size(peered_window.values()) == 3);
 
-    const auto *legacy = factory.legacy_binding_for(schema);
-    REQUIRE(legacy != nullptr);
-    auto data_base = data.view();
-    TSDataView legacy_view{legacy, const_cast<void *>(data_base.data())};
-    REQUIRE(legacy_view.storage_type().legacy_backed());
-    require_ranges(legacy_view.as_window());
+    auto canonical_view = data.view();
+    require_ranges(canonical_view.as_window());
 }

@@ -88,7 +88,7 @@ namespace hgraph
         struct TSDProxyContextKey
         {
             const TSValueTypeMetaData *schema{nullptr};
-            TSStorageTypeRef           element_type{};
+            TSRoleTypeRef           element_type{};
             TypeRole                   role{TypeRole::Invalid};
 
             [[nodiscard]] bool operator==(const TSDProxyContextKey &) const noexcept = default;
@@ -99,7 +99,7 @@ namespace hgraph
             [[nodiscard]] std::size_t operator()(const TSDProxyContextKey &key) const noexcept
             {
                 std::size_t seed = std::hash<const void *>{}(key.schema);
-                const auto  h    = std::hash<std::uintptr_t>{}(key.element_type.raw_bits());
+                const auto h = std::hash<const TypeRecord *>{}(key.element_type.record());
                 seed ^= h + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
                 return combine_hash(seed, static_cast<std::size_t>(key.role));
             }
@@ -118,15 +118,15 @@ namespace hgraph
             MapValueOps                     value_map_ops{};
             MapValueOps                     modified_map_ops{};
             IndexedValueOps                 delta_bundle_ops{};
-            TSStorageTypeRef                 element_type{};
-            TSStorageTypeRef                 key_set_type{};
+            TSRoleTypeRef                 element_type{};
+            TSRoleTypeRef                 key_set_type{};
             TypeRole                         role{TypeRole::Invalid};
             ValueTypeRef key_set_value_binding{nullptr};
             ValueTypeRef added_set_binding{nullptr};
             ValueTypeRef removed_set_binding{nullptr};
             ValueTypeRef modified_map_binding{nullptr};
 
-            TSDProxyContext(const TSValueTypeMetaData &schema_, TSStorageTypeRef element_type_, TypeRole role_)
+            TSDProxyContext(const TSValueTypeMetaData &schema_, TSRoleTypeRef element_type_, TypeRole role_)
                 : schema(&schema_),
                   plan(&MemoryUtils::plan_for<TSDProxy>()),
                   element_type(ts_data_plan_factory_detail::tsd_value_projection_type(element_type_, role_)),
@@ -286,7 +286,7 @@ namespace hgraph
                 const auto label = role == TypeRole::Data
                                        ? std::string_view{"ts.tsd.key-set.data"}
                                        : std::string_view{"ts.tsd.key-set.output"};
-                key_set_type = TSStorageTypeRef{intern_ts_type(
+                key_set_type = TSRoleTypeRef{intern_ts_type(
                     *key_set_ts_schema, role, *plan, key_set_ts_ops, label)};
                 layout.key_set_type = key_set_type;
             }
@@ -1251,7 +1251,7 @@ namespace hgraph
         }
 
         [[nodiscard]] const TSDProxyContext &tsd_proxy_context_for(const TSValueTypeMetaData &schema,
-                                                                   TSStorageTypeRef element_type,
+                                                                   TSRoleTypeRef element_type,
                                                                    TypeRole role)
         {
             std::lock_guard<std::recursive_mutex> lock(tsd_proxy_context_mutex());
@@ -1318,8 +1318,8 @@ namespace hgraph
         unsubscribe_source(false);
     }
 
-    void TSDProxy::bind(TSStorageTypeRef     self_type,
-                        TSStorageTypeRef     element_type,
+    void TSDProxy::bind(TSRoleTypeRef     self_type,
+                        TSRoleTypeRef     element_type,
                         const TSDDataView   &source,
                         const TSDProxyValueOps *value_ops,
                         const void          *builder_context,
@@ -1863,7 +1863,7 @@ namespace hgraph
     }
 
     TSDataTypeRef tsd_proxy_data_type_for(const TSValueTypeMetaData &schema,
-                                          TSStorageTypeRef element_type)
+                                          TSRoleTypeRef element_type)
     {
         const auto &context = tsd_proxy_context_for(schema, element_type, TypeRole::Data);
         return TSDataTypeRef::checked(intern_ts_type(
@@ -1871,7 +1871,7 @@ namespace hgraph
     }
 
     TSOutputTypeRef tsd_proxy_output_type_for(const TSValueTypeMetaData &schema,
-                                              TSStorageTypeRef element_type)
+                                              TSRoleTypeRef element_type)
     {
         const auto &context = tsd_proxy_context_for(schema, element_type, TypeRole::Output);
         return TSOutputTypeRef::checked(intern_ts_type(

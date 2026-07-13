@@ -260,7 +260,7 @@ namespace hgraph::ts_data_plan_factory_detail
         class TSDSlotStorage
         {
           public:
-            TSDSlotStorage(const ValueTypeRef &key_binding, TSStorageTypeRef element_type)
+            TSDSlotStorage(const ValueTypeRef &key_binding, TSRoleTypeRef element_type)
                 : key_binding_(key_binding),
                   element_type_(element_type),
                   keys_(key_binding.checked_plan(), key_store_ops(key_binding)),
@@ -277,7 +277,7 @@ namespace hgraph::ts_data_plan_factory_detail
             ~TSDSlotStorage() = default;
 
             [[nodiscard]] ValueTypeRef key_binding() const { return key_binding_; }
-            [[nodiscard]] TSStorageTypeRef element_type() const noexcept { return element_type_; }
+            [[nodiscard]] TSRoleTypeRef element_type() const noexcept { return element_type_; }
             [[nodiscard]] const TSDataTracking &tracking() const noexcept { return tracking_; }
             [[nodiscard]] TSDataTracking &mutable_tracking() noexcept { return tracking_; }
             /**
@@ -495,7 +495,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             ValueTypeRef key_binding_{nullptr};
-            TSStorageTypeRef             element_type_{};
+            TSRoleTypeRef             element_type_{};
             TSDataTracking              tracking_{};
             TSDataTracking          key_set_tracking_{};
             KeySlotStore                keys_;
@@ -519,7 +519,7 @@ namespace hgraph::ts_data_plan_factory_detail
         struct TSDStoragePlanContext
         {
             ValueTypeRef key_binding{nullptr};
-            TSStorageTypeRef element_type{};
+            TSRoleTypeRef element_type{};
         };
 
         [[nodiscard]] const TSSStoragePlanContext &tss_plan_context(const void *context)
@@ -566,7 +566,7 @@ namespace hgraph::ts_data_plan_factory_detail
         struct TSDSlotPlanKey
         {
             const TSValueTypeMetaData *schema{nullptr};
-            TSStorageTypeRef           element_type{};
+            TSRoleTypeRef           element_type{};
 
             [[nodiscard]] bool operator==(const TSDSlotPlanKey &) const noexcept = default;
         };
@@ -576,7 +576,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] std::size_t operator()(const TSDSlotPlanKey &key) const noexcept
             {
                 auto seed = std::hash<const TSValueTypeMetaData *>{}(key.schema);
-                return combine_hash(seed, std::hash<std::uintptr_t>{}(key.element_type.raw_bits()));
+                return combine_hash(seed, std::hash<const TypeRecord *>{}(key.element_type.record()));
             }
         };
 
@@ -708,7 +708,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
         struct ProjectionKey
         {
-            std::uintptr_t type_bits{0};
+            const TypeRecord *type_record{nullptr};
             const TSDataOps *source_ops{nullptr};
             const TSValueTypeMetaData *schema{nullptr};
             TypeRole role{TypeRole::Invalid};
@@ -719,7 +719,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             [[nodiscard]] std::size_t operator()(const ProjectionKey &key) const noexcept
             {
-                auto seed = combine_hash(std::hash<std::uintptr_t>{}(key.type_bits),
+                auto seed = combine_hash(std::hash<const TypeRecord *>{}(key.type_record),
                                          std::hash<const TSDataOps *>{}(key.source_ops));
                 seed = combine_hash(seed, std::hash<const TSValueTypeMetaData *>{}(key.schema));
                 return combine_hash(seed, static_cast<std::size_t>(key.role));
@@ -766,7 +766,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return cache;
         }
 
-        [[nodiscard]] TSStorageTypeRef intern_tsd_value_projection_type(TSStorageTypeRef element_type,
+        [[nodiscard]] TSRoleTypeRef intern_tsd_value_projection_type(TSRoleTypeRef element_type,
                                                                          TypeRole role)
         {
             const auto *schema = element_type.schema();
@@ -780,7 +780,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 record != nullptr && record->role == role && record->implementation_name() == label)
                 return element_type;
             const auto &source_ops = element_type.ops_ref();
-            const ProjectionKey key{element_type.raw_bits(), &source_ops, schema, role};
+            const ProjectionKey key{element_type.record(), &source_ops, schema, role};
             std::lock_guard<std::recursive_mutex> lock(projection_mutex());
             const TSDataOps *projection_ops = nullptr;
             auto &cache = projection_ops_cache();
@@ -792,7 +792,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 projection_ops = owned_ops.get();
                 cache.emplace(key, std::move(owned_ops));
             }
-            return TSStorageTypeRef{intern_ts_type(
+            return TSRoleTypeRef{intern_ts_type(
                 *schema, role, element_type.checked_plan(), *projection_ops, label)};
         }
 
@@ -832,11 +832,11 @@ namespace hgraph::ts_data_plan_factory_detail
             SetValueOps                     removed_set_ops{};
             ValueTypeRef added_set_binding{nullptr};
             ValueTypeRef removed_set_binding{nullptr};
-            TSStorageTypeRef root_type{};
+            TSRoleTypeRef root_type{};
 
             virtual ~SlotContextBase() = default;
             virtual const TSDataOps &ops_ref() const noexcept = 0;
-            virtual TSStorageTypeRef key_set_type() const noexcept { return {}; }
+            virtual TSRoleTypeRef key_set_type() const noexcept { return {}; }
         };
 
         template <typename Storage>
@@ -1676,7 +1676,7 @@ namespace hgraph::ts_data_plan_factory_detail
                        bool embedded)
             {
                 initialise_tss_common(schema, plan, key_binding, true);
-                root_type = TSStorageTypeRef{intern_ts_type(
+                root_type = TSRoleTypeRef{intern_ts_type(
                     schema, role, plan, set_ops, keyed_root_label(schema.kind, role, embedded))};
             }
         };
@@ -1694,12 +1694,12 @@ namespace hgraph::ts_data_plan_factory_detail
             IndexedValueOps          dict_delta_bundle_ops{};
             ValueTypeRef modified_map_binding{nullptr};
             ValueTypeRef key_set_value_binding{nullptr};
-            TSStorageTypeRef          key_set_ts_type{};
+            TSRoleTypeRef          key_set_ts_type{};
 
             TSDContext(const TSValueTypeMetaData &schema,
                        const MemoryUtils::StoragePlan &plan,
                        const ValueTypeRef &key_binding,
-                       TSStorageTypeRef element_type,
+                       TSRoleTypeRef element_type,
                        TypeRole role_,
                        bool embedded,
                        bool composite)
@@ -1714,12 +1714,12 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
                 initialise_tss_common(*key_set_schema, plan, key_binding, false);
                 initialise_tsd(schema, plan, key_binding, element_type);
-                root_type = TSStorageTypeRef{intern_ts_type(
+                root_type = TSRoleTypeRef{intern_ts_type(
                     schema, role, plan, dict_ops, keyed_root_label(schema.kind, role, embedded, composite))};
             }
 
             const TSDataOps &ops_ref() const noexcept override { return dict_ops; }
-            TSStorageTypeRef key_set_type() const noexcept override { return key_set_ts_type; }
+            TSRoleTypeRef key_set_type() const noexcept override { return key_set_ts_type; }
 
             [[nodiscard]] static const detail::TSDataOwnershipOps &ownership_ops() noexcept
             {
@@ -1763,7 +1763,7 @@ namespace hgraph::ts_data_plan_factory_detail
             void initialise_tsd(const TSValueTypeMetaData &schema_,
                                 const MemoryUtils::StoragePlan &plan_,
                                 const ValueTypeRef &key_binding,
-                                TSStorageTypeRef element_type)
+                                TSRoleTypeRef element_type)
             {
                 const auto &element_ops = element_type.ops_ref();
                 const auto *element_layout = element_ops.layout_impl(element_ops.context);
@@ -1965,7 +1965,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                             : role == TypeRole::Input
                                                   ? std::string_view{"ts.tsd.key-set.input"}
                                                   : std::string_view{"ts.tsd.key-set.output"};
-                key_set_ts_type = TSStorageTypeRef{intern_ts_type(
+                key_set_ts_type = TSRoleTypeRef{intern_ts_type(
                     *key_set_schema, role, plan_, key_set_ts_ops, role_label)};
                 dict_layout.key_set_type = key_set_ts_type;
             }
@@ -2914,7 +2914,7 @@ namespace hgraph::ts_data_plan_factory_detail
             const TSValueTypeMetaData      *schema{nullptr};
             const MemoryUtils::StoragePlan *plan{nullptr};
             std::size_t                     storage_offset{0};
-            TSStorageTypeRef                element_type{};
+            TSRoleTypeRef                element_type{};
             TypeRole                        role{TypeRole::Invalid};
             bool                            embedded{false};
             bool                            composite{false};
@@ -2929,7 +2929,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 auto seed = combine_hash(std::hash<const TSValueTypeMetaData *>{}(key.schema),
                                          std::hash<const MemoryUtils::StoragePlan *>{}(key.plan));
                 seed = combine_hash(seed, key.storage_offset);
-                seed = combine_hash(seed, std::hash<std::uintptr_t>{}(key.element_type.raw_bits()));
+                seed = combine_hash(seed, std::hash<const TypeRecord *>{}(key.element_type.record()));
                 seed = combine_hash(seed, static_cast<std::size_t>(key.role));
                 seed = combine_hash(seed, key.embedded ? 1U : 0U);
                 return combine_hash(seed, key.composite ? 1U : 0U);
@@ -2968,26 +2968,18 @@ namespace hgraph::ts_data_plan_factory_detail
             return binding;
         }
 
-        [[nodiscard]] TSStorageTypeRef element_type_for(const TSValueTypeMetaData &schema, TypeRole role)
+        [[nodiscard]] TSRoleTypeRef element_type_for(const TSValueTypeMetaData &schema, TypeRole role)
         {
             const auto *element_schema = schema.element_ts();
             if (element_schema == nullptr) { throw std::logic_error("TSD element TS schema is not resolved"); }
             auto &factory = TSDataPlanFactory::instance();
-            if (is_migrated_ts_root_schema(element_schema))
-            {
-                if (role == TypeRole::Output)
-                    return TSStorageTypeRef{factory.output_type_for(element_schema).as_role()};
-                const auto data = factory.data_type_for(element_schema);
-                return TSStorageTypeRef{data.as_role()};
-            }
-            const auto *binding = factory.legacy_binding_for(element_schema);
-            if (binding == nullptr) { throw std::logic_error("TSD element TSData type is not resolved"); }
-            return TSStorageTypeRef{binding};
+            if (role == TypeRole::Output) return factory.output_type_for(element_schema).as_role();
+            return factory.data_type_for(element_schema).as_role();
         }
 
         [[nodiscard]] std::unique_ptr<SlotPlanEntry> make_tsd_slot_plan_entry(
             const ValueTypeRef &key_binding,
-            TSStorageTypeRef element_type)
+            TSRoleTypeRef element_type)
         {
             auto entry = std::make_unique<SlotPlanEntry>();
             entry->tsd_context = TSDStoragePlanContext{.key_binding = key_binding,
@@ -3076,7 +3068,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_tsd_plan(
         const TSValueTypeMetaData &schema,
-        TSStorageTypeRef           element_type)
+        TSRoleTypeRef           element_type)
     {
         if (!is_slot_ts_data(schema) || schema.kind != TSTypeKind::TSD)
         {
@@ -3117,7 +3109,7 @@ namespace hgraph::ts_data_plan_factory_detail
         std::lock_guard<std::recursive_mutex> lock(slot_context_mutex());
         auto                       &contexts = slot_contexts();
         const auto element_type = schema.kind == TSTypeKind::TSD ? element_type_for(schema, role)
-                                                                 : TSStorageTypeRef{};
+                                                                 : TSRoleTypeRef{};
         const SlotContextKey key{&schema, &plan, storage_offset, element_type, role, embedded, false};
         if (const auto it = contexts.find(key); it != contexts.end()) { return it->second->ops_ref(); }
 
@@ -3144,7 +3136,7 @@ namespace hgraph::ts_data_plan_factory_detail
     [[nodiscard]] const TSDataOps &slot_tsd_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                         const MemoryUtils::StoragePlan &plan,
                                                         std::size_t storage_offset,
-                                                        TSStorageTypeRef                element_type,
+                                                        TSRoleTypeRef                element_type,
                                                         TypeRole storage_role,
                                                         bool embedded,
                                                         bool composite)
@@ -3175,7 +3167,7 @@ namespace hgraph::ts_data_plan_factory_detail
         return result->ops_ref();
     }
 
-    TSStorageTypeRef tsd_value_projection_type(TSStorageTypeRef element_type, TypeRole role)
+    TSRoleTypeRef tsd_value_projection_type(TSRoleTypeRef element_type, TypeRole role)
     {
         return intern_tsd_value_projection_type(element_type, role);
     }

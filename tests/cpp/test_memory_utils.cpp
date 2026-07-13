@@ -144,18 +144,6 @@ namespace
         }
     };
 
-    struct TestStorageBinding
-    {
-        const MemoryUtils::StoragePlan *storage_plan{nullptr};
-
-        [[nodiscard]] const MemoryUtils::StoragePlan *plan() const noexcept { return storage_plan; }
-        [[nodiscard]] const MemoryUtils::StoragePlan &checked_plan() const
-        {
-            if (storage_plan == nullptr) { throw std::logic_error("missing plan"); }
-            return *storage_plan;
-        }
-    };
-
     void *tracked_allocate(MemoryUtils::StorageLayout layout) {
         ++AllocationProbe::allocations;
         AllocationProbe::last_layout = layout;
@@ -210,30 +198,6 @@ TEST_CASE("memory utils rejects empty or invalid raw storage layouts", "[memory 
 
 TEST_CASE("memory utils packs erased owner state into three pointer words", "[memory utils]") {
     REQUIRE(sizeof(MemoryUtils::ErasedOwner<>) == sizeof(void *) * 3);
-}
-
-TEST_CASE("memory utils storage refs are two pointer borrowed cursors", "[memory utils]") {
-    using StorageRef = MemoryUtils::StorageRef<TestStorageBinding>;
-
-    const auto          &plan = MemoryUtils::plan_for<uint32_t>();
-    TestStorageBinding   binding{&plan};
-    uint32_t             value{42u};
-    StorageRef           ref{binding, &value};
-
-    static_assert(std::is_trivially_copyable_v<StorageRef>);
-    REQUIRE(sizeof(StorageRef) == sizeof(void *) * 2);
-    REQUIRE(ref.has_value());
-    REQUIRE(ref.bound());
-    REQUIRE(ref.binding() == &binding);
-    REQUIRE(ref.plan() == &plan);
-    REQUIRE(ref.data() == &value);
-
-    auto copied = ref;
-    value       = 7u;
-
-    REQUIRE(copied.binding() == &binding);
-    REQUIRE(copied.data() == &value);
-    REQUIRE(*static_cast<uint32_t *>(copied.data()) == 7u);
 }
 
 TEST_CASE("memory utils keeps trivial pointer-sized payloads inline in erased owners", "[memory utils]") {

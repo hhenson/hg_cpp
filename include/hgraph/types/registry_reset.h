@@ -26,11 +26,8 @@ namespace hgraph
      *    and TSData ops contexts after the records that pointed into them.
      * 4. ``ValuePlanFactory`` — plans borrow schema pointers (and the later
      *    clears release MemoryUtils synthesised composite/array plans).
-     * 5. Compact, mutable-container, and synthesised plan registries —
-     *    lifecycle contexts reference the bindings below.
-     * 6. ``TSDataBinding`` — borrows schema + plan + ops pointers. Value type
-     *    identity is owned by the common record registry cleared in step 2.
-     * 7. ``TypeRegistry`` — last, because it owns the schemas everyone above
+     * 5. Compact, mutable-container, and synthesised plan registries.
+     * 6. ``TypeRegistry`` — last, because it owns the schemas everyone above
      *    borrows; its reset re-seeds the standard scalar/TS vocabulary.
      */
     HGRAPH_EXPORT void reset_all_registries() noexcept;

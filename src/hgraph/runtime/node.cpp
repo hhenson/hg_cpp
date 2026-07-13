@@ -1354,7 +1354,8 @@ namespace hgraph
     void NodeValue::attach_graph(GraphValue *graph, std::size_t node_index)
     {
         if (!has_value()) { return; }
-        const auto &table = type().ops_ref();
+        const auto node_type = type();
+        const auto &table = node_type.ops_ref();
         table.attach_graph_impl(table.context, storage_.data(), graph, node_index);
     }
 

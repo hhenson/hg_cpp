@@ -15,8 +15,8 @@ namespace hgraph
 {
     TSOutput::TSOutput() noexcept = default;
 
-    TSOutput::TSOutput(const TSDataBinding &binding)
-        : data_(checked_data_for(binding))
+    TSOutput::TSOutput(TSOutputTypeRef type)
+        : data_(type)
     {
         attach_root_parent();
     }
@@ -87,11 +87,6 @@ namespace hgraph
     bool TSOutput::has_value() const noexcept
     {
         return data_.has_value();
-    }
-
-    const TSDataBinding *TSOutput::binding() const noexcept
-    {
-        return data_.binding();
     }
 
     TSOutputTypeRef TSOutput::type_ref() const
@@ -168,33 +163,10 @@ namespace hgraph
         if (alternatives_) { alternatives_->release_subscriptions(release_time); }
     }
 
-    TSData TSOutput::checked_data_for(const TSDataBinding &binding)
-    {
-        const auto *schema = binding.type_meta;
-        if (is_migrated_ts_root_schema(schema))
-        {
-            if (binding.storage_plan == nullptr || binding.ops == nullptr)
-                throw std::invalid_argument("TSOutput requires a complete migrated TSData binding");
-            const auto label = schema->kind == TSTypeKind::TSS ? std::string_view{"ts.tss.output.root"}
-                             : schema->kind == TSTypeKind::TSD ? std::string_view{"ts.tsd.output.root"}
-                             : schema->kind == TSTypeKind::REF ? std::string_view{"ts.ref.output.root"}
-                                                               : std::string_view{};
-            const auto type = checked_ts_role_type(
-                intern_ts_type(*schema, TypeRole::Output, *binding.storage_plan, *binding.ops, label),
-                std::integral_constant<TypeRole, TypeRole::Output>{});
-            return TSData{type};
-        }
-        return TSData{binding};
-    }
-
     TSData TSOutput::checked_data_for(const TSValueTypeMetaData *schema)
     {
         if (schema == nullptr) { throw std::invalid_argument("TSOutput requires a time-series schema"); }
-        if (is_migrated_ts_root_schema(schema))
-            return TSData{TSDataPlanFactory::instance().output_type_for(schema)};
-        const auto *binding = TSDataPlanFactory::instance().binding_for(schema);
-        if (binding == nullptr) { throw std::logic_error("TSOutput could not resolve a TSData binding"); }
-        return TSData{*binding};
+        return TSData{TSDataPlanFactory::instance().output_type_for(schema)};
     }
 
     TSData TSOutput::checked_data_for(const TSEndpointSchema &endpoint_schema)
@@ -203,8 +175,7 @@ namespace hgraph
         {
             throw std::invalid_argument("TSOutput requires a non-empty output endpoint schema");
         }
-        if (const auto *schema = endpoint_schema.schema(); endpoint_schema.is_owned() &&
-            is_migrated_ts_root_schema(schema))
+        if (const auto *schema = endpoint_schema.schema(); endpoint_schema.is_owned())
         {
             return checked_data_for(schema);
         }

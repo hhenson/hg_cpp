@@ -225,110 +225,6 @@ namespace hgraph::ts_data_plan_factory_detail
         }
     }
 
-    [[nodiscard]] const TSDataBinding *embedded_ts_data_binding(const TSValueTypeMetaData      &schema,
-                                                                const MemoryUtils::StoragePlan &root_plan,
-                                                                std::size_t value_offset, std::size_t aux_offset)
-    {
-        if (is_slot_ts_data(schema))
-        {
-            const auto *plan = synthesise_slot_plan(schema);
-            if (plan == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: slot TSData plan is not resolved");
-            }
-            const auto &ops = slot_ts_data_ops(schema, *plan, 0);
-            return &TSDataBinding::intern(schema, *plan, ops);
-        }
-        if (is_dynamic_list_ts_data(schema))
-        {
-            const auto *plan = synthesise_dynamic_list_plan(schema);
-            if (plan == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: dynamic TSL TSData plan is not resolved");
-            }
-            const auto type = standalone_ts_storage_type(schema, TypeRole::Data, true);
-            const auto &ops = type.ops_ref();
-            return &TSDataBinding::intern(schema, *plan, ops);
-        }
-        if (is_window_ts_data(schema))
-        {
-            const auto *plan = synthesise_window_plan(schema);
-            if (plan == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: TSW TSData plan is not resolved");
-            }
-            const auto *window_component   = plan->find_component("window");
-            const auto *tracking_component = plan->find_component("tracking");
-            if (window_component == nullptr || tracking_component == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: TSW TSData plan is missing required components");
-            }
-            const auto type = standalone_ts_storage_type(schema, TypeRole::Data, true);
-            const auto &ops = type.ops_ref();
-            return &TSDataBinding::intern(schema, *plan, ops);
-        }
-
-        const auto &aux_plan        = ts_data_aux_plan(schema);
-        const auto  tracking_offset = aux_offset + tracking_offset_in_aux(aux_plan);
-
-        if (is_compact_atomic_ts_data(schema))
-        {
-            const auto value_binding = ValuePlanFactory::instance().type_for(schema.value_schema);
-            const auto delta_binding = ValuePlanFactory::instance().type_for(schema.delta_value_schema);
-            if (!value_binding || !delta_binding)
-            {
-                throw std::logic_error("TSDataPlanFactory: embedded atomic bindings are not resolved");
-            }
-            const auto &ops = atomic_ts_data_ops(schema.kind, value_binding, delta_binding, root_plan, value_offset,
-                                                 tracking_offset);
-            return &TSDataBinding::intern(schema, root_plan, ops);
-        }
-
-        if (!is_fixed_structured_ts_data(schema))
-        {
-            throw std::logic_error(
-                fmt::format("TSDataPlanFactory: TSData storage is not implemented for kind {}",
-                            static_cast<int>(schema.kind)));
-        }
-
-        const auto value_binding = ValuePlanFactory::instance().type_for(schema.value_schema);
-        if (!value_binding)
-        {
-            throw std::logic_error("TSDataPlanFactory: embedded fixed value binding is not resolved");
-        }
-
-        const auto                        &value_plan = value_binding.checked_plan();
-        const auto                         count      = fixed_element_count(schema);
-        std::vector<TSStorageTypeRef>       element_types;
-        std::vector<std::size_t>           element_data_offsets;
-        element_types.reserve(count);
-        element_data_offsets.reserve(count);
-        for (std::size_t index = 0; index < count; ++index)
-        {
-            const auto *element_schema = fixed_element_schema(schema, index);
-            if (element_schema == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: embedded fixed element schema is not resolved");
-            }
-
-            const auto child_value_offset = value_offset + fixed_element_value_offset(schema, value_plan, index);
-            const auto child_aux_offset   = aux_offset + fixed_element_aux_offset(schema, aux_plan, index);
-            const auto *child_binding = embedded_ts_data_binding(
-                *element_schema, root_plan, child_value_offset, child_aux_offset);
-            if (child_binding == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: embedded fixed element binding is not resolved");
-            }
-            const auto child_type = TSStorageTypeRef{child_binding};
-            element_types.push_back(child_type);
-            element_data_offsets.push_back(child_type.plan() == &root_plan ? 0 : child_aux_offset);
-        }
-
-        return &TSDataBinding::intern(schema, root_plan,
-            fixed_structured_ts_data_ops(schema, root_plan, TypeRole::Data, value_offset, aux_offset, tracking_offset,
-                                         std::move(element_types), std::move(element_data_offsets)));
-    }
-
     namespace
     {
         [[nodiscard]] std::string_view fixed_record_label(const TSValueTypeMetaData &schema,
@@ -371,7 +267,7 @@ namespace hgraph::ts_data_plan_factory_detail
         }
     }
 
-    TSStorageTypeRef embedded_ts_storage_type(const TSValueTypeMetaData      &schema,
+    TSRoleTypeRef embedded_ts_storage_type(const TSValueTypeMetaData      &schema,
                                               TypeRole                         role,
                                               const MemoryUtils::StoragePlan &root_plan,
                                               std::size_t value_offset,
@@ -386,7 +282,7 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto *plan = synthesise_slot_plan(schema);
             if (plan == nullptr) throw std::logic_error("embedded keyed TSData plan is not resolved");
             const auto &ops = slot_ts_data_ops(schema, *plan, 0, role, true);
-            return TSStorageTypeRef{intern_ts_type(
+            return TSRoleTypeRef{intern_ts_type(
                 schema, role, *plan, ops, fixed_record_label(schema, role, false))};
         }
 
@@ -396,7 +292,7 @@ namespace hgraph::ts_data_plan_factory_detail
         const bool scalar = schema.kind == TSTypeKind::TS || schema.kind == TSTypeKind::SIGNAL ||
                             schema.kind == TSTypeKind::REF;
         if (!scalar && !is_fixed_structured_ts_data(schema))
-            return TSStorageTypeRef{embedded_ts_data_binding(schema, root_plan, value_offset, aux_offset)};
+            throw std::logic_error("embedded TSData storage kind is not supported");
 
         const auto &aux_plan = ts_data_aux_plan(schema);
         const auto tracking_offset = aux_offset + tracking_offset_in_aux(aux_plan);
@@ -408,7 +304,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 throw std::logic_error("embedded scalar TSData value bindings are not resolved");
             const auto &ops = atomic_ts_data_ops(schema.kind, value_type, delta_type, root_plan,
                                                  value_offset, tracking_offset);
-            return TSStorageTypeRef{intern_ts_type(
+            return TSRoleTypeRef{intern_ts_type(
                 schema, role, root_plan, ops, fixed_record_label(schema, role, false))};
         }
 
@@ -417,7 +313,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
         const auto &value_plan = value_type.checked_plan();
         const auto count = fixed_element_count(schema);
-        std::vector<TSStorageTypeRef> element_types;
+        std::vector<TSRoleTypeRef> element_types;
         std::vector<std::size_t> element_data_offsets;
         element_types.reserve(count);
         element_data_offsets.reserve(count);
@@ -439,7 +335,7 @@ namespace hgraph::ts_data_plan_factory_detail
         const auto *ops = &fixed_structured_ts_data_ops(schema, root_plan, role, value_offset, aux_offset,
                                                         tracking_offset, std::move(element_types),
                                                         std::move(element_data_offsets));
-        return TSStorageTypeRef{
+        return TSRoleTypeRef{
             intern_ts_type(schema, role, root_plan, *ops, fixed_record_label(schema, role, root_record))};
     }
 

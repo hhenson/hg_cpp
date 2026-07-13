@@ -310,7 +310,7 @@ namespace hgraph
 
     bool TSParentLink::has_ts_data_parent() const noexcept
     {
-        return (kind() == TSParentLinkKind::TSData || kind() == TSParentLinkKind::TSDataRecord) &&
+        return kind() == TSParentLinkKind::TSData &&
                parent_.ptr() != nullptr && payload_.ts_data != nullptr;
     }
 
@@ -335,17 +335,10 @@ namespace hgraph
                payload_.node_data != nullptr;
     }
 
-    const TSDataBinding *TSParentLink::parent_binding() const noexcept
-    {
-        return parent_storage_type().legacy_binding();
-    }
-
-    TSStorageTypeRef TSParentLink::parent_storage_type() const noexcept
+    TSRoleTypeRef TSParentLink::parent_storage_type() const noexcept
     {
         if (!has_ts_data_parent()) return {};
-        auto bits = reinterpret_cast<std::uintptr_t>(parent_.ptr());
-        if (kind() == TSParentLinkKind::TSData) bits |= std::uintptr_t{1};
-        return TSStorageTypeRef::from_raw_bits(bits);
+        return TSRoleTypeRef{static_cast<const TypeRecord *>(parent_.ptr())};
     }
 
     const void *TSParentLink::parent_data() const noexcept
@@ -463,7 +456,7 @@ namespace hgraph
     {
         if (!has_ts_data_parent()) { return TSDataView{}; }
 
-        TSStorageTypeRef root_type = parent_storage_type();
+        TSRoleTypeRef root_type = parent_storage_type();
         const void      *root_data = parent_data();
         auto             current = *this;
         while (current.has_ts_data_parent())

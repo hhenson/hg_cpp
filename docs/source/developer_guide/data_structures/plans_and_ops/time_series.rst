@@ -125,8 +125,10 @@ The implementation uses the following names consistently:
     dynamic ``TSL`` therefore share ``TSLDataView`` but do not have to
     share the same layout or mutation implementation.
 
-``TSDataTypeRef`` / ``TSInputTypeRef`` / ``TSOutputTypeRef``
-    One-word, checked references to canonical ``TypeRecord`` instances
+``TSRoleTypeRef`` / ``TSDataTypeRef`` / ``TSInputTypeRef`` / ``TSOutputTypeRef``
+    One-word references to canonical ``TypeRecord`` instances. The generic
+    role reference preserves the runtime role; the three checked wrappers
+    require ``Data``, ``Input``, or ``Output`` respectively. They cover
     for scalar ``TS<T>`` / ``SIGNAL``, fixed ``TSB`` / fixed ``TSL``,
     keyed ``TSS`` / ``TSD``, dynamic ``TSL``, ``TSW``, and ``REF`` roots and
     descendants. The records
@@ -138,20 +140,13 @@ The implementation uses the following names consistently:
     assignment sources as writable ``ValueView`` pointers rather than owning
     ``Value&&`` objects.
 
-``TSDataBinding``
-    An internal compatibility descriptor retained for implementation paths
-    that have not migrated to canonical records. It is not outward identity
-    for dynamic ``TSL`` or ``TSW`` and cannot construct an owning migrated
-    root. New code uses the role-specific type references above.
-
-``TSStorageTypeRef``
-    An internal one-word tagged facade used by generic TS cursors and
-    owners during coexistence. It contains either a time-series role-record
-    pointer or a legacy ``TSDataBinding`` pointer. It is passed and stored
-    by value, never by pointer to a temporary facade. ``binding()`` is
-    consequently null on migrated cursors; generic child projection returns
-    ``TSStorageTypeRef`` by value and generic code uses
-    ``type_ref()``, ``schema()``, ``plan()``, and cached ``ops()`` instead.
+``TSDataStorageRef<DataOps>``
+    The non-owning time-series cursor. Every generic and specialised form is
+    exactly two words: a ``TSRoleTypeRef`` and a data pointer. Ops, schema, and
+    plan are reached through the canonical record rather than cached in the
+    cursor. A typed-null cursor may retain its type record while carrying no
+    data; it is not live and its generic ops surface reports the default empty
+    behaviour. Specialised cursors validate their TS kind when constructed.
 
 ``TSDataPlanFactory``
     The schema → data-plan resolver for ``TSData``. It chooses the
@@ -207,7 +202,7 @@ TSData implementation families
     value as one canonical value-layer region, followed by an auxiliary
     tree containing child and parent tracking. The full memory footprint
     of the parent and all fixed children is known before allocation, and
-    child views use role-specific ``TSStorageTypeRef`` records whose ops carry
+    child views use role-specific ``TSRoleTypeRef`` records whose ops carry
     offsets into the shared root value and auxiliary regions. Dynamic-list and
     window children use their canonical embedded role records over independent
     child plans.
@@ -278,7 +273,7 @@ TSData implementation families
     modified with the parent. Because that delta schema has no removal
     surface, dynamic ``TSL`` TSData is currently grow-only; copying a
     shorter list is rejected. The role-neutral storage binds its one-word
-    element ``TSStorageTypeRef`` on first growth and rejects a later type
+    element ``TSRoleTypeRef`` on first growth and rejects a later type
     mismatch. Destruction walks owned children and invalidates observers before
     destroying their record-backed storage handles; there is no retired-child
     side channel.
@@ -803,7 +798,7 @@ fixed ``TSL`` it exposes the documented map-shaped delta
 
 Projecting a child stores a ``TSDataParentLink`` in the child node's
 tracking region. The link records the immediate parent storage-type/data
-identity (a role record or legacy binding) and the parent-local field/index
+identity (a canonical role record) and the parent-local field/index
 id. It does not point at the
 parent view object. When a child modification is first recorded in an
 evaluation cycle, the child bubbles that id to the parent; the parent then
@@ -906,8 +901,8 @@ View Handles
 
 View objects are handles over TSData memory; they are not embedded
 inside the TSData allocation. A plain data view needs only its one-word
-``TSStorageTypeRef`` and data pointer, and exposes the common time-series operations:
-``binding()``, ``schema()``, current ``value()``, ``delta_value(t)``,
+``TSRoleTypeRef`` and data pointer, and exposes the common time-series operations:
+``type_ref()``, ``schema()``, current ``value()``, ``delta_value(t)``,
 ``last_modified_time()``, ``modified(t)``, ``has_current_value()``, and
 ``all_valid()``. Top-level input/output views should delegate this
 common surface to the data view; they only add endpoint-specific
@@ -923,7 +918,7 @@ transient parent view that created it:
 
    flowchart LR
       View["TSDataView handle<br/>storage type<br/>data pointer"]
-      Type["TSStorageTypeRef<br/>TypeRecord or legacy binding"]
+      Type["TSRoleTypeRef<br/>canonical TypeRecord"]
       Data["TSData storage allocation<br/>value + optional delta + tracking"]
       Tracking["TSDataTracking<br/>last_modified_time<br/>parent<br/>observers"]
       Link["TSDataParentLink<br/>tagged parent identity<br/>payload union<br/>child_id"]
@@ -936,12 +931,12 @@ transient parent view that created it:
       Data -->|tracking_offset| Tracking
       Tracking -->|parent| Link
       Tracking -->|observers| Observers
-      Link -->|TSData: TSStorageTypeRef + data| ParentData
+      Link -->|TSData: TypeRecord + data| ParentData
       Link -.endpoint: endpoint pointer.-> Endpoint
       Link -.child_id belongs to parent.-> ParentData
 
 The parent identity is tagged so the link carries exactly one parent
-kind. For a TSData parent it stores ``TSStorageTypeRef + data``; for an endpoint
+kind. For a TSData parent it stores ``TypeRecord + data``; for an endpoint
 parent it stores the endpoint pointer in the same payload slot. Because
 each TSData parent also stores its own ``TSDataParentLink``, a child link
 can walk back to the root TSData without retaining transient views. The

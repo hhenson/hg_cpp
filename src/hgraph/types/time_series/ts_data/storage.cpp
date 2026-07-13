@@ -9,19 +9,6 @@
 
 namespace hgraph
 {
-    namespace
-    {
-        [[nodiscard]] TSStorageTypeRef checked_legacy_root_type(const TSDataBinding &binding)
-        {
-            if (is_migrated_ts_root_schema(binding.type_meta))
-            {
-                throw std::invalid_argument(
-                    "migrated TSData roots require a Data/Input/Output TypeRecord");
-            }
-            return TSStorageTypeRef{binding};
-        }
-    }
-
     namespace detail
     {
         void attach_owned_ts_data_parents(TSDataView root)
@@ -94,7 +81,7 @@ namespace hgraph
         }
     }
 
-    TSDataOwnedStorage::TSDataOwnedStorage(TSStorageTypeRef type, const MemoryUtils::AllocatorOps &allocator)
+    TSDataOwnedStorage::TSDataOwnedStorage(TSRoleTypeRef type, const MemoryUtils::AllocatorOps &allocator)
     {
         construct_default(type, allocator);
     }
@@ -139,7 +126,7 @@ namespace hgraph
         reset();
     }
 
-    void TSDataOwnedStorage::construct_default(TSStorageTypeRef type, const MemoryUtils::AllocatorOps &allocator)
+    void TSDataOwnedStorage::construct_default(TSRoleTypeRef type, const MemoryUtils::AllocatorOps &allocator)
     {
         const auto *plan = type.plan();
         if (plan == nullptr || !plan->valid())
@@ -194,33 +181,14 @@ namespace hgraph
 
     TSData::TSData() noexcept = default;
 
-    TSData::TSData(const TSDataBinding &binding)
-        : storage_(checked_legacy_root_type(binding))
-    {}
-
-    TSData::TSData(TSRoleTypeRef type)
-        : storage_(TSStorageTypeRef{type})
-    {
-    }
-
     bool TSData::has_value() const noexcept
     {
         return storage_.has_value();
     }
 
-    const TSDataBinding *TSData::binding() const noexcept
-    {
-        return storage_.storage_type().legacy_binding();
-    }
-
-    TSStorageTypeRef TSData::storage_type_ref() const noexcept
-    {
-        return storage_.storage_type();
-    }
-
     TSRoleTypeRef TSData::type_ref() const noexcept
     {
-        return storage_.storage_type().type_ref();
+        return storage_.storage_type();
     }
 
     const TSValueTypeMetaData *TSData::schema() const noexcept

@@ -274,7 +274,7 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     const auto t2 = t1 + TimeDelta{1};
 
     auto initial = output.view(t1);
-    REQUIRE(initial.binding() == nullptr);
+    REQUIRE(initial.type_ref().record() != nullptr);
     REQUIRE(initial.type_ref().record() == output.type_ref().record());
     REQUIRE(initial.bound());
     REQUIRE(initial.evaluation_time() == t1);
@@ -595,7 +595,7 @@ TEST_CASE("TSOutputHandle stores output identity without evaluation time")
     auto       handle = view.handle();
     REQUIRE(handle.bound());
     REQUIRE(handle.output() == &output);
-    REQUIRE(handle.binding() == view.binding());
+    REQUIRE(handle.storage_type() == view.storage_type());
     REQUIRE(handle.schema() == view.schema());
 
     const TSOutputHandle from_view{view};
@@ -1198,7 +1198,7 @@ TEST_CASE("TSOutputView delegates validity through slot TSData ops")
     Value      one{1};
 
     TSOutput set_output{*tss};
-    REQUIRE(set_output.view(t1).binding() == set_output.binding());
+    REQUIRE(set_output.view(t1).type_ref() == set_output.type_ref());
     REQUIRE_FALSE(set_output.view(t1).valid());
     REQUIRE_FALSE(set_output.view(t1).all_valid());
 
@@ -1253,7 +1253,7 @@ TEST_CASE("TSOutput shape casts return endpoint views for slot collections")
     TSOutput set_output{*tss};
     auto     set_view = set_output.view(t1);
     auto     set = set_view.as_set();
-    REQUIRE(set.base().binding() == set_output.binding());
+    REQUIRE(set.base().type_ref() == set_output.type_ref());
     {
         auto mutation = set.begin_mutation(t1);
         REQUIRE(mutation.add(one.view()));
@@ -1266,7 +1266,7 @@ TEST_CASE("TSOutput shape casts return endpoint views for slot collections")
     TSOutput dict_output{*tsd};
     auto     dict_view = dict_output.view(t1);
     auto     dict = dict_view.as_dict();
-    REQUIRE(dict.base().binding() == dict_output.binding());
+    REQUIRE(dict.base().type_ref() == dict_output.type_ref());
     {
         auto mutation = dict.begin_mutation(t1);
         auto child = mutation.at(key.view());

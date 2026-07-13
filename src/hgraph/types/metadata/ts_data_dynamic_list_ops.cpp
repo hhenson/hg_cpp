@@ -62,7 +62,7 @@ namespace hgraph::ts_data_plan_factory_detail
             DynamicTSLStorage &operator=(DynamicTSLStorage &&)      = delete;
             ~DynamicTSLStorage() = default;
 
-            [[nodiscard]] TSStorageTypeRef element_type() const noexcept { return element_type_; }
+            [[nodiscard]] TSRoleTypeRef element_type() const noexcept { return element_type_; }
             [[nodiscard]] const TSDataTracking &tracking() const noexcept { return tracking_; }
             [[nodiscard]] TSDataTracking &mutable_tracking() noexcept { return tracking_; }
             [[nodiscard]] std::size_t size() const noexcept { return elements_.size(); }
@@ -82,9 +82,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 return ordinal_keys_.at(index);
             }
 
-            void ensure_size(std::size_t size, TSStorageTypeRef element_type)
+            void ensure_size(std::size_t size, TSRoleTypeRef element_type)
             {
-                if (element_type.legacy_backed() || element_type.record() == nullptr)
+                if (element_type.record() == nullptr)
                     throw std::logic_error("dynamic TSL elements require canonical TypeRecords");
                 if (element_type.schema() == nullptr || element_type.plan() == nullptr)
                     throw std::logic_error("dynamic TSL element type is not resolved");
@@ -107,7 +107,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
           private:
-            TSStorageTypeRef                   element_type_{};
+            TSRoleTypeRef                   element_type_{};
             TSDataTracking                    tracking_{};
             // Handles may move as the vector grows, but the child TSData bytes
             // must not. The heap-only policy above keeps published child
@@ -157,7 +157,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return *MemoryUtils::cast<DynamicTSLStorage>(memory);
         }
 
-        [[nodiscard]] const TSDataOps &child_ops(TSStorageTypeRef child)
+        [[nodiscard]] const TSDataOps &child_ops(TSRoleTypeRef child)
         {
             return child.ops_ref();
         }
@@ -171,7 +171,7 @@ namespace hgraph::ts_data_plan_factory_detail
             IndexedValueOps                 value_list_ops{};
             MapValueOps                     delta_map_ops{};
             SetValueOps                     delta_key_set_ops{};
-            TSStorageTypeRef                 element_type{};
+            TSRoleTypeRef                 element_type{};
             TypeRole                        role{TypeRole::Invalid};
             bool                            embedded{false};
             ValueTypeRef element_value_binding{nullptr};
@@ -181,7 +181,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             DynamicTSLContext(const TSValueTypeMetaData &schema_,
                               const MemoryUtils::StoragePlan &plan_,
-                              TSStorageTypeRef element_type_,
+                              TSRoleTypeRef element_type_,
                               TypeRole role_,
                               bool embedded_)
                 : schema(&schema_), plan(&plan_), element_type(element_type_), role(role_), embedded(embedded_)
@@ -455,7 +455,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return storage(memory).size();
             }
 
-            [[nodiscard]] static TSStorageTypeRef dynamic_indexed_element_binding(const void *context,
+            [[nodiscard]] static TSRoleTypeRef dynamic_indexed_element_binding(const void *context,
                                                                                    const void *,
                                                                                    std::size_t) noexcept
             {
@@ -1182,7 +1182,7 @@ namespace hgraph::ts_data_plan_factory_detail
             const TSValueTypeMetaData      *schema{nullptr};
             const MemoryUtils::StoragePlan *plan{nullptr};
             std::size_t                     storage_offset{0};
-            std::uintptr_t                  element_type{0};
+            const TypeRecord               *element_type{nullptr};
             TypeRole                        role{TypeRole::Invalid};
             bool                            embedded{false};
 
@@ -1196,7 +1196,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 auto seed = dynamic_combine_hash(std::hash<const TSValueTypeMetaData *>{}(key.schema),
                                                  std::hash<const MemoryUtils::StoragePlan *>{}(key.plan));
                 seed = dynamic_combine_hash(seed, key.storage_offset);
-                seed = dynamic_combine_hash(seed, key.element_type);
+                seed = dynamic_combine_hash(seed, std::hash<const TypeRecord *>{}(key.element_type));
                 seed = dynamic_combine_hash(seed, static_cast<std::size_t>(key.role));
                 seed = dynamic_combine_hash(seed, key.embedded);
                 return seed;
@@ -1263,7 +1263,7 @@ namespace hgraph::ts_data_plan_factory_detail
     [[nodiscard]] const TSDataOps &dynamic_list_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                             const MemoryUtils::StoragePlan &plan,
                                                             std::size_t storage_offset,
-                                                            TSStorageTypeRef element_type,
+                                                            TSRoleTypeRef element_type,
                                                             TypeRole role,
                                                             bool embedded)
     {
@@ -1271,15 +1271,14 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             throw std::logic_error("dynamic TSL currently expects the storage object at the root");
         }
-        if (element_type.legacy_backed() || element_type.record() == nullptr ||
-            element_type.schema() != schema.element_ts())
+        if (element_type.record() == nullptr || element_type.schema() != schema.element_ts())
             throw std::invalid_argument("dynamic TSL ops require the canonical element TypeRecord");
-        if (element_type.type_ref().role() != role)
+        if (element_type.role() != role)
             throw std::invalid_argument("dynamic TSL element role must match the parent role");
 
         std::lock_guard<std::recursive_mutex> lock(dynamic_list_context_mutex());
         auto                                 &contexts = dynamic_list_contexts();
-        const DynamicListContextKey           key{&schema, &plan, storage_offset, element_type.raw_bits(), role, embedded};
+        const DynamicListContextKey key{&schema, &plan, storage_offset, element_type.record(), role, embedded};
         if (const auto it = contexts.find(key); it != contexts.end()) { return it->second->ops; }
 
         auto context = std::make_unique<DynamicTSLContext>(schema, plan, element_type, role, embedded);

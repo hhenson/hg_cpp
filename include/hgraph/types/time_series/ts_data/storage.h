@@ -16,7 +16,7 @@ namespace hgraph
     {
       public:
         TSDataOwnedStorage() noexcept = default;
-        explicit TSDataOwnedStorage(TSStorageTypeRef type,
+        explicit TSDataOwnedStorage(TSRoleTypeRef type,
                                     const MemoryUtils::AllocatorOps &allocator = MemoryUtils::allocator());
         TSDataOwnedStorage(const TSDataOwnedStorage &other);
         TSDataOwnedStorage &operator=(const TSDataOwnedStorage &other);
@@ -25,16 +25,16 @@ namespace hgraph
         ~TSDataOwnedStorage() noexcept;
 
         [[nodiscard]] bool has_value() const noexcept { return data_ != nullptr; }
-        [[nodiscard]] TSStorageTypeRef storage_type() const noexcept { return type_; }
+        [[nodiscard]] TSRoleTypeRef storage_type() const noexcept { return type_; }
         [[nodiscard]] void *data() noexcept { return data_; }
         [[nodiscard]] const void *data() const noexcept { return data_; }
         void reset() noexcept;
 
       private:
-        void construct_default(TSStorageTypeRef type, const MemoryUtils::AllocatorOps &allocator);
+        void construct_default(TSRoleTypeRef type, const MemoryUtils::AllocatorOps &allocator);
         void construct_copy(const TSDataOwnedStorage &other);
 
-        TSStorageTypeRef type_{};
+        TSRoleTypeRef type_{};
         const MemoryUtils::AllocatorOps *allocator_{nullptr};
         void *data_{nullptr};
     };
@@ -48,9 +48,7 @@ namespace hgraph
         using storage_type = TSDataOwnedStorage;
 
         TSData() noexcept;
-        explicit TSData(const TSDataBinding &binding);
-        explicit TSData(TSStorageTypeRef type) : storage_(type) {}
-        explicit TSData(TSRoleTypeRef type);
+        explicit TSData(TSRoleTypeRef type) : storage_(type) {}
         explicit TSData(TSDataTypeRef type) : TSData(type.as_role()) {}
         explicit TSData(TSInputTypeRef type) : TSData(type.as_role()) {}
         explicit TSData(TSOutputTypeRef type) : TSData(type.as_role()) {}
@@ -58,9 +56,7 @@ namespace hgraph
         /** True when the storage owns a bound TSData allocation. */
         [[nodiscard]] bool has_value() const noexcept;
 
-        /** Binding and schema for the owned allocation, or null when empty. */
-        [[nodiscard]] const TSDataBinding *binding() const noexcept;
-        [[nodiscard]] TSStorageTypeRef storage_type_ref() const noexcept;
+        /** Canonical type record and schema for the owned allocation. */
         [[nodiscard]] TSRoleTypeRef type_ref() const noexcept;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
 

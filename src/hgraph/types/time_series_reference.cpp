@@ -22,7 +22,7 @@ namespace hgraph
         std::size_t hash_output_handle(const TSOutputHandle &handle) noexcept
         {
             std::size_t seed = std::hash<const void *>{}(static_cast<const void *>(handle.output()));
-            seed = hash_combine(seed, std::hash<const void *>{}(static_cast<const void *>(handle.binding())));
+            seed = hash_combine(seed, std::hash<const TypeRecord *>{}(handle.type_ref().record()));
             seed = hash_combine(seed, std::hash<const void *>{}(handle.data_view().data()));
             return seed;
         }

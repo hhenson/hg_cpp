@@ -8,6 +8,8 @@
 #include <hgraph/types/value/container_ops.h>
 #include <hgraph/types/value/value_ops.h>
 
+#include <sul/dynamic_bitset.hpp>
+
 #include <algorithm>
 #include <compare>
 #include <cstddef>

@@ -38,7 +38,7 @@ namespace hgraph
         void noop_record_child_modified(const void *, void *, std::size_t, DateTime);
         [[nodiscard]] bool missing_copy_value_from(const void *, void *, const ValueView &, DateTime);
         [[nodiscard]] bool missing_move_value_from(const void *, void *, ValueView, DateTime);
-        [[nodiscard]] Value missing_empty_delta(const TSDataBinding &);
+        [[nodiscard]] Value missing_empty_delta(const TSRoleTypeRef &);
         [[nodiscard]] Value missing_capture_delta(const TSInputView &);
         [[nodiscard]] bool missing_delta_has_effect(const TSOutputView &, const ValueView &);
         void missing_apply_delta(const TSOutputView &, const ValueView &);
@@ -48,7 +48,7 @@ namespace hgraph
         [[nodiscard]] nb::object missing_delta_to_python(const void *, const void *, DateTime);
 #endif
         [[nodiscard]] std::size_t missing_indexed_size(const void *, const void *);
-        [[nodiscard]] TSStorageTypeRef missing_indexed_element_binding(const void *, const void *, std::size_t);
+        [[nodiscard]] TSRoleTypeRef missing_indexed_element_binding(const void *, const void *, std::size_t);
         [[nodiscard]] const void *missing_indexed_element_memory(const void *, const void *, std::size_t);
         [[nodiscard]] void *missing_mutable_indexed_element_memory(const void *, void *, std::size_t);
         [[nodiscard]] bool noop_clear_collection(const TSDataView &, DateTime) noexcept;
@@ -77,11 +77,11 @@ namespace hgraph
         void missing_unsubscribe_slot_observer(const void *, void *, SlotObserver *);
         [[nodiscard]] const void *missing_child_at_slot(const void *, const void *, std::size_t);
 
-        [[nodiscard]] Value empty_delta_atomic(const TSDataBinding &binding);
-        [[nodiscard]] Value empty_delta_tss(const TSDataBinding &binding);
-        [[nodiscard]] Value empty_delta_tsd(const TSDataBinding &binding);
-        [[nodiscard]] Value empty_delta_tsl(const TSDataBinding &binding);
-        [[nodiscard]] Value empty_delta_tsb(const TSDataBinding &binding);
+        [[nodiscard]] Value empty_delta_atomic(const TSRoleTypeRef &binding);
+        [[nodiscard]] Value empty_delta_tss(const TSRoleTypeRef &binding);
+        [[nodiscard]] Value empty_delta_tsd(const TSRoleTypeRef &binding);
+        [[nodiscard]] Value empty_delta_tsl(const TSRoleTypeRef &binding);
+        [[nodiscard]] Value empty_delta_tsb(const TSRoleTypeRef &binding);
 
         [[nodiscard]] const TSDataOps &default_ts_data_ops() noexcept;
 
@@ -151,7 +151,7 @@ namespace hgraph
                                      DateTime modified_time) = &ts_data_detail::missing_copy_value_from;
         bool (*move_value_from_impl)(const void *context, void *memory, ValueView source,
                                      DateTime modified_time) = &ts_data_detail::missing_move_value_from;
-        Value (*empty_delta_impl)(const TSDataBinding &binding) = &ts_data_detail::missing_empty_delta;
+        Value (*empty_delta_impl)(const TSRoleTypeRef &binding) = &ts_data_detail::missing_empty_delta;
         Value (*capture_delta_impl)(const TSInputView &in) = &ts_data_detail::missing_capture_delta;
         bool (*delta_has_effect_impl)(const TSOutputView &out,
                                       const ValueView &delta) = &ts_data_detail::missing_delta_has_effect;
@@ -161,7 +161,7 @@ namespace hgraph
                                       DateTime modified_time) = &ts_data_detail::noop_clear_collection;
         std::size_t (*indexed_child_count_impl)(const void *context,
                                                 const void *memory) = &ts_data_detail::missing_indexed_size;
-        TSStorageTypeRef (*indexed_child_binding_impl)(
+        TSRoleTypeRef (*indexed_child_binding_impl)(
             const void *context,
             const void *memory,
             std::size_t index) = &ts_data_detail::missing_indexed_element_binding;
@@ -283,7 +283,7 @@ namespace hgraph
     struct IndexedTSDataOps : TSDataOps
     {
         std::size_t (*size_impl)(const void *context, const void *memory) = &ts_data_detail::missing_indexed_size;
-        TSStorageTypeRef (*element_binding_impl)(
+        TSRoleTypeRef (*element_binding_impl)(
             const void *context,
             const void *memory,
             std::size_t index) = &ts_data_detail::missing_indexed_element_binding;

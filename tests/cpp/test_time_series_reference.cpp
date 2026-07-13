@@ -547,7 +547,7 @@ TEST_CASE("TimeSeriesReference: to-REF alternative stores fixed list children th
 
     auto handle = target.view(MIN_ST).binding_for(*requested_schema);
     REQUIRE(handle.schema() == requested_schema);
-    REQUIRE(handle.binding() == nullptr);
+    REQUIRE(handle.storage_type().record() != nullptr);
     REQUIRE(handle.type_ref().as_role().role() == TypeRole::Output);
     const auto requested_data_type = TSDataPlanFactory::instance().data_type_for(requested_schema);
     REQUIRE(handle.type_ref().plan() == requested_data_type.plan());
@@ -594,7 +594,7 @@ TEST_CASE("TimeSeriesReference: fixed to-REF owns Data storage behind an Output 
 
     auto handle = target.view(MIN_ST).binding_for(*requested_root);
     const auto data_type = TSDataPlanFactory::instance().data_type_for(requested_root);
-    REQUIRE(handle.binding() == nullptr);
+    REQUIRE(handle.storage_type().record() != nullptr);
     REQUIRE(handle.type_ref().as_role().role() == TypeRole::Output);
     REQUIRE(handle.type_ref().plan() == data_type.plan());
     REQUIRE(std::string{handle.type_ref().record()->implementation_name()} ==

@@ -48,14 +48,14 @@ namespace hgraph::ts_data_plan_factory_detail
         ValueTypeRef ordinal_key_binding{nullptr};
         ValueTypeRef delta_map_value_binding{nullptr};
         ValueTypeRef delta_key_set_binding{nullptr};
-        std::vector<TSStorageTypeRef>       element_types{};
+        std::vector<TSRoleTypeRef>       element_types{};
         std::vector<std::size_t>       element_data_offsets{};
         std::vector<std::int64_t>       ordinal_keys{};
         bool                           projected_value_surface{false};
 
         FixedTSDataContext(const TSValueTypeMetaData &schema_, const MemoryUtils::StoragePlan &plan_, TypeRole role_,
                            std::size_t value_offset, std::size_t aux_offset, std::size_t tracking_offset,
-                           std::vector<TSStorageTypeRef> element_type_cache,
+                           std::vector<TSRoleTypeRef> element_type_cache,
                            std::vector<std::size_t> element_data_offset_cache)
             : schema(&schema_), plan(&plan_), role(role_)
         {
@@ -220,7 +220,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return schema->kind == TSTypeKind::TSB ? bundle_layout.fields.size() : list_layout.element_count;
         }
 
-        [[nodiscard]] TSStorageTypeRef element_type(std::size_t index) const noexcept
+        [[nodiscard]] TSRoleTypeRef element_type(std::size_t index) const noexcept
         {
             return schema->kind == TSTypeKind::TSB ? bundle_layout.fields[index].type : element_types[index];
         }
@@ -518,7 +518,7 @@ namespace hgraph::ts_data_plan_factory_detail
             };
         }
 
-        [[nodiscard]] static const TSDataOps &child_ops(TSStorageTypeRef child)
+        [[nodiscard]] static const TSDataOps &child_ops(TSRoleTypeRef child)
         {
             return *child.ops();
         }
@@ -568,7 +568,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return ctx(context)->element_count();
         }
 
-        [[nodiscard]] static TSStorageTypeRef fixed_indexed_element_binding(const void *context, const void *,
+        [[nodiscard]] static TSRoleTypeRef fixed_indexed_element_binding(const void *context, const void *,
                                                                             std::size_t index) noexcept
         {
             return ctx(context)->element_type(index);
@@ -1774,7 +1774,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                             TypeRole role,
                                                             std::size_t value_offset, std::size_t aux_offset,
                                                             std::size_t tracking_offset,
-                                                            std::vector<TSStorageTypeRef> element_types,
+                                                            std::vector<TSRoleTypeRef> element_types,
                                                             std::vector<std::size_t> element_data_offsets)
     {
         std::lock_guard<std::mutex> lock(fixed_ts_data_context_mutex());
@@ -1798,7 +1798,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                 TypeRole role,
                                                                 std::size_t value_offset, std::size_t aux_offset,
                                                                 std::size_t tracking_offset,
-                                                                std::vector<TSStorageTypeRef> element_types,
+                                                                std::vector<TSRoleTypeRef> element_types,
                                                                 std::vector<std::size_t> element_data_offsets)
     {
         auto &context =

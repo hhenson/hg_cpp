@@ -67,9 +67,10 @@ namespace hgraph
             if (required_words > word_capacity)
             {
                 auto replacement = std::make_unique<std::uint64_t[]>(required_words);
-                if (old_word_count != 0)
+                const std::size_t preserved_words = std::min(old_word_count, word_capacity);
+                if (preserved_words != 0)
                 {
-                    std::copy_n(words, old_word_count, replacement.get());
+                    std::copy_n(words, preserved_words, replacement.get());
                 }
                 delete[] words;
                 words = replacement.release();

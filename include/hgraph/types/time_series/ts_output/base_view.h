@@ -39,8 +39,7 @@ namespace hgraph
         [[nodiscard]] TSDataView data_view() const noexcept;
 
         /** Binding and schema for the borrowed TSData. */
-        [[nodiscard]] const TSDataBinding *binding() const noexcept;
-        [[nodiscard]] TSStorageTypeRef storage_type() const noexcept;
+        [[nodiscard]] TSRoleTypeRef storage_type() const noexcept;
         [[nodiscard]] TSOutputTypeRef type_ref() const;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
 
@@ -93,8 +92,7 @@ namespace hgraph
         [[nodiscard]] TSEndpointOwnerPort owner_port() const noexcept;
 
         /** Binding and schema for the borrowed TSData. */
-        [[nodiscard]] const TSDataBinding *binding() const noexcept;
-        [[nodiscard]] TSStorageTypeRef storage_type() const noexcept;
+        [[nodiscard]] TSRoleTypeRef storage_type() const noexcept;
         [[nodiscard]] TSOutputTypeRef type_ref() const;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
 

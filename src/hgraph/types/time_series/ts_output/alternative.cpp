@@ -38,7 +38,7 @@ namespace hgraph::detail
 
         struct AlternativeTypeKey
         {
-            std::uintptr_t bits{0};
+            const TypeRecord *record{nullptr};
             const TSDataOps *ops{nullptr};
             const TSValueTypeMetaData *schema{nullptr};
             TypeRole role{TypeRole::Invalid};
@@ -50,7 +50,7 @@ namespace hgraph::detail
         {
             [[nodiscard]] std::size_t operator()(const AlternativeTypeKey &key) const noexcept
             {
-                auto seed = std::hash<std::uintptr_t>{}(key.bits);
+                auto seed = std::hash<const TypeRecord *>{}(key.record);
                 seed ^= std::hash<const TSDataOps *>{}(key.ops) + 0x9e3779b97f4a7c15ULL + (seed << 6U) +
                         (seed >> 2U);
                 seed ^= std::hash<const TSValueTypeMetaData *>{}(key.schema) + 0x9e3779b97f4a7c15ULL +
@@ -101,14 +101,14 @@ namespace hgraph::detail
             return cache;
         }
 
-        [[nodiscard]] TSStorageTypeRef alternative_type_for(TSStorageTypeRef source,
+        [[nodiscard]] TSRoleTypeRef alternative_type_for(TSRoleTypeRef source,
                                                              TypeRole role,
                                                              std::string_view label)
         {
             const auto *schema = source.schema();
             if (schema == nullptr || !is_migrated_ts_root_schema(schema)) { return source; }
             const auto &source_ops = source.ops_ref();
-            const AlternativeTypeKey key{source.raw_bits(), &source_ops, schema, role, label};
+            const AlternativeTypeKey key{source.record(), &source_ops, schema, role, label};
             std::lock_guard<std::recursive_mutex> lock(alternative_type_mutex());
             auto &cache = alternative_type_cache();
             const TSDataOps *ops = nullptr;
@@ -119,7 +119,7 @@ namespace hgraph::detail
                 ops = owned_ops.get();
                 cache.emplace(key, std::move(owned_ops));
             }
-            return TSStorageTypeRef{intern_ts_type(*schema, role, source.checked_plan(), *ops, label)};
+            return TSRoleTypeRef{intern_ts_type(*schema, role, source.checked_plan(), *ops, label)};
         }
 
         [[nodiscard]] DateTime concrete_reference_time(DateTime time) noexcept
@@ -134,17 +134,7 @@ namespace hgraph::detail
             return time_series_schema_equivalent(registry.dereference(lhs), registry.dereference(rhs));
         }
 
-        [[nodiscard]] const TSDataBinding &checked_ts_data_binding(const TSValueTypeMetaData &schema)
-        {
-            const auto *binding = TSDataPlanFactory::instance().legacy_binding_for(&schema);
-            if (binding == nullptr)
-            {
-                throw std::logic_error("TSOutput to-REF alternative could not resolve requested TSData binding");
-            }
-            return *binding;
-        }
-
-        [[nodiscard]] TSStorageTypeRef checked_endpoint_storage_type(const TSEndpointSchema &endpoint_schema)
+        [[nodiscard]] TSRoleTypeRef checked_endpoint_storage_type(const TSEndpointSchema &endpoint_schema)
         {
             const auto type = output_data_storage_type_for(endpoint_schema);
             if (!type)
@@ -154,7 +144,7 @@ namespace hgraph::detail
             return type;
         }
 
-        [[nodiscard]] TSStorageTypeRef checked_from_ref_storage_type(const TSEndpointSchema &endpoint_schema)
+        [[nodiscard]] TSRoleTypeRef checked_from_ref_storage_type(const TSEndpointSchema &endpoint_schema)
         {
             return alternative_type_for(
                 checked_endpoint_storage_type(endpoint_schema), TypeRole::Output,
@@ -689,13 +679,13 @@ namespace hgraph::detail
          * leaves at (and whole-subtree links below) the source's REF
          * positions.
          */
-        [[nodiscard]] TSStorageTypeRef from_ref_interior_type_for(const TSValueTypeMetaData &requested,
+        [[nodiscard]] TSRoleTypeRef from_ref_interior_type_for(const TSValueTypeMetaData &requested,
                                                                   const TSValueTypeMetaData &source)
         {
             if (requested.kind == TSTypeKind::TSD && source.kind == TSTypeKind::TSD &&
                 !time_series_schema_equivalent(&source, &requested))
             {
-                return TSStorageTypeRef{tsd_proxy_data_type_for(
+                return TSRoleTypeRef{tsd_proxy_data_type_for(
                     requested, from_ref_interior_type_for(*requested.element_ts(), *source.element_ts())).as_role()};
             }
             return checked_endpoint_storage_type(from_ref_endpoint_schema_for(&requested));
@@ -951,7 +941,7 @@ namespace hgraph::detail
             &from_ref_proxy_source_identity_matches,
         };
 
-        [[nodiscard]] TSStorageTypeRef to_ref_ts_data_type_for(const TSValueTypeMetaData &schema);
+        [[nodiscard]] TSRoleTypeRef to_ref_ts_data_type_for(const TSValueTypeMetaData &schema);
         void populate_to_ref_data(const TSDataView           &target,
                                   const TSOutputView         &source_view,
                                   const TSValueTypeMetaData  &target_schema,
@@ -989,20 +979,18 @@ namespace hgraph::detail
             nullptr,
         };
 
-        [[nodiscard]] TSStorageTypeRef to_ref_regular_type_for(const TSValueTypeMetaData &schema)
+        [[nodiscard]] TSRoleTypeRef to_ref_regular_type_for(const TSValueTypeMetaData &schema)
         {
-            if (is_migrated_ts_root_schema(&schema))
-                return TSStorageTypeRef{TSDataPlanFactory::instance().data_type_for(&schema).as_role()};
-            return TSStorageTypeRef{checked_ts_data_binding(schema)};
+            return TSDataPlanFactory::instance().data_type_for(&schema).as_role();
         }
 
-        [[nodiscard]] TSStorageTypeRef to_ref_dict_type_for(const TSValueTypeMetaData &schema)
+        [[nodiscard]] TSRoleTypeRef to_ref_dict_type_for(const TSValueTypeMetaData &schema)
         {
-            return TSStorageTypeRef{tsd_proxy_data_type_for(
+            return TSRoleTypeRef{tsd_proxy_data_type_for(
                 schema, to_ref_ts_data_type_for(*schema.element_ts())).as_role()};
         }
 
-        using ToRefTypeForFn = TSStorageTypeRef (*)(const TSValueTypeMetaData &);
+        using ToRefTypeForFn = TSRoleTypeRef (*)(const TSValueTypeMetaData &);
 
         [[nodiscard]] ToRefTypeForFn to_ref_type_for_kind(TSTypeKind kind) noexcept
         {
@@ -1022,7 +1010,7 @@ namespace hgraph::detail
             return index < table.size() ? table[index] : &to_ref_regular_type_for;
         }
 
-        [[nodiscard]] TSStorageTypeRef to_ref_ts_data_type_for(const TSValueTypeMetaData &schema)
+        [[nodiscard]] TSRoleTypeRef to_ref_ts_data_type_for(const TSValueTypeMetaData &schema)
         {
             return to_ref_type_for_kind(schema.kind)(schema);
         }
@@ -1049,8 +1037,8 @@ namespace hgraph::detail
                 output_type = TSDataPlanFactory::instance().output_type_for(&schema);
             }
             output_type = TSOutputTypeRef::checked(alternative_type_for(
-                TSStorageTypeRef{output_type.as_role()}, TypeRole::Output,
-                "ts.alternative.to-ref.output").type_ref());
+                output_type.as_role(), TypeRole::Output,
+                "ts.alternative.to-ref.output"));
             if (data_type.plan() != output_type.plan())
             {
                 throw std::logic_error("TSOutput to-REF Data owner and Output facade require the same storage plan");
@@ -1568,7 +1556,7 @@ namespace hgraph::detail
 
         std::size_t seed = 0;
         seed = combine(seed, std::hash<const void *>{}(key.source_output));
-        seed = combine(seed, std::hash<std::uintptr_t>{}(key.source_type.raw_bits()));
+        seed = combine(seed, std::hash<const TypeRecord *>{}(key.source_type.record()));
         seed = combine(seed, std::hash<const void *>{}(key.source_data));
         seed = combine(seed, std::hash<const void *>{}(key.requested_schema));
         return seed;

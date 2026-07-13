@@ -5,7 +5,6 @@
 
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
-#include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/type_meta_data.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
@@ -62,7 +61,7 @@ void instantiate_memory_utils() {
     assert(array_plan.array_count() == 4);
 
     MemoryUtils::ErasedOwner<MemoryUtils::InlineStoragePolicy<>, void> owner(plan);
-    assert(handle.has_value());
+    assert(owner.has_value());
 }
 
 void instantiate_intern_table() {

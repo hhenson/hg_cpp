@@ -3,7 +3,6 @@
 
 #include <hgraph/runtime/node_fwd.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
-#include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/notifiable.h>
 #include <hgraph/types/time_series/endpoint_owner.h>
 #include <hgraph/types/time_series/ts_type_ref.h>
@@ -19,95 +18,6 @@
 namespace hgraph
 {
     struct TSDataOps;
-    using TSDataBinding = TypeBinding<TSValueTypeMetaData, TSDataOps>;
-
-    /**
-     * One-word storage cursor identity used while migrated role records coexist
-     * with legacy TSData bindings. The low bit identifies a legacy binding;
-     * canonical TypeRecord pointers are stored untagged.
-     */
-    class TSStorageTypeRef
-    {
-      public:
-        constexpr TSStorageTypeRef() noexcept = default;
-        constexpr TSStorageTypeRef(std::nullptr_t) noexcept {}
-        constexpr TSStorageTypeRef(TSRoleTypeRef type) noexcept
-            : bits_(reinterpret_cast<std::uintptr_t>(type.record()))
-        {
-        }
-        explicit TSStorageTypeRef(const TSDataBinding *binding) noexcept
-            : bits_(binding != nullptr ? reinterpret_cast<std::uintptr_t>(binding) | LEGACY_TAG : 0)
-        {
-        }
-        explicit TSStorageTypeRef(const TSDataBinding &binding) noexcept : TSStorageTypeRef(&binding) {}
-
-        [[nodiscard]] constexpr bool bound() const noexcept { return bits_ != 0; }
-        [[nodiscard]] constexpr explicit operator bool() const noexcept { return bound(); }
-        [[nodiscard]] constexpr bool record_backed() const noexcept { return bits_ != 0 && (bits_ & LEGACY_TAG) == 0; }
-        [[nodiscard]] constexpr bool legacy_backed() const noexcept { return (bits_ & LEGACY_TAG) != 0; }
-        [[nodiscard]] const TypeRecord *record() const noexcept
-        {
-            return record_backed() ? reinterpret_cast<const TypeRecord *>(bits_) : nullptr;
-        }
-        [[nodiscard]] const TSDataBinding *legacy_binding() const noexcept
-        {
-            return legacy_backed() ? reinterpret_cast<const TSDataBinding *>(bits_ & ~LEGACY_TAG) : nullptr;
-        }
-        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept
-        {
-            if (const auto *record_ptr = record(); record_ptr != nullptr)
-                return reinterpret_cast<const TSValueTypeMetaData *>(record_ptr->schema);
-            const auto *binding = legacy_binding();
-            return binding != nullptr ? binding->type_meta : nullptr;
-        }
-        [[nodiscard]] const MemoryUtils::StoragePlan *plan() const noexcept
-        {
-            if (const auto *record_ptr = record(); record_ptr != nullptr) return record_ptr->plan;
-            const auto *binding = legacy_binding();
-            return binding != nullptr ? binding->plan() : nullptr;
-        }
-        [[nodiscard]] const MemoryUtils::StoragePlan &checked_plan() const
-        {
-            const auto *storage_plan = plan();
-            if (storage_plan == nullptr) throw std::logic_error("time-series storage type is unbound");
-            return *storage_plan;
-        }
-        [[nodiscard]] const TSDataOps *ops() const noexcept
-        {
-            if (const auto *record_ptr = record(); record_ptr != nullptr)
-                return static_cast<const TSDataOps *>(record_ptr->ops);
-            const auto *binding = legacy_binding();
-            return binding != nullptr ? binding->ops : nullptr;
-        }
-        [[nodiscard]] const TSDataOps &ops_ref() const
-        {
-            const auto *table = ops();
-            if (table == nullptr) throw std::logic_error("time-series storage type is unbound");
-            return *table;
-        }
-        [[nodiscard]] TSRoleTypeRef type_ref() const noexcept
-        {
-            return record() != nullptr ? TSRoleTypeRef{record()} : TSRoleTypeRef{};
-        }
-        [[nodiscard]] constexpr std::uintptr_t raw_bits() const noexcept { return bits_; }
-        [[nodiscard]] static constexpr TSStorageTypeRef from_raw_bits(std::uintptr_t bits) noexcept
-        {
-            TSStorageTypeRef result;
-            result.bits_ = bits;
-            return result;
-        }
-
-        [[nodiscard]] friend constexpr bool operator==(TSStorageTypeRef, TSStorageTypeRef) noexcept = default;
-
-      private:
-        static constexpr std::uintptr_t LEGACY_TAG = 1;
-        std::uintptr_t bits_{0};
-    };
-
-    static_assert(alignof(TypeRecord) >= 2);
-    static_assert(alignof(TSDataBinding) >= 2);
-    static_assert(sizeof(TSStorageTypeRef) == sizeof(void *));
-    static_assert(std::is_trivially_copyable_v<TSStorageTypeRef>);
 
     class GraphView;
     struct TSDataTracking;
@@ -150,7 +60,6 @@ namespace hgraph
         InputEndpoint  = 2,
         OutputEndpoint = 3,
         NodeEndpoint   = 4,
-        TSDataRecord   = 5,
     };
 
     /**
@@ -159,7 +68,7 @@ namespace hgraph
      * This is stored in the child node's value-owned tracking region. It
      * carries a type-erased handle plus a small tag that says which view type
      * can interpret that handle. TSData and node parents both use the same
-     * ``TSStorageTypeRef + data`` pattern as the rest of the runtime.
+     * ``TSRoleTypeRef + data`` pattern as the rest of the runtime.
      */
     struct TSParentLink
     {
@@ -187,19 +96,12 @@ namespace hgraph
         std::size_t child_id{TS_DATA_NO_CHILD_ID};
 
         constexpr TSParentLink() noexcept = default;
-        constexpr TSParentLink(TSStorageTypeRef type,
-                               const void          *data,
-                               std::size_t          parent_child_id) noexcept
-            : parent_(reinterpret_cast<const void *>(type.raw_bits() & ~std::uintptr_t{1}),
-                      type.record_backed() ? TSParentLinkKind::TSDataRecord : TSParentLinkKind::TSData),
+        constexpr TSParentLink(TSRoleTypeRef type,
+                               const void   *data,
+                               std::size_t   parent_child_id) noexcept
+            : parent_(type.record(), TSParentLinkKind::TSData),
               payload_(data),
               child_id(parent_child_id)
-        {
-        }
-        constexpr TSParentLink(const TSDataBinding *binding,
-                               const void *data,
-                               std::size_t parent_child_id) noexcept
-            : TSParentLink(TSStorageTypeRef{binding}, data, parent_child_id)
         {
         }
         TSParentLink(NodePtr node, TSEndpointOwnerPort port) noexcept
@@ -210,14 +112,14 @@ namespace hgraph
         }
         constexpr TSParentLink(TSInput &endpoint,
                                std::size_t parent_child_id = TS_DATA_NO_CHILD_ID) noexcept
-            : parent_(static_cast<const TSDataBinding *>(nullptr), TSParentLinkKind::InputEndpoint),
+            : parent_(nullptr, TSParentLinkKind::InputEndpoint),
               payload_(&endpoint),
               child_id(parent_child_id)
         {
         }
         constexpr TSParentLink(TSOutput &endpoint,
                                std::size_t parent_child_id = TS_DATA_NO_CHILD_ID) noexcept
-            : parent_(static_cast<const TSDataBinding *>(nullptr), TSParentLinkKind::OutputEndpoint),
+            : parent_(nullptr, TSParentLinkKind::OutputEndpoint),
               payload_(&endpoint),
               child_id(parent_child_id)
         {
@@ -244,11 +146,8 @@ namespace hgraph
         /** True when this child bubbles directly to a node-owned endpoint parent. */
         [[nodiscard]] bool has_node_endpoint_parent() const noexcept;
 
-        /** Legacy parent TSData binding, or null for record-backed and non-TSData parents. */
-        [[nodiscard]] const TSDataBinding *parent_binding() const noexcept;
-
-        /** Mixed parent storage identity; scalar parents are record-backed. */
-        [[nodiscard]] TSStorageTypeRef parent_storage_type() const noexcept;
+        /** Canonical parent TSData type record, or an unbound reference. */
+        [[nodiscard]] TSRoleTypeRef parent_storage_type() const noexcept;
 
         /** Parent TSData memory, or null when this link does not target TSData. */
         [[nodiscard]] const void *parent_data() const noexcept;
@@ -422,7 +321,7 @@ namespace hgraph
      */
     struct FixedTSDataFieldLayout
     {
-        TSStorageTypeRef     type{};
+        TSRoleTypeRef     type{};
         const TSDataLayout  *layout{nullptr};
         std::size_t          data_offset{0};
 
@@ -460,7 +359,7 @@ namespace hgraph
      */
     struct FixedTSLDataLayout : TSDataLayout
     {
-        TSStorageTypeRef     element_type{};
+        TSRoleTypeRef     element_type{};
         const TSDataLayout  *element_layout{nullptr};
         std::size_t          element_count{0};
         std::size_t          element_value_stride{0};
@@ -484,9 +383,9 @@ namespace hgraph
 
     struct TSDDataLayout : TSSDataLayout
     {
-        TSStorageTypeRef        element_type{};
+        TSRoleTypeRef        element_type{};
         const TSDataLayout     *element_layout{nullptr};
-        TSStorageTypeRef        key_set_type{};
+        TSRoleTypeRef        key_set_type{};
         ValueTypeRef element_value_binding{nullptr};
         ValueTypeRef element_delta_binding{nullptr};
     };

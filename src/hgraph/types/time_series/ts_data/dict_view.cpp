@@ -18,11 +18,6 @@ namespace hgraph
         return TSDataView{storage_.storage_ref()};
     }
 
-    const TSDataBinding *TSDDataView::binding() const noexcept
-    {
-        return base().binding();
-    }
-
     const TSValueTypeMetaData *TSDDataView::schema() const noexcept
     {
         return base().schema();

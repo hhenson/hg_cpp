@@ -31,7 +31,7 @@ namespace hgraph
             }
             if (record.ops_abi_version != TS_DATA_OPS_ABI_VERSION)
             {
-                throw std::invalid_argument("TSRoleTypeRef requires TSData ops ABI version 3");
+                throw std::invalid_argument("TSRoleTypeRef requires TSData ops ABI version 4");
             }
             const auto *ops = static_cast<const TSDataOps *>(record.ops);
             if (!migrated_kind(*schema) || ops == nullptr || ops->kind != schema->kind)
@@ -125,14 +125,4 @@ namespace hgraph
         return *plan();
     }
 
-    const TSDataOps *TSRoleTypeRef::ops() const noexcept
-    {
-        return record_ != nullptr ? static_cast<const TSDataOps *>(record_->ops) : nullptr;
-    }
-
-    const TSDataOps &TSRoleTypeRef::ops_ref() const
-    {
-        if (ops() == nullptr) throw std::logic_error("TSRoleTypeRef is unbound");
-        return *ops();
-    }
 } // namespace hgraph

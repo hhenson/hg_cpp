@@ -614,6 +614,60 @@ Acceptance
    not block progression.  Measured regressions have an explicit accepted
    explanation.
 
+Implemented
+   The final time-series migration removes ``TypeBinding``,
+   ``TSDataBinding``, the tagged ``TSStorageTypeRef``, their compatibility
+   registry, and the generic binding-based ``MemoryUtils::StorageRef``.  A
+   ``TSRoleTypeRef`` now carries the only time-series representation identity:
+   the canonical interned ``TypeRecord`` for a schema, endpoint role, storage
+   plan, and ops table.  Factories, nested child layouts, deltas, proxies,
+   inputs, outputs, and parent links all pass that record directly.  Searches
+   of production and C++ test sources find no remaining legacy identity or
+   accessor path.
+
+   Every borrowed time-series data cursor is now the common two-word
+   type-record/data-pointer representation.  ``TSDataStorageRef`` and
+   ``TSDataView`` shrink from three words to two; ``TSOutputHandle`` from four
+   to three; ``TSOutputView`` from five to four; ``TSInputView`` from ten to
+   eight; and ``TimeSeriesReference`` from six to five.  Owning ``TSData``,
+   ``TSOutput``, and ``TSInput`` layouts remain three, five, and seven words.
+   Compile-time assertions cover generic and specialised cursors as well as
+   all endpoint view and owner layouts.
+
+   On macOS, AppleClang 21 passes the warnings-as-errors Debug build and the
+   combined ASan/UBSan suite (973 cases, 9,423 assertions).  The CPython 3.12
+   stable-ABI bridge passes 947 compatibility tests with 38 skips and four
+   expected failures.  A Python-disabled Release build installs successfully,
+   and Sphinx passes with warnings treated as errors.
+
+   The required Linux validation uses the Ubuntu 24.04 OrbStack VM and GCC
+   13.3.  The warnings-as-errors Release build passes 973 cases and 9,417
+   assertions.  It also builds a ``cp312-abi3-linux_x86_64`` wheel and passes
+   the same 947-test Python compatibility suite.  GCC's dangling-reference
+   analysis found and removed four references taken through temporary type
+   handles.
+
+   Best-effort Windows validation uses the MinGW-w64 x86-64 Windows target
+   with GCC 16.1.  Runtime, wiring, stdlib, and all five C++ test object groups
+   compile as C++23 with warnings as errors, including the ABI assertions.  It
+   found a public header that depended on the precompiled header and made a
+   slot-bitmap preservation copy explicitly capacity-bounded.  MSVC linking
+   and execution still require GitHub Actions after the milestone commit.
+
+   Immediate pre-milestone Release comparisons retain the same allocation
+   counts.  Across repeated review-Mac samples, small-graph construction was
+   0.3% to 3.0% faster, nested steady scheduling 5.9% to 7.6% faster, and
+   switch lifecycle ranged from 2.0% faster to 1.0% slower.  Scalar,
+   fixed-composite, and dynamic-list reads were 4.9% to 5.4%, 2.8% to 4.0%,
+   and 5.4% to 9.1% slower.  On Linux, scalar and fixed-composite reads
+   improved by 12.5% to 17.0% and 1.5% to 3.5%; dynamic-list read remained
+   within 1.2%.  Graph construction, nested scheduling, and switch lifecycle
+   improved by 4.2% to 6.7%, 8.5% to 9.6%, and 0.8% to 4.0%, while the window
+   microbenchmarks were 7.0% to 17.1% slower.  The expected hot-path cost is
+   one ``TypeRecord``-to-ops load in place of the removed cached cursor word.
+   The review decision is whether the substantially smaller canonical
+   representation justifies that measured read tradeoff.
+
 Recommended model allocation
    A cost-effective model performs cleanup and matrix fixes.  The final audit
    and ABI decision belong to the highest-reasoning model and human reviewers.

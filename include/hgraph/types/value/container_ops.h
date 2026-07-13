@@ -1,7 +1,6 @@
 #ifndef HGRAPH_CPP_ROOT_VALUE_CONTAINER_OPS_H
 #define HGRAPH_CPP_ROOT_VALUE_CONTAINER_OPS_H
 
-#include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/value/value_ops.h>
 #include <hgraph/types/value/value_range.h>
 #include <hgraph/types/value/value_view.h>

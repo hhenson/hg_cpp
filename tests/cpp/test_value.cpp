@@ -7,7 +7,6 @@
 
 #include <cstdint>
 
-#include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/metadata/type_registry.h>

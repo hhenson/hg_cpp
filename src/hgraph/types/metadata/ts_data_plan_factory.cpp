@@ -90,7 +90,7 @@ namespace hgraph
 
     namespace ts_data_plan_factory_detail
     {
-        TSStorageTypeRef standalone_ts_storage_type(const TSValueTypeMetaData &schema,
+        TSRoleTypeRef standalone_ts_storage_type(const TSValueTypeMetaData &schema,
                                                     TypeRole role,
                                                     bool embedded)
         {
@@ -112,7 +112,7 @@ namespace hgraph
                                               is_window_ts_data(*element_schema);
                 const auto element_type = standalone_ts_storage_type(*element_schema, role, element_embedded);
                 const auto &ops = dynamic_list_ts_data_ops(schema, *plan, 0, element_type, role, embedded);
-                return TSStorageTypeRef{
+                return TSRoleTypeRef{
                     intern_ts_type(schema, role, *plan, ops, standalone_label(schema, role, embedded))};
             }
 
@@ -124,7 +124,7 @@ namespace hgraph
                     throw std::logic_error("standalone TSW storage components are not resolved");
                 const auto &ops = window_ts_data_ops(schema, *plan, window->offset, tracking->offset,
                                                      role, embedded);
-                return TSStorageTypeRef{
+                return TSRoleTypeRef{
                     intern_ts_type(schema, role, *plan, ops, standalone_label(schema, role, embedded))};
             }
 
@@ -155,7 +155,7 @@ namespace hgraph
                                              : role == TypeRole::Data ? "ts.tsd.data.root"
                                                : role == TypeRole::Input ? "ts.tsd.input.owned"
                                                                          : "ts.tsd.output.root";
-                return TSStorageTypeRef{intern_ts_type(schema, role, *plan, ops, label)};
+                return TSRoleTypeRef{intern_ts_type(schema, role, *plan, ops, label)};
             }
 
             const auto *value = plan->find_component("value");
@@ -175,7 +175,7 @@ namespace hgraph
                                      : role == TypeRole::Input ? std::string_view{"ts.ref.input.owned"}
                                                                : std::string_view{"ts.ref.output.root"}
                                    : std::string_view{};
-            return TSStorageTypeRef{intern_ts_type(schema, role, *plan, ops, label)};
+            return TSRoleTypeRef{intern_ts_type(schema, role, *plan, ops, label)};
         }
     }  // namespace ts_data_plan_factory_detail
 
@@ -220,7 +220,6 @@ namespace hgraph
     {
         std::lock_guard<std::mutex> lock(mutex_);
         cache_.clear();
-        binding_cache_.clear();
         data_type_cache_.clear();
         output_type_cache_.clear();
         plan_detail::clear_atomic_ts_data_ops();
@@ -230,34 +229,6 @@ namespace hgraph
         plan_detail::clear_slot_ts_data_contexts();
         clear_tsd_proxy_contexts();
         detail::clear_ts_output_alternative_type_cache();
-    }
-
-    const TSDataBinding *TSDataPlanFactory::binding_for(const TSValueTypeMetaData *schema)
-    {
-        if (schema == nullptr) return nullptr;
-        if (migrated_root(schema))
-        {
-            throw std::logic_error("TSDataPlanFactory: migrated root identity is a TypeRecord, not TSDataBinding");
-        }
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (const auto it = binding_cache_.find(schema); it != binding_cache_.end())
-            {
-                return it->second;
-            }
-        }
-
-        return synthesise_binding(schema);
-    }
-
-    const TSDataBinding *TSDataPlanFactory::legacy_binding_for(const TSValueTypeMetaData *schema)
-    {
-        if (schema == nullptr) return nullptr;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (const auto it = binding_cache_.find(schema); it != binding_cache_.end()) return it->second;
-        }
-        return synthesise_binding(schema);
     }
 
     TSDataTypeRef TSDataPlanFactory::data_type_for(const TSValueTypeMetaData *schema)
@@ -270,7 +241,7 @@ namespace hgraph
         if (plan_detail::is_dynamic_list_ts_data(*schema) || plan_detail::is_window_ts_data(*schema))
         {
             const auto storage_type = plan_detail::standalone_ts_storage_type(*schema, TypeRole::Data);
-            const auto type = TSDataTypeRef::checked(storage_type.type_ref());
+            const auto type = TSDataTypeRef::checked(storage_type);
             std::lock_guard<std::mutex> lock(mutex_);
             return data_type_cache_.try_emplace(schema, type).first->second;
         }
@@ -292,7 +263,7 @@ namespace hgraph
                 throw std::logic_error("data_type_for could not resolve fixed storage");
             const auto storage_type = plan_detail::embedded_ts_storage_type(
                 *schema, TypeRole::Data, *plan, value->offset, aux->offset, true);
-            const auto type = TSDataTypeRef::checked(storage_type.type_ref());
+            const auto type = TSDataTypeRef::checked(storage_type);
             std::lock_guard<std::mutex> lock(mutex_);
             return data_type_cache_.try_emplace(schema, type).first->second;
         }
@@ -322,7 +293,7 @@ namespace hgraph
         if (plan_detail::is_dynamic_list_ts_data(*schema) || plan_detail::is_window_ts_data(*schema))
         {
             const auto storage_type = plan_detail::standalone_ts_storage_type(*schema, TypeRole::Output);
-            const auto type = TSOutputTypeRef::checked(storage_type.type_ref());
+            const auto type = TSOutputTypeRef::checked(storage_type);
             std::lock_guard<std::mutex> lock(mutex_);
             return output_type_cache_.try_emplace(schema, type).first->second;
         }
@@ -335,7 +306,7 @@ namespace hgraph
                 throw std::logic_error("output_type_for could not resolve fixed storage");
             const auto storage_type = plan_detail::embedded_ts_storage_type(
                 *schema, TypeRole::Output, *plan, value->offset, aux->offset, true);
-            const auto type = TSOutputTypeRef::checked(storage_type.type_ref());
+            const auto type = TSOutputTypeRef::checked(storage_type);
             std::lock_guard<std::mutex> lock(mutex_);
             return output_type_cache_.try_emplace(schema, type).first->second;
         }
@@ -370,18 +341,6 @@ namespace hgraph
         std::lock_guard<std::mutex> lock(mutex_);
         const auto it = output_type_cache_.find(schema);
         return it == output_type_cache_.end() ? TSOutputTypeRef{} : it->second;
-    }
-
-    const TSDataBinding *TSDataPlanFactory::find_binding(const TSValueTypeMetaData *schema) const
-    {
-        if (schema == nullptr || migrated_root(schema))
-        {
-            return nullptr;
-        }
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto                  it = binding_cache_.find(schema);
-        return it == binding_cache_.end() ? nullptr : it->second;
     }
 
     const MemoryUtils::StoragePlan *TSDataPlanFactory::synthesise(const TSValueTypeMetaData *schema)
@@ -464,194 +423,4 @@ namespace hgraph
         return plan;
     }
 
-    const TSDataBinding *TSDataPlanFactory::synthesise_binding(const TSValueTypeMetaData *schema)
-    {
-        if (schema == nullptr)
-        {
-            return nullptr;
-        }
-        if (plan_detail::is_dynamic_list_ts_data(*schema))
-        {
-            const auto *plan = plan_for(schema);
-            if (plan == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: dynamic TSL plan is not resolvable");
-            }
-
-            const auto type = plan_detail::standalone_ts_storage_type(*schema, TypeRole::Data);
-            const auto &ops = type.ops_ref();
-            const auto &binding = TSDataBinding::intern(*schema, *plan, ops);
-
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (const auto it = binding_cache_.find(schema); it != binding_cache_.end())
-            {
-                return it->second;
-            }
-            binding_cache_.emplace(schema, &binding);
-            if (const auto plan_it = cache_.find(schema); plan_it != cache_.end())
-            {
-                if (plan_it->second != binding.plan())
-                {
-                    throw std::logic_error("TSDataPlanFactory: synthesised binding does not match cached plan");
-                }
-            }
-            else
-            {
-                cache_.emplace(schema, binding.plan());
-            }
-            return &binding;
-        }
-        if (plan_detail::is_fixed_structured_ts_data(*schema))
-        {
-            const auto *plan = plan_for(schema);
-            if (plan == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: fixed TSData plan is not resolvable");
-            }
-
-            const auto *value_component = plan->find_component("value");
-            const auto *aux_component   = plan->find_component("aux");
-            if (value_component == nullptr || aux_component == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: fixed TSData plan is missing value or auxiliary region");
-            }
-
-            const auto *binding =
-                plan_detail::embedded_ts_data_binding(*schema, *plan, value_component->offset, aux_component->offset);
-
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (const auto it = binding_cache_.find(schema); it != binding_cache_.end())
-            {
-                return it->second;
-            }
-            binding_cache_.emplace(schema, binding);
-            if (const auto plan_it = cache_.find(schema); plan_it != cache_.end())
-            {
-                if (plan_it->second != binding->plan())
-                {
-                    throw std::logic_error("TSDataPlanFactory: synthesised binding does not match cached plan");
-                }
-            }
-            else
-            {
-                cache_.emplace(schema, binding->plan());
-            }
-            return binding;
-        }
-        if (plan_detail::is_window_ts_data(*schema))
-        {
-            const auto *plan = plan_for(schema);
-            if (plan == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: TSW TSData plan is not resolvable");
-            }
-
-            const auto *window_component   = plan->find_component("window");
-            const auto *tracking_component = plan->find_component("tracking");
-            if (window_component == nullptr || tracking_component == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: TSW TSData plan is missing required components");
-            }
-
-            const auto type = plan_detail::standalone_ts_storage_type(*schema, TypeRole::Data);
-            const auto &ops = type.ops_ref();
-            const auto &binding = TSDataBinding::intern(*schema, *plan, ops);
-
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (const auto it = binding_cache_.find(schema); it != binding_cache_.end())
-            {
-                return it->second;
-            }
-            binding_cache_.emplace(schema, &binding);
-            if (const auto plan_it = cache_.find(schema); plan_it != cache_.end())
-            {
-                if (plan_it->second != binding.plan())
-                {
-                    throw std::logic_error("TSDataPlanFactory: synthesised binding does not match cached plan");
-                }
-            }
-            else
-            {
-                cache_.emplace(schema, binding.plan());
-            }
-            return &binding;
-        }
-        if (plan_detail::is_slot_ts_data(*schema))
-        {
-            const auto *plan = plan_for(schema);
-            if (plan == nullptr)
-            {
-                throw std::logic_error("TSDataPlanFactory: slot TSData plan is not resolvable");
-            }
-
-            const auto &ops = plan_detail::slot_ts_data_ops(*schema, *plan, 0);
-            const auto &binding = TSDataBinding::intern(*schema, *plan, ops);
-
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (const auto it = binding_cache_.find(schema); it != binding_cache_.end())
-            {
-                return it->second;
-            }
-            binding_cache_.emplace(schema, &binding);
-            if (const auto plan_it = cache_.find(schema); plan_it != cache_.end())
-            {
-                if (plan_it->second != binding.plan())
-                {
-                    throw std::logic_error("TSDataPlanFactory: synthesised binding does not match cached plan");
-                }
-            }
-            else
-            {
-                cache_.emplace(schema, binding.plan());
-            }
-            return &binding;
-        }
-        if (!plan_detail::is_compact_atomic_ts_data(*schema))
-        {
-            unsupported(schema);
-        }
-
-        const auto value_binding = ValuePlanFactory::instance().type_for(schema->value_schema);
-        const auto delta_binding = ValuePlanFactory::instance().type_for(schema->delta_value_schema);
-        if (!value_binding || !delta_binding)
-        {
-            throw std::logic_error("TSDataPlanFactory: atomic TSData value/delta bindings are not resolvable");
-        }
-
-        const auto *plan = plan_for(schema);
-        if (plan == nullptr)
-        {
-            throw std::logic_error("TSDataPlanFactory: atomic TSData plan is not resolvable");
-        }
-
-        const auto *value_component    = plan->find_component("value");
-        const auto *tracking_component = plan->find_component("tracking");
-        if (value_component == nullptr || tracking_component == nullptr)
-        {
-            throw std::logic_error("TSDataPlanFactory: atomic TSData plan is missing required components");
-        }
-
-        const auto &ops     = plan_detail::atomic_ts_data_ops(schema->kind, value_binding, delta_binding, *plan,
-                                                              value_component->offset, tracking_component->offset);
-        const auto &binding = TSDataBinding::intern(*schema, *plan, ops);
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (const auto it = binding_cache_.find(schema); it != binding_cache_.end())
-        {
-            return it->second;
-        }
-        binding_cache_.emplace(schema, &binding);
-        if (const auto plan_it = cache_.find(schema); plan_it != cache_.end())
-        {
-            if (plan_it->second != binding.plan())
-            {
-                throw std::logic_error("TSDataPlanFactory: synthesised binding does not match cached plan");
-            }
-        }
-        else
-        {
-            cache_.emplace(schema, binding.plan());
-        }
-        return &binding;
-    }
 } // namespace hgraph

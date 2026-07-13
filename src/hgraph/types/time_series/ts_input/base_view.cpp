@@ -41,22 +41,7 @@ namespace hgraph
         return detail::target_link_bound(raw_data);
     }
 
-    const TSDataBinding *TSInputView::InputDataCursor::binding() const noexcept
-    {
-        if (is_target_position())
-        {
-            const auto &target = resolved_value_data();
-            if (target.valid() && target.binding() != nullptr) { return target.binding(); }
-            const auto *schema = target_path_schema();
-            if (raw_data.type_ref() && schema != nullptr &&
-                (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::SIGNAL))
-                return nullptr;
-            return detail::regular_ts_data_binding_for(target_path_schema());
-        }
-        return value_data.binding();
-    }
-
-    TSStorageTypeRef TSInputView::InputDataCursor::storage_type() const noexcept
+    TSRoleTypeRef TSInputView::InputDataCursor::storage_type() const noexcept
     {
         return is_target_position() ? raw_data.storage_type() : value_data.storage_type();
     }
@@ -251,14 +236,9 @@ namespace hgraph
         return owner.node_owned() ? owner.port() : TSEndpointOwnerPort::Input;
     }
 
-    const TSDataBinding *TSInputView::binding() const noexcept
-    {
-        return data_.binding();
-    }
-
     TSInputTypeRef TSInputView::type_ref() const
     {
-        const auto type = data_.storage_type().type_ref();
+        const auto type = data_.storage_type();
         // Descents through one peered root share the root TargetLink storage
         // and therefore its root record. That record must not describe a
         // child at a different semantic path; callers fall back through the

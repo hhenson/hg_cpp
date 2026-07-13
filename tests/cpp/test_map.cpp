@@ -281,7 +281,7 @@ TEST_CASE("mapped key sources expose their exact Output role record")
     const auto type = view.type_ref();
 
     REQUIRE(view.bound());
-    REQUIRE(view.binding() == nullptr);
+    REQUIRE(view.storage_type().record() == type.record());
     REQUIRE(type);
     REQUIRE(type.valid());
     REQUIRE(type.record()->role == TypeRole::Output);

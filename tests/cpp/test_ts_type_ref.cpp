@@ -172,9 +172,6 @@ TEST_CASE("scalar time-series role records are canonical, exact, and thread stab
     REQUIRE(has_capability(data.capabilities(), TypeCapabilities::Mutable));
     REQUIRE(has_capability(output.capabilities(), TypeCapabilities::Mutable));
     REQUIRE_FALSE(has_capability(input_type.capabilities(), TypeCapabilities::Mutable));
-    REQUIRE_THROWS_AS(factory.binding_for(schema), std::logic_error);
-    REQUIRE(factory.find_binding(schema) == nullptr);
-
     std::array<const TypeRecord *, 8> records{};
     std::array<std::thread, 8> threads{};
     for (std::size_t i = 0; i < threads.size(); ++i)
@@ -204,8 +201,6 @@ TEST_CASE("scalar role references validate AnyPtr boundaries and enforce role mu
     REQUIRE_THROWS_AS(input_role.writable(nullptr), std::logic_error);
     REQUIRE_THROWS_AS(TSInputTypeRef::checked(AnyPtr::writable(*input_role.record(), nullptr)),
                       std::invalid_argument);
-    REQUIRE_THROWS_AS(TSData{*factory.legacy_binding_for(schema)}, std::invalid_argument);
-
     TSData data{data_type};
     Value forty_two{std::int32_t{42}};
     {
@@ -215,7 +210,7 @@ TEST_CASE("scalar role references validate AnyPtr boundaries and enforce role mu
     REQUIRE(data.view().value().checked_as<std::int32_t>() == 42);
 
     TSInput owned{TSInputBuilderFactory::checked_builder_for(*schema, TSEndpointSchema::owned(schema))};
-    REQUIRE(owned.binding() == nullptr);
+    REQUIRE(owned.type_ref().record() != nullptr);
     REQUIRE_THROWS_AS(owned.view(nullptr, MIN_ST).data_view().begin_mutation(MIN_ST), std::logic_error);
 }
 
@@ -259,11 +254,6 @@ TEST_CASE("time-series role validation rejects common header kind mismatches")
     REQUIRE_THROWS_AS(TSRoleTypeRef::checked(malformed_pointer), std::invalid_argument);
     REQUIRE_THROWS_AS(TSDataTypeRef::checked(malformed_pointer), std::invalid_argument);
 
-    const auto malformed_role = TSStorageTypeRef::from_raw_bits(
-        reinterpret_cast<std::uintptr_t>(&malformed_record)).type_ref();
-    REQUIRE_FALSE(malformed_role.valid());
-    REQUIRE_THROWS_AS(TSDataTypeRef::checked(malformed_role), std::invalid_argument);
-
     for (const auto *canonical : {ts, registry.signal()})
     {
         const auto type = factory.data_type_for(canonical);
@@ -303,8 +293,6 @@ TEST_CASE("fixed structured role records preserve semantic identity and embedded
         REQUIRE(has_capability(data.capabilities(), TypeCapabilities::HasChildren));
         REQUIRE(has_capability(data.capabilities(), TypeCapabilities::Mutable));
         REQUIRE(has_capability(output.capabilities(), TypeCapabilities::Mutable));
-        REQUIRE_THROWS_AS(factory.binding_for(schema), std::logic_error);
-        REQUIRE(factory.find_binding(schema) == nullptr);
     }
 
     REQUIRE(factory.data_type_for(named).record() != factory.data_type_for(structural).record());
@@ -330,7 +318,7 @@ TEST_CASE("fixed structured role records preserve semantic identity and embedded
     auto output_bundle = output_root.as_bundle();
     auto output_scalar = output_bundle.field("value");
     auto output_list = output_bundle.field("items");
-    REQUIRE(output.binding() == nullptr);
+    REQUIRE(output.type_ref().record() != nullptr);
     REQUIRE(output.type_ref().schema() == named);
     REQUIRE(output_scalar.type_ref().role() == TypeRole::Output);
     REQUIRE(std::string{output_scalar.type_ref().record()->implementation_name()} == "ts.fixed.output.embedded");
@@ -343,46 +331,10 @@ TEST_CASE("fixed structured role records preserve semantic identity and embedded
     TSOutput mixed_output{mixed};
     auto mixed_root = mixed_output.data_view();
     auto mixed_bundle = mixed_root.as_bundle();
-    REQUIRE(mixed_bundle.field("value").storage_type().record_backed());
-    REQUIRE(mixed_bundle.field("window").storage_type().record_backed());
+    REQUIRE(mixed_bundle.field("value").storage_type().record() != nullptr);
+    REQUIRE(mixed_bundle.field("window").storage_type().record() != nullptr);
     REQUIRE(std::string{mixed_bundle.field("window").type_ref().record()->implementation_name()} ==
             "ts.tsw.tick.output.embedded");
-}
-
-TEST_CASE("migrated roots reject legacy ownership including dynamic TSL and TSW")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-    auto &factory = TSDataPlanFactory::instance();
-    const auto *integer = registry.register_scalar<std::int32_t>("int32");
-    const auto *string = registry.register_scalar<std::string>("string");
-    const auto *ts = registry.ts(integer);
-    const auto *fixed_list = registry.tsl(ts, 2);
-    const auto *structural = registry.un_named_tsb({{"value", ts}});
-    const auto *named = registry.tsb("LegacyRootRejected", {{"value", ts}});
-
-    for (const auto *schema : {fixed_list, structural, named})
-    {
-        const auto *legacy = factory.legacy_binding_for(schema);
-        REQUIRE(legacy != nullptr);
-        REQUIRE_THROWS_AS(TSData{*legacy}, std::invalid_argument);
-    }
-
-    const auto *dict = registry.tsd(string, named);
-    const auto *dict_legacy = factory.legacy_binding_for(dict);
-    REQUIRE(dict_legacy != nullptr);
-    REQUIRE_THROWS_AS(TSData{*dict_legacy}, std::invalid_argument);
-    REQUIRE(factory.data_type_for(dict));
-
-    const auto *dynamic_list = registry.tsl(named, 0);
-    const auto *window = registry.tsw(integer, 2, 1);
-    for (const auto *schema : {dynamic_list, window})
-    {
-        const auto *legacy = factory.legacy_binding_for(schema);
-        REQUIRE(legacy != nullptr);
-        REQUIRE_THROWS_AS(TSData{*legacy}, std::invalid_argument);
-        REQUIRE(factory.data_type_for(schema));
-    }
 }
 
 TEST_CASE("mixed fixed output topology preserves Output roles through forwarding children")
@@ -409,15 +361,15 @@ TEST_CASE("mixed fixed output topology preserves Output roles through forwarding
     REQUIRE(detail::has_input_children(nested.data_view()));
     auto forwarding_projection = detail::input_child_projection(nested.data_view(), 1);
     CAPTURE(forwarding_projection.visible.valid(), forwarding_projection.target_link.valid(),
-            forwarding_projection.visible.storage_type().record_backed(),
-            forwarding_projection.target_link.storage_type().record_backed());
+            forwarding_projection.visible.storage_type().record(),
+            forwarding_projection.target_link.storage_type().record());
     REQUIRE(forwarding_projection.target_link.valid());
 
     const std::array views{&nested, &owned, &forwarded};
     for (std::size_t index = 0; index < views.size(); ++index)
     {
         const auto *view = views[index];
-        CAPTURE(index, view->storage_type().record_backed(), view->storage_type().legacy_backed());
+        CAPTURE(index, view->storage_type().record());
         const auto type = view->type_ref();
         REQUIRE(type.valid());
         REQUIRE(type.as_role().role() == TypeRole::Output);
@@ -806,13 +758,13 @@ TEST_CASE("keyed and reference role records preserve root input and projection t
     auto dict_view = dict_data.view();
     auto dict = dict_view.as_dict();
     REQUIRE(label(dict.key_set().base().type_ref()) == "ts.tsd.key-set.data");
-    REQUIRE(label(dict.layout().element_type.type_ref()) == "ts.tsd.value.data");
+    REQUIRE(label(dict.layout().element_type) == "ts.tsd.value.data");
 
     TSOutput dict_output{tsd};
     auto output_view = dict_output.data_view();
     auto output_dict = output_view.as_dict();
     REQUIRE(label(output_dict.key_set().base().type_ref()) == "ts.tsd.key-set.output");
-    REQUIRE(label(output_dict.layout().element_type.type_ref()) == "ts.tsd.value.output");
+    REQUIRE(label(output_dict.layout().element_type) == "ts.tsd.value.output");
 
     for (const auto &[schema, owned_label, target_label] : std::array{
              std::tuple{tss, "ts.tss.input.owned", "ts.tss.input.target"},
@@ -831,12 +783,12 @@ TEST_CASE("keyed and reference role records preserve root input and projection t
     REQUIRE(label(composite.type_ref()) == "ts.tsd.input.composite");
     auto composite_dict = composite.view().data_view().as_dict();
     REQUIRE(label(composite_dict.key_set().base().type_ref()) == "ts.tsd.key-set.input");
-    REQUIRE(label(composite_dict.layout().element_type.type_ref()) == "ts.tsd.value.input");
+    REQUIRE(label(composite_dict.layout().element_type) == "ts.tsd.value.input");
 
     const auto proxy_data = tsd_proxy_data_type_for(
-        *tsd, TSStorageTypeRef{factory.data_type_for(ts).as_role()});
+        *tsd, TSRoleTypeRef{factory.data_type_for(ts).as_role()});
     const auto proxy_output = tsd_proxy_output_type_for(
-        *tsd, TSStorageTypeRef{factory.output_type_for(ts).as_role()});
+        *tsd, TSRoleTypeRef{factory.output_type_for(ts).as_role()});
     REQUIRE(label(proxy_data.as_role()) == "ts.tsd.proxy.data");
     REQUIRE(label(proxy_output.as_role()) == "ts.tsd.proxy.output");
 }
@@ -863,14 +815,14 @@ TEST_CASE("keyed projection ops caches release and reseed every role without sta
             TSData data{factory.data_type_for(outer)};
             auto data_view = data.view();
             auto data_dict = data_view.as_dict();
-            const auto data_element_type = data_dict.layout().element_type.type_ref();
+            const auto data_element_type = data_dict.layout().element_type;
             labels.emplace_back(data_element_type.record()->implementation_name());
             REQUIRE(data_element_type.role() == TypeRole::Data);
 
             TSOutput output{outer};
             auto output_data = output.data_view();
             auto output_dict = output_data.as_dict();
-            const auto output_element_type = output_dict.layout().element_type.type_ref();
+            const auto output_element_type = output_dict.layout().element_type;
             labels.emplace_back(output_element_type.record()->implementation_name());
             REQUIRE(output_element_type.role() == TypeRole::Output);
 
@@ -879,7 +831,7 @@ TEST_CASE("keyed projection ops caches release and reseed every role without sta
             TSInput input{TSInputBuilderFactory::checked_builder_for(*outer, endpoint)};
             auto input_view = input.view();
             auto input_dict = input_view.data_view().as_dict();
-            const auto input_element_type = input_dict.layout().element_type.type_ref();
+            const auto input_element_type = input_dict.layout().element_type;
             labels.emplace_back(input_element_type.record()->implementation_name());
             REQUIRE(input_element_type.role() == TypeRole::Input);
         }
@@ -955,10 +907,6 @@ TEST_CASE("dynamic TSL and TSW role records are canonical distinct and exactly l
         REQUIRE(has_capability(output.capabilities(), TypeCapabilities::HasChildren) == item.has_children);
         TSData input_storage{owned.type_ref()};
         REQUIRE_THROWS_AS(input_storage.view().begin_mutation(MIN_ST), std::logic_error);
-        REQUIRE_THROWS_AS(factory.binding_for(item.schema), std::logic_error);
-        const auto *legacy = factory.legacy_binding_for(item.schema);
-        REQUIRE(legacy != nullptr);
-        REQUIRE_THROWS_AS(TSData{*legacy}, std::invalid_argument);
         REQUIRE(factory.data_type_for(item.schema).record() == data.record());
         REQUIRE(factory.output_type_for(item.schema).record() == output.record());
     }
@@ -1012,7 +960,7 @@ TEST_CASE("dynamic TSL and TSW records preserve roles through fixed parents")
         auto dynamic_child = bundle.field("dynamic");
         auto dynamic_list = dynamic_child.as_list();
         const auto &dynamic_layout = static_cast<const FixedTSLDataLayout &>(dynamic_list.layout());
-        REQUIRE(dynamic_layout.element_type.type_ref().role() == parent.role);
+        REQUIRE(dynamic_layout.element_type.role() == parent.role);
     }
 }
 
@@ -1078,8 +1026,8 @@ TEST_CASE("scalar output and peered input preserve binding, timing, and subscrip
     RecordingNotifier notifier;
     auto in = input.view(&notifier, MIN_ST);
 
-    REQUIRE(first.binding() == nullptr);
-    REQUIRE(input.binding() == nullptr);
+    REQUIRE(first.type_ref().record() != nullptr);
+    REQUIRE(input.type_ref().record() != nullptr);
     REQUIRE(first.schema() == schema);
     REQUIRE(first.data_view().schema() == schema);
     REQUIRE(first.view(MIN_ST).schema() == schema);

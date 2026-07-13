@@ -269,7 +269,7 @@ TEST_CASE("TSDProxy source invalidation clears live and pending children once an
     const auto *tsd = registry.tsd(integer, ts);
     const auto source_type = TSDataPlanFactory::instance().data_type_for(tsd);
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
-    const auto proxy_type = tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()});
+    const auto proxy_type = tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()});
 
     REQUIRE(source_type.ops_ref().ownership_ops != nullptr);
     REQUIRE(proxy_type.ops_ref().ownership_ops != nullptr);
@@ -352,7 +352,7 @@ TEST_CASE("TSDProxy source invalidation cascades immediately through nested prox
     const auto *tsd = registry.tsd(integer, ts);
     const auto source_type = TSDataPlanFactory::instance().data_type_for(tsd);
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
-    const auto proxy_type = tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()});
+    const auto proxy_type = tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()});
 
     std::optional<TSData> source{std::in_place, source_type};
     TSData first{proxy_type};
@@ -399,7 +399,7 @@ TEST_CASE("TSDProxy rejects reentrant root and clear callback binds until invali
     const auto *tsd = registry.tsd(integer, ts);
     const auto source_type = TSDataPlanFactory::instance().data_type_for(tsd);
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
-    const auto proxy_type = tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()});
+    const auto proxy_type = tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()});
     std::optional<TSData> source{std::in_place, source_type};
     TSData replacement{source_type};
     TSData proxy{proxy_type};
@@ -473,7 +473,7 @@ TEST_CASE("TSDProxy cache-style resync never rebuilds a pending removed child")
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
 
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()})};
     Value key{1};
     const auto t1 = MIN_ST;
     const auto t2 = t1 + TimeDelta{1};
@@ -547,7 +547,7 @@ TEST_CASE("TSDProxy cache-style resync builds deferred same-time inserts without
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
 
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()})};
     Value key_one{1};
     Value key_two{2};
     const auto t1 = MIN_ST;
@@ -606,7 +606,7 @@ TEST_CASE("TSDProxy same-time identity reconciliation builds once and repeat rea
     const auto source_type = TSDataPlanFactory::instance().data_type_for(tsd);
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()})};
     Value key{1};
     const auto t1 = MIN_ST;
     const auto t2 = t1 + TimeDelta{1};
@@ -657,7 +657,7 @@ TEST_CASE("TSDProxy announced insertion retries a failed build without a second 
     const auto source_type = TSDataPlanFactory::instance().data_type_for(tsd);
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()})};
     Value key{1};
     const auto t1 = MIN_ST;
     const auto t2 = t1 + TimeDelta{1};
@@ -713,7 +713,7 @@ TEST_CASE("TSDProxy insert-owed resurrection survives builder failure and delta 
     const auto source_type = TSDataPlanFactory::instance().data_type_for(tsd);
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()})};
     Value key{1};
     const auto t1 = MIN_ST;
     const auto t2 = t1 + TimeDelta{1};
@@ -793,7 +793,7 @@ TEST_CASE("TSDProxy initial unannounced build failure retains insert debt until 
     const auto source_type = TSDataPlanFactory::instance().data_type_for(tsd);
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()})};
     Value key{1};
     const auto t1 = MIN_ST;
     const auto t2 = t1 + TimeDelta{1};
@@ -843,7 +843,7 @@ TEST_CASE("TSDProxy rejects sentinel build times before invoking the builder")
     const auto source_type = TSDataPlanFactory::instance().data_type_for(tsd);
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()})};
     Value key{1};
     const auto t1 = MIN_ST;
     {
@@ -885,7 +885,7 @@ TEST_CASE("TSDProxy rejects sentinel lifecycle times for an untouched empty sour
     const auto source_type = TSDataPlanFactory::instance().data_type_for(tsd);
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()})};
     FailingValueBuilderContext builds;
     RecordingSlotObserver lifecycle;
     auto proxy_view = proxy.view();
@@ -941,7 +941,7 @@ TEST_CASE("TSDProxy rejects sentinel lifecycle times for a touched empty source 
     const auto source_type = TSDataPlanFactory::instance().data_type_for(tsd);
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts);
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*tsd, TSStorageTypeRef{element_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*tsd, TSRoleTypeRef{element_type.as_role()})};
     Value key{1};
     const auto t1 = MIN_ST;
     {
@@ -1015,7 +1015,7 @@ TEST_CASE("TSDProxy constructs builder-created values from source key slots")
     const auto element_type = TSDataPlanFactory::instance().data_type_for(ts_int);
 
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*tsd_int, TSStorageTypeRef{element_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*tsd_int, TSRoleTypeRef{element_type.as_role()})};
 
     Value key_one{1};
     Value key_two{2};
@@ -1117,9 +1117,9 @@ TEST_CASE("TSDProxy projected values preserve canonical hash equality comparison
     TSData source_a{source_type};
     TSData source_b{source_type};
     TSData source_different{source_type};
-    TSData proxy_a{tsd_proxy_data_type_for(*tsd_int, TSStorageTypeRef{element_type.as_role()})};
-    TSData proxy_b{tsd_proxy_data_type_for(*tsd_int, TSStorageTypeRef{element_type.as_role()})};
-    TSData proxy_different{tsd_proxy_data_type_for(*tsd_int, TSStorageTypeRef{element_type.as_role()})};
+    TSData proxy_a{tsd_proxy_data_type_for(*tsd_int, TSRoleTypeRef{element_type.as_role()})};
+    TSData proxy_b{tsd_proxy_data_type_for(*tsd_int, TSRoleTypeRef{element_type.as_role()})};
+    TSData proxy_different{tsd_proxy_data_type_for(*tsd_int, TSRoleTypeRef{element_type.as_role()})};
 
     const auto add_key = [](TSData &source, std::int32_t key, std::int32_t value) {
         Value key_value{key};
@@ -1212,7 +1212,7 @@ TEST_CASE("TSDProxy non-atomic maps project child value and delta storage")
     REQUIRE(window_type);
 
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*proxy_schema, TSStorageTypeRef{window_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*proxy_schema, TSRoleTypeRef{window_type.as_role()})};
     Value key{7};
     const auto t1 = MIN_ST + TimeDelta{1};
     {
@@ -1291,7 +1291,7 @@ TEST_CASE("TSDProxy non-atomic owning copy preserves nested typed holes")
     const auto bundle_type = TSDataPlanFactory::instance().data_type_for(bundle_schema);
 
     TSData source{source_type};
-    TSData proxy{tsd_proxy_data_type_for(*proxy_schema, TSStorageTypeRef{bundle_type.as_role()})};
+    TSData proxy{tsd_proxy_data_type_for(*proxy_schema, TSRoleTypeRef{bundle_type.as_role()})};
     Value key{9};
     {
         auto source_view = source.view();

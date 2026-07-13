@@ -4,9 +4,10 @@ Type Erasure Inventory And Baseline
 Status
 ------
 
-This chapter records the Milestone 0 implementation at commit
+This chapter records the historical Milestone 0 implementation at commit
 ``ed0d40dce8edfbd8e6d0740f2f1261b7a853a9ff``.  It is an inventory of the
-current system, not the target API described in :doc:`unified_type_erasure`.
+system as it existed at that commit, not the current API described in
+:doc:`unified_type_erasure`.
 The layout assertions and performance executable added with this inventory do
 not change runtime behaviour.
 

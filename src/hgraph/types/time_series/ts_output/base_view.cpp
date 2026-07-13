@@ -35,12 +35,7 @@ namespace hgraph
         return TSDataView{data_};
     }
 
-    const TSDataBinding *TSOutputHandle::binding() const noexcept
-    {
-        return data_.binding();
-    }
-
-    TSStorageTypeRef TSOutputHandle::storage_type() const noexcept { return data_.storage_type(); }
+    TSRoleTypeRef TSOutputHandle::storage_type() const noexcept { return data_.storage_type(); }
 
     TSOutputTypeRef TSOutputHandle::type_ref() const
     {
@@ -138,12 +133,7 @@ namespace hgraph
         return owner.node_owned() ? owner.port() : TSEndpointOwnerPort::Output;
     }
 
-    const TSDataBinding *TSOutputView::binding() const noexcept
-    {
-        return data_.binding();
-    }
-
-    TSStorageTypeRef TSOutputView::storage_type() const noexcept { return data_.storage_type(); }
+    TSRoleTypeRef TSOutputView::storage_type() const noexcept { return data_.storage_type(); }
 
     TSOutputTypeRef TSOutputView::type_ref() const
     {

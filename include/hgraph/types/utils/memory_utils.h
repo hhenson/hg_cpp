@@ -41,7 +41,6 @@ namespace hgraph
      * - ``AllocatorOps`` is the matching ops table for allocate / deallocate.
      * - ``CompositePlanBuilder`` and ``array_plan`` synthesise plans for
      *   composite and array layouts.
-     * - ``StorageRef`` is the legacy borrowed two-pointer storage cursor.
      * - ``ErasedOwner`` owns inline or allocated storage used by consumers
      *   such as ``Value``.
      * - ``plan_for<T>()`` and friends produce canonical plans for concrete
@@ -522,89 +521,6 @@ namespace hgraph
         template <typename Binding>
         static constexpr bool storage_binding = requires(const Binding &binding) {
             { storage_binding_plan(binding) } -> std::same_as<const StoragePlan *>;
-        };
-
-        /**
-         * Borrowed reference to storage described by a binding.
-         *
-         * ``StorageRef`` is intentionally only a binding pointer plus a
-         * memory pointer. It is the view-side counterpart to
-         * ``ErasedOwner``: copying it copies the cursor only, never the
-         * payload, and destruction never touches the referenced memory.
-         */
-        template <typename Binding>
-            requires storage_binding<Binding>
-        class StorageRef
-        {
-          public:
-            constexpr StorageRef() noexcept = default;
-            constexpr StorageRef(const Binding *binding, void *data) noexcept
-                : m_binding(binding),
-                  m_data(data)
-            {
-            }
-            constexpr StorageRef(const Binding *binding, const void *data) noexcept
-                : m_binding(binding),
-                  m_data(const_cast<void *>(data))
-            {
-            }
-            constexpr StorageRef(const Binding &binding, void *data) noexcept
-                : StorageRef(&binding, data)
-            {
-            }
-            constexpr StorageRef(const Binding &binding, const void *data) noexcept
-                : StorageRef(&binding, data)
-            {
-            }
-
-            /** Build a typed empty reference that retains its binding. */
-            [[nodiscard]] static constexpr StorageRef empty(const Binding &binding) noexcept
-            {
-                return StorageRef{&binding, static_cast<void *>(nullptr)};
-            }
-
-            /** Build a live borrowed reference to externally owned storage. */
-            [[nodiscard]] static constexpr StorageRef reference(const Binding &binding, void *data) noexcept
-            {
-                return StorageRef{binding, data};
-            }
-
-            /** True when both the binding and data pointer are present. */
-            [[nodiscard]] constexpr bool has_value() const noexcept { return m_binding != nullptr && m_data != nullptr; }
-            [[nodiscard]] constexpr explicit operator bool() const noexcept { return has_value(); }
-            /** True when the reference carries a binding, even without data. */
-            [[nodiscard]] constexpr bool bound() const noexcept { return m_binding != nullptr; }
-
-            /** Bound binding, or ``nullptr`` when unbound. */
-            [[nodiscard]] constexpr const Binding *binding() const noexcept { return m_binding; }
-            /** Bound storage plan, or ``nullptr`` when unbound. */
-            [[nodiscard]] constexpr const StoragePlan *plan() const noexcept
-            {
-                return m_binding != nullptr ? storage_binding_plan(*m_binding) : nullptr;
-            }
-            /** Checked storage plan access for callers that require a binding. */
-            [[nodiscard]] const StoragePlan &checked_plan() const
-            {
-                if (m_binding == nullptr)
-                {
-                    throw std::logic_error("MemoryUtils::StorageRef requires a bound binding");
-                }
-                return checked_storage_binding_plan(*m_binding);
-            }
-
-            /** Mutable borrowed memory pointer, or ``nullptr`` when empty. */
-            [[nodiscard]] constexpr void *data() const noexcept { return m_data; }
-
-            /** Clear both the binding and memory pointer. */
-            constexpr void reset() noexcept
-            {
-                m_binding = nullptr;
-                m_data    = nullptr;
-            }
-
-          private:
-            const Binding *m_binding{nullptr};
-            void          *m_data{nullptr};
         };
 
         /**

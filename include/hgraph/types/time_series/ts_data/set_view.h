@@ -24,7 +24,6 @@ namespace hgraph
         TSSDataView &operator=(TSSDataView &&) noexcept = default;
 
         /** Binding, schema, layout, and value projections for the set node. */
-        [[nodiscard]] const TSDataBinding *binding() const noexcept;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
         [[nodiscard]] const TSSDataLayout &layout() const;
         [[nodiscard]] ValueView value() const;

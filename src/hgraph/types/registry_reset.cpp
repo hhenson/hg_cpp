@@ -5,7 +5,6 @@
 #include <hgraph/runtime/executor.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_record_registry.h>
-#include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -51,7 +50,6 @@ namespace hgraph
         clear_compact_container_plans();
         clear_mutable_container_plans();
         MemoryUtils::clear_synthesised_plans();
-        TSDataBinding::clear();
         type_registry.reset();  // re-seeds the standard scalar/TS vocabulary
     }
 }  // namespace hgraph

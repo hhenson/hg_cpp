@@ -229,7 +229,7 @@ need to mirror a source ``TSD`` but own transformed values.
 
    TSData source{source_type};
    TSData proxy{tsd_proxy_data_type_for(*proxy_schema,
-                                        TSStorageTypeRef{element_type.as_role()})};
+                                        element_type.as_role())};
 
    bind_tsd_proxy(proxy.view(),
                   source.view().as_dict(),

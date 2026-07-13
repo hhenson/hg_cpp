@@ -12,7 +12,7 @@
 namespace hgraph
 {
     struct TSDataOps;
-    class TSStorageTypeRef;
+    struct TSParentLink;
 
     inline constexpr std::uint16_t TS_DATA_OPS_ABI_VERSION = 4;
 
@@ -34,8 +34,16 @@ namespace hgraph
             return record_ != nullptr ? record_->plan : nullptr;
         }
         [[nodiscard]] const MemoryUtils::StoragePlan &checked_plan() const;
-        [[nodiscard]] const TSDataOps *ops() const noexcept;
-        [[nodiscard]] const TSDataOps &ops_ref() const;
+        [[nodiscard]] const TSDataOps *ops() const noexcept
+        {
+            return record_ != nullptr ? static_cast<const TSDataOps *>(record_->ops) : nullptr;
+        }
+        [[nodiscard]] const TSDataOps &ops_ref() const
+        {
+            const auto *table = ops();
+            if (table == nullptr) throw std::logic_error("TSRoleTypeRef is unbound");
+            return *table;
+        }
         [[nodiscard]] constexpr TypeRole role() const noexcept
         {
             return record_ != nullptr ? record_->role : TypeRole::Invalid;
@@ -49,7 +57,7 @@ namespace hgraph
 
       private:
         template <TypeRole> friend class BasicTSTypeRef;
-        friend class TSStorageTypeRef;
+        friend struct TSParentLink;
         friend TSRoleTypeRef intern_ts_type(const TSValueTypeMetaData &, TypeRole,
                                             const MemoryUtils::StoragePlan &, const TSDataOps &,
                                             std::string_view);
