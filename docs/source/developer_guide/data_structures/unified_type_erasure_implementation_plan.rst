@@ -787,12 +787,14 @@ Acceptance
 
 Implemented
    The release workflow now configures a Python-disabled native C++ build on
-   ``ubuntu-latest``, ``macos-26``, and ``windows-latest``.  It builds and runs
-   CTest with the repository warning policy enabled; Linux and macOS are
-   required and Windows is explicitly best effort.  Python 3.12 is present in
-   this job only as build tooling to locate the Arrow libraries shipped by
-   pyarrow.  Nanobind and Python development headers are not part of the
-   native targets.
+   ``ubuntu-latest``, ``macos-26``, and ``windows-2025-vs2026``.  Linux and
+   macOS use Ninja with their current native compiler; Windows explicitly uses
+   the ``Visual Studio 18 2026`` generator so it cannot silently select MinGW.
+   It builds and runs CTest with the repository warning policy enabled; Linux
+   and macOS are required and Windows is explicitly best effort.  Python 3.12
+   is present in this job only as build tooling to locate the Arrow libraries
+   shipped by pyarrow.  Nanobind and Python development headers are not part
+   of the native targets.
 
    ``HGRAPH_FETCH_SIMDJSON`` makes the hosted build's pinned simdjson explicit,
    while the default pure-C++ configure continues to use normal CMake package
@@ -880,6 +882,79 @@ Implemented
    Periodic Python-entry TSan coverage and richer Python-node debugger fixtures
    remain deferred until the native platform gates have accumulated stable CI
    evidence.
+
+Milestone 15: Release Evidence And Compatibility Closure
+--------------------------------------------------------
+
+Purpose
+   Turn the accepted type-erasure implementation into a repeatable release
+   gate, and close the remaining nested-graph, installed-package, debugger, and
+   measurement gaps without expanding the common pointer representation.
+
+Implementation work
+   Add a required Linux shared-library build that installs the CMake package
+   and builds a separately configured downstream consumer.  Exercise real
+   switch, map, and mesh instances in the debugger fixture and assert their
+   exact construct/start/stop/destroy lifetimes.  Check in a format-two Linux
+   benchmark baseline and a comparator which treats allocation counts, bytes,
+   benchmark inventory, and checksums as exact while using a MAD-aware timing
+   threshold.  Record an explicit ABI evolution policy for every frozen common
+   record.
+
+Acceptance
+   Current AppleClang and GCC builds pass the complete native suite with
+   warnings as errors; the shared Linux install and downstream
+   ``find_package(hgraph)`` consumer pass independently of the source tree.
+   Visual Studio 2026 compiles and executes the native suite as a best-effort
+   check.  LLDB and GDB can descend from real switch banks and keyed map/mesh
+   slots into their child graphs.  Exact lifecycle tests prove stop-on-delete,
+   destruction-on-erase, and alternating switch-bank reuse.  The pinned Linux
+   benchmark comparison reports exact allocation evidence and separates
+   repeatable timing regressions from host noise.
+
+Implemented
+   The release workflow contains a required Python-disabled Linux shared build,
+   full CTest run, install, and separately configured downstream consumer.  The
+   Windows native job is pinned to ``windows-2025-vs2026`` and the ``Visual
+   Studio 18 2026`` CMake generator; Ninja cannot select MinGW for that matrix
+   entry.  The downstream consumer passes against the installed shared package
+   and public ``hgraph::core`` target on GCC 13.3.
+
+   The debugger fixture executes real switch, map, and mesh nodes.  It retains
+   both switch banks and keyed live/pending slots at the breakpoint, and the
+   LLDB/GDB validators descend into every nested graph.  This exposed and fixed
+   map/mesh dynamic-layout offsets which previously described the enclosing
+   storage component rather than its nested entry store.  Exact counter tests
+   prove switch A/B/A placement reuse and map/mesh stop-on-delete followed by
+   destruction-on-erase.  The new tests and fixture pass GCC ASan/UBSan.  The
+   local Linux VM still cannot run the GDB subprocess because it denies
+   ``ptrace``; the script loads there and remains enabled on hosted Linux CI.
+
+   ``benchmarks/type_erasure/linux_gcc13_milestone15.txt`` is the accepted
+   static Release baseline.  ``tools/compare_type_erasure_perf.py`` requires
+   the same host, compiler, benchmark inventory, iterations, checksums,
+   allocation counts, and allocated bytes.  Timing fails only when the current
+   median exceeds both five percent and three times the larger measured MAD.
+   A second pinned 21-sample run passed every comparison.  Steady window and
+   nested scheduling cases allocate zero bytes; graph construction records 22
+   allocations per graph and the switch lifecycle records 1,502.4 allocations
+   per measured operation.  The reproducible command is:
+
+   .. code-block:: console
+
+      taskset -c 0 env \
+        HGRAPH_TYPE_ERASURE_PERF_HOST=orbstack-ubuntu24-x86_64 \
+        HGRAPH_TYPE_ERASURE_PERF_SAMPLES=21 \
+        HGRAPH_TYPE_ERASURE_PERF_WARMUP=5000 \
+        build/tests/cpp/hgraph_type_erasure_perf | \
+        python3 tools/compare_type_erasure_perf.py \
+          benchmarks/type_erasure/linux_gcc13_milestone15.txt -
+
+   AppleClang 21 and GCC 13.3 are warning-clean.  The fresh macOS Release suite
+   passes all 978 ordinary tests and its LLDB nested-navigation smoke test; the
+   Linux shared suite passes the same ordinary tests and ABI boundary.  The
+   ABI evolution rules now state exactly which common fields are frozen and
+   which version and boundary fixtures change with each kind of evolution.
 
 Review Evidence
 ---------------

@@ -31,6 +31,25 @@ def _children(value):
     }
 
 
+def _require_keyed_nested_graphs(value, label):
+    children = _children(value)
+    keys = [child for name, child in children.items() if name.startswith("key[")]
+    graphs = [child for name, child in children.items() if name.startswith("value[")]
+    if len(keys) != 2 or len(graphs) != 2:
+        raise RuntimeError(
+            "{} nested slots are incomplete: {}".format(label, sorted(children))
+        )
+    key_summaries = " ".join(_summary(child) for child in keys)
+    _require(key_summaries, "value=22")
+    _require(key_summaries, "value=33")
+    if "value=11" in key_summaries:
+        raise RuntimeError("{} retained an erased key: {}".format(label, key_summaries))
+    for graph in graphs:
+        _require(_summary(graph), "Graph/Runtime")
+        if "[0]" not in _children(graph):
+            raise RuntimeError("{} child graph has no node navigation".format(label))
+
+
 def run(debugger, _command, _exe_ctx, result, _internal_dict):
     try:
         target = debugger.GetSelectedTarget()
@@ -63,6 +82,27 @@ def run(debugger, _command, _exe_ctx, result, _internal_dict):
         if "[0]" not in graph_children:
             raise RuntimeError("graph node navigation is incomplete: {}".format(sorted(graph_children)))
         _require(_summary(graph_children["[0]"]), 'semantic="debugger_fixture_graph_node"')
+
+        nested_graph = _global(target, "fixture_nested_graph_pointer")
+        _require(_summary(nested_graph), 'semantic="debugger_nested_graph"')
+
+        switch_node = _global(target, "fixture_switch_node_pointer")
+        _require(_summary(switch_node), 'semantic="switch_"')
+        switch_children = _children(switch_node)
+        if not {"graph[0]", "graph[1]"}.issubset(switch_children):
+            raise RuntimeError("switch bank navigation is incomplete: {}".format(sorted(switch_children)))
+        for name in ("graph[0]", "graph[1]"):
+            graph = switch_children[name]
+            _require(_summary(graph), "Graph/Runtime")
+            if "[0]" not in _children(graph):
+                raise RuntimeError("switch bank {} has no node navigation".format(name))
+
+        map_node = _global(target, "fixture_map_node_pointer")
+        mesh_node = _global(target, "fixture_mesh_node_pointer")
+        _require(_summary(map_node), 'semantic="map_"')
+        _require(_summary(mesh_node), 'semantic="mesh_"')
+        _require_keyed_nested_graphs(map_node, "map")
+        _require_keyed_nested_graphs(mesh_node, "mesh")
     except Exception as error:
         result.SetError(str(error))
         return

@@ -1,16 +1,29 @@
+#include <hgraph/lib/std/std_operators.h>
 #include <hgraph/runtime/graph.h>
+#include <hgraph/runtime/executor.h>
+#include <hgraph/runtime/map_node.h>
+#include <hgraph/runtime/mesh_node.h>
 #include <hgraph/runtime/node.h>
+#include <hgraph/runtime/switch_node.h>
 #include <hgraph/lib/testing/mock_runtime.h>
+#include <hgraph/lib/testing/record_replay.h>
+#include <hgraph/lib/testing/runtime_support.h>
+#include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/static_node.h>
+#include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/types/value/value_builder.h>
+#include <hgraph/types/wired_fn.h>
 
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <utility>
+#include <vector>
 
 using namespace hgraph;
 
@@ -26,11 +39,16 @@ AnyPtr fixture_list_pointer{};
 AnyPtr fixture_map_pointer{};
 AnyPtr fixture_node_pointer{};
 AnyPtr fixture_graph_pointer{};
+AnyPtr fixture_nested_graph_pointer{};
+AnyPtr fixture_switch_node_pointer{};
+AnyPtr fixture_map_node_pointer{};
+AnyPtr fixture_mesh_node_pointer{};
 AnyPtr fixture_typed_null_pointer{};
 AnyPtr fixture_malformed_pointer{};
 std::unique_ptr<TypeRecord> fixture_invalid_record_owner{};
 TypeRecord *fixture_invalid_record{};
 DebugDescriptor fixture_invalid_descriptor{};
+std::unique_ptr<GraphExecutorValue> fixture_nested_executor{};
 
 #if defined(_MSC_VER)
 #define HGRAPH_DEBUGGER_NOINLINE __declspec(noinline)
@@ -45,8 +63,36 @@ extern "C" HGRAPH_DEBUGGER_NOINLINE void hgraph_debugger_fixture_stop()
 #endif
 }
 
+namespace
+{
+    using namespace hgraph::testing;
+
+    struct DebuggerNestedIdentity
+    {
+        static constexpr auto name = "debugger_nested_identity";
+
+        static void eval(In<"ts", TS<Int>> ts, Out<TS<Int>> out) { out.set(ts.value()); }
+    };
+
+    struct DebuggerNestedSink
+    {
+        static constexpr auto name = "debugger_nested_sink";
+        static inline std::size_t evaluations{};
+
+        static void eval(In<"switched", TS<Int>>,
+                         In<"mapped", TSD<Int, TS<Int>>>,
+                         In<"meshed", TSD<Int, TS<Int>>>)
+        {
+            if (++evaluations == 4) { hgraph_debugger_fixture_stop(); }
+        }
+    };
+}  // namespace
+
 int main()
 {
+    using namespace hgraph::testing;
+
+    stdlib::register_standard_operators();
     auto &registry = TypeRegistry::instance();
     const auto *int_schema = registry.register_scalar<std::int32_t>("int32");
     const auto *bool_schema = registry.register_scalar<bool>("bool");
@@ -105,6 +151,119 @@ int main()
     fixture_root_graph = std::make_unique<testing::MockRootGraph>(graph_builder);
     fixture_graph_pointer = fixture_root_graph->graph().pointer().to_any();
 
+    Wiring nested_wiring;
+    auto switch_key = wire<testing::replay, TS<Str>>(nested_wiring, Str{"debugger_switch_key"});
+    auto switch_value = wire<testing::replay, TS<Int>>(nested_wiring, Str{"debugger_switch_value"});
+    auto source = wire<testing::replay, TSD<Int, TS<Int>>>(nested_wiring, Str{"debugger_source"});
+    auto keys = wire<testing::replay, TSS<Int>>(nested_wiring, Str{"debugger_keys"});
+
+    auto switched = wire<stdlib::switch_>(
+                        nested_wiring, switch_key,
+                        stdlib::switch_cases({
+                            {Value{Str{"left"}}, fn<DebuggerNestedIdentity>()},
+                            {Value{Str{"right"}}, fn<DebuggerNestedIdentity>()},
+                        }),
+                        switch_value)
+                        .as<TS<Int>>();
+    auto mapped = wire<stdlib::map_>(nested_wiring, fn<DebuggerNestedIdentity>(), source,
+                                     arg<"__keys__">(keys))
+                      .as<TSD<Int, TS<Int>>>();
+    auto meshed = wire<stdlib::mesh_>(nested_wiring, fn<DebuggerNestedIdentity>(), source,
+                                      arg<"__keys__">(keys))
+                      .as<TSD<Int, TS<Int>>>();
+    static_cast<void>(wire<DebuggerNestedSink>(nested_wiring, switched, mapped, meshed));
+
+    GraphBuilder nested_builder = std::move(nested_wiring).finish();
+    nested_builder.label("debugger_nested_graph");
+    set_replay_values(nested_builder.global_state(), "debugger_switch_key",
+                      std::vector<std::optional<Str>>{
+                          Str{"left"}, Str{"right"}, Str{"left"}, std::nullopt});
+    set_replay_values(nested_builder.global_state(), "debugger_switch_value",
+                      std::vector<std::optional<Int>>{1, 2, 3, 4});
+    set_replay_deltas(
+        nested_builder.global_state(), "debugger_source",
+        std::vector<std::optional<Value>>{
+            dict_delta<Int, TS<Int>>({{11, 1}, {22, 2}, {33, 3}}),
+            std::nullopt, std::nullopt, std::nullopt});
+    set_replay_deltas(
+        nested_builder.global_state(), "debugger_keys",
+        std::vector<std::optional<Value>>{
+            set_delta<Int>({11}, {}),
+            set_delta<Int>({22}, {}),
+            set_delta<Int>({}, {11}),
+            set_delta<Int>({33}, {22})});
+
+    GraphExecutorBuilder nested_executor_builder;
+    nested_executor_builder.graph_builder(std::move(nested_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{10});
+    fixture_nested_executor =
+        std::make_unique<GraphExecutorValue>(nested_executor_builder.make_executor());
+
+    auto nested_graph = fixture_nested_executor->view().graph();
+    fixture_nested_graph_pointer = nested_graph.pointer().to_any();
+    bool found_switch = false;
+    bool found_map    = false;
+    bool found_mesh   = false;
+    for (std::size_t i = 0; i < nested_graph.node_count(); ++i)
+    {
+        auto node = nested_graph.node_at(i);
+        if (node.is<SwitchNodeView>())
+        {
+            fixture_switch_node_pointer = node.pointer().to_any();
+            found_switch = true;
+        }
+        if (node.is<MapNodeView>())
+        {
+            fixture_map_node_pointer = node.pointer().to_any();
+            found_map = true;
+        }
+        if (node.is<MeshNodeView>())
+        {
+            fixture_mesh_node_pointer = node.pointer().to_any();
+            found_mesh = true;
+        }
+    }
+    if (!found_switch || !found_map || !found_mesh) { return 2; }
+
+    DebuggerNestedSink::evaluations = 0;
+    fixture_nested_executor->view().run();
+
+    auto stopped_graph = fixture_nested_executor->view().graph();
+    for (std::size_t i = 0; i < stopped_graph.node_count(); ++i)
+    {
+        auto node = stopped_graph.node_at(i);
+        if (node.is<SwitchNodeView>())
+        {
+            auto view = node.as<SwitchNodeView>();
+            if (view.stored_graph_count() != 2 || !view.child_graphs_use_in_place_storage()) { return 3; }
+        }
+        if (node.is<MapNodeView>())
+        {
+            auto view = node.as<MapNodeView>();
+            if (view.child_graph_count() != 2 || !view.child_graphs_use_in_place_storage()) { return 4; }
+        }
+        if (node.is<MeshNodeView>())
+        {
+            auto view = node.as<MeshNodeView>();
+            if (view.child_graph_count() != 2 || !view.child_graphs_use_in_place_storage()) { return 5; }
+        }
+    }
+
     hgraph_debugger_fixture_stop();
-    return fixture_atomic_value.view().checked_as<std::int32_t>() == 42 ? 0 : 1;
+    const int result = fixture_atomic_value.view().checked_as<std::int32_t>() == 42 ? 0 : 1;
+
+    // These debugger-visible owners are globals so LLDB/GDB can find them, but
+    // their type registries are function statics first constructed in main.
+    // Destroy the owners before main exits rather than relying on the reverse
+    // order of unrelated static teardown.
+    fixture_nested_executor.reset();
+    fixture_root_graph.reset();
+    fixture_node_value = NodeValue{};
+    fixture_map_value = Value{};
+    fixture_list_value = Value{};
+    fixture_bundle_value = Value{};
+    fixture_atomic_value = Value{};
+    fixture_invalid_record_owner.reset();
+    return result;
 }

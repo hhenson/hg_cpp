@@ -24,6 +24,7 @@
 #include <hgraph/types/wired_fn.h>
 
 #include "../../src/hgraph/runtime/mapped_key_source.h"
+#include "nested_lifecycle_test_support.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -191,7 +192,8 @@ namespace
                                         const WiringPortRef &map_output,
                                         std::span<const WiringPortRef> triggers,
                                         std::vector<std::size_t> &counts,
-                                        std::vector<std::size_t> *constructed_counts = nullptr)
+                                        std::vector<std::size_t> *constructed_counts = nullptr,
+                                        std::vector<NestedLifecycleSnapshot> *lifecycle = nullptr)
     {
         std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
         fields.reserve(1 + triggers.size());
@@ -217,22 +219,24 @@ namespace
         meta.valid_inputs = std::vector<std::size_t>{};
 
         NodeCallbacks callbacks;
-        callbacks.evaluate = [&counts, constructed_counts](const NodeView &view, DateTime) {
+        callbacks.evaluate = [&counts, constructed_counts, lifecycle](const NodeView &view, DateTime) {
             auto graph = view.graph();
             for (std::size_t i = 0; i < graph.node_count(); ++i)
             {
-                try
+                auto node = graph.node_at(i);
+                if (node.is<MapNodeView>())
                 {
-                    auto map = graph.node_at(i).as<MapNodeView>();
+                    auto map = node.as<MapNodeView>();
                     counts.push_back(map.active_count());
                     if (constructed_counts != nullptr)
                     {
                         constructed_counts->push_back(map.child_graph_count());
                     }
+                    if (lifecycle != nullptr)
+                    {
+                        lifecycle->push_back(NestedLifecycleCounters::snapshot());
+                    }
                     return;
-                }
-                catch (const std::invalid_argument &)
-                {
                 }
             }
             throw std::logic_error("map_active_count_recorder could not find a map node");
@@ -880,18 +884,20 @@ TEST_CASE("map_: removed children stop before their source slot erases")
 {
     using namespace hgraph;
     stdlib::register_standard_operators();
+    NestedLifecycleCounters::reset();
 
     std::vector<std::size_t> active_counts;
     std::vector<std::size_t> constructed_counts;
+    std::vector<NestedLifecycleSnapshot> lifecycle;
     Wiring                   w;
     auto source = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"source"});
     auto keys   = wire<testing::replay, TSS<Str>>(w, Str{"keys"});
-    auto mapped = wire<stdlib::map_>(w, fn<AddOneG>(), source, arg<"__keys__">(keys))
+    auto mapped = wire<stdlib::map_>(w, fn<NestedLifecycleNode>(), source, arg<"__keys__">(keys))
                       .as<TSD<Str, TS<Int>>>();
 
     const std::array<WiringPortRef, 2> triggers{keys.erased(), source.erased()};
     wire_map_active_count_recorder(w, mapped.erased(), triggers, active_counts,
-                                   &constructed_counts);
+                                   &constructed_counts, &lifecycle);
 
     GraphBuilder gb = std::move(w).finish();
     set_replay_deltas(
@@ -906,13 +912,23 @@ TEST_CASE("map_: removed children stop before their source slot erases")
                                     set_delta<Str>({}, {"a"s}),
                                     set_delta<Str>({}, {"b"s})));
 
-    GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
-    GraphExecutorValue ex = eb.make_executor();
-    ex.view().run();
+    {
+        GraphExecutorBuilder eb;
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
+        GraphExecutorValue ex = eb.make_executor();
+        ex.view().run();
+
+        CHECK(lifecycle == std::vector<NestedLifecycleSnapshot>{
+                               {1, 1, 1, 0, 0},
+                               {2, 2, 2, 0, 0},
+                               {2, 2, 2, 1, 0},
+                               {2, 1, 2, 2, 1},
+                           });
+    }
 
     CHECK(active_counts == std::vector<std::size_t>{1, 2, 1, 0});
     CHECK(constructed_counts == std::vector<std::size_t>{1, 2, 2, 1});
+    CHECK(NestedLifecycleCounters::snapshot() == NestedLifecycleSnapshot{2, 0, 2, 2, 2});
 }
 
 TEST_CASE("map_: __keys__ creates children for keys missing from the multiplexed dict")

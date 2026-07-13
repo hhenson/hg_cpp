@@ -29,6 +29,37 @@ def _children(expression):
     return {name: value for name, value in printer.children()}
 
 
+def _child_summary(value):
+    printer = gdb.default_visualizer(value)
+    if printer is None:
+        raise gdb.GdbError("missing child printer")
+    summary = str(printer.to_string())
+    if "<printer error:" in summary:
+        raise gdb.GdbError(summary)
+    return summary
+
+
+def _require_keyed_nested_graphs(expression, label):
+    children = _children(expression)
+    keys = [child for name, child in children.items() if name.startswith("key[")]
+    graphs = [child for name, child in children.items() if name.startswith("value[")]
+    if len(keys) != 2 or len(graphs) != 2:
+        raise gdb.GdbError(
+            "{} nested slots are incomplete: {}".format(label, sorted(children))
+        )
+    key_summaries = " ".join(_child_summary(child) for child in keys)
+    _require(key_summaries, "value=22")
+    _require(key_summaries, "value=33")
+    if "value=11" in key_summaries:
+        raise gdb.GdbError("{} retained an erased key: {}".format(label, key_summaries))
+    for graph in graphs:
+        _require(_child_summary(graph), "Graph/Runtime")
+        graph_printer = gdb.default_visualizer(graph)
+        graph_children = {name: child for name, child in graph_printer.children()}
+        if "[0]" not in graph_children:
+            raise gdb.GdbError("{} child graph has no node navigation".format(label))
+
+
 class HGraphSmoke(gdb.Command):
     def __init__(self):
         super().__init__("hgraph-smoke", gdb.COMMAND_USER)
@@ -63,6 +94,26 @@ class HGraphSmoke(gdb.Command):
             raise gdb.GdbError("graph node navigation is incomplete: {}".format(sorted(graph_children)))
         node_printer = gdb.default_visualizer(graph_children["[0]"])
         _require(str(node_printer.to_string()), 'semantic="debugger_fixture_graph_node"')
+
+        _require(_summary("fixture_nested_graph_pointer"), 'semantic="debugger_nested_graph"')
+        _require(_summary("fixture_switch_node_pointer"), 'semantic="switch_"')
+        switch_children = _children("fixture_switch_node_pointer")
+        if not {"graph[0]", "graph[1]"}.issubset(switch_children):
+            raise gdb.GdbError(
+                "switch bank navigation is incomplete: {}".format(sorted(switch_children))
+            )
+        for name in ("graph[0]", "graph[1]"):
+            graph = switch_children[name]
+            _require(_child_summary(graph), "Graph/Runtime")
+            graph_printer = gdb.default_visualizer(graph)
+            graph_children = {child_name: child for child_name, child in graph_printer.children()}
+            if "[0]" not in graph_children:
+                raise gdb.GdbError("switch bank {} has no node navigation".format(name))
+
+        _require(_summary("fixture_map_node_pointer"), 'semantic="map_"')
+        _require(_summary("fixture_mesh_node_pointer"), 'semantic="mesh_"')
+        _require_keyed_nested_graphs("fixture_map_node_pointer", "map")
+        _require_keyed_nested_graphs("fixture_mesh_node_pointer", "mesh")
 
         gdb.write("hgraph GDB type-erasure smoke test passed\n")
 

@@ -819,6 +819,9 @@ namespace hgraph
         const MemoryUtils::StorageLayout graph_layout = spec.child.graph_builder.nested_storage_layout();
         MapNodeStorage debug_exemplar;
         debug_exemplar.entries.bind_graph_layout(graph_layout);
+        const std::size_t entries_offset = static_cast<std::size_t>(
+            reinterpret_cast<const std::byte *>(&debug_exemplar.entries) -
+            reinterpret_cast<const std::byte *>(&debug_exemplar));
         MapKeyEntry debug_entry{Value{key_type}};
         const std::size_t graph_pointer_offset = static_cast<std::size_t>(
             reinterpret_cast<const std::byte *>(&debug_entry.graph) -
@@ -827,7 +830,7 @@ namespace hgraph
             .key_type = key_type.record(),
             .element_type = child_graph_type.record(),
             .layout = debug_exemplar.entries.debug_layout(
-                descriptor.storage_plan->component(map_storage_field_name).offset,
+                descriptor.storage_plan->component(map_storage_field_name).offset + entries_offset,
                 graph_pointer_offset, true),
         };
         descriptor.ops.extended_view_context = &register_map_node_context(

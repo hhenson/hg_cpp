@@ -20,6 +20,8 @@
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/wired_fn.h>
 
+#include "nested_lifecycle_test_support.h"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
@@ -113,7 +115,8 @@ namespace
                                       const WiringPortRef &switch_output,
                                       const WiringPortRef &key,
                                       std::vector<std::size_t> &stored_counts,
-                                      std::vector<std::uintptr_t> &active_addresses)
+                                      std::vector<std::uintptr_t> &active_addresses,
+                                      std::vector<NestedLifecycleSnapshot> *lifecycle = nullptr)
     {
         const auto *input_schema = TypeRegistry::instance().un_named_tsb(
             {{"switch", switch_output.schema}, {"key", key.schema}});
@@ -129,20 +132,22 @@ namespace
         meta.valid_inputs = std::vector<std::size_t>{};
 
         NodeCallbacks callbacks;
-        callbacks.evaluate = [&stored_counts, &active_addresses](const NodeView &view, DateTime) {
+        callbacks.evaluate = [&stored_counts, &active_addresses, lifecycle](const NodeView &view, DateTime) {
             auto graph = view.graph();
             for (std::size_t i = 0; i < graph.node_count(); ++i)
             {
-                try
+                auto node = graph.node_at(i);
+                if (node.is<SwitchNodeView>())
                 {
-                    auto switch_view = graph.node_at(i).as<SwitchNodeView>();
+                    auto switch_view = node.as<SwitchNodeView>();
                     stored_counts.push_back(switch_view.stored_graph_count());
                     active_addresses.push_back(reinterpret_cast<std::uintptr_t>(
                         switch_view.active_graph_value().view().data()));
+                    if (lifecycle != nullptr)
+                    {
+                        lifecycle->push_back(NestedLifecycleCounters::snapshot());
+                    }
                     return;
-                }
-                catch (const std::invalid_argument &)
-                {
                 }
             }
             throw std::logic_error("switch_storage_recorder could not find a switch node");
@@ -263,35 +268,46 @@ TEST_CASE("switch_: alternating branches reuse two fixed graph addresses")
 {
     using namespace hgraph;
     stdlib::register_standard_operators();
+    NestedLifecycleCounters::reset();
 
     std::vector<std::size_t>    stored_counts;
     std::vector<std::uintptr_t> active_addresses;
+    std::vector<NestedLifecycleSnapshot> lifecycle;
     Wiring                      w;
     auto key = wire<testing::replay, TS<Str>>(w, Str{"key"});
     auto source = wire<testing::replay, TS<Int>>(w, Str{"source"});
     auto switched = wire<stdlib::switch_>(
                         w, key,
-                        stdlib::switch_cases({{Value{Str{"a"}}, fn<Doubler>()},
-                                              {Value{Str{"b"}}, fn<Negator>()}}),
+                        stdlib::switch_cases({{Value{Str{"a"}}, fn<NestedLifecycleNode>()},
+                                              {Value{Str{"b"}}, fn<NestedLifecycleNode>()}}),
                         source)
                         .as<TS<Int>>();
     wire_switch_storage_recorder(w, switched.erased(), key.erased(), stored_counts,
-                                 active_addresses);
+                                 active_addresses, &lifecycle);
 
     GraphBuilder gb = std::move(w).finish();
     set_replay_values(gb.global_state(), "key",
                       values<Str>(Str{"a"}, Str{"b"}, Str{"a"}));
     set_replay_values(gb.global_state(), "source", values<Int>(1, 2, 3));
 
-    GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
-    GraphExecutorValue ex = eb.make_executor();
-    ex.view().run();
+    {
+        GraphExecutorBuilder eb;
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
+        GraphExecutorValue ex = eb.make_executor();
+        ex.view().run();
+
+        CHECK(lifecycle == std::vector<NestedLifecycleSnapshot>{
+                               {1, 1, 1, 0, 0},
+                               {2, 2, 2, 1, 0},
+                               {3, 2, 3, 2, 1},
+                           });
+    }
 
     REQUIRE(stored_counts == std::vector<std::size_t>{1, 2, 2});
     REQUIRE(active_addresses.size() == 3);
     CHECK(active_addresses[0] != active_addresses[1]);
     CHECK(active_addresses[0] == active_addresses[2]);
+    CHECK(NestedLifecycleCounters::snapshot() == NestedLifecycleSnapshot{3, 0, 3, 3, 3});
 }
 
 TEST_CASE("switch_: reload_on_ticked rebuilds the branch on every key tick")

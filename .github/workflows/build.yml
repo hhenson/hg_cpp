@@ -297,12 +297,15 @@ jobs:
         include:
           - os: ubuntu-latest
             parallel: "2"
+            generator: Ninja
             experimental: false
           - os: macos-26
             parallel: "1"
+            generator: Ninja
             experimental: false
-          - os: windows-latest
+          - os: windows-2025-vs2026
             parallel: "2"
+            generator: Visual Studio 18 2026
             experimental: true
 
     steps:
@@ -331,11 +334,67 @@ jobs:
           with open(os.environ["GITHUB_PATH"], "a", encoding="utf-8") as path_file:
               path_file.write(str(Path(pyarrow.__file__).resolve().parent) + "\n")
       - name: Configure native C++ tests
-        run: cmake -S . -B build-native -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DHGRAPH_BUILD_PYTHON_BINDINGS=OFF -DHGRAPH_ENABLE_PYTHON_USER_NODES=OFF -DHGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS=OFF -DHGRAPH_USE_PYARROW_ARROW=ON -DHGRAPH_FETCH_SIMDJSON=ON -DHGRAPH_ENABLE_DEBUGGER_SMOKE_TESTS=ON -DHGRAPH_WARNINGS_AS_ERRORS=ON
+        run: cmake -S . -B build-native -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DHGRAPH_BUILD_PYTHON_BINDINGS=OFF -DHGRAPH_ENABLE_PYTHON_USER_NODES=OFF -DHGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS=OFF -DHGRAPH_USE_PYARROW_ARROW=ON -DHGRAPH_FETCH_SIMDJSON=ON -DHGRAPH_ENABLE_DEBUGGER_SMOKE_TESTS=ON -DHGRAPH_WARNINGS_AS_ERRORS=ON
       - name: Build native C++ tests
         run: cmake --build build-native --config Release --parallel ${{ matrix.parallel }}
       - name: Run native C++ tests
         run: ctest --test-dir build-native -C Release --output-on-failure --parallel ${{ matrix.parallel }}
+
+  native-install:
+    name: Native C++ / Linux shared install
+    needs:
+      - validate-release
+      - reuse-build
+    if: needs.reuse-build.outputs.run-id == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-name: hgraph-native
+          cache-environment: true
+          create-args: >-
+            cmake>=3.26
+            ninja
+            libarrow=24
+            fmt
+            spdlog
+            simdjson>=4.5
+      - name: Configure shared C++ tests
+        shell: micromamba-shell {0}
+        run: >-
+          cmake -S . -B build-shared -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="$CONDA_PREFIX"
+          -DBUILD_TESTING=ON
+          -DHGRAPH_BUILD_SHARED=ON
+          -DHGRAPH_BUILD_PYTHON_BINDINGS=OFF
+          -DHGRAPH_ENABLE_PYTHON_USER_NODES=OFF
+          -DHGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS=OFF
+          -DHGRAPH_ENABLE_DEBUGGER_SMOKE_TESTS=ON
+          -DHGRAPH_WARNINGS_AS_ERRORS=ON
+      - name: Build shared C++ tests
+        shell: micromamba-shell {0}
+        run: cmake --build build-shared --parallel 2
+      - name: Run shared C++ tests
+        shell: micromamba-shell {0}
+        run: ctest --test-dir build-shared --output-on-failure --parallel 2
+      - name: Install shared C++ package
+        shell: micromamba-shell {0}
+        run: cmake --install build-shared --prefix "$GITHUB_WORKSPACE/install-shared"
+      - name: Configure installed-package consumer
+        shell: micromamba-shell {0}
+        run: >-
+          cmake -S tests/install_consumer -B build-consumer -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/install-shared;$CONDA_PREFIX"
+      - name: Build and test installed-package consumer
+        shell: micromamba-shell {0}
+        run: |
+          cmake --build build-consumer --parallel 2
+          ctest --test-dir build-consumer --output-on-failure
 
   publish:
     name: Publish hg_cpp to PyPI
@@ -349,7 +408,8 @@ jobs:
         (
           needs.build-sdist.result == 'success' &&
           needs.test-wheel.result == 'success' &&
-          needs.native-cpp.result == 'success'
+          needs.native-cpp.result == 'success' &&
+          needs.native-install.result == 'success'
         )
       )
     needs:
@@ -358,6 +418,7 @@ jobs:
       - build-sdist
       - test-wheel
       - native-cpp
+      - native-install
     runs-on: ubuntu-latest
     environment:
       name: release

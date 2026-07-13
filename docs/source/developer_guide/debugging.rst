@@ -84,7 +84,11 @@ such as ``semantic="debugger_fixture_graph"`` with
 ``implementation="hgraph.graph.root"``, then expands the graph's ``[0]`` child
 and verifies ``semantic="debugger_fixture_graph_node"``.  It also checks
 bundle fields, mutable-map key/value pairs, typed-null pointers, malformed
-pointers, and unsupported ABI versions.
+pointers, and unsupported ABI versions.  The fixture also runs real switch,
+map, and mesh nodes to the point where both switch banks are populated and
+keyed slots contain one live and one stopped/pending child.  The validators
+expand those children into their nested graph nodes, require keys 22 and 33,
+and verify that the physically erased key 11 is no longer visible.
 
 Some VM security configurations deny ``ptrace``.  In that environment GDB may
 load both scripts successfully but fail with ``Couldn't get registers`` before

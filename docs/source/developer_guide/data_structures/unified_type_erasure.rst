@@ -290,6 +290,40 @@ immutable and have stable addresses for at least the lifetime of the registry.
 Production registries will normally keep them for the process lifetime.  This
 makes type-record pointer equality a valid identity comparison.
 
+ABI Evolution Policy
+--------------------
+
+Version one freezes the field order, field widths, alignment, and meaning of
+``SchemaHeader``, ``TypeRecord``, ``AnyPtr``, and the version-one debug
+descriptor structures.  It does not freeze C++ constructors, registry or owner
+classes, storage-plan implementations, ops-table layouts across different
+``ops_abi_version`` values, or the address chosen for any interned object.
+
+The following rules apply when these records evolve:
+
+* adding, removing, reordering, resizing, or changing the meaning of a frozen
+  field requires incrementing the ABI version of that independently readable
+  structure;
+* a family ops-table change increments that family's ops ABI version and every
+  consumer must validate it before casting ``TypeRecord::ops``;
+* reserved fields remain zero in the current ABI.  Giving a reserved bit or
+  byte a meaning is an ABI change unless version-one readers are explicitly
+  specified to ignore it;
+* producers populate magic and version fields through the central registry or
+  descriptor factory.  Consumers reject unknown versions before following
+  schema, plan, ops, debug, or data pointers;
+* appending a separately versioned structure and pointing to it may preserve
+  the parent ABI when a null pointer retains its old meaning.  Embedding the
+  same fields into a frozen parent does not;
+* changing only an implementation label or immutable metadata contents does
+  not change layout ABI, but changing semantic identity requires a distinct
+  interned schema or type record.
+
+Every accepted ABI change must update the compile-time size/offset assertions,
+the separately compiled shared-library boundary fixture, debugger decoder
+version checks, and installed-package consumer.  ABI version constants are
+monotonic; an old value is never repurposed after release.
+
 The common record must not grow a universal ops table.
 ``schema->family`` and ``role`` select the expected narrow ops ABI, and ``ops``
 points at that ABI.  A ``NodePtr`` can therefore call node ops directly while

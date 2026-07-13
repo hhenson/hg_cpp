@@ -1225,6 +1225,9 @@ namespace hgraph
         descriptor.ops.extended_view_type_id = MeshNodeView::node_view_type_id();
         MeshNodeStorage debug_exemplar;
         debug_exemplar.entries.bind_graph_layout(graph_layout);
+        const std::size_t entries_offset = static_cast<std::size_t>(
+            reinterpret_cast<const std::byte *>(&debug_exemplar.entries) -
+            reinterpret_cast<const std::byte *>(&debug_exemplar));
         MeshEntry debug_entry{Value{key_binding}};
         const std::size_t graph_pointer_offset = static_cast<std::size_t>(
             reinterpret_cast<const std::byte *>(&debug_entry.graph) -
@@ -1233,7 +1236,7 @@ namespace hgraph
             .key_type = key_binding.record(),
             .element_type = child_graph_type.record(),
             .layout = debug_exemplar.entries.debug_layout(
-                descriptor.storage_plan->component(mesh_storage_field_name).offset,
+                descriptor.storage_plan->component(mesh_storage_field_name).offset + entries_offset,
                 graph_pointer_offset, true),
         };
         descriptor.ops.extended_view_context = &register_mesh_node_context(
