@@ -359,6 +359,7 @@ jobs:
             cmake>=3.26
             ninja
             libarrow=24
+            libarrow-compute=24
             fmt
             spdlog
             simdjson>=4.5
