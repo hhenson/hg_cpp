@@ -683,7 +683,7 @@ namespace hgraph::testing
             using A0 = std::remove_cvref_t<
                 std::tuple_element_t<I, std::remove_reference_t<decltype(all)>>>;
             using A              = eval_node_detail::payload_t<A0>;
-            constexpr bool named = eval_node_detail::is_named_arg_v<A0>;
+            [[maybe_unused]] constexpr bool named = eval_node_detail::is_named_arg_v<A0>;
             auto rewrap          = [&](auto port) {
                 if constexpr (named)
                 {

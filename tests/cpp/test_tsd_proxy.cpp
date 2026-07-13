@@ -497,8 +497,8 @@ TEST_CASE("TSDProxy cache-style resync never rebuilds a pending removed child")
     RecordingSlotObserver lifecycle;
     initial.key_set().subscribe_slot_observer(&lifecycle);
     {
-        auto source_view = source.view();
-        auto mutation = source_view.as_dict().begin_mutation(t2);
+        auto mutation_source = source.view();
+        auto mutation = mutation_source.as_dict().begin_mutation(t2);
         REQUIRE(mutation.erase(key.view()));
     }
     REQUIRE(builds.calls == 1);
@@ -518,8 +518,8 @@ TEST_CASE("TSDProxy cache-style resync never rebuilds a pending removed child")
     REQUIRE(lifecycle.events == std::vector<std::string>{"remove:" + std::to_string(slot)});
 
     {
-        auto source_view = source.view();
-        auto mutation = source_view.as_dict().begin_mutation(t2);
+        auto mutation_source = source.view();
+        auto mutation = mutation_source.as_dict().begin_mutation(t2);
         auto retained = mutation.at(key.view());
         REQUIRE(retained.has_current_value());
     }

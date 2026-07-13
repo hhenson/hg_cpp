@@ -395,7 +395,8 @@ jobs:
         shell: micromamba-shell {0}
         run: |
           cmake --build build-consumer --parallel 2
-          ctest --test-dir build-consumer --output-on-failure
+          LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            ctest --test-dir build-consumer --output-on-failure
 
   publish:
     name: Publish hg_cpp to PyPI

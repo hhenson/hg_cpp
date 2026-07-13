@@ -651,6 +651,11 @@ namespace hgraph
          *               type satisfying ``storage_binding`` that exposes
          *               the plan via ``plan()`` / ``checked_plan()``.
          */
+#if defined(_MSC_VER)
+#pragma warning(push)
+        // Policy-selected over-alignment is an intentional part of inline storage.
+#pragma warning(disable : 4324)
+#endif
         template <typename Policy = InlineStoragePolicy<>, typename Binding = void>
             requires(std::is_void_v<Binding> || storage_binding<Binding>)
         class ErasedOwner
@@ -1090,6 +1095,9 @@ namespace hgraph
                 }
             }
         };
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
         /** Begin building a positional tuple plan. */
         [[nodiscard]] static CompositePlanBuilder tuple() { return CompositePlanBuilder{CompositeKind::Tuple}; }

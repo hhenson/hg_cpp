@@ -2,6 +2,7 @@
 
 #include <hgraph/types/utils/memory_utils.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <type_traits>
@@ -72,7 +73,7 @@ namespace
 
     struct alignas(32) OverAlignedValue
     {
-        uint64_t value{0};
+        std::byte storage[32]{};
     };
 
     struct LifecycleRecorder
