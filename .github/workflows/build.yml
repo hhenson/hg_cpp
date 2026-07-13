@@ -361,7 +361,7 @@ jobs:
             libarrow=24
             libarrow-compute=24
             fmt
-            spdlog
+            spdlog>=1.15
             simdjson>=4.5
       - name: Configure shared C++ tests
         shell: micromamba-shell {0}

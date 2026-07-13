@@ -160,6 +160,7 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_FETCH_SIMDJSON)
         GIT_REPOSITORY https://github.com/simdjson/simdjson.git
         GIT_TAG        v4.6.4
         GIT_SHALLOW    TRUE
+        SYSTEM
     )
     set(SIMDJSON_INSTALL OFF CACHE BOOL "Generate simdjson install targets" FORCE)
     set(SIMDJSON_DEVELOPER_MODE OFF CACHE BOOL "Build simdjson developer targets" FORCE)
@@ -191,6 +192,7 @@ if(NOT fmt_FOUND)
         GIT_REPOSITORY https://github.com/fmtlib/fmt.git
         GIT_TAG        12.1.0
         GIT_SHALLOW    TRUE
+        SYSTEM
     )
     set(FMT_DOC OFF CACHE BOOL "Build fmt documentation" FORCE)
     set(FMT_INSTALL OFF CACHE BOOL "Generate fmt install target" FORCE)
@@ -304,7 +306,7 @@ target_link_libraries(hgraph_options INTERFACE Arrow::arrow_shared ArrowCompute:
 # in the process. A system spdlog is only trusted when fmt also came from the
 # system (a fetched fmt paired with a system spdlog risks ODR mismatches).
 if(fmt_FOUND)
-    find_package(spdlog CONFIG QUIET)
+    find_package(spdlog 1.15 CONFIG QUIET)
 endif()
 if(NOT spdlog_FOUND)
     FetchContent_Declare(
@@ -312,6 +314,7 @@ if(NOT spdlog_FOUND)
         GIT_REPOSITORY https://github.com/gabime/spdlog.git
         GIT_TAG        v1.15.3
         GIT_SHALLOW    TRUE
+        SYSTEM
     )
     set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "spdlog uses the project fmt" FORCE)
     set(SPDLOG_INSTALL OFF CACHE BOOL "Generate spdlog install target" FORCE)
@@ -530,7 +533,7 @@ set(_hgraph_config_dependencies
     "find_dependency(fmt CONFIG)\n"
     "find_dependency(Arrow CONFIG)\n"
     "find_dependency(ArrowCompute CONFIG)\n"
-    "find_dependency(spdlog CONFIG)\n"
+    "find_dependency(spdlog 1.15 CONFIG)\n"
     # Both installed-config flavours reference simdjson::simdjson (the
     # non-bindings export links it; the bindings config re-links it below),
     # and the code needs dom::element_type::BIGINT from simdjson 4.5. The
