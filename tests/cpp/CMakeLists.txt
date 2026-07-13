@@ -292,4 +292,10 @@ target_link_libraries(hgraph_type_erasure_perf
 hgraph_enable_private_pch(hgraph_type_erasure_perf)
 
 include(Catch)
-catch_discover_tests(hgraph_unit_tests)
+if(HGRAPH_PYARROW_LIBRARY_DIR)
+    catch_discover_tests(hgraph_unit_tests
+        DL_PATHS "${HGRAPH_PYARROW_LIBRARY_DIR}"
+    )
+else()
+    catch_discover_tests(hgraph_unit_tests)
+endif()
