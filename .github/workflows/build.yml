@@ -394,6 +394,10 @@ jobs:
                   for member in archive.getmembers():
                       data = archive.extractfile(member).read() if member.isfile() else None
                       member.name = member.name.replace(old_root, new_root, 1)
+                      # long (>100 char) paths ride PAX 'path' headers which
+                      # would override the renamed member.name at write time.
+                      member.pax_headers.pop("path", None)
+                      member.pax_headers.pop("linkpath", None)
                       if member.name == f"{new_root}/PKG-INFO":
                           text = data.decode()
                           text, count = re.subn(rf"(?m)^Version: {re.escape(old_version)}$",
