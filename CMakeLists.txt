@@ -184,6 +184,7 @@ endif()
 if(NOT HGRAPH_BUILD_PYTHON_BINDINGS)
     find_package(fmt CONFIG QUIET)
 endif()
+set(_hgraph_fmt_fetched OFF)
 if(NOT fmt_FOUND)
     FetchContent_Declare(
         fmt
@@ -195,8 +196,9 @@ if(NOT fmt_FOUND)
     set(FMT_INSTALL OFF CACHE BOOL "Generate fmt install target" FORCE)
     set(FMT_TEST OFF CACHE BOOL "Build fmt tests" FORCE)
     FetchContent_MakeAvailable(fmt)
+    set(_hgraph_fmt_fetched ON)
 endif()
-if(HGRAPH_BUILD_PYTHON_BINDINGS)
+if(_hgraph_fmt_fetched)
     target_link_libraries(hgraph_options INTERFACE
         $<BUILD_INTERFACE:fmt::fmt>
     )
