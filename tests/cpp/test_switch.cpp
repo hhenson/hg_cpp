@@ -22,7 +22,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
+#include <cstdint>
+#include <span>
 #include <stdexcept>
+#include <vector>
 
 namespace
 {
@@ -100,6 +104,57 @@ namespace
             out.set(count.get());
         }
     };
+
+    struct SwitchStorageRecorderTag
+    {
+    };
+
+    void wire_switch_storage_recorder(Wiring &w,
+                                      const WiringPortRef &switch_output,
+                                      const WiringPortRef &key,
+                                      std::vector<std::size_t> &stored_counts,
+                                      std::vector<std::uintptr_t> &active_addresses)
+    {
+        const auto *input_schema = TypeRegistry::instance().un_named_tsb(
+            {{"switch", switch_output.schema}, {"key", key.schema}});
+        std::vector<TSEndpointSchema> endpoints{
+            TSEndpointSchema::peered(switch_output.schema),
+            TSEndpointSchema::peered(key.schema),
+        };
+
+        NodeTypeMetaData meta;
+        meta.display_name = "switch_storage_recorder";
+        meta.input_schema = input_schema;
+        meta.node_kind    = NodeKind::Sink;
+        meta.valid_inputs = std::vector<std::size_t>{};
+
+        NodeCallbacks callbacks;
+        callbacks.evaluate = [&stored_counts, &active_addresses](const NodeView &view, DateTime) {
+            auto graph = view.graph();
+            for (std::size_t i = 0; i < graph.node_count(); ++i)
+            {
+                try
+                {
+                    auto switch_view = graph.node_at(i).as<SwitchNodeView>();
+                    stored_counts.push_back(switch_view.stored_graph_count());
+                    active_addresses.push_back(reinterpret_cast<std::uintptr_t>(
+                        switch_view.active_graph_value().view().data()));
+                    return;
+                }
+                catch (const std::invalid_argument &)
+                {
+                }
+            }
+            throw std::logic_error("switch_storage_recorder could not find a switch node");
+        };
+
+        NodeBuilder builder = NodeBuilder::native(
+            std::move(meta), std::move(callbacks),
+            TSEndpointSchema::non_peered(input_schema, std::move(endpoints)));
+        const std::array<WiringPortRef, 2> inputs{switch_output, key};
+        static_cast<void>(w.add_node(std::type_index(typeid(SwitchStorageRecorderTag)),
+                                     std::move(builder), inputs, Value{}));
+    }
 }  // namespace
 
 TEST_CASE("switch_: the key selects the branch and a swap samples the held input")
@@ -202,6 +257,41 @@ TEST_CASE("switch_: switching back reuses the old slot with a fresh branch graph
                      stdlib::switch_cases({{Value{Str{"c"}}, fn<CounterNode>()}, {Value{Str{"d"}}, fn<Doubler>()}}),
                      values<Int>(5, 6, 7, 8)),
                  values<Int>(1, 2, 14, 1));
+}
+
+TEST_CASE("switch_: alternating branches reuse two fixed graph addresses")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    std::vector<std::size_t>    stored_counts;
+    std::vector<std::uintptr_t> active_addresses;
+    Wiring                      w;
+    auto key = wire<testing::replay, TS<Str>>(w, Str{"key"});
+    auto source = wire<testing::replay, TS<Int>>(w, Str{"source"});
+    auto switched = wire<stdlib::switch_>(
+                        w, key,
+                        stdlib::switch_cases({{Value{Str{"a"}}, fn<Doubler>()},
+                                              {Value{Str{"b"}}, fn<Negator>()}}),
+                        source)
+                        .as<TS<Int>>();
+    wire_switch_storage_recorder(w, switched.erased(), key.erased(), stored_counts,
+                                 active_addresses);
+
+    GraphBuilder gb = std::move(w).finish();
+    set_replay_values(gb.global_state(), "key",
+                      values<Str>(Str{"a"}, Str{"b"}, Str{"a"}));
+    set_replay_values(gb.global_state(), "source", values<Int>(1, 2, 3));
+
+    GraphExecutorBuilder eb;
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
+    GraphExecutorValue ex = eb.make_executor();
+    ex.view().run();
+
+    REQUIRE(stored_counts == std::vector<std::size_t>{1, 2, 2});
+    REQUIRE(active_addresses.size() == 3);
+    CHECK(active_addresses[0] != active_addresses[1]);
+    CHECK(active_addresses[0] == active_addresses[2]);
 }
 
 TEST_CASE("switch_: reload_on_ticked rebuilds the branch on every key tick")

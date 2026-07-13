@@ -190,7 +190,8 @@ namespace
     void wire_map_active_count_recorder(Wiring &w,
                                         const WiringPortRef &map_output,
                                         std::span<const WiringPortRef> triggers,
-                                        std::vector<std::size_t> &counts)
+                                        std::vector<std::size_t> &counts,
+                                        std::vector<std::size_t> *constructed_counts = nullptr)
     {
         std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
         fields.reserve(1 + triggers.size());
@@ -216,13 +217,18 @@ namespace
         meta.valid_inputs = std::vector<std::size_t>{};
 
         NodeCallbacks callbacks;
-        callbacks.evaluate = [&counts](const NodeView &view, DateTime) {
+        callbacks.evaluate = [&counts, constructed_counts](const NodeView &view, DateTime) {
             auto graph = view.graph();
             for (std::size_t i = 0; i < graph.node_count(); ++i)
             {
                 try
                 {
-                    counts.push_back(graph.node_at(i).as<MapNodeView>().active_count());
+                    auto map = graph.node_at(i).as<MapNodeView>();
+                    counts.push_back(map.active_count());
+                    if (constructed_counts != nullptr)
+                    {
+                        constructed_counts->push_back(map.child_graph_count());
+                    }
                     return;
                 }
                 catch (const std::invalid_argument &)
@@ -870,6 +876,45 @@ TEST_CASE("map_: __keys__ additions and removals drive the lifecycle, not the di
                                dict_delta<Str, TS<Int>>({}, {"a"s})));
 }
 
+TEST_CASE("map_: removed children stop before their source slot erases")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    std::vector<std::size_t> active_counts;
+    std::vector<std::size_t> constructed_counts;
+    Wiring                   w;
+    auto source = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"source"});
+    auto keys   = wire<testing::replay, TSS<Str>>(w, Str{"keys"});
+    auto mapped = wire<stdlib::map_>(w, fn<AddOneG>(), source, arg<"__keys__">(keys))
+                      .as<TSD<Str, TS<Int>>>();
+
+    const std::array<WiringPortRef, 2> triggers{keys.erased(), source.erased()};
+    wire_map_active_count_recorder(w, mapped.erased(), triggers, active_counts,
+                                   &constructed_counts);
+
+    GraphBuilder gb = std::move(w).finish();
+    set_replay_deltas(
+        gb.global_state(), "source",
+        values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+                      dict_delta<Str, TS<Int>>({{"a"s, 3}}),
+                      dict_delta<Str, TS<Int>>({{"b"s, 4}}),
+                      dict_delta<Str, TS<Int>>({{"b"s, 5}})));
+    set_replay_deltas(gb.global_state(), "keys",
+                      values<Value>(set_delta<Str>({"a"s}, {}),
+                                    set_delta<Str>({"b"s}, {}),
+                                    set_delta<Str>({}, {"a"s}),
+                                    set_delta<Str>({}, {"b"s})));
+
+    GraphExecutorBuilder eb;
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
+    GraphExecutorValue ex = eb.make_executor();
+    ex.view().run();
+
+    CHECK(active_counts == std::vector<std::size_t>{1, 2, 1, 0});
+    CHECK(constructed_counts == std::vector<std::size_t>{1, 2, 2, 1});
+}
+
 TEST_CASE("map_: __keys__ creates children for keys missing from the multiplexed dict")
 {
     using namespace hgraph;
@@ -974,6 +1019,7 @@ TEST_CASE("map_: __keys__ source repoint rebuilds children from the new slot lay
     stdlib::register_standard_operators();
 
     std::vector<std::size_t> counts;
+    std::vector<std::size_t> constructed_counts;
     Wiring                   w;
     auto source = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"source"});
     auto select = wire<testing::replay, TS<Str>>(w, Str{"select"});
@@ -987,14 +1033,17 @@ TEST_CASE("map_: __keys__ source repoint rebuilds children from the new slot lay
     wire<testing::record>(w, mapped, Str{"out"});
 
     const std::array<WiringPortRef, 2> triggers{keys.erased(), source.erased()};
-    wire_map_active_count_recorder(w, mapped.erased(), triggers, counts);
+    wire_map_active_count_recorder(w, mapped.erased(), triggers, counts,
+                                   &constructed_counts);
 
     GraphBuilder gb = std::move(w).finish();
     set_replay_deltas(gb.global_state(), "source",
                       values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}, {"c"s, 3}}),
-                                    none));
+                                    none,
+                                    dict_delta<Str, TS<Int>>({{"c"s, 4}}),
+                                    dict_delta<Str, TS<Int>>({{"c"s, 5}})));
     set_replay_values(gb.global_state(), "select",
-                      values<Str>(Str{"ab"}, Str{"c"}));
+                      values<Str>(Str{"ab"}, Str{"c"}, none, none));
 
     GraphExecutorBuilder eb;
     eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
@@ -1003,8 +1052,11 @@ TEST_CASE("map_: __keys__ source repoint rebuilds children from the new slot lay
 
     CHECK_OUTPUT(get_recorded_deltas(ex.view().graph().global_state(), "out"),
                  values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}, {"b"s, 3}}),
-                               dict_delta<Str, TS<Int>>({{"c"s, 4}}, {"a"s, "b"s})));
-    CHECK(counts == std::vector<std::size_t>{2, 1});
+                               dict_delta<Str, TS<Int>>({{"c"s, 4}}, {"a"s, "b"s}),
+                               dict_delta<Str, TS<Int>>({{"c"s, 5}}),
+                               dict_delta<Str, TS<Int>>({{"c"s, 6}})));
+    CHECK(counts == std::vector<std::size_t>{2, 1, 1, 1});
+    CHECK(constructed_counts == std::vector<std::size_t>{2, 3, 3, 3});
 }
 
 TEST_CASE("map_: invalid __keys__ source clears children and output")

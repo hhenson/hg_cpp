@@ -58,6 +58,11 @@ namespace hgraph
             // logical removal stops the graph, while the source's later erase
             // callback destroys the entry in its stable slot.
             InPlaceGraphSlotStore<MapKeyEntry> entries{};
+            // Source replacement may immediately reuse the same slot ids. The
+            // inactive bank keeps the stopped old generation alive through the
+            // replacement cycle.
+            InPlaceGraphSlotStore<MapKeyEntry> previous_entries{};
+            DateTime previous_entries_time{MIN_DT};
             // Cached bound-output handles of the outer inputs (tsd + broadcast
             // sources). Entry input bindings are established at creation and
             // refreshed only when an upstream source re-points.
@@ -81,6 +86,39 @@ namespace hgraph
                     if (entry != nullptr && entry->graph.has_value() && entry->graph.view().started()) { ++count; }
                 }
                 return count;
+            }
+
+            [[nodiscard]] std::size_t child_graph_count() const noexcept
+            {
+                const auto count_bank = [](const auto &bank) {
+                    std::size_t count = 0;
+                    for (std::size_t slot = 0; slot < bank.slot_capacity(); ++slot)
+                    {
+                        const auto *entry = bank.entry_at(slot);
+                        if (entry != nullptr && entry->graph.has_value()) { ++count; }
+                    }
+                    return count;
+                };
+                return count_bank(entries) + count_bank(previous_entries);
+            }
+
+            void destroy_previous_entries_before(DateTime evaluation_time) noexcept
+            {
+                if (previous_entries.has_entries() && previous_entries_time < evaluation_time)
+                {
+                    previous_entries.destroy_all();
+                    previous_entries_time = MIN_DT;
+                }
+            }
+
+            void retire_entries(DateTime evaluation_time)
+            {
+                if (previous_entries.has_entries())
+                {
+                    throw std::logic_error("map_ previous key-source generation is still occupied");
+                }
+                entries.swap(previous_entries);
+                previous_entries_time = evaluation_time;
             }
 
             [[nodiscard]] MapKeyEntry *entry_at(std::size_t slot)
@@ -215,8 +253,7 @@ namespace hgraph
             SourceRepointStatus status;
             for (std::size_t i = 0; i < outer_count; ++i)
             {
-                TSOutputHandle current = effective_output_handle(
-                    walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{i}).bound_output());
+                TSOutputHandle current = effective_output_handle(root_input.indexed_child_at(i).bound_output());
                 if (!current.same_as(storage.outer_sources[i]))
                 {
                     storage.outer_sources[i] = current;
@@ -336,7 +373,9 @@ namespace hgraph
         {
             const auto &spec       = context.spec;
             const auto  keys_index = *spec.keys_input_index;
+            storage.destroy_previous_entries_before(evaluation_time);
             storage.entries.bind_graph_layout(context.graph_layout);
+            storage.previous_entries.bind_graph_layout(context.graph_layout);
 
             auto root_input = view.input(evaluation_time);
             SourceRepointStatus source_status =
@@ -350,7 +389,7 @@ namespace hgraph
             bool any_modified = false;
             for (const std::size_t mux_index : spec.multiplexed_inputs)
             {
-                auto mux_input = walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{mux_index});
+                auto mux_input = root_input.indexed_child_at(mux_index);
                 if (mux_input.bound() && mux_input.modified()) { any_modified = true; }
             }
             if (any_modified) { bindings_need_refresh = true; }
@@ -359,7 +398,7 @@ namespace hgraph
             // children exist exactly for its members. The multiplexed dicts
             // only feed elements; their membership changes re-bind surviving
             // entries through ``bindings_need_refresh`` above.
-            auto keys_input = walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{keys_index});
+            auto keys_input = root_input.indexed_child_at(keys_index);
             auto keys_source = keys_input.bound_output();
             const bool keys_handle_changed = !keys_source.handle().same_as(storage.observed_keys_source);
             const bool keys_source_replaced = keys_handle_changed || source_status.keys_repointed;
@@ -371,7 +410,7 @@ namespace hgraph
                 remove_all_entries(view, context, storage, output_mutation, evaluation_time);
                 output_mutation.clear();
                 storage.unsubscribe_keys_noexcept();
-                storage.entries.destroy_all();
+                storage.retire_entries(evaluation_time);
                 storage.primed = false;
             }
             const bool keys_observer_changed = storage.observe_keys_source(keys_source.handle());
@@ -713,14 +752,7 @@ namespace hgraph
 
     std::size_t MapNodeView::child_graph_count() const noexcept
     {
-        const auto &storage = *MemoryUtils::cast<MapNodeStorage>(storage_);
-        std::size_t count = 0;
-        for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
-        {
-            const auto *entry = storage.entries.entry_at(slot);
-            if (entry != nullptr && entry->graph.has_value()) { ++count; }
-        }
-        return count;
+        return MemoryUtils::cast<MapNodeStorage>(storage_)->child_graph_count();
     }
 
     bool MapNodeView::child_graphs_use_in_place_storage() const noexcept
@@ -729,6 +761,11 @@ namespace hgraph
         for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
         {
             const auto *entry = storage.entries.entry_at(slot);
+            if (entry != nullptr && entry->graph.has_value() && !entry->graph.uses_external_storage()) { return false; }
+        }
+        for (std::size_t slot = 0; slot < storage.previous_entries.slot_capacity(); ++slot)
+        {
+            const auto *entry = storage.previous_entries.entry_at(slot);
             if (entry != nullptr && entry->graph.has_value() && !entry->graph.uses_external_storage()) { return false; }
         }
         return true;

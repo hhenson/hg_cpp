@@ -1,6 +1,9 @@
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/mock_runtime.h>
+#include <hgraph/runtime/mesh_node.h>
+#include <hgraph/runtime/reduce_node.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
@@ -562,6 +565,76 @@ int main()
                 throw std::runtime_error("small graph construction failed");
             }
         });
+
+    Wiring nested_wiring;
+    auto nested_source = wire<stdlib::const_, TSD<Str, TS<Int>>>(
+        nested_wiring,
+        stdlib::make_map<Str, Int>({{Str{"a"}, Int{1}}, {Str{"b"}, Int{2}},
+                                    {Str{"c"}, Int{3}}}));
+    static_cast<void>(wire<stdlib::map_>(nested_wiring, fn<Doubler>(), nested_source));
+    static_cast<void>(wire<stdlib::mesh_>(nested_wiring, fn<Doubler>(), nested_source));
+    static_cast<void>(wire<stdlib::reduce_>(nested_wiring, fn<stdlib::add_>(), nested_source));
+
+    GraphBuilder nested_builder = std::move(nested_wiring).finish();
+    MockGraphExecutor nested_executor{nested_builder, MIN_ST, MAX_ET};
+    auto nested_graph = nested_executor.view().graph();
+    nested_graph.start(MIN_ST);
+    nested_executor.set_evaluation_time(MIN_ST);
+    if (!nested_graph.evaluate(MIN_ST))
+    {
+        throw std::runtime_error("nested steady-state benchmark setup paused");
+    }
+
+    std::vector<std::size_t> nested_node_indices;
+    std::uint64_t nested_checksum = 0;
+    for (std::size_t index = 0; index < nested_graph.node_count(); ++index)
+    {
+        auto node = nested_graph.node_at(index);
+        if (node.is<MapNodeView>())
+        {
+            nested_node_indices.push_back(index);
+            nested_checksum += node.as<MapNodeView>().active_count();
+        }
+        else if (node.is<MeshNodeView>())
+        {
+            nested_node_indices.push_back(index);
+            nested_checksum += node.as<MeshNodeView>().active_count();
+        }
+        else if (node.is<ReduceNodeView>())
+        {
+            nested_node_indices.push_back(index);
+            nested_checksum += node.as<ReduceNodeView>().combiner_count();
+        }
+    }
+    if (nested_node_indices.size() != 3 || nested_checksum == 0)
+    {
+        throw std::runtime_error("nested steady-state benchmark did not find its runtime nodes");
+    }
+
+    std::uint64_t nested_time = 0;
+    run_benchmark(
+        "nested_graph_steady_scheduled_scan", 20000, samples, warmup,
+        [&] {
+            const DateTime evaluation_time =
+                MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(++nested_time)};
+            nested_executor.set_evaluation_time(evaluation_time);
+            for (const std::size_t index : nested_node_indices)
+            {
+                nested_graph.schedule_node(index, evaluation_time);
+            }
+            if (!nested_graph.evaluate(evaluation_time))
+            {
+                throw std::runtime_error("nested steady-state benchmark paused");
+            }
+            return nested_checksum;
+        },
+        [nested_checksum](std::uint64_t value) {
+            if (value != nested_checksum)
+            {
+                throw std::runtime_error("nested steady-state benchmark checksum failed");
+            }
+        });
+    nested_graph.stop();
 
     const std::vector<std::optional<Str>> switch_keys{Str{"a"}, Str{"b"}, Str{"a"}, Str{"b"}};
     const std::vector<std::optional<Int>> switch_inputs{Int{3}, Int{4}, Int{5}, Int{6}};

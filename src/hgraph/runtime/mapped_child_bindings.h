@@ -19,10 +19,11 @@ namespace hgraph::runtime_detail
         TSOutputHandle source{};
     };
 
-    [[nodiscard]] inline std::vector<std::size_t> mapped_child_path_suffix(
+    [[nodiscard]] inline std::span<const std::size_t> mapped_child_path_suffix(
         const std::vector<std::size_t> &path)
     {
-        return std::vector<std::size_t>{path.begin() + 1, path.end()};
+        if (path.empty()) { throw std::logic_error("Mapped child source path requires an argument ordinal"); }
+        return std::span<const std::size_t>{path}.subspan(1);
     }
 
     [[nodiscard]] inline TSOutputView mapped_child_input_source(
@@ -38,8 +39,7 @@ namespace hgraph::runtime_detail
                 return key_source.borrowed_ref();
             case MapArgSourceKind::Element:
             {
-                auto mux_source = walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{arg.outer_index})
-                                      .bound_output();
+                auto mux_source = root_input.indexed_child_at(arg.outer_index).bound_output();
                 if (!mux_source.bound()) { return {}; }
 
                 auto dict = mux_source.as_dict();
@@ -48,9 +48,8 @@ namespace hgraph::runtime_detail
             }
             case MapArgSourceKind::OuterInput:
             {
-                std::vector<std::size_t> outer_path = mapped_child_path_suffix(source_path);
-                outer_path.insert(outer_path.begin(), arg.outer_index);
-                return walk_source_to_output(root_input.borrowed_ref(), outer_path);
+                auto outer_input = root_input.indexed_child_at(arg.outer_index);
+                return walk_source_to_output(std::move(outer_input), mapped_child_path_suffix(source_path));
             }
         }
         return {};

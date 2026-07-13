@@ -45,6 +45,17 @@ namespace hgraph
 
         ~InPlaceGraphSlotStore() { destroy_all(); }
 
+        void swap(InPlaceGraphSlotStore &other) noexcept
+        {
+            using std::swap;
+            swap(storage_, other.storage_);
+            swap(constructed_, other.constructed_);
+            swap(graph_layout_, other.graph_layout_);
+            swap(slot_layout_, other.slot_layout_);
+            swap(graph_offset_, other.graph_offset_);
+            swap(bound_, other.bound_);
+        }
+
         void bind_graph_layout(MemoryUtils::StorageLayout graph_layout)
         {
             if (!graph_layout.valid() || graph_layout.size == 0) {

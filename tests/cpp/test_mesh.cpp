@@ -12,12 +12,16 @@
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
+#include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/wired_fn.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -217,6 +221,70 @@ namespace
             return (val + base).as<TS<Int>>();
         }
     };
+
+    struct MeshLifecycleRecorderTag
+    {
+    };
+
+    void wire_mesh_lifecycle_recorder(Wiring &w,
+                                      const WiringPortRef &mesh_output,
+                                      std::span<const WiringPortRef> triggers,
+                                      std::vector<std::size_t> &active_counts,
+                                      std::vector<std::size_t> &constructed_counts)
+    {
+        std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+        fields.reserve(1 + triggers.size());
+        fields.emplace_back("mesh", mesh_output.schema);
+        for (std::size_t i = 0; i < triggers.size(); ++i)
+        {
+            fields.emplace_back("trigger" + std::to_string(i), triggers[i].schema);
+        }
+        const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
+
+        std::vector<TSEndpointSchema> endpoints;
+        endpoints.reserve(fields.size());
+        endpoints.push_back(TSEndpointSchema::peered(mesh_output.schema));
+        for (const WiringPortRef &trigger : triggers)
+        {
+            endpoints.push_back(TSEndpointSchema::peered(trigger.schema));
+        }
+
+        NodeTypeMetaData meta;
+        meta.display_name = "mesh_lifecycle_recorder";
+        meta.input_schema = input_schema;
+        meta.node_kind    = NodeKind::Sink;
+        meta.valid_inputs = std::vector<std::size_t>{};
+
+        NodeCallbacks callbacks;
+        callbacks.evaluate = [&active_counts, &constructed_counts](const NodeView &view, DateTime) {
+            auto graph = view.graph();
+            for (std::size_t i = 0; i < graph.node_count(); ++i)
+            {
+                try
+                {
+                    auto mesh = graph.node_at(i).as<MeshNodeView>();
+                    active_counts.push_back(mesh.active_count());
+                    constructed_counts.push_back(mesh.child_graph_count());
+                    return;
+                }
+                catch (const std::invalid_argument &)
+                {
+                }
+            }
+            throw std::logic_error("mesh_lifecycle_recorder could not find a mesh node");
+        };
+
+        NodeBuilder builder = NodeBuilder::native(
+            std::move(meta), std::move(callbacks),
+            TSEndpointSchema::non_peered(input_schema, std::move(endpoints)));
+
+        std::vector<WiringPortRef> inputs;
+        inputs.reserve(1 + triggers.size());
+        inputs.push_back(mesh_output);
+        inputs.insert(inputs.end(), triggers.begin(), triggers.end());
+        static_cast<void>(w.add_node(std::type_index(typeid(MeshLifecycleRecorderTag)),
+                                     std::move(builder), inputs, Value{}));
+    }
 }  // namespace
 
 TEST_CASE("mesh_: with no cross-instance access a mesh is observably map_")
@@ -312,6 +380,45 @@ TEST_CASE("mesh_: a removed key re-added later gets a fresh child instance")
                                dict_delta<Str, TS<Int>>({{"a"s, 2}}),
                                dict_delta<Str, TS<Int>>({}, {"a"s}),
                                dict_delta<Str, TS<Int>>({{"a"s, 1}})));
+}
+
+TEST_CASE("mesh_: removed instances stop for one cycle before slot erase")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    std::vector<std::size_t> active_counts;
+    std::vector<std::size_t> constructed_counts;
+    Wiring                   w;
+    auto source = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"source"});
+    auto keys   = wire<testing::replay, TSS<Str>>(w, Str{"keys"});
+    auto mesh   = wire<stdlib::mesh_>(w, fn<AddOneG>(), source, arg<"__keys__">(keys))
+                      .as<TSD<Str, TS<Int>>>();
+
+    const std::array<WiringPortRef, 2> triggers{keys.erased(), source.erased()};
+    wire_mesh_lifecycle_recorder(w, mesh.erased(), triggers, active_counts,
+                                 constructed_counts);
+
+    GraphBuilder gb = std::move(w).finish();
+    set_replay_deltas(
+        gb.global_state(), "source",
+        values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+                      dict_delta<Str, TS<Int>>({{"a"s, 3}}),
+                      dict_delta<Str, TS<Int>>({{"b"s, 4}}),
+                      dict_delta<Str, TS<Int>>({{"b"s, 5}})));
+    set_replay_deltas(gb.global_state(), "keys",
+                      values<Value>(set_delta<Str>({"a"s}, {}),
+                                    set_delta<Str>({"b"s}, {}),
+                                    set_delta<Str>({}, {"a"s}),
+                                    set_delta<Str>({}, {"b"s})));
+
+    GraphExecutorBuilder eb;
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
+    GraphExecutorValue ex = eb.make_executor();
+    ex.view().run();
+
+    CHECK(active_counts == std::vector<std::size_t>{1, 2, 1, 0});
+    CHECK(constructed_counts == std::vector<std::size_t>{1, 2, 2, 1});
 }
 
 TEST_CASE("mesh_: named key-set access forwards the mesh output key set")

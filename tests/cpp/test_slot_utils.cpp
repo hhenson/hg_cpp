@@ -170,6 +170,18 @@ namespace
         explicit InPlaceEntry(int value_) : value(value_) {}
         ~InPlaceEntry() { ++destroyed; }
     };
+
+    struct ThrowingInPlaceEntry
+    {
+        static inline int destroyed{0};
+
+        explicit ThrowingInPlaceEntry(bool should_throw)
+        {
+            if (should_throw) { throw std::runtime_error("entry construction failed"); }
+        }
+
+        ~ThrowingInPlaceEntry() { ++destroyed; }
+    };
 }  // namespace
 
 TEST_CASE("stable slot storage preserves existing slot addresses across chained growth", "[v2 slot utils]") {
@@ -292,6 +304,50 @@ TEST_CASE("in-place graph slots reject layout changes and occupied construction"
     REQUIRE_THROWS_AS(store.bind_graph_layout({.size = 64, .alignment = 16}), std::logic_error);
     REQUIRE_THROWS_AS(store.construct_at(0, 8), std::logic_error);
     REQUIRE_THROWS_AS(store.construct_at(1, 9), std::out_of_range);
+}
+
+TEST_CASE("in-place graph slots leave a throwing construction reusable", "[v2 slot utils]") {
+    AllocationProbe::reset();
+    ThrowingInPlaceEntry::destroyed = 0;
+
+    const MemoryUtils::AllocatorOps allocator{
+        .allocate   = &tracked_allocate,
+        .deallocate = &tracked_deallocate,
+    };
+    InPlaceGraphSlotStore<ThrowingInPlaceEntry> store({.size = 64, .alignment = 16}, allocator);
+    store.reserve_to(1);
+
+    REQUIRE_THROWS_AS(store.construct_at(0, true), std::runtime_error);
+    CHECK_FALSE(store.has_entry(0));
+    CHECK(AllocationProbe::allocations == 1);
+
+    store.construct_at(0, false);
+    REQUIRE(store.has_entry(0));
+    CHECK(AllocationProbe::allocations == 1);
+
+    store.destroy_at(0);
+    CHECK_FALSE(store.has_entry(0));
+    CHECK(ThrowingInPlaceEntry::destroyed == 1);
+}
+
+TEST_CASE("in-place graph slot banks swap without relocating entries", "[v2 slot utils]") {
+    InPlaceEntry::destroyed = 0;
+    constexpr MemoryUtils::StorageLayout graph_layout{.size = 96, .alignment = 32};
+    InPlaceGraphSlotStore<InPlaceEntry> active{graph_layout};
+    InPlaceGraphSlotStore<InPlaceEntry> previous{graph_layout};
+    active.reserve_to(2);
+    InPlaceEntry *entry = &active.construct_at(1, 17);
+    void *graph_memory = active.graph_memory(1);
+
+    active.swap(previous);
+
+    CHECK_FALSE(active.has_entries());
+    REQUIRE(previous.entry_at(1) == entry);
+    CHECK(previous.graph_memory(1) == graph_memory);
+    CHECK(previous.entry_at(1)->value == 17);
+
+    previous.destroy_all();
+    CHECK(InPlaceEntry::destroyed == 1);
 }
 
 TEST_CASE("value slot store tracks updates and notifies observers", "[v2 slot utils]") {

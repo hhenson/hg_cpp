@@ -65,7 +65,7 @@ namespace hgraph
          * A ``mesh_subscribe`` inside that instance reads this as its requester
          * (``my_key``) when registering a dependency. Empty outside instance eval.
          */
-        [[nodiscard]] Value current_key() const;
+        [[nodiscard]] ValueView current_key() const;
 
         /**
          * Register that the instance for ``key`` depends on the instance for

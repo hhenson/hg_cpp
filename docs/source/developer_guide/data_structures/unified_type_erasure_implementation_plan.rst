@@ -553,6 +553,33 @@ Acceptance
    static nested state is placed in graph or slot memory and that steady-state
    execution does not introduce descriptor or pointer allocation.
 
+Implemented
+   The audit covers single nested graphs, switch, map, mesh, and dynamic reduce.
+   Fixed nested graphs remain in the parent node storage plan. Switch uses two
+   maximum-layout graph regions. Map and mesh co-locate entry headers and child
+   graph payloads in stable slots, and reduce alternates two positional banks.
+   ``GraphValue`` exposes pointers into those regions without owning them.
+
+   Map and mesh removal tests now observe both active and constructed graph
+   counts. They prove logical removal stops a child while its entry remains
+   constructed, and physical slot erase performs destruction later. Switch
+   tests prove that three alternating activations use addresses A, B, A. Slot
+   tests cover capacity growth without relocation, bank swapping without
+   relocation, destructor-on-erase behavior, and rollback after a throwing
+   entry constructor. Direct map key-source replacement now alternates two
+   stable stores so replacement slot ids cannot force same-cycle destruction.
+
+   Allocation cleanup removes temporary boundary-path vectors, replaces
+   forwarding-chain allocation with constant-storage cycle detection, caches
+   mesh rank ordering after capacity growth, represents the current mesh key as
+   a borrowed ``ValuePtr``, and removes stale reduce leaves in place. A reusable
+   Release benchmark schedules already-built map, mesh, and reduce nodes for
+   20,000 steady-state scans with zero allocations. On the review Mac its
+   seven-sample median was 1,349.646 ns per scan. Existing benchmark allocation
+   counts remained stable. The Release and combined ASan/UBSan suites each pass
+   975 test cases and 9,476 assertions. Review accepted; this milestone is
+   committed separately from the removal and ABI review.
+
 Recommended model allocation
    A cost-effective model can extend established tests and fix local accessor
    use.  The highest-reasoning model reviews slot lifetime, placement reuse, and

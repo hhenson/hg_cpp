@@ -9,6 +9,7 @@
 #include <bit>
 #include <cstddef>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -224,9 +225,7 @@ namespace hgraph
             {
                 case Aggregate::Kind::Leaf:
                 {
-                    auto tsd_source = walk_ts_path(view.input(evaluation_time).borrowed_ref(),
-                                                   std::vector<std::size_t>{0})
-                                          .bound_output();
+                    auto tsd_source = view.input(evaluation_time).indexed_child_at(0).bound_output();
                     if (!tsd_source.bound()) { return TSOutputView{}; }
                     auto dict = tsd_source.as_dict();
                     const Value &key = storage.dense_to_key[aggregate.index];
@@ -258,9 +257,9 @@ namespace hgraph
                 auto source = aggregate_output(view, context, storage, side, evaluation_time);
                 if (!binding.source_path.empty() && binding.source_path.size() > 1 && source.bound())
                 {
-                    source = walk_ts_path(std::move(source),
-                                          std::vector<std::size_t>{binding.source_path.begin() + 1,
-                                                                   binding.source_path.end()});
+                    source = walk_ts_path(
+                        std::move(source),
+                        std::span<const std::size_t>{binding.source_path}.subspan(1));
                 }
                 auto target = walk_ts_path(child.node_at(binding.target.node).input(evaluation_time),
                                            binding.target.path);
@@ -290,18 +289,14 @@ namespace hgraph
         {
             bool structural = false;
 
-            std::vector<Value> stale_keys;
-            for (const auto &[key, leaf] : storage.key_to_leaf)
+            for (std::size_t leaf = 0; leaf < storage.dense_to_key.size();)
             {
-                static_cast<void>(leaf);
-                if (!dict_input.contains(key.view())) { stale_keys.push_back(key); }
-            }
-            for (const Value &key : stale_keys)
-            {
-                auto it = storage.key_to_leaf.find(key);
-                if (it == storage.key_to_leaf.end()) { continue; }
-                remove_leaf_at(storage, it->second);
-                structural = true;
+                if (dict_input.contains(storage.dense_to_key[leaf].view())) { ++leaf; }
+                else
+                {
+                    remove_leaf_at(storage, leaf);
+                    structural = true;
+                }
             }
 
             for (const ValueView &key : dict_input.keys())
@@ -446,8 +441,7 @@ namespace hgraph
             TSOutputView    source = aggregate_output(view, context, storage, root, evaluation_time);
             if (root.kind == Aggregate::Kind::Empty)
             {
-                source = walk_ts_path(view.input(evaluation_time).borrowed_ref(), std::vector<std::size_t>{1})
-                             .bound_output();
+                source = view.input(evaluation_time).indexed_child_at(1).bound_output();
             }
             auto                 output = view.output(evaluation_time);
             const TSOutputHandle before = output.forwarding_target();
@@ -489,7 +483,7 @@ namespace hgraph
                               ReduceNodeStorage &storage, DateTime evaluation_time)
         {
             auto root_input = view.input(evaluation_time);
-            auto tsd_input  = walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{0});
+            auto tsd_input  = root_input.indexed_child_at(0);
 
             bool structural = false;
             bool refresh_bindings = false;

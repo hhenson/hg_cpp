@@ -70,6 +70,21 @@ in-place child before the raw slot can be reused. ``switch_`` expresses the
 same rule with its active/previous A/B slots; ``reduce`` expresses it with its
 active/previous banks.
 
+Map normally mirrors the authoritative key-set slots directly. If the bound
+key-set handle itself is replaced, the replacement may reuse the same slot ids
+before the old handle can emit erase callbacks. Map therefore alternates two
+``InPlaceGraphSlotStore`` banks for that case: it stops and retires the old
+bank, builds the replacement in the inactive bank, and destroys the retired
+bank only on a later evaluation time. This is the dynamic counterpart of the
+switch A/B protocol and does not introduce per-entry ownership allocations.
+
+Steady-state nested evaluation avoids temporary pointer bookkeeping. Boundary
+paths are traversed as spans, forwarding-chain cycle detection uses constant
+storage, mesh reuses its rank-order vector after capacity growth, and the
+currently evaluated mesh key is a borrowed ``ValuePtr``. Event-driven key,
+dependency, and capacity growth can still allocate; scanning an unchanged
+nested graph does not.
+
 
 Boundary compilation: placeholders, not stubs
 ---------------------------------------------
@@ -469,7 +484,9 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   payload blocks before new source slots are used. The owned key is used for
   output erasure across removals and re-points. Entry member order is
   load-bearing: the child graph (subscriber) tears down before the key source
-  it observes.
+  it observes. A direct key-source handle replacement alternates two stores so
+  the stopped old generation survives the replacement cycle even when the new
+  source reuses its slot ids immediately.
 - **Child boundary args** are sourced per ordinal (``MapArgSource``): the
   **element** binds to the parent TSD input's bound output child *at the
   entry's key*; if that key is absent from a multiplexed TSD, the child input
@@ -617,6 +634,8 @@ another instance requested it.
   on-demand instance and re-rank dependents so dependencies evaluate before
   requesters. The mesh scans instances by rank until no child pauses, allowing
   transitive chains to settle in one parent cycle. Cycles are runtime errors.
+  The rank-order vector retains its grown capacity, and the current requester
+  key is represented by a borrowed value pointer rather than an owning copy.
 - **On-demand lifetime is reference-driven.** Requested keys are kept by
   ``__keys__`` membership. On-demand keys are kept only while they have
   dependents. Retargeting or removing a requester retracts its old dependency

@@ -132,11 +132,12 @@ namespace hgraph
             ankerl::unordered_dense::map<Value, ValueSet, ValueKeyHash, ValueKeyEqual> dependents{};
 
             std::vector<Value>          graphs_to_remove{};  // lost a dependent; remove if unreferenced
+            std::vector<std::pair<int, std::size_t>> evaluation_order{};
             int                         max_rank{0};
             bool                        primed{false};
             // The instance whose child graph is currently being evaluated; a
             // mesh_subscribe inside it reads this as its "my_key" (the requester).
-            Value                       current_eval_key{};
+            ValuePtr                    current_eval_key{};
             DateTime                    retirement_time{MIN_DT};
 
             void initialise(const ValueTypeRef &key_binding, MemoryUtils::StorageLayout graph_layout)
@@ -199,7 +200,7 @@ namespace hgraph
                 graphs_to_remove.clear();
                 max_rank = 0;
                 primed = false;
-                current_eval_key = Value{};
+                current_eval_key = {};
                 retirement_time = MIN_DT;
                 requested_keys_source_cleared = false;
             }
@@ -496,7 +497,7 @@ namespace hgraph
             storage.graphs_to_remove.clear();
             storage.max_rank = 0;
             storage.primed = false;
-            storage.current_eval_key = Value{};
+            storage.current_eval_key = {};
         }
 
         MeshEntry &create_instance(const NodeView &view, const MeshNodeContext &context, MeshNodeStorage &storage,
@@ -586,8 +587,7 @@ namespace hgraph
         [[nodiscard]] bool keys_contains(const NodeView &view, const MeshNodeContext &context,
                                          const ValueView &key, DateTime evaluation_time)
         {
-            auto keys_input = walk_ts_path(view.input(evaluation_time).borrowed_ref(),
-                                           std::vector<std::size_t>{context.spec.keys_input_index});
+            auto keys_input = view.input(evaluation_time).indexed_child_at(context.spec.keys_input_index);
             if (!keys_input.valid()) { return false; }
             return keys_input.as_set().contains(key);
         }
@@ -687,8 +687,7 @@ namespace hgraph
             storage.erase_retired_before(evaluation_time);
 
             auto root_input  = view.input(evaluation_time);
-            auto keys_input  = walk_ts_path(root_input.borrowed_ref(),
-                                            std::vector<std::size_t>{spec.keys_input_index});
+            auto keys_input  = root_input.indexed_child_at(spec.keys_input_index);
 
             // 1. __keys__ key-set membership drives instance create/remove.
             if (!keys_input.valid())
@@ -746,7 +745,8 @@ namespace hgraph
 
                 // Snapshot stable slots by rank: add_dependency can create
                 // instances mid-pass, but existing slot addresses never move.
-                std::vector<std::pair<int, std::size_t>> order;
+                auto &order = storage.evaluation_order;
+                order.clear();
                 order.reserve(storage.active_count());
                 for (std::size_t slot = 0; slot < storage.instance_keys->slot_capacity(); ++slot)
                 {
@@ -776,7 +776,11 @@ namespace hgraph
                     const bool due = child_next <= evaluation_time;
                     if (!due && !entry->paused) { continue; }
 
-                    storage.current_eval_key = entry->key;
+                    const ValueView entry_key = entry->key.view();
+                    storage.current_eval_key = entry_key.type().read_only(entry_key.data());
+                    auto clear_current_key = make_scope_exit([&storage]() noexcept {
+                        storage.current_eval_key = {};
+                    });
                     entry->paused            = false;
                     if (child.evaluate(evaluation_time)) { entry->settled_time = evaluation_time; }
                     else { entry->paused = true; }  // a dependency was created / ranked; re-scan
@@ -794,7 +798,7 @@ namespace hgraph
                     throw std::runtime_error("mesh_ failed to settle within the cycle");
                 }
             }
-            storage.current_eval_key = Value{};
+            storage.current_eval_key = {};
             process_graphs_to_remove(view, context, storage, evaluation_time);
 
             if (next_time < MAX_DT) { view.graph().schedule_node(view.node_index(), next_time); }
@@ -998,7 +1002,7 @@ namespace hgraph
                 throw std::logic_error("mesh_subscribe: not evaluated inside a mesh instance");
             }
 
-            const Value my_key = mesh->current_key();
+            const ValueView my_key = mesh->current_key();
             const Value item{item_in.value()};
             if (!my_key.has_value())
             {
@@ -1007,11 +1011,11 @@ namespace hgraph
                 return true;
             }
 
-            if (!same_subscribe_dependency(storage, my_key.view(), item.view()))
+            if (!same_subscribe_dependency(storage, my_key, item.view()))
             {
                 remove_subscribe_dependency(view, storage);
                 clear_subscribe_runtime_links(view, storage, evaluation_time);
-                storage.requester      = my_key;
+                storage.requester      = Value{my_key};
                 storage.dependency     = item;
                 storage.has_dependency = true;
             }
@@ -1019,7 +1023,7 @@ namespace hgraph
             // Register the dependency (creating / ranking the target on demand). If the
             // target is not yet available this cycle, PAUSE: the mesh resolves it in rank
             // order and re-evaluates this instance to resume from here.
-            if (!mesh->add_dependency(my_key.view(), item.view())) { return false; }
+            if (!mesh->add_dependency(my_key, item.view())) { return false; }
 
             // Available — (re)bind our dynamic ``value`` input to self[item] so we forward
             // it AND become reactive to its future ticks (a sibling tick reschedules us via
@@ -1115,9 +1119,11 @@ namespace hgraph
         return true;
     }
 
-    Value MeshNodeView::current_key() const
+    ValueView MeshNodeView::current_key() const
     {
-        return MemoryUtils::cast<MeshNodeStorage>(storage_)->current_eval_key;
+        const ValuePtr pointer = MemoryUtils::cast<MeshNodeStorage>(storage_)->current_eval_key;
+        return pointer.is_unbound() ? ValueView{}
+                                    : ValueView{ValueTypeRef::checked(pointer), pointer.data()};
     }
 
     bool MeshNodeView::add_dependency(const ValueView &key, const ValueView &depends_on) const

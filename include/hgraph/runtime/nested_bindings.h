@@ -7,6 +7,7 @@
 #include <hgraph/types/time_series/ts_output.h>
 
 #include <cstddef>
+#include <span>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -29,7 +30,7 @@ namespace hgraph
      * binding path may carry it.
      */
     template <typename View>
-    [[nodiscard]] View walk_ts_path(View view, const std::vector<std::size_t> &path)
+    [[nodiscard]] View walk_ts_path(View view, std::span<const std::size_t> path)
     {
         for (const std::size_t component : path)
         {
@@ -55,6 +56,12 @@ namespace hgraph
         return view;
     }
 
+    template <typename View>
+    [[nodiscard]] View walk_ts_path(View view, const std::vector<std::size_t> &path)
+    {
+        return walk_ts_path(std::move(view), std::span<const std::size_t>{path});
+    }
+
     /**
      * Walk an output endpoint path intended to be a forwarding target. Unlike
      * normal output projection, peered children are returned as the raw
@@ -62,7 +69,7 @@ namespace hgraph
      */
     [[nodiscard]] inline TSOutputView walk_forwarding_target_path(
         TSOutputView view,
-        const std::vector<std::size_t> &path)
+        std::span<const std::size_t> path)
     {
         for (const std::size_t component : path)
         {
@@ -86,6 +93,13 @@ namespace hgraph
             view = TSOutputView{view.output(), child, view.evaluation_time()};
         }
         return view;
+    }
+
+    [[nodiscard]] inline TSOutputView walk_forwarding_target_path(
+        TSOutputView view,
+        const std::vector<std::size_t> &path)
+    {
+        return walk_forwarding_target_path(std::move(view), std::span<const std::size_t>{path});
     }
 
     /**
@@ -122,25 +136,30 @@ namespace hgraph
      */
     [[nodiscard]] inline TSOutputView resolve_forwarding_source(TSOutputView source)
     {
-        std::vector<TSOutputHandle> seen;
+        const DateTime evaluation_time = source.evaluation_time();
+        const auto next_forwarding_target = [evaluation_time](const TSOutputHandle &handle) {
+            if (!handle.bound()) { return TSOutputHandle{}; }
+            const TSOutputView view = handle.view(evaluation_time);
+            if (!view.forwarding()) { return TSOutputHandle{}; }
+            const TSOutputHandle target = view.forwarding_target();
+            return target.bound() ? target : TSOutputHandle{};
+        };
+
+        TSOutputHandle tortoise = source.handle();
+        TSOutputHandle hare     = source.handle();
         while (source.bound() && source.forwarding())
         {
-            const TSOutputHandle current = source.handle();
-            bool already_seen = false;
-            for (const TSOutputHandle &candidate : seen)
-            {
-                if (candidate.same_as(current))
-                {
-                    already_seen = true;
-                    break;
-                }
-            }
-            if (already_seen) { break; }
-            seen.push_back(current);
-
             TSOutputHandle target = source.forwarding_target();
             if (!target.bound()) { break; }
-            source = target.view(source.evaluation_time());
+            source = target.view(evaluation_time);
+
+            tortoise = next_forwarding_target(tortoise);
+            hare     = next_forwarding_target(hare);
+            if (hare.bound()) { hare = next_forwarding_target(hare); }
+            if (tortoise.bound() && hare.bound() && tortoise.same_as(hare))
+            {
+                throw std::logic_error("Nested graph forwarding output cycle");
+            }
         }
         return source;
     }
@@ -170,16 +189,21 @@ namespace hgraph
      * key-set surface).
      */
     [[nodiscard]] inline TSOutputView walk_source_to_output(TSInputView root,
-                                                            const std::vector<std::size_t> &path)
+                                                            std::span<const std::size_t> path)
     {
         if (!path.empty() && path.back() == ts_key_set_path_component)
         {
-            const std::vector<std::size_t> prefix{path.begin(), path.end() - 1};
-            auto bound = walk_ts_path(std::move(root), prefix).bound_output();
+            auto bound = walk_ts_path(std::move(root), path.first(path.size() - 1)).bound_output();
             if (!bound.bound()) { return {}; }
             return bound.as_dict().key_set();
         }
         return walk_ts_path(std::move(root), path).bound_output();
+    }
+
+    [[nodiscard]] inline TSOutputView walk_source_to_output(TSInputView root,
+                                                            const std::vector<std::size_t> &path)
+    {
+        return walk_source_to_output(std::move(root), std::span<const std::size_t>{path});
     }
 }  // namespace hgraph
 
