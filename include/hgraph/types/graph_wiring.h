@@ -2897,9 +2897,17 @@ namespace hgraph
         auto   arg_tuple    = std::forward_as_tuple(std::forward<Args>(args)...);
         auto   default_args = call_args_detail::default_args_for<G>();
         call_args_detail::validate_call_args<params>("build_graph<G>", arg_tuple, default_args, "scalar parameter");
+#if defined(_MSC_VER)
+#pragma warning(push)
+        // Invalid static argument packs make validation unconditionally throw.
+#pragma warning(disable : 4702)
+#endif
         [&]<std::size_t... I>(std::index_sequence<I...>) {
             G::compose(w, graph_wiring_detail::make_bound_scalar_param<I, params>(arg_tuple, default_args)...);
         }(std::make_index_sequence<sig::param_count()>{});
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
         GraphBuilder graph_builder = std::move(w).finish();
         if constexpr (static_node_detail::has_name<G>) { graph_builder.label(std::string{G::name}); }
