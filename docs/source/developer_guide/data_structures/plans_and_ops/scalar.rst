@@ -128,7 +128,7 @@ never directly on ``Value``.
 Storage and Allocation
 ----------------------
 
-Memory is owned by ``MemoryUtils::StorageHandle``, parameterised by
+Memory is owned by ``MemoryUtils::ErasedOwner``, parameterised by
 an inline-storage policy and ``TypeRecord`` identity. Lifecycle hooks
 delegated to ``LifecycleOps`` on the record's ``StoragePlan`` cover
 only object lifetime:
@@ -137,7 +137,7 @@ only object lifetime:
 - ``copy_assign``, ``move_assign``
 - ``destroy``
 
-Allocation is **not** part of ``LifecycleOps``. The ``StorageHandle``
+Allocation is **not** part of ``LifecycleOps``. The ``ErasedOwner``
 holds an allocator separately — by default a heap allocator with the
 plan's alignment, but any allocator with the matching size and
 alignment contract can be used — and consults the bound
@@ -152,11 +152,13 @@ with schema alignment. Container kinds have their own internal
 storage shapes that keep element addresses stable across growth and
 reconciliation; those shapes feed directly into the time-series
 representation and are described under *Time-Series Plans and Ops*.
+An erased owner has no borrowed state: external access is represented by a
+two-word typed pointer or family view.
 
 A scalar ``StoragePlan`` does not use a slot store. Slot stores carry
 the delayed-erase and per-slot-bit machinery the time-series layer
 needs to expose deltas; for scalars, that overhead is wasted — a flat
-``StorageHandle`` is sufficient. The slot store family is introduced
+``ErasedOwner`` is sufficient. The slot store family is introduced
 separately in *Time-Series Plans and Ops*.
 
 Nullability

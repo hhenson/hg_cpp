@@ -377,11 +377,26 @@ the access mode, while ``same_state_as`` compares both encoded words including
 the access tag.  Typed nulls therefore compare equal only when they carry the
 same record, and unbound pointers compare equal.
 
-Ownership must be separate.  An ``ErasedOwner`` may retain the current useful
-inline/heap allocation optimisation and an allocator reference, but it should
-not have a borrowed mode.  Externally owned or in-place graph storage produces
-an ``AnyPtr`` or typed pointer directly.  Destruction is performed only by the
-owner or by the graph/slot lifetime protocol, never by a borrowed pointer.
+Ownership is separate. ``ErasedOwner`` retains the inline/heap allocation
+optimisation and allocator reference, but has no borrowed mode or reference
+factory. Its only live states are owning-inline and owning-heap. Externally
+owned or in-place graph storage produces an ``AnyPtr`` or typed pointer
+directly. Destruction is performed only by the owner or by the graph/slot
+lifetime protocol, never by a borrowed pointer.
+
+``Value`` uses ``ErasedOwner`` exclusively. Destructive time-series assignment
+accepts an rvalue writable ``ValueView`` as its erased source; the ``Value&&``
+surface is a convenience which supplies that view. This permits moving a child
+from a larger externally owned value without fabricating a non-owning
+``Value``. Read-only views are rejected before dispatch.
+
+``GraphValue`` stores a ``GraphPtr`` followed by an optional ``ErasedOwner``.
+Ordinary root/nested graphs point into their owner. Slot-placed nested graphs
+have no owner and point into graph/slot memory, whose stop/delete and
+destructor/erase protocol remains the lifetime authority. The uniform pointer
+costs one additional word compared with the former owner-plus-boolean layout:
+five words instead of four on 64-bit builds; ``ErasedOwner`` itself remains
+three words and all borrowed pointers remain two words.
 
 This makes the following invariants visible in the types:
 
@@ -484,18 +499,20 @@ as typed-null rather than reading uninitialised payload bytes.
 The version-one dynamic layout is 88 bytes on supported 64-bit platforms. It
 distinguishes contiguous storage from stable pointer slots and records whether
 size is fixed, data is indirect, a pointer table is used, a ring head is
-present, or keys/elements are embedded erased owners. Stable slots use the
+present, or keys/elements are embedded erased owners or typed pointers. Stable slots use the
 public ``SlotBitmap`` words and bit count, so live and erased entries are read
 without decoding a standard-library container. ``StableSlotStorage`` exposes a
 raw pointer table for the same reason; this representation is smaller than the
 previous ``std::vector`` member and does not add release-mode debug mirrors.
 
 The common embedded-owner field flag describes the three-word
-``StorageHandle<InlineStoragePolicy<>, TypeRecord>`` ABI. The record is read
+``ErasedOwner<InlineStoragePolicy<>, TypeRecord>`` ABI. The record is read
 from the identity word, ownership state from the tagged allocator word, and
-the inline or indirect payload from the storage word. This lets node state and
-nested ``GraphValue`` fields resolve their run-time type without inferior
-calls.
+the inline or indirect payload from the storage word. State value three is
+reserved and rejected. Node state/scalar fields use this owner protocol.
+Nested ``GraphValue`` fields and map/mesh entries instead expose their leading
+two-word ``GraphPtr`` through embedded-pointer descriptor flags, so owned and
+slot-placed graphs have the same debugger path.
 
 Implemented dynamic navigation covers fixed lists, dense compact lists and
 sets, cyclic buffers, queues, mutable lists/sets/maps, graph node allocations,
@@ -628,8 +645,9 @@ execution behaviour:
    wrappers and migrate views to wrap those pointers.
 5. Replace template-specialized type bindings with typed accessors over
    ``TypeRecord``.  Keep temporary aliases where they reduce source churn.
-6. Split owning storage from borrowed pointers.  Migrate ``StorageHandle``
-   borrowed states to pointers, leaving inline and allocated state in an owner.
+6. Split owning storage from borrowed pointers. Migrate borrowed
+   ``StorageHandle`` states to typed pointers, leaving inline and allocated
+   state in ``ErasedOwner``.
 7. Emit debug descriptors from factories and rewrite GDB and LLDB printers to
    start at ``AnyPtr`` and ``TypeRecord``.
 8. Retire old type-binding terminology after all factories and documentation

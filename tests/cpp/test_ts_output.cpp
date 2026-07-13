@@ -329,6 +329,38 @@ TEST_CASE("TSOutput move mutation moves an owned value without copy assignment")
     REQUIRE(output.view(t1).delta_value().checked_as<MoveTrackedScalar>().value == 42);
 }
 
+TEST_CASE("TSOutput move mutation uses writable borrowed views but rejects read-only views")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *meta     = registry.register_scalar<MoveTrackedScalar>("MoveTrackedScalar");
+    const auto *ts_meta  = registry.ts(meta);
+    const auto binding   = ValuePlanFactory::instance().type_for(meta);
+    REQUIRE(binding != nullptr);
+
+    TSOutput output{*ts_meta};
+    MoveTrackedScalar source{73};
+    const MoveTrackedScalar read_only_source{91};
+
+    {
+        auto mutation = output.begin_mutation(MIN_ST);
+        ValueView read_only{binding, static_cast<const void *>(&read_only_source)};
+        REQUIRE_THROWS_AS(mutation.move_value_from(std::move(read_only)), std::invalid_argument);
+    }
+
+    MoveTrackedScalar::reset_counts();
+    {
+        auto mutation = output.begin_mutation(MIN_ST);
+        ValueView writable{binding, static_cast<void *>(&source)};
+        REQUIRE(mutation.move_value_from(std::move(writable)));
+    }
+
+    REQUIRE(MoveTrackedScalar::copy_assign_count == 0);
+    REQUIRE(MoveTrackedScalar::move_assign_count == 1);
+    REQUIRE(output.view(MIN_ST).value().checked_as<MoveTrackedScalar>().value == 73);
+}
+
 TEST_CASE("TSOutput fixed TSB move mutation moves owned child fields")
 {
     using namespace hgraph;

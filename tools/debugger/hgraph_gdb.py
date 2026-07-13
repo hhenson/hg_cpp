@@ -252,12 +252,25 @@ def make_owner_pointer(owner_address, fallback_record, access):
         data_address = 0
     elif state == common.DEBUG_OWNER_INLINE_STATE:
         data_address = owner_address + 2 * size
-    elif state in (common.DEBUG_OWNER_HEAP_STATE, common.DEBUG_OWNER_BORROWED_STATE):
+    elif state == common.DEBUG_OWNER_HEAP_STATE:
         data_address = read_unsigned(owner_address + 2 * size)
         if data_address is None:
             return None
     else:
         return None
+    return make_any_pointer(record_address, data_address, access if data_address else 0)
+
+
+def make_embedded_pointer(pointer_address, fallback_record=0):
+    size = target_pointer_size()
+    tagged_record = read_unsigned(pointer_address)
+    data_address = read_unsigned(pointer_address + size)
+    if tagged_record is None or data_address is None:
+        return None
+    record_address = tagged_record & ~0x3
+    access = tagged_record & 0x3
+    if record_address == 0:
+        record_address = fallback_record
     return make_any_pointer(record_address, data_address, access if data_address else 0)
 
 
@@ -548,6 +561,10 @@ class TypePointerPrinter:
                         child = make_owner_pointer(
                             data_address + field_snapshot["offset"], field_snapshot["type"], access
                         )
+                    elif field_snapshot["flags"] & common.DEBUG_FIELD_EMBEDDED_POINTER:
+                        child = make_embedded_pointer(
+                            data_address + field_snapshot["offset"], field_snapshot["type"]
+                        )
                     else:
                         child = make_any_pointer(
                             field_snapshot["type"],
@@ -577,6 +594,8 @@ class TypePointerPrinter:
                 if element_address:
                     if layout["flags"] & common.DEBUG_DYNAMIC_ELEMENTS_ARE_OWNERS:
                         element_child = make_owner_pointer(element_address, snapshot["element_type"], access)
+                    elif layout["flags"] & common.DEBUG_DYNAMIC_ELEMENTS_ARE_POINTERS:
+                        element_child = make_embedded_pointer(element_address, snapshot["element_type"])
                     else:
                         element_child = make_any_pointer(snapshot["element_type"], element_address, access)
                     if element_child is not None:

@@ -35,9 +35,9 @@ namespace
         static_assert(alignof(Ref) == alignof(void *));
     }
 
-    template <typename Binding> constexpr void assert_storage_handle_layout()
+    template <typename Binding> constexpr void assert_erased_owner_layout()
     {
-        using Handle = hgraph::MemoryUtils::StorageHandle<hgraph::MemoryUtils::InlineStoragePolicy<>, Binding>;
+        using Handle = hgraph::MemoryUtils::ErasedOwner<hgraph::MemoryUtils::InlineStoragePolicy<>, Binding>;
         static_assert(sizeof(Handle) == sizeof(void *) * 3);
         static_assert(alignof(Handle) == alignof(void *));
     }
@@ -82,6 +82,10 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(sizeof(GraphView) == sizeof(void *) * 2);
     static_assert(sizeof(GraphExecutorView) == sizeof(void *) * 2);
     static_assert(sizeof(EvaluationClockView) == sizeof(void *) * 2);
+    static_assert(sizeof(NodeValue) == sizeof(void *) * 3);
+    static_assert(sizeof(GraphValue) == sizeof(void *) * 5);
+    static_assert(sizeof(GraphExecutorValue) == sizeof(void *) * 3);
+    static_assert(GraphValue::debug_pointer_offset() == 0);
 
     // TSData refs cache the selected ops pointer in addition to the generic
     // binding/data cursor. This is true for both generic and specialized refs.
@@ -93,6 +97,7 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(!HasNoArgumentRemovedValue<TSWDataView>);
     static_assert(HasNoArgumentRemovedValue<TSWInputView>);
     static_assert(sizeof(TSDataView) == sizeof(void *) * 3);
+    static_assert(TS_DATA_OPS_ABI_VERSION == 4);
     static_assert(sizeof(TSStorageTypeRef) == sizeof(void *));
     static_assert(sizeof(TSDataObserverSet) == sizeof(void *));
     static_assert(sizeof(TSData) == sizeof(void *) * 3);
@@ -121,12 +126,12 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(sizeof(FixedTSBDataLayout) == sizeof(void *) * 7);
     static_assert(sizeof(FixedTSLDataLayout) == sizeof(void *) * 10);
 
-    using RawHandle = MemoryUtils::StorageHandle<>;
+    using RawHandle = MemoryUtils::ErasedOwner<>;
     static_assert(sizeof(RawHandle) == sizeof(void *) * 3);
     static_assert(alignof(RawHandle) == alignof(void *));
 
-    assert_storage_handle_layout<TypeRecord>();
-    assert_storage_handle_layout<TSDataBinding>();
+    assert_erased_owner_layout<TypeRecord>();
+    assert_erased_owner_layout<TSDataBinding>();
 
     SUCCEED("compile-time type-erasure layout assertions passed");
 }

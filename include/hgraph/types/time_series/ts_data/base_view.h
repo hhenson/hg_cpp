@@ -383,6 +383,9 @@ namespace hgraph
         /** Move an owned value into this TSData node using the binding's type-erased move op. */
         [[nodiscard]] bool move_value_from(Value &&source);
 
+        /** Move from externally owned writable storage without fabricating an owner. */
+        [[nodiscard]] bool move_value_from(ValueView source);
+
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         /** Apply a Python object through the TSData binding's type-erased conversion op. */
         [[nodiscard]] bool from_python(nb::handle source);

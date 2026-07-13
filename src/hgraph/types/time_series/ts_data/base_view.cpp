@@ -496,7 +496,16 @@ namespace hgraph
 
     bool TSDataMutationView::move_value_from(Value &&source)
     {
+        return move_value_from(source.view());
+    }
+
+    bool TSDataMutationView::move_value_from(ValueView source)
+    {
         require_active_mutation();
+        if (!source.writable_payload())
+        {
+            throw std::invalid_argument("TSDataMutationView::move_value_from requires writable source storage");
+        }
 
         auto        current = view();
         const auto &table   = current.ops();

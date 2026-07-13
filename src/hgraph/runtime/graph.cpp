@@ -1403,6 +1403,7 @@ namespace hgraph
                         &GraphExecutorView{root_executor}.lifecycle_observers();
                 });
         });
+        pointer_ = type.writable(storage_.data());
         attach_nodes();
     }
 
@@ -1427,6 +1428,7 @@ namespace hgraph
                         &NodeView{parent_node}.graph().lifecycle_observers();
                 });
         });
+        pointer_ = type.writable(storage_.data());
         attach_nodes();
     }
 
@@ -1460,8 +1462,7 @@ namespace hgraph
                     &NodeView{parent_node}.graph().lifecycle_observers();
             });
         auto rollback = make_scope_exit([&]() noexcept { type.destroy_at(external_memory); });
-        storage_ = storage_type::reference(*type.record(), external_memory);
-        external_payload_ = true;
+        pointer_ = type.writable(external_memory);
         attach_nodes();
         rollback.release();
     }
@@ -1477,7 +1478,7 @@ namespace hgraph
         // producer's storage is alive; disposal must find no references. A
         // graph destroyed while still started would skip that teardown, so
         // stop it here (best-effort — a destructor must not throw).
-        if (storage_.has_value())
+        if (pointer_.has_value())
         {
             const GraphView graph = view();
             if (graph.valid() && graph.started())
@@ -1488,18 +1489,22 @@ namespace hgraph
                 }));
             }
         }
-        if (external_payload_ && storage_.has_value())
+        if (uses_external_storage())
         {
-            type().destroy_at(storage_.data());
+            type().destroy_at(const_cast<void *>(pointer_.data()));
         }
-        storage_.reset();
-        external_payload_ = false;
+        else
+        {
+            storage_.reset();
+        }
+        pointer_ = {};
     }
 
     GraphValue::GraphValue(GraphValue &&other) noexcept
-        : storage_(std::move(other.storage_)),
-          external_payload_(std::exchange(other.external_payload_, false))
+        : pointer_(std::exchange(other.pointer_, {})),
+          storage_(std::move(other.storage_))
     {
+        if (storage_.has_value()) { pointer_ = GraphTypeRef{storage_.binding()}.writable(storage_.data()); }
         attach_nodes();
     }
 
@@ -1508,16 +1513,17 @@ namespace hgraph
         if (this != &other)
         {
             reset();
+            pointer_ = std::exchange(other.pointer_, {});
             storage_ = std::move(other.storage_);
-            external_payload_ = std::exchange(other.external_payload_, false);
+            if (storage_.has_value()) { pointer_ = GraphTypeRef{storage_.binding()}.writable(storage_.data()); }
             attach_nodes();
         }
         return *this;
     }
 
-    bool GraphValue::has_value() const noexcept { return storage_.has_value(); }
-    bool GraphValue::uses_external_storage() const noexcept { return external_payload_; }
-    GraphTypeRef GraphValue::type() const noexcept { return GraphTypeRef{storage_.binding()}; }
+    bool GraphValue::has_value() const noexcept { return pointer_.has_value(); }
+    bool GraphValue::uses_external_storage() const noexcept { return pointer_.has_value() && !storage_.has_value(); }
+    GraphTypeRef GraphValue::type() const noexcept { return GraphTypeRef{pointer_.record()}; }
     const GraphTypeMetaData *GraphValue::schema() const noexcept
     {
         return type().schema();
@@ -1525,12 +1531,12 @@ namespace hgraph
 
     GraphView GraphValue::view()
     {
-        return GraphView{type(), storage_.data()};
+        return GraphView{pointer_};
     }
 
     GraphView GraphValue::view() const
     {
-        return GraphView{type(), const_cast<void *>(storage_.data())};
+        return GraphView{pointer_};
     }
 
     void GraphValue::schedule_node(std::size_t node_index, DateTime when)
@@ -1542,7 +1548,7 @@ namespace hgraph
     {
         if (!has_value()) { return; }
         const auto &table = type().ops_ref();
-        table.attach_nodes_impl(table.context, storage_.data(), this);
+        table.attach_nodes_impl(table.context, const_cast<void *>(pointer_.data()), this);
     }
 
     GraphBuilder::GraphBuilder()

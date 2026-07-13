@@ -399,6 +399,11 @@ namespace hgraph
 
     bool TSDDataMutationView::move_value_from(Value &&source)
     {
+        return move_value_from(source.view());
+    }
+
+    bool TSDDataMutationView::move_value_from(ValueView source)
+    {
         if (!source.has_value())
         {
             throw std::invalid_argument("TSDDataMutationView::move_value_from requires a live source");
@@ -406,6 +411,10 @@ namespace hgraph
         if (source.schema() != layout().value_binding.schema())
         {
             throw std::invalid_argument("TSDDataMutationView::move_value_from requires the map value schema");
+        }
+        if (!source.writable_payload())
+        {
+            throw std::invalid_argument("TSDDataMutationView::move_value_from requires writable source storage");
         }
 
         auto       source_map = source.as_map();
@@ -416,7 +425,7 @@ namespace hgraph
                 "TSDDataMutationView::move_value_from cannot relocate non-movable child TSData; update nested "
                 "time-series collections in place");
         }
-        for (const auto [key, value] : source_map.items())
+        for (auto [key, value] : source_map.items())
         {
             if (!key.valid() || !value.valid())
             {
@@ -436,7 +445,7 @@ namespace hgraph
         touch();
 
         const auto &ops = dict_ops();
-        for (const auto [key, value] : source_map.items())
+        for (auto [key, value] : source_map.items())
         {
             const auto result = ops.insert_key_move_impl(
                 ops.context,
@@ -447,7 +456,7 @@ namespace hgraph
 
             auto child = at_slot(result.slot);
             auto child_mutation = child.begin_mutation(current_mutation_time());
-            auto source_child = Value::reference(value.binding(), const_cast<void *>(value.data()));
+            ValueView source_child{value.binding(), const_cast<void *>(value.data())};
             static_cast<void>(child_mutation.move_value_from(std::move(source_child)));
         }
 

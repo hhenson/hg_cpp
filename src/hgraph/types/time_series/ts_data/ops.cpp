@@ -66,7 +66,7 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("copy value");
     }
 
-    bool missing_move_value_from(const void *, void *, Value &&, DateTime)
+    bool missing_move_value_from(const void *, void *, ValueView, DateTime)
     {
         missing_ts_data_op("move value");
     }

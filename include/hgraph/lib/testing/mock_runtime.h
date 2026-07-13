@@ -190,7 +190,7 @@ namespace hgraph::testing
     class MockGraphExecutor
     {
       public:
-        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
+        using storage_type = MemoryUtils::ErasedOwner<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
 
         MockGraphExecutor() noexcept = default;
 

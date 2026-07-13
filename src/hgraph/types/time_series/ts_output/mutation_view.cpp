@@ -2,6 +2,7 @@
 
 #include <hgraph/types/time_series/ts_data/dict_view.h>
 #include <hgraph/types/time_series/ts_output/view_common.h>
+#include <hgraph/types/value/value.h>
 
 #include <utility>
 
@@ -64,6 +65,11 @@ namespace hgraph
     }
 
     bool TSOutputMutationView::move_value_from(Value &&source)
+    {
+        return move_value_from(source.view());
+    }
+
+    bool TSOutputMutationView::move_value_from(ValueView source)
     {
         auto root = mutation_.view();
         if (const auto *schema = root.schema(); schema != nullptr && schema->kind == TSTypeKind::TSD)

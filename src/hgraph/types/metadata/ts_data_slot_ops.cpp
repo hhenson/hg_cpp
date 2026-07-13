@@ -1161,11 +1161,13 @@ namespace hgraph::ts_data_plan_factory_detail
                 return newly_touched;
             }
 
-            [[nodiscard]] static bool tss_move_value_from(const void *context, void *memory, Value &&source,
+            [[nodiscard]] static bool tss_move_value_from(const void *context, void *memory, ValueView source,
                                                           DateTime modified_time)
             {
                 if (memory == nullptr) { throw std::logic_error("TSS move requires live storage"); }
                 if (!source.has_value()) { throw std::invalid_argument("TSS move requires a live source value"); }
+                if (!source.writable_payload())
+                    throw std::invalid_argument("TSS move requires writable source storage");
                 if (modified_time == MIN_DT)
                 {
                     throw std::invalid_argument("TSS move requires a concrete evaluation time");

@@ -48,6 +48,9 @@ namespace hgraph
         /** Move an owned value into the root TSData. */
         [[nodiscard]] bool move_value_from(Value &&source);
 
+        /** Move from externally owned writable storage without taking ownership. */
+        [[nodiscard]] bool move_value_from(ValueView source);
+
       private:
         static TSDataMutationView begin_root_mutation(TSOutput &output, DateTime evaluation_time);
 

@@ -281,11 +281,11 @@ struct HGRAPH_EXPORT GraphEdge
         GraphPtr graph_{};
     };
 
-    /** Owning graph value. */
+    /** Graph lifetime wrapper: owns ordinary graphs and points into slot-owned nested storage. */
     class HGRAPH_EXPORT GraphValue
     {
       public:
-        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
+        using storage_type = MemoryUtils::ErasedOwner<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
 
         GraphValue() noexcept;
         GraphValue(const GraphBuilder &builder, ExecutorPtr root_executor);
@@ -306,6 +306,12 @@ struct HGRAPH_EXPORT GraphEdge
         [[nodiscard]] GraphView view();
         [[nodiscard]] GraphView view() const;
 
+        /** Stable offset consumed by the data-only debugger graph-pointer protocol. */
+        [[nodiscard]] static constexpr std::size_t debug_pointer_offset() noexcept
+        {
+            return offsetof(GraphValue, pointer_);
+        }
+
         void schedule_node(std::size_t node_index, DateTime when);
 
       private:
@@ -314,8 +320,8 @@ struct HGRAPH_EXPORT GraphEdge
         void reset() noexcept;
         void attach_nodes();
 
+        GraphPtr    pointer_{};
         storage_type storage_{};
-        bool         external_payload_{false};
 
         friend class GraphBuilder;
     };

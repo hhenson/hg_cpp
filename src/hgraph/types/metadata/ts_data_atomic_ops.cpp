@@ -179,7 +179,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return first_for_time;
         }
 
-        [[nodiscard]] static bool atomic_move_value_from(const void *context, void *memory, Value &&source,
+        [[nodiscard]] static bool atomic_move_value_from(const void *context, void *memory, ValueView source,
                                                          DateTime modified_time)
         {
             if (memory == nullptr)
@@ -189,6 +189,10 @@ namespace hgraph::ts_data_plan_factory_detail
             if (!source.has_value())
             {
                 throw std::invalid_argument("TSData atomic move requires a live source value");
+            }
+            if (!source.writable_payload())
+            {
+                throw std::invalid_argument("TSData atomic move requires writable source storage");
             }
             if (modified_time == MIN_DT)
             {
@@ -207,7 +211,7 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto &value_plan = layout->value_binding.checked_plan();
             move_assign_required(value_plan,
                                  atomic_mutable_value_memory(context, memory),
-                                 const_cast<void *>(source.view().data()));
+                                 const_cast<void *>(source.data()));
             return first_for_time;
         }
 

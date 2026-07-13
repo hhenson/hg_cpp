@@ -235,9 +235,9 @@ namespace hgraph
         descriptor.debug_fields.push_back(DebugField{
             .name = "child_graph",
             .offset = descriptor.storage_plan->component(child_graph_field_name).offset +
-                      offsetof(SingleNestedGraphNodeStorage, graph),
+                      offsetof(SingleNestedGraphNodeStorage, graph) + GraphValue::debug_pointer_offset(),
             .type = spec.graph_builder.nested_type().record(),
-            .flags = DebugFieldFlags::EmbeddedOwner,
+            .flags = DebugFieldFlags::EmbeddedPointer,
         });
 
         descriptor.callbacks.start = &single_nested_graph_start;

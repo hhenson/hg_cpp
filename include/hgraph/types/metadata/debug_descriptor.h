@@ -26,7 +26,7 @@ namespace hgraph
     inline constexpr std::uintptr_t DEBUG_OWNER_STATE_MASK = 0x3u;
     inline constexpr std::uintptr_t DEBUG_OWNER_INLINE_STATE = 0x1u;
     inline constexpr std::uintptr_t DEBUG_OWNER_HEAP_STATE = 0x2u;
-    inline constexpr std::uintptr_t DEBUG_OWNER_BORROWED_STATE = 0x3u;
+    inline constexpr std::uintptr_t DEBUG_OWNER_RESERVED_STATE = 0x3u;
 
     enum class DebugLayoutKind : std::uint8_t
     {
@@ -59,6 +59,7 @@ namespace hgraph
         None = 0,
         Optional = 1u << 0u,
         EmbeddedOwner = 1u << 1u,
+        EmbeddedPointer = 1u << 2u,
     };
 
     enum class DebugDynamicKind : std::uint8_t
@@ -79,6 +80,7 @@ namespace hgraph
         HasHead = 1u << 6u,
         ElementsAreOwners = 1u << 7u,
         KeysAreOwners = 1u << 8u,
+        ElementsArePointers = 1u << 9u,
     };
 
     [[nodiscard]] constexpr DebugDescriptorFlags operator|(DebugDescriptorFlags lhs, DebugDescriptorFlags rhs) noexcept
@@ -90,6 +92,11 @@ namespace hgraph
     {
         return (static_cast<std::uint32_t>(flags) & static_cast<std::uint32_t>(requested)) ==
                static_cast<std::uint32_t>(requested);
+    }
+
+    [[nodiscard]] constexpr DebugFieldFlags operator|(DebugFieldFlags lhs, DebugFieldFlags rhs) noexcept
+    {
+        return static_cast<DebugFieldFlags>(static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));
     }
 
     [[nodiscard]] constexpr bool has_flag(DebugFieldFlags flags, DebugFieldFlags requested) noexcept

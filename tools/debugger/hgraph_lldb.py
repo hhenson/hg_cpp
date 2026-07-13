@@ -267,12 +267,25 @@ def make_owner_pointer(value, name, owner_address, fallback_record, access):
         data_address = 0
     elif state == common.DEBUG_OWNER_INLINE_STATE:
         data_address = owner_address + 2 * size
-    elif state in (common.DEBUG_OWNER_HEAP_STATE, common.DEBUG_OWNER_BORROWED_STATE):
+    elif state == common.DEBUG_OWNER_HEAP_STATE:
         data_address = read_unsigned(value, owner_address + 2 * size)
         if data_address is None:
             return lldb.SBValue()
     else:
         return lldb.SBValue()
+    return make_any_pointer(value, name, record_address, data_address, access if data_address else 0)
+
+
+def make_embedded_pointer(value, name, pointer_address, fallback_record=0):
+    size = value.GetTarget().GetAddressByteSize()
+    tagged_record = read_unsigned(value, pointer_address)
+    data_address = read_unsigned(value, pointer_address + size)
+    if tagged_record is None or data_address is None:
+        return lldb.SBValue()
+    record_address = tagged_record & ~0x3
+    access = tagged_record & 0x3
+    if record_address == 0:
+        record_address = fallback_record
     return make_any_pointer(value, name, record_address, data_address, access if data_address else 0)
 
 
@@ -583,6 +596,13 @@ class TypePointerSyntheticProvider(SyntheticProvider):
                             field_snapshot["type"],
                             access,
                         )
+                    elif field_snapshot["flags"] & common.DEBUG_FIELD_EMBEDDED_POINTER:
+                        pointer_value = make_embedded_pointer(
+                            self.value,
+                            name,
+                            data_address + field_snapshot["offset"],
+                            field_snapshot["type"],
+                        )
                     else:
                         pointer_value = make_any_pointer(
                             self.value,
@@ -622,6 +642,10 @@ class TypePointerSyntheticProvider(SyntheticProvider):
                     if layout["flags"] & common.DEBUG_DYNAMIC_ELEMENTS_ARE_OWNERS:
                         pointer_value = make_owner_pointer(
                             self.value, name, element_address, snapshot["element_type"], access
+                        )
+                    elif layout["flags"] & common.DEBUG_DYNAMIC_ELEMENTS_ARE_POINTERS:
+                        pointer_value = make_embedded_pointer(
+                            self.value, name, element_address, snapshot["element_type"]
                         )
                     else:
                         pointer_value = make_any_pointer(

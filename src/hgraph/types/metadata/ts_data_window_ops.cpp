@@ -491,9 +491,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
             }
 
-            void move_from_value(Value &&source, DateTime modified_time)
+            void move_from_value(ValueView source, DateTime modified_time)
             {
-                const IndexedValueView source_values = checked_source_values(source.view());
+                const IndexedValueView source_values = checked_source_values(source);
                 if (source_values.size() > period_)
                 {
                     throw std::length_error("TSW fixed window source exceeds the configured period");
@@ -571,9 +571,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
             }
 
-            void move_from_value(Value &&source, DateTime modified_time)
+            void move_from_value(ValueView source, DateTime modified_time)
             {
-                const IndexedValueView source_values = checked_source_values(source.view());
+                const IndexedValueView source_values = checked_source_values(source);
 
                 clear();
                 ensure_capacity(source_values.size());
@@ -963,7 +963,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             [[nodiscard]] static bool window_move_value_from(const void *context, void *memory,
-                                                             Value &&source,
+                                                             ValueView source,
                                                              DateTime modified_time)
             {
                 if (memory == nullptr)
@@ -973,6 +973,10 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (!source.has_value())
                 {
                     throw std::invalid_argument("TSW move requires a live source value");
+                }
+                if (!source.writable_payload())
+                {
+                    throw std::invalid_argument("TSW move requires writable source storage");
                 }
                 if (modified_time == MIN_DT)
                 {

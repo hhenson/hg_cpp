@@ -768,7 +768,7 @@ namespace hgraph::detail
             return mutation.copy_value_from(value);
         }
 
-        [[nodiscard]] bool target_link_move_value_from(const void *context, void *memory, Value &&value,
+        [[nodiscard]] bool target_link_move_value_from(const void *context, void *memory, ValueView value,
                                                        DateTime modified_time)
         {
             const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);

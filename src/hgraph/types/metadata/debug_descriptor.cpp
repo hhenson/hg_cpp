@@ -19,14 +19,14 @@ namespace hgraph
     namespace
     {
         using CommonErasedOwner =
-            MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
+            MemoryUtils::ErasedOwner<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
 
         static_assert(CommonErasedOwner::debug_identity_offset() == DEBUG_OWNER_IDENTITY_OFFSET);
         static_assert(CommonErasedOwner::debug_state_offset() == DEBUG_OWNER_STATE_OFFSET);
         static_assert(CommonErasedOwner::debug_storage_offset() == DEBUG_OWNER_STORAGE_OFFSET);
         inline constexpr std::uint32_t KNOWN_DESCRIPTOR_FLAGS = 1u;
-        inline constexpr std::uint32_t KNOWN_FIELD_FLAGS = 3u;
-        inline constexpr std::uint32_t KNOWN_DYNAMIC_FLAGS = (1u << 9u) - 1u;
+        inline constexpr std::uint32_t KNOWN_FIELD_FLAGS = (1u << 3u) - 1u;
+        inline constexpr std::uint32_t KNOWN_DYNAMIC_FLAGS = (1u << 10u) - 1u;
         inline constexpr std::uint32_t VALIDITY_WORD_SIZE = sizeof(std::uint64_t);
 
         struct DescriptorKey
@@ -294,8 +294,12 @@ namespace hgraph
         for (std::uint32_t index = 0; index < field_count; ++index)
         {
             const DebugField &field = fields[index];
-            if ((field.type == nullptr && !has_flag(field.flags, DebugFieldFlags::EmbeddedOwner)) ||
+            if ((field.type == nullptr && !has_flag(field.flags, DebugFieldFlags::EmbeddedOwner) &&
+                 !has_flag(field.flags, DebugFieldFlags::EmbeddedPointer)) ||
                 (static_cast<std::uint32_t>(field.flags) & ~KNOWN_FIELD_FLAGS) != 0)
+                return false;
+            if (has_flag(field.flags, DebugFieldFlags::EmbeddedOwner) &&
+                has_flag(field.flags, DebugFieldFlags::EmbeddedPointer))
                 return false;
         }
         const bool requires_dynamic = layout == DebugLayoutKind::Sequence || layout == DebugLayoutKind::KeyedSlots;
@@ -316,6 +320,9 @@ namespace hgraph
             return false;
         if (has_flag(flags, DebugDynamicFlags::SizeIsConstant) == (size_offset != 0)) return false;
         if (kind == DebugDynamicKind::Contiguous && has_flag(flags, DebugDynamicFlags::DataIsPointerTable))
+            return false;
+        if (has_flag(flags, DebugDynamicFlags::ElementsAreOwners) &&
+            has_flag(flags, DebugDynamicFlags::ElementsArePointers))
             return false;
         if (kind == DebugDynamicKind::StableSlots &&
             (!has_flag(flags, DebugDynamicFlags::DataIsPointerTable) ||

@@ -123,7 +123,7 @@ namespace hgraph
     class HGRAPH_EXPORT GraphExecutorValue
     {
       public:
-        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
+        using storage_type = MemoryUtils::ErasedOwner<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
 
         GraphExecutorValue() noexcept;
         explicit GraphExecutorValue(const GraphExecutorBuilder &builder);

@@ -1474,7 +1474,7 @@ TEST_CASE("map_ publishes keyed nested-graph debugger navigation")
         REQUIRE(debug->element_type != nullptr);
         REQUIRE(debug->dynamic_layout->kind == DebugDynamicKind::StableSlots);
         REQUIRE(has_flag(debug->dynamic_layout->flags, DebugDynamicFlags::HasSlotState));
-        REQUIRE(has_flag(debug->dynamic_layout->flags, DebugDynamicFlags::ElementsAreOwners));
+        REQUIRE(has_flag(debug->dynamic_layout->flags, DebugDynamicFlags::ElementsArePointers));
         REQUIRE(has_flag(debug->dynamic_layout->flags, DebugDynamicFlags::KeysAreOwners));
         found = true;
     }

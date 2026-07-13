@@ -41,10 +41,9 @@ namespace hgraph
      * - ``AllocatorOps`` is the matching ops table for allocate / deallocate.
      * - ``CompositePlanBuilder`` and ``array_plan`` synthesise plans for
      *   composite and array layouts.
-     * - ``StorageRef`` is the borrowed two-pointer storage cursor used by
-     *   views.
-     * - ``StorageHandle`` is the owning / borrowing wrapper that consumers
-     *   (e.g. ``Value``) build on.
+     * - ``StorageRef`` is the legacy borrowed two-pointer storage cursor.
+     * - ``ErasedOwner`` owns inline or allocated storage used by consumers
+     *   such as ``Value``.
      * - ``plan_for<T>()`` and friends produce canonical plans for concrete
      *   C++ types.
      *
@@ -183,7 +182,7 @@ namespace hgraph
         };
 
         /**
-         * Compile-time policy that controls when ``StorageHandle`` chooses
+         * Compile-time policy that controls when ``ErasedOwner`` chooses
          * inline (small-buffer) storage over heap allocation.
          *
          * Defaults to a pointer-sized inline buffer with pointer alignment.
@@ -201,7 +200,7 @@ namespace hgraph
             /** Required alignment of the inline storage region. */
             static constexpr size_t inline_alignment = InlineAlignment;
 
-            /** Effective alignment used by ``StorageHandle`` (at least pointer alignment). */
+            /** Effective alignment used by ``ErasedOwner`` (at least pointer alignment). */
             [[nodiscard]] static constexpr size_t storage_alignment() noexcept {
                 return InlineAlignment > alignof(void *) ? InlineAlignment : alignof(void *);
             }
@@ -502,7 +501,7 @@ namespace hgraph
 
         /**
          * Concept satisfied by binding types that expose a ``StoragePlan``
-         * via ``plan()`` / ``checked_plan()``. Used by ``StorageHandle`` to
+         * via ``plan()`` / ``checked_plan()``. Used by ``ErasedOwner`` to
          * accept either a raw plan or a richer binding type.
          */
         template <typename Binding>
@@ -530,7 +529,7 @@ namespace hgraph
          *
          * ``StorageRef`` is intentionally only a binding pointer plus a
          * memory pointer. It is the view-side counterpart to
-         * ``StorageHandle``: copying it copies the cursor only, never the
+         * ``ErasedOwner``: copying it copies the cursor only, never the
          * payload, and destruction never touches the referenced memory.
          */
         template <typename Binding>
@@ -716,21 +715,18 @@ namespace hgraph
         };
 
         /**
-         * Owning or borrowing handle to a piece of memory described by a
+         * Type-erased owner for a piece of memory described by a
          * ``StoragePlan`` (or a richer ``Binding`` wrapper).
          *
-         * Three states are supported:
+         * Two live states are supported:
          *
          * - ``OwningInline``: payload lives in the inline buffer when the
          *   plan fits under ``Policy``.
          * - ``OwningHeap``: payload was heap-allocated through the bound
          *   ``AllocatorOps``.
-         * - ``Borrowed``: handle merely points at memory it does not own;
-         *   the destructor will not destroy or deallocate it.
-         *
          * The default state is empty (``has_value()`` returns false). The
          * underlying storage uses a tagged-pointer-encoded state to keep
-         * the handle two pointers wide on the common path.
+         * the owner three pointers wide with a pointer-sized inline payload.
          *
          * Template parameters:
          * - ``Policy``  ``InlineStoragePolicy`` controlling the inline
@@ -741,14 +737,14 @@ namespace hgraph
          */
         template <typename Policy = InlineStoragePolicy<>, typename Binding = void>
             requires(std::is_void_v<Binding> || storage_binding<Binding>)
-        class StorageHandle
+        class ErasedOwner
         {
           public:
-            /** Construct an empty handle. */
-            StorageHandle() = default;
+            /** Construct an empty owner. */
+            ErasedOwner() = default;
 
             /** Build a default-constructed payload from ``plan`` (raw-plan overload). */
-            explicit StorageHandle(const StoragePlan &plan, const AllocatorOps &allocator = MemoryUtils::allocator())
+            explicit ErasedOwner(const StoragePlan &plan, const AllocatorOps &allocator = MemoryUtils::allocator())
                 requires std::is_void_v<Binding>
             {
                 construct_owned_default(plan, allocator);
@@ -757,12 +753,12 @@ namespace hgraph
             /** Build a default-constructed payload from ``binding`` (binding overload). */
             template <typename B = Binding>
                 requires(!std::is_void_v<B>)
-            explicit StorageHandle(const B &binding, const AllocatorOps &allocator = MemoryUtils::allocator()) {
+            explicit ErasedOwner(const B &binding, const AllocatorOps &allocator = MemoryUtils::allocator()) {
                 construct_owned_default(binding, allocator);
             }
 
             /** Copy construction allocates fresh storage and copy-constructs the payload. */
-            StorageHandle(const StorageHandle &other) {
+            ErasedOwner(const ErasedOwner &other) {
                 if (!other.has_value()) {
                     m_identity = other.m_identity;
                     return;
@@ -776,10 +772,10 @@ namespace hgraph
             }
 
             /** Move construction transfers ownership of the payload. */
-            StorageHandle(StorageHandle &&other) noexcept { move_from(std::move(other)); }
+            ErasedOwner(ErasedOwner &&other) noexcept { move_from(std::move(other)); }
 
             /** Copy assignment resets the existing payload then copy-constructs from ``other``. */
-            StorageHandle &operator=(const StorageHandle &other) {
+            ErasedOwner &operator=(const ErasedOwner &other) {
                 if (this != &other) {
                     reset();
                     if (other.has_value()) {
@@ -796,7 +792,7 @@ namespace hgraph
             }
 
             /** Move assignment resets the existing payload then adopts ``other``. */
-            StorageHandle &operator=(StorageHandle &&other) noexcept {
+            ErasedOwner &operator=(ErasedOwner &&other) noexcept {
                 if (this != &other) {
                     reset();
                     move_from(std::move(other));
@@ -805,59 +801,59 @@ namespace hgraph
             }
 
             /** Destructor calls ``reset`` so any owned payload is destroyed and (if heap) deallocated. */
-            ~StorageHandle() { reset(); }
+            ~ErasedOwner() { reset(); }
 
-            /** Factory: default-construct an owning handle from ``plan``. */
-            [[nodiscard]] static StorageHandle owning(const StoragePlan  &plan,
+            /** Factory: default-construct an owner from ``plan``. */
+            [[nodiscard]] static ErasedOwner owning(const StoragePlan  &plan,
                                                       const AllocatorOps &allocator = MemoryUtils::allocator())
                 requires std::is_void_v<Binding>
             {
-                return StorageHandle(plan, allocator);
+                return ErasedOwner(plan, allocator);
             }
 
-            /** Factory: default-construct an owning handle from ``binding``. */
+            /** Factory: default-construct an owner from ``binding``. */
             template <typename B = Binding>
                 requires(!std::is_void_v<B>)
-            [[nodiscard]] static StorageHandle owning(const B &binding, const AllocatorOps &allocator = MemoryUtils::allocator()) {
-                return StorageHandle(binding, allocator);
+            [[nodiscard]] static ErasedOwner owning(const B &binding, const AllocatorOps &allocator = MemoryUtils::allocator()) {
+                return ErasedOwner(binding, allocator);
             }
 
-            /** Factory: create an empty handle that still retains a bound plan. */
-            [[nodiscard]] static StorageHandle empty(const StoragePlan &plan)
+            /** Factory: create an empty owner that still retains a bound plan. */
+            [[nodiscard]] static ErasedOwner empty(const StoragePlan &plan)
                 requires std::is_void_v<Binding>
             {
-                StorageHandle handle;
-                handle.m_identity = &plan;
-                return handle;
+                ErasedOwner owner;
+                owner.m_identity = &plan;
+                return owner;
             }
 
-            /** Factory: create an empty handle that still retains a bound binding. */
+            /** Factory: create an empty owner that still retains a bound binding. */
             template <typename B = Binding>
                 requires(!std::is_void_v<B>)
-            [[nodiscard]] static StorageHandle empty(const B &binding) {
-                StorageHandle handle;
-                handle.m_identity = &binding;
-                return handle;
+            [[nodiscard]] static ErasedOwner empty(const B &binding) {
+                ErasedOwner owner;
+                owner.m_identity = &binding;
+                return owner;
             }
 
-            /** Factory: copy-construct an owning handle from ``src`` using ``plan``. */
-            [[nodiscard]] static StorageHandle owning_copy(const StoragePlan &plan, const void *src,
+            /** Factory: copy-construct an owner from ``src`` using ``plan``. */
+            [[nodiscard]] static ErasedOwner owning_copy(const StoragePlan &plan, const void *src,
                                                            const AllocatorOps &allocator = MemoryUtils::allocator())
                 requires std::is_void_v<Binding>
             {
-                StorageHandle handle;
-                handle.construct_owned_copy(plan, src, allocator);
-                return handle;
+                ErasedOwner owner;
+                owner.construct_owned_copy(plan, src, allocator);
+                return owner;
             }
 
-            /** Factory: copy-construct an owning handle from ``src`` using ``binding``. */
+            /** Factory: copy-construct an owner from ``src`` using ``binding``. */
             template <typename B = Binding>
                 requires(!std::is_void_v<B>)
-            [[nodiscard]] static StorageHandle owning_copy(const B &binding, const void *src,
+            [[nodiscard]] static ErasedOwner owning_copy(const B &binding, const void *src,
                                                            const AllocatorOps &allocator = MemoryUtils::allocator()) {
-                StorageHandle handle;
-                handle.construct_owned_copy(binding, src, allocator);
-                return handle;
+                ErasedOwner owner;
+                owner.construct_owned_copy(binding, src, allocator);
+                return owner;
             }
 
             /**
@@ -866,51 +862,33 @@ namespace hgraph
              *
              * ``construct`` is invoked exactly once with the destination
              * memory pointer. If it throws, any heap allocation is released
-             * and the returned handle is not produced.
+             * and the returned owner is not produced.
              */
             template <typename Construct, typename B = Binding>
                 requires(!std::is_void_v<B>)
-            [[nodiscard]] static StorageHandle owning_constructed(
+            [[nodiscard]] static ErasedOwner owning_constructed(
                 const B &binding,
                 Construct &&construct,
                 const AllocatorOps &allocator = MemoryUtils::allocator())
             {
-                StorageHandle handle;
-                handle.construct_owned_custom(binding, std::forward<Construct>(construct), allocator);
-                return handle;
+                ErasedOwner owner;
+                owner.construct_owned_custom(binding, std::forward<Construct>(construct), allocator);
+                return owner;
             }
 
-            /** Factory: produce a borrowing handle around externally owned memory. */
-            [[nodiscard]] static StorageHandle reference(const StoragePlan &plan, void *data,
-                                                         const AllocatorOps &allocator = MemoryUtils::allocator()) noexcept
-                requires std::is_void_v<Binding>
-            {
-                return StorageHandle(plan, data, allocator);
-            }
-
-            /** Factory: produce a borrowing handle around externally owned memory (binding overload). */
-            template <typename B = Binding>
-                requires(!std::is_void_v<B>)
-            [[nodiscard]] static StorageHandle reference(const B &binding, void *data,
-                                                         const AllocatorOps &allocator = MemoryUtils::allocator()) noexcept {
-                return StorageHandle(binding, data, allocator);
-            }
-
-            /** True when the handle holds (owns or references) a payload. */
-            [[nodiscard]] bool     has_value() const noexcept { return storage_state() != State::Empty; }
-            [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
-            /** True when the handle owns the payload (either inline or on the heap). */
-            [[nodiscard]] bool     is_owning() const noexcept {
+            /** True when the owner holds a payload. */
+            [[nodiscard]] bool     has_value() const noexcept {
                 const State state = storage_state();
                 return state == State::OwningInline || state == State::OwningHeap;
             }
-            /** True when the handle merely borrows external memory. */
-            [[nodiscard]] bool               is_reference() const noexcept { return storage_state() == State::Borrowed; }
+            [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
+            /** Every live owner owns its payload, either inline or on the heap. */
+            [[nodiscard]] bool     is_owning() const noexcept { return has_value(); }
             /** True when the owned payload is held in inline storage. */
             [[nodiscard]] bool               stores_inline() const noexcept { return storage_state() == State::OwningInline; }
             /** True when the owned payload is held on the heap. */
             [[nodiscard]] bool               stores_heap() const noexcept { return storage_state() == State::OwningHeap; }
-            /** Bound storage plan, or ``nullptr`` if the handle has no retained identity. */
+            /** Bound storage plan, or ``nullptr`` if the owner has no retained identity. */
             [[nodiscard]] const StoragePlan *plan() const noexcept {
                 if constexpr (std::is_void_v<Binding>) {
                     return m_identity;
@@ -931,8 +909,7 @@ namespace hgraph
             [[nodiscard]] void *data() noexcept {
                 switch (storage_state()) {
                     case State::OwningInline: return static_cast<void *>(m_storage.inline_bytes.data());
-                    case State::OwningHeap:
-                    case State::Borrowed: return m_storage.ptr;
+                    case State::OwningHeap: return m_storage.ptr;
                     default: return nullptr;
                 }
             }
@@ -941,21 +918,20 @@ namespace hgraph
             [[nodiscard]] const void *data() const noexcept {
                 switch (storage_state()) {
                     case State::OwningInline: return static_cast<const void *>(m_storage.inline_bytes.data());
-                    case State::OwningHeap:
-                    case State::Borrowed: return m_storage.ptr;
+                    case State::OwningHeap: return m_storage.ptr;
                     default: return nullptr;
                 }
             }
 
             /** Stable offsets consumed by the data-only debugger owner protocol. */
             [[nodiscard]] static constexpr size_t debug_identity_offset() noexcept {
-                return offsetof(StorageHandle, m_identity);
+                return offsetof(ErasedOwner, m_identity);
             }
             [[nodiscard]] static constexpr size_t debug_state_offset() noexcept {
-                return offsetof(StorageHandle, m_allocator_state);
+                return offsetof(ErasedOwner, m_allocator_state);
             }
             [[nodiscard]] static constexpr size_t debug_storage_offset() noexcept {
-                return offsetof(StorageHandle, m_storage);
+                return offsetof(ErasedOwner, m_storage);
             }
 
             /** Typed pointer to the payload via ``MemoryUtils::cast<T>``. */
@@ -965,15 +941,15 @@ namespace hgraph
             template <typename T> [[nodiscard]] const T *as() const noexcept { return MemoryUtils::cast<T>(data()); }
 
             /**
-             * Make a copy of this handle, copy-constructing a fresh
-             * payload. Empty-but-bound handles clone to the same retained
+             * Make a copy of this owner, copy-constructing a fresh
+             * payload. Empty-but-bound owners clone to the same retained
              * identity without constructing a payload.
              */
-            [[nodiscard]] StorageHandle clone() const {
+            [[nodiscard]] ErasedOwner clone() const {
                 if (!has_value()) {
-                    StorageHandle handle;
-                    handle.m_identity = m_identity;
-                    return handle;
+                    ErasedOwner owner;
+                    owner.m_identity = m_identity;
+                    return owner;
                 }
 
                 if constexpr (std::is_void_v<Binding>) {
@@ -984,25 +960,25 @@ namespace hgraph
             }
 
             /**
-             * Rebuild this owned handle to the default value for its bound plan.
+             * Rebuild this owner to the default value for its bound plan.
              *
-             * The replacement handle is constructed first so a throwing default
-             * constructor leaves the original handle unchanged.
+             * The replacement owner is constructed first so a throwing default
+             * constructor leaves the original owner unchanged.
              */
             void reset_to_default() {
                 const State state = storage_state();
                 if (plan() == nullptr) {
-                    throw std::logic_error("MemoryUtils::StorageHandle::reset_to_default requires a bound plan");
+                    throw std::logic_error("MemoryUtils::ErasedOwner::reset_to_default requires a bound plan");
                 }
                 if (state != State::OwningInline && state != State::OwningHeap) {
-                    throw std::logic_error("MemoryUtils::StorageHandle::reset_to_default requires an owning handle");
+                    throw std::logic_error("MemoryUtils::ErasedOwner::reset_to_default requires a live owner");
                 }
 
-                StorageHandle replacement = [&]() {
+                ErasedOwner replacement = [&]() {
                     if constexpr (std::is_void_v<Binding>) {
-                        return StorageHandle(*plan(), *allocator());
+                        return ErasedOwner(*plan(), *allocator());
                     } else {
-                        return StorageHandle(*binding(), *allocator());
+                        return ErasedOwner(*binding(), *allocator());
                     }
                 }();
                 *this = std::move(replacement);
@@ -1010,14 +986,13 @@ namespace hgraph
 
             /**
              * Destroy and (if heap-allocated) deallocate the held payload,
-             * leaving the handle empty. Borrowed handles release the borrow
-             * without touching the underlying memory.
+             * leaving the owner empty.
              */
             void reset() noexcept { reset_impl(false); }
 
             /**
              * Destroy and release the held payload while preserving the
-             * bound plan / binding identity. This is the storage-handle
+             * bound plan / binding identity. This is the owner
              * primitive for typed-null values.
              */
             void reset_payload() noexcept { reset_impl(true); }
@@ -1033,8 +1008,6 @@ namespace hgraph
                         allocator()->deallocate_storage(m_storage.ptr, storage_plan->layout);
                         m_storage.ptr = nullptr;
                     }
-                } else if (state == State::Borrowed) {
-                    m_storage.ptr = nullptr;
                 }
 
                 m_identity = preserve_identity ? identity_before : nullptr;
@@ -1045,7 +1018,7 @@ namespace hgraph
                 Empty,
                 OwningInline,
                 OwningHeap,
-                Borrowed,
+                Reserved,
             };
 
             union alignas(Policy::storage_alignment()) Storage {
@@ -1062,19 +1035,6 @@ namespace hgraph
             identity_ptr        m_identity{nullptr};
             allocator_state_ptr m_allocator_state{};
             Storage             m_storage{};
-
-            StorageHandle(const StoragePlan &plan, void *data, const AllocatorOps &allocator) noexcept
-                requires std::is_void_v<Binding>
-                : m_identity(&plan), m_allocator_state(&allocator, State::Borrowed) {
-                m_storage.ptr = data;
-            }
-
-            template <typename B = Binding>
-                requires(!std::is_void_v<B>)
-            StorageHandle(const B &binding, void *data, const AllocatorOps &allocator) noexcept
-                : m_identity(&binding), m_allocator_state(&allocator, State::Borrowed) {
-                m_storage.ptr = data;
-            }
 
             [[nodiscard]] const AllocatorOps *tagged_allocator() const noexcept { return m_allocator_state.ptr(); }
 
@@ -1098,7 +1058,7 @@ namespace hgraph
             }
 
             void construct_owned_default(const StoragePlan &plan, const AllocatorOps &allocator) {
-                if (!plan.valid()) { throw std::logic_error("MemoryUtils::StorageHandle requires a valid plan"); }
+                if (!plan.valid()) { throw std::logic_error("MemoryUtils::ErasedOwner requires a valid plan"); }
 
                 m_identity = &plan;
                 set_allocator_state(&allocator, owning_state_for(plan));
@@ -1120,7 +1080,7 @@ namespace hgraph
                 requires(!std::is_void_v<B>)
             void construct_owned_default(const B &binding, const AllocatorOps &allocator) {
                 const StoragePlan &plan = checked_storage_binding_plan(binding);
-                if (!plan.valid()) { throw std::logic_error("MemoryUtils::StorageHandle requires a valid plan"); }
+                if (!plan.valid()) { throw std::logic_error("MemoryUtils::ErasedOwner requires a valid plan"); }
 
                 m_identity = &binding;
                 set_allocator_state(&allocator, owning_state_for(plan));
@@ -1139,7 +1099,7 @@ namespace hgraph
             }
 
             void construct_owned_copy(const StoragePlan &plan, const void *src, const AllocatorOps &allocator) {
-                if (!plan.valid()) { throw std::logic_error("MemoryUtils::StorageHandle requires a valid plan"); }
+                if (!plan.valid()) { throw std::logic_error("MemoryUtils::ErasedOwner requires a valid plan"); }
 
                 m_identity = &plan;
                 set_allocator_state(&allocator, owning_state_for(plan));
@@ -1161,7 +1121,7 @@ namespace hgraph
                 requires(!std::is_void_v<B>)
             void construct_owned_copy(const B &binding, const void *src, const AllocatorOps &allocator) {
                 const StoragePlan &plan = checked_storage_binding_plan(binding);
-                if (!plan.valid()) { throw std::logic_error("MemoryUtils::StorageHandle requires a valid plan"); }
+                if (!plan.valid()) { throw std::logic_error("MemoryUtils::ErasedOwner requires a valid plan"); }
 
                 m_identity = &binding;
                 set_allocator_state(&allocator, owning_state_for(plan));
@@ -1183,7 +1143,7 @@ namespace hgraph
                 requires(!std::is_void_v<B>)
             void construct_owned_custom(const B &binding, Construct &&construct, const AllocatorOps &allocator) {
                 const StoragePlan &plan = checked_storage_binding_plan(binding);
-                if (!plan.valid()) { throw std::logic_error("MemoryUtils::StorageHandle requires a valid plan"); }
+                if (!plan.valid()) { throw std::logic_error("MemoryUtils::ErasedOwner requires a valid plan"); }
 
                 m_identity = &binding;
                 set_allocator_state(&allocator, owning_state_for(plan));
@@ -1201,7 +1161,7 @@ namespace hgraph
                 rollback.release();
             }
 
-            void move_from(StorageHandle &&other) noexcept {
+            void move_from(ErasedOwner &&other) noexcept {
                 m_identity        = std::exchange(other.m_identity, nullptr);
                 m_allocator_state = std::exchange(other.m_allocator_state, allocator_state_ptr{});
 
@@ -1209,8 +1169,7 @@ namespace hgraph
                     case State::OwningInline:
                         std::memcpy(m_storage.inline_bytes.data(), other.m_storage.inline_bytes.data(), Policy::inline_bytes);
                         break;
-                    case State::OwningHeap:
-                    case State::Borrowed: m_storage.ptr = std::exchange(other.m_storage.ptr, nullptr); break;
+                    case State::OwningHeap: m_storage.ptr = std::exchange(other.m_storage.ptr, nullptr); break;
                     default: m_storage.ptr = nullptr; break;
                 }
             }

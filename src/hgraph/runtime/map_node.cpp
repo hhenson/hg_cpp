@@ -783,15 +783,15 @@ namespace hgraph
         MapNodeStorage debug_exemplar;
         debug_exemplar.entries.bind_graph_layout(graph_layout);
         MapKeyEntry debug_entry{Value{key_type}};
-        const std::size_t graph_owner_offset = static_cast<std::size_t>(
+        const std::size_t graph_pointer_offset = static_cast<std::size_t>(
             reinterpret_cast<const std::byte *>(&debug_entry.graph) -
-            reinterpret_cast<const std::byte *>(&debug_entry));
+            reinterpret_cast<const std::byte *>(&debug_entry)) + GraphValue::debug_pointer_offset();
         descriptor.dynamic_debug = NodeTypeDescriptor::DynamicDebug{
             .key_type = key_type.record(),
             .element_type = child_graph_type.record(),
             .layout = debug_exemplar.entries.debug_layout(
                 descriptor.storage_plan->component(map_storage_field_name).offset,
-                graph_owner_offset, true),
+                graph_pointer_offset, true),
         };
         descriptor.ops.extended_view_context = &register_map_node_context(
             std::move(spec),

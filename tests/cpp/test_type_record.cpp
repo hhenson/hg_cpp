@@ -139,6 +139,8 @@ TEST_CASE("debug descriptor common enums and layouts are fixed", "[type-erasure]
     STATIC_REQUIRE(static_cast<std::uint8_t>(DebugAtomicKind::SignedInteger) == 2);
     STATIC_REQUIRE(static_cast<std::uint8_t>(DebugAtomicKind::UnsignedInteger) == 3);
     STATIC_REQUIRE(static_cast<std::uint8_t>(DebugAtomicKind::FloatingPoint) == 4);
+    STATIC_REQUIRE(static_cast<std::uint32_t>(DebugFieldFlags::EmbeddedPointer) == (1u << 2u));
+    STATIC_REQUIRE(static_cast<std::uint32_t>(DebugDynamicFlags::ElementsArePointers) == (1u << 9u));
 
     DebugDescriptor descriptor{
         .magic = DEBUG_DESCRIPTOR_MAGIC,
@@ -160,6 +162,29 @@ TEST_CASE("debug descriptor common enums and layouts are fixed", "[type-erasure]
     };
     REQUIRE(dynamic.valid());
     dynamic.flags = DebugDynamicFlags::DataIsPointerTable;
+    REQUIRE_FALSE(dynamic.valid());
+
+    DebugField pointer_field{
+        .name = "graph",
+        .flags = DebugFieldFlags::EmbeddedPointer,
+    };
+    descriptor = DebugDescriptor{
+        .magic = DEBUG_DESCRIPTOR_MAGIC,
+        .abi_version = DEBUG_DESCRIPTOR_ABI_VERSION,
+        .layout = DebugLayoutKind::Node,
+        .field_count = 1,
+        .fields = &pointer_field,
+    };
+    REQUIRE(descriptor.valid());
+    pointer_field.flags = DebugFieldFlags::EmbeddedOwner | DebugFieldFlags::EmbeddedPointer;
+    REQUIRE_FALSE(descriptor.valid());
+
+    dynamic.kind = DebugDynamicKind::StableSlots;
+    dynamic.flags = DebugDynamicFlags::DataIsIndirect | DebugDynamicFlags::DataIsPointerTable |
+                    DebugDynamicFlags::ElementsAreOwners;
+    dynamic.size_offset = sizeof(std::size_t);
+    REQUIRE(dynamic.valid());
+    dynamic.flags = dynamic.flags | DebugDynamicFlags::ElementsArePointers;
     REQUIRE_FALSE(dynamic.valid());
 }
 

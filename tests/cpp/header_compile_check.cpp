@@ -61,7 +61,7 @@ void instantiate_memory_utils() {
     assert(array_plan.is_array());
     assert(array_plan.array_count() == 4);
 
-    MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, void> handle(plan);
+    MemoryUtils::ErasedOwner<MemoryUtils::InlineStoragePolicy<>, void> owner(plan);
     assert(handle.has_value());
 }
 

@@ -143,6 +143,9 @@ namespace hgraph
         /** Replace the dictionary from an owned value-layer map without copying keys or child values. */
         [[nodiscard]] bool move_value_from(Value &&source);
 
+        /** Replace the dictionary from a writable map view without taking ownership. */
+        [[nodiscard]] bool move_value_from(ValueView source);
+
       private:
         [[nodiscard]] TSDataView at_slot(std::size_t slot);
 

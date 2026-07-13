@@ -48,8 +48,8 @@ namespace hgraph::ts_data_plan_factory_detail
             }
         };
 
-        using TSDataStorageHandle =
-            MemoryUtils::StorageHandle<HeapOnlyTSDataStoragePolicy, TypeRecord>;
+        using TSDataErasedOwner =
+            MemoryUtils::ErasedOwner<HeapOnlyTSDataStoragePolicy, TypeRecord>;
 
         class DynamicTSLStorage
         {
@@ -112,7 +112,7 @@ namespace hgraph::ts_data_plan_factory_detail
             // Handles may move as the vector grows, but the child TSData bytes
             // must not. The heap-only policy above keeps published child
             // addresses stable while preserving vector locality for handles.
-            std::vector<TSDataStorageHandle>  elements_{};
+            std::vector<TSDataErasedOwner>  elements_{};
             std::vector<std::int64_t>         ordinal_keys_{};
         };
 
@@ -1106,7 +1106,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] static bool dynamic_move_value_from(const void *context,
                                                               void *memory,
-                                                              Value &&source,
+                                                              ValueView source,
                                                               DateTime modified_time)
             {
                 if (memory == nullptr)
@@ -1116,6 +1116,10 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (!source.has_value())
                 {
                     throw std::invalid_argument("dynamic TSL move requires a live source value");
+                }
+                if (!source.writable_payload())
+                {
+                    throw std::invalid_argument("dynamic TSL move requires writable source storage");
                 }
                 if (modified_time == MIN_DT)
                 {
@@ -1156,8 +1160,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     void *data = target.child_memory(index);
                     auto  source_value = source_values.at(index);
-                    auto  source_child = Value::reference(source_value.binding(),
-                                                          const_cast<void *>(source_value.data()));
+                    ValueView source_child{source_value.binding(), const_cast<void *>(source_value.data())};
                     if (!ops.move_value_from_impl(ops.context, data, std::move(source_child), modified_time))
                     {
                         continue;

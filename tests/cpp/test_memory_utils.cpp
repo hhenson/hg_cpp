@@ -12,6 +12,11 @@ namespace
 {
     using MemoryUtils = hgraph::MemoryUtils;
 
+    template <typename Owner>
+    concept HasBorrowedFactory = requires(const MemoryUtils::StoragePlan &plan, void *data) {
+        Owner::reference(plan, data);
+    };
+
     struct TrackedValue
     {
         static inline int default_constructed{0};
@@ -203,8 +208,8 @@ TEST_CASE("memory utils rejects empty or invalid raw storage layouts", "[memory 
     REQUIRE_THROWS_AS(MemoryUtils::raw_storage_plan({.size = 8, .alignment = 3}), std::logic_error);
 }
 
-TEST_CASE("memory utils packs storage handle state into pointer-sized storage", "[memory utils]") {
-    REQUIRE(sizeof(MemoryUtils::StorageHandle<>) == sizeof(void *) * 3);
+TEST_CASE("memory utils packs erased owner state into three pointer words", "[memory utils]") {
+    REQUIRE(sizeof(MemoryUtils::ErasedOwner<>) == sizeof(void *) * 3);
 }
 
 TEST_CASE("memory utils storage refs are two pointer borrowed cursors", "[memory utils]") {
@@ -231,14 +236,13 @@ TEST_CASE("memory utils storage refs are two pointer borrowed cursors", "[memory
     REQUIRE(*static_cast<uint32_t *>(copied.data()) == 7u);
 }
 
-TEST_CASE("memory utils keeps trivial pointer-sized payloads inline in owning handles", "[memory utils]") {
+TEST_CASE("memory utils keeps trivial pointer-sized payloads inline in erased owners", "[memory utils]") {
     const auto &plan = MemoryUtils::plan_for<uint32_t>();
 
-    MemoryUtils::StorageHandle<> handle(plan);
+    MemoryUtils::ErasedOwner<> handle(plan);
     REQUIRE(handle);
     REQUIRE(handle.plan() == &plan);
     REQUIRE(handle.is_owning());
-    REQUIRE_FALSE(handle.is_reference());
     REQUIRE(handle.stores_inline());
     REQUIRE_FALSE(handle.stores_heap());
 
@@ -259,10 +263,10 @@ TEST_CASE("memory utils keeps trivial pointer-sized payloads inline in owning ha
     REQUIRE(*moved.as<uint32_t>() == 7u);
 }
 
-TEST_CASE("memory utils empty handles can retain a bound plan", "[memory utils]") {
+TEST_CASE("memory utils empty owners can retain a bound plan", "[memory utils]") {
     const auto &plan = MemoryUtils::plan_for<uint32_t>();
 
-    auto handle = MemoryUtils::StorageHandle<>::empty(plan);
+    auto handle = MemoryUtils::ErasedOwner<>::empty(plan);
     REQUIRE_FALSE(handle.has_value());
     REQUIRE(handle.plan() == &plan);
     REQUIRE(handle.data() == nullptr);
@@ -291,7 +295,7 @@ TEST_CASE("memory utils separates allocation through allocator ops", "[memory ut
     AllocationProbe::reset();
 
     {
-        MemoryUtils::StorageHandle<> handle(plan, allocator);
+        MemoryUtils::ErasedOwner<> handle(plan, allocator);
         REQUIRE(handle.stores_heap());
         REQUIRE(AllocationProbe::allocations == 1);
         REQUIRE(AllocationProbe::deallocations == 0);
@@ -304,7 +308,7 @@ TEST_CASE("memory utils separates allocation through allocator ops", "[memory ut
     REQUIRE(TrackedValue::destroyed == 1);
 }
 
-TEST_CASE("memory utils heap-backed handles deep-copy on copy and transfer on move", "[memory utils]") {
+TEST_CASE("memory utils heap-backed owners deep-copy on copy and transfer on move", "[memory utils]") {
     TrackedValue::reset();
 
     const auto &plan = MemoryUtils::plan_for<TrackedValue>();
@@ -315,13 +319,13 @@ TEST_CASE("memory utils heap-backed handles deep-copy on copy and transfer on mo
     REQUIRE(plan.template requires_deallocate<>());
 
     {
-        MemoryUtils::StorageHandle<> source(plan);
+        MemoryUtils::ErasedOwner<> source(plan);
         REQUIRE(source.is_owning());
         REQUIRE(source.stores_heap());
         source.as<TrackedValue>()->value = 17;
         REQUIRE(TrackedValue::default_constructed == 1);
 
-        MemoryUtils::StorageHandle<> copied = source;
+        MemoryUtils::ErasedOwner<> copied = source;
         REQUIRE(copied.is_owning());
         REQUIRE(copied.stores_heap());
         REQUIRE(copied.as<TrackedValue>()->value == 17);
@@ -330,7 +334,7 @@ TEST_CASE("memory utils heap-backed handles deep-copy on copy and transfer on mo
         source.as<TrackedValue>()->value = 23;
         REQUIRE(copied.as<TrackedValue>()->value == 17);
 
-        MemoryUtils::StorageHandle<> moved = std::move(source);
+        MemoryUtils::ErasedOwner<> moved = std::move(source);
         REQUIRE_FALSE(source);
         REQUIRE(moved.is_owning());
         REQUIRE(moved.as<TrackedValue>()->value == 23);
@@ -346,9 +350,9 @@ TEST_CASE("memory utils storage plans expose copy and move assignment hooks", "[
     REQUIRE(plan.can_copy_assign());
     REQUIRE(plan.can_move_assign());
 
-    MemoryUtils::StorageHandle<> dst(plan);
-    MemoryUtils::StorageHandle<> src(plan);
-    MemoryUtils::StorageHandle<> moved(plan);
+    MemoryUtils::ErasedOwner<> dst(plan);
+    MemoryUtils::ErasedOwner<> src(plan);
+    MemoryUtils::ErasedOwner<> moved(plan);
 
     dst.as<TrackedValue>()->value   = 1;
     src.as<TrackedValue>()->value   = 7;
@@ -373,8 +377,8 @@ TEST_CASE("memory utils composite and array plans forward assignment support fro
     REQUIRE(tuple_plan.can_copy_assign());
     REQUIRE(tuple_plan.can_move_assign());
 
-    MemoryUtils::StorageHandle<> tuple_dst(tuple_plan);
-    MemoryUtils::StorageHandle<> tuple_src(tuple_plan);
+    MemoryUtils::ErasedOwner<> tuple_dst(tuple_plan);
+    MemoryUtils::ErasedOwner<> tuple_src(tuple_plan);
 
     MemoryUtils::cast<TrackedValue>(MemoryUtils::advance(tuple_dst.data(), tuple_plan.component("value").offset))->value = 1;
     *MemoryUtils::cast<uint32_t>(MemoryUtils::advance(tuple_dst.data(), tuple_plan.component("count").offset))           = 2u;
@@ -391,8 +395,8 @@ TEST_CASE("memory utils composite and array plans forward assignment support fro
     REQUIRE(array_plan.can_copy_assign());
     REQUIRE(array_plan.can_move_assign());
 
-    MemoryUtils::StorageHandle<> array_dst(array_plan);
-    MemoryUtils::StorageHandle<> array_src(array_plan);
+    MemoryUtils::ErasedOwner<> array_dst(array_plan);
+    MemoryUtils::ErasedOwner<> array_src(array_plan);
     MemoryUtils::cast<TrackedValue>(MemoryUtils::advance(array_dst.data(), array_plan.element_offset(0)))->value = 3;
     MemoryUtils::cast<TrackedValue>(MemoryUtils::advance(array_dst.data(), array_plan.element_offset(1)))->value = 4;
     MemoryUtils::cast<TrackedValue>(MemoryUtils::advance(array_src.data(), array_plan.element_offset(0)))->value = 21;
@@ -409,45 +413,34 @@ TEST_CASE("memory utils plans report missing assignment hooks when a type is not
     REQUIRE_FALSE(plan.can_copy_assign());
     REQUIRE_FALSE(plan.can_move_assign());
 
-    MemoryUtils::StorageHandle<> dst(plan);
-    MemoryUtils::StorageHandle<> src(plan);
+    MemoryUtils::ErasedOwner<> dst(plan);
+    MemoryUtils::ErasedOwner<> src(plan);
 
     REQUIRE_THROWS_AS(plan.copy_assign(dst.data(), src.data()), std::logic_error);
     REQUIRE_THROWS_AS(plan.move_assign(dst.data(), src.data()), std::logic_error);
 }
 
-TEST_CASE("memory utils reference handles are non-owning and copy into owning handles", "[memory utils]") {
-    TrackedValue::reset();
+TEST_CASE("memory utils erased owners have no borrowed-storage factory", "[memory utils]") {
+    using Owner = MemoryUtils::ErasedOwner<>;
+    static_assert(!HasBorrowedFactory<Owner>);
+}
 
+TEST_CASE("memory utils reset destroys an erased owner exactly once", "[memory utils]") {
+    TrackedValue::reset();
     const auto &plan = MemoryUtils::plan_for<TrackedValue>();
 
-    {
-        TrackedValue external;
-        external.value = 41;
+    MemoryUtils::ErasedOwner<> owner(plan);
+    REQUIRE(owner.has_value());
+    owner.reset_payload();
+    REQUIRE_FALSE(owner.has_value());
+    REQUIRE(owner.plan() == &plan);
+    REQUIRE(TrackedValue::destroyed == 1);
 
-        auto reference = MemoryUtils::StorageHandle<>::reference(plan, &external);
-        REQUIRE(reference.is_reference());
-        REQUIRE_FALSE(reference.is_owning());
-        REQUIRE(reference.plan() == &plan);
-        REQUIRE(reference.data() == &external);
-
-        {
-            auto copied = reference;
-            REQUIRE(copied.is_owning());
-            REQUIRE(copied.plan() == &plan);
-            REQUIRE(copied.as<TrackedValue>()->value == 41);
-            REQUIRE(TrackedValue::copy_constructed == 1);
-
-            external.value = 7;
-            REQUIRE(copied.as<TrackedValue>()->value == 41);
-            copied.as<TrackedValue>()->value = 99;
-            REQUIRE(external.value == 7);
-        }
-
-        REQUIRE(TrackedValue::destroyed == 1);
-    }
-
-    REQUIRE(TrackedValue::destroyed == 2);
+    owner.reset_payload();
+    REQUIRE(TrackedValue::destroyed == 1);
+    owner.reset();
+    REQUIRE(owner.plan() == nullptr);
+    REQUIRE(TrackedValue::destroyed == 1);
 }
 
 TEST_CASE("memory utils supports custom inline policies and aligned heap ownership", "[memory utils]") {
@@ -457,7 +450,7 @@ TEST_CASE("memory utils supports custom inline policies and aligned heap ownersh
     REQUIRE_FALSE(wide_inline_plan.template stores_inline<>());
     REQUIRE(wide_inline_plan.template stores_inline<WideInlinePolicy>());
 
-    MemoryUtils::StorageHandle<WideInlinePolicy> wide_inline_handle(wide_inline_plan);
+    MemoryUtils::ErasedOwner<WideInlinePolicy> wide_inline_handle(wide_inline_plan);
     REQUIRE(wide_inline_handle.stores_inline());
     wide_inline_handle.as<WideInlineValue>()->lhs = 3;
     wide_inline_handle.as<WideInlineValue>()->rhs = 9;
@@ -468,7 +461,7 @@ TEST_CASE("memory utils supports custom inline policies and aligned heap ownersh
     REQUIRE_FALSE(over_aligned_plan.requires_destroy());
     REQUIRE(over_aligned_plan.template requires_deallocate<>());
 
-    MemoryUtils::StorageHandle<> over_aligned_handle(over_aligned_plan);
+    MemoryUtils::ErasedOwner<> over_aligned_handle(over_aligned_plan);
     REQUIRE(over_aligned_handle.stores_heap());
     REQUIRE(reinterpret_cast<std::uintptr_t>(over_aligned_handle.data()) % alignof(OverAlignedValue) == 0u);
 
@@ -476,7 +469,7 @@ TEST_CASE("memory utils supports custom inline policies and aligned heap ownersh
         MemoryUtils::InlineStoragePolicy<sizeof(OverAlignedValue), alignof(OverAlignedValue)>;
     REQUIRE(over_aligned_plan.template stores_inline<OverAlignedInlinePolicy>());
 
-    MemoryUtils::StorageHandle<OverAlignedInlinePolicy> over_aligned_inline(over_aligned_plan);
+    MemoryUtils::ErasedOwner<OverAlignedInlinePolicy> over_aligned_inline(over_aligned_plan);
     REQUIRE(over_aligned_inline.stores_inline());
     REQUIRE(reinterpret_cast<std::uintptr_t>(over_aligned_inline.data()) % alignof(OverAlignedValue) == 0u);
 }
@@ -569,7 +562,7 @@ TEST_CASE("memory utils composite builders reject invalid tuple and named tuple 
     REQUIRE_THROWS_AS(named_builder.add_field("value", scalar), std::logic_error);
 }
 
-TEST_CASE("memory utils nested composite handles construct and destroy in deterministic order", "[memory utils]") {
+TEST_CASE("memory utils nested composite owners construct and destroy in deterministic order", "[memory utils]") {
     LifecycleRecorder::reset();
 
     auto        inner_builder = MemoryUtils::named_tuple().add_field<OrderedValue<2>>("lhs").add_field<OrderedValue<3>>("rhs");
@@ -578,14 +571,14 @@ TEST_CASE("memory utils nested composite handles construct and destroy in determ
     {
         auto        outer_builder = MemoryUtils::tuple().add_type<OrderedValue<1>>().add_plan(inner);
         const auto &outer         = outer_builder.build();
-        MemoryUtils::StorageHandle<> handle(outer);
+        MemoryUtils::ErasedOwner<> handle(outer);
         REQUIRE(handle.is_owning());
     }
 
     REQUIRE(LifecycleRecorder::events == std::vector<int>{1, 2, 3, -3, -2, -1});
 }
 
-TEST_CASE("memory utils composite handles deep-copy nested child payloads", "[memory utils]") {
+TEST_CASE("memory utils composite owners deep-copy nested child payloads", "[memory utils]") {
     TrackedValue::reset();
 
     auto        composite_builder = MemoryUtils::named_tuple()
@@ -594,7 +587,7 @@ TEST_CASE("memory utils composite handles deep-copy nested child payloads", "[me
     const auto &composite         = composite_builder.build();
 
     {
-        MemoryUtils::StorageHandle<> source(composite);
+        MemoryUtils::ErasedOwner<> source(composite);
 
         auto *source_value =
             MemoryUtils::cast<TrackedValue>(MemoryUtils::advance(source.data(), composite.component("value").offset));
@@ -603,7 +596,7 @@ TEST_CASE("memory utils composite handles deep-copy nested child payloads", "[me
         source_value->value = 23;
         *source_count       = 99u;
 
-        MemoryUtils::StorageHandle<> copied = source;
+        MemoryUtils::ErasedOwner<> copied = source;
         auto                        *copied_value =
             MemoryUtils::cast<TrackedValue>(MemoryUtils::advance(copied.data(), composite.component("value").offset));
         auto *copied_count = MemoryUtils::cast<uint32_t>(MemoryUtils::advance(copied.data(), composite.component("count").offset));
@@ -617,7 +610,7 @@ TEST_CASE("memory utils composite handles deep-copy nested child payloads", "[me
         REQUIRE(copied_value->value == 23);
         REQUIRE(*copied_count == 99u);
 
-        MemoryUtils::StorageHandle<> moved = std::move(source);
+        MemoryUtils::ErasedOwner<> moved = std::move(source);
         REQUIRE_FALSE(source);
         REQUIRE(MemoryUtils::cast<TrackedValue>(MemoryUtils::advance(moved.data(), composite.component("value").offset))->value ==
                 77);
@@ -626,13 +619,13 @@ TEST_CASE("memory utils composite handles deep-copy nested child payloads", "[me
     REQUIRE(TrackedValue::destroyed == 2);
 }
 
-TEST_CASE("memory utils array handles deep-copy element payloads", "[memory utils]") {
+TEST_CASE("memory utils array owners deep-copy element payloads", "[memory utils]") {
     TrackedValue::reset();
 
     const auto &array = MemoryUtils::array_plan<TrackedValue>(3);
 
     {
-        MemoryUtils::StorageHandle<> source(array);
+        MemoryUtils::ErasedOwner<> source(array);
         REQUIRE(source.is_owning());
         REQUIRE(source.stores_heap());
         REQUIRE(TrackedValue::default_constructed == 3);
@@ -642,7 +635,7 @@ TEST_CASE("memory utils array handles deep-copy element payloads", "[memory util
             value->value = static_cast<int>(index + 1) * 10;
         }
 
-        MemoryUtils::StorageHandle<> copied = source;
+        MemoryUtils::ErasedOwner<> copied = source;
         REQUIRE(TrackedValue::copy_constructed == 3);
 
         for (size_t index = 0; index < array.array_count(); ++index) {
@@ -658,22 +651,22 @@ TEST_CASE("memory utils array handles deep-copy element payloads", "[memory util
     REQUIRE(TrackedValue::destroyed == 6);
 }
 
-TEST_CASE("memory utils composite plans clean up partial construction on owning handle creation", "[memory utils]") {
+TEST_CASE("memory utils composite plans clean up partial owner construction", "[memory utils]") {
     PartiallyConstructedValue::reset();
 
     auto        composite_builder = MemoryUtils::tuple().add_type<PartiallyConstructedValue>().add_type<ThrowsOnDefault>();
     const auto &composite         = composite_builder.build();
 
-    REQUIRE_THROWS_AS(MemoryUtils::StorageHandle<>{composite}, std::runtime_error);
+    REQUIRE_THROWS_AS(MemoryUtils::ErasedOwner<>{composite}, std::runtime_error);
     REQUIRE(PartiallyConstructedValue::destroyed == 1);
 }
 
-TEST_CASE("memory utils array plans clean up partial construction on owning handle creation", "[memory utils]") {
+TEST_CASE("memory utils array plans clean up partial owner construction", "[memory utils]") {
     ThrowsOnThirdDefault::reset();
 
     const auto &array = MemoryUtils::array_plan<ThrowsOnThirdDefault>(4);
 
-    REQUIRE_THROWS_AS(MemoryUtils::StorageHandle<>{array}, std::runtime_error);
+    REQUIRE_THROWS_AS(MemoryUtils::ErasedOwner<>{array}, std::runtime_error);
     REQUIRE(ThrowsOnThirdDefault::constructed == 2);
     REQUIRE(ThrowsOnThirdDefault::destroyed == 2);
 }

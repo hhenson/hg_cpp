@@ -399,14 +399,14 @@ namespace hgraph
         descriptor.debug_fields.push_back(DebugField{
             .name = "graph[0]",
             .offset = descriptor.storage_plan->component(switch_storage_field_name).offset +
-                      offsetof(SwitchNodeStorage, graphs),
-            .flags = DebugFieldFlags::EmbeddedOwner,
+                      offsetof(SwitchNodeStorage, graphs) + GraphValue::debug_pointer_offset(),
+            .flags = DebugFieldFlags::EmbeddedPointer,
         });
         descriptor.debug_fields.push_back(DebugField{
             .name = "graph[1]",
             .offset = descriptor.storage_plan->component(switch_storage_field_name).offset +
-                      offsetof(SwitchNodeStorage, graphs) + sizeof(GraphValue),
-            .flags = DebugFieldFlags::EmbeddedOwner,
+                      offsetof(SwitchNodeStorage, graphs) + sizeof(GraphValue) + GraphValue::debug_pointer_offset(),
+            .flags = DebugFieldFlags::EmbeddedPointer,
         });
 
         descriptor.callbacks.stop            = &switch_node_stop;

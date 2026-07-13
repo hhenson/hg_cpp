@@ -139,7 +139,7 @@ namespace hgraph
         }
 
         [[nodiscard]] DebugDynamicLayout debug_layout(std::size_t owner_offset,
-                                                      std::size_t graph_owner_offset,
+                                                      std::size_t graph_pointer_offset,
                                                       bool keys_are_owners) const noexcept
         {
             const auto *base = reinterpret_cast<const std::byte *>(this);
@@ -150,7 +150,7 @@ namespace hgraph
             DebugDynamicFlags flags = DebugDynamicFlags::DataIsIndirect |
                                       DebugDynamicFlags::DataIsPointerTable |
                                       DebugDynamicFlags::HasSlotState |
-                                      DebugDynamicFlags::ElementsAreOwners;
+                                      DebugDynamicFlags::ElementsArePointers;
             if (keys_are_owners)
             {
                 flags = flags | DebugDynamicFlags::KeyDataIsIndirect |
@@ -168,7 +168,7 @@ namespace hgraph
                 .key_data_offset = keys_are_owners ? offset_of(&storage_.slots) : 0,
                 .key_stride = keys_are_owners ? std::size_t{1} : 0,
                 .state_offset = offset_of(&constructed_),
-                .entry_offset = graph_owner_offset,
+                .entry_offset = graph_pointer_offset,
             };
         }
 

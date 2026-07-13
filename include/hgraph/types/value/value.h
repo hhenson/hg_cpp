@@ -24,11 +24,11 @@
 namespace hgraph
 {
     /**
-     * Owning handle for a value-layer instance.
+     * Owning value-layer instance.
      *
-     * ``Value`` is a thin wrapper over ``MemoryUtils::StorageHandle``
+     * ``Value`` is a thin wrapper over ``MemoryUtils::ErasedOwner``
      * specialised on the value-layer ``ValueTypeRef``. The storage
-     * handle owns the bytes (inline or heap, deciding via the policy) and
+     * owner holds the bytes (inline or heap, deciding via the policy) and
      * retains the binding identity. The binding carries the schema, plan,
      * and ops, and ``Value`` adds the
      * typed convenience surface: scalar construction, ``ValueView`` lift,
@@ -42,7 +42,7 @@ namespace hgraph
     class Value
     {
       public:
-        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
+        using storage_type = MemoryUtils::ErasedOwner<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
 
         Value() noexcept = default;
 
@@ -99,7 +99,7 @@ namespace hgraph
         /**
          * Construct an owning value for an atomic ``T`` whose schema has
          * been registered through ``TypeRegistry::register_scalar<T>``.
-         * The matching binding is looked up; the storage handle drives
+         * The matching binding is looked up; the erased owner drives
          * allocation and construction.
          */
         template <typename T,
@@ -114,12 +114,12 @@ namespace hgraph
                     "Value(T): scalar type not registered — call register_scalar<T>(name) first");
             }
             storage_ = storage_type(*binding.record());
-            // The handle has default-constructed the payload; assign the
+            // The owner has default-constructed the payload; assign the
             // caller-supplied value into the live storage.
             *static_cast<T *>(storage_.data()) = std::move(value);
         }
 
-        // Copy and move are inherited from ``StorageHandle`` — copy
+        // Copy and move are inherited from ``ErasedOwner`` — copy
         // performs a deep allocation + copy-construct via the binding's
         // plan; move transfers ownership.
         Value(const Value &) = default;
@@ -127,19 +127,6 @@ namespace hgraph
         Value(Value &&) noexcept = default;
         Value &operator=(Value &&) noexcept = default;
         ~Value() = default;
-
-        /**
-         * Build a non-owning handle around externally owned mutable value
-         * memory. This is for internal erased APIs that accept ``Value&&``
-         * when the caller owns a larger parent value and needs to move one
-         * child field out of that parent without first copying the child.
-         */
-        [[nodiscard]] static Value reference(const ValueTypeRef &binding, void *data) noexcept
-        {
-            Value value;
-            value.storage_ = storage_type::reference(*binding.record(), data);
-            return value;
-        }
 
         /** True when storage is allocated and a value has been constructed in it. */
         [[nodiscard]] bool has_value() const noexcept { return storage_.has_value(); }

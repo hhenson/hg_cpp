@@ -14,7 +14,7 @@ namespace hgraph
     struct TSDataOps;
     class TSStorageTypeRef;
 
-    inline constexpr std::uint16_t TS_DATA_OPS_ABI_VERSION = 3;
+    inline constexpr std::uint16_t TS_DATA_OPS_ABI_VERSION = 4;
 
     class TSRoleTypeRef
     {

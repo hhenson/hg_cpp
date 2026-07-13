@@ -37,7 +37,7 @@ namespace hgraph
         void noop_reset_delta(const void *, void *);
         void noop_record_child_modified(const void *, void *, std::size_t, DateTime);
         [[nodiscard]] bool missing_copy_value_from(const void *, void *, const ValueView &, DateTime);
-        [[nodiscard]] bool missing_move_value_from(const void *, void *, Value &&, DateTime);
+        [[nodiscard]] bool missing_move_value_from(const void *, void *, ValueView, DateTime);
         [[nodiscard]] Value missing_empty_delta(const TSDataBinding &);
         [[nodiscard]] Value missing_capture_delta(const TSInputView &);
         [[nodiscard]] bool missing_delta_has_effect(const TSOutputView &, const ValueView &);
@@ -149,7 +149,7 @@ namespace hgraph
         // absent so published child addresses remain stable.
         bool (*copy_value_from_impl)(const void *context, void *memory, const ValueView &source,
                                      DateTime modified_time) = &ts_data_detail::missing_copy_value_from;
-        bool (*move_value_from_impl)(const void *context, void *memory, Value &&source,
+        bool (*move_value_from_impl)(const void *context, void *memory, ValueView source,
                                      DateTime modified_time) = &ts_data_detail::missing_move_value_from;
         Value (*empty_delta_impl)(const TSDataBinding &binding) = &ts_data_detail::missing_empty_delta;
         Value (*capture_delta_impl)(const TSInputView &in) = &ts_data_detail::missing_capture_delta;

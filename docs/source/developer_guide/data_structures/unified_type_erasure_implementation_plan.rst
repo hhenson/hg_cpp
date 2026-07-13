@@ -277,7 +277,8 @@ Iteration 4D
    unchanged.
 
    Implemented: dynamic ``TSL`` and tick/duration ``TSW`` expose canonical
-   ABI-3 Data, Input, and Output records. Role-specific root and embedded
+   Data, Input, and Output records (originally ABI 3; advanced to ABI 4 by
+   the pointer/owner separation). Role-specific root and embedded
    labels share one physical plan per schema. Dynamic-list storage binds its
    one-word element type on first growth, remains grow-only, and invalidates
    owned descendants before their handles are destroyed. Owned and peered
@@ -431,8 +432,7 @@ Iteration 6B
    pointer-stable descriptors and attaches them to canonical records. GDB and
    LLDB decode supported atomics and synthesize child ``AnyPtr`` values without
    inferior calls. A debugger fixture covers recursive children, unset fields,
-   and static teardown. This records implementation status only; review
-   acceptance and commit status remain open.
+   and static teardown. Review accepted and committed.
 
 Iteration 6C
    Add sequences, keyed slots, nodes, graphs, and nested-graph navigation.
@@ -450,8 +450,7 @@ Iteration 6C
    stopped graphs, and omit erased slots through the slot lifecycle bitmap.
    GDB and LLDB traverse each supported form without inferior calls. Nullable
    dynamic validity and specialized endpoint owners remain explicitly opaque.
-   This records implementation status only; review acceptance and commit
-   status remain open.
+   Review accepted and committed.
 
 Technical model
    Printers dispatch from common numeric fields and descriptor data, not C++
@@ -496,6 +495,36 @@ Acceptance
    detection where available; and allocator propagation.  Sanitizers and the
    full nested-graph suite pass.  Owner size and allocation behaviour are
    measured against Milestone 0.
+
+Implemented
+   ``MemoryUtils::ErasedOwner`` replaces ``StorageHandle`` and has only empty,
+   owning-inline, and owning-heap states; tag value three is reserved. The
+   owner retains the existing allocator, SBO, deep-copy, move-transfer,
+   typed-null, and construction rollback behavior in the same three-word
+   layout. Its reference factories and borrowed-state queries are removed.
+
+   ``Value`` and all node, graph, executor, mock, and dynamic-TSL owners use
+   ``ErasedOwner``. Destructive TS assignment dispatches through an rvalue
+   writable ``ValueView``; ``Value&&`` remains a convenience overload and
+   read-only sources fail before dispatch. This removes the former
+   ``Value::reference`` synthetic owner and advances ``TSDataOps`` to ABI 4.
+
+   ``GraphValue`` begins with a common two-word ``GraphPtr`` and carries an
+   owner only for normally allocated graphs. Externally placed nested graphs
+   carry no owner and are destroyed by the graph/slot protocol. Graph movement
+   rebinds the pointer to moved owner storage, while external pointers transfer
+   without changing their target. Debug descriptors use embedded-pointer
+   fields for nested/switch graphs and pointer elements for map/mesh slots.
+   ``GraphValue`` grows from four to five words; ``ErasedOwner`` stays three
+   words and all typed pointers stay two. Review accepted and committed.
+
+   A same-host Release comparison against pre-milestone commit ``3092e668``
+   produced identical allocation counts in every type-erasure benchmark. Small
+   graph construction retained 22 allocations per operation and alternating
+   switch lifecycle retained 1,445.05; bytes increased by exactly 8 and 24 per
+   operation respectively, matching the additional ``GraphValue`` pointer word
+   in the benchmarked layouts. Hot reads and steady window operations remained
+   allocation-free, and timing sample ranges showed no attributable regression.
 
 Recommended model allocation
    The highest-reasoning model must write the lifetime state machine and review

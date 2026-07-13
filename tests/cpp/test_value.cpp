@@ -1,5 +1,5 @@
 // Tests for the value-layer plumbing: ``ValueOps`` synthesis,
-// ``ValueTypeRef`` interning, ``StorageHandle`` SBO behaviour, and the
+// ``ValueTypeRef`` interning, ``ErasedOwner`` SBO behaviour, and the
 // owning ``Value`` + non-owning ``ValueView`` round-trip for atomic and
 // structured value-layer kinds.
 
@@ -349,7 +349,7 @@ TEST_CASE("ValueTypeRef is canonical by record and narrows generic pointers safe
                       std::invalid_argument);
 }
 
-// ``StorageHandle`` itself has its own coverage in ``test_memory_utils.cpp``;
+// ``ErasedOwner`` itself has its own coverage in ``test_memory_utils.cpp``;
 // here we exercise the value-layer round-trip that uses it through
 // ``Value`` and ``ValueTypeRef``.
 
@@ -364,7 +364,7 @@ TEST_CASE("Value: atomic round-trip — construct, view, hash/equals/to_string")
     REQUIRE(v.schema() != nullptr);
     REQUIRE(v.schema()->value_kind() == ValueTypeKind::Atomic);
 
-    // Owning-handle accessors.
+    // Owning-value accessors.
     REQUIRE(v.as<std::int32_t>() == 42);
     REQUIRE(*v.try_as<std::int32_t>() == 42);
     REQUIRE(v.try_as<double>() == nullptr);  // type mismatch via view -> still fine, atomic but wrong T

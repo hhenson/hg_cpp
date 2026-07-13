@@ -1449,7 +1449,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return newly_modified;
         }
 
-        [[nodiscard]] static bool fixed_move_value_from(const void *context, void *memory, Value &&source,
+        [[nodiscard]] static bool fixed_move_value_from(const void *context, void *memory, ValueView source,
                                                         DateTime modified_time)
         {
             if (memory == nullptr)
@@ -1459,6 +1459,10 @@ namespace hgraph::ts_data_plan_factory_detail
             if (!source.has_value())
             {
                 throw std::invalid_argument("fixed TSData move requires a live source value");
+            }
+            if (!source.writable_payload())
+            {
+                throw std::invalid_argument("fixed TSData move requires writable source storage");
             }
             if (modified_time == MIN_DT)
             {
@@ -1496,8 +1500,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 const auto child = state->element_type(index);
                 const auto &ops  = child_ops(child);
                 void       *data  = child_data(state, memory, index);
-                auto        source_child = Value::reference(source_value.binding(),
-                                                            const_cast<void *>(source_value.data()));
+                ValueView source_child{source_value.binding(), const_cast<void *>(source_value.data())};
                 if (ops.move_value_from_impl(ops.context, data, std::move(source_child), modified_time))
                 {
                     auto *tracking = ops.mutable_tracking_impl(ops.context, data);

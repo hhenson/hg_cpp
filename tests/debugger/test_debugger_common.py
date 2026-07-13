@@ -183,6 +183,23 @@ class CommonDebuggerFormattingTest(unittest.TestCase):
                 dynamic_layout(flags=common.DEBUG_DYNAMIC_DATA_INDIRECT)
             )
         )
+        self.assertTrue(
+            common.debug_dynamic_layout_valid(
+                dynamic_layout(
+                    flags=dynamic_layout()["flags"]
+                    | common.DEBUG_DYNAMIC_ELEMENTS_ARE_POINTERS
+                )
+            )
+        )
+        self.assertFalse(
+            common.debug_dynamic_layout_valid(
+                dynamic_layout(
+                    flags=dynamic_layout()["flags"]
+                    | common.DEBUG_DYNAMIC_ELEMENTS_ARE_OWNERS
+                    | common.DEBUG_DYNAMIC_ELEMENTS_ARE_POINTERS
+                )
+            )
+        )
 
         sequence = atomic_descriptor(
             layout=3,

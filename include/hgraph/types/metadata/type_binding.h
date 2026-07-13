@@ -17,7 +17,7 @@ namespace hgraph
      * layers share: it holds three borrowed pointers — schema identity,
      * storage layout (with lifecycle hooks), and the runtime ops vtable —
      * and exposes them through a single stable address. Lightweight views
-     * and ``StorageHandle`` instances can recover everything they need
+     * and ``ErasedOwner`` instances can recover everything they need
      * from the same binding.
      *
      * Bindings are interned through a per-instantiation ``InternTable``

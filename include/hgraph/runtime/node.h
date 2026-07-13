@@ -282,14 +282,14 @@ namespace hgraph
      * Owning node value.
      *
      * ``NodeValue`` owns the node allocation through the same
-     * ``StorageHandle``/binding pattern used by values and time-series data.
+     * ``ErasedOwner``/type-record pattern used by values and time-series data.
      * The stable active-input notification identity lives in the node runtime
      * storage header and is reached through the node memory pointer.
      */
     class HGRAPH_EXPORT NodeValue final
     {
       public:
-        using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
+        using storage_type = MemoryUtils::ErasedOwner<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
 
         NodeValue() noexcept;
         explicit NodeValue(const NodeBuilder &builder, std::size_t node_index = 0);
