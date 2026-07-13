@@ -329,7 +329,7 @@ namespace hgraph
         [[nodiscard]] ValueView delta_value(DateTime evaluation_time) const;
 
         /** Runtime time associated with this mutation scope. */
-        [[nodiscard]] DateTime current_mutation_time() const;
+        [[nodiscard]] DateTime current_mutation_time() const { return mutation_time_; }
 
         /** True when the underlying TSData was modified at ``evaluation_time``. */
         [[nodiscard]] bool modified(DateTime evaluation_time) const;
@@ -357,10 +357,52 @@ namespace hgraph
 #endif
 
       private:
-        void require_active_mutation() const;
+        friend class TSWDataMutationView;
+
+        [[nodiscard]] void *mutable_data(const TSDataOps &table) const
+        {
+            require_active_mutation();
+            if (!table.allows_mutation)
+            {
+                throw std::logic_error("TSData mutation requires mutable TSData ops");
+            }
+            return storage_.data();
+        }
+
+        [[nodiscard]] bool modified(const TSDataOps &table, DateTime evaluation_time) const
+        {
+            require_active_mutation();
+            return evaluation_time != MIN_DT &&
+                   table.tracking_impl(table.context, storage_.data())->last_modified_time == evaluation_time;
+        }
+
+        void mark_modified(const TSDataOps &table)
+        {
+            if (record_modified_local(table)) { notify_parent_modified(table); }
+        }
+
+        void require_active_mutation() const
+        {
+            if (mutation_time_ == MIN_DT || !storage_.has_value())
+            {
+                throw std::logic_error("TSData mutation requires an active mutation scope");
+            }
+        }
+
         void validate_mutation_view() const;
         [[nodiscard]] bool record_modified_local() const;
+        [[nodiscard]] bool record_modified_local(const TSDataOps &table) const
+        {
+            require_active_mutation();
+            auto &state = *table.mutable_tracking_impl(table.context, storage_.data());
+            return state.record_modified(mutation_time_);
+        }
+
         void notify_parent_modified() const;
+        void notify_parent_modified(const TSDataOps &table) const
+        {
+            table.tracking_impl(table.context, storage_.data())->parent.notify_child_modified(mutation_time_);
+        }
 
         TSDataStorageRef<> storage_{};
         DateTime      mutation_time_{MIN_DT};

@@ -459,6 +459,9 @@ class SyntheticProvider:
     @staticmethod
     def add(values, name, value):
         if valid(value):
+            renamed = value.Clone(name)
+            if valid(renamed):
+                value = renamed
             values.append((name, value))
 
 

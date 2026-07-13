@@ -47,6 +47,50 @@ layout from semantic labels, C++ template names, or private container fields.
 Build with debug information enabled for reliable output. Optimized builds may
 hide or fold the private fields that the summaries read.
 
+Interactive printer validation
+------------------------------
+
+The deterministic fixture and batch validators exercise real debugger child
+navigation.  Configure with ``HGRAPH_ENABLE_DEBUGGER_SMOKE_TESTS=ON`` to add
+the platform debugger to CTest, or run the same check directly from the
+repository root.
+
+On macOS:
+
+.. code-block:: console
+
+   lldb --batch \
+       -o 'command script import tools/debugger/hgraph_lldb.py' \
+       -o 'command script import tests/debugger/hgraph_lldb_smoke.py' \
+       -o 'breakpoint set --name hgraph_debugger_fixture_stop' \
+       -o run -o hgraph-smoke \
+       build/tests/cpp/hgraph_debugger_fixture
+
+On Linux:
+
+.. code-block:: console
+
+   gdb --nx --batch \
+       -ex 'set pagination off' \
+       -ex 'source tools/debugger/hgraph_gdb.py' \
+       -ex 'source tests/debugger/hgraph_gdb_smoke.py' \
+       -ex 'break hgraph_debugger_fixture_stop' \
+       -ex run -ex hgraph-smoke \
+       build/tests/cpp/hgraph_debugger_fixture
+
+A successful run ends with ``hgraph LLDB type-erasure smoke test passed`` or
+``hgraph GDB type-erasure smoke test passed``.  The validator checks summaries
+such as ``semantic="debugger_fixture_graph"`` with
+``implementation="hgraph.graph.root"``, then expands the graph's ``[0]`` child
+and verifies ``semantic="debugger_fixture_graph_node"``.  It also checks
+bundle fields, mutable-map key/value pairs, typed-null pointers, malformed
+pointers, and unsupported ABI versions.
+
+Some VM security configurations deny ``ptrace``.  In that environment GDB may
+load both scripts successfully but fail with ``Couldn't get registers`` before
+the fixture breakpoint.  Use a native Linux host or the required Linux CI gate
+for the interactive smoke test; this failure does not exercise the printers.
+
 Linux Python/ASan debugging from macOS
 --------------------------------------
 

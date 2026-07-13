@@ -420,7 +420,7 @@ namespace hgraph
     void *TSDataMutationView::mutable_data() const
     {
         require_active_mutation();
-        return view().mutable_data();
+        return storage_.data();
     }
 
     ValueView TSDataMutationView::value() const
@@ -433,19 +433,14 @@ namespace hgraph
         return view().delta_value(evaluation_time);
     }
 
-    DateTime TSDataMutationView::current_mutation_time() const
-    {
-        return mutation_time_;
-    }
-
     bool TSDataMutationView::modified(DateTime evaluation_time) const
     {
-        return view().modified(evaluation_time);
+        return modified(ops(), evaluation_time);
     }
 
     void TSDataMutationView::mark_modified()
     {
-        if (record_modified_local()) { notify_parent_modified(); }
+        mark_modified(ops());
     }
 
     bool TSDataMutationView::copy_value_from(const ValueView &source)
@@ -521,15 +516,6 @@ namespace hgraph
 
 #endif
 
-    void TSDataMutationView::require_active_mutation() const
-    {
-        if (mutation_time_ == MIN_DT)
-        {
-            throw std::logic_error("TSData mutation requires an active mutation scope");
-        }
-        (void)view().mutable_data();
-    }
-
     void TSDataMutationView::validate_mutation_view() const
     {
         if (mutation_time_ == MIN_DT)
@@ -541,16 +527,12 @@ namespace hgraph
 
     bool TSDataMutationView::record_modified_local() const
     {
-        require_active_mutation();
-
-        auto  current = view();
-        auto &state   = current.mutable_tracking();
-        return state.record_modified(mutation_time_);
+        return record_modified_local(ops());
     }
 
     void TSDataMutationView::notify_parent_modified() const
     {
-        view().parent_link().notify_child_modified(mutation_time_);
+        notify_parent_modified(ops());
     }
 
     void apply_slot_mutation_result(TSDataMutationView &mutation, const SlotTSDataMutationResult &result)

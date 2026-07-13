@@ -672,6 +672,215 @@ Recommended model allocation
    A cost-effective model performs cleanup and matrix fixes.  The final audit
    and ABI decision belong to the highest-reasoning model and human reviewers.
 
+Milestone 10: Performance Attribution And Window Recovery
+----------------------------------------------------------
+
+Purpose
+   Turn the Milestone 9 timing samples into reproducible evidence and remove
+   attributable window regressions without growing the common two-word erased
+   pointer representation.
+
+Implementation work
+   Extend the standalone benchmark with distribution statistics and focused
+   window setup, mutation, eviction, and read workloads.  Document a pinned-CPU
+   Linux procedure, capture compiler and host identity with every result, and
+   use profiling or generated assembly to identify repeated record-to-ops
+   resolution inside hot loops.  Optimisations may cache resolved operations
+   in operation-local or specialised mutation state, but must not add an ops
+   word to ``AnyPtr``, typed pointers, or ``TSDataStorageRef``.
+
+Acceptance
+   The Ubuntu 24.04 VM produces repeatable before/after distributions with the
+   same compiler and host configuration.  Window allocation counts remain
+   zero, public erased-pointer layouts remain unchanged, and tick and duration
+   steady-state workloads are within five percent of their accepted baseline
+   unless profiling provides a reviewed explanation.  The full time-series
+   and sanitizer suites pass.
+
+Implemented
+   Benchmark format 2 adds substring filtering, host/compiler/architecture
+   labels, tenth and ninetieth percentiles, median absolute deviation, and
+   diagnostic window cases which separate bound reads, view construction,
+   mutation/eviction, and combined mutation/read.  The documented Linux
+   procedure pins old and new binaries to the same virtual CPU and alternates
+   them to expose VM drift.
+
+   Compound window reads now resolve the canonical record's ops table once and
+   reuse its layout, size, and storage projections.  A mutation scope validates
+   mutability at construction, then inlines its small trusted helpers around
+   the already-resolved ops table.  ``TSWDataView::begin_mutation`` uses a
+   private trusted-storage constructor because the source specialised view has
+   already checked the TSW kind; direct public construction retains the check.
+   No ops pointer is stored in ``TSDataStorageRef`` or any public erased
+   pointer, and their Milestone 9 layouts are unchanged.
+
+   On the Ubuntu 24.04 x86-64 OrbStack VM with GCC 13.3, an immediate pinned
+   21-sample comparison against ``99fd9957`` measured tick bound read, view
+   read, mutation-only, and combined work at 10.536, 21.427, 80.274, and
+   88.786 ns versus 14.380, 26.304, 86.357, and 101.603 ns.  Duration bound
+   read, mutation-only, and combined work measured 9.458, 90.151, and 98.553
+   ns versus 17.076, 93.951, and 111.271 ns.  Thus both combined paths are
+   more than eleven percent faster than the pre-migration implementation and
+   every diagnostic case is faster.  All reported window allocation and byte
+   counts remain zero.
+
+Milestone 11: Shared-Library ABI Boundary
+------------------------------------------
+
+Purpose
+   Prove that the common records and compact pointers remain valid when their
+   producer and consumer are compiled separately.
+
+Implementation work
+   Add a small shared-library fixture that exports canonical records and erased
+   pointers to a separately compiled test executable.  Cover read-only,
+   writable, typed-null, wrong-family, wrong-role, and unsupported ABI cases.
+   Record size, alignment, standard-layout, and trivial-copy properties for
+   public data-only ABI structures.  Exercise installed headers and the public
+   ``hgraph::core`` CMake target rather than relying only on build-tree state.
+
+Acceptance
+   Boundary tests pass for shared and static C++ builds on macOS and Linux.
+   Incompatible ABI versions fail before an ops call or data dereference.  The
+   Python ``cp312-abi3`` wheel is audited and installed under every supported
+   Python version.  Only the reviewed data-only record and descriptor fields
+   are declared stable; C++ ownership classes remain outside the binary ABI.
+
+Implemented
+   ``hgraph_abi_boundary_producer`` is a shared fixture with a private
+   ``TypeRecordRegistry`` and private pointer implementation.  Its separately
+   compiled consumer checks ``SchemaHeader``, ``TypeRecord``, and ``AnyPtr``
+   layout properties before exercising cross-library read, write, mutation,
+   typed-null, family/role narrowing, ops dispatch, and unsupported-version
+   rejection.  This prevents the test from passing merely because both sides
+   share one in-process registry implementation.
+
+   The fixture passes with static and shared ``hgraph::core`` builds on macOS
+   and with a GCC 13.3 shared build on Linux.  A downstream project also
+   configures against an installed shared package and links only the public
+   ``hgraph::core`` target.  That test exposed and fixed list separators in
+   the generated dependency fragment.  Shared builds now enable position-
+   independent code for all linked static dependencies.  The existing wheel
+   workflow audits the ``cp312-abi3`` wheel and installs it under Python 3.12,
+   3.13, and 3.14 on each supported wheel platform.
+
+Milestone 12: Native Platform CI
+--------------------------------
+
+Purpose
+   Raise platform confidence from wheel compilation to native runtime
+   execution while retaining Linux as the required performance platform.
+
+Implementation work
+   Add pure-C++ configure, build, and CTest jobs for current AppleClang, GCC,
+   and MSVC.  Enable the repository warning policy on every compiler, with
+   narrow documented exclusions only where a compiler warning is demonstrably
+   incorrect.  Keep the existing Python 3.12 through 3.14 stable-ABI wheel
+   matrix and run the Python bridge suite from the installed wheel.
+
+Acceptance
+   macOS and Linux native jobs are required.  Windows remains best effort, but
+   it compiles with ``/W4 /permissive-`` and executes both the C++ and Python
+   suites so failures contain runtime evidence rather than compile evidence
+   alone.  Tagged releases may reuse artifacts only from a successful workflow
+   for the exact commit.
+
+Implemented
+   The release workflow now configures a Python-disabled native C++ build on
+   ``ubuntu-latest``, ``macos-26``, and ``windows-latest``.  It builds and runs
+   CTest with the repository warning policy enabled; Linux and macOS are
+   required and Windows is explicitly best effort.  Python 3.12 is present in
+   this job only as build tooling to locate the Arrow libraries shipped by
+   pyarrow.  Nanobind and Python development headers are not part of the
+   native targets.
+
+   ``HGRAPH_FETCH_SIMDJSON`` makes the hosted build's pinned simdjson explicit,
+   while the default pure-C++ configure continues to use normal CMake package
+   discovery.  A newly built release requires the native job as well as wheel
+   and sdist validation.  A tag can still reuse artifacts only from a
+   successful workflow with the exact commit SHA.  The existing installed-
+   wheel matrix executes the Python compatibility suite on Python 3.12 through
+   3.14, including Windows.
+
+Milestone 13: Interactive Debugger Validation
+----------------------------------------------
+
+Purpose
+   Validate the original debugging objective with realistic stopped-process
+   structures rather than printer snapshot tests alone.
+
+Implementation work
+   Build deterministic debugger fixtures containing native and Python nodes,
+   scalar and composite values, both switch banks, and live, stopped/deleted,
+   and erased map/mesh slots.  Add command-driven GDB and LLDB smoke tests that
+   inspect those fixtures without inferior calls.  Include malformed records,
+   typed-null values, and unsupported descriptor versions to verify safe
+   failure.
+
+Acceptance
+   A developer can navigate graph to node to endpoint to value using semantic
+   and implementation labels without knowing private template spellings.
+   Automated smoke tests match the debugger-independent decoder, and a manual
+   review records the commands and representative output for both debuggers.
+
+Implemented
+   The stopped-process fixture now publishes scalar, bundle, list, mutable-map,
+   node, and graph pointers together with typed-null, malformed-pointer,
+   invalid-record, and invalid-descriptor cases.  LLDB and GDB batch commands
+   assert semantic and implementation labels and navigate bundle fields, map
+   key/value children, and graph-to-node children without calling inferior
+   methods.  The LLDB gate passes on macOS and is enabled in native CI; the GDB
+   gate is enabled on Linux CI.  Local GDB execution in the OrbStack VM is a
+   known platform limitation because that VM denies ``ptrace`` register access,
+   but the script loads and registers its command there.
+
+   Expanding the fixture found two unreachable GDB reader bodies and corrected
+   them.  LLDB synthetic children now retain the semantic names requested by
+   the descriptor decoder.  The commands and expected success messages are
+   recorded in :doc:`../debugging`.
+
+Milestone 14: Adversarial Lifetime And Release Gate
+---------------------------------------------------
+
+Purpose
+   Stress ownership and nested-slot state transitions before freezing the
+   reviewed ABI fields.
+
+Implementation work
+   Add deterministic state-machine tests for construct, copy, move, start,
+   stop, delete, erase, reuse, and construction failure.  Generate map and mesh
+   key churn across capacity growth and delayed erase, and exercise repeated
+   Python/native transitions.  Keep checked-in benchmark and layout baselines
+   with thresholds that distinguish repeatable regressions from timer noise.
+
+Acceptance
+   ASan/UBSan pass the generated lifetime suite on macOS and Linux; periodic
+   TSan runs cover shared registries and Python bridge entry points.  Nested
+   steady state remains allocation-free, every stopped slot is destroyed once
+   on erase, and release evidence contains layouts, allocation counts,
+   benchmark distributions, compiler versions, and known platform limits.
+
+Implemented
+   A deterministic key-slot state machine mixes insert, duplicate insert,
+   delayed remove, resurrection, erase, capacity growth, move round trips, and
+   clear while an independent model verifies key ownership and every slot's
+   constructed/live/pending state after each transition.  A Python test runs
+   the same graph 32 times while alternating Python compute nodes and native
+   operations, validating that bridge type and state lifetimes survive repeated
+   run teardown.
+
+   The complete 447-case C++ value suite passes under ASan and UBSan on macOS
+   and on Ubuntu 24.04 with GCC 13.3; the Linux run contains 231,971 assertions.
+   The same 447 cases and 231,977 assertions pass under AppleClang 21
+   ThreadSanitizer, including the concurrent intern and registry tests.  A GCC
+   13.3 TSan build is warning-clean, but the OrbStack VM aborts its runtime
+   before ``main`` with an unsupported address-space mapping.  The focused
+   Python/native repetition test also passes.  Window benchmarks report zero
+   allocations and the exact compact pointer layout tests remain unchanged.
+   Periodic Python-entry TSan coverage and richer Python-node debugger fixtures
+   remain deferred until the native platform gates have accumulated stable CI
+   evidence.
+
 Review Evidence
 ---------------
 

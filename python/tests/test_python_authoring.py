@@ -36,6 +36,27 @@ def test_compute_nodes_mix_with_cpp_and_bind_keywords():
     check(eval_node(app, [2.5, 4.0], [10, 3]) == [51.0, 25.0], "mixed compute pipeline")
 
 
+def test_repeated_python_native_boundary_runs_preserve_type_and_state_lifetimes():
+    @hg.compute_node
+    def add_bias(value: TS[int], bias: int) -> TS[int]:
+        return value.value + bias
+
+    @hg.compute_node
+    def finish(value: TS[int]) -> TS[int]:
+        return value.value - 1
+
+    @graph
+    def app(value: TS[int]) -> TS[int]:
+        python_value = add_bias(value, 3)
+        native_value = (python_value + hg.const(2, tp=TS[int])) * hg.const(4, tp=TS[int])
+        return finish(native_value)
+
+    for run in range(32):
+        inputs = [run, run + 1, run - 2]
+        expected = [(value + 5) * 4 - 1 for value in inputs]
+        check(eval_node(app, inputs) == expected, f"mixed boundary run {run}")
+
+
 def test_python_node_type_records_identify_bridge_implementations():
     observed = {}
 

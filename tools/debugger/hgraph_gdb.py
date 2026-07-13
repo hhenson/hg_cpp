@@ -106,6 +106,11 @@ def record_at(address):
 def descriptor_at(address):
     if address == 0:
         return None
+    try:
+        descriptor_type = gdb.lookup_type("hgraph::DebugDescriptor")
+        return gdb.Value(address).cast(descriptor_type.pointer()).dereference()
+    except Exception:
+        return None
 
 
 def dynamic_layout_at(address):
@@ -114,11 +119,6 @@ def dynamic_layout_at(address):
     try:
         layout_type = gdb.lookup_type("hgraph::DebugDynamicLayout")
         return gdb.Value(address).cast(layout_type.pointer()).dereference()
-    except Exception:
-        return None
-    try:
-        descriptor_type = gdb.lookup_type("hgraph::DebugDescriptor")
-        return gdb.Value(address).cast(descriptor_type.pointer()).dereference()
     except Exception:
         return None
 
@@ -195,16 +195,16 @@ def target_pointer_size():
 def read_memory(address, size):
     if address == 0 or size <= 0:
         return None
+    try:
+        return bytes(gdb.selected_inferior().read_memory(address, size))
+    except Exception:
+        return None
 
 
 def read_unsigned(address, size=None):
     size = target_pointer_size() if size is None else size
     payload = read_memory(address, size)
     return int.from_bytes(payload, target_byte_order()) if payload is not None else None
-    try:
-        return bytes(gdb.selected_inferior().read_memory(address, size))
-    except Exception:
-        return None
 
 
 def record_plan_size(record_value):

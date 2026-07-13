@@ -5,6 +5,7 @@
 #include <hgraph/types/utils/slot_bitmap.h>
 #include <hgraph/types/utils/value_slot_store.h>
 
+#include <array>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -706,4 +707,165 @@ TEST_CASE("key slot store supports custom allocators with explicit pending erase
 
     REQUIRE(TrackedKey::live_instances == 0);
     REQUIRE(AllocationProbe::deallocations == 1);
+}
+
+TEST_CASE("key slot store survives deterministic adversarial lifecycle transitions", "[v2 slot utils][lifetime]")
+{
+    constexpr std::size_t key_count = 16;
+    constexpr std::size_t step_count = 1024;
+
+    enum class ModelState : std::uint8_t
+    {
+        Absent,
+        Live,
+        PendingErase,
+    };
+
+    const auto &plan = MemoryUtils::plan_for<std::int32_t>();
+    const auto ops = key_slot_store_ops_for<std::int32_t>();
+    KeySlotStore store(plan, ops);
+    std::array<ModelState, key_count> states{};
+    std::array<std::size_t, key_count> slots{};
+    slots.fill(KeySlotStore::npos);
+
+    std::uint32_t random_state = 0x6d2b79f5U;
+    const auto next_random = [&] {
+        random_state = random_state * 1664525U + 1013904223U;
+        return random_state;
+    };
+
+    const auto validate = [&] {
+        std::size_t expected_live = 0;
+        std::size_t expected_pending = 0;
+
+        for (std::size_t key_index = 0; key_index < key_count; ++key_index)
+        {
+            const auto key = static_cast<std::int32_t>(key_index);
+            const bool live = states[key_index] == ModelState::Live;
+            const bool constructed = states[key_index] != ModelState::Absent;
+            expected_live += live ? 1U : 0U;
+            expected_pending += states[key_index] == ModelState::PendingErase ? 1U : 0U;
+
+            CHECK(store.contains(key) == live);
+            CHECK(store.find_slot(key) == (live ? slots[key_index] : KeySlotStore::npos));
+            CHECK(store.find_stored_slot(key) == (constructed ? slots[key_index] : KeySlotStore::npos));
+            if (constructed)
+            {
+                REQUIRE(slots[key_index] < store.slot_capacity());
+                REQUIRE(store.try_key<std::int32_t>(slots[key_index]) != nullptr);
+                CHECK(*store.try_key<std::int32_t>(slots[key_index]) == key);
+            }
+        }
+
+        CHECK(store.size() == expected_live);
+        CHECK(store.pending_erase_count() == expected_pending);
+        CHECK(store.has_pending_erase() == (expected_pending != 0));
+
+        std::size_t constructed_slots = 0;
+        for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
+        {
+            std::size_t owner = key_count;
+            for (std::size_t key_index = 0; key_index < key_count; ++key_index)
+            {
+                if (states[key_index] != ModelState::Absent && slots[key_index] == slot)
+                {
+                    REQUIRE(owner == key_count);
+                    owner = key_index;
+                }
+            }
+
+            const bool expected_constructed = owner != key_count;
+            CHECK(store.slot_constructed(slot) == expected_constructed);
+            CHECK(store.slot_live(slot) ==
+                  (expected_constructed && states[owner] == ModelState::Live));
+            CHECK(store.slot_pending_erase(slot) ==
+                  (expected_constructed && states[owner] == ModelState::PendingErase));
+            constructed_slots += expected_constructed ? 1U : 0U;
+        }
+        CHECK(constructed_slots == expected_live + expected_pending);
+    };
+
+    for (std::size_t step = 0; step < step_count; ++step)
+    {
+        const std::uint32_t random = next_random();
+        const std::size_t key_index = (random >> 8U) % key_count;
+        const auto key = static_cast<std::int32_t>(key_index);
+
+        switch (random % 11U)
+        {
+            case 0:
+            case 1:
+            case 2:
+            case 3:
+            {
+                const ModelState previous = states[key_index];
+                const std::size_t previous_slot = slots[key_index];
+                const auto inserted = store.insert(key);
+                CHECK(inserted.inserted == (previous != ModelState::Live));
+                if (previous == ModelState::PendingErase) { CHECK(inserted.slot == previous_slot); }
+                states[key_index] = ModelState::Live;
+                slots[key_index] = inserted.slot;
+                break;
+            }
+            case 4:
+            case 5:
+            case 6:
+            {
+                const bool was_live = states[key_index] == ModelState::Live;
+                CHECK(store.remove(key) == was_live);
+                if (was_live) { states[key_index] = ModelState::PendingErase; }
+                break;
+            }
+            case 7:
+                store.erase_pending();
+                for (std::size_t index = 0; index < key_count; ++index)
+                {
+                    if (states[index] == ModelState::PendingErase)
+                    {
+                        states[index] = ModelState::Absent;
+                        slots[index] = KeySlotStore::npos;
+                    }
+                }
+                break;
+            case 8:
+                store.reserve_to(1U + ((random >> 16U) % 48U));
+                break;
+            case 9:
+            {
+                std::array<const std::int32_t *, key_count> addresses{};
+                for (std::size_t index = 0; index < key_count; ++index)
+                {
+                    if (states[index] != ModelState::Absent)
+                    {
+                        addresses[index] = store.try_key<std::int32_t>(slots[index]);
+                    }
+                }
+                KeySlotStore moved{std::move(store)};
+                for (std::size_t index = 0; index < key_count; ++index)
+                {
+                    if (addresses[index] != nullptr)
+                    {
+                        CHECK(moved.try_key<std::int32_t>(slots[index]) == addresses[index]);
+                    }
+                }
+                store = std::move(moved);
+                break;
+            }
+            case 10:
+                if ((random & 0x7000U) == 0)
+                {
+                    store.clear();
+                    states.fill(ModelState::Absent);
+                    slots.fill(KeySlotStore::npos);
+                }
+                break;
+        }
+
+        validate();
+    }
+
+    store.clear();
+    states.fill(ModelState::Absent);
+    slots.fill(KeySlotStore::npos);
+    validate();
 }

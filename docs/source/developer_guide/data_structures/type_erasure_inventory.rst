@@ -486,25 +486,33 @@ direct ``malloc`` calls or allocations made through unrelated external
 allocators, and a Windows shared build is not guaranteed to route allocations
 inside DLLs through the executable's overrides.  Each case performs a
 correctness check, warmup, and at least seven samples, then emits one
-machine-readable line containing median, minimum and maximum nanoseconds per
-operation, allocation/byte counts and a checksum.  It never fails on a timing
-threshold.
+machine-readable line containing median, minimum, maximum, tenth and ninetieth
+percentile, median absolute deviation, allocation/byte counts and a checksum.
+The header identifies the host label, compiler family and version, and target
+architecture.  It never fails on a timing threshold.
 
 The cases establish these migration comparisons:
 
 * atomic ``ValueView`` read;
 * scalar TS current-value read;
 * fixed composite TS child read;
+* dynamic-list read and construction/growth;
+* tick and duration window bound reads, view construction/read, mutation and
+  eviction, and combined mutation/read;
 * erased native ``NodeView::evaluate`` with node construction excluded;
 * repeated small graph construction/destruction from one reusable builder;
+* an allocation-free steady scheduled scan of map, mesh, and reduce nodes;
 * an alternating ``switch_`` run which constructs, stops, retains and destroys
   nested branch graphs through the normal runtime lifecycle.
 
 Use ``HGRAPH_TYPE_ERASURE_PERF_SAMPLES`` (minimum seven),
 ``HGRAPH_TYPE_ERASURE_PERF_WARMUP`` and
-``HGRAPH_TYPE_ERASURE_PERF_ITERATIONS`` to control a run.  The global iteration
-override is intended for smoke checks; omit it when recording comparative
-baselines because the cases have workload-appropriate defaults.
+``HGRAPH_TYPE_ERASURE_PERF_ITERATIONS`` to control a run.  Use
+``HGRAPH_TYPE_ERASURE_PERF_FILTER`` to select cases whose names contain one
+substring and ``HGRAPH_TYPE_ERASURE_PERF_HOST`` to attach a whitespace-free
+machine label.  The global iteration override is intended for smoke checks;
+omit it when recording comparative baselines because the cases have
+workload-appropriate defaults.
 
 .. code-block:: console
 
@@ -512,6 +520,33 @@ baselines because the cases have workload-appropriate defaults.
    cmake --build build --target hgraph_unit_tests_value hgraph_type_erasure_perf
    build/tests/cpp/hgraph_unit_tests_value "current type-erasure records retain their baseline layouts"
    build/tests/cpp/hgraph_type_erasure_perf
+
+Reproducible Linux comparison
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Linux performance evidence is recorded in the Ubuntu 24.04 OrbStack VM, not
+on a changing hosted CI runner.  Build both commits with the same GCC Release
+configuration.  Before each comparison record ``uname -a``, the relevant
+``lscpu`` output, ``c++ --version``, and the commit ids.  Pin each process to
+the same virtual CPU and run the old and new binaries alternately when more
+than one comparison cycle is required:
+
+.. code-block:: console
+
+   uname -a
+   lscpu
+   c++ --version
+   taskset -c 0 env \
+       HGRAPH_TYPE_ERASURE_PERF_HOST=orbstack-ubuntu24-x86_64 \
+       HGRAPH_TYPE_ERASURE_PERF_FILTER=tsw_ \
+       HGRAPH_TYPE_ERASURE_PERF_SAMPLES=21 \
+       HGRAPH_TYPE_ERASURE_PERF_WARMUP=5000 \
+       build/tests/cpp/hgraph_type_erasure_perf
+
+Report the median and relative median absolute deviation together.  Treat a
+sub-five-percent change as unresolved timer or host variation unless repeated
+cycles or a profiler attribute it to a specific path.  Allocation-count or
+layout changes are exact and are reviewed independently of timing noise.
 
 Provisional macOS baseline
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -51,6 +51,7 @@ configure_file("${HGRAPH_VERSION_HEADER_IN}" "${HGRAPH_VERSION_HEADER}" @ONLY)
 
 option(HGRAPH_BUILD_SHARED "Build hgraph_core as a shared library" OFF)
 option(HGRAPH_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+option(HGRAPH_FETCH_SIMDJSON "Fetch the supported simdjson release instead of using a system package" OFF)
 option(HGRAPH_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(HGRAPH_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 option(HGRAPH_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
@@ -60,10 +61,12 @@ option(HGRAPH_PYTHON_STABLE_ABI "Build the Python bridge against the CPython 3.1
 option(HGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS "Use local .venv Python/nanobind headers for IDE code models when Python support is disabled" ON)
 option(HGRAPH_ENABLE_COMPILER_CACHE "Use sccache or ccache when available" ON)
 option(HGRAPH_ENABLE_PCH "Use private precompiled headers for repository targets" ON)
+option(HGRAPH_ENABLE_DEBUGGER_SMOKE_TESTS "Run debugger subprocess smoke tests when the platform debugger is available" OFF)
 
-if(HGRAPH_BUILD_PYTHON_BINDINGS)
+if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_BUILD_SHARED)
     # Every static library linked into the extension must provide PIC on ELF
     # platforms, including dependencies created later through FetchContent.
+    # Shared native builds have the same requirement.
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
@@ -71,7 +74,7 @@ set(_hgraph_default_use_pyarrow_arrow OFF)
 if(HGRAPH_BUILD_PYTHON_BINDINGS)
     set(_hgraph_default_use_pyarrow_arrow ON)
 endif()
-option(HGRAPH_USE_PYARROW_ARROW "Use pyarrow's bundled Arrow libraries for Python bridge builds" "${_hgraph_default_use_pyarrow_arrow}")
+option(HGRAPH_USE_PYARROW_ARROW "Use pyarrow's bundled Arrow libraries for this build" "${_hgraph_default_use_pyarrow_arrow}")
 
 if(HGRAPH_ENABLE_COMPILER_CACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
     find_program(HGRAPH_COMPILER_CACHE_PROGRAM sccache)
@@ -149,9 +152,9 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(hgraph_options INTERFACE Threads::Threads)
 
-if(HGRAPH_BUILD_PYTHON_BINDINGS)
-    # Wheels must not retain a dependency on a package-manager shared library.
-    # Build simdjson as a private static dependency of the extension instead.
+if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_FETCH_SIMDJSON)
+    # Wheels must not retain a dependency on a package-manager shared library;
+    # hosted native builds can opt into the same pinned dependency explicitly.
     FetchContent_Declare(
         simdjson
         GIT_REPOSITORY https://github.com/simdjson/simdjson.git
@@ -205,15 +208,12 @@ endif()
 # ruling 2026-07-04): the Frame value kind and the table serialization family
 # are Arrow-native. A system/package-manager install is expected for normal
 # C++ builds (`brew install apache-arrow` / `apt install libarrow-dev`);
-# Arrow is too heavy to FetchContent by default. Python bridge builds may use
-# pyarrow's bundled Arrow dylibs instead so one Python process does not load
-# both system Arrow and wheel-bundled Arrow.
+# Arrow is too heavy to FetchContent by default. Explicit pyarrow-backed builds
+# may use its bundled libraries; the resulting native targets do not link the
+# Python runtime unless Python support is independently enabled.
 set(HGRAPH_PYARROW_LIBRARY_DIR "" CACHE PATH "Directory containing pyarrow's bundled Arrow libraries")
-set(HGRAPH_PYARROW_ABI_MAJOR "24" CACHE STRING "Required pyarrow/Arrow ABI major for Python bridge builds")
+set(HGRAPH_PYARROW_ABI_MAJOR "24" CACHE STRING "Required pyarrow/Arrow ABI major for pyarrow-backed builds")
 if(HGRAPH_USE_PYARROW_ARROW)
-    if(NOT (HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES))
-        message(FATAL_ERROR "HGRAPH_USE_PYARROW_ARROW requires Python support to be enabled")
-    endif()
     if(DEFINED Python3_EXECUTABLE AND NOT DEFINED Python_EXECUTABLE)
         set(Python_EXECUTABLE "${Python3_EXECUTABLE}")
     endif()
@@ -539,6 +539,7 @@ set(_hgraph_config_dependencies
     "  message(FATAL_ERROR \"hgraph requires simdjson >= 4.5; found \${simdjson_VERSION}\")\n"
     "endif()\n"
 )
+string(JOIN "" _hgraph_config_dependencies ${_hgraph_config_dependencies})
 if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     if(_hgraph_use_python_stable_abi)
         set(_hgraph_config_python_components "Interpreter Development.Module Development.SABIModule")

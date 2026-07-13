@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -132,6 +133,34 @@ namespace
         return values[values.size() / 2];
     }
 
+    [[nodiscard]] double percentile(std::vector<double> values, double quantile)
+    {
+        std::ranges::sort(values);
+        const double position = quantile * static_cast<double>(values.size() - 1);
+        const auto lower = static_cast<std::size_t>(position);
+        const auto upper = std::min(lower + 1, values.size() - 1);
+        const double fraction = position - static_cast<double>(lower);
+        return values[lower] + (values[upper] - values[lower]) * fraction;
+    }
+
+    [[nodiscard]] double median_absolute_deviation(const std::vector<double> &values)
+    {
+        const double center = median(values);
+        std::vector<double> deviations;
+        deviations.reserve(values.size());
+        for (const double value : values)
+        {
+            deviations.push_back(std::abs(value - center));
+        }
+        return median(std::move(deviations));
+    }
+
+    [[nodiscard]] bool benchmark_selected(std::string_view name) noexcept
+    {
+        const char *filter = std::getenv("HGRAPH_TYPE_ERASURE_PERF_FILTER");
+        return filter == nullptr || *filter == '\0' || name.contains(filter);
+    }
+
     void retain(std::uint64_t value) noexcept
     {
         g_retained_value = value;
@@ -142,6 +171,8 @@ namespace
     void run_benchmark(std::string_view name, std::size_t default_iterations, std::size_t samples,
                        std::size_t warmup_iterations, Operation &&operation, Check &&check)
     {
+        if (!benchmark_selected(name)) { return; }
+
         const std::size_t override_iterations = env_size("HGRAPH_TYPE_ERASURE_PERF_ITERATIONS", 0, 0);
         const std::size_t iterations = override_iterations == 0 ? default_iterations : override_iterations;
 
@@ -193,11 +224,18 @@ namespace
             throw std::runtime_error(std::string{name} + " produced an unstable checksum");
         }
 
+        const double elapsed_median = median(elapsed_per_op);
+        const double elapsed_mad = median_absolute_deviation(elapsed_per_op);
         std::cout << "benchmark"
                   << " name=" << name << " samples=" << samples << " iterations=" << iterations
-                  << " median_ns_per_op=" << median(elapsed_per_op)
+                  << " median_ns_per_op=" << elapsed_median
                   << " min_ns_per_op=" << *std::ranges::min_element(elapsed_per_op)
                   << " max_ns_per_op=" << *std::ranges::max_element(elapsed_per_op)
+                  << " p10_ns_per_op=" << percentile(elapsed_per_op, 0.10)
+                  << " p90_ns_per_op=" << percentile(elapsed_per_op, 0.90)
+                  << " mad_ns_per_op=" << elapsed_mad
+                  << " relative_mad_percent="
+                  << (elapsed_median == 0.0 ? 0.0 : elapsed_mad * 100.0 / elapsed_median)
                   << " median_allocations=" << median(allocations) << " median_allocations_per_op="
                   << static_cast<double>(median(allocations)) / static_cast<double>(iterations)
                   << " median_bytes=" << median(bytes)
@@ -360,8 +398,41 @@ int main()
     const std::size_t samples = env_size("HGRAPH_TYPE_ERASURE_PERF_SAMPLES", 7, 7);
     const std::size_t warmup = env_size("HGRAPH_TYPE_ERASURE_PERF_WARMUP", 64, 0);
 
-    std::cout << std::fixed << std::setprecision(3) << "type_erasure_perf format=1 samples=" << samples
-              << " warmup_iterations=" << warmup << '\n';
+    const char *filter = std::getenv("HGRAPH_TYPE_ERASURE_PERF_FILTER");
+    const char *host_label = std::getenv("HGRAPH_TYPE_ERASURE_PERF_HOST");
+#if defined(__apple_build_version__)
+    constexpr std::string_view compiler_family{"appleclang"};
+#elif defined(__clang__)
+    constexpr std::string_view compiler_family{"clang"};
+#elif defined(__GNUC__)
+    constexpr std::string_view compiler_family{"gcc"};
+#elif defined(_MSC_VER)
+    constexpr std::string_view compiler_family{"msvc"};
+#else
+    constexpr std::string_view compiler_family{"unknown"};
+#endif
+#if defined(__aarch64__) || defined(_M_ARM64)
+    constexpr std::string_view architecture{"arm64"};
+#elif defined(__x86_64__) || defined(_M_X64)
+    constexpr std::string_view architecture{"x86_64"};
+#else
+    constexpr std::string_view architecture{"unknown"};
+#endif
+    std::cout << std::fixed << std::setprecision(3) << "type_erasure_perf format=2 samples=" << samples
+              << " warmup_iterations=" << warmup << " filter="
+              << (filter == nullptr || *filter == '\0' ? "all" : filter) << " host="
+              << (host_label == nullptr || *host_label == '\0' ? "unspecified" : host_label)
+              << " compiler=" << compiler_family
+#if defined(__clang__)
+              << " compiler_version=" << __clang_major__ << '.' << __clang_minor__ << '.' << __clang_patchlevel__
+#elif defined(__GNUC__)
+              << " compiler_version=" << __GNUC__ << '.' << __GNUC_MINOR__ << '.' << __GNUC_PATCHLEVEL__
+#elif defined(_MSC_VER)
+              << " compiler_version=" << _MSC_VER
+#else
+              << " compiler_version=unknown"
+#endif
+              << " architecture=" << architecture << '\n';
 
     Value atomic_value{Int{41}};
     auto atomic_view = atomic_value.view();
@@ -480,6 +551,37 @@ int main()
             MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(++tick_time)});
         mutation.push(tick_value.view());
     }
+    auto tick_bound_window_data = tick_window.data_view();
+    auto tick_bound_window = tick_bound_window_data.as_window();
+    run_benchmark(
+        "tsw_tick_bound_back_read", 100000, samples, warmup,
+        [&] { return static_cast<std::uint64_t>(tick_bound_window.back().checked_as<Int>()); },
+        [](std::uint64_t value) {
+            if (value != 61) throw std::runtime_error("tick TSW bound back read failed");
+        });
+    run_benchmark(
+        "tsw_tick_view_back_read", 100000, samples, warmup,
+        [&] {
+            auto window_data = tick_window.data_view();
+            auto window = window_data.as_window();
+            return static_cast<std::uint64_t>(window.back().checked_as<Int>());
+        },
+        [](std::uint64_t value) {
+            if (value != 61) throw std::runtime_error("tick TSW view back read failed");
+        });
+    run_benchmark(
+        "tsw_tick_steady_push_evict_no_read", 20000, samples, warmup,
+        [&] {
+            auto window_data = tick_window.data_view();
+            auto window = window_data.as_window();
+            auto mutation = window.begin_mutation(
+                MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(++tick_time)});
+            mutation.push(tick_value.view());
+            return std::uint64_t{1};
+        },
+        [](std::uint64_t value) {
+            if (value != 1) throw std::runtime_error("tick TSW steady mutation failed");
+        });
     run_benchmark(
         "tsw_tick_steady_push_evict", 20000, samples, warmup,
         [&] {
@@ -505,6 +607,27 @@ int main()
             MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(duration_time += 11)});
         mutation.push(duration_value.view());
     }
+    auto duration_bound_window_data = duration_window.data_view();
+    auto duration_bound_window = duration_bound_window_data.as_window();
+    run_benchmark(
+        "tsw_duration_bound_back_read", 100000, samples, warmup,
+        [&] { return static_cast<std::uint64_t>(duration_bound_window.back().checked_as<Int>()); },
+        [](std::uint64_t value) {
+            if (value != 67) throw std::runtime_error("duration TSW bound back read failed");
+        });
+    run_benchmark(
+        "tsw_duration_steady_push_evict_no_read", 20000, samples, warmup,
+        [&] {
+            auto window_data = duration_window.data_view();
+            auto window = window_data.as_window();
+            auto mutation = window.begin_mutation(
+                MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(duration_time += 11)});
+            mutation.push(duration_value.view());
+            return std::uint64_t{1};
+        },
+        [](std::uint64_t value) {
+            if (value != 1) throw std::runtime_error("duration TSW steady mutation failed");
+        });
     run_benchmark(
         "tsw_duration_steady_push_evict", 20000, samples, warmup,
         [&] {

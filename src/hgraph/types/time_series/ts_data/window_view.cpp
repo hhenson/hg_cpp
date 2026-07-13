@@ -150,38 +150,58 @@ namespace hgraph
 
     ValueView TSWDataView::removed_value(DateTime evaluation_time) const
     {
-        if (!has_removed_value(evaluation_time))
+        const auto &ops = window_ops();
+        const auto *memory = storage_.data();
+        if (ops.evicted_element_impl == nullptr || ops.evicted_time_impl == nullptr || evaluation_time == MIN_DT ||
+            ops.evicted_time_impl(ops.context, memory) != evaluation_time ||
+            ops.evicted_element_impl(ops.context, memory) == nullptr)
         {
             throw std::logic_error("TSWDataView::removed_value: nothing was evicted this cycle");
         }
-        const auto &ops = window_ops();
-        return ValueView{layout().element_binding, ops.evicted_element_impl(ops.context, storage_.data())};
+        const auto &data_layout = *static_cast<const TSWDataLayout *>(ops.layout_impl(ops.context));
+        return ValueView{data_layout.element_binding, ops.evicted_element_impl(ops.context, memory)};
     }
 
     DateTime TSWDataView::first_modified_time() const
     {
-        return empty() ? MIN_DT : time_at(0);
+        const auto &ops = window_ops();
+        const auto *memory = storage_.data();
+        return ops.size_impl(ops.context, memory) == 0 ? MIN_DT : ops.time_at_impl(ops.context, memory, 0);
     }
 
     DateTime TSWDataView::time_at(std::size_t index) const
     {
         const auto &ops = window_ops();
-        if (index >= size()) { throw std::out_of_range("TSWDataView::time_at: index out of range"); }
-        return ops.time_at_impl(ops.context, storage_.data(), index);
+        const auto *memory = storage_.data();
+        if (index >= ops.size_impl(ops.context, memory))
+        {
+            throw std::out_of_range("TSWDataView::time_at: index out of range");
+        }
+        return ops.time_at_impl(ops.context, memory, index);
     }
 
     ValueView TSWDataView::time_value_at(std::size_t index) const
     {
         const auto &ops = window_ops();
-        if (index >= size()) { throw std::out_of_range("TSWDataView::time_value_at: index out of range"); }
-        return ValueView{layout().time_binding, ops.time_element_at_impl(ops.context, storage_.data(), index)};
+        const auto *memory = storage_.data();
+        if (index >= ops.size_impl(ops.context, memory))
+        {
+            throw std::out_of_range("TSWDataView::time_value_at: index out of range");
+        }
+        const auto &data_layout = *static_cast<const TSWDataLayout *>(ops.layout_impl(ops.context));
+        return ValueView{data_layout.time_binding, ops.time_element_at_impl(ops.context, memory, index)};
     }
 
     ValueView TSWDataView::at(std::size_t index) const
     {
         const auto &ops = window_ops();
-        if (index >= size()) { throw std::out_of_range("TSWDataView::at: index out of range"); }
-        return ValueView{layout().element_binding, ops.element_at_impl(ops.context, storage_.data(), index)};
+        const auto *memory = storage_.data();
+        if (index >= ops.size_impl(ops.context, memory))
+        {
+            throw std::out_of_range("TSWDataView::at: index out of range");
+        }
+        const auto &data_layout = *static_cast<const TSWDataLayout *>(ops.layout_impl(ops.context));
+        return ValueView{data_layout.element_binding, ops.element_at_impl(ops.context, memory, index)};
     }
 
     ValueView TSWDataView::operator[](std::size_t index) const
@@ -191,22 +211,35 @@ namespace hgraph
 
     ValueView TSWDataView::front() const
     {
-        if (empty()) { throw std::out_of_range("TSWDataView::front on empty window"); }
-        return at(0);
+        const auto &ops = window_ops();
+        const auto *memory = storage_.data();
+        if (ops.size_impl(ops.context, memory) == 0)
+        {
+            throw std::out_of_range("TSWDataView::front on empty window");
+        }
+        const auto &data_layout = *static_cast<const TSWDataLayout *>(ops.layout_impl(ops.context));
+        return ValueView{data_layout.element_binding, ops.element_at_impl(ops.context, memory, 0)};
     }
 
     ValueView TSWDataView::back() const
     {
-        if (empty()) { throw std::out_of_range("TSWDataView::back on empty window"); }
-        return at(size() - 1);
+        const auto &ops = window_ops();
+        const auto *memory = storage_.data();
+        const auto window_size = ops.size_impl(ops.context, memory);
+        if (window_size == 0) { throw std::out_of_range("TSWDataView::back on empty window"); }
+        const auto &data_layout = *static_cast<const TSWDataLayout *>(ops.layout_impl(ops.context));
+        return ValueView{data_layout.element_binding,
+                         ops.element_at_impl(ops.context, memory, window_size - 1)};
     }
 
     Range<ValueView> TSWDataView::values() const
     {
+        const auto &ops = window_ops();
+        const auto *memory = storage_.data();
         return Range<ValueView>{
-            .context   = &window_ops(),
-            .memory    = storage_.data(),
-            .limit     = size(),
+            .context   = &ops,
+            .memory    = memory,
+            .limit     = ops.size_impl(ops.context, memory),
             .predicate = nullptr,
             .projector = &project_value,
         };
@@ -214,10 +247,12 @@ namespace hgraph
 
     Range<ValueView> TSWDataView::time_values() const
     {
+        const auto &ops = window_ops();
+        const auto *memory = storage_.data();
         return Range<ValueView>{
-            .context   = &window_ops(),
-            .memory    = storage_.data(),
-            .limit     = size(),
+            .context   = &ops,
+            .memory    = memory,
+            .limit     = ops.size_impl(ops.context, memory),
             .predicate = nullptr,
             .projector = &project_time_value,
         };
@@ -225,10 +260,12 @@ namespace hgraph
 
     Range<DateTime> TSWDataView::value_times() const
     {
+        const auto &ops = window_ops();
+        const auto *memory = storage_.data();
         return Range<DateTime>{
-            .context   = &window_ops(),
-            .memory    = storage_.data(),
-            .limit     = size(),
+            .context   = &ops,
+            .memory    = memory,
+            .limit     = ops.size_impl(ops.context, memory),
             .predicate = nullptr,
             .projector = &project_time,
         };
@@ -246,7 +283,7 @@ namespace hgraph
 
     TSWDataMutationView TSWDataView::begin_mutation(DateTime evaluation_time) const
     {
-        return TSWDataMutationView{base(), evaluation_time};
+        return TSWDataMutationView{storage_, evaluation_time, TrustedStorageTag{}};
     }
 
     const TSWDataOps &TSWDataView::window_ops() const
@@ -275,13 +312,16 @@ namespace hgraph
     }
 
     TSWDataMutationView::TSWDataMutationView(TSDataView view, DateTime evaluation_time)
-        : TSWDataView(TSDataView{view.storage_ref()}),
-          mutation_(view.begin_mutation(evaluation_time))
+        : TSWDataMutationView(TSWDataStorageRef{view.storage_ref(), TSTypeKind::TSW}, evaluation_time,
+                              TrustedStorageTag{})
     {
-        if (view.schema() == nullptr || view.schema()->kind != TSTypeKind::TSW)
-        {
-            throw std::invalid_argument("TSWDataMutationView requires a TSW TSData kind");
-        }
+    }
+
+    TSWDataMutationView::TSWDataMutationView(TSWDataStorageRef storage, DateTime evaluation_time,
+                                             TrustedStorageTag tag)
+        : TSWDataView(storage, tag),
+          mutation_(TSDataView{storage.storage_ref()}.begin_mutation(evaluation_time))
+    {
     }
 
     TSWDataMutationView::TSWDataMutationView(TSWDataMutationView &&) noexcept = default;
@@ -300,17 +340,17 @@ namespace hgraph
 
     void TSWDataMutationView::push(const ValueView &source)
     {
-        if (mutation_.modified(current_mutation_time()))
+        const auto &ops = window_ops();
+        if (mutation_.modified(ops, current_mutation_time()))
         {
             throw std::logic_error("TSWDataMutationView::push allows only one window tick per evaluation time");
         }
-        const auto &ops = window_ops();
         if (ops.push_impl == nullptr)
         {
             throw std::logic_error("TSWDataMutationView::push is not supported by this TSW ops");
         }
-        ops.push_impl(ops.context, mutation_.mutable_data(), source, current_mutation_time());
-        mutation_.mark_modified();
+        ops.push_impl(ops.context, mutation_.mutable_data(ops), source, current_mutation_time());
+        mutation_.mark_modified(ops);
     }
 
     bool TSWDataMutationView::copy_value_from(const ValueView &source)

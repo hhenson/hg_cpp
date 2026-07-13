@@ -22,6 +22,40 @@ target_link_libraries(hgraph_header_compile_check
 hgraph_enable_private_pch(hgraph_header_compile_check)
 add_test(NAME hgraph.header_compile_check COMMAND hgraph_header_compile_check)
 
+add_library(hgraph_abi_boundary_producer SHARED
+    abi_boundary/producer.cpp
+    ${PROJECT_SOURCE_DIR}/src/hgraph/types/type_pointer.cpp
+    ${PROJECT_SOURCE_DIR}/src/hgraph/types/metadata/type_record_registry.cpp
+)
+
+target_link_libraries(hgraph_abi_boundary_producer
+    PRIVATE
+        hgraph::options
+)
+
+target_compile_definitions(hgraph_abi_boundary_producer
+    PRIVATE
+        HGRAPH_ABI_FIXTURE_BUILD
+        HGRAPH_STATIC_DEFINE
+)
+
+set_target_properties(hgraph_abi_boundary_producer PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES
+)
+
+add_executable(hgraph_abi_boundary_test
+    abi_boundary/consumer.cpp
+)
+
+target_link_libraries(hgraph_abi_boundary_test
+    PRIVATE
+        hgraph_abi_boundary_producer
+        hgraph::core
+)
+
+add_test(NAME hgraph.abi_boundary COMMAND hgraph_abi_boundary_test)
+
 add_executable(hgraph_debugger_fixture
     ../debugger/debugger_fixture.cpp
 )
@@ -38,6 +72,37 @@ else()
     target_compile_options(hgraph_debugger_fixture PRIVATE -O0 -g)
 endif()
 add_test(NAME hgraph.debugger_fixture COMMAND hgraph_debugger_fixture)
+
+if(HGRAPH_ENABLE_DEBUGGER_SMOKE_TESTS AND APPLE)
+    find_program(HGRAPH_LLDB_EXECUTABLE lldb)
+    if(HGRAPH_LLDB_EXECUTABLE)
+        add_test(NAME hgraph.debugger_lldb
+            COMMAND "${HGRAPH_LLDB_EXECUTABLE}" --batch
+                -o "command script import \"${PROJECT_SOURCE_DIR}/tools/debugger/hgraph_lldb.py\""
+                -o "command script import \"${PROJECT_SOURCE_DIR}/tests/debugger/hgraph_lldb_smoke.py\""
+                -o "breakpoint set --name hgraph_debugger_fixture_stop"
+                -o run
+                -o hgraph-smoke
+                "$<TARGET_FILE:hgraph_debugger_fixture>"
+        )
+        set_tests_properties(hgraph.debugger_lldb PROPERTIES LABELS debugger TIMEOUT 75)
+    endif()
+elseif(HGRAPH_ENABLE_DEBUGGER_SMOKE_TESTS AND UNIX)
+    find_program(HGRAPH_GDB_EXECUTABLE gdb)
+    if(HGRAPH_GDB_EXECUTABLE)
+        add_test(NAME hgraph.debugger_gdb
+            COMMAND "${HGRAPH_GDB_EXECUTABLE}" --nx --batch
+                -ex "set pagination off"
+                -ex "source ${PROJECT_SOURCE_DIR}/tools/debugger/hgraph_gdb.py"
+                -ex "source ${PROJECT_SOURCE_DIR}/tests/debugger/hgraph_gdb_smoke.py"
+                -ex "break hgraph_debugger_fixture_stop"
+                -ex run
+                -ex hgraph-smoke
+                "$<TARGET_FILE:hgraph_debugger_fixture>"
+        )
+        set_tests_properties(hgraph.debugger_gdb PROPERTIES LABELS debugger TIMEOUT 75)
+    endif()
+endif()
 
 # Catch2 for the utility test suites.
 find_package(Catch2 3 CONFIG QUIET)

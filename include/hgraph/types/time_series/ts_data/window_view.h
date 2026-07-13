@@ -83,6 +83,11 @@ namespace hgraph
         [[nodiscard]] TSWDataMutationView begin_mutation(DateTime evaluation_time) const;
 
       protected:
+        struct TrustedStorageTag
+        {
+        };
+
+        TSWDataView(TSWDataStorageRef storage, TrustedStorageTag) noexcept : storage_(storage) {}
         [[nodiscard]] const TSWDataOps &window_ops() const;
 
       private:
@@ -118,6 +123,10 @@ namespace hgraph
         [[nodiscard]] bool copy_value_from(const ValueView &source);
 
       private:
+        friend class TSWDataView;
+
+        TSWDataMutationView(TSWDataStorageRef storage, DateTime evaluation_time, TrustedStorageTag);
+
         TSDataMutationView mutation_;
     };
 }  // namespace hgraph
