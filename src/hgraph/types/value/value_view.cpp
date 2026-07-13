@@ -34,10 +34,22 @@ namespace hgraph
         [[nodiscard]] bool value_schema_equivalent(const ValueTypeMetaData *lhs,
                                                    const ValueTypeMetaData *rhs) noexcept
         {
-            lhs = structural_schema(lhs);
-            rhs = structural_schema(rhs);
             if (lhs == rhs) { return true; }
             if (lhs == nullptr || rhs == nullptr) { return false; }
+            // Owned[T] borrows Bundle-shaped indexed operations, but is an
+            // indirection schema rather than T's structural twin.
+            if (lhs->is_owned() || rhs->is_owned()) { return false; }
+
+            // A named bundle is structurally compatible with its anonymous
+            // twin, but two different named bundles retain nominal identity.
+            if (lhs->try_value_kind() == ValueTypeKind::Bundle &&
+                rhs->try_value_kind() == ValueTypeKind::Bundle)
+            {
+                if (lhs->is_named_bundle() && rhs->is_named_bundle()) { return false; }
+                if (lhs->is_named_bundle()) { lhs = lhs->wrapped_un_named; }
+                if (rhs->is_named_bundle()) { rhs = rhs->wrapped_un_named; }
+                if (lhs == rhs) { return true; }
+            }
 
             const auto lhs_kind = lhs->try_value_kind();
             const auto rhs_kind = rhs->try_value_kind();
@@ -53,6 +65,13 @@ namespace hgraph
                     if (lhs->field_count != rhs->field_count) { return false; }
                     for (std::size_t index = 0; index < lhs->field_count; ++index)
                     {
+                        const std::string_view lhs_name = lhs->fields[index].name != nullptr
+                                                              ? std::string_view{lhs->fields[index].name}
+                                                              : std::string_view{};
+                        const std::string_view rhs_name = rhs->fields[index].name != nullptr
+                                                              ? std::string_view{rhs->fields[index].name}
+                                                              : std::string_view{};
+                        if (lhs_name != rhs_name) { return false; }
                         if (!value_schema_equivalent(lhs->fields[index].type, rhs->fields[index].type))
                         {
                             return false;

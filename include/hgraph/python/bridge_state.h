@@ -62,7 +62,11 @@ namespace hgraph::python_bridge
         return slot;
     }
 
-    /** CompoundScalar bundle name -> python class (read-back reconstruction). */
+    /**
+     * CompoundScalar schema address -> python class (read-back
+     * reconstruction). Schema identity is nominal; labels are diagnostic and
+     * are not a safe registry key once namespaces and specialisations exist.
+     */
     [[nodiscard]] inline nb::dict &bundle_class_registry()
     {
         static auto *registry = new nb::dict();

@@ -1,11 +1,6 @@
 # Ported from ext/main/hgraph_unit_tests/_wiring/test_dispatch.py
 import pytest
 
-pytestmark = pytest.mark.skip(
-    reason="gap: runtime dispatch over CompoundScalar hierarchies needs bundle lineage + "
-           "per-tick concrete-schema values (design pending); the dispatch composition "
-           "itself is landed (python/tests/test_dispatch_scalar.py)")
-
 from typing import Union
 from hgraph import graph, TS, CompoundScalar, operator
 from hgraph import dispatch_, dispatch, format_, cast_
@@ -45,6 +40,7 @@ def test_dispatch_1():
     ]
 
 
+@pytest.mark.skip(reason="gap: Union[TS[A], TS[B]] overload annotations are not represented by TypePattern yet")
 def test_dispatch_2():
     class Animal(CompoundScalar): ...
 

@@ -49,7 +49,7 @@ namespace hgraph
     };
 
     static_assert(sizeof(ValueOpsKind) == 1);
-    inline constexpr std::uint16_t VALUE_OPS_ABI_VERSION = 1;
+    inline constexpr std::uint16_t VALUE_OPS_ABI_VERSION = 2;
 
     struct ValueOps;
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -130,6 +130,16 @@ namespace hgraph
         void (*copy_assign_view_impl)(const void *context, const ValueTypeRef &binding, void *dst,
                                       const void *memory) = nullptr;
         ValueTypeRef (*owning_type_impl)(const void *context, ValueTypeRef view_type) = nullptr;
+        bool (*accepts_source_impl)(const void *context, ValueTypeRef binding,
+                                    ValueTypeRef source) noexcept = nullptr;
+        void (*copy_assign_from_impl)(const void *context, ValueTypeRef binding, void *dst,
+                                      ValueTypeRef source, const void *src) = nullptr;
+        void (*move_assign_from_impl)(const void *context, ValueTypeRef binding, void *dst,
+                                      ValueTypeRef source, void *src) = nullptr;
+        ValueTypeRef (*concrete_type_impl)(const void *context, ValueTypeRef binding,
+                                           const void *memory) noexcept = nullptr;
+        const void *(*concrete_memory_impl)(const void *context, const void *memory) noexcept = nullptr;
+        void *(*mutable_concrete_memory_impl)(const void *context, void *memory) noexcept = nullptr;
 
         [[nodiscard]] std::size_t hash(const void *memory) const
         {
@@ -240,6 +250,57 @@ namespace hgraph
                 return;
             }
             binding.checked_plan().copy_assign(dst, memory);
+        }
+
+        [[nodiscard]] bool accepts_source(ValueTypeRef binding, ValueTypeRef source) const noexcept
+        {
+            if (accepts_source_impl != nullptr) { return accepts_source_impl(context, binding, source); }
+            return binding && source && binding.plan() == source.plan();
+        }
+
+        void copy_assign_from(ValueTypeRef binding, void *dst, ValueTypeRef source, const void *src) const
+        {
+            if (!accepts_source(binding, source))
+            {
+                throw std::invalid_argument("ValueOps::copy_assign_from received an incompatible source binding");
+            }
+            if (copy_assign_from_impl != nullptr)
+            {
+                copy_assign_from_impl(context, binding, dst, source, src);
+                return;
+            }
+            binding.checked_plan().copy_assign(dst, src);
+        }
+
+        void move_assign_from(ValueTypeRef binding, void *dst, ValueTypeRef source, void *src) const
+        {
+            if (!accepts_source(binding, source))
+            {
+                throw std::invalid_argument("ValueOps::move_assign_from received an incompatible source binding");
+            }
+            if (move_assign_from_impl != nullptr)
+            {
+                move_assign_from_impl(context, binding, dst, source, src);
+                return;
+            }
+            binding.checked_plan().move_assign(dst, src);
+        }
+
+        [[nodiscard]] ValueTypeRef concrete_type(ValueTypeRef binding, const void *memory) const noexcept
+        {
+            return concrete_type_impl != nullptr ? concrete_type_impl(context, binding, memory) : binding;
+        }
+
+        [[nodiscard]] const void *concrete_memory(const void *memory) const noexcept
+        {
+            return concrete_memory_impl != nullptr ? concrete_memory_impl(context, memory) : memory;
+        }
+
+        [[nodiscard]] void *mutable_concrete_memory(void *memory) const noexcept
+        {
+            return mutable_concrete_memory_impl != nullptr
+                       ? mutable_concrete_memory_impl(context, memory)
+                       : memory;
         }
     };
 

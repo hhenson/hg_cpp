@@ -67,6 +67,9 @@ namespace hgraph
         [[nodiscard]] TSDataTypeRef data_type_for(const TSValueTypeMetaData *schema);
         /** Canonical output role record. */
         [[nodiscard]] TSOutputTypeRef output_type_for(const TSValueTypeMetaData *schema);
+        /** Output role using an explicitly realized value binding. */
+        [[nodiscard]] TSOutputTypeRef output_type_for(const TSValueTypeMetaData *schema,
+                                                      ValueTypeRef value_binding);
         [[nodiscard]] TSDataTypeRef find_data_type(const TSValueTypeMetaData *schema) const noexcept;
         [[nodiscard]] TSOutputTypeRef find_output_type(const TSValueTypeMetaData *schema) const noexcept;
 
@@ -85,6 +88,24 @@ namespace hgraph
         std::unordered_map<const TSValueTypeMetaData *, const MemoryUtils::StoragePlan *> cache_;
         std::unordered_map<const TSValueTypeMetaData *, TSDataTypeRef>                     data_type_cache_;
         std::unordered_map<const TSValueTypeMetaData *, TSOutputTypeRef>                   output_type_cache_;
+
+        struct RealizedOutputKey
+        {
+            const TSValueTypeMetaData *schema{nullptr};
+            ValueTypeRef value{};
+            bool operator==(const RealizedOutputKey &) const noexcept = default;
+        };
+        struct RealizedOutputKeyHash
+        {
+            std::size_t operator()(const RealizedOutputKey &key) const noexcept
+            {
+                auto seed = std::hash<const TSValueTypeMetaData *>{}(key.schema);
+                return seed ^ (std::hash<ValueTypeRef>{}(key.value) + 0x9e3779b9U +
+                               (seed << 6U) + (seed >> 2U));
+            }
+        };
+        std::unordered_map<RealizedOutputKey, TSOutputTypeRef, RealizedOutputKeyHash>
+            realized_output_type_cache_;
     };
 }  // namespace hgraph
 

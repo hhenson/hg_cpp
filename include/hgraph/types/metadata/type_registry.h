@@ -29,6 +29,21 @@
 
 namespace hgraph
 {
+    /** Atomic copy of the registered Bundle graph at one hierarchy generation. */
+    struct BundleHierarchySnapshot
+    {
+        struct Entry
+        {
+            const ValueTypeMetaData *schema{nullptr};
+            std::vector<const ValueTypeMetaData *> parents{};
+            bool is_abstract{false};
+            bool has_children{false};
+        };
+
+        std::uint64_t generation{0};
+        std::vector<Entry> entries{};
+    };
+
     /**
      * Process-wide registry that interns value and time-series schemas.
      *
@@ -94,6 +109,20 @@ namespace hgraph
          */
         const ValueTypeMetaData *un_named_bundle(
             const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields);
+        /** Bundle-shaped, one-pointer owner for an on-demand pointee value. */
+        const ValueTypeMetaData *owned(const ValueTypeMetaData *target);
+        /**
+         * Define a self-recursive named Bundle. A null field type denotes an
+         * ``Owned<Self>`` edge; all other fields are ordinary value schemas.
+         */
+        const ValueTypeMetaData *recursive_bundle(
+            std::string_view bundle_namespace,
+            std::string_view local_name,
+            const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields,
+            const std::vector<const ValueTypeMetaData *> &parents = {},
+            bool is_abstract = false,
+            std::string_view discriminator = "__type__",
+            const std::vector<const ValueTypeMetaData *> &generic_arguments = {});
         /**
          * Intern a *named* bundle value-schema. Internally synthesises the
          * un-named bundle for ``fields``, then interns a named wrapper keyed
@@ -103,6 +132,15 @@ namespace hgraph
          */
         const ValueTypeMetaData *bundle(std::string_view name,
                                         const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields);
+        /** Intern a qualified named bundle and register its immediate bundle parents. */
+        const ValueTypeMetaData *bundle(
+            std::string_view bundle_namespace,
+            std::string_view local_name,
+            const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields,
+            const std::vector<const ValueTypeMetaData *> &parents = {},
+            bool is_abstract = false,
+            std::string_view discriminator = "__type__",
+            const std::vector<const ValueTypeMetaData *> &generic_arguments = {});
         /**
          * Look up a previously-registered *named* bundle by name. Returns
          * the canonical named-bundle metadata, or ``nullptr`` if no schema
@@ -111,6 +149,28 @@ namespace hgraph
          * value kind sharing the name). Lookup-only — does not synthesise.
          */
         [[nodiscard]] const ValueTypeMetaData *named_bundle(std::string_view name) const;
+        [[nodiscard]] const ValueTypeMetaData *named_bundle(std::string_view bundle_namespace,
+                                                             std::string_view local_name) const;
+
+        /** True when ``candidate`` is ``base`` or has ``base`` in its registered ancestry. */
+        [[nodiscard]] bool bundle_is_a(const ValueTypeMetaData *candidate,
+                                       const ValueTypeMetaData *base) const;
+        /**
+         * Return the closed registered descendant set for ``base`` in
+         * registration order. ``base`` is included when it is concrete and
+         * ``include_base`` is true. Abstract bundles are omitted unless
+         * ``include_abstract`` is requested.
+         */
+        [[nodiscard]] std::vector<const ValueTypeMetaData *> bundle_descendants(
+            const ValueTypeMetaData *base,
+            bool include_base = true,
+            bool include_abstract = false) const;
+        /** Snapshot all currently registered named Bundles in registration order. */
+        [[nodiscard]] std::vector<const ValueTypeMetaData *> named_bundles() const;
+        /** Current hierarchy generation; incremented whenever a bundle edge or abstract flag is added. */
+        [[nodiscard]] std::uint64_t bundle_hierarchy_generation() const noexcept;
+        /** Copy the complete Bundle hierarchy while holding the registry lock once. */
+        [[nodiscard]] BundleHierarchySnapshot bundle_hierarchy_snapshot() const;
 
         /**
          * Intern a NOMINAL enum scalar (design record: schemas/scalar.rst,
@@ -355,7 +415,8 @@ namespace hgraph
         /** Key for the named-bundle cache: ``(name, un_named_pointer)``. Two named bundles with the same fields but different names hash to different buckets. */
         struct NamedBundleKey
         {
-            std::string name;
+            std::string bundle_namespace;
+            std::string local_name;
             const ValueTypeMetaData *un_named{nullptr};
             bool operator==(const NamedBundleKey &) const noexcept = default;
         };
@@ -363,7 +424,8 @@ namespace hgraph
         {
             size_t operator()(const NamedBundleKey &k) const noexcept
             {
-                size_t seed = std::hash<std::string>{}(k.name);
+                size_t seed = std::hash<std::string>{}(k.bundle_namespace);
+                seed = combine(seed, std::hash<std::string>{}(k.local_name));
                 return combine(seed, std::hash<const ValueTypeMetaData *>{}(k.un_named));
             }
         };
@@ -525,6 +587,8 @@ namespace hgraph
         std::vector<std::unique_ptr<std::string>> name_storage_;
         std::vector<std::unique_ptr<ValueFieldMetaData[]>> value_field_storage_;
         std::vector<std::unique_ptr<TSFieldMetaData[]>> ts_field_storage_;
+        std::vector<std::unique_ptr<BundleHierarchyMetaData>> bundle_hierarchy_storage_;
+        std::uint64_t bundle_hierarchy_generation_{0};
 
         // Identity caches: thin wrappers over InternTable that own the
         // metadata. Equivalent keys always return the same canonical pointer.
@@ -532,7 +596,9 @@ namespace hgraph
         InternTable<std::string, ValueTypeMetaData> synthetic_scalar_cache_;
         InternTable<TupleKey, ValueTypeMetaData, TupleKeyHash> tuple_cache_;
         InternTable<BundleKey, ValueTypeMetaData, BundleKeyHash> bundle_cache_;
+        InternTable<const ValueTypeMetaData *, ValueTypeMetaData> owned_cache_;
         InternTable<NamedBundleKey, ValueTypeMetaData, NamedBundleKeyHash> named_bundle_cache_;
+        std::vector<std::unique_ptr<ValueTypeMetaData>> recursive_bundle_storage_;
         InternTable<std::string, ValueTypeMetaData> named_enum_cache_;
         InternTable<ListKey, ValueTypeMetaData, ListKeyHash> list_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> set_cache_;

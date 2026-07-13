@@ -222,6 +222,7 @@ namespace hgraph
         cache_.clear();
         data_type_cache_.clear();
         output_type_cache_.clear();
+        realized_output_type_cache_.clear();
         plan_detail::clear_atomic_ts_data_ops();
         plan_detail::clear_fixed_ts_data_contexts();
         plan_detail::clear_dynamic_list_ts_data_contexts();
@@ -327,6 +328,47 @@ namespace hgraph
             std::integral_constant<TypeRole, TypeRole::Output>{});
         std::lock_guard<std::mutex> lock(mutex_);
         return output_type_cache_.try_emplace(schema, type).first->second;
+    }
+
+    TSOutputTypeRef TSDataPlanFactory::output_type_for(const TSValueTypeMetaData *schema,
+                                                       ValueTypeRef value_binding)
+    {
+        if (schema == nullptr || !migrated_root(schema))
+        {
+            throw std::invalid_argument("realized output_type_for requires a migrated TS schema");
+        }
+        if (!plan_detail::is_compact_atomic_ts_data(*schema) || !value_binding ||
+            value_binding.schema() != schema->value_schema)
+        {
+            throw std::invalid_argument(
+                "realized output_type_for requires an atomic TS and a binding for its declared value schema");
+        }
+
+        const RealizedOutputKey key{schema, value_binding};
+        {
+            std::lock_guard lock(mutex_);
+            if (const auto found = realized_output_type_cache_.find(key);
+                found != realized_output_type_cache_.end())
+            {
+                return found->second;
+            }
+        }
+
+        auto builder = MemoryUtils::named_tuple();
+        builder.reserve(2);
+        builder.add_field("value", value_binding.checked_plan());
+        builder.add_field("tracking", MemoryUtils::plan_for<TSDataTracking>());
+        const auto &plan = builder.build();
+        const auto &value = plan.component("value");
+        const auto &tracking = plan.component("tracking");
+        const auto &ops = plan_detail::atomic_ts_data_ops(
+            schema->kind, value_binding, value_binding, plan, value.offset, tracking.offset);
+        const auto type = checked_ts_role_type(
+            intern_ts_type(*schema, TypeRole::Output, plan, ops, "ts.output.realized"),
+            std::integral_constant<TypeRole, TypeRole::Output>{});
+
+        std::lock_guard lock(mutex_);
+        return realized_output_type_cache_.try_emplace(key, type).first->second;
     }
 
     TSDataTypeRef TSDataPlanFactory::find_data_type(const TSValueTypeMetaData *schema) const noexcept

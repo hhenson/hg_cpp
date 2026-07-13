@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 namespace hgraph::ts_data_plan_factory_detail
 {
@@ -120,24 +121,6 @@ namespace hgraph::ts_data_plan_factory_detail
             return atomic_mutable_value_memory(context, memory);
         }
 
-        static void copy_assign_required(const MemoryUtils::StoragePlan &plan, void *dst, const void *src)
-        {
-            if (!plan.can_copy_assign())
-            {
-                throw std::logic_error("TSData atomic assignment requires copy-assignable value storage");
-            }
-            plan.copy_assign(dst, src);
-        }
-
-        static void move_assign_required(const MemoryUtils::StoragePlan &plan, void *dst, void *src)
-        {
-            if (!plan.can_move_assign())
-            {
-                throw std::logic_error("TSData atomic assignment requires move-assignable value storage");
-            }
-            plan.move_assign(dst, src);
-        }
-
         /** Same binding, or distinct schema identities over ONE layout
             (variadic tuple vs list: the PLAN is the layout contract; the ops
             may be per-binding variants, e.g. tuple-shaped python read-back). */
@@ -146,6 +129,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             if (source == bound) { return true; }
             if (source == nullptr || bound == nullptr) { return false; }
+            if (bound.ops_ref().accepts_source(bound, source)) { return true; }
             return source.plan() == bound.plan();
         }
 
@@ -168,14 +152,23 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto *layout = atomic_layout(context);
             if (!atomic_value_binding_compatible(source.binding(), layout->value_binding))
             {
-                throw std::invalid_argument("TSData atomic copy requires the bound value schema and plan");
+                throw std::invalid_argument(
+                    "TSData atomic copy cannot assign source '" +
+                    std::string{source.schema() != nullptr ? source.schema()->name() : "<unbound>"} +
+                    "' to bound value '" +
+                    std::string{layout->value_binding.schema() != nullptr
+                                    ? layout->value_binding.schema()->name()
+                                    : "<unbound>"} + "'");
             }
 
             const auto *tracking       = atomic_tracking(context, memory);
             const bool  first_for_time = tracking->last_modified_time != modified_time;
 
-            const auto &value_plan = layout->value_binding.checked_plan();
-            copy_assign_required(value_plan, atomic_mutable_value_memory(context, memory), source.data());
+            layout->value_binding.ops_ref().copy_assign_from(
+                layout->value_binding,
+                atomic_mutable_value_memory(context, memory),
+                source.binding(),
+                source.data());
             return first_for_time;
         }
 
@@ -208,10 +201,11 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto *tracking       = atomic_tracking(context, memory);
             const bool  first_for_time = tracking->last_modified_time != modified_time;
 
-            const auto &value_plan = layout->value_binding.checked_plan();
-            move_assign_required(value_plan,
-                                 atomic_mutable_value_memory(context, memory),
-                                 const_cast<void *>(source.data()));
+            layout->value_binding.ops_ref().move_assign_from(
+                layout->value_binding,
+                atomic_mutable_value_memory(context, memory),
+                source.binding(),
+                const_cast<void *>(source.data()));
             return first_for_time;
         }
 

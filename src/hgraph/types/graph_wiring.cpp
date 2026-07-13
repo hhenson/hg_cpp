@@ -1,4 +1,5 @@
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/operator_dispatch.h>   // context scope stack (OperatorRegistry)
 #include <hgraph/types/subgraph_wiring.h>
 
@@ -1084,8 +1085,11 @@ namespace hgraph
         }
 
         apply_service_rank_dependencies();
+        const auto realization = TypeRealizationSnapshot::capture(TypeRegistry::instance());
+        TypeRealizationScope realization_scope{realization.get()};
         RankedGraphBuild build = build_ranked_graph(impl_->instances, nullptr);
         validate_same_cycle_pairs(build.index_of);
+        build.graph_builder.type_realization(realization);
         build.graph_builder.global_state(std::move(impl_->global_state));  // carry wiring-time entries onto the graph
         for (const auto [key, boxed] : impl_->traits.as_value().view().as_map())
         {

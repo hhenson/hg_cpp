@@ -15,7 +15,9 @@ namespace hgraph
         {
             if (record.ops_abi_version != VALUE_OPS_ABI_VERSION)
             {
-                throw std::invalid_argument("ValueTypeRef requires value ops ABI version 1");
+                throw std::invalid_argument(
+                    "ValueTypeRef requires value ops ABI version " +
+                    std::to_string(VALUE_OPS_ABI_VERSION));
             }
             const auto *ops = static_cast<const ValueOps *>(record.ops);
             if (ops == nullptr || ops->kind <= ValueOpsKind::Invalid || ops->kind > ValueOpsKind::MutableMap)

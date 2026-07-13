@@ -31,6 +31,7 @@ set(HGRAPH_RUNTIME_SOURCES
     hgraph/types/metadata/ts_data_slot_ops.cpp
     hgraph/types/metadata/ts_data_window_ops.cpp
     hgraph/types/metadata/type_record_registry.cpp
+    hgraph/types/metadata/type_realization.cpp
     hgraph/types/metadata/type_registry.cpp
     hgraph/types/metadata/value_plan_factory.cpp
     hgraph/types/primitive_types.cpp

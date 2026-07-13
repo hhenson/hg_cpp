@@ -1,5 +1,7 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 
+#include <hgraph/types/metadata/type_realization.h>
+
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
 #include <hgraph/python/bridge_state.h>
 #endif
@@ -10,13 +12,18 @@
 #include <hgraph/types/value/mutable_container_ops.h>
 #include <hgraph/util/scope.h>
 
+#include <algorithm>
 #include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <fmt/format.h>
 #include <iterator>
+#include <new>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -106,6 +113,151 @@ namespace hgraph
             std::size_t             stride{0};
         };
 
+        struct OwnedAllocation
+        {
+            const TypeRecord *record{nullptr};
+        };
+
+        struct OwnedValueEntry;
+
+        [[nodiscard]] constexpr std::size_t align_up(std::size_t value, std::size_t alignment) noexcept
+        {
+            return (value + alignment - 1U) & ~(alignment - 1U);
+        }
+
+        [[nodiscard]] const OwnedAllocation *owned_allocation(const void *memory) noexcept
+        {
+            return memory != nullptr ? *static_cast<OwnedAllocation *const *>(memory) : nullptr;
+        }
+
+        [[nodiscard]] OwnedAllocation *owned_allocation(void *memory) noexcept
+        {
+            return memory != nullptr ? *static_cast<OwnedAllocation **>(memory) : nullptr;
+        }
+
+        void set_owned_allocation(void *memory, OwnedAllocation *allocation) noexcept
+        {
+            *static_cast<OwnedAllocation **>(memory) = allocation;
+        }
+
+        [[nodiscard]] std::size_t owned_payload_offset(const MemoryUtils::StoragePlan &plan) noexcept
+        {
+            return align_up(sizeof(OwnedAllocation), plan.layout.alignment);
+        }
+
+        [[nodiscard]] MemoryUtils::StorageLayout owned_allocation_layout(const MemoryUtils::StoragePlan &plan) noexcept
+        {
+            const std::size_t alignment = std::max(alignof(OwnedAllocation), plan.layout.alignment);
+            return MemoryUtils::StorageLayout{
+                .size = align_up(owned_payload_offset(plan) + plan.layout.size, alignment),
+                .alignment = alignment,
+            };
+        }
+
+        [[nodiscard]] const void *owned_payload(const OwnedAllocation &allocation) noexcept
+        {
+            return reinterpret_cast<const std::byte *>(&allocation) +
+                   owned_payload_offset(*allocation.record->plan);
+        }
+
+        [[nodiscard]] void *owned_payload(OwnedAllocation &allocation) noexcept
+        {
+            return reinterpret_cast<std::byte *>(&allocation) +
+                   owned_payload_offset(*allocation.record->plan);
+        }
+
+        [[nodiscard]] ValueTypeRef owned_allocation_type(const OwnedAllocation &allocation)
+        {
+            return ValueTypeRef::checked(AnyPtr::typed_null(*allocation.record));
+        }
+
+        [[nodiscard]] ValueTypeRef owned_target_type(const ValueTypeMetaData &owned_schema)
+        {
+            if (const auto *snapshot = active_type_realization(); snapshot != nullptr)
+            {
+                return snapshot->type_for(owned_schema.element_type);
+            }
+            return ValuePlanFactory::instance().type_for(owned_schema.element_type);
+        }
+
+        [[nodiscard]] OwnedAllocation *allocate_owned(ValueTypeRef binding)
+        {
+            const auto &plan = binding.checked_plan();
+            const auto layout = owned_allocation_layout(plan);
+            void *raw = MemoryUtils::allocator().allocate_storage(layout);
+            auto release = make_scope_exit([&]() noexcept {
+                MemoryUtils::allocator().deallocate_storage(raw, layout);
+            });
+            auto *allocation = ::new (raw) OwnedAllocation{binding.record()};
+            binding.default_construct_at(owned_payload(*allocation));
+            release.release();
+            return allocation;
+        }
+
+        [[nodiscard]] OwnedAllocation *copy_owned(const OwnedAllocation &source)
+        {
+            const auto binding = owned_allocation_type(source);
+            const auto layout = owned_allocation_layout(binding.checked_plan());
+            void *raw = MemoryUtils::allocator().allocate_storage(layout);
+            auto release = make_scope_exit([&]() noexcept {
+                MemoryUtils::allocator().deallocate_storage(raw, layout);
+            });
+            auto *allocation = ::new (raw) OwnedAllocation{binding.record()};
+            binding.copy_construct_at(owned_payload(*allocation), owned_payload(source));
+            release.release();
+            return allocation;
+        }
+
+        void destroy_owned_allocation(OwnedAllocation *allocation) noexcept
+        {
+            if (allocation == nullptr) { return; }
+            const auto *plan = allocation->record->plan;
+            plan->destroy(owned_payload(*allocation));
+            MemoryUtils::allocator().deallocate_storage(allocation, owned_allocation_layout(*plan));
+        }
+
+        void owned_default_construct(void *memory, const void *)
+        {
+            set_owned_allocation(memory, nullptr);
+        }
+
+        void owned_destroy(void *memory, const void *) noexcept
+        {
+            auto *allocation = owned_allocation(memory);
+            set_owned_allocation(memory, nullptr);
+            destroy_owned_allocation(allocation);
+        }
+
+        void owned_copy_construct(void *dst, const void *src, const void *)
+        {
+            const auto *source = owned_allocation(src);
+            set_owned_allocation(dst, source != nullptr ? copy_owned(*source) : nullptr);
+        }
+
+        void owned_move_construct(void *dst, void *src, const void *)
+        {
+            set_owned_allocation(dst, owned_allocation(src));
+            set_owned_allocation(src, nullptr);
+        }
+
+        void owned_copy_assign(void *dst, const void *src, const void *)
+        {
+            const auto *source = owned_allocation(src);
+            OwnedAllocation *replacement = source != nullptr ? copy_owned(*source) : nullptr;
+            auto *previous = owned_allocation(dst);
+            set_owned_allocation(dst, replacement);
+            destroy_owned_allocation(previous);
+        }
+
+        void owned_move_assign(void *dst, void *src, const void *)
+        {
+            if (dst == src) { return; }
+            auto *previous = owned_allocation(dst);
+            set_owned_allocation(dst, owned_allocation(src));
+            set_owned_allocation(src, nullptr);
+            destroy_owned_allocation(previous);
+        }
+
         [[nodiscard]] std::size_t combine_hash(std::size_t seed, std::size_t value) noexcept
         {
             seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
@@ -177,6 +329,74 @@ namespace hgraph
                 .predicate = nullptr,
                 .projector = &composite_indexed_mutable_range_projector,
             };
+        }
+
+        [[nodiscard]] bool composite_accepts_source(const void *context, ValueTypeRef,
+                                                     ValueTypeRef source) noexcept
+        {
+            const auto *state = static_cast<const CompositeIndexedContext *>(context);
+            return state != nullptr && source && source.schema() == state->schema;
+        }
+
+        template <bool Move>
+        void composite_assign_from(const void *context, void *dst,
+                                   ValueTypeRef source, const void *src)
+        {
+            const auto *state = static_cast<const CompositeIndexedContext *>(context);
+            const auto actual_type = source.ops_ref().concrete_type(source, src);
+            const auto *actual_memory = source.ops_ref().concrete_memory(src);
+            if (!actual_type || actual_type.schema() != state->schema || actual_memory == nullptr)
+            {
+                throw std::invalid_argument(
+                    "composite assignment requires the same concrete Tuple or Bundle schema");
+            }
+            const auto *source_ops = checked_value_ops<IndexedValueOps>(
+                actual_type, "composite assignment source");
+            if (source_ops->element_at == nullptr || source_ops->element_binding == nullptr ||
+                source_ops->size == nullptr ||
+                source_ops->size(source_ops->context, actual_memory) != state->child_bindings.size())
+            {
+                throw std::invalid_argument("composite assignment source has an incompatible field shape");
+            }
+
+            for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
+            {
+                const auto *source_child = source_ops->element_at(
+                    source_ops->context, actual_memory, index);
+                if (source_child == nullptr)
+                {
+                    composite_mark_field(state, dst, index, false);
+                    continue;
+                }
+                const auto source_binding = source_ops->element_binding(
+                    source_ops->context, actual_memory, index);
+                const auto target_binding = state->child_bindings[index];
+                auto *target_child = static_cast<std::byte *>(dst) + state->offsets[index];
+                if constexpr (Move)
+                {
+                    target_binding.ops_ref().move_assign_from(
+                        target_binding, target_child, source_binding,
+                        const_cast<void *>(source_child));
+                }
+                else
+                {
+                    target_binding.ops_ref().copy_assign_from(
+                        target_binding, target_child, source_binding, source_child);
+                }
+                composite_mark_field(state, dst, index, true);
+            }
+        }
+
+        void composite_copy_assign_from(const void *context, ValueTypeRef, void *dst,
+                                        ValueTypeRef source, const void *src)
+        {
+            composite_assign_from<false>(context, dst, source, src);
+        }
+
+        void composite_move_assign_from(const void *context, ValueTypeRef, void *dst,
+                                        ValueTypeRef source, void *src)
+        {
+            composite_assign_from<true>(context, dst, source, src);
         }
 
         [[nodiscard]] std::size_t composite_value_hash(const void *context, const void *memory)
@@ -307,7 +527,7 @@ namespace hgraph
                 if (!state->schema->name().empty())
                 {
                     nb::dict &classes = python_bridge::bundle_class_registry();
-                    nb::str   key{std::string{state->schema->name()}.c_str()};
+                    nb::int_  key{reinterpret_cast<std::uintptr_t>(state->schema)};
                     if (classes.contains(key)) { bundle_class = classes[key]; }
                 }
                 nb::dict result;
@@ -640,6 +860,385 @@ namespace hgraph
         }
 #endif
 
+        struct OwnedValueEntry
+        {
+            const ValueTypeMetaData *schema{nullptr};
+            MemoryUtils::StoragePlan plan{};
+            IndexedValueOps ops{};
+            ValueTypeRef binding{};
+
+            explicit OwnedValueEntry(const ValueTypeMetaData &owned_schema)
+                : schema{&owned_schema}
+            {
+                if (!owned_schema.is_owned() || owned_schema.element_type == nullptr)
+                {
+                    throw std::logic_error("Owned value entry requires an Owned target schema");
+                }
+
+                plan.layout = MemoryUtils::StorageLayout{
+                    .size = sizeof(OwnedAllocation *),
+                    .alignment = alignof(OwnedAllocation *),
+                };
+                plan.lifecycle = MemoryUtils::LifecycleOps{
+                    .construct = &owned_default_construct,
+                    .destroy = &owned_destroy,
+                    .copy_construct = &owned_copy_construct,
+                    .move_construct = &owned_move_construct,
+                    .copy_assign = &owned_copy_assign,
+                    .move_assign = &owned_move_assign,
+                };
+                plan.lifecycle_context = this;
+                plan.trivially_destructible = false;
+                plan.trivially_copyable = false;
+                plan.trivially_move_constructible = false;
+
+                ops.kind = ValueOpsKind::Indexed;
+                ops.context = this;
+                ops.allows_mutation = true;
+                ops.hash_impl = owned_schema.is_hashable() ? &hash : nullptr;
+                ops.equals_impl = owned_schema.is_equatable() ? &equals : nullptr;
+                ops.compare_impl = owned_schema.is_comparable() ? &compare : nullptr;
+                ops.to_string_impl = &to_string;
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                ops.to_python_impl = &to_python;
+                ops.from_python_impl = &from_python;
+#endif
+                ops.accepts_source_impl = &accepts_source;
+                ops.copy_assign_from_impl = &copy_assign_from;
+                ops.move_assign_from_impl = &move_assign_from;
+                ops.concrete_type_impl = &concrete_type;
+                ops.concrete_memory_impl = &concrete_memory;
+                ops.mutable_concrete_memory_impl = &mutable_concrete_memory;
+                ops.size = &indexed_size;
+                ops.element_at = &element_at;
+                ops.element_binding = &element_binding;
+                ops.make_range = &make_range;
+                ops.make_mutable_range = &make_mutable_range;
+                ops.mutable_element_at = &mutable_element_at;
+
+                binding = intern_value_type(owned_schema, plan, ops);
+            }
+
+            [[nodiscard]] static const OwnedValueEntry &entry(const void *context) noexcept
+            {
+                return *static_cast<const OwnedValueEntry *>(context);
+            }
+
+            [[nodiscard]] static ValueTypeRef allocation_type(const OwnedAllocation *allocation)
+            {
+                return owned_allocation_type(*allocation);
+            }
+
+            [[nodiscard]] static const IndexedValueOps &indexed_ops(ValueTypeRef target)
+            {
+                const auto *indexed = checked_value_ops<IndexedValueOps>(target, "Owned target");
+                if (indexed->size == nullptr || indexed->element_at == nullptr ||
+                    indexed->element_binding == nullptr)
+                {
+                    throw std::logic_error("Owned target does not provide indexed Bundle operations");
+                }
+                return *indexed;
+            }
+
+            [[nodiscard]] static OwnedAllocation *ensure_allocation(const OwnedValueEntry &self, void *memory)
+            {
+                if (auto *allocation = owned_allocation(memory); allocation != nullptr) { return allocation; }
+                auto *allocation = allocate_owned(owned_target_type(*self.schema));
+                set_owned_allocation(memory, allocation);
+                return allocation;
+            }
+
+            [[nodiscard]] static std::pair<ValueTypeRef, const void *>
+            projected(const OwnedAllocation &allocation) noexcept
+            {
+                return fallback_on_exception(
+                    std::pair<ValueTypeRef, const void *>{}, [&]() {
+                        const auto type = owned_allocation_type(allocation);
+                        return std::pair{
+                            type.ops_ref().concrete_type(type, owned_payload(allocation)),
+                            type.ops_ref().concrete_memory(owned_payload(allocation)),
+                        };
+                    });
+            }
+
+            [[nodiscard]] static std::size_t hash(const void *, const void *memory)
+            {
+                const auto *allocation = owned_allocation(memory);
+                if (allocation == nullptr) { return 0x4f776e65644e756cULL; }
+                const auto type = allocation_type(allocation);
+                return type.ops_ref().hash(owned_payload(*allocation));
+            }
+
+            [[nodiscard]] static bool equals(const void *, const void *lhs, const void *rhs) noexcept
+            {
+                const auto *left = owned_allocation(lhs);
+                const auto *right = owned_allocation(rhs);
+                if (left == nullptr || right == nullptr) { return left == right; }
+                const auto [left_type, left_memory] = projected(*left);
+                const auto [right_type, right_memory] = projected(*right);
+                return left_type && left_type == right_type &&
+                       left_type.ops_ref().equals(left_memory, right_memory);
+            }
+
+            [[nodiscard]] static std::partial_ordering compare(const void *, const void *lhs,
+                                                               const void *rhs) noexcept
+            {
+                const auto *left = owned_allocation(lhs);
+                const auto *right = owned_allocation(rhs);
+                if (left == nullptr || right == nullptr)
+                {
+                    if (left == right) { return std::partial_ordering::equivalent; }
+                    return left == nullptr ? std::partial_ordering::less : std::partial_ordering::greater;
+                }
+                const auto [left_type, left_memory] = projected(*left);
+                const auto [right_type, right_memory] = projected(*right);
+                if (!left_type || left_type != right_type) { return std::partial_ordering::unordered; }
+                return left_type.ops_ref().compare(left_memory, right_memory);
+            }
+
+            [[nodiscard]] static std::string to_string(const void *, const void *memory)
+            {
+                const auto *allocation = owned_allocation(memory);
+                if (allocation == nullptr) { return "None"; }
+                return allocation_type(allocation).ops_ref().to_string(owned_payload(*allocation));
+            }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+            [[nodiscard]] static nb::object to_python(const void *, const void *memory)
+            {
+                const auto *allocation = owned_allocation(memory);
+                if (allocation == nullptr) { return nb::none(); }
+                return allocation_type(allocation).ops_ref().to_python(owned_payload(*allocation));
+            }
+
+            static void from_python(const void *context, const ValueTypeRef &, void *memory, nb::handle source)
+            {
+                const auto &self = entry(context);
+                if (source.is_none())
+                {
+                    auto *previous = owned_allocation(memory);
+                    set_owned_allocation(memory, nullptr);
+                    destroy_owned_allocation(previous);
+                    return;
+                }
+
+                const auto desired = owned_target_type(*self.schema);
+                auto *allocation = owned_allocation(memory);
+                if (allocation == nullptr || allocation->record != desired.record())
+                {
+                    auto *replacement = allocate_owned(desired);
+                    auto cleanup = make_scope_exit([&]() noexcept { destroy_owned_allocation(replacement); });
+                    desired.ops_ref().from_python(desired, owned_payload(*replacement), source);
+                    auto *previous = allocation;
+                    set_owned_allocation(memory, replacement);
+                    cleanup.release();
+                    destroy_owned_allocation(previous);
+                    return;
+                }
+                desired.ops_ref().from_python(desired, owned_payload(*allocation), source);
+            }
+#endif
+
+            [[nodiscard]] static std::size_t indexed_size(const void *context, const void *memory) noexcept
+            {
+                return fallback_on_exception(std::size_t{0}, [&]() {
+                    const auto *allocation = owned_allocation(memory);
+                    const auto type = allocation != nullptr ? allocation_type(allocation)
+                                                            : owned_target_type(*entry(context).schema);
+                    const auto &indexed = indexed_ops(type);
+                    return indexed.size(indexed.context,
+                                        allocation != nullptr ? owned_payload(*allocation) : nullptr);
+                });
+            }
+
+            [[nodiscard]] static const void *element_at(const void *, const void *memory, std::size_t index)
+            {
+                const auto *allocation = owned_allocation(memory);
+                if (allocation == nullptr) { return nullptr; }
+                const auto type = allocation_type(allocation);
+                const auto &indexed = indexed_ops(type);
+                return indexed.element_at(indexed.context, owned_payload(*allocation), index);
+            }
+
+            [[nodiscard]] static ValueTypeRef element_binding(const void *context, const void *memory,
+                                                              std::size_t index) noexcept
+            {
+                return fallback_on_exception(ValueTypeRef{}, [&]() {
+                    const auto *allocation = owned_allocation(memory);
+                    const auto type = allocation != nullptr ? allocation_type(allocation)
+                                                            : owned_target_type(*entry(context).schema);
+                    const auto &indexed = indexed_ops(type);
+                    return indexed.element_binding(indexed.context,
+                                                   allocation != nullptr ? owned_payload(*allocation) : nullptr,
+                                                   index);
+                });
+            }
+
+            [[nodiscard]] static void *mutable_element_at(const void *context, void *memory,
+                                                          std::size_t index)
+            {
+                const auto &self = entry(context);
+                auto *allocation = ensure_allocation(self, memory);
+                const auto type = allocation_type(allocation);
+                const auto &indexed = indexed_ops(type);
+                if (indexed.mutable_element_at != nullptr)
+                {
+                    return indexed.mutable_element_at(indexed.context, owned_payload(*allocation), index);
+                }
+                return const_cast<void *>(indexed.element_at(indexed.context, owned_payload(*allocation), index));
+            }
+
+            [[nodiscard]] static ValueView range_projector(const void *context, const void *memory,
+                                                           std::size_t index)
+            {
+                return ValueView{element_binding(context, memory, index), element_at(context, memory, index)};
+            }
+
+            [[nodiscard]] static ValueView mutable_range_projector(const void *context, const void *memory,
+                                                                   std::size_t index)
+            {
+                return ValueView{element_binding(context, memory, index),
+                                 mutable_element_at(context, const_cast<void *>(memory), index)}
+                    .begin_mutation();
+            }
+
+            [[nodiscard]] static Range<ValueView> make_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context = context,
+                    .memory = memory,
+                    .limit = indexed_size(context, memory),
+                    .predicate = nullptr,
+                    .projector = &range_projector,
+                };
+            }
+
+            [[nodiscard]] static Range<ValueView> make_mutable_range(const void *context, void *memory)
+            {
+                (void)ensure_allocation(entry(context), memory);
+                return Range<ValueView>{
+                    .context = context,
+                    .memory = memory,
+                    .limit = indexed_size(context, memory),
+                    .predicate = nullptr,
+                    .projector = &mutable_range_projector,
+                };
+            }
+
+            [[nodiscard]] static bool accepts_source(const void *context, ValueTypeRef binding,
+                                                     ValueTypeRef source) noexcept
+            {
+                return fallback_on_exception(false, [&]() {
+                    const auto &self = entry(context);
+                    if (source == binding) { return true; }
+                    const auto target = owned_target_type(*self.schema);
+                    return target.ops_ref().accepts_source(target, source) ||
+                           TypeRegistry::instance().bundle_is_a(source.schema(), self.schema->element_type);
+                });
+            }
+
+            [[nodiscard]] static ValueTypeRef destination_type(const OwnedValueEntry &self,
+                                                               ValueTypeRef source)
+            {
+                const auto target = owned_target_type(*self.schema);
+                if (target.ops_ref().accepts_source(target, source)) { return target; }
+                if (TypeRegistry::instance().bundle_is_a(source.schema(), self.schema->element_type))
+                {
+                    return source;
+                }
+                throw std::invalid_argument("Owned value received an incompatible source type");
+            }
+
+            static void copy_assign_from(const void *context, ValueTypeRef binding, void *dst,
+                                         ValueTypeRef source, const void *src)
+            {
+                if (source == binding)
+                {
+                    owned_copy_assign(dst, src, context);
+                    return;
+                }
+
+                const auto &self = entry(context);
+                auto *allocation = owned_allocation(dst);
+                if (allocation != nullptr)
+                {
+                    const auto current = allocation_type(allocation);
+                    if (current.ops_ref().accepts_source(current, source))
+                    {
+                        current.ops_ref().copy_assign_from(
+                            current, owned_payload(*allocation), source, src);
+                        return;
+                    }
+                }
+
+                const auto target = destination_type(self, source);
+                auto *replacement = allocate_owned(target);
+                auto cleanup = make_scope_exit([&]() noexcept { destroy_owned_allocation(replacement); });
+                target.ops_ref().copy_assign_from(target, owned_payload(*replacement), source, src);
+                auto *previous = allocation;
+                set_owned_allocation(dst, replacement);
+                cleanup.release();
+                destroy_owned_allocation(previous);
+            }
+
+            static void move_assign_from(const void *context, ValueTypeRef binding, void *dst,
+                                         ValueTypeRef source, void *src)
+            {
+                if (source == binding)
+                {
+                    owned_move_assign(dst, src, context);
+                    return;
+                }
+
+                const auto &self = entry(context);
+                auto *allocation = owned_allocation(dst);
+                if (allocation != nullptr)
+                {
+                    const auto current = allocation_type(allocation);
+                    if (current.ops_ref().accepts_source(current, source))
+                    {
+                        current.ops_ref().move_assign_from(
+                            current, owned_payload(*allocation), source, src);
+                        return;
+                    }
+                }
+
+                const auto target = destination_type(self, source);
+                auto *replacement = allocate_owned(target);
+                auto cleanup = make_scope_exit([&]() noexcept { destroy_owned_allocation(replacement); });
+                target.ops_ref().move_assign_from(target, owned_payload(*replacement), source, src);
+                auto *previous = allocation;
+                set_owned_allocation(dst, replacement);
+                cleanup.release();
+                destroy_owned_allocation(previous);
+            }
+
+            [[nodiscard]] static ValueTypeRef concrete_type(const void *, ValueTypeRef binding,
+                                                            const void *memory) noexcept
+            {
+                const auto *allocation = owned_allocation(memory);
+                if (allocation == nullptr) { return binding; }
+                return projected(*allocation).first;
+            }
+
+            [[nodiscard]] static const void *concrete_memory(const void *, const void *memory) noexcept
+            {
+                const auto *allocation = owned_allocation(memory);
+                if (allocation == nullptr) { return memory; }
+                return projected(*allocation).second;
+            }
+
+            [[nodiscard]] static void *mutable_concrete_memory(const void *, void *memory) noexcept
+            {
+                auto *allocation = owned_allocation(memory);
+                if (allocation == nullptr) { return memory; }
+                return fallback_on_exception(static_cast<void *>(nullptr), [&]() {
+                    const auto type = allocation_type(allocation);
+                    return type.ops_ref().mutable_concrete_memory(owned_payload(*allocation));
+                });
+            }
+        };
+
         struct CompositeIndexedOpsEntry
         {
             CompositeIndexedContext context{};
@@ -657,7 +1256,9 @@ namespace hgraph
                 ops.context = &context;
             }
 
-            CompositeIndexedOpsEntry(const ValueTypeMetaData &schema, const MemoryUtils::StoragePlan &plan)
+            CompositeIndexedOpsEntry(const ValueTypeMetaData &schema,
+                                     const MemoryUtils::StoragePlan &plan,
+                                     const std::vector<ValueTypeRef> &child_bindings)
             {
                 const std::size_t validity_words =
                     (schema.value_kind() == ValueTypeKind::Bundle || schema.value_kind() == ValueTypeKind::Tuple)
@@ -669,13 +1270,16 @@ namespace hgraph
                     throw std::logic_error("ValuePlanFactory: composite indexed ops require matching composite plan");
                 }
 
+                if (child_bindings.size() != schema.field_count)
+                {
+                    throw std::logic_error("ValuePlanFactory: composite binding count does not match its schema");
+                }
                 context.child_bindings.reserve(schema.field_count);
                 context.offsets.reserve(schema.field_count);
                 const auto components = plan.components();
                 for (std::size_t index = 0; index < schema.field_count; ++index)
                 {
-                    const auto child_binding =
-                        ValuePlanFactory::instance().type_for(schema.fields[index].type);
+                    const auto child_binding = child_bindings[index];
                     if (child_binding == nullptr)
                     {
                         throw std::logic_error("ValuePlanFactory: composite field has no resolvable indexed binding");
@@ -714,6 +1318,23 @@ namespace hgraph
                     &composite_indexed_make_mutable_range,
                 };
                 ops.mutable_element_at = &composite_indexed_mutable_element_at;
+                ops.accepts_source_impl = &composite_accepts_source;
+                ops.copy_assign_from_impl = &composite_copy_assign_from;
+                ops.move_assign_from_impl = &composite_move_assign_from;
+            }
+
+            CompositeIndexedOpsEntry(const ValueTypeMetaData &schema, const MemoryUtils::StoragePlan &plan)
+                : CompositeIndexedOpsEntry(schema, plan, [&]() {
+                      std::vector<ValueTypeRef> bindings;
+                      bindings.reserve(schema.field_count);
+                      for (std::size_t index = 0; index < schema.field_count; ++index)
+                      {
+                          bindings.push_back(
+                              ValuePlanFactory::instance().type_for(schema.fields[index].type));
+                      }
+                      return bindings;
+                  }())
+            {
             }
         };
 
@@ -790,6 +1411,147 @@ namespace hgraph
             return cache;
         }
 
+        struct OwnedValueCache
+        {
+            std::mutex mutex{};
+            std::unordered_map<const ValueTypeMetaData *, const OwnedValueEntry *> entries{};
+            std::vector<std::unique_ptr<OwnedValueEntry>> storage{};
+
+            [[nodiscard]] const OwnedValueEntry &get(const ValueTypeMetaData &schema)
+            {
+                std::lock_guard lock(mutex);
+                if (const auto found = entries.find(&schema); found != entries.end()) { return *found->second; }
+                auto value = std::make_unique<OwnedValueEntry>(schema);
+                const auto *result = value.get();
+                storage.push_back(std::move(value));
+                entries.emplace(&schema, result);
+                return *result;
+            }
+
+            void clear() noexcept
+            {
+                std::lock_guard lock(mutex);
+                entries.clear();
+                storage.clear();
+            }
+        };
+
+        [[nodiscard]] OwnedValueCache &owned_value_cache() noexcept
+        {
+            static OwnedValueCache cache;
+            return cache;
+        }
+
+        [[nodiscard]] const OwnedValueEntry &owned_value_entry(const ValueTypeMetaData &schema)
+        {
+            return owned_value_cache().get(schema);
+        }
+
+        struct RealizedCompositeKey
+        {
+            const ValueTypeMetaData *schema{nullptr};
+            std::vector<ValueTypeRef> fields{};
+            bool operator==(const RealizedCompositeKey &) const noexcept = default;
+        };
+
+        struct RealizedCompositeKeyHash
+        {
+            [[nodiscard]] std::size_t operator()(const RealizedCompositeKey &key) const noexcept
+            {
+                std::size_t seed = std::hash<const ValueTypeMetaData *>{}(key.schema);
+                for (const auto field : key.fields)
+                {
+                    seed = combine_hash(seed, std::hash<ValueTypeRef>{}(field));
+                }
+                return seed;
+            }
+        };
+
+        [[nodiscard]] const MemoryUtils::StoragePlan &realized_composite_plan(
+            const ValueTypeMetaData &schema,
+            const std::vector<ValueTypeRef> &fields)
+        {
+            const std::size_t validity_words = bundle_validity_word_count(schema.field_count);
+            if (schema.value_kind() == ValueTypeKind::Bundle)
+            {
+                auto builder = MemoryUtils::named_tuple();
+                builder.reserve(fields.size() + (validity_words == 0 ? 0 : 1));
+                for (std::size_t index = 0; index < fields.size(); ++index)
+                {
+                    builder.add_field(
+                        schema.fields[index].name != nullptr ? schema.fields[index].name : "",
+                        fields[index].checked_plan());
+                }
+                if (validity_words != 0)
+                {
+                    builder.add_hidden_plan(bundle_validity_plan(schema.field_count));
+                }
+                return builder.build();
+            }
+
+            auto builder = MemoryUtils::tuple();
+            builder.reserve(fields.size() + (validity_words == 0 ? 0 : 1));
+            for (const auto field : fields) { builder.add_plan(field.checked_plan()); }
+            if (validity_words != 0)
+            {
+                builder.add_hidden_plan(bundle_validity_plan(schema.field_count));
+            }
+            return builder.build();
+        }
+
+        struct RealizedCompositeEntry
+        {
+            const MemoryUtils::StoragePlan *plan{nullptr};
+            CompositeIndexedOpsEntry ops;
+            ValueTypeRef binding{};
+
+            RealizedCompositeEntry(const ValueTypeMetaData &schema,
+                                   const std::vector<ValueTypeRef> &fields)
+                : plan{&realized_composite_plan(schema, fields)},
+                  ops{schema, *plan, fields}
+            {
+                const auto &debug = intern_fixed_composite_debug_descriptor(schema, *plan);
+                binding = intern_value_type(schema, *plan, ops.ops, &debug);
+            }
+        };
+
+        struct RealizedCompositeCache
+        {
+            std::mutex mutex{};
+            std::unordered_map<RealizedCompositeKey, const RealizedCompositeEntry *,
+                               RealizedCompositeKeyHash> entries{};
+            std::vector<std::unique_ptr<RealizedCompositeEntry>> storage{};
+
+            [[nodiscard]] ValueTypeRef get(const ValueTypeMetaData &schema,
+                                           std::vector<ValueTypeRef> fields)
+            {
+                std::lock_guard lock(mutex);
+                RealizedCompositeKey key{&schema, std::move(fields)};
+                if (const auto found = entries.find(key); found != entries.end())
+                {
+                    return found->second->binding;
+                }
+                auto entry = std::make_unique<RealizedCompositeEntry>(schema, key.fields);
+                const auto *result = entry.get();
+                storage.push_back(std::move(entry));
+                entries.emplace(std::move(key), result);
+                return result->binding;
+            }
+
+            void clear() noexcept
+            {
+                std::lock_guard lock(mutex);
+                entries.clear();
+                storage.clear();
+            }
+        };
+
+        [[nodiscard]] RealizedCompositeCache &realized_composite_cache() noexcept
+        {
+            static RealizedCompositeCache cache;
+            return cache;
+        }
+
         [[nodiscard]] const IndexedValueOps &composite_indexed_ops(const ValueTypeMetaData &schema,
                                                                    const MemoryUtils::StoragePlan &plan)
         {
@@ -806,6 +1568,8 @@ namespace hgraph
         {
             composite_indexed_ops_cache().clear();
             array_indexed_ops_cache().clear();
+            owned_value_cache().clear();
+            realized_composite_cache().clear();
         }
     }  // namespace
 
@@ -923,6 +1687,35 @@ namespace hgraph
         return it == type_cache_.end() ? ValueTypeRef{} : it->second;
     }
 
+    ValueTypeRef ValuePlanFactory::realized_composite_type_for(
+        const ValueTypeMetaData *schema,
+        std::span<const ValueTypeRef> field_bindings)
+    {
+        if (schema == nullptr ||
+            (schema->value_kind() != ValueTypeKind::Tuple &&
+             schema->value_kind() != ValueTypeKind::Bundle) ||
+            schema->is_owned())
+        {
+            throw std::invalid_argument(
+                "realized_composite_type_for requires a non-Owned Tuple or Bundle schema");
+        }
+        if (field_bindings.size() != schema->field_count)
+        {
+            throw std::invalid_argument(
+                "realized_composite_type_for field count does not match its schema");
+        }
+        std::vector<ValueTypeRef> fields{field_bindings.begin(), field_bindings.end()};
+        for (std::size_t index = 0; index < fields.size(); ++index)
+        {
+            if (!fields[index] || fields[index].schema() != schema->fields[index].type)
+            {
+                throw std::invalid_argument(
+                    "realized_composite_type_for received an incompatible field binding");
+            }
+        }
+        return realized_composite_cache().get(*schema, std::move(fields));
+    }
+
     void ValuePlanFactory::reset() noexcept
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -934,6 +1727,14 @@ namespace hgraph
 
     const MemoryUtils::StoragePlan *ValuePlanFactory::synthesise(const ValueTypeMetaData *schema)
     {
+        if (schema->is_owned())
+        {
+            const auto *plan = &owned_value_entry(*schema).plan;
+            std::lock_guard<std::mutex> lock(mutex_);
+            const auto [it, _] = cache_.emplace(schema, plan);
+            return it->second;
+        }
+
         const MemoryUtils::StoragePlan *plan = nullptr;
 
         switch (schema->value_kind())
@@ -1038,6 +1839,15 @@ namespace hgraph
 
     ValueTypeRef ValuePlanFactory::synthesise_type(const ValueTypeMetaData *schema)
     {
+        if (schema->is_owned())
+        {
+            const auto type = owned_value_entry(*schema).binding;
+            std::lock_guard<std::mutex> lock(mutex_);
+            const auto [it, _] = type_cache_.emplace(schema, type);
+            cache_.try_emplace(schema, type.plan());
+            return it->second;
+        }
+
         ValueTypeRef type{};
 
         switch (schema->value_kind())

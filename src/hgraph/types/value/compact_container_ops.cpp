@@ -1,4 +1,3 @@
-#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/value_builder.h>
 
 #include <stdexcept>
@@ -23,15 +22,16 @@ namespace hgraph
                 return *binding.schema();
             }
 
-            [[nodiscard]] ValueTypeRef checked_binding_for(const ValueTypeMetaData *schema,
-                                                           const char *what)
+            template <typename State>
+            [[nodiscard]] const State &checked_container_state(const ValueTypeRef &binding,
+                                                               const char *what)
             {
-                const auto binding = ValuePlanFactory::instance().type_for(schema);
-                if (!binding)
+                const auto *state = static_cast<const State *>(binding.checked_plan().lifecycle_context);
+                if (state == nullptr)
                 {
-                    throw std::logic_error(std::string{what} + ": schema has no canonical value binding");
+                    throw std::logic_error(std::string{what} + ": binding has no container lifecycle state");
                 }
-                return binding;
+                return *state;
             }
 
             void require_non_none(nb::handle source, const char *what)
@@ -85,7 +85,8 @@ namespace hgraph
                 throw std::logic_error("List from_python compact storage is only valid for dynamic lists");
             }
 
-            const auto &element_binding = checked_binding_for(schema.element_type, "List from_python");
+            const auto element_binding =
+                checked_container_state<ListState>(binding, "List from_python").element_binding;
             ListBuilder builder{element_binding};
             for_each_sequence_item(source, "List value", [&](nb::handle item) {
                 Value element = value_from_python(element_binding, item);
@@ -105,7 +106,8 @@ namespace hgraph
                 throw std::invalid_argument("CyclicBuffer value requires a non-zero capacity");
             }
 
-            const auto &element_binding = checked_binding_for(schema.element_type, "CyclicBuffer from_python");
+            const auto element_binding = checked_container_state<CyclicBufferState>(
+                binding, "CyclicBuffer from_python").element_binding;
             CyclicBufferBuilder builder{element_binding, schema.fixed_size};
             for_each_sequence_item(source, "CyclicBuffer value", [&](nb::handle item) {
                 Value element = value_from_python(element_binding, item);
@@ -120,7 +122,8 @@ namespace hgraph
             if (memory == nullptr) { throw std::runtime_error("Queue from_python requires live storage"); }
             const auto &schema = checked_schema(binding, ValueTypeKind::Queue, "Queue from_python");
 
-            const auto &element_binding = checked_binding_for(schema.element_type, "Queue from_python");
+            const auto element_binding = checked_container_state<QueueState>(
+                binding, "Queue from_python").element_binding;
             QueueBuilder builder{element_binding, schema.fixed_size};
             for_each_sequence_item(source, "Queue value", [&](nb::handle item) {
                 Value element = value_from_python(element_binding, item);
@@ -133,7 +136,7 @@ namespace hgraph
         void set_from_python(const void *, const ValueTypeRef &binding, void *memory, nb::handle source)
         {
             if (memory == nullptr) { throw std::runtime_error("Set from_python requires live storage"); }
-            const auto &schema = checked_schema(binding, ValueTypeKind::Set, "Set from_python");
+            (void)checked_schema(binding, ValueTypeKind::Set, "Set from_python");
 
             nb::object object = nb::borrow<nb::object>(source);
             if (!nb::isinstance<nb::set>(object) && !nb::isinstance<nb::frozenset>(object) &&
@@ -142,7 +145,8 @@ namespace hgraph
                 throw std::invalid_argument("Set value expects a Python set, frozenset, list, or tuple");
             }
 
-            const auto &element_binding = checked_binding_for(schema.element_type, "Set from_python");
+            const auto element_binding =
+                checked_container_state<SetState>(binding, "Set from_python").element_binding;
             SetBuilder builder{element_binding};
             nb::iterator it = nb::iter(object);
             while (it != nb::iterator::sentinel())
@@ -160,7 +164,7 @@ namespace hgraph
         void map_from_python(const void *, const ValueTypeRef &binding, void *memory, nb::handle source)
         {
             if (memory == nullptr) { throw std::runtime_error("Map from_python requires live storage"); }
-            const auto &schema = checked_schema(binding, ValueTypeKind::Map, "Map from_python");
+            (void)checked_schema(binding, ValueTypeKind::Map, "Map from_python");
 
             nb::object object = nb::borrow<nb::object>(source);
             if (!nb::isinstance<nb::dict>(object) && !nb::hasattr(object, "items"))
@@ -168,8 +172,9 @@ namespace hgraph
                 throw std::invalid_argument("Map value expects a Python dict or dict-like object");
             }
 
-            const auto &key_binding   = checked_binding_for(schema.key_type, "Map from_python");
-            const auto &value_binding = checked_binding_for(schema.element_type, "Map from_python");
+            const auto &state = checked_container_state<MapState>(binding, "Map from_python");
+            const auto key_binding   = state.key_binding;
+            const auto value_binding = state.value_binding;
             MapBuilder  builder{key_binding, value_binding};
 
             nb::object   items = nb::hasattr(object, "items") ? object.attr("items")() : object;

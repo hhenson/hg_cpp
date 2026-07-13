@@ -3,7 +3,9 @@
 #include <hgraph/runtime/graph.h>
 #include <hgraph/runtime/node.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/time_series/ts_input/detail.h>
 #include <hgraph/types/time_series/ts_output/alternative.h>
@@ -166,6 +168,15 @@ namespace hgraph
     TSData TSOutput::checked_data_for(const TSValueTypeMetaData *schema)
     {
         if (schema == nullptr) { throw std::invalid_argument("TSOutput requires a time-series schema"); }
+        if (const auto *snapshot = active_type_realization();
+            snapshot != nullptr && schema->kind == TSTypeKind::TS && schema->value_schema != nullptr)
+        {
+            const auto realized = snapshot->type_for(schema->value_schema);
+            if (realized != ValuePlanFactory::instance().type_for(schema->value_schema))
+            {
+                return TSData{TSDataPlanFactory::instance().output_type_for(schema, realized)};
+            }
+        }
         return TSData{TSDataPlanFactory::instance().output_type_for(schema)};
     }
 

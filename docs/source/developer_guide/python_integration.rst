@@ -319,8 +319,8 @@ Recorded divergences / gaps (the morning-summary list):
   const is less specific than a true scalar parameter, and nested type
   variables decay (``TSL[~T, ~N]`` beats bare ``~T``). ``dispatch_``/
   ``@dispatch`` = key utility + enumerated ``switch_`` (design record:
-  nested_graphs.rst) — python-class scalars dispatch today; CompoundScalar
-  hierarchies await the bundle-lineage design.
+  nested_graphs.rst). Python-class scalars and closed ``CompoundScalar``
+  hierarchies both retain a concrete runtime type for dispatch.
 - **Real-time + push sources** are surfaced with hgraph's shapes:
   ``run_graph(..., run_mode=EvaluationMode.REAL_TIME)`` runs the
   wall-clock executor (the GIL is released for the whole run), and

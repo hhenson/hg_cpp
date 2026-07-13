@@ -1,0 +1,822 @@
+#include <hgraph/types/metadata/type_realization.h>
+
+#include <hgraph/config.h>
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+#include <hgraph/python/bridge_state.h>
+#endif
+
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/value/compact_container_ops.h>
+#include <hgraph/types/value/container_ops.h>
+#include <hgraph/types/value/value_range.h>
+#include <hgraph/util/scope.h>
+
+#include <algorithm>
+#include <compare>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <new>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <utility>
+
+namespace hgraph
+{
+    namespace
+    {
+        thread_local const TypeRealizationSnapshot *active_snapshot = nullptr;
+
+        [[nodiscard]] constexpr std::size_t align_up(std::size_t value, std::size_t alignment) noexcept
+        {
+            return (value + alignment - 1U) & ~(alignment - 1U);
+        }
+
+        [[nodiscard]] std::size_t combine_hash(std::size_t seed, std::size_t value) noexcept
+        {
+            return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U));
+        }
+    }
+
+    struct TypeRealizationSnapshot::Impl
+    {
+        struct UnionEntry
+        {
+            const ValueTypeMetaData *declared{nullptr};
+            std::vector<ValueTypeRef> alternatives{};
+            std::unordered_map<const TypeRecord *, ValueTypeRef> alternatives_by_record{};
+            ValueTypeRef default_type{};
+            std::size_t payload_offset{0};
+            MemoryUtils::StoragePlan plan{};
+            IndexedValueOps ops{};
+            ValueTypeRef binding{};
+
+            UnionEntry(const ValueTypeMetaData *schema,
+                       std::vector<ValueTypeRef> realized_alternatives)
+                : declared(schema), alternatives(std::move(realized_alternatives))
+            {
+                std::size_t payload_size = 0;
+                std::size_t payload_alignment = 1;
+                alternatives_by_record.reserve(alternatives.size());
+                for (const auto alternative : alternatives)
+                {
+                    if (!alternative) { throw std::logic_error("closed Bundle alternative has no value binding"); }
+                    alternatives_by_record.emplace(alternative.record(), alternative);
+                    payload_size = std::max(payload_size, alternative.checked_plan().layout.size);
+                    payload_alignment = std::max(payload_alignment, alternative.checked_plan().layout.alignment);
+                }
+                if (alternatives.empty())
+                {
+                    throw std::logic_error("abstract Bundle has no concrete alternative in this graph snapshot");
+                }
+                default_type = alternatives.front();
+                payload_offset = align_up(sizeof(const TypeRecord *), payload_alignment);
+                const auto overall_alignment = std::max(alignof(const TypeRecord *), payload_alignment);
+
+                plan.layout = MemoryUtils::StorageLayout{
+                    .size = align_up(payload_offset + payload_size, overall_alignment),
+                    .alignment = overall_alignment,
+                };
+                plan.lifecycle = MemoryUtils::LifecycleOps{
+                    .construct = &default_construct,
+                    .destroy = &destroy,
+                    .copy_construct = &copy_construct,
+                    .move_construct = &move_construct,
+                    .copy_assign = &copy_assign,
+                    .move_assign = &move_assign,
+                };
+                plan.lifecycle_context = this;
+                plan.trivially_destructible = false;
+                plan.trivially_copyable = false;
+                plan.trivially_move_constructible = false;
+
+                ops.kind = ValueOpsKind::Indexed;
+                ops.context = this;
+                ops.allows_mutation = true;
+                ops.hash_impl = &hash;
+                ops.equals_impl = &equals;
+                ops.compare_impl = &compare;
+                ops.to_string_impl = &to_string;
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                ops.to_python_impl = &to_python;
+                ops.from_python_impl = &from_python;
+#endif
+                ops.accepts_source_impl = &accepts_source;
+                ops.copy_assign_from_impl = &copy_assign_from;
+                ops.move_assign_from_impl = &move_assign_from;
+                ops.concrete_type_impl = &concrete_type;
+                ops.concrete_memory_impl = &concrete_memory;
+                ops.mutable_concrete_memory_impl = &mutable_concrete_memory;
+                ops.size = &indexed_size;
+                ops.element_at = &element_at;
+                ops.element_binding = &element_binding;
+                ops.make_range = &make_range;
+                ops.make_mutable_range = &make_mutable_range;
+                ops.mutable_element_at = &mutable_element_at;
+
+                binding = intern_value_type(*declared, plan, ops);
+            }
+
+            [[nodiscard]] static const UnionEntry &entry(const void *context) noexcept
+            {
+                return *static_cast<const UnionEntry *>(context);
+            }
+
+            [[nodiscard]] static const TypeRecord *active_record(const void *memory) noexcept
+            {
+                return memory == nullptr ? nullptr : *static_cast<const TypeRecord *const *>(memory);
+            }
+
+            static void set_active_record(void *memory, const TypeRecord *record) noexcept
+            {
+                *static_cast<const TypeRecord **>(memory) = record;
+            }
+
+            [[nodiscard]] static const void *payload(const UnionEntry &self, const void *memory) noexcept
+            {
+                return static_cast<const std::byte *>(memory) + self.payload_offset;
+            }
+
+            [[nodiscard]] static void *payload(const UnionEntry &self, void *memory) noexcept
+            {
+                return static_cast<std::byte *>(memory) + self.payload_offset;
+            }
+
+            [[nodiscard]] ValueTypeRef active_type(const void *memory) const noexcept
+            {
+                const auto *record = active_record(memory);
+                if (record == nullptr) { return {}; }
+                const auto found = alternatives_by_record.find(record);
+                return found != alternatives_by_record.end() ? found->second : ValueTypeRef{};
+            }
+
+            [[nodiscard]] bool contains(ValueTypeRef source) const noexcept
+            {
+                if (!source) { return false; }
+                const auto found = alternatives_by_record.find(source.record());
+                return found != alternatives_by_record.end() && found->second == source;
+            }
+
+            static void default_construct(void *memory, const void *context)
+            {
+                const auto &self = entry(context);
+                set_active_record(memory, nullptr);
+                self.default_type.default_construct_at(payload(self, memory));
+                set_active_record(memory, self.default_type.record());
+            }
+
+            static void destroy(void *memory, const void *context) noexcept
+            {
+                const auto &self = entry(context);
+                if (const auto active = self.active_type(memory))
+                {
+                    active.destroy_at(payload(self, memory));
+                }
+                set_active_record(memory, nullptr);
+            }
+
+            static void copy_construct(void *dst, const void *src, const void *context)
+            {
+                const auto &self = entry(context);
+                const auto active = self.active_type(src);
+                if (!active) { throw std::logic_error("closed Bundle source has an invalid active type"); }
+                set_active_record(dst, nullptr);
+                active.copy_construct_at(payload(self, dst), payload(self, src));
+                set_active_record(dst, active.record());
+            }
+
+            static void move_construct(void *dst, void *src, const void *context)
+            {
+                const auto &self = entry(context);
+                const auto active = self.active_type(src);
+                if (!active) { throw std::logic_error("closed Bundle source has an invalid active type"); }
+                set_active_record(dst, nullptr);
+                active.move_construct_at(payload(self, dst), payload(self, src));
+                set_active_record(dst, active.record());
+            }
+
+            void replace_copy(void *dst, ValueTypeRef source_type, const void *source_memory) const
+            {
+                const auto current = active_type(dst);
+                if (current == source_type)
+                {
+                    current.copy_assign_at(payload(*this, dst), source_memory);
+                    return;
+                }
+                if (current) { current.destroy_at(payload(*this, dst)); }
+                set_active_record(dst, nullptr);
+                auto restore = make_scope_exit([&]() noexcept {
+                    if (active_record(dst) == nullptr)
+                    {
+                        set_active_record(dst, default_type.record());
+                        try { default_type.default_construct_at(payload(*this, dst)); }
+                        catch (...) { std::terminate(); }
+                    }
+                });
+                source_type.copy_construct_at(payload(*this, dst), source_memory);
+                set_active_record(dst, source_type.record());
+                restore.release();
+            }
+
+            void replace_move(void *dst, ValueTypeRef source_type, void *source_memory) const
+            {
+                const auto current = active_type(dst);
+                if (current == source_type)
+                {
+                    current.move_assign_at(payload(*this, dst), source_memory);
+                    return;
+                }
+                if (current) { current.destroy_at(payload(*this, dst)); }
+                set_active_record(dst, nullptr);
+                auto restore = make_scope_exit([&]() noexcept {
+                    if (active_record(dst) == nullptr)
+                    {
+                        set_active_record(dst, default_type.record());
+                        try { default_type.default_construct_at(payload(*this, dst)); }
+                        catch (...) { std::terminate(); }
+                    }
+                });
+                source_type.move_construct_at(payload(*this, dst), source_memory);
+                set_active_record(dst, source_type.record());
+                restore.release();
+            }
+
+            static void copy_assign(void *dst, const void *src, const void *context)
+            {
+                const auto &self = entry(context);
+                const auto source_type = self.active_type(src);
+                if (!source_type) { throw std::logic_error("closed Bundle source has an invalid active type"); }
+                self.replace_copy(dst, source_type, payload(self, src));
+            }
+
+            static void move_assign(void *dst, void *src, const void *context)
+            {
+                const auto &self = entry(context);
+                const auto source_type = self.active_type(src);
+                if (!source_type) { throw std::logic_error("closed Bundle source has an invalid active type"); }
+                self.replace_move(dst, source_type, payload(self, src));
+            }
+
+            static bool accepts_source(const void *context, ValueTypeRef binding,
+                                       ValueTypeRef source) noexcept
+            {
+                const auto &self = entry(context);
+                return binding == self.binding && source &&
+                       (source == self.binding || self.contains(source) ||
+                        source.schema() == self.declared);
+            }
+
+            static void copy_assign_from(const void *context, ValueTypeRef, void *dst,
+                                         ValueTypeRef source, const void *src)
+            {
+                const auto &self = entry(context);
+                if (source == self.binding)
+                {
+                    copy_assign(dst, src, context);
+                    return;
+                }
+                if (!self.contains(source) && source.schema() == self.declared)
+                {
+                    const auto source_type = source.ops_ref().concrete_type(source, src);
+                    const auto *source_memory = source.ops_ref().concrete_memory(src);
+                    if (!self.contains(source_type))
+                    {
+                        throw std::invalid_argument(
+                            "closed Bundle source alternative '" +
+                            std::string{source_type.schema() != nullptr
+                                            ? source_type.schema()->name()
+                                            : "<invalid>"} +
+                            "' is outside this graph snapshot");
+                    }
+                    self.replace_copy(dst, source_type, source_memory);
+                    return;
+                }
+                self.replace_copy(dst, source, src);
+            }
+
+            static void move_assign_from(const void *context, ValueTypeRef, void *dst,
+                                         ValueTypeRef source, void *src)
+            {
+                const auto &self = entry(context);
+                if (source == self.binding)
+                {
+                    move_assign(dst, src, context);
+                    return;
+                }
+                if (!self.contains(source) && source.schema() == self.declared)
+                {
+                    const auto source_type = source.ops_ref().concrete_type(source, src);
+                    auto *source_memory = source.ops_ref().mutable_concrete_memory(src);
+                    if (!self.contains(source_type) || source_memory == nullptr)
+                    {
+                        throw std::invalid_argument(
+                            "closed Bundle source alternative '" +
+                            std::string{source_type.schema() != nullptr
+                                            ? source_type.schema()->name()
+                                            : "<invalid>"} +
+                            "' is outside this graph snapshot");
+                    }
+                    self.replace_move(dst, source_type, source_memory);
+                    return;
+                }
+                self.replace_move(dst, source, src);
+            }
+
+            static ValueTypeRef concrete_type(const void *context, ValueTypeRef,
+                                              const void *memory) noexcept
+            {
+                return entry(context).active_type(memory);
+            }
+
+            static const void *concrete_memory(const void *context, const void *memory) noexcept
+            {
+                return payload(entry(context), memory);
+            }
+
+            static void *mutable_concrete_memory(const void *context, void *memory) noexcept
+            {
+                return payload(entry(context), memory);
+            }
+
+            [[nodiscard]] static const IndexedValueOps &active_ops(const UnionEntry &self,
+                                                                    const void *memory)
+            {
+                const auto active = self.active_type(memory);
+                if (!active) { throw std::logic_error("closed Bundle has an invalid active type"); }
+                return *checked_value_ops<IndexedValueOps>(active, "closed Bundle alternative");
+            }
+
+            [[nodiscard]] static const IndexedValueOps *try_active_ops(const UnionEntry &self,
+                                                                        const void *memory) noexcept
+            {
+                const auto active = self.active_type(memory);
+                if (!active || active.ops() == nullptr || active.ops()->kind != ValueOpsKind::Indexed)
+                {
+                    return nullptr;
+                }
+                return static_cast<const IndexedValueOps *>(active.ops());
+            }
+
+            static std::size_t hash(const void *context, const void *memory)
+            {
+                const auto &self = entry(context);
+                const auto active = self.active_type(memory);
+                if (!active) { throw std::logic_error("closed Bundle has an invalid active type"); }
+                return combine_hash(std::hash<const TypeRecord *>{}(active.record()),
+                                    active.ops_ref().hash(payload(self, memory)));
+            }
+
+            static bool equals(const void *context, const void *lhs, const void *rhs) noexcept
+            {
+                return fallback_on_exception(false, [&]() {
+                    const auto &self = entry(context);
+                    const auto lhs_type = self.active_type(lhs);
+                    const auto rhs_type = self.active_type(rhs);
+                    return lhs_type && lhs_type == rhs_type &&
+                           lhs_type.ops_ref().equals(payload(self, lhs), payload(self, rhs));
+                });
+            }
+
+            static std::partial_ordering compare(const void *context, const void *lhs,
+                                                 const void *rhs) noexcept
+            {
+                return fallback_on_exception(std::partial_ordering::unordered, [&]() {
+                    const auto &self = entry(context);
+                    const auto lhs_type = self.active_type(lhs);
+                    const auto rhs_type = self.active_type(rhs);
+                    if (!lhs_type || lhs_type != rhs_type) { return std::partial_ordering::unordered; }
+                    return lhs_type.ops_ref().compare(payload(self, lhs), payload(self, rhs));
+                });
+            }
+
+            static std::string to_string(const void *context, const void *memory)
+            {
+                const auto &self = entry(context);
+                const auto active = self.active_type(memory);
+                if (!active) { return "<invalid closed Bundle>"; }
+                return std::string{active.schema()->name()} + active.ops_ref().to_string(payload(self, memory));
+            }
+
+            static std::size_t indexed_size(const void *context, const void *memory) noexcept
+            {
+                const auto &self = entry(context);
+                const auto *actual_ops = try_active_ops(self, memory);
+                return actual_ops != nullptr && actual_ops->size != nullptr
+                           ? actual_ops->size(actual_ops->context, payload(self, memory))
+                           : 0;
+            }
+
+            static const void *element_at(const void *context, const void *memory, std::size_t index)
+            {
+                const auto &self = entry(context);
+                const auto &actual_ops = active_ops(self, memory);
+                return actual_ops.element_at(actual_ops.context, payload(self, memory), index);
+            }
+
+            static ValueTypeRef element_binding(const void *context, const void *memory,
+                                                std::size_t index) noexcept
+            {
+                const auto &self = entry(context);
+                const auto *actual_ops = try_active_ops(self, memory);
+                return actual_ops != nullptr && actual_ops->element_binding != nullptr
+                           ? actual_ops->element_binding(actual_ops->context, payload(self, memory), index)
+                           : ValueTypeRef{};
+            }
+
+            static void *mutable_element_at(const void *context, void *memory, std::size_t index)
+            {
+                const auto &self = entry(context);
+                const auto &actual_ops = active_ops(self, memory);
+                if (actual_ops.mutable_element_at == nullptr)
+                {
+                    return const_cast<void *>(actual_ops.element_at(actual_ops.context, payload(self, memory), index));
+                }
+                return actual_ops.mutable_element_at(actual_ops.context, payload(self, memory), index);
+            }
+
+            static ValueView range_project(const void *context, const void *memory, std::size_t index)
+            {
+                return ValueView{element_binding(context, memory, index), element_at(context, memory, index)};
+            }
+
+            static ValueView mutable_range_project(const void *context, const void *memory, std::size_t index)
+            {
+                return ValueView{element_binding(context, memory, index),
+                                 mutable_element_at(context, const_cast<void *>(memory), index)}.begin_mutation();
+            }
+
+            static Range<ValueView> make_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context = context,
+                    .memory = memory,
+                    .limit = indexed_size(context, memory),
+                    .predicate = nullptr,
+                    .projector = &range_project,
+                };
+            }
+
+            static Range<ValueView> make_mutable_range(const void *context, void *memory)
+            {
+                return Range<ValueView>{
+                    .context = context,
+                    .memory = memory,
+                    .limit = indexed_size(context, memory),
+                    .predicate = nullptr,
+                    .projector = &mutable_range_project,
+                };
+            }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+            static nb::object to_python(const void *context, const void *memory)
+            {
+                const auto &self = entry(context);
+                const auto active = self.active_type(memory);
+                if (!active) { throw std::logic_error("closed Bundle has an invalid active type"); }
+                return active.ops_ref().to_python(payload(self, memory));
+            }
+
+            [[nodiscard]] ValueTypeRef python_source_type(nb::handle source) const
+            {
+                nb::object object = nb::borrow<nb::object>(source);
+                auto &classes = python_bridge::bundle_class_registry();
+                const nb::object source_class = nb::getattr(object, "__class__");
+                for (const auto alternative : alternatives)
+                {
+                    nb::int_ key{reinterpret_cast<std::uintptr_t>(alternative.schema())};
+                    if (classes.contains(key) && source_class.is(classes[key])) { return alternative; }
+                }
+
+                if (nb::isinstance<nb::dict>(object))
+                {
+                    const auto discriminator = declared->bundle_discriminator();
+                    nb::dict map = nb::cast<nb::dict>(object);
+                    nb::str key{std::string{discriminator}.c_str()};
+                    if (!map.contains(key))
+                    {
+                        throw std::invalid_argument(
+                            "polymorphic Bundle dictionaries require the configured type discriminator");
+                    }
+                    const auto requested = nb::cast<std::string>(map[key]);
+                    ValueTypeRef match{};
+                    for (const auto alternative : alternatives)
+                    {
+                        if (alternative.schema()->name() == requested ||
+                            alternative.schema()->bundle_local_name() == requested)
+                        {
+                            if (match)
+                            {
+                                throw std::invalid_argument("polymorphic Bundle discriminator is ambiguous");
+                            }
+                            match = alternative;
+                        }
+                    }
+                    if (match) { return match; }
+                    throw std::invalid_argument("polymorphic Bundle discriminator names no valid alternative");
+                }
+                throw std::invalid_argument("value is not an instance of a closed Bundle alternative");
+            }
+
+            static void from_python(const void *context, const ValueTypeRef &, void *memory,
+                                    nb::handle source)
+            {
+                const auto &self = entry(context);
+                const auto requested = self.python_source_type(source);
+                const auto current = self.active_type(memory);
+                if (current != requested)
+                {
+                    if (current) { current.destroy_at(payload(self, memory)); }
+                    set_active_record(memory, nullptr);
+                    auto restore = make_scope_exit([&]() noexcept {
+                        if (active_record(memory) == nullptr)
+                        {
+                            set_active_record(memory, self.default_type.record());
+                            try { self.default_type.default_construct_at(payload(self, memory)); }
+                            catch (...) { std::terminate(); }
+                        }
+                    });
+                    requested.default_construct_at(payload(self, memory));
+                    set_active_record(memory, requested.record());
+                    restore.release();
+                }
+                requested.ops_ref().from_python(requested, payload(self, memory), source);
+            }
+#endif
+        };
+
+        std::uint64_t generation{0};
+        std::vector<const ValueTypeMetaData *> registration_order{};
+        std::unordered_map<const ValueTypeMetaData *, std::vector<const ValueTypeMetaData *>> parents{};
+        std::unordered_map<const ValueTypeMetaData *, bool> abstract_bundles{};
+        std::unordered_map<const ValueTypeMetaData *, bool> polymorphic_bases{};
+        mutable std::mutex mutex{};
+        mutable std::unordered_map<const ValueTypeMetaData *, std::vector<const ValueTypeMetaData *>> closures{};
+        mutable std::unordered_map<const ValueTypeMetaData *, ValueTypeRef> exact_types{};
+        mutable std::unordered_map<const ValueTypeMetaData *, std::unique_ptr<UnionEntry>> union_types{};
+
+        explicit Impl(TypeRegistry &registry)
+        {
+            const auto snapshot = registry.bundle_hierarchy_snapshot();
+            generation = snapshot.generation;
+            registration_order.reserve(snapshot.entries.size());
+            parents.reserve(snapshot.entries.size());
+            abstract_bundles.reserve(snapshot.entries.size());
+            polymorphic_bases.reserve(snapshot.entries.size());
+            for (const auto &entry : snapshot.entries)
+            {
+                registration_order.push_back(entry.schema);
+                parents.emplace(entry.schema, entry.parents);
+                abstract_bundles.emplace(entry.schema, entry.is_abstract);
+                polymorphic_bases.emplace(entry.schema, entry.is_abstract || entry.has_children);
+            }
+        }
+
+        [[nodiscard]] bool derives_from(const ValueTypeMetaData *candidate,
+                                        const ValueTypeMetaData *base) const
+        {
+            if (candidate == base) { return true; }
+            std::vector<const ValueTypeMetaData *> pending{candidate};
+            std::unordered_map<const ValueTypeMetaData *, bool> seen;
+            while (!pending.empty())
+            {
+                const auto *current = pending.back();
+                pending.pop_back();
+                if (!seen.emplace(current, true).second) { continue; }
+                const auto found = parents.find(current);
+                if (found == parents.end()) { continue; }
+                for (const auto *parent : found->second)
+                {
+                    if (parent == base) { return true; }
+                    pending.push_back(parent);
+                }
+            }
+            return false;
+        }
+
+        [[nodiscard]] const std::vector<const ValueTypeMetaData *> &
+        closure_for_locked(const ValueTypeMetaData *schema) const
+        {
+            if (const auto found = closures.find(schema); found != closures.end())
+            {
+                return found->second;
+            }
+            std::vector<const ValueTypeMetaData *> closure;
+            for (const auto *candidate : registration_order)
+            {
+                const auto abstract = abstract_bundles.find(candidate);
+                if (abstract != abstract_bundles.end() && !abstract->second &&
+                    derives_from(candidate, schema))
+                {
+                    closure.push_back(candidate);
+                }
+            }
+            return closures.emplace(schema, std::move(closure)).first->second;
+        }
+
+        [[nodiscard]] bool polymorphic(const ValueTypeMetaData *schema) const noexcept
+        {
+            const auto found = polymorphic_bases.find(schema);
+            return found != polymorphic_bases.end() && found->second;
+        }
+
+        [[nodiscard]] ValueTypeRef exact_type_for_locked(const ValueTypeMetaData *schema) const
+        {
+            if (schema == nullptr) { return {}; }
+            if (const auto found = exact_types.find(schema); found != exact_types.end())
+            {
+                return found->second;
+            }
+
+            auto &factory = ValuePlanFactory::instance();
+            const auto canonical = factory.type_for(schema);
+            if (schema->is_owned())
+            {
+                exact_types.emplace(schema, canonical);
+                return canonical;
+            }
+
+            ValueTypeRef result = canonical;
+            switch (schema->value_kind())
+            {
+                case ValueTypeKind::Tuple:
+                case ValueTypeKind::Bundle: {
+                    std::vector<ValueTypeRef> fields;
+                    fields.reserve(schema->field_count);
+                    bool changed = false;
+                    for (std::size_t index = 0; index < schema->field_count; ++index)
+                    {
+                        const auto child = type_for_locked(schema->fields[index].type);
+                        fields.push_back(child);
+                        changed = changed || child != factory.type_for(schema->fields[index].type);
+                    }
+                    if (changed) { result = factory.realized_composite_type_for(schema, fields); }
+                    break;
+                }
+                case ValueTypeKind::List: {
+                    const auto element = type_for_locked(schema->element_type);
+                    if (element != factory.type_for(schema->element_type))
+                    {
+                        if (schema->fixed_size != 0 || schema->is_mutable())
+                        {
+                            throw std::logic_error(
+                                "polymorphic Bundle elements are not supported in fixed or mutable List schemas");
+                        }
+                        result = compact_list_type(element, *schema);
+                    }
+                    break;
+                }
+                case ValueTypeKind::Set: {
+                    const auto element = type_for_locked(schema->element_type);
+                    if (element != factory.type_for(schema->element_type))
+                    {
+                        if (schema->is_mutable())
+                        {
+                            throw std::logic_error(
+                                "polymorphic Bundle elements are not supported in mutable Set schemas");
+                        }
+                        result = compact_set_type(element);
+                    }
+                    break;
+                }
+                case ValueTypeKind::Map: {
+                    const auto key = type_for_locked(schema->key_type);
+                    const auto value = type_for_locked(schema->element_type);
+                    if (key != factory.type_for(schema->key_type) ||
+                        value != factory.type_for(schema->element_type))
+                    {
+                        if (schema->is_mutable())
+                        {
+                            throw std::logic_error(
+                                "polymorphic Bundle keys or values are not supported in mutable Map schemas");
+                        }
+                        result = compact_map_type(key, value);
+                    }
+                    break;
+                }
+                case ValueTypeKind::CyclicBuffer: {
+                    const auto element = type_for_locked(schema->element_type);
+                    if (element != factory.type_for(schema->element_type))
+                    {
+                        result = compact_cyclic_buffer_type(element, schema->fixed_size);
+                    }
+                    break;
+                }
+                case ValueTypeKind::Queue: {
+                    const auto element = type_for_locked(schema->element_type);
+                    if (element != factory.type_for(schema->element_type))
+                    {
+                        result = compact_queue_type(element, schema->fixed_size);
+                    }
+                    break;
+                }
+                case ValueTypeKind::Atomic:
+                case ValueTypeKind::Any:
+                    break;
+            }
+            exact_types.emplace(schema, result);
+            return result;
+        }
+
+        [[nodiscard]] ValueTypeRef type_for_locked(const ValueTypeMetaData *schema) const
+        {
+            if (!polymorphic(schema)) { return exact_type_for_locked(schema); }
+            if (const auto found = union_types.find(schema); found != union_types.end())
+            {
+                return found->second->binding;
+            }
+            std::vector<ValueTypeRef> alternatives;
+            const auto &alternative_schemas = closure_for_locked(schema);
+            alternatives.reserve(alternative_schemas.size());
+            for (const auto *alternative : alternative_schemas)
+            {
+                alternatives.push_back(exact_type_for_locked(alternative));
+            }
+            auto created = std::make_unique<UnionEntry>(schema, std::move(alternatives));
+            const auto result = created->binding;
+            union_types.emplace(schema, std::move(created));
+            return result;
+        }
+
+        [[nodiscard]] ValueTypeRef type_for(const ValueTypeMetaData *schema) const
+        {
+            std::lock_guard lock(mutex);
+            return type_for_locked(schema);
+        }
+    };
+
+    namespace
+    {
+        std::mutex &snapshot_mutex()
+        {
+            static auto *value = new std::mutex();
+            return *value;
+        }
+
+        std::unordered_map<std::uint64_t, std::shared_ptr<const TypeRealizationSnapshot>> &snapshots()
+        {
+            static auto *value =
+                new std::unordered_map<std::uint64_t, std::shared_ptr<const TypeRealizationSnapshot>>();
+            return *value;
+        }
+    }
+
+    TypeRealizationSnapshot::TypeRealizationSnapshot(std::shared_ptr<Impl> impl) noexcept
+        : impl_(std::move(impl))
+    {
+    }
+
+    std::shared_ptr<const TypeRealizationSnapshot> TypeRealizationSnapshot::capture(TypeRegistry &registry)
+    {
+        const auto requested_generation = registry.bundle_hierarchy_generation();
+        {
+            std::lock_guard lock(snapshot_mutex());
+            if (const auto found = snapshots().find(requested_generation); found != snapshots().end())
+            {
+                return found->second;
+            }
+        }
+        auto snapshot = std::shared_ptr<const TypeRealizationSnapshot>{
+            new TypeRealizationSnapshot{std::make_shared<Impl>(registry)}};
+        std::lock_guard lock(snapshot_mutex());
+        return snapshots().try_emplace(snapshot->generation(), snapshot).first->second;
+    }
+
+    std::uint64_t TypeRealizationSnapshot::generation() const noexcept { return impl_->generation; }
+
+    bool TypeRealizationSnapshot::is_polymorphic(const ValueTypeMetaData *schema) const noexcept
+    {
+        return impl_->polymorphic(schema);
+    }
+
+    std::vector<const ValueTypeMetaData *>
+    TypeRealizationSnapshot::alternatives(const ValueTypeMetaData *schema) const
+    {
+        if (schema == nullptr || impl_->parents.find(schema) == impl_->parents.end()) { return {}; }
+        std::lock_guard lock(impl_->mutex);
+        return impl_->closure_for_locked(schema);
+    }
+
+    ValueTypeRef TypeRealizationSnapshot::type_for(const ValueTypeMetaData *schema) const
+    {
+        if (schema == nullptr) { return {}; }
+        return impl_->type_for(schema);
+    }
+
+    TypeRealizationScope::TypeRealizationScope(const TypeRealizationSnapshot *snapshot) noexcept
+        : previous_(std::exchange(active_snapshot, snapshot))
+    {
+    }
+
+    TypeRealizationScope::~TypeRealizationScope() noexcept { active_snapshot = previous_; }
+
+    const TypeRealizationSnapshot *active_type_realization() noexcept { return active_snapshot; }
+
+    void clear_type_realization_snapshots() noexcept
+    {
+        std::lock_guard lock(snapshot_mutex());
+        snapshots().clear();
+    }
+}

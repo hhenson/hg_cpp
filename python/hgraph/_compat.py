@@ -166,8 +166,37 @@ class BoolResult:
 
 
 class CompoundScalar:
-    """Base class for compound scalars (dataclass-style). Instances are
-    first-class python-object scalars in this runtime."""
+    """Base class for nominal Bundle values.
+
+    ``namespace`` defaults to the defining module plus any enclosing class or
+    function scope. Hierarchy registration is completed lazily when the class
+    is first materialised as an hgraph value type, after ``@dataclass`` has
+    populated its inherited field set.
+    """
+
+    __compound_namespace__ = ""
+    __compound_abstract__ = True
+    __compound_discriminator__ = "__type__"
+
+    def __init_subclass__(
+        cls,
+        *,
+        namespace=None,
+        abstract=False,
+        discriminator="__type__",
+        **options,
+    ):
+        # Some upstream hgraph classes still carry bridge-specific class
+        # options (for example cpp_native). They are metadata here and must
+        # not leak into object.__init_subclass__.
+        super().__init_subclass__()
+        enclosing = cls.__qualname__.rsplit(".", 1)[0] if "." in cls.__qualname__ else ""
+        if namespace is None:
+            namespace = cls.__module__ if not enclosing else f"{cls.__module__}.{enclosing}"
+        cls.__compound_namespace__ = namespace
+        cls.__compound_abstract__ = bool(abstract)
+        cls.__compound_discriminator__ = discriminator
+        cls.__compound_options__ = dict(options)
 
 
 class JSON(str):

@@ -179,6 +179,13 @@ namespace hgraph
         static constexpr auto name_sv = Name;
     };
 
+    /** One-pointer, on-demand owner for a value-layer schema. */
+    template <typename TValue>
+    struct Owned
+    {
+        using value_type = TValue;
+    };
+
     /** Un-named (structural) time-series bundle; corresponds to ``un_named_tsb``. */
     template <typename... TFields>
     struct UnNamedTSB
@@ -445,6 +452,27 @@ namespace hgraph
             {
                 return TypeRegistry::instance().map(scalar_descriptor<TKey>::value_meta(),
                                                     scalar_descriptor<TValue>::value_meta());
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <typename TValue>
+    struct scalar_descriptor<Owned<TValue>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TValue>::is_concrete();
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                return TypeRegistry::instance().owned(scalar_descriptor<TValue>::value_meta());
             }
             else
             {

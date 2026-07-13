@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <ranges>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -14,6 +15,14 @@ namespace hgraph
 {
     namespace
     {
+        [[nodiscard]] std::string qualified_bundle_name(std::string_view bundle_namespace,
+                                                        std::string_view local_name)
+        {
+            if (local_name.empty()) { throw std::invalid_argument("bundle local name must not be empty"); }
+            if (bundle_namespace.empty()) { return std::string{local_name}; }
+            return std::string{bundle_namespace} + "::" + std::string{local_name};
+        }
+
         constexpr ValueTypeFlags kCompositeSeedFlags = ValueTypeFlags::TriviallyConstructible |
                                                        ValueTypeFlags::TriviallyDestructible |
                                                        ValueTypeFlags::TriviallyCopyable | ValueTypeFlags::Hashable |
@@ -286,6 +295,117 @@ namespace hgraph
         return (meta != nullptr && meta->is_named_bundle()) ? meta : nullptr;
     }
 
+    const ValueTypeMetaData *TypeRegistry::named_bundle(std::string_view bundle_namespace,
+                                                         std::string_view local_name) const
+    {
+        return named_bundle(qualified_bundle_name(bundle_namespace, local_name));
+    }
+
+    bool TypeRegistry::bundle_is_a(const ValueTypeMetaData *candidate,
+                                   const ValueTypeMetaData *base) const
+    {
+        const std::lock_guard lock(mutex_);
+        if (candidate == base) { return candidate != nullptr; }
+        if (candidate == nullptr || base == nullptr || !candidate->is_named_bundle() || !base->is_named_bundle())
+        {
+            return false;
+        }
+        std::vector<const ValueTypeMetaData *> pending{candidate};
+        std::unordered_map<const ValueTypeMetaData *, bool> seen;
+        while (!pending.empty())
+        {
+            const ValueTypeMetaData *current = pending.back();
+            pending.pop_back();
+            if (!seen.emplace(current, true).second || current->bundle_hierarchy == nullptr) { continue; }
+            for (const ValueTypeMetaData *parent : current->bundle_hierarchy->parents)
+            {
+                if (parent == base) { return true; }
+                pending.push_back(parent);
+            }
+        }
+        return false;
+    }
+
+    std::vector<const ValueTypeMetaData *> TypeRegistry::bundle_descendants(
+        const ValueTypeMetaData *base,
+        bool include_base,
+        bool include_abstract) const
+    {
+        const std::lock_guard lock(mutex_);
+        if (base == nullptr || !base->is_named_bundle())
+        {
+            throw std::invalid_argument("bundle_descendants requires a named Bundle schema");
+        }
+
+        std::vector<const ValueTypeMetaData *> result;
+        result.reserve(bundle_hierarchy_storage_.size());
+        for (const auto &entry : bundle_hierarchy_storage_)
+        {
+            if (entry == nullptr) { continue; }
+            const ValueTypeMetaData *candidate = named_bundle(
+                entry->namespace_name != nullptr ? std::string_view{entry->namespace_name} : std::string_view{},
+                entry->local_name != nullptr ? std::string_view{entry->local_name} : std::string_view{});
+            if (candidate == nullptr) { continue; }
+            if (candidate == base && !include_base) { continue; }
+            if (!bundle_is_a(candidate, base)) { continue; }
+            if (!include_abstract && candidate->is_abstract_bundle()) { continue; }
+            result.push_back(candidate);
+        }
+        return result;
+    }
+
+    std::vector<const ValueTypeMetaData *> TypeRegistry::named_bundles() const
+    {
+        const std::lock_guard lock(mutex_);
+        std::vector<const ValueTypeMetaData *> result;
+        result.reserve(bundle_hierarchy_storage_.size());
+        for (const auto &entry : bundle_hierarchy_storage_)
+        {
+            if (entry == nullptr) { continue; }
+            if (const auto *bundle = named_bundle(
+                    entry->namespace_name != nullptr ? std::string_view{entry->namespace_name} : std::string_view{},
+                    entry->local_name != nullptr ? std::string_view{entry->local_name} : std::string_view{}))
+            {
+                result.push_back(bundle);
+            }
+        }
+        return result;
+    }
+
+    std::uint64_t TypeRegistry::bundle_hierarchy_generation() const noexcept
+    {
+        const std::lock_guard lock(mutex_);
+        return bundle_hierarchy_generation_;
+    }
+
+    BundleHierarchySnapshot TypeRegistry::bundle_hierarchy_snapshot() const
+    {
+        const std::lock_guard lock(mutex_);
+        BundleHierarchySnapshot result;
+        result.generation = bundle_hierarchy_generation_;
+        result.entries.reserve(bundle_hierarchy_storage_.size());
+        for (const auto &hierarchy : bundle_hierarchy_storage_)
+        {
+            if (hierarchy == nullptr) { continue; }
+            const auto qualified_name = qualified_bundle_name(
+                hierarchy->namespace_name != nullptr
+                    ? std::string_view{hierarchy->namespace_name}
+                    : std::string_view{},
+                hierarchy->local_name != nullptr
+                    ? std::string_view{hierarchy->local_name}
+                    : std::string_view{});
+            const auto found = value_name_cache_.find(qualified_name);
+            if (found == value_name_cache_.end() || !found->second->is_named_bundle()) { continue; }
+            result.entries.push_back(BundleHierarchySnapshot::Entry{
+                .schema = found->second,
+                .parents = hierarchy->parents,
+                .is_abstract = hierarchy->is_abstract,
+                .has_children = !hierarchy->children.empty(),
+            });
+        }
+        return result;
+    }
+
     namespace
     {
         /** Per-enum ValueOps: Int ops with member-aware rendering and the
@@ -451,6 +571,7 @@ namespace hgraph
         synthetic_scalar_cache_.clear();
         tuple_cache_.clear();
         bundle_cache_.clear();
+        owned_cache_.clear();
         named_bundle_cache_.clear();
         named_enum_cache_.clear();
         clear_enum_ops();
@@ -484,6 +605,9 @@ namespace hgraph
         name_storage_.clear();
         value_field_storage_.clear();
         ts_field_storage_.clear();
+        recursive_bundle_storage_.clear();
+        bundle_hierarchy_storage_.clear();
+        bundle_hierarchy_generation_ = 0;
 
         // Reset singletons that don't fit any of the keyed caches.
         signal_meta_.reset();
@@ -672,42 +796,245 @@ namespace hgraph
         return &meta;
     }
 
+    const ValueTypeMetaData *TypeRegistry::owned(const ValueTypeMetaData *target)
+    {
+        const std::lock_guard lock(mutex_);
+        if (target == nullptr) { throw std::invalid_argument("owned requires a target value schema"); }
+        const ValueTypeMetaData &meta = owned_cache_.intern(target, [&]() {
+            ValueTypeFlags flags = target->flags | ValueTypeFlags::Owned;
+            flags = flags & ~(ValueTypeFlags::TriviallyConstructible |
+                              ValueTypeFlags::TriviallyDestructible |
+                              ValueTypeFlags::TriviallyCopyable |
+                              ValueTypeFlags::BufferCompatible);
+            ValueTypeMetaData result(
+                ValueTypeKind::Bundle, flags,
+                store_name_interned("Owned[" + std::string{target->name()} + "]"));
+            result.element_type = target;
+            result.fields = target->fields;
+            result.field_count = target->field_count;
+            return result;
+        });
+        return &meta;
+    }
+
+    const ValueTypeMetaData *TypeRegistry::recursive_bundle(
+        std::string_view bundle_namespace,
+        std::string_view local_name,
+        const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields,
+        const std::vector<const ValueTypeMetaData *> &parents,
+        bool is_abstract,
+        std::string_view discriminator,
+        const std::vector<const ValueTypeMetaData *> &generic_arguments)
+    {
+        const std::lock_guard lock(mutex_);
+        const std::string qualified_name = qualified_bundle_name(bundle_namespace, local_name);
+        if (value_type(qualified_name) != nullptr)
+        {
+            throw std::invalid_argument("recursive bundle '" + qualified_name + "' is already registered");
+        }
+        if (discriminator.empty()) { throw std::invalid_argument("bundle discriminator must not be empty"); }
+
+        for (const auto &[field_name, field_type] : fields)
+        {
+            (void)field_type;
+            if (field_name.empty())
+            {
+                throw std::invalid_argument("recursive bundle fields must have non-empty names");
+            }
+            if (std::ranges::count_if(fields, [&](const auto &field) { return field.first == field_name; }) != 1)
+            {
+                throw std::invalid_argument("recursive bundle fields must have unique names");
+            }
+        }
+        for (const ValueTypeMetaData *parent : parents)
+        {
+            if (parent == nullptr || !parent->is_named_bundle() || parent->bundle_hierarchy == nullptr)
+            {
+                throw std::invalid_argument("recursive bundle parents must be named Bundle schemas");
+            }
+            if (std::ranges::count(parents, parent) != 1)
+            {
+                throw std::invalid_argument("recursive bundle parents must not contain duplicates");
+            }
+            for (std::size_t index = 0; index < parent->field_count; ++index)
+            {
+                const auto &parent_field = parent->fields[index];
+                const auto child_field = std::ranges::find_if(fields, [&](const auto &field) {
+                    return parent_field.name != nullptr && field.first == parent_field.name;
+                });
+                if (child_field == fields.end() || child_field->second == nullptr ||
+                    child_field->second != parent_field.type)
+                {
+                    throw std::invalid_argument(
+                        "recursive bundle '" + qualified_name + "' must preserve inherited fields");
+                }
+            }
+        }
+
+        auto named = std::make_unique<ValueTypeMetaData>(
+            ValueTypeKind::Bundle, ValueTypeFlags::None, store_name_interned(qualified_name));
+        auto hierarchy = std::make_unique<BundleHierarchyMetaData>();
+        hierarchy->namespace_name = store_name_interned(bundle_namespace);
+        hierarchy->local_name = store_name_interned(local_name);
+        hierarchy->parents = parents;
+        hierarchy->generic_arguments = generic_arguments;
+        hierarchy->is_abstract = is_abstract;
+        hierarchy->discriminator = store_name_interned(discriminator);
+        hierarchy->generation = ++bundle_hierarchy_generation_;
+        named->bundle_hierarchy = hierarchy.get();
+        ValueTypeMetaData *named_ptr = named.get();
+        recursive_bundle_storage_.push_back(std::move(named));
+        bundle_hierarchy_storage_.push_back(std::move(hierarchy));
+
+        const ValueTypeMetaData *owned_self = owned(named_ptr);
+        std::vector<std::pair<std::string, const ValueTypeMetaData *>> resolved_fields;
+        resolved_fields.reserve(fields.size());
+        for (const auto &[field_name, field_type] : fields)
+        {
+            resolved_fields.emplace_back(field_name, field_type != nullptr ? field_type : owned_self);
+        }
+        const ValueTypeMetaData *un_named = un_named_bundle(resolved_fields);
+        named_ptr->flags = un_named->flags;
+        named_ptr->fields = un_named->fields;
+        named_ptr->field_count = un_named->field_count;
+        named_ptr->wrapped_un_named = un_named;
+
+        auto *owned_meta = const_cast<ValueTypeMetaData *>(owned_self);
+        owned_meta->flags = (un_named->flags | ValueTypeFlags::Owned) &
+                            ~(ValueTypeFlags::TriviallyConstructible |
+                              ValueTypeFlags::TriviallyDestructible |
+                              ValueTypeFlags::TriviallyCopyable |
+                              ValueTypeFlags::BufferCompatible);
+        owned_meta->fields = named_ptr->fields;
+        owned_meta->field_count = named_ptr->field_count;
+
+        for (const ValueTypeMetaData *parent : parents)
+        {
+            parent->bundle_hierarchy->children.push_back(named_ptr);
+            parent->bundle_hierarchy->generation = ++bundle_hierarchy_generation_;
+        }
+        register_value_alias(qualified_name, named_ptr);
+        return named_ptr;
+    }
+
     const ValueTypeMetaData *
     TypeRegistry::bundle(std::string_view name,
                          const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields)
     {
+        if (const auto separator = name.rfind("::"); separator != std::string_view::npos)
+        {
+            return bundle(name.substr(0, separator), name.substr(separator + 2), fields);
+        }
+        return bundle({}, name, fields);
+    }
+
+    const ValueTypeMetaData *
+    TypeRegistry::bundle(std::string_view bundle_namespace,
+                         std::string_view local_name,
+                         const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields,
+                         const std::vector<const ValueTypeMetaData *> &parents,
+                         bool is_abstract,
+                         std::string_view discriminator,
+                         const std::vector<const ValueTypeMetaData *> &generic_arguments)
+    {
         const std::lock_guard lock(mutex_);
-        if (name.empty())
+        if (local_name.empty())
         {
             throw std::invalid_argument("bundle requires a non-empty name; use un_named_bundle for the structural form");
         }
+        const std::string qualified_name = qualified_bundle_name(bundle_namespace, local_name);
+        if (discriminator.empty()) { throw std::invalid_argument("bundle discriminator must not be empty"); }
+        if (const ValueTypeMetaData *existing = value_type(qualified_name);
+            existing != nullptr && !existing->is_named_bundle())
+        {
+            throw std::invalid_argument(
+                "bundle name '" + qualified_name + "' is already registered for another value type");
+        }
         const ValueTypeMetaData *un_named = un_named_bundle(fields);
+
+        for (const ValueTypeMetaData *parent : parents)
+        {
+            if (parent == nullptr || !parent->is_named_bundle() || parent->bundle_hierarchy == nullptr)
+            {
+                throw std::invalid_argument("bundle parents must be named Bundle schemas");
+            }
+            if (std::ranges::count(parents, parent) != 1)
+            {
+                throw std::invalid_argument("bundle parents must not contain duplicates");
+            }
+            if (parent->name() == qualified_name)
+            {
+                throw std::invalid_argument("bundle cannot inherit from itself");
+            }
+            for (std::size_t index = 0; index < parent->field_count; ++index)
+            {
+                const auto &parent_field = parent->fields[index];
+                const auto child_field = std::ranges::find_if(fields, [&](const auto &field) {
+                    return parent_field.name != nullptr && field.first == parent_field.name;
+                });
+                if (child_field == fields.end() || child_field->second != parent_field.type)
+                {
+                    throw std::invalid_argument(
+                        "bundle '" + qualified_name + "' must preserve inherited field '" +
+                        std::string{parent_field.name != nullptr ? parent_field.name : ""} + "'");
+                }
+            }
+        }
 
         // Bundle name namespace must be unique: a name already in use by a
         // named bundle with a different field list is a conflict, not a
         // re-registration. Same name + same fields is idempotent and falls
         // through to the regular intern path below.
-        if (const ValueTypeMetaData *existing = named_bundle(name);
+        if (const ValueTypeMetaData *existing = named_bundle(qualified_name);
             existing != nullptr && existing->wrapped_un_named != un_named)
         {
             throw std::invalid_argument(
-                std::string("named bundle '") + std::string(name) +
+                std::string("named bundle '") + qualified_name +
                 "' is already registered with a different schema");
         }
 
-        NamedBundleKey key{std::string{name}, un_named};
+        NamedBundleKey key{std::string{bundle_namespace}, std::string{local_name}, un_named};
         const ValueTypeMetaData &meta = named_bundle_cache_.intern(std::move(key), [&]() {
             // Named bundle wraps the un-named: shares the same field array
             // (no duplication), records its own name, and sets
             // wrapped_un_named so consumers can navigate to the structural
             // twin.
-            ValueTypeMetaData m(ValueTypeKind::Bundle, un_named->flags, store_name_interned(name));
+            ValueTypeMetaData m(ValueTypeKind::Bundle, un_named->flags, store_name_interned(qualified_name));
             m.fields = un_named->fields;
             m.field_count = un_named->field_count;
             m.wrapped_un_named = un_named;
+            auto hierarchy = std::make_unique<BundleHierarchyMetaData>();
+            hierarchy->namespace_name = store_name_interned(bundle_namespace);
+            hierarchy->local_name = store_name_interned(local_name);
+            hierarchy->parents = parents;
+            hierarchy->generic_arguments = generic_arguments;
+            hierarchy->is_abstract = is_abstract;
+            hierarchy->discriminator = store_name_interned(discriminator);
+            hierarchy->generation = ++bundle_hierarchy_generation_;
+            m.bundle_hierarchy = hierarchy.get();
+            bundle_hierarchy_storage_.push_back(std::move(hierarchy));
             return m;
         });
-        register_value_alias(name, &meta);
+
+        auto *hierarchy = meta.bundle_hierarchy;
+        if (hierarchy == nullptr) { throw std::logic_error("named bundle is missing hierarchy metadata"); }
+        if (hierarchy->parents != parents || hierarchy->is_abstract != is_abstract ||
+            std::string_view{hierarchy->discriminator} != discriminator ||
+            hierarchy->generic_arguments != generic_arguments)
+        {
+            throw std::invalid_argument("named bundle '" + qualified_name +
+                                        "' is already registered with different hierarchy metadata");
+        }
+        for (const ValueTypeMetaData *parent : parents)
+        {
+            auto &children = parent->bundle_hierarchy->children;
+            if (std::ranges::find(children, &meta) == children.end())
+            {
+                children.push_back(&meta);
+                parent->bundle_hierarchy->generation = ++bundle_hierarchy_generation_;
+            }
+        }
+        register_value_alias(qualified_name, &meta);
         return &meta;
     }
 
@@ -1141,7 +1468,20 @@ namespace hgraph
             {
                 value_fields.emplace_back(field_name, ts_type ? ts_type->value_schema : nullptr);
             }
-            const ValueTypeMetaData *named_value_bundle = bundle(name, value_fields);
+            const ValueTypeMetaData *named_value_bundle = named_bundle(name);
+            if (named_value_bundle != nullptr)
+            {
+                if (named_value_bundle->wrapped_un_named != un_named->value_schema)
+                {
+                    throw std::invalid_argument(
+                        "named tsb '" + std::string{name} +
+                        "' does not match its existing Bundle value schema");
+                }
+            }
+            else
+            {
+                named_value_bundle = bundle(name, value_fields);
+            }
 
             const char *interned_name = store_name_interned(name);
             TSValueTypeMetaData m(TSTypeKind::TSB, named_value_bundle, interned_name);

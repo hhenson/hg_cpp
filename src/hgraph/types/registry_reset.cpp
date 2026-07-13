@@ -5,6 +5,7 @@
 #include <hgraph/runtime/executor.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_record_registry.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -41,6 +42,7 @@ namespace hgraph
         // factories. Their cached handles are trivial and are not dereferenced
         // while those factories are subsequently cleared.
         TypeRecordRegistry::instance().reset();
+        clear_type_realization_snapshots();
         clear_executor_runtime_types();
         clear_graph_runtime_types();
         clear_node_runtime_types();

@@ -30,6 +30,7 @@
 #include <hgraph/runtime/push_source_node.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/record_replay.h>
@@ -58,6 +59,8 @@ using namespace hgraph::python_bridge;
 
 namespace
 {
+    std::uint64_t python_registry_generation{0};
+
     // ---------------------------------------------------------------
     // Wiring surface
     // ---------------------------------------------------------------
@@ -2070,7 +2073,28 @@ NB_MODULE(_hgraph, m)
                  if (!nb::isinstance<PyValueType>(other)) { return false; }
                  return self.meta == nb::cast<PyValueType &>(other).meta;   // metas are interned
              })
-        .def("__hash__", [](const PyValueType &self) { return std::hash<const void *>{}(self.meta); });
+        .def("__hash__", [](const PyValueType &self) { return std::hash<const void *>{}(self.meta); })
+        .def_prop_ro("name", [](const PyValueType &self) {
+            return self.meta != nullptr ? std::string{self.meta->name()} : std::string{};
+        })
+        .def_prop_ro("namespace", [](const PyValueType &self) {
+            return self.meta != nullptr ? std::string{self.meta->bundle_namespace()} : std::string{};
+        })
+        .def_prop_ro("local_name", [](const PyValueType &self) {
+            return self.meta != nullptr ? std::string{self.meta->bundle_local_name()} : std::string{};
+        })
+        .def_prop_ro("fields", [](const PyValueType &self) {
+            nb::list result;
+            if (self.meta == nullptr) { return result; }
+            for (std::size_t index = 0; index < self.meta->field_count; ++index)
+            {
+                const auto &field = self.meta->fields[index];
+                result.append(nb::make_tuple(
+                    std::string{field.name != nullptr ? field.name : ""},
+                    PyValueType{field.type}));
+            }
+            return result;
+        });
     m.def("value_type", [](const std::string &name) {
         const auto *meta = TypeRegistry::instance().value_type(name);
         if (meta == nullptr) { throw nb::value_error(("unknown value type: " + name).c_str()); }
@@ -2161,6 +2185,8 @@ NB_MODULE(_hgraph, m)
         return to_json_string(owned.view());
     });
     m.def("value_from_json", [](PyValueType meta, const std::string &text) {
+        const auto realization = TypeRealizationSnapshot::capture(TypeRegistry::instance());
+        TypeRealizationScope scope{realization.get()};
         const Value parsed = from_json_string(meta.meta, text);
         return python_bridge::value_to_py(parsed.view());
     });
@@ -2908,8 +2934,71 @@ NB_MODULE(_hgraph, m)
         return PyValueType{TypeRegistry::instance().bundle(name, field_metas)};
     });
 
+    m.def("qualified_bundle_vt", [](const std::string &bundle_namespace,
+                                    const std::string &local_name,
+                                    nb::list fields,
+                                    nb::list parents,
+                                    bool is_abstract,
+                                    const std::string &discriminator,
+                                    nb::list generic_arguments) {
+        std::vector<std::pair<std::string, const ValueTypeMetaData *>> field_metas;
+        field_metas.reserve(nb::len(fields));
+        for (nb::handle item : fields)
+        {
+            auto pair = nb::cast<nb::tuple>(item);
+            field_metas.emplace_back(nb::cast<std::string>(pair[0]), nb::cast<PyValueType &>(pair[1]).meta);
+        }
+        std::vector<const ValueTypeMetaData *> parent_metas;
+        parent_metas.reserve(nb::len(parents));
+        for (nb::handle parent : parents) { parent_metas.push_back(nb::cast<PyValueType &>(parent).meta); }
+        std::vector<const ValueTypeMetaData *> generic_metas;
+        generic_metas.reserve(nb::len(generic_arguments));
+        for (nb::handle argument : generic_arguments)
+        {
+            generic_metas.push_back(nb::cast<PyValueType &>(argument).meta);
+        }
+        return PyValueType{TypeRegistry::instance().bundle(
+            bundle_namespace, local_name, field_metas, parent_metas, is_abstract, discriminator, generic_metas)};
+    }, nb::arg("namespace"), nb::arg("local_name"), nb::arg("fields"),
+       nb::arg("parents") = nb::list(), nb::arg("abstract") = false,
+       nb::arg("discriminator") = "__type__", nb::arg("generic_arguments") = nb::list());
+
+    m.def("recursive_bundle_vt", [](const std::string &bundle_namespace,
+                                    const std::string &local_name,
+                                    nb::list fields,
+                                    nb::list parents,
+                                    bool is_abstract,
+                                    const std::string &discriminator,
+                                    nb::list generic_arguments) {
+        std::vector<std::pair<std::string, const ValueTypeMetaData *>> field_metas;
+        field_metas.reserve(nb::len(fields));
+        for (nb::handle item : fields)
+        {
+            auto pair = nb::cast<nb::tuple>(item);
+            const auto field_name = nb::cast<std::string>(pair[0]);
+            field_metas.emplace_back(
+                field_name, pair[1].is_none() ? nullptr : nb::cast<PyValueType &>(pair[1]).meta);
+        }
+        std::vector<const ValueTypeMetaData *> parent_metas;
+        parent_metas.reserve(nb::len(parents));
+        for (nb::handle parent : parents) { parent_metas.push_back(nb::cast<PyValueType &>(parent).meta); }
+        std::vector<const ValueTypeMetaData *> generic_metas;
+        generic_metas.reserve(nb::len(generic_arguments));
+        for (nb::handle argument : generic_arguments)
+        {
+            generic_metas.push_back(nb::cast<PyValueType &>(argument).meta);
+        }
+        return PyValueType{TypeRegistry::instance().recursive_bundle(
+            bundle_namespace, local_name, field_metas, parent_metas, is_abstract, discriminator, generic_metas)};
+    }, nb::arg("namespace"), nb::arg("local_name"), nb::arg("fields"),
+       nb::arg("parents") = nb::list(), nb::arg("abstract") = false,
+       nb::arg("discriminator") = "__type__", nb::arg("generic_arguments") = nb::list());
+
     m.def("register_bundle_class", [](const std::string &name, nb::object cls) {
         bundle_class_registry()[nb::str(name.c_str())] = std::move(cls);
+    });
+    m.def("register_bundle_class", [](PyValueType type, nb::object cls) {
+        bundle_class_registry()[nb::int_(reinterpret_cast<std::uintptr_t>(type.meta))] = std::move(cls);
     });
 
     m.def("tsl_element", [](const PyPort &port, std::size_t index) {
@@ -3212,9 +3301,12 @@ NB_MODULE(_hgraph, m)
         nb::arg("state"), nb::arg("name"), nb::arg("args") = nb::tuple(), nb::arg("kwargs") = nb::dict(),
         nb::arg("output_type") = nb::none());
 
+    m.def("_registry_generation", [] { return python_registry_generation; });
     m.def("reset_registries", [] {
         python_bridge::enum_class_registry().clear();   // meta pointers are re-interned
+        python_bridge::bundle_class_registry().clear();
         reset_all_registries();
+        ++python_registry_generation;
         stdlib::register_standard_operators();
     (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar
     register_overload<op_materialize, materialize_node>();

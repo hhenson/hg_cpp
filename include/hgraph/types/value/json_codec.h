@@ -39,7 +39,7 @@ namespace hgraph
         using ReadFn  = Value (*)(const JsonConverter &, json_detail::Reader &);
 
         void write(const ValueView &view, std::string &out) const { write_(*this, view, out); }
-        [[nodiscard]] Value read(json_detail::Reader &reader) const { return read_(*this, reader); }
+        [[nodiscard]] Value read(json_detail::Reader &reader) const;
 
         /** Which atomic wire form this converter uses (Atomic kinds only). */
         enum class AtomicTag : unsigned char

@@ -7,6 +7,7 @@
 #include <hgraph/types/value/value_ops.h>
 
 #include <mutex>
+#include <span>
 #include <unordered_map>
 
 namespace hgraph
@@ -105,6 +106,15 @@ namespace hgraph
          * bindings and interned through ``ValueTypeRef``.
          */
         [[nodiscard]] ValueTypeRef type_for(const ValueTypeMetaData *schema);
+
+        /**
+         * Build a graph-realized Tuple/Bundle binding from explicit field
+         * bindings. The schema stays canonical; only its storage plan and
+         * indexed child ops differ.
+         */
+        [[nodiscard]] ValueTypeRef realized_composite_type_for(
+            const ValueTypeMetaData *schema,
+            std::span<const ValueTypeRef> field_bindings);
 
         /** Binding lookup only; never synthesises. Returns ``nullptr`` when missing. */
         [[nodiscard]] ValueTypeRef find_type(const ValueTypeMetaData *schema) const;

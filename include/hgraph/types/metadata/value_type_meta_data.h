@@ -16,10 +16,30 @@
 #include <stdexcept>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 namespace hgraph
 {
     struct ValueTypeMetaData;
+
+    /**
+     * Mutable registration-time ancestry for a named Bundle schema.
+     *
+     * The metadata object itself has a stable address for the process lifetime.
+     * Parent/child vectors may grow as additional bundle classes are registered;
+     * graph compilation copies the visible closure into an immutable realization.
+     */
+    struct BundleHierarchyMetaData
+    {
+        const char *namespace_name{nullptr};
+        const char *local_name{nullptr};
+        std::vector<const ValueTypeMetaData *> parents{};
+        std::vector<const ValueTypeMetaData *> children{};
+        std::vector<const ValueTypeMetaData *> generic_arguments{};
+        bool is_abstract{false};
+        const char *discriminator{"__type__"};
+        std::uint64_t generation{0};
+    };
 
     /**
      * Nine value-layer kinds, matching the ``Value Kinds`` section of the
@@ -104,6 +124,8 @@ namespace hgraph
             the ordered member table rides ``fields`` (name + assigned value).
             Nominal identity, like a named bundle. */
         Enum = 1u << 10,
+        /** Bundle-shaped indirection whose inline storage is exactly one owner pointer. */
+        Owned = 1u << 11,
     };
 
     /** Bitwise OR over ``ValueTypeFlags``. */
@@ -208,6 +230,8 @@ namespace hgraph
          * shared by every bundle that has its field list).
          */
         const ValueTypeMetaData *wrapped_un_named{nullptr};
+        /** Qualified identity and ancestry for named bundles; null for structural bundles and other kinds. */
+        BundleHierarchyMetaData *bundle_hierarchy{nullptr};
 
         /** Checked value-family kind. */
         [[nodiscard]] constexpr ValueTypeKind value_kind() const
@@ -235,7 +259,36 @@ namespace hgraph
         /** True when this metadata is a structural (un-named) bundle. */
         [[nodiscard]] constexpr bool is_un_named_bundle() const noexcept
         {
-            return try_value_kind() == ValueTypeKind::Bundle && wrapped_un_named == nullptr;
+            return try_value_kind() == ValueTypeKind::Bundle && wrapped_un_named == nullptr &&
+                   !has(ValueTypeFlags::Owned);
+        }
+
+        [[nodiscard]] constexpr std::string_view bundle_namespace() const noexcept
+        {
+            return bundle_hierarchy == nullptr || bundle_hierarchy->namespace_name == nullptr
+                       ? std::string_view{}
+                       : std::string_view{bundle_hierarchy->namespace_name};
+        }
+        [[nodiscard]] constexpr std::string_view bundle_local_name() const noexcept
+        {
+            return bundle_hierarchy == nullptr || bundle_hierarchy->local_name == nullptr
+                       ? std::string_view{}
+                       : std::string_view{bundle_hierarchy->local_name};
+        }
+        [[nodiscard]] constexpr bool is_abstract_bundle() const noexcept
+        {
+            return bundle_hierarchy != nullptr && bundle_hierarchy->is_abstract;
+        }
+        [[nodiscard]] constexpr std::string_view bundle_discriminator() const noexcept
+        {
+            return bundle_hierarchy != nullptr && bundle_hierarchy->discriminator != nullptr
+                       ? std::string_view{bundle_hierarchy->discriminator}
+                       : std::string_view{"__type__"};
+        }
+        [[nodiscard]] const std::vector<const ValueTypeMetaData *> &bundle_generic_arguments() const noexcept
+        {
+            static const std::vector<const ValueTypeMetaData *> empty;
+            return bundle_hierarchy != nullptr ? bundle_hierarchy->generic_arguments : empty;
         }
 
         /** True when ``fixed_size`` is non-zero. Note: this is a semantic property (capacity / staticness), not a layout property. */
@@ -278,6 +331,7 @@ namespace hgraph
         [[nodiscard]] constexpr bool is_nullable() const noexcept { return has(ValueTypeFlags::Nullable); }
 
         [[nodiscard]] constexpr bool is_enum() const noexcept { return has(ValueTypeFlags::Enum); }
+        [[nodiscard]] constexpr bool is_owned() const noexcept { return has(ValueTypeFlags::Owned); }
     };
 
     namespace detail

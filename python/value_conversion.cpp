@@ -1,5 +1,7 @@
 #include "module_internal.h"
 
+#include <hgraph/types/metadata/type_realization.h>
+
 #include <hgraph/lib/std/operators/arithmetic.h>
 
 #include <arrow/array.h>
@@ -302,13 +304,81 @@ namespace hgraph::python_bridge
         return type;
     }
 
+    [[nodiscard]] const ValueTypeMetaData *python_bundle_source_schema(
+        nb::handle object, const ValueTypeMetaData *declared)
+    {
+        if (declared == nullptr || !declared->is_named_bundle() ||
+            declared->bundle_hierarchy == nullptr || declared->bundle_hierarchy->children.empty())
+        {
+            return declared;
+        }
+
+        const auto alternatives = TypeRegistry::instance().bundle_descendants(declared);
+        nb::object source = nb::borrow<nb::object>(object);
+        if (nb::isinstance<nb::dict>(source))
+        {
+            nb::dict map = nb::cast<nb::dict>(source);
+            nb::str key{std::string{declared->bundle_discriminator()}.c_str()};
+            if (!map.contains(key))
+            {
+                throw std::invalid_argument(
+                    "polymorphic Bundle dictionaries require the configured type discriminator");
+            }
+            const auto requested = nb::cast<std::string>(map[key]);
+            const ValueTypeMetaData *match = nullptr;
+            for (const auto *alternative : alternatives)
+            {
+                if (alternative->name() == requested || alternative->bundle_local_name() == requested)
+                {
+                    if (match != nullptr)
+                    {
+                        throw std::invalid_argument("polymorphic Bundle discriminator is ambiguous");
+                    }
+                    match = alternative;
+                }
+            }
+            if (match == nullptr)
+            {
+                throw std::invalid_argument("polymorphic Bundle discriminator names no valid alternative");
+            }
+            return match;
+        }
+
+        const nb::object source_class = nb::getattr(source, "__class__");
+        auto &classes = bundle_class_registry();
+        for (const auto *alternative : alternatives)
+        {
+            nb::int_ key{reinterpret_cast<std::uintptr_t>(alternative)};
+            if (classes.contains(key) && source_class.is(classes[key])) { return alternative; }
+        }
+        throw std::invalid_argument("value is not an instance of a closed Bundle alternative");
+    }
+
     Value py_to_value_as(nb::handle object, const ValueTypeMetaData *meta)
     {
         // Frame/Series -> arrow go through the BINDING's from_python (the
         // type-erased python_conversion_traits hooks); no kind-switch.
         if (nb::isinstance<PyOpaqueRef>(object)) { return Value{nb::cast<PyOpaqueRef &>(object).value.view()}; }
-        const auto type = ValuePlanFactory::instance().type_for(meta);
+        std::shared_ptr<const TypeRealizationSnapshot> conversion_snapshot;
+        const auto *snapshot = active_type_realization();
+        if (snapshot == nullptr && meta != nullptr &&
+            meta->value_kind() != ValueTypeKind::Atomic &&
+            meta->value_kind() != ValueTypeKind::Any)
+        {
+            conversion_snapshot = TypeRealizationSnapshot::capture(TypeRegistry::instance());
+            snapshot = conversion_snapshot.get();
+        }
+        const auto canonical = ValuePlanFactory::instance().type_for(meta);
+        const auto realized = snapshot != nullptr ? snapshot->type_for(meta) : ValueTypeRef{};
+        const bool uses_realized_storage = realized && realized != canonical;
+        const auto *storage_schema = uses_realized_storage
+                                         ? meta
+                                         : python_bundle_source_schema(object, meta);
+        const auto type = uses_realized_storage
+                              ? realized
+                              : ValuePlanFactory::instance().type_for(storage_schema);
         if (!type) { throw nb::type_error("schema has no canonical type"); }
+        TypeRealizationScope realization_scope{snapshot};
         Value result{type};
         result.view().assign_from_python(object);
         return result;

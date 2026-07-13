@@ -53,6 +53,13 @@ TEST_CASE("static_schema: scalar_descriptor maps value containers to registry sc
     REQUIRE(scalar_descriptor<Map<Str, Int>>::is_concrete());
     REQUIRE(scalar_descriptor<Map<Str, Int>>::value_meta() == registry.map(str_meta, int_meta));
 
+    using OwnedPoint = Owned<Bundle<"OwnedPoint", Field<"value", Int>>>;
+    const auto *owned_point = scalar_descriptor<OwnedPoint>::value_meta();
+    REQUIRE(owned_point->is_owned());
+    REQUIRE_FALSE(owned_point->is_un_named_bundle());
+    REQUIRE(owned_point->element_type ==
+            scalar_descriptor<Bundle<"OwnedPoint", Field<"value", Int>>>::value_meta());
+
     REQUIRE_FALSE(scalar_descriptor<Map<Str, ScalarVar<"V">>>::is_concrete());
     REQUIRE(scalar_descriptor<Map<Str, ScalarVar<"V">>>::value_meta() == nullptr);
 }

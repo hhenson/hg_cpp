@@ -674,17 +674,14 @@ decorator whose body registers as the most-generic overload):
    branch (ordinary ``switch_`` semantics — a re-tick of the same concrete
    type does not re-emit).
 
-**Scope today**: python-class scalars work end-to-end — the object value
-kind carries the dynamic type (``python/tests/test_dispatch_scalar.py``).
-**CompoundScalar hierarchies are pending a design decision**: CS bundles
-flatten their MRO *compositionally* into one named bundle at registration
-(no lineage in the meta), and converting a ``Dog()`` into a ``TS[Pet]``
-port stores the PET-schema value — the concrete class does not survive to
-the runtime value, so ``type_`` has nothing to key on. Closing this needs
-(a) inheritance lineage on bundle metas, and (b) a per-tick concrete-schema
-carrier for base-typed TS (candidates: plan-compatible subclass storage, or
-an Any-boxed lineage-constrained value). Until then the ported
-``test_dispatch`` cases record the gap.
+Python-class scalars and ``CompoundScalar`` hierarchies both retain their
+dynamic type. CompoundScalar uses the graph-scoped closed Bundle union
+described in :doc:`data_structures/schemas/scalar`: the active
+``TypeRecord*`` is available without inspecting erased payload bytes, while
+the largest alternative is reserved once when the graph's type realization
+is built. This gives ``type_`` and dispatch a stable concrete key without an
+``Any`` allocation per tick. The closure is captured at top-level wiring
+completion and inherited unchanged by nested graph instances.
 
 Reconciliation with the 2603 RFC
 --------------------------------

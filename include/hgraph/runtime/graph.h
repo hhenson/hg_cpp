@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -28,6 +29,7 @@ namespace hgraph
     class NestedGraphView;
     class RootGraphView;
     class GraphView;
+    class TypeRealizationSnapshot;
     /** Parent role for a graph runtime allocation. */
     enum class GraphParentKind : std::uint8_t
     {
@@ -148,6 +150,8 @@ struct HGRAPH_EXPORT GraphEdge
         NodeView (*parent_node_impl)(const void *context, void *memory) = nullptr;
         /** Cached pointer to the shared (executor-owned) lifecycle observer list; never null once constructed. */
         LifecycleObserverList *(*lifecycle_observers_impl)(const void *context, const void *memory) noexcept = nullptr;
+        const TypeRealizationSnapshot *(*type_realization_impl)(const void *context,
+                                                                const void *memory) noexcept = nullptr;
     };
 
     /** Borrowed type-erased view over graph runtime storage. */
@@ -212,6 +216,8 @@ struct HGRAPH_EXPORT GraphEdge
          * run. Cached at construction; O(1) regardless of nesting depth.
          */
         [[nodiscard]] LifecycleObserverList &lifecycle_observers() const;
+        /** Closed Bundle hierarchy snapshot used by this graph instance. */
+        [[nodiscard]] const TypeRealizationSnapshot *type_realization() const noexcept;
 
         void start(DateTime start_time = MIN_ST) const;
         void stop() const;
@@ -346,6 +352,8 @@ struct HGRAPH_EXPORT GraphEdge
         [[nodiscard]] GlobalStateView global_state() noexcept;
         /** Replace the initial ``GlobalState`` (used by the wiring layer's ``finish``). */
         GraphBuilder &global_state(GlobalState state);
+        GraphBuilder &type_realization(std::shared_ptr<const TypeRealizationSnapshot> snapshot);
+        [[nodiscard]] std::shared_ptr<const TypeRealizationSnapshot> type_realization() const;
 
         /**
          * Set a graph trait (parent-chained key-value metadata; see
@@ -388,6 +396,7 @@ struct HGRAPH_EXPORT GraphEdge
         mutable GraphTypeRef          root_type_{};
         mutable GraphTypeRef          nested_type_{};
         mutable bool                  types_compiled_{false};
+        mutable std::shared_ptr<const TypeRealizationSnapshot> type_realization_{};
     };
 
     HGRAPH_EXPORT void clear_graph_runtime_types() noexcept;

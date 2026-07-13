@@ -149,7 +149,7 @@ namespace hgraph
     {
         const auto &table = ops();
         const auto *data_layout = table.layout_impl(table.context);
-        return ValueView{data_layout->value_binding, table.value_memory_impl(table.context, data())};
+        return ValueView{data_layout->value_binding, table.value_memory_impl(table.context, data())}.concrete();
     }
 
     ValueView TSDataView::delta_value(DateTime evaluation_time) const
@@ -161,7 +161,7 @@ namespace hgraph
         {
             return ValueView{data_layout->delta_binding, nullptr};
         }
-        return ValueView{data_layout->delta_binding, table.delta_memory_impl(table.context, data())};
+        return ValueView{data_layout->delta_binding, table.delta_memory_impl(table.context, data())}.concrete();
     }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES

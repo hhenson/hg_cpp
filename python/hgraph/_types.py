@@ -17,6 +17,190 @@ _SCALAR_NAMES = {
     datetime.timedelta: "timedelta",
 }
 
+_COMPOUND_TYPE_CACHE = {}
+
+
+def _substitute_typevars(tp, substitutions):
+    if tp in substitutions:
+        return substitutions[tp]
+    import typing
+
+    origin = typing.get_origin(tp)
+    if origin is None:
+        return tp
+    args = tuple(_substitute_typevars(arg, substitutions) for arg in typing.get_args(tp))
+    if hasattr(tp, "copy_with"):
+        return tp.copy_with(args)
+    try:
+        return origin[args[0] if len(args) == 1 else args]
+    except TypeError:
+        return tp
+
+
+def _compound_specialization_token(tp):
+    import typing
+
+    origin = typing.get_origin(tp)
+    if origin is not None:
+        args = ",".join(_compound_specialization_token(arg) for arg in typing.get_args(tp))
+        return f"{origin.__name__}[{args}]"
+    return getattr(tp, "__name__", repr(tp))
+
+
+def _is_self_recursive_annotation(annotation, scalar, substitutions):
+    """Recognise the one recursion edge the runtime can close immediately.
+
+    Mutual recursion needs a batch declaration API because neither nominal
+    schema is complete when the first class is materialised. Self recursion
+    has no such ambiguity and maps directly to ``Owned<Self>``.
+    """
+    import types
+    import typing
+
+    annotation = _substitute_typevars(annotation, substitutions)
+    if annotation is scalar or annotation is typing.Self:
+        return True
+    if isinstance(annotation, typing.ForwardRef):
+        annotation = annotation.__forward_arg__
+    if isinstance(annotation, str):
+        token = annotation.strip().replace(" ", "").replace("'", "").replace('"', "")
+        names = {scalar.__name__, scalar.__qualname__}
+        if token in names:
+            return True
+        return any(
+            token in {
+                f"Optional[{name}]",
+                f"typing.Optional[{name}]",
+                f"{name}|None",
+                f"None|{name}",
+            }
+            for name in names
+        )
+
+    origin = typing.get_origin(annotation)
+    if origin in (typing.Union, types.UnionType):
+        members = tuple(arg for arg in typing.get_args(annotation) if arg is not type(None))
+        return len(members) == 1 and _is_self_recursive_annotation(members[0], scalar, substitutions)
+    return False
+
+
+def _compound_value_type(scalar, type_args=()):
+    from ._compat import CompoundScalar
+    import dataclasses
+
+    cache_key = (_hgraph._registry_generation(), scalar, tuple(type_args))
+    if cache_key in _COMPOUND_TYPE_CACHE:
+        return _COMPOUND_TYPE_CACHE[cache_key]
+
+    parameters = tuple(getattr(scalar, "__parameters__", ()))
+    if type_args and len(type_args) != len(parameters):
+        raise TypeError(
+            f"CompoundScalar {scalar.__qualname__} expects {len(parameters)} generic arguments, "
+            f"got {len(type_args)}"
+        )
+    substitutions = dict(zip(parameters, type_args))
+
+    parent_metas = []
+    original_bases = tuple(scalar.__dict__.get("__orig_bases__", ()))
+    consumed = set()
+    import typing
+
+    for original_base in original_bases:
+        base_origin = typing.get_origin(original_base)
+        if not isinstance(base_origin, type) or not issubclass(base_origin, CompoundScalar):
+            continue
+        base_args = tuple(
+            _substitute_typevars(arg, substitutions) for arg in typing.get_args(original_base)
+        )
+        parent_metas.append(_compound_value_type(base_origin, base_args))
+        consumed.add(base_origin)
+    for base in scalar.__bases__:
+        if (
+            isinstance(base, type)
+            and issubclass(base, CompoundScalar)
+            and base is not CompoundScalar
+            and base not in consumed
+        ):
+            parent_metas.append(_compound_value_type(base))
+
+    inherited_fields = {}
+    for parent in parent_metas:
+        for field_name, field_type in parent.fields:
+            previous = inherited_fields.setdefault(field_name, field_type)
+            if previous != field_type:
+                raise TypeError(
+                    f"CompoundScalar {scalar.__qualname__} inherits incompatible field {field_name!r}"
+                )
+
+    try:
+        dataclass_fields = dataclasses.fields(scalar)
+    except TypeError as exc:
+        annotations = {
+            name: annotation
+            for base in reversed(scalar.__mro__)
+            if issubclass(base, CompoundScalar)
+            for name, annotation in getattr(base, "__annotations__", {}).items()
+        }
+        if annotations:
+            raise TypeError(
+                f"field-bearing CompoundScalar {scalar.__module__}.{scalar.__qualname__} must be a dataclass "
+                "before it is used in a graph annotation"
+            ) from exc
+        dataclass_fields = ()
+    fields = []
+    has_self_recursion = False
+    locally_declared = scalar.__dict__.get("__annotations__", {})
+    for field in dataclass_fields:
+        if field.name not in locally_declared and field.name in inherited_fields:
+            fields.append((field.name, inherited_fields[field.name]))
+        elif _is_self_recursive_annotation(field.type, scalar, substitutions):
+            fields.append((field.name, None))
+            has_self_recursion = True
+        else:
+            fields.append((field.name, _value_type(_substitute_typevars(field.type, substitutions))))
+
+    if getattr(scalar, "__unnamed_compound__", False):
+        if has_self_recursion:
+            raise TypeError("self-recursive CompoundScalar values require a nominal namespace and name")
+        return _hgraph.un_named_bundle_vt(fields)
+
+    bundle_namespace = scalar.__dict__.get("__compound_namespace__", scalar.__module__)
+    local_name = scalar.__name__
+    if type_args:
+        local_name += "[" + ",".join(_compound_specialization_token(arg) for arg in type_args) + "]"
+    is_abstract = bool(scalar.__dict__.get("__compound_abstract__", False))
+    discriminator = scalar.__dict__.get("__compound_discriminator__", "__type__")
+    generic_arguments = [_value_type(argument) for argument in type_args]
+    register = _hgraph.recursive_bundle_vt if has_self_recursion else _hgraph.qualified_bundle_vt
+    meta = register(
+        bundle_namespace, local_name, fields, parent_metas, is_abstract, discriminator, generic_arguments
+    )
+    # Python erases generic arguments on ``instance.__class__``. The runtime
+    # schema still carries invariant arguments, while class matching must use
+    # the concrete origin class.
+    _hgraph.register_bundle_class(meta, scalar)
+    _COMPOUND_TYPE_CACHE[cache_key] = meta
+
+    # Close the Python-visible subclass set while wiring is still allowed to
+    # add schemas. Generic children are included only when their concrete
+    # parent specialization matches this one; open generic children remain a
+    # wiring-time error until a specialization is actually used.
+    for child in scalar.__subclasses__():
+        if not isinstance(child, type) or not issubclass(child, CompoundScalar):
+            continue
+        if getattr(child, "__parameters__", ()):
+            continue
+        if type_args:
+            matches_specialization = any(
+                typing.get_origin(base) is scalar and
+                tuple(typing.get_args(base)) == tuple(type_args)
+                for base in child.__dict__.get("__orig_bases__", ())
+            )
+            if not matches_specialization:
+                continue
+        _compound_value_type(child)
+    return meta
+
 
 def _value_type(scalar):
     if isinstance(scalar, _SeriesType):
@@ -38,6 +222,9 @@ def _value_type(scalar):
     origin = typing.get_origin(scalar)
     if origin is not None:
         args = typing.get_args(scalar)
+        from ._compat import CompoundScalar
+        if isinstance(origin, type) and issubclass(origin, CompoundScalar):
+            return _compound_value_type(origin, args)
         is_mapping_origin = (
             origin is dict
             or getattr(origin, "__name__", "") == "frozendict"
@@ -135,23 +322,7 @@ def _value_type(scalar):
         if issubclass(scalar, CompoundScalar) and scalar is not CompoundScalar:
             # C++-first ruling (2026-07-06): a CompoundScalar IS a C++
             # Bundle value - the schema maps to a named bundle schema.
-            import dataclasses
-
-            fields = [(f.name, _value_type(f.type)) for f in dataclasses.fields(scalar)]
-            if getattr(scalar, "__unnamed_compound__", False):
-                # compound_scalar(**kwargs) anonymous compounds are the
-                # STRUCTURAL (un-named) bundle (scalar.rst nominal-vs-
-                # structural rule).
-                return _hgraph.un_named_bundle_vt(fields)
-            # Function-local classes qualify by module+qualname (the enum
-            # rule): two same-named locals must not collide nominally.
-            bundle_name = scalar.__name__
-            qualname = getattr(scalar, "__qualname__", bundle_name)
-            if "<locals>" in qualname:
-                bundle_name = f"{scalar.__module__}.{qualname}"
-            meta = _hgraph.bundle_vt(bundle_name, fields)
-            _hgraph.register_bundle_class(bundle_name, scalar)
-            return meta
+            return _compound_value_type(scalar)
     if name is None and isinstance(scalar, type) and issubclass(scalar, _enum.Enum):
         # A python Enum is a FIRST-CLASS enum scalar (nominal identity by
         # class name; the member table interns with the meta and the class
@@ -675,11 +846,12 @@ class _TSBMeta(type):
         from ._compat import CompoundScalar as _CS
 
         is_cs = isinstance(schema, type) and issubclass(schema, _CS)
+        compound_meta = None
         if is_cs:
             # TSB[CompoundScalar]: scalar annotations LIFT to TS fields; the
             # bundle keeps the CS NAME (and registers the class) so its
             # value side IS the CS bundle and reads back as the dataclass.
-            _value_type(schema)
+            compound_meta = _value_type(schema)
             annotations = {name: TS[tp] for name, tp in annotations.items()}
         if any(isinstance(ts, (_GenericTsExpr, _TypeVarSentinel)) for ts in annotations.values()):
             # A GENERIC schema (e.g. WindowResult[SCALAR]): resolve from the
@@ -692,11 +864,10 @@ class _TSBMeta(type):
         # (tests re-define same-named local schemas freely). Qualify with the
         # module + qualname so distinct classes never collide; the plain
         # __name__ stays for stable top-level classes (nicer diagnostics).
-        name = schema.__name__
-        qualname = getattr(schema, "__qualname__", name)
-        if "<locals>" in qualname:
-            # CS classes qualify the same way in _value_type, so the TSB's
-            # value side stays THE SAME named bundle as the CS registration.
+        name = compound_meta.name if compound_meta is not None else schema.__name__
+        qualname = getattr(schema, "__qualname__", schema.__name__)
+        if compound_meta is None and "<locals>" in qualname:
+            # Function-local TimeSeriesSchema classes need nominal isolation.
             name = f"{schema.__module__}.{qualname}"
         return _TsExpr(_hgraph.tsb(name, fields), f"TSB[{schema.__name__}]")
 

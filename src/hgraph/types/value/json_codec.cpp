@@ -1,6 +1,7 @@
 #include <hgraph/types/value/json_codec.h>
 
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/value/value_builder.h>
@@ -406,24 +407,60 @@ namespace hgraph
         void write_composite(const JsonConverter &self, const ValueView &view, std::string &out)
         {
             // Bundle -> object; (un-named) tuple without field names -> array.
-            const auto indexed  = view.as_indexed_view();
-            const bool as_array = self.names.empty();
+            const auto concrete = view.concrete();
+            const JsonConverter *selected = &self;
+            bool polymorphic = false;
+            if (self.meta->is_named_bundle())
+            {
+                const auto *snapshot = active_type_realization();
+                polymorphic = view.binding() != self.binding ||
+                              (snapshot != nullptr && snapshot->is_polymorphic(self.meta));
+                if (polymorphic)
+                {
+                    if (!TypeRegistry::instance().bundle_is_a(concrete.schema(), self.meta))
+                    {
+                        throw std::logic_error("json: polymorphic Bundle contains an invalid concrete type");
+                    }
+                    selected = &json_converter(concrete.schema());
+                }
+            }
+
+            const auto indexed  = concrete.as_indexed_view();
+            const bool as_array = selected->names.empty();
             out.push_back(as_array ? '[' : '{');
             bool first = true;
-            for (std::size_t i = 0; i < self.children.size(); ++i)
+            if (polymorphic)
+            {
+                json_detail::append_escaped(self.meta->bundle_discriminator(), out);
+                out += ": ";
+                json_detail::append_escaped(concrete.schema()->name(), out);
+                first = false;
+            }
+            for (std::size_t i = 0; i < selected->children.size(); ++i)
             {
                 const auto child = indexed.at(i);
                 if (!as_array && !child.has_value()) { continue; }
                 if (!std::exchange(first, false)) { out += ", "; }
                 if (!as_array)
                 {
-                    json_detail::append_escaped(self.names[i], out);
+                    json_detail::append_escaped(selected->names[i], out);
                     out += ": ";
                 }
-                if (child.has_value()) { self.children[i]->write(child, out); }
+                if (child.has_value()) { selected->children[i]->write(child, out); }
                 else { out += "null"; }
             }
             out.push_back(as_array ? ']' : '}');
+        }
+
+        void write_owned(const JsonConverter &self, const ValueView &view, std::string &out)
+        {
+            const auto concrete = view.concrete();
+            if (concrete.schema() == self.meta)
+            {
+                out += "null";
+                return;
+            }
+            self.children[0]->write(concrete, out);
         }
 
         void write_sequence(const JsonConverter &self, const ValueView &view, std::string &out)
@@ -522,9 +559,71 @@ namespace hgraph
             throw std::logic_error("json: unsupported atomic read");
         }
 
+        Value read_realized(const JsonConverter &converter, Reader &reader)
+        {
+            const auto *snapshot = active_type_realization();
+            if (snapshot == nullptr || !snapshot->is_polymorphic(converter.meta))
+            {
+                return converter.read_(converter, reader);
+            }
+
+            Reader probe = reader;
+            probe.expect('{');
+            const std::string discriminator{converter.meta->bundle_discriminator()};
+            std::string       requested;
+            if (!probe.consume_if('}'))
+            {
+                while (true)
+                {
+                    const std::string key = probe.parse_string();
+                    probe.expect(':');
+                    if (key == discriminator) { requested = probe.parse_string(); }
+                    else { probe.skip_value(); }
+                    if (!probe.consume_if(',')) { break; }
+                }
+                probe.expect('}');
+            }
+            if (requested.empty())
+            {
+                probe.fail("polymorphic Bundle object requires its configured type discriminator");
+            }
+
+            const ValueTypeMetaData *selected = nullptr;
+            for (const auto *alternative : snapshot->alternatives(converter.meta))
+            {
+                if (alternative->name() == requested || alternative->bundle_local_name() == requested)
+                {
+                    if (selected != nullptr) { probe.fail("polymorphic Bundle discriminator is ambiguous"); }
+                    selected = alternative;
+                }
+            }
+            if (selected == nullptr)
+            {
+                probe.fail("polymorphic Bundle discriminator names no valid alternative");
+            }
+
+            // Read the selected alternative exactly. Its own children still
+            // use read_realized, but an instantiable parent remains a valid
+            // concrete alternative even when it also has descendants.
+            const auto &selected_converter = json_converter(selected);
+            Value       concrete            = selected_converter.read_(selected_converter, reader);
+            const auto  realized            = snapshot->type_for(converter.meta);
+            Value       result{realized};
+            auto        destination = result.begin_mutation();
+            realized.ops_ref().copy_assign_from(
+                realized, destination.mutable_data(), concrete.binding(), concrete.view().data());
+            return result;
+        }
+
         Value read_composite(const JsonConverter &self, Reader &reader)
         {
-            BundleBuilder builder{self.binding};
+            auto binding = self.binding;
+            if (const auto *snapshot = active_type_realization();
+                snapshot != nullptr && !snapshot->is_polymorphic(self.meta))
+            {
+                binding = snapshot->type_for(self.meta);
+            }
+            BundleBuilder builder{binding};
             if (self.names.empty())
             {
                 reader.expect('[');
@@ -539,7 +638,7 @@ namespace hgraph
                         }
                         continue;
                     }
-                    builder.set(i, self.children[i]->read(reader));
+                    builder.set(i, read_realized(*self.children[i], reader));
                 }
                 reader.expect(']');
             }
@@ -563,7 +662,7 @@ namespace hgraph
                         }
                         if (index == self.names.size()) { reader.skip_value(); }
                         else if (reader.consume_keyword("null")) {}
-                        else { builder.set(index, self.children[index]->read(reader)); }
+                        else { builder.set(index, read_realized(*self.children[index], reader)); }
                         if (!reader.consume_if(',')) { break; }
                     }
                     reader.expect('}');
@@ -572,9 +671,30 @@ namespace hgraph
             return builder.build();
         }
 
+        Value read_owned(const JsonConverter &self, Reader &reader)
+        {
+            Value result{self.binding};
+            if (reader.consume_keyword("null")) { return result; }
+
+            Value pointee = read_realized(*self.children[0], reader);
+            auto destination = result.begin_mutation();
+            self.binding.ops_ref().copy_assign_from(
+                self.binding, destination.mutable_data(), pointee.binding(), pointee.view().data());
+            return result;
+        }
+
+        [[nodiscard]] ValueTypeRef realized_read_binding(const JsonConverter &converter)
+        {
+            if (const auto *snapshot = active_type_realization(); snapshot != nullptr)
+            {
+                return snapshot->type_for(converter.meta);
+            }
+            return converter.binding;
+        }
+
         Value read_list(const JsonConverter &self, Reader &reader)
         {
-            ListBuilder builder{self.children[0]->binding};
+            ListBuilder builder{realized_read_binding(*self.children[0])};
             reader.expect('[');
             if (!reader.consume_if(']'))
             {
@@ -591,7 +711,7 @@ namespace hgraph
 
         Value read_set(const JsonConverter &self, Reader &reader)
         {
-            SetBuilder builder{self.children[0]->binding};
+            SetBuilder builder{realized_read_binding(*self.children[0])};
             reader.expect('[');
             if (!reader.consume_if(']'))
             {
@@ -608,7 +728,9 @@ namespace hgraph
 
         Value read_map(const JsonConverter &self, Reader &reader)
         {
-            MapBuilder builder{self.children[0]->binding, self.children[1]->binding};
+            MapBuilder builder{
+                realized_read_binding(*self.children[0]),
+                realized_read_binding(*self.children[1])};
             reader.expect('{');
             if (!reader.consume_if('}'))
             {
@@ -697,6 +819,15 @@ namespace hgraph
             g_converters.emplace(meta, std::move(converter));
             auto unwind = UnwindCleanupGuard([&] { g_converters.erase(meta); });
 
+            if (meta->is_owned())
+            {
+                raw->children.push_back(converter_for_locked(meta->element_type));
+                raw->write_ = &write_owned;
+                raw->read_ = &read_owned;
+                unwind.release();
+                return raw;
+            }
+
             switch (meta->value_kind())
             {
                 case ValueTypeKind::Atomic: {
@@ -758,6 +889,8 @@ namespace hgraph
             return raw;
         }
     }  // namespace
+
+    Value JsonConverter::read(json_detail::Reader &reader) const { return read_realized(*this, reader); }
 
     const JsonConverter &json_converter(const ValueTypeMetaData *meta)
     {

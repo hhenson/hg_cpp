@@ -1,4 +1,6 @@
 #include <hgraph/runtime/graph.h>
+#include <hgraph/types/metadata/type_realization.h>
+#include <hgraph/types/metadata/type_registry.h>
 
 #include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/lifecycle_observer.h>
@@ -160,6 +162,7 @@ namespace hgraph
                 (root: from the root executor; nested: one hop to the parent graph's own
                 cached pointer) so the hot path never walks the nested-parent chain. */
             LifecycleObserverList *lifecycle_observers{nullptr};
+            const TypeRealizationSnapshot *type_realization{nullptr};
         };
 
         struct RootGraphRuntimeStorage : GraphRuntimeBaseStorage
@@ -796,6 +799,13 @@ namespace hgraph
         }
 
         template <typename Storage>
+        const TypeRealizationSnapshot *type_realization_impl(const void *context,
+                                                              const void *memory) noexcept
+        {
+            return graph_header<Storage>(graph_context(context), memory).type_realization;
+        }
+
+        template <typename Storage>
         bool evaluate_impl(const void *context, const GraphView &graph, DateTime evaluation_time)
         {
             const auto &runtime = graph_context(context);
@@ -1000,6 +1010,7 @@ namespace hgraph
                     .graph_executor_impl = &root_graph_executor_impl,
                     .parent_node_impl = &root_parent_node_impl,
                     .lifecycle_observers_impl = &lifecycle_observers_impl<RootGraphRuntimeStorage>,
+                    .type_realization_impl = &type_realization_impl<RootGraphRuntimeStorage>,
                 };
             }
 
@@ -1026,6 +1037,7 @@ namespace hgraph
                     .graph_executor_impl = &nested_graph_executor_impl,
                     .parent_node_impl = &nested_parent_node_impl,
                     .lifecycle_observers_impl = &lifecycle_observers_impl<NestedGraphRuntimeStorage>,
+                    .type_realization_impl = &type_realization_impl<NestedGraphRuntimeStorage>,
                 };
             }
 
@@ -1058,7 +1070,9 @@ namespace hgraph
             }
             if (record.ops_abi_version != GRAPH_OPS_ABI_VERSION || record.ops == nullptr)
             {
-                throw std::invalid_argument("GraphTypeRef requires graph ops ABI version 1");
+                throw std::invalid_argument(
+                    "GraphTypeRef requires graph ops ABI version " +
+                    std::to_string(GRAPH_OPS_ABI_VERSION));
             }
             if (record.capabilities != graph_type_capabilities(*record.plan))
             {
@@ -1325,9 +1339,30 @@ namespace hgraph
         return *list;
     }
 
-    void GraphView::start(DateTime start_time) const { ops().start_impl(ops().context, *this, start_time); }
-    void GraphView::stop() const { ops().stop_impl(ops().context, *this); }
-    bool GraphView::evaluate(DateTime evaluation_time) const { return ops().evaluate_impl(ops().context, *this, evaluation_time); }
+    const TypeRealizationSnapshot *GraphView::type_realization() const noexcept
+    {
+        if (!valid()) { return nullptr; }
+        const auto &table = ops();
+        return table.type_realization_impl != nullptr
+                   ? table.type_realization_impl(table.context, data())
+                   : nullptr;
+    }
+
+    void GraphView::start(DateTime start_time) const
+    {
+        TypeRealizationScope scope{type_realization()};
+        ops().start_impl(ops().context, *this, start_time);
+    }
+    void GraphView::stop() const
+    {
+        TypeRealizationScope scope{type_realization()};
+        ops().stop_impl(ops().context, *this);
+    }
+    bool GraphView::evaluate(DateTime evaluation_time) const
+    {
+        TypeRealizationScope scope{type_realization()};
+        return ops().evaluate_impl(ops().context, *this, evaluation_time);
+    }
     void GraphView::schedule_node(std::size_t node_index, DateTime when) const
     {
         ops().schedule_node_impl(ops().context, *this, node_index, when);
@@ -1384,6 +1419,8 @@ namespace hgraph
 
     GraphValue::GraphValue(const GraphBuilder &builder, ExecutorPtr root_executor)
     {
+        const auto snapshot = builder.type_realization();
+        TypeRealizationScope realization_scope{snapshot.get()};
         const auto type = builder.root_type();
         storage_ = storage_type::owning_constructed(*type.record(), [&](void *dst) {
             // GraphValue is a friend of GraphBuilder, so we read the owning
@@ -1402,6 +1439,7 @@ namespace hgraph
                     state.root_executor_ptr = root_executor;
                     state.lifecycle_observers =
                         &GraphExecutorView{root_executor}.lifecycle_observers();
+                    state.type_realization = snapshot.get();
                 });
         });
         pointer_ = type.writable(storage_.data());
@@ -1410,6 +1448,10 @@ namespace hgraph
 
     GraphValue::GraphValue(const GraphBuilder &builder, NodePtr parent_node)
     {
+        const auto *active_snapshot = active_type_realization();
+        const auto snapshot = active_snapshot == nullptr ? builder.type_realization() : nullptr;
+        const auto *effective_snapshot = active_snapshot != nullptr ? active_snapshot : snapshot.get();
+        TypeRealizationScope realization_scope{effective_snapshot};
         const auto type = builder.nested_type();
         storage_ = storage_type::owning_constructed(*type.record(), [&](void *dst) {
             construct_graph_storage<NestedGraphRuntimeStorage>(
@@ -1427,6 +1469,7 @@ namespace hgraph
                     // during its construction) — O(1) regardless of nesting depth.
                     state.lifecycle_observers =
                         &NodeView{parent_node}.graph().lifecycle_observers();
+                    state.type_realization = effective_snapshot;
                 });
         });
         pointer_ = type.writable(storage_.data());
@@ -1436,6 +1479,10 @@ namespace hgraph
     GraphValue::GraphValue(const GraphBuilder &builder, NodePtr parent_node,
                            void *external_memory, MemoryUtils::StorageLayout available_layout)
     {
+        const auto *active_snapshot = active_type_realization();
+        const auto snapshot = active_snapshot == nullptr ? builder.type_realization() : nullptr;
+        const auto *effective_snapshot = active_snapshot != nullptr ? active_snapshot : snapshot.get();
+        TypeRealizationScope realization_scope{effective_snapshot};
         const auto type = builder.nested_type();
         const auto required = type.checked_plan().layout;
         if (external_memory == nullptr)
@@ -1461,6 +1508,7 @@ namespace hgraph
                 state.parent_node_ptr = parent_node;
                 state.lifecycle_observers =
                     &NodeView{parent_node}.graph().lifecycle_observers();
+                state.type_realization = effective_snapshot;
             });
         auto rollback = make_scope_exit([&]() noexcept { type.destroy_at(external_memory); });
         pointer_ = type.writable(external_memory);
@@ -1615,6 +1663,23 @@ namespace hgraph
         return *this;
     }
 
+    GraphBuilder &GraphBuilder::type_realization(
+        std::shared_ptr<const TypeRealizationSnapshot> snapshot)
+    {
+        if (!snapshot) { throw std::invalid_argument("graph type realization snapshot must not be null"); }
+        type_realization_ = std::move(snapshot);
+        return *this;
+    }
+
+    std::shared_ptr<const TypeRealizationSnapshot> GraphBuilder::type_realization() const
+    {
+        if (!type_realization_)
+        {
+            type_realization_ = TypeRealizationSnapshot::capture(TypeRegistry::instance());
+        }
+        return type_realization_;
+    }
+
     std::string_view GraphBuilder::label() const noexcept { return label_; }
     std::size_t GraphBuilder::node_count() const noexcept { return nodes_.size(); }
     const std::vector<NodeBuilder> &GraphBuilder::nodes() const noexcept { return nodes_; }
@@ -1664,6 +1729,7 @@ namespace hgraph
         root_type_ = {};
         nested_type_ = {};
         types_compiled_ = false;
+        type_realization_.reset();
     }
 
     GraphValue GraphBuilder::make_root_graph(ExecutorPtr root_executor) const

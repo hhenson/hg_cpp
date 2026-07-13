@@ -104,6 +104,14 @@ runtime — they exist purely to drive the descriptor traits.
     factories respectively, with the same nominal-vs-structural
     identity rules described in *Scalar Schemas > Bundle*.
 
+``Owned<T>``
+    Value-layer owner indirection. Its runtime schema is
+    ``TypeRegistry::owned(T)`` and its inline storage is exactly one pointer;
+    the pointee is allocated on first mutable access. Runtime
+    ``recursive_bundle`` is the preferred declaration path for a
+    self-recursive nominal Bundle because a directly recursive C++ marker
+    alias cannot be completed in one template declaration.
+
 ``TSB<Name, Fields...>`` / ``UnNamedTSB<Fields...>``
     Time-series compound. Same named/un-named split as ``Bundle``.
 

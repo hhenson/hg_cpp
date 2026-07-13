@@ -73,21 +73,80 @@ A scalar schema has one of nine kinds, recorded on its
     ``Quote``) keep nominal identity even when their fields happen
     to coincide.
 
-    *Python correspondence.* The Python ``CompoundScalar`` class
-    (``hgraph._types._scalar_types.CompoundScalar``) maps onto the
-    C++ ``Bundle`` kind. A user-defined ``CompoundScalar`` subclass
-    — a class with ``__meta_data_schema__`` declaring its fields —
-    is the *named* C++ ``Bundle`` whose name is the Python class
-    name; Python's ``UnNamedCompoundScalar`` (anonymous compounds
-    produced by ``compound_scalar(**kwargs)``) is the *un-named*
-    form. The nominal-vs-structural identity rule holds on both
-    sides: two ``CompoundScalar`` subclasses with the same fields
-    but different class names are distinct schemas, and any
-    ``UnNamedCompoundScalar`` is structurally equal to any same-
-    shape compound. The Python→C++ bridge for an expanded compound
-    goes through ``_hgraph.value.get_compound_scalar_type_meta(
-    fields, py_type, name)``, which interns the named ``Bundle`` in
-    the C++ ``TypeRegistry``.
+    *Python correspondence.* The Python ``CompoundScalar`` class maps onto
+    the C++ ``Bundle`` kind. A dataclass subclass is a qualified nominal
+    Bundle; its default namespace is the defining module plus enclosing
+    scope. ``class Quote(CompoundScalar, namespace="feed", abstract=True,
+    discriminator="kind")`` overrides the namespace, construction policy,
+    and external type marker. Anonymous compounds produced by
+    ``compound_scalar(**kwargs)`` remain structural.
+
+    Named Bundle metadata records immediate parents and children. Multiple
+    inheritance is allowed, but a child must contain every inherited field
+    with exactly the inherited type. A child may add fields or restate an
+    inherited field identically; it may not change one. Generic
+    specializations are invariant, carry their argument schemas, and have
+    distinct nominal identities (for example ``Box[int]`` and ``Box[str]``).
+
+Closed Bundle unions
+--------------------
+
+``Wiring::finish`` captures the registered Bundle hierarchy in an immutable
+``TypeRealizationSnapshot``. A later subclass registration does not resize or
+change an already-wired graph. Materialising a Python base recursively
+registers its concrete, already-defined ``__subclasses__`` before the snapshot
+is captured. Classes imported or defined only after wiring are intentionally
+outside that graph's closure; concrete generic specializations must also be
+used or inherited concretely before wiring completes.
+
+When a declared Bundle had children at capture time, ``TS[Base]`` uses a
+closed-union value plan. Its storage is one ``TypeRecord*`` followed by an
+aligned payload large enough for the largest concrete alternative in the
+captured closure. The pointer identifies the active concrete schema and the
+payload is constructed in place. Equality and hashing include that schema;
+ordering is lexicographic only within the same concrete schema and unordered
+between siblings. Abstract Bundles are excluded as alternatives. A
+non-abstract parent remains directly constructible.
+
+A declared leaf uses its ordinary canonical Bundle plan. It has no union
+header, padding, or other polymorphism overhead, including when it is itself a
+descendant. If one of the leaf's fields is itself a polymorphic Bundle, only
+that field uses its realized union plan; the containing leaf does not acquire a
+second type header. Nested graphs inherit the root graph's snapshot during
+dynamic construction, so they cannot observe a different closure. Registry
+snapshots copy only the type order and immediate inheritance edges; transitive
+closures and realized plans are built lazily for schemas a graph actually uses.
+Dynamic immutable lists, sets, maps, cyclic buffers, and queues retain the same
+compact storage shapes while carrying realized element bindings. Fixed lists
+and structurally mutable containers currently reject polymorphic Bundle
+elements at wiring instead of erasing the concrete type.
+
+Python conversion constructs the active concrete dataclass directly in the
+union. ``None`` means an unset Bundle field. A dictionary or JSON object being
+decoded *through a polymorphic parent* must include the configured
+discriminator (``__type__`` by default), naming a valid qualified or
+unambiguous local alternative. The marker is an external wire artifact and is
+not stored as a Bundle field.
+
+Recursive Bundle fields
+-----------------------
+
+A recursive field is represented by an ``Owned[T]`` value schema. Its inline
+storage plan is exactly one owner pointer, independent of ``T``. ``None`` or
+an unset field leaves that pointer null. Mutable access, Python conversion, or
+JSON decoding allocates the pointee on demand; copy operations deep-copy it.
+The allocated block retains the pointee's ``TypeRecord`` before its aligned
+payload, so a graph-scoped polymorphic pointee is destroyed correctly even
+after the thread-local realization scope has ended.
+
+C++ code can request an owner with ``TypeRegistry::owned(target)``. A
+self-recursive nominal schema is declared atomically with
+``TypeRegistry::recursive_bundle(...)``; a null field-schema entry denotes
+``Owned<Self>``. Python recognises direct self references, including
+``Optional[Self]``, on a dataclass ``CompoundScalar`` and uses the same path.
+Mutually recursive Python classes are intentionally not inferred yet: they
+need a future batch declaration API so neither class publishes a partial
+schema.
 
 ``List``
     Ordered sequence of one element type. May be ``fixed_size`` or dynamic.
