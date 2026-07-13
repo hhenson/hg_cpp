@@ -34,24 +34,20 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          from pathlib import Path
           from urllib.error import HTTPError
           from urllib.request import urlopen
           import os
           import re
-          import tomllib
 
           tag = os.environ["RELEASE_TAG"]
           match = re.fullmatch(r"v_(\d+\.\d+\.\d+)", tag)
           if match is None:
               raise SystemExit(f"release tag must match v_x.x.x, got {tag!r}")
 
-          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          # The TAG is the version authority: the project version in
+          # pyproject.toml is ignored for releases (the publish job restamps
+          # the tested artifacts' metadata to the tag version).
           version = match.group(1)
-          if project["version"] != version:
-              raise SystemExit(
-                  f"tag {tag!r} does not match project version {project['version']!r}"
-              )
 
           try:
               with urlopen(f"https://pypi.org/pypi/hg_cpp/{version}/json"):
@@ -318,6 +314,113 @@ jobs:
           merge-multiple: true
           github-token: ${{ github.token }}
           run-id: ${{ needs.reuse-build.outputs.run-id || github.run_id }}
+      - name: Restamp distributions to the tag version
+        shell: python
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          # The TAG is the version authority. The distributions were built
+          # (and fully tested) at whatever version pyproject.toml carried -
+          # rewriting the version is a METADATA-ONLY operation, so the
+          # expensive compiled artifacts are reused byte-identical.
+          import base64
+          import csv
+          import hashlib
+          import io
+          import os
+          import re
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          version = os.environ["RELEASE_TAG"].removeprefix("v_")
+
+          def record_hash(data: bytes) -> str:
+              digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest())
+              return "sha256=" + digest.decode().rstrip("=")
+
+          def restamp_wheel(path: Path) -> None:
+              name, old_version, rest = path.name.split("-", 2)
+              if old_version == version:
+                  print(f"{path.name}: already at {version}")
+                  return
+              old_info = f"{name}-{old_version}.dist-info"
+              new_info = f"{name}-{version}.dist-info"
+              entries = {}
+              with zipfile.ZipFile(path) as archive:
+                  for item in archive.infolist():
+                      entries[item.filename] = archive.read(item.filename)
+              renamed = {}
+              for item_name, data in entries.items():
+                  new_name = item_name.replace(old_info + "/", new_info + "/")
+                  if new_name == f"{new_info}/METADATA":
+                      text = data.decode()
+                      text, count = re.subn(rf"(?m)^Version: {re.escape(old_version)}$",
+                                            f"Version: {version}", text, count=1)
+                      assert count == 1, "wheel METADATA Version line not found"
+                      data = text.encode()
+                  renamed[new_name] = data
+              record_name = f"{new_info}/RECORD"
+              rows = []
+              for row in csv.reader(io.StringIO(renamed[record_name].decode())):
+                  if not row:
+                      continue
+                  entry = row[0].replace(old_info + "/", new_info + "/")
+                  if entry == record_name:
+                      rows.append([entry, "", ""])
+                  else:
+                      data = renamed[entry]
+                      rows.append([entry, record_hash(data), str(len(data))])
+              buffer = io.StringIO(newline="")
+              csv.writer(buffer, lineterminator="\n").writerows(rows)
+              renamed[record_name] = buffer.getvalue().encode()
+              new_path = path.with_name(path.name.replace(f"-{old_version}-", f"-{version}-", 1))
+              with zipfile.ZipFile(new_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                  for item_name, data in renamed.items():
+                      archive.writestr(item_name, data)
+              if new_path != path:
+                  path.unlink()
+              print(f"{path.name} -> {new_path.name}")
+
+          def restamp_sdist(path: Path) -> None:
+              name, old_version = path.name.removesuffix(".tar.gz").rsplit("-", 1)
+              if old_version == version:
+                  print(f"{path.name}: already at {version}")
+                  return
+              old_root = f"{name}-{old_version}"
+              new_root = f"{name}-{version}"
+              members = []
+              with tarfile.open(path, "r:gz") as archive:
+                  for member in archive.getmembers():
+                      data = archive.extractfile(member).read() if member.isfile() else None
+                      member.name = member.name.replace(old_root, new_root, 1)
+                      if member.name == f"{new_root}/PKG-INFO":
+                          text = data.decode()
+                          text, count = re.subn(rf"(?m)^Version: {re.escape(old_version)}$",
+                                                f"Version: {version}", text, count=1)
+                          assert count == 1, "sdist PKG-INFO Version line not found"
+                          data = text.encode()
+                      elif member.name == f"{new_root}/pyproject.toml":
+                          text = data.decode()
+                          text, count = re.subn(r'(?m)^version = "[^"]+"$',
+                                                f'version = "{version}"', text, count=1)
+                          assert count == 1, "sdist pyproject.toml version not found"
+                          data = text.encode()
+                      if data is not None:
+                          member.size = len(data)
+                      members.append((member, data))
+              new_path = path.with_name(f"{new_root}.tar.gz")
+              with tarfile.open(new_path, "w:gz") as archive:
+                  for member, data in members:
+                      archive.addfile(member, io.BytesIO(data) if data is not None else None)
+              if new_path != path:
+                  path.unlink()
+              print(f"{path.name} -> {new_path.name}")
+
+          for wheel in sorted(Path("dist").glob("*.whl")):
+              restamp_wheel(wheel)
+          for sdist in sorted(Path("dist").glob("*.tar.gz")):
+              restamp_sdist(sdist)
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
