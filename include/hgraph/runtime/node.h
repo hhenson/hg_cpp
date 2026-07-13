@@ -14,6 +14,7 @@
 #include <hgraph/runtime/node_type_ref.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/time_series/ts_output.h>
@@ -178,11 +179,20 @@ namespace hgraph
 
     struct HGRAPH_EXPORT NodeTypeDescriptor
     {
+        struct DynamicDebug
+        {
+            const TypeRecord    *key_type{nullptr};
+            const TypeRecord    *element_type{nullptr};
+            DebugDynamicLayout   layout{};
+        };
+
         NodeTypeMetaData                  schema{};
         const MemoryUtils::StoragePlan   *storage_plan{nullptr};
         NodeCallbacks                     callbacks{};
         NodeOps                           ops{};
         std::string                       implementation_label{};
+        std::vector<DebugField>           debug_fields{};
+        std::optional<DynamicDebug>        dynamic_debug{};
     };
 
     /**

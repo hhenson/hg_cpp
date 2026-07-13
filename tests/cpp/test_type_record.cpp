@@ -121,6 +121,8 @@ TEST_CASE("debug descriptor common enums and layouts are fixed", "[type-erasure]
 
     STATIC_REQUIRE(DEBUG_DESCRIPTOR_MAGIC == 0x48474444u);
     STATIC_REQUIRE(DEBUG_DESCRIPTOR_ABI_VERSION == 1);
+    STATIC_REQUIRE(DEBUG_DYNAMIC_LAYOUT_MAGIC == 0x4847444cu);
+    STATIC_REQUIRE(DEBUG_DYNAMIC_LAYOUT_ABI_VERSION == 1);
     STATIC_REQUIRE(sizeof(DebugLayoutKind) == sizeof(std::uint8_t));
     STATIC_REQUIRE(sizeof(DebugAtomicKind) == sizeof(std::uint8_t));
     STATIC_REQUIRE(sizeof(DebugDescriptorFlags) == sizeof(std::uint32_t));
@@ -128,6 +130,10 @@ TEST_CASE("debug descriptor common enums and layouts are fixed", "[type-erasure]
     STATIC_REQUIRE(static_cast<std::uint8_t>(DebugLayoutKind::Opaque) == 0);
     STATIC_REQUIRE(static_cast<std::uint8_t>(DebugLayoutKind::Atomic) == 1);
     STATIC_REQUIRE(static_cast<std::uint8_t>(DebugLayoutKind::FixedComposite) == 2);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugLayoutKind::Sequence) == 3);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugLayoutKind::KeyedSlots) == 4);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugLayoutKind::Node) == 5);
+    STATIC_REQUIRE(static_cast<std::uint8_t>(DebugLayoutKind::Graph) == 6);
     STATIC_REQUIRE(static_cast<std::uint8_t>(DebugAtomicKind::Opaque) == 0);
     STATIC_REQUIRE(static_cast<std::uint8_t>(DebugAtomicKind::Boolean) == 1);
     STATIC_REQUIRE(static_cast<std::uint8_t>(DebugAtomicKind::SignedInteger) == 2);
@@ -143,6 +149,18 @@ TEST_CASE("debug descriptor common enums and layouts are fixed", "[type-erasure]
     REQUIRE(descriptor.valid());
     descriptor.reserved0 = 1;
     REQUIRE_FALSE(descriptor.valid());
+
+    DebugDynamicLayout dynamic{
+        .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+        .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+        .kind = DebugDynamicKind::Contiguous,
+        .flags = DebugDynamicFlags::SizeIsConstant,
+        .size_constant = 3,
+        .stride = sizeof(std::int32_t),
+    };
+    REQUIRE(dynamic.valid());
+    dynamic.flags = DebugDynamicFlags::DataIsPointerTable;
+    REQUIRE_FALSE(dynamic.valid());
 }
 
 TEST_CASE("type record common layouts are fixed", "[type-erasure][type-record]")

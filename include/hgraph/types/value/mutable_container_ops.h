@@ -169,6 +169,23 @@ namespace hgraph
             validity_.clear();
         }
 
+        [[nodiscard]] DebugDynamicLayout debug_layout() const noexcept
+        {
+            const auto *base = reinterpret_cast<const std::byte *>(this);
+            const auto offset_of = [base](const auto *member) {
+                return static_cast<std::size_t>(reinterpret_cast<const std::byte *>(member) - base);
+            };
+            return DebugDynamicLayout{
+                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+                .kind = DebugDynamicKind::StableSlots,
+                .flags = DebugDynamicFlags::DataIsIndirect | DebugDynamicFlags::DataIsPointerTable,
+                .size_offset = offset_of(&size_),
+                .data_offset = offset_of(&slots_.value_storage.slots),
+                .stride = element_binding_.checked_plan().layout.size,
+            };
+        }
+
       private:
         ValueTypeRef element_binding_{nullptr};
         ValueSlotStore          slots_{};
@@ -449,7 +466,12 @@ namespace hgraph
     [[nodiscard]] inline ValueTypeRef mutable_list_type(const ValueTypeRef &element_binding)
     {
         const auto *meta = TypeRegistry::instance().mutable_list(element_binding.schema());
-        return intern_value_type(*meta, mutable_list_plan(element_binding), mutable_list_ops());
+        const auto &plan = mutable_list_plan(element_binding);
+        if (meta->is_nullable()) { return intern_value_type(*meta, plan, mutable_list_ops()); }
+        const MutableListStorage exemplar{element_binding};
+        const auto &debug = intern_dynamic_debug_descriptor(
+            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(), exemplar.debug_layout());
+        return intern_value_type(*meta, plan, mutable_list_ops(), &debug);
     }
 
     // =================================================================
@@ -586,6 +608,28 @@ namespace hgraph
         {
             values_.destroy_all();
             keys_.clear();
+        }
+
+        [[nodiscard]] DebugDynamicLayout debug_layout() const noexcept
+        {
+            const auto *base = reinterpret_cast<const std::byte *>(this);
+            const auto offset_of = [base](const auto *member) {
+                return static_cast<std::size_t>(reinterpret_cast<const std::byte *>(member) - base);
+            };
+            return DebugDynamicLayout{
+                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+                .kind = DebugDynamicKind::StableSlots,
+                .flags = DebugDynamicFlags::DataIsIndirect | DebugDynamicFlags::KeyDataIsIndirect |
+                         DebugDynamicFlags::DataIsPointerTable | DebugDynamicFlags::KeyDataIsPointerTable |
+                         DebugDynamicFlags::HasSlotState,
+                .size_offset = offset_of(&keys_.key_storage.slot_count),
+                .data_offset = offset_of(&values_.value_storage.slots),
+                .stride = value_binding_.checked_plan().layout.size,
+                .key_data_offset = offset_of(&keys_.key_storage.slots),
+                .key_stride = key_binding_.checked_plan().layout.size,
+                .state_offset = offset_of(&keys_.live),
+            };
         }
 
       private:
@@ -994,7 +1038,12 @@ namespace hgraph
                                                                      const ValueTypeRef &value_binding)
     {
         const auto *meta = TypeRegistry::instance().mutable_map(key_binding.schema(), value_binding.schema());
-        return intern_value_type(*meta, mutable_map_plan(key_binding, value_binding), mutable_map_ops());
+        const auto &plan = mutable_map_plan(key_binding, value_binding);
+        const MutableMapStorage exemplar{key_binding, value_binding};
+        const auto &debug = intern_dynamic_debug_descriptor(
+            meta->header, plan, DebugLayoutKind::KeyedSlots, key_binding.record(), value_binding.record(),
+            exemplar.debug_layout());
+        return intern_value_type(*meta, plan, mutable_map_ops(), &debug);
     }
 
     // -----------------------------------------------------------------
@@ -1057,6 +1106,25 @@ namespace hgraph
         }
 
         void clear() { keys_.clear(); }
+
+        [[nodiscard]] DebugDynamicLayout debug_layout() const noexcept
+        {
+            const auto *base = reinterpret_cast<const std::byte *>(this);
+            const auto offset_of = [base](const auto *member) {
+                return static_cast<std::size_t>(reinterpret_cast<const std::byte *>(member) - base);
+            };
+            return DebugDynamicLayout{
+                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+                .kind = DebugDynamicKind::StableSlots,
+                .flags = DebugDynamicFlags::DataIsIndirect | DebugDynamicFlags::DataIsPointerTable |
+                         DebugDynamicFlags::HasSlotState,
+                .size_offset = offset_of(&keys_.key_storage.slot_count),
+                .data_offset = offset_of(&keys_.key_storage.slots),
+                .stride = element_binding_.checked_plan().layout.size,
+                .state_offset = offset_of(&keys_.live),
+            };
+        }
 
       private:
         ValueTypeRef element_binding_{nullptr};
@@ -1264,7 +1332,11 @@ namespace hgraph
     [[nodiscard]] inline ValueTypeRef mutable_set_type(const ValueTypeRef &element_binding)
     {
         const auto *meta = TypeRegistry::instance().mutable_set(element_binding.schema());
-        return intern_value_type(*meta, mutable_set_plan(element_binding), mutable_set_ops());
+        const auto &plan = mutable_set_plan(element_binding);
+        const MutableSetStorage exemplar{element_binding};
+        const auto &debug = intern_dynamic_debug_descriptor(
+            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(), exemplar.debug_layout());
+        return intern_value_type(*meta, plan, mutable_set_ops(), &debug);
     }
 
     inline void clear_mutable_container_plans() noexcept

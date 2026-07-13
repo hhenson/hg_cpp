@@ -1200,6 +1200,8 @@ namespace hgraph
         const auto key_binding = ValuePlanFactory::instance().type_for(meta.output_schema->key_type());
         if (!key_binding) { throw std::logic_error("mesh_node could not resolve its key binding"); }
         const MemoryUtils::StorageLayout graph_layout = spec.child.graph_builder.nested_storage_layout();
+        const GraphTypeRef child_graph_type = spec.child.graph_builder.nested_type();
+        if (!child_graph_type) { throw std::logic_error("mesh_node could not resolve its child graph type"); }
 
         NodeTypeDescriptor descriptor;
         descriptor.schema = std::move(meta);
@@ -1215,6 +1217,19 @@ namespace hgraph
         descriptor.callbacks.stop            = &mesh_node_stop;
         descriptor.ops.evaluate_impl         = &mesh_evaluate_impl;
         descriptor.ops.extended_view_type_id = MeshNodeView::node_view_type_id();
+        MeshNodeStorage debug_exemplar;
+        debug_exemplar.entries.bind_graph_layout(graph_layout);
+        MeshEntry debug_entry{Value{key_binding}};
+        const std::size_t graph_owner_offset = static_cast<std::size_t>(
+            reinterpret_cast<const std::byte *>(&debug_entry.graph) -
+            reinterpret_cast<const std::byte *>(&debug_entry));
+        descriptor.dynamic_debug = NodeTypeDescriptor::DynamicDebug{
+            .key_type = key_binding.record(),
+            .element_type = child_graph_type.record(),
+            .layout = debug_exemplar.entries.debug_layout(
+                descriptor.storage_plan->component(mesh_storage_field_name).offset,
+                graph_owner_offset, true),
+        };
         descriptor.ops.extended_view_context = &register_mesh_node_context(
             std::move(spec),
             descriptor.storage_plan->component(mesh_storage_field_name).offset,

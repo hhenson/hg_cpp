@@ -10,12 +10,23 @@
 
 namespace hgraph
 {
+    enum class TypeFamily : std::uint8_t;
+    struct SchemaHeader;
     struct TypeRecord;
     struct ValueTypeMetaData;
     struct DebugDynamicLayout;
 
     inline constexpr std::uint32_t DEBUG_DESCRIPTOR_MAGIC = 0x48474444u;
     inline constexpr std::uint16_t DEBUG_DESCRIPTOR_ABI_VERSION = 1;
+    inline constexpr std::uint32_t DEBUG_DYNAMIC_LAYOUT_MAGIC = 0x4847444cu;
+    inline constexpr std::uint16_t DEBUG_DYNAMIC_LAYOUT_ABI_VERSION = 1;
+    inline constexpr std::size_t DEBUG_OWNER_IDENTITY_OFFSET = 0;
+    inline constexpr std::size_t DEBUG_OWNER_STATE_OFFSET = sizeof(void *);
+    inline constexpr std::size_t DEBUG_OWNER_STORAGE_OFFSET = 2 * sizeof(void *);
+    inline constexpr std::uintptr_t DEBUG_OWNER_STATE_MASK = 0x3u;
+    inline constexpr std::uintptr_t DEBUG_OWNER_INLINE_STATE = 0x1u;
+    inline constexpr std::uintptr_t DEBUG_OWNER_HEAP_STATE = 0x2u;
+    inline constexpr std::uintptr_t DEBUG_OWNER_BORROWED_STATE = 0x3u;
 
     enum class DebugLayoutKind : std::uint8_t
     {
@@ -47,6 +58,27 @@ namespace hgraph
     {
         None = 0,
         Optional = 1u << 0u,
+        EmbeddedOwner = 1u << 1u,
+    };
+
+    enum class DebugDynamicKind : std::uint8_t
+    {
+        Contiguous = 1,
+        StableSlots = 2,
+    };
+
+    enum class DebugDynamicFlags : std::uint32_t
+    {
+        None = 0,
+        SizeIsConstant = 1u << 0u,
+        DataIsIndirect = 1u << 1u,
+        KeyDataIsIndirect = 1u << 2u,
+        DataIsPointerTable = 1u << 3u,
+        KeyDataIsPointerTable = 1u << 4u,
+        HasSlotState = 1u << 5u,
+        HasHead = 1u << 6u,
+        ElementsAreOwners = 1u << 7u,
+        KeysAreOwners = 1u << 8u,
     };
 
     [[nodiscard]] constexpr DebugDescriptorFlags operator|(DebugDescriptorFlags lhs, DebugDescriptorFlags rhs) noexcept
@@ -66,6 +98,17 @@ namespace hgraph
                static_cast<std::uint32_t>(requested);
     }
 
+    [[nodiscard]] constexpr DebugDynamicFlags operator|(DebugDynamicFlags lhs, DebugDynamicFlags rhs) noexcept
+    {
+        return static_cast<DebugDynamicFlags>(static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));
+    }
+
+    [[nodiscard]] constexpr bool has_flag(DebugDynamicFlags flags, DebugDynamicFlags requested) noexcept
+    {
+        return (static_cast<std::uint32_t>(flags) & static_cast<std::uint32_t>(requested)) ==
+               static_cast<std::uint32_t>(requested);
+    }
+
     struct DebugField
     {
         const char *name{nullptr};
@@ -73,6 +116,29 @@ namespace hgraph
         const TypeRecord *type{nullptr};
         std::uint32_t validity_bit{0};
         DebugFieldFlags flags{DebugFieldFlags::None};
+    };
+
+    /** Data-only offsets used by Sequence and KeyedSlots descriptors. */
+    struct HGRAPH_EXPORT DebugDynamicLayout
+    {
+        std::uint32_t magic{0};
+        std::uint16_t abi_version{0};
+        DebugDynamicKind kind{DebugDynamicKind::Contiguous};
+        std::uint8_t reserved0{0};
+        DebugDynamicFlags flags{DebugDynamicFlags::None};
+        std::uint32_t reserved1{0};
+        std::size_t size_offset{0};
+        std::size_t size_constant{0};
+        std::size_t data_offset{0};
+        std::size_t stride{0};
+        std::size_t key_data_offset{0};
+        std::size_t key_stride{0};
+        std::size_t state_offset{0};
+        std::size_t auxiliary_offset{0};
+        std::size_t entry_offset{0};
+
+        [[nodiscard]] bool valid() const noexcept;
+        [[nodiscard]] constexpr bool operator==(const DebugDynamicLayout &) const noexcept = default;
     };
 
     struct HGRAPH_EXPORT DebugDescriptor
@@ -115,10 +181,20 @@ namespace hgraph
     [[nodiscard]] HGRAPH_EXPORT const DebugDescriptor &intern_fixed_composite_debug_descriptor(
         const ValueTypeMetaData &schema, const MemoryUtils::StoragePlan &plan);
 
+    [[nodiscard]] HGRAPH_EXPORT const DebugDescriptor &intern_dynamic_debug_descriptor(
+        const SchemaHeader &schema, const MemoryUtils::StoragePlan &plan, DebugLayoutKind layout,
+        const TypeRecord *key_type, const TypeRecord *element_type, DebugDynamicLayout dynamic_layout);
+
+    [[nodiscard]] HGRAPH_EXPORT const DebugDescriptor &intern_structured_debug_descriptor(
+        const SchemaHeader &schema, const MemoryUtils::StoragePlan &plan, DebugLayoutKind layout,
+        const DebugField *fields, std::size_t field_count, const TypeRecord *key_type = nullptr,
+        const TypeRecord *element_type = nullptr, const DebugDynamicLayout *dynamic_layout = nullptr);
+
     [[nodiscard]] HGRAPH_EXPORT const DebugDescriptor *find_value_debug_descriptor(
         const ValueTypeMetaData &schema, const MemoryUtils::StoragePlan &plan) noexcept;
 
     HGRAPH_EXPORT void clear_value_debug_descriptors() noexcept;
+    HGRAPH_EXPORT void clear_debug_descriptors(TypeFamily family) noexcept;
 
     static_assert(sizeof(DebugField) == 4 * sizeof(void *));
     static_assert(alignof(DebugField) == alignof(void *));
@@ -138,6 +214,15 @@ namespace hgraph
     static_assert(offsetof(DebugDescriptor, validity_offset) == 3 * sizeof(void *));
     static_assert(offsetof(DebugDescriptor, key_type) == 5 * sizeof(void *));
     static_assert(offsetof(DebugDescriptor, dynamic_layout) == 7 * sizeof(void *));
+
+    static_assert(sizeof(DebugDynamicLayout) == 11 * sizeof(void *));
+    static_assert(alignof(DebugDynamicLayout) == alignof(void *));
+    static_assert(std::is_standard_layout_v<DebugDynamicLayout>);
+    static_assert(std::is_trivially_copyable_v<DebugDynamicLayout>);
+    static_assert(offsetof(DebugDynamicLayout, magic) == 0);
+    static_assert(offsetof(DebugDynamicLayout, size_offset) == 2 * sizeof(void *));
+    static_assert(offsetof(DebugDynamicLayout, data_offset) == 4 * sizeof(void *));
+    static_assert(offsetof(DebugDynamicLayout, state_offset) == 8 * sizeof(void *));
 } // namespace hgraph
 
 #endif // HGRAPH_TYPES_METADATA_DEBUG_DESCRIPTOR_H

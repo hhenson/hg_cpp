@@ -88,6 +88,48 @@ TEST_CASE("Value TypeRecords carry atomic and fixed-composite debug descriptors"
     REQUIRE(debug->validity_offset == components[2].offset);
 }
 
+TEST_CASE("Value TypeRecords describe contiguous and stable-slot collections",
+          "[type-erasure][debug-descriptor]")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    const auto *int_schema = registry.register_scalar<std::int32_t>("int32");
+    const ValueTypeRef int_type = ValuePlanFactory::instance().type_for(int_schema);
+
+    const ValueTypeRef fixed = ValuePlanFactory::instance().type_for(registry.list(int_schema, 3));
+    REQUIRE(fixed.record()->debug->layout == DebugLayoutKind::Sequence);
+    REQUIRE(fixed.record()->debug->element_type == int_type.record());
+    REQUIRE(fixed.record()->debug->dynamic_layout->valid());
+    REQUIRE(has_flag(fixed.record()->debug->dynamic_layout->flags, DebugDynamicFlags::SizeIsConstant));
+    REQUIRE(fixed.record()->debug->dynamic_layout->size_constant == 3);
+
+    const ValueTypeRef compact = ValuePlanFactory::instance().type_for(registry.list(int_schema));
+    REQUIRE(compact.record()->debug->layout == DebugLayoutKind::Sequence);
+    REQUIRE(compact.record()->debug->dynamic_layout->kind == DebugDynamicKind::Contiguous);
+    REQUIRE(has_flag(compact.record()->debug->dynamic_layout->flags, DebugDynamicFlags::DataIsIndirect));
+
+    const ValueTypeRef compact_set = ValuePlanFactory::instance().type_for(registry.set(int_schema));
+    REQUIRE(compact_set.record()->debug->layout == DebugLayoutKind::Sequence);
+    REQUIRE(compact_set.record()->debug->element_type == int_type.record());
+    REQUIRE(compact_set.record()->debug->dynamic_layout->kind == DebugDynamicKind::Contiguous);
+
+    const ValueTypeRef mutable_list = ValuePlanFactory::instance().type_for(registry.mutable_list(int_schema));
+    REQUIRE(mutable_list.record()->debug->dynamic_layout->kind == DebugDynamicKind::StableSlots);
+    REQUIRE(has_flag(mutable_list.record()->debug->dynamic_layout->flags,
+                     DebugDynamicFlags::DataIsPointerTable));
+
+    const ValueTypeRef mutable_map =
+        ValuePlanFactory::instance().type_for(registry.mutable_map(int_schema, int_schema));
+    const DebugDescriptor *map_debug = mutable_map.record()->debug;
+    REQUIRE(map_debug->layout == DebugLayoutKind::KeyedSlots);
+    REQUIRE(map_debug->key_type == int_type.record());
+    REQUIRE(map_debug->element_type == int_type.record());
+    REQUIRE(map_debug->dynamic_layout->kind == DebugDynamicKind::StableSlots);
+    REQUIRE(has_flag(map_debug->dynamic_layout->flags, DebugDynamicFlags::HasSlotState));
+    REQUIRE(has_flag(map_debug->dynamic_layout->flags, DebugDynamicFlags::KeyDataIsPointerTable));
+}
+
 TEST_CASE("ValueOps: ops_for<T> returns a stable canonical vtable")
 {
     using namespace hgraph;

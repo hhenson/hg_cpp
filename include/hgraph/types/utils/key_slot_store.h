@@ -3,11 +3,10 @@
 
 #include <hgraph/util/scope.h>
 #include <hgraph/types/utils/slot_observer.h>
+#include <hgraph/types/utils/slot_bitmap.h>
 #include <hgraph/types/utils/stable_slot_storage.h>
 
 #include <ankerl/unordered_dense.h>
-#include <sul/dynamic_bitset.hpp>
-
 #include <algorithm>
 #include <concepts>
 #include <cstddef>
@@ -143,12 +142,12 @@ namespace hgraph
          * Physical ownership bitset. If set, a key object exists in slot
          * memory and may still be inspected even when no longer live.
          */
-        sul::dynamic_bitset<> constructed{};
+        SlotBitmap constructed{};
         /**
          * Logical membership bitset. If set, the constructed key currently
          * participates in lookup and iteration.
          */
-        sul::dynamic_bitset<> live{};
+        SlotBitmap live{};
         /**
          * Structural observers kept in sync with insert, remove, erase, clear,
          * and capacity events.

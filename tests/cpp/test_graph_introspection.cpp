@@ -10,6 +10,7 @@
 #include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/static_node.h>
 
@@ -68,4 +69,27 @@ TEST_CASE("diagnostics: GraphView::dump lists every node with its schedule state
     CHECK_THAT(dump, ContainsSubstring("node[0"));
     CHECK_THAT(dump, ContainsSubstring("introspection_thrower"));
     CHECK_THAT(dump, ContainsSubstring("scheduled="));
+}
+
+TEST_CASE("debug descriptors navigate graph node allocations")
+{
+    using namespace hgraph;
+
+    GraphBuilder builder = build_graph<ThrowingGraph>();
+    const GraphTypeRef graph_type = builder.root_type();
+    const DebugDescriptor *graph_debug = graph_type.record()->debug;
+    REQUIRE(graph_debug != nullptr);
+    REQUIRE(graph_debug->valid());
+    REQUIRE(graph_debug->layout == DebugLayoutKind::Graph);
+    REQUIRE(graph_debug->field_count == builder.node_count());
+
+    for (std::size_t index = 0; index < builder.node_count(); ++index)
+    {
+        const NodeTypeRef node_type = builder.nodes()[index].type();
+        REQUIRE(graph_debug->fields[index].type == node_type.record());
+        REQUIRE(graph_debug->fields[index].offset < graph_type.plan()->layout.size);
+        REQUIRE(node_type.record()->debug != nullptr);
+        REQUIRE(node_type.record()->debug->valid());
+        REQUIRE(node_type.record()->debug->layout == DebugLayoutKind::Node);
+    }
 }

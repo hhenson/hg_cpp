@@ -17,6 +17,7 @@
 #include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/subgraph_wiring.h>
@@ -1453,4 +1454,29 @@ TEST_CASE("map_ over TSL: no_key is rejected (TSD maps only)")
 
     REQUIRE_THROWS_AS((eval_node<MapTslNoKeyG>(values<Value>(list_delta<TS<Int>>({1, 2, 3})))),
                       std::invalid_argument);
+}
+
+TEST_CASE("map_ publishes keyed nested-graph debugger navigation")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphBuilder builder = build_graph<MapKwargsMixedCollectionGraph>();
+    bool found = false;
+    for (const NodeBuilder &node : builder.nodes())
+    {
+        const DebugDescriptor *debug = node.type().record()->debug;
+        if (node.type().schema()->node_kind != NodeKind::Nested || debug == nullptr ||
+            debug->dynamic_layout == nullptr)
+            continue;
+        REQUIRE(debug->layout == DebugLayoutKind::Node);
+        REQUIRE(debug->key_type != nullptr);
+        REQUIRE(debug->element_type != nullptr);
+        REQUIRE(debug->dynamic_layout->kind == DebugDynamicKind::StableSlots);
+        REQUIRE(has_flag(debug->dynamic_layout->flags, DebugDynamicFlags::HasSlotState));
+        REQUIRE(has_flag(debug->dynamic_layout->flags, DebugDynamicFlags::ElementsAreOwners));
+        REQUIRE(has_flag(debug->dynamic_layout->flags, DebugDynamicFlags::KeysAreOwners));
+        found = true;
+    }
+    REQUIRE(found);
 }

@@ -1,9 +1,9 @@
 #ifndef HGRAPH_RUNTIME_NESTED_GRAPH_STORAGE_H
 #define HGRAPH_RUNTIME_NESTED_GRAPH_STORAGE_H
 
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/utils/stable_slot_storage.h>
-
-#include <sul/dynamic_bitset.hpp>
+#include <hgraph/types/utils/slot_bitmap.h>
 
 #include <algorithm>
 #include <bit>
@@ -138,9 +138,43 @@ namespace hgraph
             return MemoryUtils::advance(storage_.slot_data(slot), graph_offset_);
         }
 
+        [[nodiscard]] DebugDynamicLayout debug_layout(std::size_t owner_offset,
+                                                      std::size_t graph_owner_offset,
+                                                      bool keys_are_owners) const noexcept
+        {
+            const auto *base = reinterpret_cast<const std::byte *>(this);
+            const auto offset_of = [base, owner_offset](const auto *member) {
+                return owner_offset + static_cast<std::size_t>(
+                                          reinterpret_cast<const std::byte *>(member) - base);
+            };
+            DebugDynamicFlags flags = DebugDynamicFlags::DataIsIndirect |
+                                      DebugDynamicFlags::DataIsPointerTable |
+                                      DebugDynamicFlags::HasSlotState |
+                                      DebugDynamicFlags::ElementsAreOwners;
+            if (keys_are_owners)
+            {
+                flags = flags | DebugDynamicFlags::KeyDataIsIndirect |
+                        DebugDynamicFlags::KeyDataIsPointerTable |
+                        DebugDynamicFlags::KeysAreOwners;
+            }
+            return DebugDynamicLayout{
+                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+                .kind = DebugDynamicKind::StableSlots,
+                .flags = flags,
+                .size_offset = offset_of(&storage_.slot_count),
+                .data_offset = offset_of(&storage_.slots),
+                .stride = slot_layout_.size,
+                .key_data_offset = keys_are_owners ? offset_of(&storage_.slots) : 0,
+                .key_stride = keys_are_owners ? std::size_t{1} : 0,
+                .state_offset = offset_of(&constructed_),
+                .entry_offset = graph_owner_offset,
+            };
+        }
+
       private:
         StableSlotStorage             storage_{};
-        sul::dynamic_bitset<>         constructed_{};
+        SlotBitmap                    constructed_{};
         MemoryUtils::StorageLayout    graph_layout_{};
         MemoryUtils::StorageLayout    slot_layout_{};
         size_t                        graph_offset_{0};

@@ -1,6 +1,7 @@
 #ifndef HGRAPH_CPP_ROOT_VALUE_COMPACT_STORAGE_H
 #define HGRAPH_CPP_ROOT_VALUE_COMPACT_STORAGE_H
 
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value_ops.h>
 #include <hgraph/util/scope.h>
@@ -378,6 +379,15 @@ namespace hgraph
             return validity_.empty() || (index < validity_.size() && validity_[index]);
         }
 
+        [[nodiscard]] static constexpr std::size_t debug_data_offset() noexcept
+        {
+            return offsetof(ListStorage, bytes_);
+        }
+        [[nodiscard]] static constexpr std::size_t debug_size_offset() noexcept
+        {
+            return offsetof(ListStorage, size_);
+        }
+
       private:
         void clear() noexcept
         {
@@ -468,6 +478,19 @@ namespace hgraph
             list-only concern - element validity). */
         [[nodiscard]] bool element_set(std::size_t) const noexcept { return true; }
 
+        [[nodiscard]] static constexpr std::size_t debug_data_offset() noexcept
+        {
+            return offsetof(CyclicBufferStorage, storage_) + ListStorage::debug_data_offset();
+        }
+        [[nodiscard]] static constexpr std::size_t debug_size_offset() noexcept
+        {
+            return offsetof(CyclicBufferStorage, storage_) + ListStorage::debug_size_offset();
+        }
+        [[nodiscard]] static constexpr std::size_t debug_head_offset() noexcept
+        {
+            return offsetof(CyclicBufferStorage, head_);
+        }
+
       private:
         ListStorage storage_{};
         std::size_t head_{0};
@@ -505,6 +528,15 @@ namespace hgraph
         /** Dense container: every element is live (holes are a
             list-only concern - element validity). */
         [[nodiscard]] bool element_set(std::size_t) const noexcept { return true; }
+
+        [[nodiscard]] static constexpr std::size_t debug_data_offset() noexcept
+        {
+            return offsetof(QueueStorage, storage_) + ListStorage::debug_data_offset();
+        }
+        [[nodiscard]] static constexpr std::size_t debug_size_offset() noexcept
+        {
+            return offsetof(QueueStorage, storage_) + ListStorage::debug_size_offset();
+        }
 
       private:
         ListStorage storage_{};
@@ -582,6 +614,22 @@ namespace hgraph
         {
             if (storage_.empty() || element_binding_ == nullptr) { return false; }
             return index_.contains(key);
+        }
+
+        [[nodiscard]] DebugDynamicLayout debug_layout(std::size_t stride) const noexcept
+        {
+            const auto *base = reinterpret_cast<const std::byte *>(this);
+            const std::size_t storage_offset = static_cast<std::size_t>(
+                reinterpret_cast<const std::byte *>(&storage_) - base);
+            return DebugDynamicLayout{
+                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+                .kind = DebugDynamicKind::Contiguous,
+                .flags = DebugDynamicFlags::DataIsIndirect,
+                .size_offset = storage_offset + ListStorage::debug_size_offset(),
+                .data_offset = storage_offset + ListStorage::debug_data_offset(),
+                .stride = stride,
+            };
         }
 
       private:

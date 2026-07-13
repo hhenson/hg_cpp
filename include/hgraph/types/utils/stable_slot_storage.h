@@ -3,11 +3,13 @@
 
 #include <hgraph/types/utils/memory_utils.h>
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <memory>
 #include <new>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace hgraph
@@ -149,11 +151,42 @@ namespace hgraph
         {
         }
 
+        StableSlotStorage(const StableSlotStorage &) = delete;
+        StableSlotStorage &operator=(const StableSlotStorage &) = delete;
+
+        StableSlotStorage(StableSlotStorage &&other) noexcept
+            : slots(std::exchange(other.slots, nullptr)), slot_count(std::exchange(other.slot_count, 0)),
+              blocks(std::move(other.blocks)), slot_size(std::exchange(other.slot_size, 0)),
+              slot_alignment(std::exchange(other.slot_alignment, 0)),
+              slot_stride(std::exchange(other.slot_stride, 0)), m_allocator(other.m_allocator)
+        {
+        }
+
+        StableSlotStorage &operator=(StableSlotStorage &&other) noexcept
+        {
+            if (this != &other)
+            {
+                clear();
+                slots = std::exchange(other.slots, nullptr);
+                slot_count = std::exchange(other.slot_count, 0);
+                blocks = std::move(other.blocks);
+                slot_size = std::exchange(other.slot_size, 0);
+                slot_alignment = std::exchange(other.slot_alignment, 0);
+                slot_stride = std::exchange(other.slot_stride, 0);
+                m_allocator = other.m_allocator;
+            }
+            return *this;
+        }
+
+        ~StableSlotStorage() { clear(); }
+
         /**
          * Slot-id → byte-pointer index. Each pointer points into one of the
          * blocks owned by ``blocks``; entries never move once published.
          */
-        std::vector<std::byte *> slots{};
+        std::byte **slots{nullptr};
+        /** Number of pointers in ``slots``. */
+        size_t slot_count{0};
         /** Chained heap blocks backing the slot-id index. */
         std::vector<StableSlotBlock> blocks{};
         /** Bound element size, set on first reservation. */
@@ -164,7 +197,7 @@ namespace hgraph
         size_t slot_stride{0};
 
         /** Number of slots currently addressable via ``slot_data``. */
-        [[nodiscard]] size_t slot_capacity() const noexcept { return slots.size(); }
+        [[nodiscard]] size_t slot_capacity() const noexcept { return slot_count; }
         /** Per-slot byte stride. */
         [[nodiscard]] size_t stride() const noexcept { return slot_stride; }
         /** Bound element size. */
@@ -177,7 +210,7 @@ namespace hgraph
         /** Pointer for ``slot``, or ``nullptr`` if the slot is out of range. */
         [[nodiscard]] std::byte *slot_data(size_t slot) const noexcept
         {
-            return slot < slots.size() ? slots[slot] : nullptr;
+            return slot < slot_count ? slots[slot] : nullptr;
         }
 
         /**
@@ -191,29 +224,36 @@ namespace hgraph
         {
             bind_layout(new_slot_size, new_slot_alignment);
 
-            if (new_capacity <= slots.size()) {
+            if (new_capacity <= slot_count) {
                 return;
             }
 
-            const size_t old_capacity = slots.size();
-            slots.resize(new_capacity, nullptr);
+            const size_t old_capacity = slot_count;
             blocks.reserve(blocks.size() + 1);
+
+            auto replacement = std::make_unique<std::byte *[]>(new_capacity);
+            if (old_capacity != 0) { std::copy_n(slots, old_capacity, replacement.get()); }
 
             StableSlotBlock block = StableSlotBlock::allocate(
                 old_capacity, new_capacity - old_capacity, slot_size, slot_alignment, allocator());
             for (size_t slot = old_capacity; slot < new_capacity; ++slot) {
-                slots[slot] = block.slot_data(slot);
+                replacement[slot] = block.slot_data(slot);
             }
 
             if (block.slot_count != 0) {
                 blocks.push_back(std::move(block));
             }
+            delete[] slots;
+            slots = replacement.release();
+            slot_count = new_capacity;
         }
 
         /** Drop every block and reset the bound layout. Existing slot pointers become invalid. */
         void clear() noexcept
         {
-            slots.clear();
+            delete[] slots;
+            slots = nullptr;
+            slot_count = 0;
             blocks.clear();
             slot_size = 0;
             slot_alignment = 0;

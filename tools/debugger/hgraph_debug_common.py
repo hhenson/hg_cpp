@@ -9,6 +9,8 @@ TYPE_RECORD_ABI_VERSION = 1
 TYPE_KIND_NONE = 0xFF
 DEBUG_DESCRIPTOR_MAGIC = 0x48474444
 DEBUG_DESCRIPTOR_ABI_VERSION = 1
+DEBUG_DYNAMIC_LAYOUT_MAGIC = 0x4847444C
+DEBUG_DYNAMIC_LAYOUT_ABI_VERSION = 1
 
 FAMILY_NAMES = {
     0: "Invalid",
@@ -113,6 +115,26 @@ DEBUG_ATOMIC_NAMES = {
 
 DEBUG_DESCRIPTOR_HAS_VALIDITY = 1 << 0
 KNOWN_DEBUG_DESCRIPTOR_FLAGS = DEBUG_DESCRIPTOR_HAS_VALIDITY
+DEBUG_FIELD_EMBEDDED_OWNER = 1 << 1
+DEBUG_DYNAMIC_SIZE_CONSTANT = 1 << 0
+DEBUG_DYNAMIC_DATA_INDIRECT = 1 << 1
+DEBUG_DYNAMIC_KEY_DATA_INDIRECT = 1 << 2
+DEBUG_DYNAMIC_DATA_POINTER_TABLE = 1 << 3
+DEBUG_DYNAMIC_KEY_DATA_POINTER_TABLE = 1 << 4
+DEBUG_DYNAMIC_HAS_SLOT_STATE = 1 << 5
+DEBUG_DYNAMIC_HAS_HEAD = 1 << 6
+DEBUG_DYNAMIC_ELEMENTS_ARE_OWNERS = 1 << 7
+DEBUG_DYNAMIC_KEYS_ARE_OWNERS = 1 << 8
+KNOWN_DEBUG_DYNAMIC_FLAGS = (1 << 9) - 1
+DEBUG_OWNER_STATE_MASK = 0x3
+DEBUG_OWNER_INLINE_STATE = 1
+DEBUG_OWNER_HEAP_STATE = 2
+DEBUG_OWNER_BORROWED_STATE = 3
+
+DEBUG_DYNAMIC_KIND_NAMES = {
+    1: "Contiguous",
+    2: "StableSlots",
+}
 
 _MISSING = object()
 
@@ -233,6 +255,9 @@ def debug_descriptor_valid(snapshot):
         and (flags & ~KNOWN_DEBUG_DESCRIPTOR_FLAGS) == 0
         and (field_count == 0) == (fields == 0)
         and snapshot.get("reserved0", 0) == 0
+        and not (snapshot.get("layout") in (3, 4) and not snapshot.get("dynamic_layout", 0))
+        and not (snapshot.get("layout") not in (3, 4, 5, 6) and snapshot.get("dynamic_layout", 0))
+        and not (snapshot.get("dynamic_layout", 0) and not snapshot.get("element_type", 0))
         and (
             (
                 has_validity
@@ -263,6 +288,54 @@ def debug_descriptor_summary(snapshot):
         pointer_text(snapshot.get("key_type", 0)),
         pointer_text(snapshot.get("element_type", 0)),
         pointer_text(snapshot.get("dynamic_layout", 0)),
+    )
+
+
+def debug_dynamic_layout_valid(snapshot):
+    flags = snapshot.get("flags", 0)
+    kind = snapshot.get("kind", 0)
+    return (
+        snapshot.get("magic") == DEBUG_DYNAMIC_LAYOUT_MAGIC
+        and snapshot.get("abi_version") == DEBUG_DYNAMIC_LAYOUT_ABI_VERSION
+        and kind in DEBUG_DYNAMIC_KIND_NAMES
+        and snapshot.get("reserved0", 0) == 0
+        and snapshot.get("reserved1", 0) == 0
+        and (flags & ~KNOWN_DEBUG_DYNAMIC_FLAGS) == 0
+        and snapshot.get("stride", 0) > 0
+        and bool(flags & DEBUG_DYNAMIC_SIZE_CONSTANT)
+        == (snapshot.get("size_offset", 0) == 0)
+        and not (kind == 1 and flags & DEBUG_DYNAMIC_DATA_POINTER_TABLE)
+        and not (
+            kind == 2
+            and not (
+                flags & DEBUG_DYNAMIC_DATA_POINTER_TABLE
+                and flags & DEBUG_DYNAMIC_DATA_INDIRECT
+            )
+        )
+        and not (flags & DEBUG_DYNAMIC_HAS_SLOT_STATE and kind != 2)
+    )
+
+
+def debug_dynamic_layout_summary(snapshot):
+    state = "valid" if debug_dynamic_layout_valid(snapshot) else "invalid"
+    kind = DEBUG_DYNAMIC_KIND_NAMES.get(snapshot.get("kind", 0), "unknown")
+    return (
+        "DebugDynamicLayout{{{} kind={} flags=0x{:x} size_offset={} size_constant={} "
+        "data_offset={} stride={} key_data_offset={} key_stride={} state_offset={} "
+        "auxiliary_offset={} entry_offset={}}}"
+    ).format(
+        state,
+        kind,
+        snapshot.get("flags", 0),
+        snapshot.get("size_offset", 0),
+        snapshot.get("size_constant", 0),
+        snapshot.get("data_offset", 0),
+        snapshot.get("stride", 0),
+        snapshot.get("key_data_offset", 0),
+        snapshot.get("key_stride", 0),
+        snapshot.get("state_offset", 0),
+        snapshot.get("auxiliary_offset", 0),
+        snapshot.get("entry_offset", 0),
     )
 
 

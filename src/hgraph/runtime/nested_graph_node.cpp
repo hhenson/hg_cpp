@@ -232,6 +232,13 @@ namespace hgraph
             },
         };
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
+        descriptor.debug_fields.push_back(DebugField{
+            .name = "child_graph",
+            .offset = descriptor.storage_plan->component(child_graph_field_name).offset +
+                      offsetof(SingleNestedGraphNodeStorage, graph),
+            .type = spec.graph_builder.nested_type().record(),
+            .flags = DebugFieldFlags::EmbeddedOwner,
+        });
 
         descriptor.callbacks.start = &single_nested_graph_start;
         descriptor.callbacks.stop  = &single_nested_graph_stop;

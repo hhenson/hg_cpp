@@ -1079,7 +1079,22 @@ namespace hgraph
                 {
                     const MemoryUtils::StoragePlan *plan = plan_for(schema);
                     if (plan == nullptr) { throw std::logic_error("ValuePlanFactory: fixed list has no resolvable plan"); }
-                    type = intern_value_type(*schema, *plan, array_indexed_ops(*schema, *plan));
+                    if (schema->is_nullable())
+                    {
+                        type = intern_value_type(*schema, *plan, array_indexed_ops(*schema, *plan));
+                        break;
+                    }
+                    const auto &debug = intern_dynamic_debug_descriptor(
+                        schema->header, *plan, DebugLayoutKind::Sequence, nullptr, element_type.record(),
+                        DebugDynamicLayout{
+                            .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+                            .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+                            .kind = DebugDynamicKind::Contiguous,
+                            .flags = DebugDynamicFlags::SizeIsConstant,
+                            .size_constant = schema->fixed_size,
+                            .stride = plan->array_stride(),
+                        });
+                    type = intern_value_type(*schema, *plan, array_indexed_ops(*schema, *plan), &debug);
                 }
                 break;
             }

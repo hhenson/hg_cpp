@@ -3,6 +3,7 @@
 #include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/graph.h>
 #include <hgraph/runtime/node_error.h>
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/notifiable.h>
@@ -851,7 +852,9 @@ namespace hgraph
                 NodeCallbacks callbacks,
                 const MemoryUtils::StoragePlan &plan,
                 NodeOps ops,
-                std::string_view implementation_label)
+                std::string_view implementation_label,
+                std::vector<DebugField> debug_fields = {},
+                std::optional<NodeTypeDescriptor::DynamicDebug> dynamic_debug = {})
             {
                 names.push_back(std::make_unique<std::string>(
                     schema.display_name != nullptr ? std::string{schema.display_name} : std::string{}));
@@ -872,7 +875,11 @@ namespace hgraph
                 ops.context = &contexts.back();
                 ops_storage.push_back(ops);
 
-                return intern_node_type(schemas.back(), plan, ops_storage.back(), implementation_label);
+                return intern_node_type(
+                    schemas.back(), plan, ops_storage.back(), implementation_label, debug_fields,
+                    dynamic_debug.has_value() ? dynamic_debug->key_type : nullptr,
+                    dynamic_debug.has_value() ? dynamic_debug->element_type : nullptr,
+                    dynamic_debug.has_value() ? &dynamic_debug->layout : nullptr);
             }
 
             static void fill_default_ops(NodeOps &ops)
@@ -974,19 +981,44 @@ namespace hgraph
     NodeTypeRef intern_node_type(const NodeTypeMetaData &schema,
                                  const MemoryUtils::StoragePlan &plan,
                                  const NodeOps &ops,
-                                 std::string_view implementation_label)
+                                 std::string_view implementation_label,
+                                 std::span<const DebugField> supplied_debug_fields,
+                                 const TypeRecord *debug_key_type,
+                                 const TypeRecord *debug_element_type,
+                                 const DebugDynamicLayout *debug_dynamic_layout)
     {
         if (!schema.header.valid() || schema.header.family != TypeFamily::Node ||
             schema.header.kind != static_cast<TypeKind>(schema.node_kind))
         {
             throw std::invalid_argument("intern_node_type requires a valid node schema header");
         }
+        std::vector<DebugField> debug_fields;
+        const auto append_value_owner = [&](const char *name, const ValueTypeMetaData *value_schema) {
+            if (value_schema == nullptr) { return; }
+            const auto *component = plan.find_component(name);
+            const auto value_type = ValuePlanFactory::instance().type_for(value_schema);
+            if (component == nullptr || !value_type)
+                throw std::logic_error("node debug descriptor could not resolve a value owner field");
+            debug_fields.push_back(DebugField{
+                .name = name,
+                .offset = component->offset,
+                .type = value_type.record(),
+                .flags = DebugFieldFlags::EmbeddedOwner,
+            });
+        };
+        append_value_owner("state", schema.state_schema);
+        append_value_owner("scalars", schema.scalar_schema);
+        debug_fields.insert(debug_fields.end(), supplied_debug_fields.begin(), supplied_debug_fields.end());
+        const auto &debug = intern_structured_debug_descriptor(
+            schema.header, plan, DebugLayoutKind::Node,
+            debug_fields.empty() ? nullptr : debug_fields.data(), debug_fields.size(), debug_key_type,
+            debug_element_type, debug_dynamic_layout);
         const TypeRecordDefinition definition{
             .key = TypeRecordKey{.schema = &schema.header,
                                  .role = TypeRole::Runtime,
                                  .plan = &plan,
                                  .ops = &ops,
-                                 .debug = nullptr},
+                                 .debug = &debug},
             .ops_abi_version = NODE_OPS_ABI_VERSION,
             .capabilities = node_type_capabilities(plan),
             .implementation_label = implementation_label,
@@ -1367,7 +1399,9 @@ namespace hgraph
             std::move(descriptor.callbacks),
             plan,
             descriptor.ops,
-            descriptor.implementation_label);
+            descriptor.implementation_label,
+            std::move(descriptor.debug_fields),
+            std::move(descriptor.dynamic_debug));
         return NodeBuilder{type, std::move(input_endpoint)};
     }
 
@@ -1563,6 +1597,7 @@ namespace hgraph
 
     void clear_node_runtime_types() noexcept
     {
+        clear_debug_descriptors(TypeFamily::Node);
         node_runtime_registry().clear();
     }
 

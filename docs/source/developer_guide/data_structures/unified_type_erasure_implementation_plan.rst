@@ -439,6 +439,20 @@ Iteration 6C
    Unknown or unsupported representations remain labeled opaque values rather
    than being guessed from memory.
 
+   Implemented: the versioned dynamic layout describes contiguous and stable
+   pointer-slot storage, including fixed/dynamic size, stride, ring head, key
+   storage, slot-state bitmap, and embedded erased owners. Slot pointer/state
+   storage now has an explicit data-only ABI while reducing per-store
+   bookkeeping size. Value descriptors cover fixed and dense dynamic
+   sequences plus mutable keyed containers. Graph descriptors publish direct
+   node allocations; node descriptors publish state/scalar owners and nested
+   graph owners. Map and mesh expose their constructed entry slots, retained
+   stopped graphs, and omit erased slots through the slot lifecycle bitmap.
+   GDB and LLDB traverse each supported form without inferior calls. Nullable
+   dynamic validity and specialized endpoint owners remain explicitly opaque.
+   This records implementation status only; review acceptance and commit
+   status remain open.
+
 Technical model
    Printers dispatch from common numeric fields and descriptor data, not C++
    template spellings or private container member names.  Tests decode captured

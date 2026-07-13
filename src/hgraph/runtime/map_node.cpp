@@ -759,6 +759,12 @@ namespace hgraph
                 TSEndpointSchema::peered(meta.output_schema->element_ts()));
         }
 
+        const ValueTypeRef key_type =
+            ValuePlanFactory::instance().type_for(meta.output_schema->key_type());
+        const GraphTypeRef child_graph_type = spec.child.graph_builder.nested_type();
+        if (!key_type || !child_graph_type)
+            throw std::logic_error("map_node could not resolve debugger child types");
+
         NodeTypeDescriptor descriptor;
         descriptor.schema = std::move(meta);
 
@@ -774,6 +780,19 @@ namespace hgraph
         descriptor.ops.evaluate_impl         = &map_evaluate_impl;
         descriptor.ops.extended_view_type_id = MapNodeView::node_view_type_id();
         const MemoryUtils::StorageLayout graph_layout = spec.child.graph_builder.nested_storage_layout();
+        MapNodeStorage debug_exemplar;
+        debug_exemplar.entries.bind_graph_layout(graph_layout);
+        MapKeyEntry debug_entry{Value{key_type}};
+        const std::size_t graph_owner_offset = static_cast<std::size_t>(
+            reinterpret_cast<const std::byte *>(&debug_entry.graph) -
+            reinterpret_cast<const std::byte *>(&debug_entry));
+        descriptor.dynamic_debug = NodeTypeDescriptor::DynamicDebug{
+            .key_type = key_type.record(),
+            .element_type = child_graph_type.record(),
+            .layout = debug_exemplar.entries.debug_layout(
+                descriptor.storage_plan->component(map_storage_field_name).offset,
+                graph_owner_offset, true),
+        };
         descriptor.ops.extended_view_context = &register_map_node_context(
             std::move(spec),
             descriptor.storage_plan->component(map_storage_field_name).offset,

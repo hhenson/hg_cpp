@@ -122,6 +122,18 @@ def descriptor_at(value, address):
     )
 
 
+def dynamic_layout_at(value, address):
+    if address == 0 or not valid(value):
+        return lldb.SBValue()
+    target = value.GetTarget()
+    layout_type = target.FindFirstType("hgraph::DebugDynamicLayout")
+    if not layout_type.IsValid():
+        return lldb.SBValue()
+    return target.CreateValueFromAddress(
+        "dynamic_layout", target.ResolveLoadAddress(address), layout_type
+    )
+
+
 def descriptor_snapshot(value):
     return {
         "magic": integer(child(value, "magic")),
@@ -147,6 +159,26 @@ def debug_field_snapshot(value):
         "type": pointer(child(value, "type")),
         "validity_bit": integer(child(value, "validity_bit")),
         "flags": integer(child(value, "flags")),
+    }
+
+
+def dynamic_layout_snapshot(value):
+    return {
+        "magic": integer(child(value, "magic")),
+        "abi_version": integer(child(value, "abi_version")),
+        "kind": integer(child(value, "kind")),
+        "reserved0": integer(child(value, "reserved0")),
+        "flags": integer(child(value, "flags")),
+        "reserved1": integer(child(value, "reserved1")),
+        "size_offset": integer(child(value, "size_offset")),
+        "size_constant": integer(child(value, "size_constant")),
+        "data_offset": integer(child(value, "data_offset")),
+        "stride": integer(child(value, "stride")),
+        "key_data_offset": integer(child(value, "key_data_offset")),
+        "key_stride": integer(child(value, "key_stride")),
+        "state_offset": integer(child(value, "state_offset")),
+        "auxiliary_offset": integer(child(value, "auxiliary_offset")),
+        "entry_offset": integer(child(value, "entry_offset")),
     }
 
 
@@ -177,6 +209,15 @@ def read_memory(value, address, size):
     error = lldb.SBError()
     payload = value.GetProcess().ReadMemory(address, size, error)
     return payload if error.Success() else None
+
+
+def read_unsigned(value, address, size=None):
+    if not valid(value) or address == 0:
+        return None
+    size = value.GetTarget().GetAddressByteSize() if size is None else size
+    error = lldb.SBError()
+    result = value.GetProcess().ReadUnsignedFromMemory(address, size, error)
+    return result if error.Success() else None
 
 
 def record_plan_size(record_value):
@@ -211,6 +252,96 @@ def make_any_pointer(value, name, record_address, data_address, access):
         return lldb.SBValue()
     pointer_type = target.FindFirstType("hgraph::AnyPtr")
     return target.CreateValueFromData(name, data, pointer_type) if pointer_type.IsValid() else lldb.SBValue()
+
+
+def make_owner_pointer(value, name, owner_address, fallback_record, access):
+    size = value.GetTarget().GetAddressByteSize()
+    record_address = read_unsigned(value, owner_address)
+    state_word = read_unsigned(value, owner_address + size)
+    if record_address is None or state_word is None:
+        return lldb.SBValue()
+    if record_address == 0:
+        record_address = fallback_record
+    state = state_word & common.DEBUG_OWNER_STATE_MASK
+    if state == 0:
+        data_address = 0
+    elif state == common.DEBUG_OWNER_INLINE_STATE:
+        data_address = owner_address + 2 * size
+    elif state in (common.DEBUG_OWNER_HEAP_STATE, common.DEBUG_OWNER_BORROWED_STATE):
+        data_address = read_unsigned(value, owner_address + 2 * size)
+        if data_address is None:
+            return lldb.SBValue()
+    else:
+        return lldb.SBValue()
+    return make_any_pointer(value, name, record_address, data_address, access if data_address else 0)
+
+
+def dynamic_child_addresses(value, data_address, layout):
+    flags = layout["flags"]
+    size = (
+        layout["size_constant"]
+        if flags & common.DEBUG_DYNAMIC_SIZE_CONSTANT
+        else read_unsigned(value, data_address + layout["size_offset"])
+    )
+    if size is None or size > (1 << 30):
+        return
+    visible_size = min(size, 4096)
+    head = (
+        read_unsigned(value, data_address + layout["auxiliary_offset"])
+        if flags & common.DEBUG_DYNAMIC_HAS_HEAD
+        else 0
+    )
+    if head is None:
+        return
+    data_base = data_address + layout["data_offset"]
+    if flags & common.DEBUG_DYNAMIC_DATA_INDIRECT:
+        data_base = read_unsigned(value, data_base)
+    if data_base is None:
+        return
+    key_base = 0
+    if layout["key_stride"]:
+        key_base = data_address + layout["key_data_offset"]
+        if flags & common.DEBUG_DYNAMIC_KEY_DATA_INDIRECT:
+            key_base = read_unsigned(value, key_base)
+        if key_base is None:
+            return
+    state_words = 0
+    state_bits = 0
+    if flags & common.DEBUG_DYNAMIC_HAS_SLOT_STATE:
+        state_words = read_unsigned(value, data_address + layout["state_offset"])
+        state_bits = read_unsigned(
+            value,
+            data_address + layout["state_offset"] + value.GetTarget().GetAddressByteSize(),
+        )
+        if state_words is None or state_bits is None:
+            return
+    pointer_size = value.GetTarget().GetAddressByteSize()
+    for logical_index in range(visible_size):
+        physical_index = (
+            (head + logical_index) % size
+            if size and flags & common.DEBUG_DYNAMIC_HAS_HEAD
+            else logical_index
+        )
+        if flags & common.DEBUG_DYNAMIC_HAS_SLOT_STATE:
+            if physical_index >= state_bits:
+                continue
+            word = read_unsigned(value, state_words + (physical_index // 64) * 8, 8)
+            if word is None or not (word & (1 << (physical_index % 64))):
+                continue
+        if flags & common.DEBUG_DYNAMIC_DATA_POINTER_TABLE:
+            element = read_unsigned(value, data_base + physical_index * pointer_size)
+        else:
+            element = data_base + physical_index * layout["stride"]
+        if key_base:
+            if flags & common.DEBUG_DYNAMIC_KEY_DATA_POINTER_TABLE:
+                key = read_unsigned(value, key_base + physical_index * pointer_size)
+            else:
+                key = key_base + physical_index * layout["key_stride"]
+        else:
+            key = 0
+        if element:
+            element += layout["entry_offset"]
+        yield logical_index, key, element
 
 
 def any_pointer_value(value):
@@ -256,6 +387,13 @@ def debug_field_summary(value, _internal_dict, _options):
         return common.debug_field_summary(debug_field_snapshot(value))
     except Exception as exc:
         return "DebugField{<printer error: %s>}" % exc
+
+
+def debug_dynamic_layout_summary(value, _internal_dict, _options):
+    try:
+        return common.debug_dynamic_layout_summary(dynamic_layout_snapshot(value))
+    except Exception as exc:
+        return "DebugDynamicLayout{<printer error: %s>}" % exc
 
 
 def type_pointer_summary(value, _internal_dict, _options):
@@ -343,6 +481,11 @@ class DebugDescriptorSyntheticProvider(SyntheticProvider):
         snapshot = descriptor_snapshot(self.value)
         for index, field_value, field_snapshot in descriptor_fields(self.value, snapshot):
             self.add(values, field_snapshot["name"] or "[{}]".format(index), field_value)
+        self.add(
+            values,
+            "dynamic_layout_value",
+            dynamic_layout_at(self.value, snapshot["dynamic_layout"]),
+        )
         for name in (
             "layout",
             "atomic_kind",
@@ -352,6 +495,28 @@ class DebugDescriptorSyntheticProvider(SyntheticProvider):
             "key_type",
             "element_type",
             "dynamic_layout",
+            "magic",
+            "abi_version",
+        ):
+            self.add(values, name, child(self.value, name))
+        return values
+
+
+class DebugDynamicLayoutSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        for name in (
+            "kind",
+            "flags",
+            "size_offset",
+            "size_constant",
+            "data_offset",
+            "stride",
+            "key_data_offset",
+            "key_stride",
+            "state_offset",
+            "auxiliary_offset",
+            "entry_offset",
             "magic",
             "abi_version",
         ):
@@ -388,39 +553,81 @@ class TypePointerSyntheticProvider(SyntheticProvider):
             if not valid(descriptor_value):
                 return values
             snapshot = descriptor_snapshot(descriptor_value)
-            if not common.debug_descriptor_valid(snapshot) or snapshot["layout"] != 2:
+            if not common.debug_descriptor_valid(snapshot):
                 return values
-
-            validity = None
-            if snapshot["flags"] & common.DEBUG_DESCRIPTOR_HAS_VALIDITY:
-                bits_per_word = snapshot["validity_word_size"] * 8
-                word_count = (snapshot["field_count"] + bits_per_word - 1) // bits_per_word
-                validity = read_memory(
-                    self.value,
-                    data_address + snapshot["validity_offset"],
-                    word_count * snapshot["validity_word_size"],
-                )
-            for index, _, field_snapshot in descriptor_fields(descriptor_value, snapshot):
-                name = field_snapshot["name"] or "[{}]".format(index)
-                is_set = common.field_is_set(
-                    validity,
-                    field_snapshot["validity_bit"],
-                    snapshot["validity_word_size"]
-                    if snapshot["flags"] & common.DEBUG_DESCRIPTOR_HAS_VALIDITY
-                    else 0,
-                    target_byte_order(self.value),
-                )
-                self.add(
-                    values,
-                    name,
-                    make_any_pointer(
+            if snapshot["layout"] in (2, 5, 6):
+                validity = None
+                if snapshot["flags"] & common.DEBUG_DESCRIPTOR_HAS_VALIDITY:
+                    bits_per_word = snapshot["validity_word_size"] * 8
+                    word_count = (snapshot["field_count"] + bits_per_word - 1) // bits_per_word
+                    validity = read_memory(
                         self.value,
-                        name,
-                        field_snapshot["type"],
-                        data_address + field_snapshot["offset"] if is_set else 0,
-                        access if is_set else 0,
-                    ),
-                )
+                        data_address + snapshot["validity_offset"],
+                        word_count * snapshot["validity_word_size"],
+                    )
+                for index, _, field_snapshot in descriptor_fields(descriptor_value, snapshot):
+                    name = field_snapshot["name"] or "[{}]".format(index)
+                    is_set = common.field_is_set(
+                        validity,
+                        field_snapshot["validity_bit"],
+                        snapshot["validity_word_size"]
+                        if snapshot["flags"] & common.DEBUG_DESCRIPTOR_HAS_VALIDITY
+                        else 0,
+                        target_byte_order(self.value),
+                    )
+                    if field_snapshot["flags"] & common.DEBUG_FIELD_EMBEDDED_OWNER:
+                        pointer_value = make_owner_pointer(
+                            self.value,
+                            name,
+                            data_address + field_snapshot["offset"],
+                            field_snapshot["type"],
+                            access,
+                        )
+                    else:
+                        pointer_value = make_any_pointer(
+                            self.value,
+                            name,
+                            field_snapshot["type"],
+                            data_address + field_snapshot["offset"] if is_set else 0,
+                            access if is_set else 0,
+                        )
+                    self.add(values, name, pointer_value)
+                if not snapshot["dynamic_layout"]:
+                    return values
+            if snapshot["layout"] not in (3, 4, 5, 6):
+                return values
+            dynamic_value = dynamic_layout_at(self.value, snapshot["dynamic_layout"])
+            if not valid(dynamic_value):
+                return values
+            layout = dynamic_layout_snapshot(dynamic_value)
+            if not common.debug_dynamic_layout_valid(layout):
+                return values
+            for slot, key_address, element_address in dynamic_child_addresses(self.value, data_address, layout):
+                if key_address and snapshot["key_type"]:
+                    if layout["flags"] & common.DEBUG_DYNAMIC_KEYS_ARE_OWNERS:
+                        key_value = make_owner_pointer(
+                            self.value, "key", key_address, snapshot["key_type"], access
+                        )
+                    else:
+                        key_value = make_any_pointer(
+                            self.value, "key", snapshot["key_type"], key_address, access
+                        )
+                    self.add(
+                        values,
+                        "key[{}]".format(slot),
+                        key_value,
+                    )
+                if element_address:
+                    name = "value[{}]".format(slot) if snapshot["key_type"] else "[{}]".format(slot)
+                    if layout["flags"] & common.DEBUG_DYNAMIC_ELEMENTS_ARE_OWNERS:
+                        pointer_value = make_owner_pointer(
+                            self.value, name, element_address, snapshot["element_type"], access
+                        )
+                    else:
+                        pointer_value = make_any_pointer(
+                            self.value, name, snapshot["element_type"], element_address, access
+                        )
+                    self.add(values, name, pointer_value)
         except Exception:
             pass
         return values
@@ -432,6 +639,7 @@ def __lldb_init_module(debugger, _internal_dict):
         (r"^hgraph::TypeRecord$", "hgraph_lldb.type_record_summary"),
         (r"^hgraph::DebugDescriptor$", "hgraph_lldb.debug_descriptor_summary"),
         (r"^hgraph::DebugField$", "hgraph_lldb.debug_field_summary"),
+        (r"^hgraph::DebugDynamicLayout$", "hgraph_lldb.debug_dynamic_layout_summary"),
         (r"^hgraph::AnyPtr$", "hgraph_lldb.type_pointer_summary"),
         (r"^hgraph::TypedPtr<.*>$", "hgraph_lldb.type_pointer_summary"),
     )
@@ -439,6 +647,7 @@ def __lldb_init_module(debugger, _internal_dict):
         (r"^hgraph::TypeRecord$", "hgraph_lldb.TypeRecordSyntheticProvider"),
         (r"^hgraph::DebugDescriptor$", "hgraph_lldb.DebugDescriptorSyntheticProvider"),
         (r"^hgraph::DebugField$", "hgraph_lldb.DebugFieldSyntheticProvider"),
+        (r"^hgraph::DebugDynamicLayout$", "hgraph_lldb.DebugDynamicLayoutSyntheticProvider"),
         (r"^hgraph::AnyPtr$", "hgraph_lldb.TypePointerSyntheticProvider"),
         (r"^hgraph::TypedPtr<.*>$", "hgraph_lldb.TypePointerSyntheticProvider"),
     )

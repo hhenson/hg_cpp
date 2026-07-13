@@ -454,6 +454,24 @@ the same factory that resolves the type record. The version-one ABI is:
        const DebugDynamicLayout *dynamic_layout;
    };
 
+   struct DebugDynamicLayout {
+       std::uint32_t magic;
+       std::uint16_t abi_version;
+       DebugDynamicKind kind;
+       std::uint8_t reserved0;
+       DebugDynamicFlags flags;
+       std::uint32_t reserved1;
+       std::size_t size_offset;
+       std::size_t size_constant;
+       std::size_t data_offset;
+       std::size_t stride;
+       std::size_t key_data_offset;
+       std::size_t key_stride;
+       std::size_t state_offset;
+       std::size_t auxiliary_offset;
+       std::size_t entry_offset;
+   };
+
 The descriptor is 64 bytes and each fixed field is 32 bytes on supported
 64-bit platforms. Atomic representation is selected from the registered C++
 type, never inferred from a semantic label: bool, signed/unsigned integers, and
@@ -463,9 +481,29 @@ records to physical plan offsets. Tuple and bundle descriptors also publish the
 validity-word offset and one bit index per field, so an unset child is displayed
 as typed-null rather than reading uninitialised payload bytes.
 
-Dynamic layouts describe stable facts such as size, capacity, slot state, key
-storage, and element storage offsets. They should not expose a long list of
-private C++ member names which changes whenever a container is refactored.
+The version-one dynamic layout is 88 bytes on supported 64-bit platforms. It
+distinguishes contiguous storage from stable pointer slots and records whether
+size is fixed, data is indirect, a pointer table is used, a ring head is
+present, or keys/elements are embedded erased owners. Stable slots use the
+public ``SlotBitmap`` words and bit count, so live and erased entries are read
+without decoding a standard-library container. ``StableSlotStorage`` exposes a
+raw pointer table for the same reason; this representation is smaller than the
+previous ``std::vector`` member and does not add release-mode debug mirrors.
+
+The common embedded-owner field flag describes the three-word
+``StorageHandle<InlineStoragePolicy<>, TypeRecord>`` ABI. The record is read
+from the identity word, ownership state from the tagged allocator word, and
+the inline or indirect payload from the storage word. This lets node state and
+nested ``GraphValue`` fields resolve their run-time type without inferior
+calls.
+
+Implemented dynamic navigation covers fixed lists, dense compact lists and
+sets, cyclic buffers, queues, mutable lists/sets/maps, graph node allocations,
+node state/scalars, single/switch child graphs, and map/mesh keyed child graph
+slots. Nullable dynamic lists and compact maps with nullable values remain
+opaque because their ``vector<bool>`` validity representation is not a stable
+debug ABI. Node input/output endpoint owners also remain shallow until their
+specialized ownership layout is published explicitly.
 
 Pretty printers first validate magic and ABI, mask pointer tags, then dispatch
 on numeric family and layout values.  They must never infer the payload type

@@ -22,9 +22,14 @@ debug descriptor pointers.
 Records carrying stable data-only debug descriptors expose bool,
 signed/unsigned integer, and 32/64-bit floating-point payloads directly. Fixed
 tuples and bundles expand into child `AnyPtr` values using descriptor offsets;
-unset fields appear typed-null through the published validity bitmap. Other
-atomic and dynamic layouts remain explicitly opaque. No payload is inferred
-from semantic labels, C++ template names, or private container layouts.
+unset fields appear typed-null through the published validity bitmap. Supported
+sequence and stable-slot layouts expand lists, sets, mutable maps, graph nodes,
+node state/scalars, and nested child graphs. Slot state comes from the public
+pointer table and bitmap ABI, so the adapters do not decode standard-library
+container internals. Nullable dynamic validity, compact maps with value holes,
+endpoint owners, and unsupported atomics remain explicitly opaque. No payload
+is inferred from semantic labels, C++ template names, or private container
+layouts.
 
 ## LLDB
 

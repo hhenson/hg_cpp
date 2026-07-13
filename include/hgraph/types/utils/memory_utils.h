@@ -947,6 +947,17 @@ namespace hgraph
                 }
             }
 
+            /** Stable offsets consumed by the data-only debugger owner protocol. */
+            [[nodiscard]] static constexpr size_t debug_identity_offset() noexcept {
+                return offsetof(StorageHandle, m_identity);
+            }
+            [[nodiscard]] static constexpr size_t debug_state_offset() noexcept {
+                return offsetof(StorageHandle, m_allocator_state);
+            }
+            [[nodiscard]] static constexpr size_t debug_storage_offset() noexcept {
+                return offsetof(StorageHandle, m_storage);
+            }
+
             /** Typed pointer to the payload via ``MemoryUtils::cast<T>``. */
             template <typename T> [[nodiscard]] T *as() noexcept { return MemoryUtils::cast<T>(data()); }
 

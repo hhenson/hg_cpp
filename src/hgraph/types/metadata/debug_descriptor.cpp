@@ -8,6 +8,8 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -16,13 +18,20 @@ namespace hgraph
 {
     namespace
     {
+        using CommonErasedOwner =
+            MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, TypeRecord>;
+
+        static_assert(CommonErasedOwner::debug_identity_offset() == DEBUG_OWNER_IDENTITY_OFFSET);
+        static_assert(CommonErasedOwner::debug_state_offset() == DEBUG_OWNER_STATE_OFFSET);
+        static_assert(CommonErasedOwner::debug_storage_offset() == DEBUG_OWNER_STORAGE_OFFSET);
         inline constexpr std::uint32_t KNOWN_DESCRIPTOR_FLAGS = 1u;
-        inline constexpr std::uint32_t KNOWN_FIELD_FLAGS = 1u;
+        inline constexpr std::uint32_t KNOWN_FIELD_FLAGS = 3u;
+        inline constexpr std::uint32_t KNOWN_DYNAMIC_FLAGS = (1u << 9u) - 1u;
         inline constexpr std::uint32_t VALIDITY_WORD_SIZE = sizeof(std::uint64_t);
 
         struct DescriptorKey
         {
-            const ValueTypeMetaData *schema{nullptr};
+            const SchemaHeader *schema{nullptr};
             const MemoryUtils::StoragePlan *plan{nullptr};
 
             [[nodiscard]] bool operator==(const DescriptorKey &) const noexcept = default;
@@ -32,7 +41,7 @@ namespace hgraph
         {
             [[nodiscard]] std::size_t operator()(const DescriptorKey &key) const noexcept
             {
-                const auto schema_hash = std::hash<const ValueTypeMetaData *>{}(key.schema);
+                const auto schema_hash = std::hash<const SchemaHeader *>{}(key.schema);
                 const auto plan_hash = std::hash<const MemoryUtils::StoragePlan *>{}(key.plan);
                 return schema_hash ^ (plan_hash + 0x9e3779b9u + (schema_hash << 6u) + (schema_hash >> 2u));
             }
@@ -40,13 +49,26 @@ namespace hgraph
 
         struct DescriptorEntry
         {
+            std::vector<std::unique_ptr<std::string>> field_names{};
             std::vector<DebugField> fields{};
+            DebugDynamicLayout dynamic_layout{};
             DebugDescriptor descriptor{};
 
             void bind_fields() noexcept
             {
                 descriptor.fields = fields.empty() ? nullptr : fields.data();
                 descriptor.field_count = static_cast<std::uint32_t>(fields.size());
+            }
+
+            void own_field_names()
+            {
+                field_names.reserve(fields.size());
+                for (DebugField &field : fields)
+                {
+                    if (field.name == nullptr) { continue; }
+                    field_names.push_back(std::make_unique<std::string>(field.name));
+                    field.name = field_names.back()->c_str();
+                }
             }
         };
 
@@ -67,7 +89,7 @@ namespace hgraph
                     .layout = DebugLayoutKind::Atomic,
                     .atomic_kind = atomic_kind,
                 };
-                return intern(DescriptorKey{&schema, &plan}, std::move(entry));
+                return intern(DescriptorKey{&schema.header, &plan}, std::move(entry));
             }
 
             [[nodiscard]] const DebugDescriptor &intern_fixed_composite(const ValueTypeMetaData &schema,
@@ -110,6 +132,70 @@ namespace hgraph
                     .validity_offset = schema.field_count == 0 ? 0 : components[schema.field_count].offset,
                     .validity_word_size = schema.field_count == 0 ? 0 : VALIDITY_WORD_SIZE,
                 };
+                entry->own_field_names();
+                entry->bind_fields();
+                return intern(DescriptorKey{&schema.header, &plan}, std::move(entry));
+            }
+
+            [[nodiscard]] const DebugDescriptor &intern_dynamic(const SchemaHeader &schema,
+                                                                 const MemoryUtils::StoragePlan &plan,
+                                                                 DebugLayoutKind layout,
+                                                                 const TypeRecord *key_type,
+                                                                 const TypeRecord *element_type,
+                                                                 DebugDynamicLayout dynamic_layout)
+            {
+                if (layout != DebugLayoutKind::Sequence && layout != DebugLayoutKind::KeyedSlots)
+                    throw std::invalid_argument("dynamic debug descriptor requires sequence or keyed-slots layout");
+                if (!dynamic_layout.valid())
+                    throw std::invalid_argument("dynamic debug descriptor requires a valid dynamic layout");
+                if (element_type == nullptr)
+                    throw std::invalid_argument("dynamic debug descriptor requires an element type");
+                if (layout == DebugLayoutKind::Sequence && key_type != nullptr)
+                    throw std::invalid_argument("sequence debug descriptor cannot carry a key type");
+
+                auto entry = std::make_unique<DescriptorEntry>();
+                entry->dynamic_layout = dynamic_layout;
+                entry->descriptor = DebugDescriptor{
+                    .magic = DEBUG_DESCRIPTOR_MAGIC,
+                    .abi_version = DEBUG_DESCRIPTOR_ABI_VERSION,
+                    .layout = layout,
+                    .key_type = key_type,
+                    .element_type = element_type,
+                    .dynamic_layout = &entry->dynamic_layout,
+                };
+                return intern(DescriptorKey{&schema, &plan}, std::move(entry));
+            }
+
+            [[nodiscard]] const DebugDescriptor &intern_structured(const SchemaHeader &schema,
+                                                                    const MemoryUtils::StoragePlan &plan,
+                                                                    DebugLayoutKind layout,
+                                                                    const DebugField *fields,
+                                                                    std::size_t field_count,
+                                                                    const TypeRecord *key_type,
+                                                                    const TypeRecord *element_type,
+                                                                    const DebugDynamicLayout *dynamic_layout)
+            {
+                if (layout != DebugLayoutKind::Node && layout != DebugLayoutKind::Graph)
+                    throw std::invalid_argument("structured debug descriptor requires node or graph layout");
+                if (field_count > std::numeric_limits<std::uint32_t>::max())
+                    throw std::length_error("structured debug descriptor exceeds the field-count ABI");
+                if ((field_count == 0) != (fields == nullptr))
+                    throw std::invalid_argument("structured debug descriptor fields are inconsistent");
+                if (dynamic_layout != nullptr && (!dynamic_layout->valid() || element_type == nullptr))
+                    throw std::invalid_argument("structured dynamic navigation requires a valid layout and element");
+
+                auto entry = std::make_unique<DescriptorEntry>();
+                if (field_count != 0) { entry->fields.assign(fields, fields + field_count); }
+                entry->own_field_names();
+                if (dynamic_layout != nullptr) { entry->dynamic_layout = *dynamic_layout; }
+                entry->descriptor = DebugDescriptor{
+                    .magic = DEBUG_DESCRIPTOR_MAGIC,
+                    .abi_version = DEBUG_DESCRIPTOR_ABI_VERSION,
+                    .layout = layout,
+                    .key_type = key_type,
+                    .element_type = element_type,
+                    .dynamic_layout = dynamic_layout == nullptr ? nullptr : &entry->dynamic_layout,
+                };
                 entry->bind_fields();
                 return intern(DescriptorKey{&schema, &plan}, std::move(entry));
             }
@@ -118,14 +204,16 @@ namespace hgraph
                                                       const MemoryUtils::StoragePlan &plan) const noexcept
             {
                 const std::lock_guard lock(mutex_);
-                const auto found = entries_.find(DescriptorKey{&schema, &plan});
+                const auto found = entries_.find(DescriptorKey{&schema.header, &plan});
                 return found == entries_.end() ? nullptr : &found->second->descriptor;
             }
 
-            void clear() noexcept
+            void clear(TypeFamily family) noexcept
             {
                 const std::lock_guard lock(mutex_);
-                entries_.clear();
+                std::erase_if(entries_, [family](const auto &entry) {
+                    return entry.first.schema != nullptr && entry.first.schema->family == family;
+                });
             }
 
           private:
@@ -139,10 +227,30 @@ namespace hgraph
                 {
                     const auto &existing = found->second->descriptor;
                     if (existing.layout != candidate->descriptor.layout ||
-                        existing.atomic_kind != candidate->descriptor.atomic_kind)
+                        existing.atomic_kind != candidate->descriptor.atomic_kind ||
+                        existing.key_type != candidate->descriptor.key_type ||
+                        existing.element_type != candidate->descriptor.element_type ||
+                        ((existing.dynamic_layout == nullptr) != (candidate->descriptor.dynamic_layout == nullptr)) ||
+                        (existing.dynamic_layout != nullptr &&
+                         *existing.dynamic_layout != *candidate->descriptor.dynamic_layout) ||
+                        existing.field_count != candidate->descriptor.field_count)
                     {
                         throw std::logic_error("debug descriptor conflicts with the canonical "
                                                "schema/plan descriptor");
+                    }
+                    for (std::uint32_t index = 0; index < existing.field_count; ++index)
+                    {
+                        const DebugField &lhs = existing.fields[index];
+                        const DebugField &rhs = candidate->descriptor.fields[index];
+                        const bool same_name = lhs.name == rhs.name ||
+                                               (lhs.name != nullptr && rhs.name != nullptr &&
+                                                std::string_view{lhs.name} == std::string_view{rhs.name});
+                        if (!same_name || lhs.offset != rhs.offset || lhs.type != rhs.type ||
+                            lhs.validity_bit != rhs.validity_bit || lhs.flags != rhs.flags)
+                        {
+                            throw std::logic_error("debug descriptor fields conflict with the canonical "
+                                                   "schema/plan descriptor");
+                        }
                     }
                     return existing;
                 }
@@ -186,9 +294,35 @@ namespace hgraph
         for (std::uint32_t index = 0; index < field_count; ++index)
         {
             const DebugField &field = fields[index];
-            if (field.type == nullptr || (static_cast<std::uint32_t>(field.flags) & ~KNOWN_FIELD_FLAGS) != 0)
+            if ((field.type == nullptr && !has_flag(field.flags, DebugFieldFlags::EmbeddedOwner)) ||
+                (static_cast<std::uint32_t>(field.flags) & ~KNOWN_FIELD_FLAGS) != 0)
                 return false;
         }
+        const bool requires_dynamic = layout == DebugLayoutKind::Sequence || layout == DebugLayoutKind::KeyedSlots;
+        const bool permits_dynamic = requires_dynamic || layout == DebugLayoutKind::Node || layout == DebugLayoutKind::Graph;
+        if ((requires_dynamic && dynamic_layout == nullptr) || (!permits_dynamic && dynamic_layout != nullptr)) return false;
+        if (dynamic_layout != nullptr && element_type == nullptr) return false;
+        if (dynamic_layout != nullptr && !dynamic_layout->valid()) return false;
+        return true;
+    }
+
+    bool DebugDynamicLayout::valid() const noexcept
+    {
+        const auto kind_value = static_cast<std::uint8_t>(kind);
+        if (magic != DEBUG_DYNAMIC_LAYOUT_MAGIC || abi_version != DEBUG_DYNAMIC_LAYOUT_ABI_VERSION ||
+            kind_value < static_cast<std::uint8_t>(DebugDynamicKind::Contiguous) ||
+            kind_value > static_cast<std::uint8_t>(DebugDynamicKind::StableSlots) || reserved0 != 0 || reserved1 != 0 ||
+            (static_cast<std::uint32_t>(flags) & ~KNOWN_DYNAMIC_FLAGS) != 0 || stride == 0)
+            return false;
+        if (has_flag(flags, DebugDynamicFlags::SizeIsConstant) == (size_offset != 0)) return false;
+        if (kind == DebugDynamicKind::Contiguous && has_flag(flags, DebugDynamicFlags::DataIsPointerTable))
+            return false;
+        if (kind == DebugDynamicKind::StableSlots &&
+            (!has_flag(flags, DebugDynamicFlags::DataIsPointerTable) ||
+             !has_flag(flags, DebugDynamicFlags::DataIsIndirect)))
+            return false;
+        if (has_flag(flags, DebugDynamicFlags::HasSlotState) && kind != DebugDynamicKind::StableSlots)
+            return false;
         return true;
     }
 
@@ -205,6 +339,29 @@ namespace hgraph
         return descriptor_registry().intern_fixed_composite(schema, plan);
     }
 
+    const DebugDescriptor &intern_dynamic_debug_descriptor(const SchemaHeader &schema,
+                                                           const MemoryUtils::StoragePlan &plan,
+                                                           DebugLayoutKind layout,
+                                                           const TypeRecord *key_type,
+                                                           const TypeRecord *element_type,
+                                                           DebugDynamicLayout dynamic_layout)
+    {
+        return descriptor_registry().intern_dynamic(schema, plan, layout, key_type, element_type, dynamic_layout);
+    }
+
+    const DebugDescriptor &intern_structured_debug_descriptor(const SchemaHeader &schema,
+                                                              const MemoryUtils::StoragePlan &plan,
+                                                              DebugLayoutKind layout,
+                                                              const DebugField *fields,
+                                                              std::size_t field_count,
+                                                              const TypeRecord *key_type,
+                                                              const TypeRecord *element_type,
+                                                              const DebugDynamicLayout *dynamic_layout)
+    {
+        return descriptor_registry().intern_structured(schema, plan, layout, fields, field_count, key_type,
+                                                       element_type, dynamic_layout);
+    }
+
     const DebugDescriptor *find_value_debug_descriptor(const ValueTypeMetaData &schema,
                                                        const MemoryUtils::StoragePlan &plan) noexcept
     {
@@ -213,6 +370,11 @@ namespace hgraph
 
     void clear_value_debug_descriptors() noexcept
     {
-        descriptor_registry().clear();
+        descriptor_registry().clear(TypeFamily::Value);
+    }
+
+    void clear_debug_descriptors(TypeFamily family) noexcept
+    {
+        descriptor_registry().clear(family);
     }
 } // namespace hgraph

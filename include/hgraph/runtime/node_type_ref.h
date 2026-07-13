@@ -6,11 +6,14 @@
 
 #include <cstddef>
 #include <functional>
+#include <span>
 #include <string_view>
 #include <type_traits>
 
 namespace hgraph
 {
+    struct DebugField;
+    struct DebugDynamicLayout;
     struct NodeOps;
     struct NodeTypeMetaData;
 
@@ -54,7 +57,8 @@ namespace hgraph
 
       private:
         friend NodeTypeRef intern_node_type(const NodeTypeMetaData &, const MemoryUtils::StoragePlan &,
-                                            const NodeOps &, std::string_view);
+                                            const NodeOps &, std::string_view, std::span<const DebugField>,
+                                            const TypeRecord *, const TypeRecord *, const DebugDynamicLayout *);
         friend class NodeView;
         friend class NodeValue;
         friend struct TSParentLink;
@@ -68,7 +72,11 @@ namespace hgraph
     [[nodiscard]] NodeTypeRef intern_node_type(const NodeTypeMetaData &schema,
                                                const MemoryUtils::StoragePlan &plan,
                                                const NodeOps &ops,
-                                               std::string_view implementation_label = {});
+                                               std::string_view implementation_label = {},
+                                               std::span<const DebugField> debug_fields = {},
+                                               const TypeRecord *debug_key_type = nullptr,
+                                               const TypeRecord *debug_element_type = nullptr,
+                                               const DebugDynamicLayout *debug_dynamic_layout = nullptr);
 
     static_assert(sizeof(NodeTypeRef) == sizeof(void *));
     static_assert(alignof(NodeTypeRef) == alignof(void *));

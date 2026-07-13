@@ -2,6 +2,7 @@
 
 #include <hgraph/runtime/nested_graph_storage.h>
 #include <hgraph/types/utils/key_slot_store.h>
+#include <hgraph/types/utils/slot_bitmap.h>
 #include <hgraph/types/utils/value_slot_store.h>
 
 #include <cstdint>
@@ -43,6 +44,32 @@ namespace std
         [[nodiscard]] size_t operator()(const TrackedKey &key) const noexcept { return hash<int>{}(key.value); }
     };
 }  // namespace std
+
+TEST_CASE("SlotBitmap preserves visible bits and clears reused capacity", "[slot-utils][debug-layout]")
+{
+    hgraph::SlotBitmap bits;
+    bits.resize(130);
+    bits.set(1);
+    bits.set(65);
+    bits.set(129);
+    REQUIRE(bits.any());
+    REQUIRE(bits.test(1));
+    REQUIRE(bits.test(65));
+    REQUIRE(bits.test(129));
+
+    bits.resize(64);
+    REQUIRE(bits.test(1));
+    REQUIRE_FALSE(bits.test(65));
+    bits.resize(130);
+    REQUIRE(bits.test(1));
+    REQUIRE_FALSE(bits.test(65));
+    REQUIRE_FALSE(bits.test(129));
+
+    bits.reset();
+    REQUIRE_FALSE(bits.any());
+    REQUIRE(bits.words != nullptr);
+    REQUIRE(bits.bit_count == 130);
+}
 
 namespace
 {

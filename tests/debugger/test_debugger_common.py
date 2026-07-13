@@ -61,6 +61,30 @@ def atomic_descriptor(**overrides):
     return snapshot
 
 
+def dynamic_layout(**overrides):
+    snapshot = {
+        "magic": common.DEBUG_DYNAMIC_LAYOUT_MAGIC,
+        "abi_version": common.DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+        "kind": 2,
+        "reserved0": 0,
+        "flags": common.DEBUG_DYNAMIC_DATA_INDIRECT
+        | common.DEBUG_DYNAMIC_DATA_POINTER_TABLE
+        | common.DEBUG_DYNAMIC_HAS_SLOT_STATE,
+        "reserved1": 0,
+        "size_offset": 16,
+        "size_constant": 0,
+        "data_offset": 8,
+        "stride": 4,
+        "key_data_offset": 0,
+        "key_stride": 0,
+        "state_offset": 24,
+        "auxiliary_offset": 0,
+        "entry_offset": 0,
+    }
+    snapshot.update(overrides)
+    return snapshot
+
+
 class CommonDebuggerFormattingTest(unittest.TestCase):
     def test_schema_summary_uses_common_classification(self):
         self.assertTrue(common.schema_valid(node_schema()))
@@ -147,6 +171,27 @@ class CommonDebuggerFormattingTest(unittest.TestCase):
         self.assertTrue(common.field_is_set(words, 63, 8, "little"))
         self.assertFalse(common.field_is_set(words, 64, 8, "little"))
         self.assertTrue(common.field_is_set(words, 65, 8, "little"))
+
+    def test_dynamic_layout_validation_rejects_ambiguous_storage(self):
+        snapshot = dynamic_layout()
+        self.assertTrue(common.debug_dynamic_layout_valid(snapshot))
+        self.assertIn("valid kind=StableSlots", common.debug_dynamic_layout_summary(snapshot))
+        self.assertFalse(common.debug_dynamic_layout_valid(dynamic_layout(abi_version=2)))
+        self.assertFalse(common.debug_dynamic_layout_valid(dynamic_layout(flags=1 << 20)))
+        self.assertFalse(
+            common.debug_dynamic_layout_valid(
+                dynamic_layout(flags=common.DEBUG_DYNAMIC_DATA_INDIRECT)
+            )
+        )
+
+        sequence = atomic_descriptor(
+            layout=3,
+            atomic_kind=0,
+            element_type=0x6000,
+            dynamic_layout=0x7000,
+        )
+        self.assertTrue(common.debug_descriptor_valid(sequence))
+        self.assertFalse(common.debug_descriptor_valid({**sequence, "dynamic_layout": 0}))
 
 
 if __name__ == "__main__":

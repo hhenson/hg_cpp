@@ -2,6 +2,7 @@
 
 #include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/lifecycle_observer.h>
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/util/scope.h>
@@ -1086,12 +1087,25 @@ namespace hgraph
         {
             throw std::invalid_argument("intern_graph_type requires a valid graph schema header");
         }
+        const auto &runtime = graph_context(ops.context);
+        std::vector<DebugField> debug_fields;
+        debug_fields.reserve(runtime.node_locations.size());
+        for (const GraphNodeRuntimeLocation &node : runtime.node_locations)
+        {
+            debug_fields.push_back(DebugField{
+                .offset = node.offset,
+                .type = node.type.record(),
+            });
+        }
+        const auto &debug = intern_structured_debug_descriptor(
+            schema.header, plan, DebugLayoutKind::Graph,
+            debug_fields.empty() ? nullptr : debug_fields.data(), debug_fields.size());
         const TypeRecordDefinition definition{
             .key = TypeRecordKey{.schema = &schema.header,
                                  .role = TypeRole::Runtime,
                                  .plan = &plan,
                                  .ops = &ops,
-                                 .debug = nullptr},
+                                 .debug = &debug},
             .ops_abi_version = GRAPH_OPS_ABI_VERSION,
             .capabilities = graph_type_capabilities(plan),
             .implementation_label = implementation_label,
@@ -1663,6 +1677,7 @@ namespace hgraph
 
     void clear_graph_runtime_types() noexcept
     {
+        clear_debug_descriptors(TypeFamily::Graph);
         graph_runtime_registry().clear();
     }
 

@@ -3,9 +3,8 @@
 
 #include <hgraph/types/utils/key_slot_store.h>
 #include <hgraph/types/utils/slot_observer.h>
+#include <hgraph/types/utils/slot_bitmap.h>
 #include <hgraph/types/utils/stable_slot_storage.h>
-
-#include <sul/dynamic_bitset.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -90,9 +89,9 @@ namespace hgraph
         /** Stable per-slot byte storage for the bound plan. */
         StableSlotStorage value_storage{};
         /** Per-slot caller-managed ``updated`` bit. */
-        sul::dynamic_bitset<> updated{};
+        SlotBitmap updated{};
         /** Per-slot ``constructed`` bit indicating live payload ownership. */
-        sul::dynamic_bitset<> constructed{};
+        SlotBitmap constructed{};
         /** Structural observer list mirrored against slot lifecycle events. */
         SlotObserverList observers{};
 

@@ -32,9 +32,17 @@ stopped process. Records carrying a stable data-only debug descriptor expose
 bool, signed/unsigned integer, and 32/64-bit floating-point payloads directly.
 Fixed tuples and bundles expand into child ``AnyPtr`` values using descriptor
 offsets; unset fields appear typed-null through the published validity bitmap.
-Other atomic and dynamic layouts remain explicitly opaque. The printers do not
-infer a payload layout from semantic labels, C++ template names, or private
-container fields.
+Supported sequences expand in logical order, including fixed arrays, dense
+compact lists/sets, ring buffers, queues, and mutable slot-backed lists/sets.
+Mutable maps expose live key/value pairs. Graphs expose their in-place nodes;
+nodes expose state and scalar owners; single, switch, map, and mesh nested
+nodes expose retained child graph owners. Slot navigation reads the stable
+pointer table and ``SlotBitmap`` state, so erased slots are omitted while
+constructed stopped entries remain inspectable.
+
+Opaque atomic storage, nullable dynamic-list/compact-map validity, and node
+endpoint owners remain explicitly opaque. The printers do not infer a payload
+layout from semantic labels, C++ template names, or private container fields.
 
 Build with debug information enabled for reliable output. Optimized builds may
 hide or fold the private fields that the summaries read.

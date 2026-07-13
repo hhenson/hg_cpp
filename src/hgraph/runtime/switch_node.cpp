@@ -396,6 +396,18 @@ namespace hgraph
             },
         };
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
+        descriptor.debug_fields.push_back(DebugField{
+            .name = "graph[0]",
+            .offset = descriptor.storage_plan->component(switch_storage_field_name).offset +
+                      offsetof(SwitchNodeStorage, graphs),
+            .flags = DebugFieldFlags::EmbeddedOwner,
+        });
+        descriptor.debug_fields.push_back(DebugField{
+            .name = "graph[1]",
+            .offset = descriptor.storage_plan->component(switch_storage_field_name).offset +
+                      offsetof(SwitchNodeStorage, graphs) + sizeof(GraphValue),
+            .flags = DebugFieldFlags::EmbeddedOwner,
+        });
 
         descriptor.callbacks.stop            = &switch_node_stop;
         descriptor.ops.evaluate_impl         = &switch_evaluate_impl;

@@ -1,6 +1,7 @@
 #ifndef HGRAPH_CPP_ROOT_VALUE_COMPACT_CONTAINER_OPS_H
 #define HGRAPH_CPP_ROOT_VALUE_COMPACT_CONTAINER_OPS_H
 
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/value/compact_storage.h>
 #include <hgraph/types/value/container_ops.h>
@@ -1212,7 +1213,19 @@ namespace hgraph
     compact_list_type(const ValueTypeRef &element_binding)
     {
         const auto *meta = TypeRegistry::instance().list(element_binding.schema(), /*fixed_size=*/0);
-        return intern_value_type(*meta, compact_list_plan(element_binding), compact_list_ops());
+        const auto &plan = compact_list_plan(element_binding);
+        const auto &debug = intern_dynamic_debug_descriptor(
+            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(),
+            DebugDynamicLayout{
+                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+                .kind = DebugDynamicKind::Contiguous,
+                .flags = DebugDynamicFlags::DataIsIndirect,
+                .size_offset = ListStorage::debug_size_offset(),
+                .data_offset = ListStorage::debug_data_offset(),
+                .stride = element_binding.checked_plan().layout.size,
+            });
+        return intern_value_type(*meta, plan, compact_list_ops(), &debug);
     }
 
     /** Meta-preserving form: a variadic-TUPLE schema keeps its identity (and
@@ -1225,13 +1238,31 @@ namespace hgraph
         const auto &ops = meta.has(ValueTypeFlags::VariadicTuple)
                               ? container_ops_detail::compact_list_ops_impl<true>()
                               : compact_list_ops();
-        return intern_value_type(meta, compact_list_plan(element_binding), ops);
+        const auto &plan = compact_list_plan(element_binding);
+        if (meta.is_nullable()) { return intern_value_type(meta, plan, ops); }
+        const auto &debug = intern_dynamic_debug_descriptor(
+            meta.header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(),
+            DebugDynamicLayout{
+                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+                .kind = DebugDynamicKind::Contiguous,
+                .flags = DebugDynamicFlags::DataIsIndirect,
+                .size_offset = ListStorage::debug_size_offset(),
+                .data_offset = ListStorage::debug_data_offset(),
+                .stride = element_binding.checked_plan().layout.size,
+            });
+        return intern_value_type(meta, plan, ops, &debug);
     }
 
     [[nodiscard]] inline ValueTypeRef compact_set_type(const ValueTypeRef &element_binding)
     {
         const auto *meta = TypeRegistry::instance().set(element_binding.schema());
-        return intern_value_type(*meta, compact_set_plan(element_binding), compact_set_ops());
+        const auto &plan = compact_set_plan(element_binding);
+        const SetStorage exemplar;
+        const auto &debug = intern_dynamic_debug_descriptor(
+            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(),
+            exemplar.debug_layout(element_binding.checked_plan().layout.size));
+        return intern_value_type(*meta, plan, compact_set_ops(), &debug);
     }
 
     [[nodiscard]] inline ValueTypeRef compact_map_type(const ValueTypeRef &key_binding,
@@ -1245,18 +1276,39 @@ namespace hgraph
     compact_cyclic_buffer_type(const ValueTypeRef &element_binding, std::size_t capacity)
     {
         const auto *meta = TypeRegistry::instance().cyclic_buffer(element_binding.schema(), capacity);
-        return intern_value_type(*meta,
-                                        compact_cyclic_buffer_plan(element_binding, capacity),
-                                        compact_cyclic_buffer_ops());
+        const auto &plan = compact_cyclic_buffer_plan(element_binding, capacity);
+        const auto &debug = intern_dynamic_debug_descriptor(
+            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(),
+            DebugDynamicLayout{
+                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+                .kind = DebugDynamicKind::Contiguous,
+                .flags = DebugDynamicFlags::DataIsIndirect | DebugDynamicFlags::HasHead,
+                .size_offset = CyclicBufferStorage::debug_size_offset(),
+                .data_offset = CyclicBufferStorage::debug_data_offset(),
+                .stride = element_binding.checked_plan().layout.size,
+                .auxiliary_offset = CyclicBufferStorage::debug_head_offset(),
+            });
+        return intern_value_type(*meta, plan, compact_cyclic_buffer_ops(), &debug);
     }
 
     [[nodiscard]] inline ValueTypeRef compact_queue_type(const ValueTypeRef &element_binding,
                                                                        std::size_t             max_capacity)
     {
         const auto *meta = TypeRegistry::instance().queue(element_binding.schema(), max_capacity);
-        return intern_value_type(*meta,
-                                        compact_queue_plan(element_binding, max_capacity),
-                                        compact_queue_ops());
+        const auto &plan = compact_queue_plan(element_binding, max_capacity);
+        const auto &debug = intern_dynamic_debug_descriptor(
+            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(),
+            DebugDynamicLayout{
+                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+                .kind = DebugDynamicKind::Contiguous,
+                .flags = DebugDynamicFlags::DataIsIndirect,
+                .size_offset = QueueStorage::debug_size_offset(),
+                .data_offset = QueueStorage::debug_data_offset(),
+                .stride = element_binding.checked_plan().layout.size,
+            });
+        return intern_value_type(*meta, plan, compact_queue_ops(), &debug);
     }
 
     /**
