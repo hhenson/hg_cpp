@@ -40,7 +40,6 @@ def test_dispatch_1():
     ]
 
 
-@pytest.mark.skip(reason="gap: Union[TS[A], TS[B]] overload annotations are not represented by TypePattern yet")
 def test_dispatch_2():
     class Animal(CompoundScalar): ...
 

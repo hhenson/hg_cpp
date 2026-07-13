@@ -1589,14 +1589,51 @@ def _overload_wire_trampoline(impl):
     NORMALISED call (ports/scalars in declared order, defaults
     materialised); it re-enters the python wiring function."""
 
+    signature = (
+        getattr(impl, "_wiring_signature", None)
+        or inspect.signature(impl.fn)
+    )
+    call_parameters = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.annotation not in _INJECTABLE_MARKERS
+        and not isinstance(parameter.annotation, _ContextExpr)
+        and parameter.kind is not inspect.Parameter.VAR_KEYWORD
+    ]
+    has_variadic = any(
+        parameter.kind is inspect.Parameter.VAR_POSITIONAL
+        for parameter in call_parameters
+    )
+
     def _wire(borrowed_wiring, args, kwargs):
         _wiring_stack.append(borrowed_wiring)
         try:
             wrap = lambda a: WiringPort(a) if isinstance(a, _hgraph.Port) else a
-            out = impl(*(wrap(a) for a in args), **{k: wrap(v) for k, v in kwargs.items()})
+            values = [wrap(value) for value in args]
+            call_kwargs = {key: wrap(value) for key, value in kwargs.items()}
+            if has_variadic:
+                call_args = values
+            else:
+                call_args = []
+                for parameter, value in zip(call_parameters, values):
+                    if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+                        call_kwargs[parameter.name] = value
+                    else:
+                        call_args.append(value)
+            out = impl(*call_args, **call_kwargs)
             if out is None:
                 return None
-            return _unwrap(out)
+            if not isinstance(out, WiringPort):
+                out = wire("const", out)
+            raw = _unwrap(out)
+            if raw.is_structural:
+                if _hgraph.structural_has_ref_children(raw):
+                    raw = _hgraph.ref_port(borrowed_wiring, raw)
+                else:
+                    raw = _unwrap(wire("__materialize", out))
+            elif raw.has_path:
+                raw = _unwrap(wire("__materialize", out))
+            return raw
         finally:
             _wiring_stack.pop()
 
@@ -1607,7 +1644,7 @@ def _register_overload(target, impl, requires=None):
     """Register a python node/graph as an operator overload candidate: the
     parameter/output PATTERNS come from its annotations through the same
     bridged constructors the rest of the DSL uses."""
-    from ._types import _pattern_of, _scalar_pattern, _TypeVarSentinel as _TVS
+    from ._types import _pattern_of, _scalar_pattern
 
     name = _overload_registry_name(target)
     if isinstance(target, _Operator):
@@ -1618,7 +1655,7 @@ def _register_overload(target, impl, requires=None):
     # object to keyword-only params (upstream parity), so fn's live
     # signature no longer shows *args/**kwargs.
     sig = getattr(impl, "_wiring_signature", None) or inspect.signature(fn)
-    params, variadic, has_kwargs = [], False, False
+    param_options, variadic, has_kwargs = [], False, False
     positional = None
     for parameter in sig.parameters.values():
         annotation = parameter.annotation
@@ -1628,33 +1665,59 @@ def _register_overload(target, impl, requires=None):
             has_kwargs = True
             continue
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY and positional is None:
-            positional = len(params)
+            positional = len(param_options)
         if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
             variadic = True
             if positional is None:
-                positional = len(params)
+                positional = len(param_options)
             # The C++ variadic convention matches the declared pattern
             # PER TAIL ARGUMENT (in a throwaway scope), while the python
             # annotation describes the PACK (TSL[E, SIZE] / TSB[SCHEMA]).
             # Match each tail arg as an unconstrained ts for now (element
             # strictness deferred with the pack-shape work).
-            params.append((parameter.name, _hgraph.type_pattern_var(f"__{parameter.name}__")))
+            param_options.append(((parameter.name, _hgraph.type_pattern_var(f"__{parameter.name}__")),))
             continue
-        try:
-            pattern = _pattern_of(annotation)
-        except TypeError:
-            pattern = _scalar_pattern(annotation if annotation is not inspect.Parameter.empty else object)
-        if parameter.default is inspect.Parameter.empty:
-            params.append((parameter.name, pattern))
+        import types
+        import typing
+
+        union_members = (
+            typing.get_args(annotation)
+            if typing.get_origin(annotation) in (typing.Union, types.UnionType)
+            else ()
+        )
+        if union_members:
+            try:
+                patterns = tuple(_pattern_of(member) for member in union_members)
+            except TypeError as error:
+                raise TypeError(
+                    f"operator overload union for '{parameter.name}' must contain only "
+                    "time-series annotations"
+                ) from error
         else:
-            params.append((parameter.name, pattern, parameter.default))
+            try:
+                patterns = (_pattern_of(annotation),)
+            except TypeError:
+                patterns = (
+                    _scalar_pattern(annotation if annotation is not inspect.Parameter.empty else object),
+                )
+        if parameter.default is inspect.Parameter.empty:
+            param_options.append(tuple((parameter.name, pattern) for pattern in patterns))
+        else:
+            param_options.append(
+                tuple((parameter.name, pattern, parameter.default) for pattern in patterns)
+            )
     output = None
     out_tp = sig.return_annotation
     if out_tp not in (inspect.Signature.empty, None):
         output = _pattern_of(out_tp)
-    _hgraph.register_python_overload(
-        name, params, output, _overload_wire_trampoline(impl), _requires_bridge(requires),
-        variadic, has_kwargs, positional)
+    from itertools import product
+
+    wire_fn = _overload_wire_trampoline(impl)
+    requires_fn = _requires_bridge(requires)
+    for params in product(*param_options):
+        _hgraph.register_python_overload(
+            name, list(params), output, wire_fn, requires_fn,
+            variadic, has_kwargs, positional)
 
 
 # ---------------------------------------------------------------------------
@@ -1662,10 +1725,9 @@ def _register_overload(target, impl, requires=None):
 # (Howard's ruling). ``type_(arg)`` reads each dispatch argument's dynamic
 # python type per tick; the key node maps it (isinstance/MRO specificity)
 # onto the enumerated overload keys; switch_ instantiates the winner.
-# Works today for python-class scalars (the object value kind keeps the
-# dynamic type). CompoundScalar hierarchies flatten compositionally into
-# the base-named bundle at conversion, so the concrete class does not yet
-# survive into the runtime value - the bundle-lineage design closes that.
+# Python-class scalars keep their dynamic object type. CompoundScalar values
+# expose the active leaf of their graph-scoped closed Bundle union, so both
+# representations provide the same concrete class key to ``type_``.
 # ---------------------------------------------------------------------------
 
 def _dispatch_specificity(cls):
@@ -1744,6 +1806,65 @@ def _declared_dispatch_class(annotation):
     return None
 
 
+def _declared_dispatch_classes(annotation):
+    """All runtime-dispatch classes represented by an annotation.
+
+    A normal ``TS[Class]`` contributes one class. A time-series union on an
+    overload contributes one switch key per member; it is expanded here and
+    during C++ overload registration so the two paths cannot disagree.
+    """
+    import types
+    import typing
+
+    members = (
+        typing.get_args(annotation)
+        if typing.get_origin(annotation) in (typing.Union, types.UnionType)
+        else (annotation,)
+    )
+    classes = tuple(_declared_dispatch_class(member) for member in members)
+    return classes if classes and all(cls is not None for cls in classes) else ()
+
+
+def _dispatch_branch(op, impl, root_signature, branch_signature, scalar_arguments,
+                     dispatch_types):
+    """Adapt base-typed switch inputs and re-enter registry dispatch.
+
+    The runtime type key only chooses the closed switch branch. Once its
+    inputs have their selected concrete schemas, the ordinary C++ operator
+    registry owns overload ranking, requirements, and output typing for
+    CompoundScalar. Object-kind class annotations share one ``TS[object]``
+    schema, so those branches invoke the already-selected Python overload.
+    """
+    from ._types import TS
+
+    registry_dispatch = all(
+        getattr(root_signature.parameters[name].annotation, "_cs_class", None) is not None
+        for name in dispatch_types
+    )
+
+    def invoke(*args, **kwargs):
+        parameter_names = tuple(branch_signature.parameters)
+        if len(args) > len(parameter_names):
+            raise TypeError(f"{invoke.__name__}: too many dispatch branch inputs")
+        arguments = dict(scalar_arguments)
+        arguments.update(zip(parameter_names, args))
+        arguments.update(kwargs)
+        bound = inspect.BoundArguments(root_signature, arguments)
+        for name, cls in dispatch_types.items():
+            target_type = TS[cls]
+            value = bound.arguments[name]
+            source = _unwrap(value).ts_type
+            if source != target_type.handle:
+                bound.arguments[name] = wire("downcast_", value, output_type=target_type)
+        callable_ = op._delegate if registry_dispatch else impl
+        return callable_(*bound.args, **bound.kwargs)
+
+    suffix = "_".join(cls.__name__ for cls in dispatch_types.values())
+    invoke.__name__ = f"__dispatch_{op.__name__}_{suffix}"
+    invoke.__signature__ = branch_signature
+    return _GraphFn(invoke)
+
+
 def dispatch_(op, *args, __on__=None, **kwargs):
     """Dispatch to the overload matching the RUNTIME types of the dispatch
     arguments: key utility + enumerated switch_ (the recorded design)."""
@@ -1753,7 +1874,30 @@ def dispatch_(op, *args, __on__=None, **kwargs):
         raise WiringError(f"{op.__name__} has no overloads to dispatch to")
     sig = inspect.signature(op.fn)
     bound = sig.bind(*args, **kwargs)
+    bound.apply_defaults()
     call_kwargs = dict(bound.arguments)
+    for name, value in tuple(call_kwargs.items()):
+        annotation = sig.parameters[name].annotation
+        if isinstance(annotation, _TsExpr) and not isinstance(value, WiringPort):
+            call_kwargs[name] = (
+                wire("nothing", output_type=annotation)
+                if value is None
+                else wire("const", value, output_type=annotation)
+            )
+    port_kwargs = {
+        name: value for name, value in call_kwargs.items()
+        if isinstance(value, WiringPort)
+    }
+    scalar_arguments = {
+        name: value for name, value in call_kwargs.items()
+        if not isinstance(value, WiringPort)
+    }
+    branch_signature = sig.replace(
+        parameters=[
+            parameter for name, parameter in sig.parameters.items()
+            if name in port_kwargs
+        ]
+    )
 
     dispatch_params = {}
     for name, param in sig.parameters.items():
@@ -1770,18 +1914,33 @@ def dispatch_(op, *args, __on__=None, **kwargs):
 
     dispatch_map = {}
     for impl, impl_sig in op._overloads:
-        classes = []
+        class_options = []
         for name in dispatch_params:
             impl_param = impl_sig.parameters.get(name)
-            cls = _declared_dispatch_class(impl_param.annotation) if impl_param is not None else None
-            if cls is None:
-                classes = None
-                break
-            classes.append(cls)
-        if classes is None:
-            continue
-        key = tuple(classes) if len(classes) > 1 else classes[0]
-        dispatch_map[key] = impl
+            classes = (
+                _declared_dispatch_classes(impl_param.annotation)
+                if impl_param is not None
+                else ()
+            )
+            if not classes:
+                raise WiringError(
+                    f"{impl.__name__}: dispatch parameter '{name}' must be a "
+                    "TS[class] or a union of TS[class] annotations"
+                )
+            if not all(issubclass(cls, dispatch_params[name]) for cls in classes):
+                raise WiringError(
+                    f"{impl.__name__}: dispatch parameter '{name}' is outside "
+                    f"{dispatch_params[name].__name__}"
+                )
+            class_options.append(classes)
+        from itertools import product
+
+        for classes in product(*class_options):
+            key = tuple(classes) if len(classes) > 1 else classes[0]
+            dispatch_map[key] = _dispatch_branch(
+                op, impl, sig, branch_signature, scalar_arguments,
+                dict(zip(dispatch_params, classes)),
+            )
     if not dispatch_map:
         raise WiringError(f"no dispatchable overloads found for {op.__name__}")
 
@@ -1796,7 +1955,7 @@ def dispatch_(op, *args, __on__=None, **kwargs):
         types_tsl = TSL.from_ts(*(wire("type_", call_kwargs[name]) for name in names))
         key = _dispatch_keys_node()(flatten_tsl_values(types_tsl, all_valid=True),
                                     tuple(dispatch_map.keys()))
-    return switch_(key, dispatch_map, **call_kwargs)
+    return switch_(key, dispatch_map, **port_kwargs)
 
 
 class _Dispatch(_Operator):
@@ -1805,7 +1964,7 @@ class _Dispatch(_Operator):
 
     def __init__(self, fn, on=None):
         super().__init__(fn)
-        self._dispatch_on = tuple(on) if on else None
+        self._dispatch_on = ((on,) if isinstance(on, str) else tuple(on)) if on else None
         _register_overload(self, _GraphFn(fn))
 
     def __call__(self, *args, **kwargs):

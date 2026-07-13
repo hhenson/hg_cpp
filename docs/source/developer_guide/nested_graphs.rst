@@ -674,6 +674,15 @@ decorator whose body registers as the most-generic overload):
    branch (ordinary ``switch_`` semantics — a re-tick of the same concrete
    type does not re-emit).
 
+``typing.Union[TS[A], TS[B]]`` overload parameters expand into two ordinary
+registry candidates and two enumerated switch keys. A CompoundScalar branch
+materializes the selected closed-union leaf through checked ``downcast_``
+before re-entering the C++ operator registry, so normal overload ranking and
+``requires=`` predicates still apply. Wiring-time scalar arguments are closed
+over by the branch; only time-series ports cross the switch boundary. Object-
+kind Python classes share one ``TS[object]`` schema, so their already-selected
+Python overload is invoked directly after the key utility resolves the class.
+
 Python-class scalars and ``CompoundScalar`` hierarchies both retain their
 dynamic type. CompoundScalar uses the graph-scoped closed Bundle union
 described in :doc:`data_structures/schemas/scalar`: the active

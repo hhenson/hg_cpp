@@ -233,6 +233,41 @@ namespace hgraph::stdlib
         }
     };
 
+    /** Materialize the active leaf of a closed Bundle union as a derived TS.
+
+        Dispatch selects the branch from the same active type before this node
+        runs. The check remains here so ``downcast_`` is also safe when wired
+        directly: a mismatched runtime leaf fails instead of interpreting the
+        base union's storage as the requested derived Bundle. */
+    struct downcast_bundle_impl
+    {
+        static constexpr auto name = "downcast_bundle";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = output_schema(resolution);
+            const auto *in = ts_value_schema_at(context, 0);
+            return out != nullptr && output_matches<AnyTS>(resolution) && in != nullptr &&
+                   in->is_named_bundle() && out->value_schema->is_named_bundle() &&
+                   TypeRegistry::instance().bundle_is_a(out->value_schema, in);
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            auto concrete = ts.base().value().concrete();
+            if (!concrete ||
+                !TypeRegistry::instance().bundle_is_a(
+                    concrete.schema(), erased.schema()->value_schema))
+            {
+                throw std::invalid_argument(
+                    "downcast_: active Bundle value does not match the requested derived type");
+            }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.copy_value_from(concrete));
+        }
+    };
+
     /** Numeric/bool scalar conversions: TYPED kernels selected at node-
         selection time (the typed-kernel rule - no per-tick type branch). */
     template <typename From, typename To>

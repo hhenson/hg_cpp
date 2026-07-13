@@ -1,8 +1,9 @@
-"""The dispatch composition (key utility + enumerated switch_) over
-python-class scalars - the object value kind keeps the dynamic type, so
-runtime dispatch works today. (CompoundScalar hierarchies await the bundle
-lineage design; the ported test_dispatch file records that gap.)"""
-from hgraph import TS, compute_node, dispatch, dispatch_, graph, operator
+"""Dispatch coverage beyond the upstream ported wiring cases."""
+from typing import Union
+
+import pytest
+
+from hgraph import CompoundScalar, TS, compute_node, dispatch, dispatch_, downcast_, graph, operator
 from hgraph.test import eval_node
 
 
@@ -72,3 +73,181 @@ def test_dispatch_fn_multi():
         [None, Cat(), None, Dog(), Cat()],
         [None, Plant(), Meat(), Plant(), Meat()],
     ) == [None, False, True, True, True]
+
+
+def test_compound_scalar_dispatch_to_compute_node_overload():
+    class Animal(CompoundScalar): ...
+
+    class Dog(Animal): ...
+
+    class Puppy(Dog): ...
+
+    @operator
+    def sound(animal: TS[Animal]) -> TS[str]: ...
+
+    @compute_node(overloads=sound)
+    def dog_sound(animal: TS[Dog]) -> TS[str]:
+        return type(animal.value).__name__
+
+    @graph
+    def app(animal: TS[Animal]) -> TS[str]:
+        return dispatch_(sound, animal)
+
+    assert eval_node(app, [Dog(), Puppy()]) == ["Dog", "Puppy"]
+
+
+def test_union_overload_is_registered_for_direct_operator_dispatch():
+    class Food(CompoundScalar): ...
+
+    class Plant(Food): ...
+
+    class Meat(Food): ...
+
+    @operator
+    def eat(food: TS[Food]) -> TS[str]: ...
+
+    @graph(overloads=eat)
+    def eat_known(food: Union[TS[Plant], TS[Meat]]) -> TS[str]:
+        return "yes"
+
+    @graph
+    def app(food: TS[Plant]) -> TS[str]:
+        return eat(food)
+
+    assert eval_node(app, [Plant()]) == ["yes"]
+
+
+def test_dispatch_preserves_scalar_requirements_and_ts_defaults():
+    class Animal(CompoundScalar): ...
+
+    class Dog(Animal): ...
+
+    @operator
+    def sound(animal: TS[Animal], upper: bool, count: TS[int] = None) -> TS[str]: ...
+
+    @graph(overloads=sound, requires=lambda m, upper: upper)
+    def dog_upper(animal: TS[Dog], upper: bool, count: TS[int] = None) -> TS[str]:
+        return "WOOF"
+
+    @graph(overloads=sound, requires=lambda m, upper: not upper)
+    def dog_lower(animal: TS[Dog], upper: bool, count: TS[int] = None) -> TS[str]:
+        return "woof"
+
+    @graph
+    def app(animal: TS[Animal]) -> TS[str]:
+        return dispatch_(sound, animal, upper=True)
+
+    assert eval_node(app, [Dog()]) == ["WOOF"]
+
+
+def test_dispatch_reports_no_matching_runtime_class():
+    class Animal(CompoundScalar): ...
+
+    class Dog(Animal): ...
+
+    class Cat(Animal): ...
+
+    @operator
+    def sound(animal: TS[Animal]) -> TS[str]: ...
+
+    @graph(overloads=sound)
+    def dog_sound(animal: TS[Dog]) -> TS[str]:
+        return "woof"
+
+    @graph
+    def app(animal: TS[Animal]) -> TS[str]:
+        return dispatch_(sound, animal)
+
+    with pytest.raises(RuntimeError, match="No suitable overload"):
+        eval_node(app, [Cat()])
+
+
+def test_dispatch_reports_ambiguous_multiple_inheritance():
+    class Animal(CompoundScalar): ...
+
+    class Left(Animal): ...
+
+    class Right(Animal): ...
+
+    class Hybrid(Left, Right): ...
+
+    @operator
+    def sound(animal: TS[Animal]) -> TS[str]: ...
+
+    @graph(overloads=sound)
+    def left_sound(animal: TS[Left]) -> TS[str]:
+        return "left"
+
+    @graph(overloads=sound)
+    def right_sound(animal: TS[Right]) -> TS[str]:
+        return "right"
+
+    @graph
+    def app(animal: TS[Animal]) -> TS[str]:
+        return dispatch_(sound, animal)
+
+    with pytest.raises(RuntimeError, match="Ambiguous dispatch"):
+        eval_node(app, [Hybrid()])
+
+
+def test_dispatch_on_restricts_dynamic_parameters():
+    class Animal(CompoundScalar): ...
+
+    class Cat(Animal): ...
+
+    class Food(CompoundScalar): ...
+
+    class Meat(Food): ...
+
+    @dispatch(on="animal")
+    def eat(animal: TS[Animal], food: TS[Food]) -> TS[str]:
+        return "default"
+
+    @graph(overloads=eat)
+    def cat_meat(animal: TS[Cat], food: TS[Meat]) -> TS[str]:
+        return "specific meat"
+
+    @graph(overloads=eat)
+    def cat_food(animal: TS[Cat], food: TS[Food]) -> TS[str]:
+        return "cat"
+
+    @graph
+    def app(animal: TS[Animal], food: TS[Food]) -> TS[str]:
+        return eat(animal, food)
+
+    assert eval_node(app, [Cat()], [Meat()]) == ["cat"]
+
+
+def test_dispatch_preserves_keyword_only_ts_parameters():
+    class Animal(CompoundScalar): ...
+
+    class Dog(Animal): ...
+
+    @dispatch
+    def sound(animal: TS[Animal], *, count: TS[int]) -> TS[str]:
+        return "default"
+
+    @graph(overloads=sound)
+    def dog_sound(animal: TS[Dog], *, count: TS[int]) -> TS[str]:
+        return "woof"
+
+    @graph
+    def app(animal: TS[Animal], count: TS[int]) -> TS[str]:
+        return sound(animal, count=count)
+
+    assert eval_node(app, [Dog()], [1]) == ["woof"]
+
+
+def test_compound_scalar_downcast_rejects_the_wrong_active_leaf():
+    class Animal(CompoundScalar): ...
+
+    class Dog(Animal): ...
+
+    class Cat(Animal): ...
+
+    @graph
+    def app(animal: TS[Animal]) -> TS[Dog]:
+        return downcast_[TS[Dog]](animal)
+
+    with pytest.raises(RuntimeError, match="active Bundle value does not match"):
+        eval_node(app, [Cat()])
