@@ -560,15 +560,6 @@ namespace hgraph
             {
                 throw std::invalid_argument("map_node requires a TSD output schema");
             }
-            if (spec.multiplexed_inputs.empty() && spec.key_output_schema == nullptr)
-            {
-                // KEY-ONLY maps (an explicit __keys__, no multiplexed dicts)
-                // are legal when the child consumes the key; otherwise
-                // nothing would drive the children.
-                throw std::invalid_argument(
-                    "map_node requires at least one multiplexed TSD input (or a key-consuming child with "
-                    "an explicit __keys__)");
-            }
             const auto *input_fields = meta.input_schema->fields();
             std::vector<std::size_t> seen_mux_inputs;
             seen_mux_inputs.reserve(spec.multiplexed_inputs.size());

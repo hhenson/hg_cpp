@@ -34,21 +34,25 @@ namespace hgraph
     Range<ValueView> TSSInputView::added() const
     {
         if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        if (view_.inherited_sampled_transition()) { return values(); }
         return data_view().added();
     }
     Range<ValueView> TSSInputView::removed() const
     {
         if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        if (view_.inherited_sampled_transition()) { return detail::empty_input_range<ValueView>(); }
         return data_view().removed();
     }
     Range<ValueView> TSSInputView::added_values() const
     {
         if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        if (view_.inherited_sampled_transition()) { return values(); }
         return data_view().added_values();
     }
     Range<ValueView> TSSInputView::removed_values() const
     {
         if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        if (view_.inherited_sampled_transition()) { return detail::empty_input_range<ValueView>(); }
         return data_view().removed_values();
     }
     Range<ValueView>::iterator TSSInputView::begin() const { return data_view().begin(); }

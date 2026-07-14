@@ -235,6 +235,8 @@ namespace hgraph
 
     struct TSDDataOps : TSSDataOps
     {
+        TSRoleTypeRef (*child_binding_at_slot_impl)(const void *context, const void *memory,
+                                                    std::size_t slot) = nullptr;
         const void *(*child_at_slot_impl)(const void *context, const void *memory,
                                           std::size_t slot) = &ts_data_detail::missing_child_at_slot;
         bool (*slot_modified_impl)(const void *context, const void *memory,

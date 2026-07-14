@@ -765,6 +765,18 @@ namespace hgraph::detail
         link->bind(*schema, output);
     }
 
+    void bind_target_link_sampled(const TSDataView &view, const TSOutputView &output,
+                                  DateTime modified_time)
+    {
+        auto *link = mutable_target_link_storage(view);
+        const auto *schema = target_link_schema(view);
+        if (link == nullptr || schema == nullptr)
+        {
+            throw std::logic_error("Sampled TSInput target binding requires TargetLink storage");
+        }
+        link->bind_sampled(*schema, output, modified_time);
+    }
+
     void unbind_target_link(const TSDataView &view)
     {
         auto *link = mutable_target_link_storage(view);

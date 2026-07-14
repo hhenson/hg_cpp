@@ -460,11 +460,13 @@ ts…)``).
   divergence from Python's ``value = None`` reset): the freshly selected
   branch evaluates with the *current* upstream values even when they did not
   tick that cycle. ``switch_`` starts the branch to establish its declared and
-  custom input activity, then explicitly schedules consumers whose boundary
-  inputs are both active and valid once at the switch time. Input activation
-  itself only establishes subscriptions and never schedules or changes
-  ``modified`` state. Passive held inputs remain silent. Pinned by tests for
-  both the active and passive cases.
+  custom input activity, binds each already-valid boundary through an explicit
+  sampled target link, then schedules the affected consumers once at the switch
+  time. Nested ``TSD`` / ``TSS`` descendants expose their full current
+  structure during that evaluation. Input activation itself only establishes
+  subscriptions and never schedules or changes ``modified`` state. Passive
+  held inputs remain silent. Pinned by tests for both the active and passive
+  cases.
 - **Lifecycle**: switching away stops the child ``GraphValue`` but preserves
   its storage as the previous instance. The next switch destroys that previous
   instance and constructs the new branch in the same slot. Switching back
@@ -740,10 +742,12 @@ this codebase, the current code wins:
   pass-through remain rejected explicitly at wiring time until designed here.
 - **Sampled semantics on rebind.** Per the sampled-runtime contract, when
   ``switch_`` retargets the active branch at time *t*, the new child samples any
-  already-valid bound inputs at *t*. ``switch_`` schedules the relevant
-  consumers as an explicit branch-selection operation; ``make_active`` remains
-  a subscription-only operation and does not fabricate a modification. We
-  deliberately diverge from Python's ``value = None`` reset.
+  already-valid bound inputs at *t*. Branch construction records an explicit
+  sampled target-link bind, including the current descendants of nested
+  collections, and ``switch_`` schedules the relevant consumers as a separate
+  branch-selection operation. Ordinary per-cycle rebinding is a no-op;
+  ``make_active`` remains subscription-only and does not fabricate a
+  modification. We deliberately diverge from Python's ``value = None`` reset.
 - **Stable payload storage is implemented.** Fixed nested graphs are part of
   the parent node's storage plan. ``map_`` mirrors ``__keys__`` slots into
   stable entry-plus-graph blocks; ``mesh_`` uses its own observed key-slot
@@ -774,7 +778,10 @@ Roadmap (this milestone)
    instances driven by current-key reconciliation on mapped-source
    modification/repoint; child terminals write through forwarding outputs into
    the owned ``TSD``'s instantiated elements (no copy). ASAN/UBSAN-verified
-   (keyed create/destroy churn).
+   (keyed create/destroy churn). Explicit ``__keys__`` can be the sole
+   lifecycle source when every child argument is broadcast. Nested map
+   terminals retain their forwarding endpoint topology and concrete child
+   storage type through TSD target-link traversal.
 6. **Done — associative ``reduce`` over ``TSD``** (see its section above):
    the 2603 design ported/reconciled first, then the runtime kernel —
    alias leaves, minimal combiner tree, zero as the empty result only.
@@ -785,9 +792,8 @@ Roadmap (this milestone)
 
 Non-goals for the milestone: services/contexts (since landed as their own
 milestone — see :doc:`services`),
-push sources inside nested graphs, TSD link-children aliasing,
-non-associative reduce, dynamic-TSL reduction, graph-level generic
-(``TsVar``) sub-graphs. (Explicit ``__keys__`` and the ``pass_through`` /
+push sources inside nested graphs, non-associative reduce, and dynamic-TSL
+reduction. (Explicit ``__keys__`` and the ``pass_through`` /
 ``no_key`` wrappers, originally deferred, landed within the milestone —
 see the ``map_`` section. ``try_except_`` landed as its own follow-on
 milestone — see :doc:`error_handling`.)

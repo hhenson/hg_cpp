@@ -98,6 +98,12 @@ namespace hgraph
         {
             if (!data.valid()) { return raw_data.modified(evaluation_time); }
             if (target_node == nullptr && raw_data.modified(evaluation_time)) { return true; }   // rebind (sampled)
+            const auto *link = detail::target_link_storage(raw_data);
+            if (link != nullptr && link->sampled_structural_transition() &&
+                link->structural_transition_time() == evaluation_time)
+            {
+                return true;
+            }
             return data.modified(evaluation_time);
         }
         return data.valid() && data.modified(evaluation_time);
@@ -119,6 +125,17 @@ namespace hgraph
     void TSInputView::InputDataCursor::bind_target(const TSOutputView &output)
     {
         detail::bind_target_link(raw_data, output);
+        value_data = detail::target_link_resolve(raw_data, target_node);
+    }
+
+    void TSInputView::InputDataCursor::bind_target_sampled(const TSOutputView &output,
+                                                            DateTime modified_time)
+    {
+        if (target_node != nullptr)
+        {
+            throw std::logic_error("Sampled TSInput binding requires a target-link root");
+        }
+        detail::bind_target_link_sampled(raw_data, output, modified_time);
         value_data = detail::target_link_resolve(raw_data, target_node);
     }
 
@@ -396,6 +413,24 @@ namespace hgraph
         }
     }
 
+    void TSInputView::bind_output_sampled(const TSOutputView &output, DateTime modified_time)
+    {
+        if (!is_bindable())
+        {
+            throw std::logic_error(
+                "TSInputView::bind_output_sampled requires a peered target-link input view");
+        }
+        const bool was_bound = bound();
+        const bool was_active = active();
+        const bool source_valid = output.valid();
+        data_.bind_target_sampled(output, modified_time);
+        if (was_active && scheduling_notifier_ != nullptr &&
+            (was_bound || source_valid || valid()))
+        {
+            scheduling_notifier_->notify(modified_time);
+        }
+    }
+
     void TSInputView::unbind_output()
     {
         if (!is_bindable())
@@ -491,6 +526,17 @@ namespace hgraph
         return data_.is_target_position();
     }
 
+    bool TSInputView::inherited_sampled_transition() const noexcept
+    {
+        if (!data_.is_target_position() || data_.target_node == nullptr || evaluation_time_ == MIN_DT)
+        {
+            return false;
+        }
+        const auto *link = detail::target_link_storage(data_.raw_data);
+        return link != nullptr && link->sampled_structural_transition() &&
+               link->structural_transition_time() == evaluation_time_;
+    }
+
     const TSValueTypeMetaData *TSInputView::target_path_schema() const noexcept
     {
         return data_.target_path_schema();
@@ -498,6 +544,17 @@ namespace hgraph
 
     TSDataView TSInputView::input_data_view() const noexcept
     {
+        // Collection target-link ops carry sampled add/remove semantics. Keep
+        // that wrapper for its transition cycle; ordinary reads take the
+        // resolved-source fast path and descendants resolve through the path.
+        if (data_.is_target_position() && data_.target_node == nullptr)
+        {
+            const auto *link = detail::target_link_storage(data_.raw_data);
+            if (link != nullptr && link->structural_transition_time() == evaluation_time_)
+            {
+                return data_.raw_data.borrowed_ref();
+            }
+        }
         const auto &resolved = data_.resolved_value_data();
         if (resolved.valid()) { return resolved.borrowed_ref(); }
         return data_.raw_data.borrowed_ref();

@@ -125,6 +125,26 @@ namespace hgraph
         if (!current.handle().same_as(source.handle())) { target.bind_output(source); }
     }
 
+    /** Bind a newly constructed child boundary and expose the source's current
+        value as a sampled delta for this lifecycle transition. */
+    inline void bind_sampled_input_to_source(TSInputView target, const TSOutputView &source,
+                                             DateTime evaluation_time)
+    {
+        if (!target.is_bindable())
+        {
+            throw std::logic_error(
+                "Sampled nested graph input binding target must be a peered child input endpoint");
+        }
+
+        if (!source.bound())
+        {
+            if (target.bound()) { target.unbind_output(); }
+            return;
+        }
+
+        target.bind_output_sampled(source, evaluation_time);
+    }
+
     /**
      * Resolve a source through any already-bound forwarding-output chain.
      *

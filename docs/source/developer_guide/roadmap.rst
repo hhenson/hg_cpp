@@ -23,8 +23,9 @@ of truth.  It distinguishes four states deliberately:
 Review Snapshot: 2026-07-14
 ---------------------------
 
-This review was made against the working tree based on ``d672ba52``, including
-the completed mutable-output and structural-REF work described below.
+This review was made against the working tree based on ``1c98e6fe``, including
+the completed mutable-output, structural-REF, constrained-generic, and nested
+explicit-key map work described below.
 Evidence came from the public implementation and tests, the commit history,
 :doc:`parity_matrix`, :doc:`python_integration`, :doc:`nested_graphs`, and
 :doc:`services`.
@@ -55,19 +56,19 @@ The important corrections to the previous roadmap are:
   raw ``operator_names()`` count is intentionally larger and is not the parity
   numerator.
 
-The completed A3 and compiled-boundary REF working tree passed the full acceptance
-gates on both local platforms:
+The current A3, compiled-boundary REF, constrained-generic, and nested-map
+working tree passed the full acceptance gates on both local platforms:
 
-- macOS arm64, AppleClang 21, Release with warnings as errors: 1007/1007 native
-  tests; a ``cp312-abi3`` wheel installed under Python 3.14.6 produced 980
-  passed, 27 skipped, 4 xfailed, and 6 deselected;
-- Ubuntu 24.04 x86_64, GCC 13.3, Release with warnings as errors: 1007/1007 native
+- macOS arm64, AppleClang 21, Release with warnings as errors: 1018/1018 native
+  tests; a ``cp312-abi3`` wheel installed under Python 3.14.6 produced 986
+  passed, 22 skipped, 4 xfailed, and 6 deselected;
+- Ubuntu 24.04 x86_64, GCC 13.3, Release with warnings as errors: 1018/1018 native
   tests; the Linux ``cp312-abi3`` wheel under Python 3.14.6 produced the same
   Python result; and
-- the preceding keyed structural-REF baseline also passed Ubuntu 24.04 x86_64,
-  GCC 13.3, Debug with AddressSanitizer and the Python bridge enabled: the full
-  non-WIP suite under Python 3.12.3 produced 977
-  passed, 30 skipped, 4 xfailed, and 6 deselected with no sanitizer report.
+- the same working tree passed Ubuntu 24.04 x86_64, GCC 13.3, Debug with
+  AddressSanitizer and the Python bridge enabled: the full non-WIP suite under
+  Python 3.12.3 produced 986 passed, 22 skipped, 4 xfailed, and 6 deselected
+  with no sanitizer report.
 
 These are execution results, not collection-only inventory.
 
@@ -231,9 +232,12 @@ Priority 2: Nested Graphs and Boundaries
 - planned, in-place nested storage with stop-before-destroy lifetimes;
 - two-slot ``switch_`` storage;
 - slot-observed keyed ``map_`` and ``mesh_`` instances;
+- explicit-key-only ``map_`` instances whose child inputs are all broadcast,
+  including anonymous nested maps with forwarding TSD terminals;
 - fixed-TSL and associative dynamic-TSD ``reduce``;
 - ``try_except_``, feedback, closed-union ``dispatch_``, closure capture, key
-  injection, ``pass_through`` / ``no_key``, and keyed write-through outputs;
+  injection, ``pass_through`` / ``no_key``, keyed write-through outputs, and
+  sampled transfer of unchanged nested collections into a new switch branch;
 - reference, subscription, and request/reply services;
 - source, sink, duplex, and service-adaptor foundations; and
 - same-wiring contexts and the source/capture context runtime primitive.
@@ -243,8 +247,7 @@ Priority 2: Nested Graphs and Boundaries
 - sink maps and all-sink switches;
 - dynamic-TSL map/reduce/mesh;
 - non-associative ordered reduce;
-- dynamic-TSD reduce with pass-through combiner outputs; and
-- graph-level generic ``TsVar`` sub-graphs.
+- dynamic-TSD reduce with pass-through combiner outputs.
 
 **Remaining boundary modes:**
 

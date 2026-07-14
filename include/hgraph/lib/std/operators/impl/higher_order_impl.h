@@ -1725,7 +1725,14 @@ namespace hgraph::stdlib
                     terminal_meta != nullptr ? terminal_meta->output_endpoint_schema : terminal_override;
                 const TSEndpointSchema &terminal_endpoint =
                     !terminal_override.empty() ? terminal_override : terminal_declared;
-                if (!terminal_endpoint.empty() && terminal_endpoint.is_peered())
+                // A declared forwarding terminal already owns its link, and a
+                // non-peered terminal has required child endpoint topology
+                // (for example, map_ owns a TSD root whose elements forward).
+                // Preserve either shape and make the parent map element point
+                // at the terminal. Only an ordinary/owned terminal can be
+                // safely re-homed onto the parent element.
+                if (!terminal_endpoint.empty() &&
+                    (terminal_endpoint.is_peered() || terminal_endpoint.is_non_peered()))
                 {
                     spec.output_binding_mode = MapOutputBindingMode::OutputElementForwardsToChildTerminal;
                 }

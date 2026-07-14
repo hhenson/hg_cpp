@@ -39,6 +39,11 @@ namespace hgraph
             return view->slot_occupied(slot) && view->slot_removed(slot);
         }
 
+        [[nodiscard]] ValueView tsd_input_project_key(const void *context, const void *, std::size_t slot)
+        {
+            return static_cast<const TSDInputView *>(context)->key_at_slot(slot);
+        }
+
         [[nodiscard]] TSInputView tsd_input_project_value(const void *context, const void *, std::size_t slot)
         {
             return static_cast<const TSDInputView *>(context)->at_slot(slot);
@@ -71,9 +76,18 @@ namespace hgraph
     std::size_t TSDInputView::slot_capacity() const { return data_view().slot_capacity(); }
     bool TSDInputView::slot_occupied(std::size_t slot) const { return data_view().slot_occupied(slot); }
     bool TSDInputView::slot_live(std::size_t slot) const { return data_view().slot_live(slot); }
-    bool TSDInputView::slot_added(std::size_t slot) const { return data_view().slot_added(slot); }
-    bool TSDInputView::slot_removed(std::size_t slot) const { return data_view().slot_removed(slot); }
-    bool TSDInputView::slot_modified(std::size_t slot) const { return data_view().slot_modified(slot); }
+    bool TSDInputView::slot_added(std::size_t slot) const
+    {
+        return view_.inherited_sampled_transition() ? slot_live(slot) : data_view().slot_added(slot);
+    }
+    bool TSDInputView::slot_removed(std::size_t slot) const
+    {
+        return !view_.inherited_sampled_transition() && data_view().slot_removed(slot);
+    }
+    bool TSDInputView::slot_modified(std::size_t slot) const
+    {
+        return view_.inherited_sampled_transition() ? slot_live(slot) : data_view().slot_modified(slot);
+    }
     ValueView TSDInputView::key_at_slot(std::size_t slot) const { return data_view().key_at_slot(slot); }
 
     TSInputView TSDInputView::at_slot(std::size_t slot) const
@@ -135,7 +149,11 @@ namespace hgraph
 
     Range<ValueView> TSDInputView::modified_keys() const
     {
-        return data_view().modified_keys(view_.evaluation_time());
+        if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        if (!view_.inherited_sampled_transition()) { return data_view().modified_keys(view_.evaluation_time()); }
+        return Range<ValueView>{.context = this, .memory = nullptr, .limit = slot_capacity(),
+                                .predicate = &tsd_input_modified_slot,
+                                .projector = &tsd_input_project_key};
     }
 
     Range<TSInputView> TSDInputView::modified_values() const
@@ -159,6 +177,12 @@ namespace hgraph
     Range<ValueView> TSDInputView::added_keys() const
     {
         if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        if (view_.inherited_sampled_transition())
+        {
+            return Range<ValueView>{.context = this, .memory = nullptr, .limit = slot_capacity(),
+                                    .predicate = &tsd_input_added_slot,
+                                    .projector = &tsd_input_project_key};
+        }
         return data_view().added_keys();
     }
 
@@ -183,6 +207,7 @@ namespace hgraph
     Range<ValueView> TSDInputView::removed_keys() const
     {
         if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        if (view_.inherited_sampled_transition()) { return detail::empty_input_range<ValueView>(); }
         return data_view().removed_keys();
     }
 

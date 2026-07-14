@@ -10,6 +10,7 @@
 // Graphs*.
 
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
@@ -1258,6 +1259,74 @@ namespace
         }
     };
 
+    struct MapBroadcastExplicitKeysG
+    {
+        static constexpr auto             name = "map_broadcast_explicit_keys_g";
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TS<Int>> value,
+                                                Port<TSS<Int>> keys)
+        {
+            return wire<stdlib::map_>(w, fn<IdentityG>(), value, arg<"__keys__">(keys))
+                .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct NestedExplicitKeysMapBodyG
+    {
+        static constexpr auto name = "nested_explicit_keys_map_body_g";
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, NamedPort<"key", TS<Int>> key,
+                                                Port<TSS<Int>> inner_keys)
+        {
+            return wire<stdlib::map_>(w, fn<IdentityG>(), key,
+                                      arg<"__keys__">(inner_keys))
+                .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct NestedExplicitKeysMapG
+    {
+        static constexpr auto name = "nested_explicit_keys_map_g";
+        static Port<TSD<Int, TSD<Int, TS<Int>>>> compose(Wiring &w, Port<TSS<Int>> keys)
+        {
+            return wire<stdlib::map_>(w, fn<NestedExplicitKeysMapBodyG>(),
+                                      stdlib::pass_through(keys), arg<"__keys__">(keys))
+                .as<TSD<Int, TSD<Int, TS<Int>>>>();
+        }
+    };
+
+    using NestedMapSwitchBundle =
+        UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TSD<Int, TSD<Int, TS<Int>>>>>;
+
+    template <Int Value>
+    struct NestedMapSwitchBranchG
+    {
+        static constexpr auto name = "nested_map_switch_branch_g";
+        static Port<NestedMapSwitchBundle> compose(Wiring &w,
+                                                    Port<TSD<Int, TSD<Int, TS<Int>>>> nested)
+        {
+            auto a = wire<stdlib::const_, TS<Int>>(w, Value);
+            auto bundle = stdlib::to_tsb<NestedMapSwitchBundle>(w, a, nested);
+            return wire<stdlib::pass_through_node>(w, bundle).as<NestedMapSwitchBundle>();
+        }
+    };
+
+    struct NestedExplicitKeysMapSwitchG
+    {
+        static constexpr auto name = "nested_explicit_keys_map_switch_g";
+        static Port<NestedMapSwitchBundle> compose(Wiring &w, Port<TSS<Int>> keys,
+                                                    Port<TS<Int>> selector)
+        {
+            auto nested = wire<stdlib::map_>(w, fn<NestedExplicitKeysMapBodyG>(),
+                                             stdlib::pass_through(keys), arg<"__keys__">(keys))
+                              .as<TSD<Int, TSD<Int, TS<Int>>>>();
+            return wire<stdlib::switch_, NestedMapSwitchBundle>(
+                       w, selector,
+                       stdlib::switch_cases({{Value{Int{0}}, fn<NestedMapSwitchBranchG<0>>()},
+                                             {Value{Int{1}}, fn<NestedMapSwitchBranchG<1>>()}}),
+                       nested)
+                .as<NestedMapSwitchBundle>();
+        }
+    };
+
     // Reads a whole fixed TSL: in the TSL form a same-size TSL would
     // otherwise multiplex per index — pass_through keeps it whole.
     struct ElemPlusListSumNode
@@ -1452,6 +1521,45 @@ TEST_CASE("map_: no_key with an explicit __keys__ drives the lifecycle from the 
                      values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}, {"c"s, 3}})),
                      values<Value>(set_delta<Str>({"a"s, "c"s}, {})))),
                  values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}, {"c"s, 4}})));
+}
+
+TEST_CASE("map_: explicit __keys__ drives children whose inputs are all broadcast")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MapBroadcastExplicitKeysG>(
+                     values<Int>(7, 8),
+                     values<Value>(set_delta<Int>({0, 1}, {}), none))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{0, 7}, {1, 7}}),
+                               dict_delta<Int, TS<Int>>({{0, 8}, {1, 8}})));
+}
+
+TEST_CASE("map_: nested explicit-key maps resolve and execute through public wiring")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<NestedExplicitKeysMapG>(
+                     values<Value>(set_delta<Int>({0, 1}, {})))),
+                 values<Value>(dict_delta<Int, TSD<Int, TS<Int>>>(
+                     {{0, dict_delta<Int, TS<Int>>({{0, 0}, {1, 0}})},
+                      {1, dict_delta<Int, TS<Int>>({{0, 1}, {1, 1}})}})));
+}
+
+TEST_CASE("map_: a switch samples an unchanged nested map into its new branch")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<NestedExplicitKeysMapSwitchG>(
+                     values<Value>(set_delta<Int>({0}, {}), none), values<Int>(0, 1))),
+                 values<Value>(tsb_delta<NestedMapSwitchBundle>(
+                                   Int{0}, dict_delta<Int, TSD<Int, TS<Int>>>(
+                                               {{0, dict_delta<Int, TS<Int>>({{0, 0}})}})),
+                               tsb_delta<NestedMapSwitchBundle>(
+                                   Int{1}, dict_delta<Int, TSD<Int, TS<Int>>>(
+                                               {{0, dict_delta<Int, TS<Int>>({{0, 0}})}}))));
 }
 
 TEST_CASE("map_ over TSL: pass_through keeps a same-size TSL whole")

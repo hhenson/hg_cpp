@@ -92,10 +92,10 @@ namespace hgraph
     };
 
     /**
-     * Build a node owning **one child graph per key** of its multiplexed TSD
-     * input. Key lifecycle is reconciled against the current TSD key set when
-     * the multiplexed input modifies, re-points, or is first observed: a new
-     * key instantiates a real element in the owned TSD output and builds,
+     * Build a node owning **one child graph per key** of its ``__keys__``
+     * input. Wiring derives that key set from the multiplexed TSD inputs when
+     * the caller does not supply it explicitly. A new key instantiates a real
+     * element in the owned TSD output and builds,
      * binds and starts a fresh child instance whose terminal **forwarding
      * output is bound onto that element** — the child writes the parent's
      * storage directly (no copy). A missing key stops the child and removes the

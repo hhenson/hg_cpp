@@ -101,6 +101,8 @@ namespace hgraph
         [[nodiscard]] TSOutputView bound_output() const;
 
         void bind_output(const TSOutputView &output);
+        /** Bind an already-valid source as a lifecycle-owned sampled input. */
+        void bind_output_sampled(const TSOutputView &output, DateTime modified_time);
         void unbind_output();
 
         void make_active();
@@ -167,6 +169,7 @@ namespace hgraph
             [[nodiscard]] TSDataView &checked_value_data(const char *what) const;
             [[nodiscard]] InputDataCursor target_child(TSDataView child, std::size_t index) const;
             void bind_target(const TSOutputView &output);
+            void bind_target_sampled(const TSOutputView &output, DateTime modified_time);
             void unbind_target();
             void make_active(TSInput *input, Notifiable *scheduling_notifier) const;
             void make_passive(TSInput *input) const;
@@ -185,6 +188,7 @@ namespace hgraph
                     DateTime                   evaluation_time) noexcept;
 
         [[nodiscard]] bool is_target_position() const noexcept;
+        [[nodiscard]] bool inherited_sampled_transition() const noexcept;
         [[nodiscard]] const TSValueTypeMetaData *target_path_schema() const noexcept;
         [[nodiscard]] TSDataView input_data_view() const noexcept;
         [[nodiscard]] TSDataView resolve_target_data_view() const noexcept;

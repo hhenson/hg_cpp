@@ -131,6 +131,8 @@ namespace hgraph::detail
                                                                   TSInputTargetActiveNode *parent,
                                                                   std::size_t slot);
     void bind_target_link(const TSDataView &view, const TSOutputView &output);
+    void bind_target_link_sampled(const TSDataView &view, const TSOutputView &output,
+                                  DateTime modified_time);
     void unbind_target_link(const TSDataView &view);
     void make_target_link_active(const TSDataView &view,
                                  TSInputTargetActiveNode *node,

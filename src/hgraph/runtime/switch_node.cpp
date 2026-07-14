@@ -91,7 +91,7 @@ namespace hgraph
         }
 
         void bind_branch_inputs(const NodeView &view, const SingleNestedGraphNodeSpec &spec, const GraphView &child,
-                                DateTime evaluation_time)
+                                DateTime evaluation_time, bool sampled = false)
         {
             if (spec.input_bindings.empty()) { return; }
             auto root_input = view.input(evaluation_time);
@@ -100,7 +100,11 @@ namespace hgraph
                 auto source = walk_source_to_output(root_input.borrowed_ref(), binding.source_path);
                 auto target = walk_ts_path(child.node_at(binding.target.node).input(evaluation_time),
                                            binding.target.path);
-                bind_input_to_source(std::move(target), source);
+                if (sampled)
+                {
+                    bind_sampled_input_to_source(std::move(target), source, evaluation_time);
+                }
+                else { bind_input_to_source(std::move(target), source); }
             }
         }
 
@@ -220,7 +224,7 @@ namespace hgraph
             auto construction_rollback = UnwindCleanupGuard([&] {
                 storage.graphs[next_slot] = GraphValue{};
             });
-            bind_branch_inputs(view, spec, next, evaluation_time);
+            bind_branch_inputs(view, spec, next, evaluation_time, true);
             construction_rollback.release();
 
             switch_teardown(view, storage, evaluation_time);

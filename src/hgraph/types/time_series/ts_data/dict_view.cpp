@@ -138,10 +138,13 @@ namespace hgraph
     {
         if (!slot_occupied(slot)) { throw std::out_of_range("TSDDataView::at_slot: slot is not occupied"); }
         const auto &ops = dict_ops();
+        const auto child_type = ops.child_binding_at_slot_impl != nullptr
+                                    ? ops.child_binding_at_slot_impl(ops.context, storage_.data(), slot)
+                                    : layout().element_type;
         const auto *child_memory = ops.child_at_slot_impl(ops.context, storage_.data(), slot);
         auto        parent       = base();
-        if (!parent.ops().allows_mutation) { return TSDataView{layout().element_type, child_memory}; }
-        return TSDataView{layout().element_type, child_memory, parent, slot};
+        if (!parent.ops().allows_mutation) { return TSDataView{child_type, child_memory}; }
+        return TSDataView{child_type, child_memory, parent, slot};
     }
 
     TSDataView TSDDataView::at(const ValueView &key) const
@@ -475,7 +478,10 @@ namespace hgraph
         {
             throw std::out_of_range("TSDDataMutationView::at_slot: slot is not occupied");
         }
+        const auto child_type = ops.child_binding_at_slot_impl != nullptr
+                                    ? ops.child_binding_at_slot_impl(ops.context, mutation_.mutable_data(), slot)
+                                    : layout().element_type;
         const auto *child_memory = ops.child_at_slot_impl(ops.context, mutation_.mutable_data(), slot);
-        return TSDataView{layout().element_type, child_memory, mutation_.view(), slot};
+        return TSDataView{child_type, child_memory, mutation_.view(), slot};
     }
 }  // namespace hgraph

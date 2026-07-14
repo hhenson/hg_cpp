@@ -647,6 +647,13 @@ namespace hgraph::detail
             return target_link_dict_view(context, memory).at_slot(slot).data();
         }
 
+        [[nodiscard]] TSRoleTypeRef target_link_dict_child_binding_at_slot(const void *context,
+                                                                           const void *memory,
+                                                                           std::size_t slot)
+        {
+            return target_link_dict_view(context, memory).at_slot(slot).storage_type();
+        }
+
         [[nodiscard]] TSDataView target_link_dict_ts_projector(const void *context,
                                                                const void *memory,
                                                                std::size_t slot)
@@ -1135,6 +1142,7 @@ namespace hgraph::detail
             static_cast<TSDataOps &>(context->dict_ops).clear_collection_impl = &ts_data_detail::clear_tsd_collection;
             configure_target_link_set_ops(context->dict_ops, &target_link_dict_insert_key,
                                           &target_link_dict_remove_key);
+            context->dict_ops.child_binding_at_slot_impl = &target_link_dict_child_binding_at_slot;
             context->dict_ops.child_at_slot_impl = &target_link_dict_child_at_slot;
             context->dict_ops.slot_modified_impl = &target_link_dict_slot_modified;
             context->dict_ops.make_ts_values_range_impl = &target_link_dict_values_range;
