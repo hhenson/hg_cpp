@@ -1,5 +1,6 @@
 #include <hgraph/runtime/try_except_node.h>
 
+#include <hgraph/runtime/nested_bindings.h>
 #include <hgraph/runtime/node_error.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/time_series/ts_output/bundle_view.h>
@@ -49,7 +50,14 @@ namespace hgraph
             nested.ensure_child_graph();
             single_nested_graph_bind_inputs(nested, evaluation_time);
             single_nested_graph_bind_output(nested, evaluation_time);
-            if (nested.context().options.start_child_on_start) { nested.child_graph().start(evaluation_time); }
+            if (nested.context().options.start_child_on_start)
+            {
+                nested.child_graph().start(evaluation_time);
+                schedule_sampled_input_consumers(
+                    nested.child_graph(),
+                    evaluation_time,
+                    nested.context().spec.input_bindings);
+            }
             single_nested_graph_propagate_schedule(nested);
         }
 

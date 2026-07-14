@@ -198,7 +198,6 @@ def test_free_tsb_signal():
     assert eval_node(g, [None, 1, None], [None, None, "b"]) == [None, True, True]
 
 
-@pytest.mark.skip(reason="gap: REF-flipping TSB composition")
 def test_free_tsb_ref_signal():
     @compute_node
     def s(ts: SIGNAL) -> TS[bool]:

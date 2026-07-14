@@ -23,30 +23,33 @@ namespace hgraph::stdlib
     {
         /**
          * The RECOVER pass-through (P7, zero-cost form): a plain forwarding
-         * node whose ``start`` resolves the last recorded value at or before
-         * the start time and publishes it directly to its OWN output —
+         * node whose first scheduled evaluation resolves the last recorded
+         * value at or before the start time and publishes it to its OWN output —
          * Python's ``merge(ts, replay_const(...))`` fused into one node.
          * Only recovering components pay for it; no graph-level state.
          */
         struct recovering_pass_through
         {
             static constexpr auto name = "recovering_pass_through";
+            static constexpr bool schedule_on_start = true;
 
-            static void start(Scalar<"fq_key", Str> fq_key, GlobalStateView gs, DateTime now,
-                              Out<TsVar<"S">> out)
+            static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                             Scalar<"fq_key", Str> fq_key, GlobalStateView gs,
+                             DateTime now, State<Bool> initialized, Out<TsVar<"S">> out)
             {
-                const auto &erased = static_cast<const TSOutputView &>(out);
-                Value recovered =
-                    record_replay::recorded_seed_resolver(
+                if (!initialized.get())
+                {
+                    const auto &erased = static_cast<const TSOutputView &>(out);
+                    Value recovered = record_replay::recorded_seed_resolver(
                         gs, fq_key.value(), erased.schema(), now);
-                if (recovered.has_value()) { out.apply(recovered.view()); }
-            }
-
-            static void eval(In<"ts", TsVar<"S">> ts, Scalar<"fq_key", Str> fq_key, Out<TsVar<"S">> out)
-            {
-                static_cast<void>(fq_key);
-                const Value delta = capture_delta(ts.base());
-                apply_delta(out, delta.view());
+                    if (recovered.has_value()) { out.apply(recovered.view()); }
+                    initialized.set(true);
+                }
+                if (ts.modified())
+                {
+                    const Value delta = capture_delta(ts.base());
+                    apply_delta(out, delta.view());
+                }
             }
         };
 

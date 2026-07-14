@@ -30,6 +30,8 @@ namespace
     using namespace hgraph;
     using namespace hgraph::testing;
 
+    using IntPair = TSL<TS<Int>, 2>;
+
     // ---------------- sub-graph definitions under test ----------------
 
     struct AddOneSubGraph
@@ -95,6 +97,89 @@ namespace
     {
         static constexpr auto name = "pass_through_subgraph";
         static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> in) { return in; }
+    };
+
+    struct IntIdentity
+    {
+        static constexpr auto name = "int_identity";
+
+        static void eval(In<"value", TS<Int>> value, Out<TS<Int>> out)
+        {
+            out.set(value.value());
+        }
+    };
+
+    struct RefSelector
+    {
+        static constexpr auto name = "nested_ref_selector";
+
+        static void eval(In<"pick_rhs", TS<Bool>> pick_rhs,
+                         In<"lhs", TS<Int>, InputValidity::Unchecked> lhs,
+                         In<"rhs", TS<Int>, InputValidity::Unchecked> rhs,
+                         Out<REF<TS<Int>>> out)
+        {
+            if (pick_rhs.modified()) { out.set(pick_rhs.value() ? rhs.reference() : lhs.reference()); }
+        }
+    };
+
+    // The declared REF boundary forces the outer plain source through the
+    // to-REF alternative before it is bound into the child graph.
+    struct RefInputSubGraph
+    {
+        static constexpr auto name = "ref_input_subgraph";
+        static Port<TS<Int>>  compose(Wiring &w, Port<REF<TS<Int>>> in)
+        {
+            return wire<IntIdentity>(w, in);
+        }
+    };
+
+    // A plain boundary fed by a REF source exercises the inverse adaptation.
+    struct PlainInputSubGraph
+    {
+        static constexpr auto name = "plain_input_subgraph";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in)
+        {
+            return wire<IntIdentity>(w, in);
+        }
+    };
+
+    // The REF is produced inside the child and forwarded through the nested
+    // node before an outer plain consumer dereferences it.
+    struct RefOutputSubGraph
+    {
+        static constexpr auto name = "ref_output_subgraph";
+        static Port<REF<TS<Int>>> compose(Wiring &w,
+                                          Port<TS<Bool>> pick_rhs,
+                                          Port<TS<Int>> lhs,
+                                          Port<TS<Int>> rhs)
+        {
+            return wire<RefSelector>(w, pick_rhs, lhs, rhs);
+        }
+    };
+
+    struct RefPassThroughSubGraph
+    {
+        static constexpr auto name = "ref_pass_through_subgraph";
+        static Port<REF<TS<Int>>> compose(Wiring &, Port<REF<TS<Int>>> in) { return in; }
+    };
+
+    struct PairSum
+    {
+        static constexpr auto name = "pair_sum";
+
+        static void eval(In<"values", IntPair> values, Out<TS<Int>> out)
+        {
+            out.set(values[0].value() + values[1].value());
+        }
+    };
+
+    struct StructuralRefInputSubGraph
+    {
+        static constexpr auto name = "structural_ref_input_subgraph";
+        static Port<TS<Int>>  compose(Wiring &w, Port<REF<IntPair>> in)
+        {
+            return wire<PairSum>(w, in);
+        }
     };
 
     // A structural-initializer boundary: the outer arg is a non-peered TSL whose
@@ -186,6 +271,59 @@ namespace
         static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in)
         {
             return nested_<PassThroughSubGraph>(w, in);
+        }
+    };
+
+    struct NestedRefInputGraph
+    {
+        static constexpr auto name = "nested_ref_input_graph";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in)
+        {
+            return nested_<RefInputSubGraph>(w, in);
+        }
+    };
+
+    struct NestedPlainInputFromRefGraph
+    {
+        static constexpr auto name = "nested_plain_input_from_ref_graph";
+        static Port<TS<Int>> compose(Wiring &w,
+                                     Port<TS<Bool>> pick_rhs,
+                                     Port<TS<Int>> lhs,
+                                     Port<TS<Int>> rhs)
+        {
+            return nested_<PlainInputSubGraph>(w, wire<RefSelector>(w, pick_rhs, lhs, rhs));
+        }
+    };
+
+    struct NestedRefOutputGraph
+    {
+        static constexpr auto name = "nested_ref_output_graph";
+        static Port<TS<Int>> compose(Wiring &w,
+                                     Port<TS<Bool>> pick_rhs,
+                                     Port<TS<Int>> lhs,
+                                     Port<TS<Int>> rhs)
+        {
+            auto ref = nested_<RefOutputSubGraph>(w, pick_rhs, lhs, rhs);
+            return wire<IntIdentity>(w, ref);
+        }
+    };
+
+    struct NestedRefPassThroughGraph
+    {
+        static constexpr auto name = "nested_ref_pass_through_graph";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in)
+        {
+            auto ref = nested_<RefPassThroughSubGraph>(w, in);
+            return wire<IntIdentity>(w, ref);
+        }
+    };
+
+    struct NestedStructuralRefInputGraph
+    {
+        static constexpr auto name = "nested_structural_ref_input_graph";
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            return nested_<StructuralRefInputSubGraph>(w, {lhs, rhs});
         }
     };
 
@@ -375,6 +513,54 @@ TEST_CASE("nested wiring: a pass-through sub-graph aliases the outer input (alia
     stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<NestedPassThroughGraph>(values<Int>(1, 2, 3)), values<Int>(1, 2, 3));
+}
+
+TEST_CASE("nested wiring: a plain outer source adapts to a child REF input")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<NestedRefInputGraph>(values<Int>(1, 2, 3)), values<Int>(1, 2, 3));
+}
+
+TEST_CASE("nested wiring: a retargeting REF source adapts to a child plain input")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<NestedPlainInputFromRefGraph>(values<Bool>(false, none, true, none, false),
+                                                         values<Int>(1, 2, none, 4, none),
+                                                         values<Int>(10, none, 30, none, 50)),
+                 values<Int>(1, 2, 30, none, 4));
+}
+
+TEST_CASE("nested wiring: a child REF output retargets an outer plain consumer")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<NestedRefOutputGraph>(values<Bool>(false, none, true, none, false),
+                                                  values<Int>(1, 2, none, 4, none),
+                                                  values<Int>(10, none, 30, none, 50)),
+                 values<Int>(1, 2, 30, none, 4));
+}
+
+TEST_CASE("nested wiring: a REF pass-through samples and follows the plain parent source")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<NestedRefPassThroughGraph>(values<Int>(1, 2, 3)), values<Int>(1, 2, 3));
+}
+
+TEST_CASE("nested wiring: a fixed structural source adapts to a child REF input")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<NestedStructuralRefInputGraph>(values<Int>(1, 2, 3),
+                                                          values<Int>(10, 20, 30)),
+                 values<Int>(11, 22, 33));
 }
 
 TEST_CASE("nested wiring: a structural initializer boundary binds leaf-wise into the child")

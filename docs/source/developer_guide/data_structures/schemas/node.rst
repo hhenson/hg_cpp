@@ -127,6 +127,10 @@ A ``NodeTypeMetaData`` carries:
 ``schedule_on_start``
     Declarative self-scheduling flag. When true, the default start op schedules
     the node for the graph start cycle after the user ``start`` callback returns.
+    Static C++ authoring also enables this for nodes with an active input whose
+    schema contains ``REF``: the initial reference binding exists before graph
+    start and therefore needs one explicit sample. This is not an input
+    modification and is independent of input activation.
 
 ``captures_errors``
     Declarative error policy flag for node families that support captured

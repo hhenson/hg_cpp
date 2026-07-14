@@ -252,6 +252,38 @@ namespace
     using IntTslPair            = TSL<TS<Int>, 2>;
     using IntTsd                = TSD<Int, TS<Int>>;
 
+    struct ForwardReference
+    {
+        static constexpr auto name = "forward_reference";
+
+        static void eval(In<"ts", REF<TS<Int>>> ts, Out<REF<TS<Int>>> out)
+        {
+            out.set(ts.reference());
+        }
+    };
+
+    struct ForwardReferenceGraph
+    {
+        static constexpr auto name = "forward_reference_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> ts)
+        {
+            return wire<ForwardReference>(w, ts).as<TS<Int>>();
+        }
+    };
+
+    struct CombineTsdReferenceTopologyGraph
+    {
+        static constexpr auto name = "combine_tsd_reference_topology_graph";
+
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TS<Int>> a, Port<TS<Int>> b)
+        {
+            return wire<stdlib::combine_tsd>(
+                       w, stdlib::make_list<Str>({Str{"a"}, Str{"b"}}), a, b)
+                .as<TSD<Str, TS<Int>>>();
+        }
+    };
+
     template <typename Schema>
     struct EmptyReferenceSource
     {
@@ -1183,6 +1215,20 @@ TEST_CASE("std operators: TSB container access projects structural and peered fi
     CHECK_OUTPUT(eval_node<PeeredTsbContainerAccessGraph>(values<Int>(2, 20),
                                                           values<Str>(Str{"abc"}, Str{"z"})),
                  values<Int>(5, 21));
+}
+
+TEST_CASE("std operators: active reference topology receives one explicit startup sample")
+{
+    stdlib::register_standard_operators();
+
+    // ForwardReference has no hand-written schedule_on_start flag. Static C++
+    // authoring infers the startup sample from its active REF input, after
+    // which target value ticks flow through the published reference directly.
+    CHECK_OUTPUT(eval_node<ForwardReferenceGraph>(values<Int>(1, 2)), values<Int>(1, 2));
+
+    CHECK_OUTPUT(eval_node<CombineTsdReferenceTopologyGraph>(values<Int>(1, 2), values<Int>(3, none)),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a", 1}, {"b", 3}}),
+                               dict_delta<Str, TS<Int>>({{"a", 2}})));
 }
 
 TEST_CASE("std operators: TSB len and is_empty are schema metadata")

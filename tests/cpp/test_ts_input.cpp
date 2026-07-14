@@ -1002,6 +1002,39 @@ TEST_CASE("TSInput active root bubbles output modifications through non-peered p
     REQUIRE(recorder.notified == std::vector<DateTime>{t1, t2});
 }
 
+TEST_CASE("TSInput activation subscribes without notifying for an already-valid target")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    TSOutput output{*ts_int};
+    TSInput  input{TSInputBuilderFactory::checked_builder_for(
+        *ts_int,
+        TSEndpointSchema::peered(ts_int))};
+
+    const auto t1 = MIN_ST + TimeDelta{30};
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
+    set_output(output, 1, t1);
+
+    RecordingNotifiable recorder;
+    auto                view = input.view(&recorder, t2);
+    view.bind_output(output.view(t2));
+    REQUIRE(view.valid());
+    REQUIRE_FALSE(view.modified());
+
+    view.make_active();
+    CHECK(view.active());
+    CHECK_FALSE(view.modified());
+    CHECK(recorder.notified.empty());
+
+    set_output(output, 2, t3);
+    CHECK(recorder.notified == std::vector<DateTime>{t3});
+}
+
 TEST_CASE("TSInput peered collection descendants can be activated independently")
 {
     using namespace hgraph;
@@ -1157,8 +1190,7 @@ TEST_CASE("TSInput shape casts return endpoint views for slot collections")
     active_dict_child.make_active();
     REQUIRE(active_set.active());
     REQUIRE(active_dict_child.active());
-    REQUIRE(recorder.notified == std::vector<DateTime>{t2, t2});
-    recorder.notified.clear();
+    REQUIRE(recorder.notified.empty());
 
     {
         auto set_view = set_output.view(t2);

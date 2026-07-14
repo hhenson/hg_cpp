@@ -429,7 +429,10 @@ namespace hgraph
             }
             for (auto it = created.rbegin(); it != created.rend(); ++it)
             {
-                storage.combiners[*it]->graph.view().start(evaluation_time);
+                auto child = storage.combiners[*it]->graph.view();
+                child.start(evaluation_time);
+                schedule_sampled_input_consumers(
+                    child, evaluation_time, context.spec.child.input_bindings);
             }
 
             // Root publication: Empty -> the zero input's bound output (or

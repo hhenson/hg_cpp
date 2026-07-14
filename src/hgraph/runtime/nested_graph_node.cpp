@@ -272,6 +272,10 @@ namespace hgraph
         if (nested.context().options.start_child_on_start)
         {
             nested.child_graph().start(evaluation_time);
+            schedule_sampled_input_consumers(
+                nested.child_graph(),
+                evaluation_time,
+                nested.context().spec.input_bindings);
         }
         single_nested_graph_propagate_schedule(nested);
     }

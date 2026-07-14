@@ -157,6 +157,26 @@ slots, and ``finish_subgraph`` emits one leaf-wise input binding per peered
 leaf (null leaves stay unbound) — the runtime binds each leaf position, which
 is the only bindable granularity (``is_bindable`` = target-link position).
 
+**REF adaptation uses endpoint negotiation, not another binding mode.** Input
+and output schema compatibility is REF-transparent.  If an outer plain source
+feeds a child ``REF`` parameter, the outer nested-node input requests the
+declared ``REF`` schema and the normal to-REF output alternative supplies the
+boundary handle.  The inverse path requests a plain schema from an outer
+``REF`` source and receives the normal from-REF alternative.  Structural
+initializers targeting a ``REF`` first compose into the same structural REF
+node used by ordinary wiring.  Child-produced ``REF`` outputs are forwarded
+unchanged; a plain outer consumer performs the inverse negotiation on that
+forwarded endpoint.  Rebinding therefore retains the standard sampled,
+EMPTY, and target-tick semantics without a nested-graph-specific reference
+object or copy.
+
+An idle child may still be on its previous evaluation time when a reference
+retargets during a later parent cycle.  Nested schedule push delegation clamps
+that notification to the parent's current time before recording it in either
+graph.  This makes the newly sampled target visible in the current cycle and
+prevents a stale child clock from attempting to schedule the parent in the
+past.
+
 Rejected explicitly at compilation, with a clear error:
 
 - error / recordable-state roots as the sub-graph output;
@@ -439,10 +459,12 @@ ts…)``).
 - **Sampled semantics** (the sampled-runtime contract; the recorded
   divergence from Python's ``value = None`` reset): the freshly selected
   branch evaluates with the *current* upstream values even when they did not
-  tick that cycle. Binding or rebinding an active child input to an
-  already-valid source schedules the child through the normal input
-  notification path at the switch time. Pinned by test (a swap while the ts
-  input holds emits the new branch's value immediately).
+  tick that cycle. ``switch_`` starts the branch to establish its declared and
+  custom input activity, then explicitly schedules consumers whose boundary
+  inputs are both active and valid once at the switch time. Input activation
+  itself only establishes subscriptions and never schedules or changes
+  ``modified`` state. Passive held inputs remain silent. Pinned by tests for
+  both the active and passive cases.
 - **Lifecycle**: switching away stops the child ``GraphValue`` but preserves
   its storage as the previous instance. The next switch destroys that previous
   instance and constructs the new branch in the same slot. Switching back
@@ -713,15 +735,15 @@ this codebase, the current code wins:
   (exists), ``alias_parent_input`` pass-through (exists, the ``ParentInput``
   output-binding kind), key-value injection (with ``switch_``/``map_`` /
   ``mesh_``), and keyed write-through forwarding for ``map_`` / ``mesh_``
-  output. Everything else
-  (context import/export, REF adaptation across the boundary, recordable-state
-  pass-through) is rejected explicitly at wiring time until designed here.
+  output. REF adaptation is ordinary endpoint negotiation around those modes,
+  not a separate binding kind. Context import/export and recordable-state
+  pass-through remain rejected explicitly at wiring time until designed here.
 - **Sampled semantics on rebind.** Per the sampled-runtime contract, when
   ``switch_`` retargets the active branch at time *t*, the new child samples any
-  already-valid bound inputs at *t*. That happens by scheduling the child
-  through active input bind/rebind notification, not by bypassing normal graph
-  scheduling or forcing eval directly. We deliberately diverge from Python's
-  ``value = None`` reset.
+  already-valid bound inputs at *t*. ``switch_`` schedules the relevant
+  consumers as an explicit branch-selection operation; ``make_active`` remains
+  a subscription-only operation and does not fabricate a modification. We
+  deliberately diverge from Python's ``value = None`` reset.
 - **Stable payload storage is implemented.** Fixed nested graphs are part of
   the parent node's storage plan. ``map_`` mirrors ``__keys__`` slots into
   stable entry-plus-graph blocks; ``mesh_`` uses its own observed key-slot

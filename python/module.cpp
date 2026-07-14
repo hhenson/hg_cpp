@@ -1289,45 +1289,13 @@ namespace
         return shape;
     }
 
-    [[nodiscard]] bool py_node_should_evaluate(std::string_view layout, const TSInputView &args,
-                                               const NodeScheduler &scheduler)
-    {
-        if (scheduler.is_scheduled_now()) { return true; }
-        auto        bundle   = args.as_bundle();
-        std::size_t ts_index = 0;
-        for (const char kind : layout)
-        {
-            switch (kind)
-            {
-                // Activity is REAL and runtime-mutable (make_active /
-                // make_passive from python) — consult the link, not the
-                // static layout marker.
-                case 't':
-                case 'u':
-                case 'C':
-                case 'T':
-                case 'U':
-                case 'P': {
-                    auto child = bundle[ts_index++];
-                    if (child.active() && child.modified()) { return true; }
-                    break;
-                }
-                default: break;
-            }
-        }
-        return false;
-    }
-
     /**
      * Make python-node input activity REAL at the per-child link level.
      *
-     * The framework activates the packed ``args`` port as ONE root
-     * subscription; runtime ``make_passive()``/``make_active()`` from user
-     * code operates on the CHILD links, which that root subscription would
-     * bypass (a passivated child still notified through the bundle root).
-     * At start we activate each child per its layout marker and drop the
-     * root subscription, so per-child activity — including runtime changes
-     * from python code — is the single subscription model.
+     * The packed ``args`` port is declaratively passive. At start we activate
+     * each child per its layout marker, so per-child activity — including
+     * runtime changes from python code — is the single subscription model.
+     * Activity only controls subscription; it never schedules an evaluation.
      */
     void py_apply_input_activity(std::string_view layout, const TSInputView &args_view)
     {
@@ -1347,7 +1315,42 @@ namespace
                 default: break;
             }
         }
-        args.make_passive();   // the framework's root subscription
+        args.make_passive();   // retain the invariant if a caller changed the root link
+    }
+
+    /**
+     * A REF carries binding topology rather than target-value ticks. A directly
+     * bound active REF can therefore be valid before graph start without ever
+     * notifying its consumer. Request one explicit startup sample for that
+     * case; this is independent of make_active() and does not mark the input
+     * modified. Required invalid inputs remain guarded by py_assemble_args().
+     */
+    void py_schedule_initial_reference_sample(std::string_view layout, const TSInputView &args,
+                                              SingleShotScheduler scheduler)
+    {
+        auto        bundle   = args.as_bundle();
+        std::size_t ts_index = 0;
+        for (const char kind : layout)
+        {
+            switch (kind)
+            {
+                case 't':
+                case 'u':
+                case 'C': {
+                    auto child = bundle[ts_index++];
+                    if (child.valid() && TypeRegistry::contains_ref(child.schema()))
+                    {
+                        scheduler.schedule_now();
+                        return;
+                    }
+                    break;
+                }
+                case 'T':
+                case 'U':
+                case 'P': ++ts_index; break;
+                default: break;
+            }
+        }
     }
 
     /** The stop-side mirror: every child link goes passive (including any the
@@ -1563,20 +1566,24 @@ namespace
         static constexpr auto name = "__py_compute";
         static constexpr std::string_view implementation_label = "hgraph.python.compute";
 
-        static void start(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+        static void start(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
                           Scalar<"config", Str> eval_config,
                           Scalar<"start_fn", PyNodeRef> fn, Scalar<"start_enabled", Bool> enabled,
                           Scalar<"start_config", Str> config,
                           Scalar<"start_scalars", ScalarVar<"SSV">> scalars,
-                          State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
+                          State<PyStateRef> state, NodeScheduler scheduler, SingleShotScheduler initial_sample,
+                          DateTime now,
                           GlobalStateView global_state)
         {
-            py_apply_input_activity(parse_py_call_shape(eval_config.value()).layout, args.base());
+            const auto layout = parse_py_call_shape(eval_config.value()).layout;
+            py_apply_input_activity(layout, args.base());
+            py_schedule_initial_reference_sample(layout, args.base(), initial_sample);
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
                               global_state);
         }
 
-        static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked> args, Scalar<"fn", PyNodeRef> fn,
+        static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
+                         Scalar<"fn", PyNodeRef> fn,
                          Scalar<"config", Str> config, Scalar<"scalars", ScalarVar<"SV">> scalars,
                          Scalar<"start_fn", PyNodeRef> start_fn, Scalar<"start_enabled", Bool> start_enabled,
                          Scalar<"start_config", Str> start_config,
@@ -1596,7 +1603,6 @@ namespace
             static_cast<void>(stop_config);
             static_cast<void>(stop_scalars);
             const PyCallShape shape = parse_py_call_shape(config.value());
-            if (!py_node_should_evaluate(shape.layout, args.base(), scheduler)) { return; }
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
@@ -1619,7 +1625,7 @@ namespace
             guard->alive = false;
         }
 
-        static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+        static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
                          Scalar<"config", Str> eval_config,
                          Scalar<"stop_fn", PyNodeRef> fn, Scalar<"stop_enabled", Bool> enabled,
                          Scalar<"stop_config", Str> config,
@@ -1658,15 +1664,16 @@ namespace
             resolution.bind_ts("RS", schema->meta);
         }
 
-        static void start(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
-                          Scalar<"config", Str> eval_config)
+        static void start(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
+                          Scalar<"config", Str> eval_config, SingleShotScheduler initial_sample)
         {
-            py_apply_input_activity(
-                parse_py_call_shape(eval_config.value()).layout, args.base());
+            const auto layout = parse_py_call_shape(eval_config.value()).layout;
+            py_apply_input_activity(layout, args.base());
+            py_schedule_initial_reference_sample(layout, args.base(), initial_sample);
         }
 
         static void eval(
-            In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+            In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
             Scalar<"fn", PyNodeRef> fn, Scalar<"config", Str> config,
             Scalar<"scalars", ScalarVar<"SV">> scalars,
             Scalar<"recordable_state_schema", PyTsMetaRef> recordable_state_schema,
@@ -1691,8 +1698,6 @@ namespace
             static_cast<void>(stop_config);
             static_cast<void>(stop_scalars);
             const PyCallShape shape = parse_py_call_shape(config.value());
-            if (!py_node_should_evaluate(shape.layout, args.base(), scheduler)) { return; }
-
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
@@ -1720,7 +1725,7 @@ namespace
             guard->alive = false;
         }
 
-        static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+        static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
                          Scalar<"config", Str> eval_config)
         {
             py_clear_input_activity(
@@ -1733,20 +1738,24 @@ namespace
         static constexpr auto name = "__py_sink";
         static constexpr std::string_view implementation_label = "hgraph.python.sink";
 
-        static void start(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+        static void start(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
                           Scalar<"config", Str> eval_config,
                           Scalar<"start_fn", PyNodeRef> fn, Scalar<"start_enabled", Bool> enabled,
                           Scalar<"start_config", Str> config,
                           Scalar<"start_scalars", ScalarVar<"SSV">> scalars,
-                          State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
+                          State<PyStateRef> state, NodeScheduler scheduler, SingleShotScheduler initial_sample,
+                          DateTime now,
                           GlobalStateView global_state)
         {
-            py_apply_input_activity(parse_py_call_shape(eval_config.value()).layout, args.base());
+            const auto layout = parse_py_call_shape(eval_config.value()).layout;
+            py_apply_input_activity(layout, args.base());
+            py_schedule_initial_reference_sample(layout, args.base(), initial_sample);
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler, now,
                               global_state);
         }
 
-        static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked> args, Scalar<"fn", PyNodeRef> fn,
+        static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
+                         Scalar<"fn", PyNodeRef> fn,
                          Scalar<"config", Str> config, Scalar<"scalars", ScalarVar<"SV">> scalars,
                          Scalar<"start_fn", PyNodeRef> start_fn, Scalar<"start_enabled", Bool> start_enabled,
                          Scalar<"start_config", Str> start_config,
@@ -1766,7 +1775,6 @@ namespace
             static_cast<void>(stop_config);
             static_cast<void>(stop_scalars);
             const PyCallShape shape = parse_py_call_shape(config.value());
-            if (!py_node_should_evaluate(shape.layout, args.base(), scheduler)) { return; }
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
@@ -1786,7 +1794,7 @@ namespace
             guard->alive = false;
         }
 
-        static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+        static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
                          Scalar<"config", Str> eval_config,
                          Scalar<"stop_fn", PyNodeRef> fn, Scalar<"stop_enabled", Bool> enabled,
                          Scalar<"stop_config", Str> config,

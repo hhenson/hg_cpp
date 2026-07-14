@@ -1,7 +1,7 @@
 #ifndef HGRAPH_RUNTIME_NESTED_BINDINGS_H
 #define HGRAPH_RUNTIME_NESTED_BINDINGS_H
 
-#include <hgraph/runtime/graph.h>
+#include <hgraph/runtime/nested_graph_node.h>
 #include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/time_series/ts_input/detail.h>
 #include <hgraph/types/time_series/ts_output.h>
@@ -204,6 +204,79 @@ namespace hgraph
                                                             const std::vector<std::size_t> &path)
     {
         return walk_source_to_output(std::move(root), std::span<const std::size_t>{path});
+    }
+
+    [[nodiscard]] inline bool nested_input_binding_has_valid_active_target(
+        const NodeView &node,
+        DateTime evaluation_time,
+        std::span<const std::size_t> target_path)
+    {
+        const auto *schema = node.schema();
+        if (schema == nullptr || schema->input_schema == nullptr) { return false; }
+
+        auto input = node.input(evaluation_time);
+        if (!target_path.empty())
+        {
+            bool active = input.active();
+            for (const std::size_t component : target_path)
+            {
+                input = input.indexed_child_at(component);
+                active = active || input.active();
+            }
+            return active && input.valid();
+        }
+        if (schema->input_schema->kind != TSTypeKind::TSB)
+        {
+            return input.active() && input.valid();
+        }
+
+        const auto bundle = input.as_bundle();
+        for (std::size_t slot = 0; slot < schema->input_schema->field_count(); ++slot)
+        {
+            const auto child = bundle[slot];
+            if (child.active() && child.valid()) { return true; }
+        }
+        return false;
+    }
+
+    /**
+     * Schedule the active consumers of already-valid boundary inputs after a
+     * newly constructed child graph starts. Startup first establishes the
+     * actual endpoint activity, including custom nodes whose activity is more
+     * precise than their root schema. Declaratively passive child inputs remain
+     * passive and cannot trigger this sample.
+     *
+     * This is the explicit sampled-initialization step owned by nested graph
+     * lifecycle code. Input activation only establishes subscriptions; it does
+     * not schedule a node or fabricate modified state.
+     */
+    inline void schedule_sampled_input_consumers(
+        const GraphView &child,
+        DateTime evaluation_time,
+        std::span<const NestedGraphInputBinding> bindings)
+    {
+        for (const NestedGraphInputBinding &binding : bindings)
+        {
+            const auto node = child.node_at(binding.target.node);
+            if (nested_input_binding_has_valid_active_target(
+                    node,
+                    evaluation_time,
+                    binding.target.path))
+            {
+                child.schedule_node(binding.target.node, evaluation_time);
+            }
+        }
+    }
+
+    inline void schedule_sampled_input_consumers(
+        const GraphView &child,
+        DateTime evaluation_time,
+        const std::vector<NestedGraphInputBinding> &bindings)
+    {
+        schedule_sampled_input_consumers(
+            child,
+            evaluation_time,
+            std::span<const NestedGraphInputBinding>{bindings});
     }
 }  // namespace hgraph
 

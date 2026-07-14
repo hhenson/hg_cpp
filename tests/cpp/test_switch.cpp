@@ -10,6 +10,7 @@
 // is named "key". See the developer guide *Nested Graphs*.
 
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/record_replay.h>
@@ -107,6 +108,70 @@ namespace
         }
     };
 
+    struct PassiveEcho
+    {
+        static constexpr auto name = "passive_echo";
+
+        static void eval(In<"ts", TS<Int>, InputActivity::Passive> ts, Out<TS<Int>> out)
+        {
+            out.set(ts.value());
+        }
+    };
+
+    using SwitchSignalBundle = UnNamedTSB<Field<"p1", TS<Int>>, Field<"p2", TS<Str>>>;
+
+    struct PeeredBundleBranch
+    {
+        static constexpr auto name = "peered_bundle_branch";
+
+        static void eval(In<"p1", TS<Int>, InputValidity::Unchecked> p1,
+                         In<"p2", TS<Str>, InputValidity::Unchecked> p2,
+                         Out<SwitchSignalBundle> out)
+        {
+            if (p1.valid()) { out.field<"p1">().set(p1.value()); }
+            if (p2.valid()) { out.field<"p2">().set(p2.value()); }
+        }
+    };
+
+    struct StructuralBundleBranch
+    {
+        static constexpr auto name = "structural_bundle_branch";
+
+        static Port<SwitchSignalBundle> compose(Wiring &w, Port<TS<Int>> p1, Port<TS<Str>> p2)
+        {
+            auto structural = stdlib::to_tsb<SwitchSignalBundle>(w, p1, p2);
+            return wire<stdlib::pass_through_node>(w, structural).as<SwitchSignalBundle>();
+        }
+    };
+
+    struct SignalTick
+    {
+        static constexpr auto name = "signal_tick";
+
+        static void eval(In<"signal", SIGNAL>, Out<TS<Bool>> out)
+        {
+            out.set(true);
+        }
+    };
+
+    struct SwitchBundleSignalGraph
+    {
+        static constexpr auto name = "switch_bundle_signal_graph";
+
+        static Port<TS<Bool>> compose(Wiring &w,
+                                      Port<TS<Bool>> structural,
+                                      Port<TS<Int>> p1,
+                                      Port<TS<Str>> p2)
+        {
+            auto bundle = wire<stdlib::switch_>(
+                w, structural,
+                stdlib::switch_cases({{Value{false}, fn<PeeredBundleBranch>()},
+                                      {Value{true}, fn<StructuralBundleBranch>()}}),
+                p1, p2);
+            return wire<SignalTick>(w, bundle);
+        }
+    };
+
     struct SwitchStorageRecorderTag
     {
     };
@@ -176,6 +241,19 @@ TEST_CASE("switch_: the key selects the branch and a swap samples the held input
                  values<Int>(6, 8, -4, -5));
 }
 
+TEST_CASE("switch_: selecting a branch does not sample a passive held input")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::switch_>(
+                     values<Str>(Str{"active"}, none, Str{"passive"}, none),
+                     stdlib::switch_cases({{Value{Str{"active"}}, fn<Doubler>()},
+                                           {Value{Str{"passive"}}, fn<PassiveEcho>()}}),
+                     values<Int>(3, 4, none, 5)),
+                 values<Int>(6, 8, none, none));
+}
+
 TEST_CASE("switch_: an unmatched key falls through to the default branch")
 {
     using namespace hgraph;
@@ -199,6 +277,17 @@ TEST_CASE("switch_: a branch may return a parent input directly")
                                            {Value{Str{"double"}}, fn<Doubler>()}}),
                      values<Int>(3, 4, none, 5, 6)),
                  values<Int>(3, 4, 8, 5, 6));
+}
+
+TEST_CASE("switch_: peered and structural TSB branches notify SIGNAL on every retarget")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<SwitchBundleSignalGraph>(values<Bool>(none, false, true, false),
+                                                     values<Int>(none, 1, none, none),
+                                                     values<Str>(none, none, Str{"b"})),
+                 values<Bool>(none, true, true, true));
 }
 
 TEST_CASE("switch_: a branch may consume the key as its first argument (mixed arities)")

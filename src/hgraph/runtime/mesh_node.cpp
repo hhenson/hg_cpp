@@ -552,6 +552,8 @@ namespace hgraph
             bind_instance_inputs(view, context, entry, evaluation_time);
             bind_instance_output(view, context, entry, evaluation_time);
             entry.graph.view().start(evaluation_time);
+            schedule_sampled_input_consumers(
+                entry.graph.view(), evaluation_time, spec.child.input_bindings);
             rollback.release();
 
             storage.max_rank = std::max(storage.max_rank, rank);

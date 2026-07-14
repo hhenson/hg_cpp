@@ -188,13 +188,7 @@ namespace hgraph
     {
         void TSInputViewOps::make_active(TSInputView &view) const
         {
-            const bool was_active = view.active();
             view.data_.make_active(view.input_, view.scheduling_notifier_);
-            if (!was_active && view.scheduling_notifier_ != nullptr && view.evaluation_time_ != MIN_DT &&
-                view.active() && view.valid())
-            {
-                view.scheduling_notifier_->notify(view.evaluation_time_);
-            }
         }
 
         void TSInputViewOps::make_passive(TSInputView &view) const

@@ -55,13 +55,13 @@ The important corrections to the previous roadmap are:
   raw ``operator_names()`` count is intentionally larger and is not the parity
   numerator.
 
-The completed A3 and structural-REF working tree passed the full acceptance
+The completed A3 and compiled-boundary REF working tree passed the full acceptance
 gates on both local platforms:
 
-- macOS arm64, AppleClang 21, Release with warnings as errors: 1001/1001 native
-  tests; a ``cp312-abi3`` wheel installed under Python 3.14.6 produced 979
-  passed, 28 skipped, 4 xfailed, and 6 deselected;
-- Ubuntu 24.04 x86_64, GCC 13.3, Release with warnings as errors: 1001/1001 native
+- macOS arm64, AppleClang 21, Release with warnings as errors: 1007/1007 native
+  tests; a ``cp312-abi3`` wheel installed under Python 3.14.6 produced 980
+  passed, 27 skipped, 4 xfailed, and 6 deselected;
+- Ubuntu 24.04 x86_64, GCC 13.3, Release with warnings as errors: 1007/1007 native
   tests; the Linux ``cp312-abi3`` wheel under Python 3.14.6 produced the same
   Python result; and
 - the preceding keyed structural-REF baseline also passed Ubuntu 24.04 x86_64,
@@ -86,8 +86,9 @@ the following are true:
 1. **Met (2026-07-14):** mutable Python ``_output`` views work for the
    supported output kinds and are callback-scoped, with equivalent native C++
    output-mutation coverage.
-2. The remaining compiled-boundary REF and generic-graph cases are either
-   implemented through C++ wiring or explicitly accepted as restrictions.
+2. Compiled-boundary REF adaptation is met.  The remaining generic-graph cases
+   are either implemented through C++ wiring or explicitly accepted as
+   restrictions.
 3. The unported upstream ``_wiring`` and ``ts_tests`` inventories have been
    reviewed against a recorded upstream revision.  Required cases must be
    ported; irrelevant internals and accepted deviations must be listed rather
@@ -96,10 +97,11 @@ the following are true:
 4. Every supported Python-visible runtime behaviour has an equivalent public
    C++ wiring route and comparable behavioural tests.  Bridge-only syntax and
    arbitrary Python-object adaptation are the narrow exceptions.
-5. **Met for A3 and structural REFs:** the full macOS and Linux native and
+5. **Met for A3 and compiled-boundary REFs:** the full macOS and Linux native and
    Python 3.14 gates pass.  Large ownership, nested-graph, or cross-language
-   changes must additionally pass the local Linux and sanitizer gates specified
-   in ``AGENTS.md``; A3 passed those gates as recorded above.
+   changes must additionally pass the local Linux gates specified in
+   ``AGENTS.md``; lifetime and memory-safety work also requires the sanitizer
+   gate.  A3 passed that sanitizer gate as recorded above.
 
 Priority 0: Mutable Python Outputs
 ----------------------------------
@@ -165,9 +167,16 @@ Those Python contracts also exercise generator sources yielding an EMPTY
 reference at relative ``timedelta(0)``, so the bridge generator accepts both
 relative ``timedelta`` and absolute ``datetime`` schedules.
 
-**Remaining:**
-
-- the still-rejected REF adaptation modes at compiled sub-graph boundaries.
+**Landed for compiled sub-graph boundaries (2026-07-14):** REF-transparent
+schema negotiation now works in both directions across a nested graph input,
+through ``ParentInput`` pass-through, and from a child-produced REF output to
+an outer plain consumer.  The boundary continues to carry ordinary output
+handles; to-REF and from-REF alternatives remain the single implementation of
+reference adaptation.  Nested schedule push delegation clamps notifications
+from an idle child's stale clock to the parent's active cycle, which preserves
+sampled retargeting without scheduling the parent in the past.  Public C++
+``eval_node`` tests cover live scalar retargets, pass-through, child output,
+and fixed structural source adaptation.
 
 The current value-only Python REF contract remains in force: a Python REF has
 no ``.output``.  Fixes must use the C++ binding alternatives and sampled

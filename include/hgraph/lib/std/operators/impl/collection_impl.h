@@ -2632,6 +2632,11 @@ namespace hgraph::stdlib
         struct combine_tsd_tsls
         {
             static constexpr auto name = "combine_tsd_tsls";
+            // The value side is reference topology. Its references are bound
+            // before graph start and do not produce a data tick merely because
+            // the input becomes active, so publish the initial topology
+            // explicitly in the start cycle.
+            static constexpr bool schedule_on_start = true;
 
             static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
             {
@@ -2686,6 +2691,7 @@ namespace hgraph::stdlib
         struct combine_tsd_tuple_values
         {
             static constexpr auto name = "combine_tsd_tuple_values";
+            static constexpr bool schedule_on_start = true;
 
             [[nodiscard]] static const ValueTypeMetaData *keys_meta(OperatorCallContext context)
             {

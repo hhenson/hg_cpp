@@ -347,6 +347,8 @@ namespace hgraph
                                                      key_source,
                                                      spec.output_binding_mode);
             entry.graph.view().start(evaluation_time);
+            schedule_sampled_input_consumers(
+                entry.graph.view(), evaluation_time, spec.child.input_bindings);
             rollback.release();
         }
 

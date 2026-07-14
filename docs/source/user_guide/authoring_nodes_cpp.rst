@@ -906,6 +906,13 @@ the Python form lists them on the decorator.
    themselves schedule evaluation. Omitting an activity flag is
    ``InputActivity::Active``.
 
+Calling ``make_active()`` or ``make_passive()`` only changes the input's
+subscription state. It never schedules the node and never changes the input's
+``modified()`` result. Static C++ nodes with an active ``REF`` input receive one
+separate startup sample because the initial reference binding is established
+before graph start; later active REF rebinds notify through the normal input
+subscription.
+
 ``InputValidity::Unchecked``
    The input does not participate in the readiness check. The node body must
    check ``valid()`` before reading its value.

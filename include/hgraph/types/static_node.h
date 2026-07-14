@@ -2426,6 +2426,38 @@ namespace hgraph
             return {};
         }
 
+        /**
+         * A reference input's initial binding exists before graph start and is
+         * not a runtime modification. Active C++ reference consumers therefore
+         * need one explicit startup sample; later reference rebinds arrive via
+         * the normal subscription path. Passive reference inputs deliberately
+         * do not opt into this policy.
+         */
+        [[nodiscard]] inline bool has_active_reference_input(const NodeTypeMetaData &schema)
+        {
+            const auto *input = schema.input_schema;
+            if (input == nullptr) { return false; }
+
+            const auto active = [&](std::size_t slot) {
+                if (!schema.active_inputs.has_value()) { return true; }
+                for (const std::size_t active_slot : *schema.active_inputs)
+                {
+                    if (active_slot == slot) { return true; }
+                }
+                return false;
+            };
+
+            if (input->kind != TSTypeKind::TSB)
+            {
+                return active(0) && TypeRegistry::contains_ref(input);
+            }
+            for (std::size_t slot = 0; slot < input->field_count(); ++slot)
+            {
+                if (active(slot) && TypeRegistry::contains_ref(input->fields()[slot].type)) { return true; }
+            }
+            return false;
+        }
+
         template <typename TImplementation>
         [[nodiscard]] NodeTypeMetaData static_node_schema_base()
         {
@@ -2487,6 +2519,7 @@ namespace hgraph
             schema.state_schema            = signature::state_schema();
             schema.scalar_schema           = signature::scalar_schema();
             schema.recordable_state_schema = signature::recordable_state_schema();
+            schema.schedule_on_start = schema.schedule_on_start || has_active_reference_input(schema);
             return StaticNodeBuilderParts<TImplementation>{
                 .schema         = std::move(schema),
                 .callbacks      = static_node_callbacks<TImplementation>(),
@@ -2508,6 +2541,7 @@ namespace hgraph
             schema.state_schema            = signature::state_schema(resolution);
             schema.scalar_schema           = signature::scalar_schema(resolution);
             schema.recordable_state_schema = signature::recordable_state_schema(resolution);
+            schema.schedule_on_start = schema.schedule_on_start || has_active_reference_input(schema);
             return StaticNodeBuilderParts<TImplementation>{
                 .schema         = std::move(schema),
                 .callbacks      = static_node_callbacks<TImplementation>(),

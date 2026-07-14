@@ -655,13 +655,29 @@ namespace hgraph
         void nested_schedule_node_impl(const void *context, const GraphView &graph, std::size_t node_index,
                                        DateTime when)
         {
-            schedule_node_impl<NestedGraphRuntimeStorage>(context, graph, node_index, when);
-
             const auto &runtime = graph_context(context);
             auto       &state = graph_header<NestedGraphRuntimeStorage>(runtime, graph.data());
-            if (!state.started || state.evaluating) { return; }
+            auto        parent = state.parent_node();
 
-            auto parent = state.parent_node();
+            // An idle child retains the time of its last evaluation while its
+            // parent may already be processing a later cycle. A cross-boundary
+            // notification (notably a REF rebind that samples an older target)
+            // must run in the parent's current cycle, never schedule either
+            // graph back at the child's stale clock.
+            when = std::max(when, parent.graph().evaluation_time());
+            schedule_node_impl<NestedGraphRuntimeStorage>(context, graph, node_index, when);
+
+            // An idle child can receive a current-cycle schedule immediately
+            // after startup. The per-node entry is authoritative, but keyed
+            // parents use this cache to decide which children are due. Graph
+            // startup normally rebuilds the cache after node start hooks; this
+            // post-start path must maintain the same invariant explicitly.
+            if (state.started && !state.evaluating && when < state.next_scheduled_time)
+            {
+                state.next_scheduled_time = when;
+            }
+
+            if (!state.started || state.evaluating) { return; }
             parent.graph().schedule_node(parent.node_index(), when);
         }
 

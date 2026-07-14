@@ -185,10 +185,13 @@ components:
   activates each packed input child per its ``active=`` policy and drops the
   framework's root subscription; the stop hook passivates every child (a
   stopped ``map_`` child must never be re-woken by a lingering subscription);
-  and the evaluation guard consults the LIVE link activity. hgraph's runtime
+  the runtime scheduler remains the sole invocation gate. hgraph's runtime
   ``ts.make_passive()`` / ``ts.make_active()`` therefore work from Python
   node code (the ``until_true`` / ``freeze`` / ``take``-with-reset family).
-  Scheduler events still wake nodes declared with ``active=()``;
+  Activation itself never schedules or fabricates a modified tick. An active,
+  already-valid ``REF`` argument requests one explicit startup sample because
+  its initial binding predates graph start. Scheduler events still wake nodes
+  declared with ``active=()``;
 - ``lift(fn, inputs=..., output=...)`` wraps a plain scalar function as a
   compute node (scalar annotations become ``TS[...]``; time-series views
   unwrap to ``value if valid else None`` before the call);

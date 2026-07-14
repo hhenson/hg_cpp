@@ -969,6 +969,11 @@ namespace hgraph::stdlib
     struct tsb_ref_field_node
     {
         static constexpr const char *name = OpName.value;
+        // A directly bound REF is already value-valid before graph start. The
+        // initial field reference is therefore an explicit startup sample;
+        // input activation only establishes the subscription used by later
+        // rebinds.
+        static constexpr bool schedule_on_start = true;
 
         [[nodiscard]] static const TSValueTypeMetaData *field_schema(OperatorCallContext context)
         {

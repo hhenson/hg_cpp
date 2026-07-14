@@ -229,7 +229,12 @@ namespace hgraph
             storage.active_spec = &spec;
 
             bind_branch_output(view, spec, next, evaluation_time);
+            // Selecting a branch samples the current boundary values once.
+            // This is an explicit switch_ lifecycle operation: activating an
+            // input only subscribes it and must never synthesize scheduling or
+            // modification state.
             next.start(evaluation_time);
+            schedule_sampled_input_consumers(next, evaluation_time, spec.input_bindings);
         }
 
         // Single active child: propagate its pause directly. On resume, re-binding is
@@ -263,10 +268,6 @@ namespace hgraph
                     }
 
                     activate_branch(view, context, storage, *spec, std::move(key_value), evaluation_time);
-
-                    // Sampled rebind (the sampled-runtime contract): binding an
-                    // active child input to an already-valid source schedules the
-                    // child through the input notification path.
                 }
             }
 
