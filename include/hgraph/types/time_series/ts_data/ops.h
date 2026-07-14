@@ -130,6 +130,12 @@ namespace hgraph
         bool (*has_current_value_impl)(const void *context,
                                        const void *memory) = &ts_data_detail::missing_has_current_value;
         bool (*all_valid_impl)(const void *context, const void *memory) = &ts_data_detail::missing_all_valid;
+        // Optional whole-view projection for aliases whose runtime value
+        // binding cannot be represented by this table's fixed layout.
+        ValueView (*value_view_impl)(const void *context, const void *memory) = nullptr;
+        ValueView (*delta_view_impl)(const void *context,
+                                     const void *memory,
+                                     DateTime evaluation_time) = nullptr;
         const void *(*value_memory_impl)(const void *context,
                                          const void *memory) = &ts_data_detail::missing_value_memory;
         void *(*mutable_value_memory_impl)(const void *context,

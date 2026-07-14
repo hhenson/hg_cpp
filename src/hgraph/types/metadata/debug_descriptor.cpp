@@ -147,7 +147,13 @@ namespace hgraph
                 if (layout != DebugLayoutKind::Sequence && layout != DebugLayoutKind::KeyedSlots)
                     throw std::invalid_argument("dynamic debug descriptor requires sequence or keyed-slots layout");
                 if (!dynamic_layout.valid())
-                    throw std::invalid_argument("dynamic debug descriptor requires a valid dynamic layout");
+                    throw std::invalid_argument(
+                        "dynamic debug descriptor requires a valid dynamic layout (kind=" +
+                        std::to_string(static_cast<unsigned>(dynamic_layout.kind)) +
+                        ", flags=" +
+                        std::to_string(static_cast<std::uint32_t>(dynamic_layout.flags)) +
+                        ", size_offset=" + std::to_string(dynamic_layout.size_offset) +
+                        ", stride=" + std::to_string(dynamic_layout.stride) + ")");
                 if (element_type == nullptr)
                     throw std::invalid_argument("dynamic debug descriptor requires an element type");
                 if (layout == DebugLayoutKind::Sequence && key_type != nullptr)

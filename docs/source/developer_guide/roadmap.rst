@@ -49,7 +49,7 @@ The important corrections to the previous roadmap are:
   ``python/tests/ported/_operators``.  The wiring tier is only a selected port:
   19 files are present under ``python/tests/ported/_wiring``.  It must not be
   described as the entire upstream wiring suite.
-- The current operator inventory is **133 registered**, **1 declared-only**,
+- The current operator inventory is **134 registered**, **0 declared-only**,
   **7 missing**, and **24 equivalent APIs** out of the 165 upstream public
   definitions.  Use :doc:`parity_matrix` for the per-module inventory.  The
   bridge registry also contains internal and compatibility operators, so its
@@ -76,6 +76,16 @@ installed under Python 3.14.6, produced 990 passed, 22 skipped, and 6
 deselected, with no remaining xfails.  This follow-on did not change nested
 storage, ownership, or cross-language lifetime behaviour, so the Linux and
 sanitizer evidence above remains the applicable baseline for those areas.
+
+The C++-first ``downcast_ref`` follow-on passed clean macOS arm64/AppleClang 21
+and Ubuntu 24.04 x86_64/GCC 13.3 Release gates with 1026/1026 native tests on
+each platform, with warnings as errors.  Rebuilt ``cp312-abi3`` wheels installed
+under Python 3.14.6 produced 991 passed, 22 skipped, and 6 deselected on each
+platform.  The tests cover native wiring, concrete closed-union views,
+zero-storage leaves, and both dense and elided Python recording.  The same
+working tree also passed the Ubuntu GCC 13.3 Debug bridge build with
+AddressSanitizer enabled: the full suite under Python 3.12.3 produced 991
+passed, 22 skipped, and 6 deselected with no sanitizer report.
 
 These are execution results, not collection-only inventory.
 
@@ -276,7 +286,7 @@ Priority 3: Catalogue and Operations
 The catalogue is no longer the critical path for Python authoring.  Additions
 should be driven by supported applications or the compatibility inventory.
 
-**Landed:** 133 upstream public operator definitions are registry-resolvable;
+**Landed:** 134 upstream public operator definitions are registry-resolvable;
 the stream, window, analytical, conversion, JSON, table, dataframe/Frame,
 Series, TSD/TSL/TSS, IO, compare, and record/replay families all have usable
 coverage.  ``Frame`` and ``Series`` use Arrow-native storage and bridge through
@@ -284,7 +294,6 @@ the Arrow C interfaces.
 
 **Remaining inventory:**
 
-- declared-only: ``downcast_ref``;
 - missing public names: ``apply``, ``dedup_builder``, ``stop_engine``,
   ``collect_builder``, ``table_shape``, ``table_shape_from_schema``, and
   ``shape_of_table_type``; and

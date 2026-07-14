@@ -100,12 +100,28 @@ namespace hgraph::detail
             return target.value().data();
         }
 
+        [[nodiscard]] ValueView target_link_value_view(const void *context, const void *memory)
+        {
+            const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
+            const auto  target = link != nullptr ? link->target_view() : TSDataView{};
+            return target.valid() ? target.value() : ValueView{};
+        }
+
         [[nodiscard]] const void *target_link_delta_memory(const void *context, const void *memory)
         {
             const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
             const auto  target = link != nullptr ? link->target_view() : TSDataView{};
             const auto  evaluation_time = link != nullptr ? link->tracking.last_modified_time : MIN_DT;
             return target.delta_value(evaluation_time).data();
+        }
+
+        [[nodiscard]] ValueView target_link_delta_view(const void *context,
+                                                        const void *memory,
+                                                        DateTime evaluation_time)
+        {
+            const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
+            const auto  target = link != nullptr ? link->target_view() : TSDataView{};
+            return target.valid() ? target.delta_value(evaluation_time) : ValueView{};
         }
 
         [[nodiscard]] TSDataView target_link_target_view(const void *context, const void *memory)
@@ -1039,6 +1055,8 @@ namespace hgraph::detail
                 .mutable_tracking_impl     = &target_link_mutable_tracking,
                 .has_current_value_impl    = &target_link_has_current_value,
                 .all_valid_impl            = &target_link_all_valid,
+                .value_view_impl           = &target_link_value_view,
+                .delta_view_impl           = &target_link_delta_view,
                 .value_memory_impl         = &target_link_value_memory,
                 .delta_memory_impl         = &target_link_delta_memory,
                 .record_child_modified_impl = &target_link_record_child_modified,

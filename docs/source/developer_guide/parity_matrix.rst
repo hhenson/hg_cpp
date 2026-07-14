@@ -38,7 +38,7 @@ Operator catalogue
 ------------------
 
 Of the **165** public operator definitions in ``hgraph/_operators``:
-**133 registered**, **1 declared-only**, **7 missing** — **24** further names
+**134 registered**, **0 declared-only**, **7 missing** — **24** further names
 are covered by equivalent C++/bridge APIs (snapshot regenerated 2026-07-13 at
 the close of the operator-test port; the counts come from comparing
 ``operator_names()`` and the catalogue markers against the upstream scan).
@@ -153,10 +153,10 @@ the close of the operator-test port; the counts come from comparing
      - 0
      - equiv-API: compute_set_delta
    * - Type ops (``type_operators``)
-     - 1
-     - 1
+     - 2
      - 0
-     - ``downcast_ref`` · equiv-API: ``cast_``
+     - 0
+     - equiv-API: ``cast_``
 
 Notes on the residue:
 
@@ -167,8 +167,9 @@ Notes on the residue:
   decisions. The ``table_shape`` helper trio is upstream sugar over
   ``table_schema`` (add on demand).
 - ``downcast_`` performs checked narrowing from a graph-realized closed
-  CompoundScalar Bundle union to a derived ``TS``; *downcast_ref* remains
-  declared-only.
+  CompoundScalar Bundle union to a derived ``TS``. ``downcast_ref`` performs
+  the corresponding unchecked reference narrowing in C++; the Python helper
+  only adapts the ``downcast_ref(Type, ts)`` syntax.
 - The equiv-API names live in ``hgraph._table`` (bitemporal config +
   ``TableSchema``), the record/replay config/traits shims, the JSON builders,
   and small python helpers (``accumulate``/``average``,

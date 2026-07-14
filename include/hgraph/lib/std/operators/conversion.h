@@ -72,7 +72,8 @@ namespace hgraph::stdlib
     };
 
     /** ``downcast_ref`` — downcast a ``REF`` to a derived type (fast, unchecked). */
-    struct downcast_ref : Operator<"downcast_ref", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct downcast_ref
+        : Operator<"downcast_ref", In<"ts", REF<TsVar<"S">>>, Out<REF<TsVar<"O">>>>
     {
     };
 

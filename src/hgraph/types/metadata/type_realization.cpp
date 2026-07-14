@@ -9,6 +9,7 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/compact_container_ops.h>
 #include <hgraph/types/value/container_ops.h>
+#include <hgraph/types/value/mutable_container_ops.h>
 #include <hgraph/types/value/value_range.h>
 #include <hgraph/util/scope.h>
 
@@ -631,6 +632,23 @@ namespace hgraph
             }
 
             auto &factory = ValuePlanFactory::instance();
+            if (!schema->is_owned() && schema->value_kind() == ValueTypeKind::List)
+            {
+                const auto element = type_for_locked(schema->element_type);
+                if (element != factory.type_for(schema->element_type))
+                {
+                    if (schema->fixed_size != 0)
+                    {
+                        throw std::logic_error(
+                            "polymorphic Bundle elements are not supported in fixed List schemas");
+                    }
+                    const auto result = schema->is_mutable() ? mutable_list_type(element)
+                                                              : compact_list_type(element, *schema);
+                    exact_types.emplace(schema, result);
+                    return result;
+                }
+            }
+
             const auto canonical = factory.type_for(schema);
             if (schema->is_owned())
             {
@@ -655,19 +673,8 @@ namespace hgraph
                     if (changed) { result = factory.realized_composite_type_for(schema, fields); }
                     break;
                 }
-                case ValueTypeKind::List: {
-                    const auto element = type_for_locked(schema->element_type);
-                    if (element != factory.type_for(schema->element_type))
-                    {
-                        if (schema->fixed_size != 0 || schema->is_mutable())
-                        {
-                            throw std::logic_error(
-                                "polymorphic Bundle elements are not supported in fixed or mutable List schemas");
-                        }
-                        result = compact_list_type(element, *schema);
-                    }
+                case ValueTypeKind::List:
                     break;
-                }
                 case ValueTypeKind::Set: {
                     const auto element = type_for_locked(schema->element_type);
                     if (element != factory.type_for(schema->element_type))

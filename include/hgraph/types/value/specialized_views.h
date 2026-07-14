@@ -404,7 +404,8 @@ namespace hgraph
             require_element(element, "push_back");
             const auto *ops = mutable_ops("push_back");
             specialized_view_detail::require_mutation_hook(ops->push_back, "MutableListView", "push_back",
-                                                            "push_back")(nullptr, mutable_data(), element.data());
+                                                            "push_back")(nullptr, mutable_data(), element.binding(),
+                                                                         element.data());
         }
 
         /** Replace the element at ``index`` with a copy of ``element``. */
@@ -414,7 +415,7 @@ namespace hgraph
             const auto *ops = mutable_ops("set");
             specialized_view_detail::require_mutation_hook(ops->set_element, "MutableListView", "set",
                                                             "set_element")(nullptr, mutable_data(), index,
-                                                                           element.data());
+                                                                           element.binding(), element.data());
         }
 
         /** Remove the element at ``index``, shifting later elements down. */
@@ -461,9 +462,12 @@ namespace hgraph
         }
         void require_element(const ValueView &element, const char *what) const
         {
-            if (!element.valid() || element.schema() != element_schema())
+            const auto *ops = mutable_ops(what);
+            const auto expected = ops->element_binding(ops->context, data(), 0);
+            if (!element.valid() || !expected ||
+                !expected.ops_ref().accepts_source(expected, element.binding()))
             {
-                throw std::logic_error(std::string{"MutableListView::"} + what + ": element schema mismatch");
+                throw std::logic_error(std::string{"MutableListView::"} + what + ": element binding mismatch");
             }
         }
     };

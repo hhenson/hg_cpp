@@ -3,7 +3,7 @@ from typing import Union
 
 import pytest
 
-from hgraph import CompoundScalar, TS, compute_node, dispatch, dispatch_, downcast_, graph, operator
+from hgraph import CompoundScalar, TS, compute_node, dispatch, dispatch_, downcast_, downcast_ref, graph, operator
 from hgraph.test import eval_node
 
 
@@ -251,3 +251,19 @@ def test_compound_scalar_downcast_rejects_the_wrong_active_leaf():
 
     with pytest.raises(RuntimeError, match="active Bundle value does not match"):
         eval_node(app, [Cat()])
+
+
+def test_compound_scalar_reference_downcast_uses_the_native_reference_operator():
+    class Animal(CompoundScalar): ...
+
+    class Dog(Animal): ...
+
+    class Puppy(Dog): ...
+
+    @graph
+    def app(animal: TS[Animal]) -> TS[Dog]:
+        return downcast_ref(Dog, animal)
+
+    samples = [Dog(), Puppy()]
+    assert [type(value) for value in eval_node(app, samples)] == [Dog, Puppy]
+    assert [type(value) for value in eval_node(app, samples, __elide__=True)] == [Dog, Puppy]

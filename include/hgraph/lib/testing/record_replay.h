@@ -5,6 +5,7 @@
 #include <hgraph/runtime/global_state.h>
 #include <hgraph/runtime/node_scheduler.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/time_series/ts_delta.h>
@@ -21,6 +22,15 @@
 
 namespace hgraph::testing
 {
+    [[nodiscard]] inline ValueTypeRef recording_binding_for(const ValueTypeMetaData *schema)
+    {
+        if (const auto *snapshot = active_type_realization(); snapshot != nullptr)
+        {
+            return snapshot->type_for(schema);
+        }
+        return ValuePlanFactory::instance().type_for(schema);
+    }
+
     /**
      * The in-memory testing toolkit: ``replay`` (a source that emits a recorded
      * sequence) and ``record`` (a sink that captures one), plus the helpers that
@@ -73,7 +83,7 @@ namespace hgraph::testing
     {
         auto       &registry = TypeRegistry::instance();
         const auto *schema   = registry.mutable_list(delta_schema);
-        return Value{ValuePlanFactory::instance().type_for(schema)};
+        return Value{recording_binding_for(schema)};
     }
 
     /** The delta at ``index`` of a dense buffer, either layout: the seeded
@@ -116,13 +126,13 @@ namespace hgraph::testing
     {
         auto       &registry = TypeRegistry::instance();
         const auto *schema   = registry.mutable_list(sparse_entry_meta(delta_schema));
-        return Value{ValuePlanFactory::instance().type_for(schema)};
+        return Value{recording_binding_for(schema)};
     }
 
     /** Build a (time, delta) sparse-buffer entry. */
     [[nodiscard]] inline Value make_sparse_entry(const ValueTypeMetaData *delta_schema, DateTime when, Value delta)
     {
-        BundleBuilder entry{ValuePlanFactory::instance().type_for(sparse_entry_meta(delta_schema))};
+        BundleBuilder entry{recording_binding_for(sparse_entry_meta(delta_schema))};
         entry.set(0, Value{when});
         entry.set(1, std::move(delta));
         return entry.build();

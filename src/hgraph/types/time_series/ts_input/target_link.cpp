@@ -2,6 +2,7 @@
 
 #include "target_link_ops.h"
 
+#include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/time_series/ts_input/detail.h>
 
 #include <hgraph/util/scope.h>
@@ -29,6 +30,19 @@ namespace hgraph::detail
 
     namespace
     {
+        [[nodiscard]] bool is_closed_union_narrowing(
+            const TSValueTypeMetaData &requested,
+            const TSValueTypeMetaData *source) noexcept
+        {
+            if (source == nullptr || requested.kind != TSTypeKind::TS || source->kind != TSTypeKind::TS ||
+                requested.value_schema == nullptr || source->value_schema == nullptr ||
+                !requested.value_schema->is_named_bundle() || !source->value_schema->is_named_bundle())
+            {
+                return false;
+            }
+            return TypeRegistry::instance().bundle_is_a(requested.value_schema, source->value_schema);
+        }
+
         void unsubscribe_node(TSInputTargetActiveNode &node,
                               TSInputTargetLinkState::SchedulingNotifier &notifier) noexcept
         {
@@ -427,8 +441,12 @@ namespace hgraph::detail
             throw std::invalid_argument("TSInput target binding requires a bound output view");
         }
 
-        auto target = schema.kind == TSTypeKind::SIGNAL ? output.handle() : output.binding_for(schema);
-        if (schema.kind != TSTypeKind::SIGNAL && !time_series_schema_equivalent(target.schema(), &schema))
+        const bool closed_union_narrowing = is_closed_union_narrowing(schema, output.schema());
+        auto target = schema.kind == TSTypeKind::SIGNAL || closed_union_narrowing
+                          ? output.handle()
+                          : output.binding_for(schema);
+        if (schema.kind != TSTypeKind::SIGNAL && !closed_union_narrowing &&
+            !time_series_schema_equivalent(target.schema(), &schema))
         {
             throw std::invalid_argument("TSInput target binding schema does not match the input slot schema");
         }

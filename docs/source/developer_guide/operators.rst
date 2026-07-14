@@ -514,7 +514,8 @@ under ``include/hgraph/lib/std/operators/``, grouped by family and pulled togeth
   (``union_`` / ``intersection_`` / ``difference_`` / ``symmetric_difference_``) and ``TSD``
   re-shaping (``keys_`` / ``values_`` / ``rekey`` / ``flip`` / ``partition`` / … );
 - ``conversion.h`` — ``const_`` / ``convert`` / ``combine`` / ``collect`` / ``emit`` /
-  ``cast_`` / ``downcast_`` / ``str_`` / ``type_`` / ``zero_`` / ``nothing`` / ``default_``;
+  ``cast_`` / ``downcast_`` / ``downcast_ref`` / ``str_`` / ``type_`` / ``zero_`` /
+  ``nothing`` / ``default_``;
 - ``string.h`` — ``match_`` / ``replace`` / ``substr`` / ``split`` / ``join`` / ``format_``;
 - ``stream.h`` — ``sample`` / ``lag`` / ``resample`` / ``filter_`` / ``filter_by`` /
   ``until_true`` / ``freeze`` / ``throttle`` / ``take`` / ``drop`` / ``gate`` / ``window`` /

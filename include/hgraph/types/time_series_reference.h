@@ -134,6 +134,16 @@ namespace hgraph
         [[nodiscard]] const TimeSeriesReference &operator[](size_t index) const;
 
         /**
+         * Return the same reference with a different declared target schema.
+         * The endpoint or composite items are preserved and no compatibility
+         * check is performed. This is the explicit unsafe primitive behind
+         * ``downcast_ref``; normal binding code must not use it to bypass
+         * schema validation.
+         */
+        [[nodiscard]] TimeSeriesReference with_target_schema_unchecked(
+            const TSValueTypeMetaData *target_schema) const;
+
+        /**
          * Two references compare equal when they share kind, target schema,
          * and (for NON_PEERED) sub-references.
          */

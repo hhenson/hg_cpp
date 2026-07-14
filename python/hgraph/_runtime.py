@@ -867,6 +867,15 @@ def cast_(tp, ts):
     return convert(ts, to=TS[tp])
 
 
+def downcast_ref(tp, ts):
+    """Narrow a time-series reference to ``TS[tp]`` without inspecting its
+    current value. Runtime storage and forwarding remain owned by C++."""
+    from ._types import REF, TS
+
+    source = WiringPort(_hgraph.ref_port(_current_wiring(), _unwrap(ts)))
+    return wire("downcast_ref", source, output_type=REF[TS[tp]])
+
+
 class WiringError(RuntimeError):
     """A wiring-time error (hgraph parity)."""
 

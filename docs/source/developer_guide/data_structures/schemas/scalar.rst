@@ -116,10 +116,10 @@ second type header. Nested graphs inherit the root graph's snapshot during
 dynamic construction, so they cannot observe a different closure. Registry
 snapshots copy only the type order and immediate inheritance edges; transitive
 closures and realized plans are built lazily for schemas a graph actually uses.
-Dynamic immutable lists, sets, maps, cyclic buffers, and queues retain the same
-compact storage shapes while carrying realized element bindings. Fixed lists
-and structurally mutable containers currently reject polymorphic Bundle
-elements at wiring instead of erasing the concrete type.
+Dynamic immutable and mutable lists, sets, maps, cyclic buffers, and queues
+retain their existing storage shapes while carrying realized element bindings.
+Fixed lists currently reject polymorphic Bundle elements at wiring instead of
+erasing the concrete type.
 
 Python conversion constructs the active concrete dataclass directly in the
 union. ``None`` means an unset Bundle field. A dictionary or JSON object being

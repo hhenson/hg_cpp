@@ -268,6 +268,26 @@ namespace hgraph::stdlib
         }
     };
 
+    /** Re-label a reference with the requested target schema without
+        inspecting the referenced value. The endpoint is unchanged; callers
+        are responsible for selecting a compatible derived target. */
+    struct downcast_ref_impl
+    {
+        static constexpr auto name = "downcast_ref";
+
+        static void eval(In<"ts", REF<TsVar<"S">>, InputValidity::Unchecked> ts,
+                         Out<REF<TsVar<"O">>> out)
+        {
+            const auto *output_schema = static_cast<const TSOutputView &>(out).schema();
+            const auto *target_schema = output_schema != nullptr ? output_schema->referenced_ts() : nullptr;
+            if (target_schema == nullptr)
+            {
+                throw std::logic_error("downcast_ref requires a resolved REF output schema");
+            }
+            out.set(ts.value().with_target_schema_unchecked(target_schema));
+        }
+    };
+
     /** Numeric/bool scalar conversions: TYPED kernels selected at node-
         selection time (the typed-kernel rule - no per-tick type branch). */
     template <typename From, typename To>

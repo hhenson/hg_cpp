@@ -148,6 +148,7 @@ namespace hgraph
     ValueView TSDataView::value() const
     {
         const auto &table = ops();
+        if (table.value_view_impl != nullptr) { return table.value_view_impl(table.context, data()); }
         const auto *data_layout = table.layout_impl(table.context);
         return ValueView{data_layout->value_binding, table.value_memory_impl(table.context, data())}.concrete();
     }
@@ -155,6 +156,10 @@ namespace hgraph
     ValueView TSDataView::delta_value(DateTime evaluation_time) const
     {
         const auto &table = ops();
+        if (table.delta_view_impl != nullptr)
+        {
+            return table.delta_view_impl(table.context, data(), evaluation_time);
+        }
         const auto *data_layout = table.layout_impl(table.context);
         const auto *data_tracking = table.tracking_impl(table.context, data());
         if (evaluation_time == MIN_DT || data_tracking->last_modified_time != evaluation_time)

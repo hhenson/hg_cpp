@@ -55,7 +55,8 @@ cmake -S . -B "$native_root/build" -GNinja \
   -DHGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS=OFF \
   -DHGRAPH_USE_PYARROW_ARROW=ON \
   -DHGRAPH_FETCH_SIMDJSON=ON \
-  -DHGRAPH_WARNINGS_AS_ERRORS=ON
+  -DHGRAPH_WARNINGS_AS_ERRORS=ON \
+  -DPython_EXECUTABLE="$PWD/.venv/bin/python"
 cmake --build "$native_root/build" --parallel
 ctest --test-dir "$native_root/build" --output-on-failure --parallel 2
 ```

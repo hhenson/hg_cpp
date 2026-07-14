@@ -45,6 +45,42 @@ namespace
             return wire<RefSelector>(w, pick_rhs, lhs, rhs).as<TS<Int>>();
         }
     };
+
+    struct InspectNarrowedReference
+    {
+        static constexpr auto name = "inspect_narrowed_reference";
+
+        static void eval(In<"ref", REF<TS<Float>>> ref, Out<TS<Bool>> out)
+        {
+            const TimeSeriesReference value = ref.value();
+            const auto *endpoint_schema = value.target_output().view(out.evaluation_time()).schema();
+            out.set(value.target_schema() == schema_descriptor<TS<Float>>::ts_meta() &&
+                    endpoint_schema == schema_descriptor<TS<Int>>::ts_meta());
+        }
+    };
+
+    struct DowncastRefGraph
+    {
+        static constexpr auto name = "downcast_ref_graph";
+
+        static Port<TS<Bool>> compose(Wiring &w, Port<TS<Int>> source)
+        {
+            auto source_ref = source.template as<REF<TS<Int>>>();
+            auto narrowed = wire<stdlib::downcast_ref, REF<TS<Float>>>(w, source_ref);
+            return wire<InspectNarrowedReference>(w, narrowed);
+        }
+    };
+
+    struct ForwardDowncastRefGraph
+    {
+        static constexpr auto name = "forward_downcast_ref_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> source)
+        {
+            auto source_ref = source.template as<REF<TS<Int>>>();
+            return wire<stdlib::downcast_ref, REF<TS<Int>>>(w, source_ref).template as<TS<Int>>();
+        }
+    };
 }  // namespace
 
 TEST_CASE("REF executor: a user REF output retargets between independent producers mid-run")
@@ -72,4 +108,19 @@ TEST_CASE("REF executor: a reference retarget to an already-valid producer sampl
                                            values<Int>(7, none, none, none),
                                            values<Int>(10, 20, none, none)),
                  values<Int>(10, 20, 7, none));
+}
+
+TEST_CASE("downcast_ref: C++ wiring preserves the endpoint and replaces only its target schema")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<DowncastRefGraph>(values<Int>(42)), values<Bool>(true));
+}
+
+TEST_CASE("downcast_ref: C++ wiring still forwards the referenced output")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<ForwardDowncastRefGraph>(values<Int>(1, 2, 3)),
+                 values<Int>(1, 2, 3));
 }

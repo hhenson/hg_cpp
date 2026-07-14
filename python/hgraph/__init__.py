@@ -22,7 +22,7 @@ from ._runtime import filter_by
 from ._runtime import convert
 from ._runtime import collect
 from ._runtime import emit
-from ._runtime import cast_
+from ._runtime import cast_, downcast_ref
 from ._runtime import ParseError, IncorrectTypeBinding, RequirementsNotMetWiringError
 from ._runtime import evaluate_graph, GraphConfiguration, TSB_OUT, operator, dispatch, dispatch_
 from ._runtime import RecordReplayContext, set_record_replay_model, RECORDABLE_STATE, TS_OUT
@@ -97,7 +97,7 @@ __all__ = [
     "WiringNodeType", "WiringNodeSignature", "extract_signature", "extract_kwargs",
     "PythonWiringNodeClass", "GraphWiringNodeClass", "PythonGeneratorWiringNodeClass",
     "evaluate_graph", "GraphConfiguration", "TSB_OUT", "operator",
-    "pass_through_node", "pass_through", "no_key",
+    "pass_through_node", "pass_through", "no_key", "downcast_ref",
 ]
 
 from ._runtime import set_delta, compute_set_delta

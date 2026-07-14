@@ -99,12 +99,23 @@ namespace hgraph
             return slots_.value_memory(index);
         }
 
-        /** Append a copy of the element at ``src``. */
-        void push_back(const void *src)
+        /** Append a copy of the typed element at ``src``. */
+        void push_back(ValueTypeRef source_binding, const void *src)
         {
             require_bound();
             ensure_capacity(size_ + 1);
-            slots_.construct_at(size_, src);  // copy-construct from src
+            if (source_binding == element_binding_)
+            {
+                slots_.construct_at(size_, src);
+            }
+            else
+            {
+                slots_.construct_at(size_);
+                auto rollback = make_scope_exit([&]() noexcept { slots_.destroy_at(size_); });
+                element_binding_.ops_ref().copy_assign_from(
+                    element_binding_, slots_.value_memory(size_), source_binding, src);
+                rollback.release();
+            }
             if (!validity_.empty()) { validity_.push_back(true); }
             ++size_;
         }
@@ -129,11 +140,12 @@ namespace hgraph
             return validity_.empty() || (index < validity_.size() && validity_.test(index));
         }
 
-        /** Replace the element at ``index`` with a copy of ``src``. */
-        void set_element(std::size_t index, const void *src)
+        /** Replace the element at ``index`` with a copy of typed ``src``. */
+        void set_element(std::size_t index, ValueTypeRef source_binding, const void *src)
         {
             require_index(index);
-            element_binding_.checked_plan().copy_assign(slots_.value_memory(index), src);
+            element_binding_.ops_ref().copy_assign_from(
+                element_binding_, slots_.value_memory(index), source_binding, src);
         }
 
         /** Remove the element at ``index``, shifting later elements down one place. */
@@ -380,17 +392,19 @@ namespace hgraph
 #endif
 
         // -- structural-mutation thunks --
-        inline void list_push_back(const void *, void *memory, const void *element)
+        inline void list_push_back(const void *, void *memory, ValueTypeRef element_type,
+                                   const void *element)
         {
-            static_cast<MutableListStorage *>(memory)->push_back(element);
+            static_cast<MutableListStorage *>(memory)->push_back(element_type, element);
         }
         inline void list_push_back_unset(const void *, void *memory)
         {
             static_cast<MutableListStorage *>(memory)->push_back_unset();
         }
-        inline void list_set_element(const void *, void *memory, std::size_t index, const void *element)
+        inline void list_set_element(const void *, void *memory, std::size_t index,
+                                     ValueTypeRef element_type, const void *element)
         {
-            static_cast<MutableListStorage *>(memory)->set_element(index, element);
+            static_cast<MutableListStorage *>(memory)->set_element(index, element_type, element);
         }
         inline void list_erase(const void *, void *memory, std::size_t index)
         {

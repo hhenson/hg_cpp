@@ -284,6 +284,13 @@ namespace hgraph
 
         return fallback_on_exception(false, [&] {
             if (bound == other_bound) { return bound.ops_ref().equals(data(), other.data()); }
+
+            auto lhs_concrete = concrete();
+            auto rhs_concrete = other.concrete();
+            if (lhs_concrete.binding() != bound || rhs_concrete.binding() != other_bound)
+            {
+                return lhs_concrete.equals(rhs_concrete);
+            }
             if (!value_schema_equivalent(schema(), other.schema())) { return false; }
             return semantic_equals(*this, other);
         });

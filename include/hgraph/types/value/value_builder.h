@@ -741,7 +741,9 @@ namespace hgraph
                 throw std::invalid_argument("BundleBuilder::set(ValueView) requires a live field value");
             }
             const auto &comp = component(index);
-            comp.plan->copy_assign(field_memory(comp.offset), field.data());
+            const auto destination = field_binding(index);
+            destination.ops_ref().copy_assign_from(
+                destination, field_memory(comp.offset), field.binding(), field.data());
             mark_field(index);
             return *this;
         }
@@ -758,7 +760,11 @@ namespace hgraph
                 throw std::invalid_argument("BundleBuilder::set(Value&&) requires a live field value");
             }
             const auto &comp = component(index);
-            comp.plan->move_assign(field_memory(comp.offset), const_cast<void *>(field.view().data()));
+            const auto destination = field_binding(index);
+            const auto source = field.view().binding();
+            destination.ops_ref().move_assign_from(
+                destination, field_memory(comp.offset), source,
+                const_cast<void *>(field.view().data()));
             mark_field(index);
             return *this;
         }
@@ -808,6 +814,14 @@ namespace hgraph
             const auto &st = state();
             if (index >= field_count()) { throw std::out_of_range("BundleBuilder: field index out of range"); }
             return st.components()[index];
+        }
+
+        [[nodiscard]] ValueTypeRef field_binding(std::size_t index) const
+        {
+            const auto *ops = checked_value_ops<IndexedValueOps>(binding_, "BundleBuilder");
+            const auto field = ops->element_binding(ops->context, value_.view().data(), index);
+            if (!field) { throw std::logic_error("BundleBuilder: field binding is unresolved"); }
+            return field;
         }
 
         [[nodiscard]] std::size_t index_of(std::string_view name) const

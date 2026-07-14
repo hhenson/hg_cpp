@@ -238,6 +238,14 @@ namespace hgraph
         return storage_.items[index];
     }
 
+    TimeSeriesReference TimeSeriesReference::with_target_schema_unchecked(
+        const TSValueTypeMetaData *target_schema) const
+    {
+        TimeSeriesReference result{*this};
+        result.target_schema_ = target_schema;
+        return result;
+    }
+
     bool TimeSeriesReference::operator==(const TimeSeriesReference &other) const noexcept
     {
         if (kind_ != other.kind_) { return false; }

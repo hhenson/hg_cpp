@@ -351,7 +351,18 @@ TEST_CASE("TypeRealizationSnapshot closes polymorphic Bundle storage without tax
     const auto realized_list = first->type_for(list_of_base);
     REQUIRE(realized_list != ValuePlanFactory::instance().type_for(list_of_base));
     REQUIRE_THROWS_AS(first->type_for(fixed_list_of_base), std::logic_error);
-    REQUIRE_THROWS_AS(first->type_for(mutable_list_of_base), std::logic_error);
+    const auto realized_mutable_list = first->type_for(mutable_list_of_base);
+    REQUIRE(realized_mutable_list != ValuePlanFactory::instance().type_for(mutable_list_of_base));
+    Value mutable_list{realized_mutable_list};
+    auto mutable_values = mutable_list.as_list().begin_mutation();
+    mutable_values.push_back(concrete.view());
+    REQUIRE(mutable_values.at(0).concrete().schema() == small);
+
+    Value replacement{exact_small};
+    replacement.as_bundle().begin_mutation()["label"].set(std::string{"replacement"});
+    mutable_values.set(0, replacement.view());
+    REQUIRE(mutable_values.at(0).concrete().as_bundle()["label"].checked_as<std::string>() ==
+            "replacement");
     {
         TypeRealizationScope scope{first.get()};
         Value list = from_json_string(
