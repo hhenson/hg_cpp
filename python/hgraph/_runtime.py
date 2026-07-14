@@ -1259,7 +1259,7 @@ class _PyNode:
             params = list(inspect.signature(resolver).parameters)
             call = {name: scalar_values.get(name) for name in params[1:]}
             resolved = resolver(scope.bindings, **call)
-            name = getattr(sentinel, "name", str(sentinel))
+            name = _type_var_name(sentinel)
             self._bind_resolved(scope, name, resolved)
 
     @staticmethod
@@ -1273,7 +1273,7 @@ class _PyNode:
         for parameter, resolved in zip(getattr(origin, "__parameters__", ()), args):
             if isinstance(resolved, _TypeVarSentinel):
                 continue
-            name = getattr(parameter, "name", getattr(parameter, "__name__", str(parameter)))
+            name = _type_var_name(parameter)
             if isinstance(resolved, _TsExpr):
                 scope.bind_ts(name, resolved.handle)
             else:
@@ -1656,13 +1656,13 @@ class _BindingsMap:
         self._bindings = bindings
 
     def __getitem__(self, key):
-        return self._bindings[getattr(key, "name", key)]
+        return self._bindings[_type_var_name(key)]
 
     def __contains__(self, key):
-        return getattr(key, "name", key) in self._bindings
+        return _type_var_name(key) in self._bindings
 
     def get(self, key, default=None):
-        return self._bindings.get(getattr(key, "name", key), default)
+        return self._bindings.get(_type_var_name(key), default)
 
     def keys(self):
         return self._bindings.keys()

@@ -334,8 +334,14 @@ jobs:
           from pathlib import Path
           import pyarrow
 
+          root = Path(pyarrow.__file__).resolve().parent
+          runtime_dirs = [root]
+          support_dir = root.parent / "pyarrow.libs"
+          if support_dir.is_dir():
+              runtime_dirs.append(support_dir)
           with open(os.environ["GITHUB_PATH"], "a", encoding="utf-8") as path_file:
-              path_file.write(str(Path(pyarrow.__file__).resolve().parent) + "\n")
+              for runtime_dir in runtime_dirs:
+                  path_file.write(str(runtime_dir) + "\n")
       - name: Configure native C++ tests
         run: cmake -S . -B build-native -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DHGRAPH_BUILD_PYTHON_BINDINGS=OFF -DHGRAPH_ENABLE_PYTHON_USER_NODES=OFF -DHGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS=OFF -DHGRAPH_USE_PYARROW_ARROW=ON -DHGRAPH_FETCH_SIMDJSON=ON -DHGRAPH_ENABLE_DEBUGGER_SMOKE_TESTS=ON -DHGRAPH_WARNINGS_AS_ERRORS=${{ matrix.warnings_as_errors }}
       - name: Build native C++ tests

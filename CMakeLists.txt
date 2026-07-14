@@ -295,6 +295,19 @@ for path in (root, root / "include", arrow_link, compute_link, arrow_runtime, co
     endif()
     set(HGRAPH_PYARROW_LIBRARY_DIR "${_hgraph_pyarrow_dir}" CACHE PATH
         "Directory containing pyarrow's bundled Arrow libraries" FORCE)
+    set(HGRAPH_PYARROW_RUNTIME_DIRS "${_hgraph_pyarrow_dir}")
+    if(WIN32)
+        get_filename_component(_hgraph_pyarrow_parent_dir
+            "${_hgraph_pyarrow_dir}" DIRECTORY)
+        set(_hgraph_pyarrow_support_dir
+            "${_hgraph_pyarrow_parent_dir}/pyarrow.libs")
+        if(EXISTS "${_hgraph_pyarrow_support_dir}")
+            list(APPEND HGRAPH_PYARROW_RUNTIME_DIRS
+                "${_hgraph_pyarrow_support_dir}")
+        endif()
+        unset(_hgraph_pyarrow_parent_dir)
+        unset(_hgraph_pyarrow_support_dir)
+    endif()
 else()
     find_package(Arrow CONFIG REQUIRED)
     find_package(ArrowCompute CONFIG REQUIRED)  # Arrow 24 splits compute into its own lib

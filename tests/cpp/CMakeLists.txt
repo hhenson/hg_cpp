@@ -297,17 +297,19 @@ if(HGRAPH_PYARROW_LIBRARY_DIR)
     # Catch2's discovery script REPLACES the environment PATH (or
     # LD_LIBRARY_PATH) with the DL_PATHS list - passing only the pyarrow
     # directory strands the test executable without its other runtime DLLs
-    # (0xc0000135 on Windows). Append the configure-time search path so the
-    # discovery run sees pyarrow FIRST and everything else after. On
-    # Windows $ENV{PATH} is semicolon-separated, i.e. already a CMake list.
+    # (0xc0000135 on Windows). PyArrow's Windows wheel also stores its
+    # hash-renamed MSVC runtime dependencies in the sibling ``pyarrow.libs``
+    # directory. Append the configure-time search path after both PyArrow
+    # runtime directories. On Windows $ENV{PATH} is semicolon-separated,
+    # i.e. already a CMake list.
     if(WIN32)
-        set(_hgraph_test_dl_paths "${HGRAPH_PYARROW_LIBRARY_DIR}" $ENV{PATH})
+        set(_hgraph_test_dl_paths ${HGRAPH_PYARROW_RUNTIME_DIRS} $ENV{PATH})
     elseif(APPLE)
         string(REPLACE ":" ";" _hgraph_env_dl_path "$ENV{DYLD_LIBRARY_PATH}")
-        set(_hgraph_test_dl_paths "${HGRAPH_PYARROW_LIBRARY_DIR}" ${_hgraph_env_dl_path})
+        set(_hgraph_test_dl_paths ${HGRAPH_PYARROW_RUNTIME_DIRS} ${_hgraph_env_dl_path})
     else()
         string(REPLACE ":" ";" _hgraph_env_dl_path "$ENV{LD_LIBRARY_PATH}")
-        set(_hgraph_test_dl_paths "${HGRAPH_PYARROW_LIBRARY_DIR}" ${_hgraph_env_dl_path})
+        set(_hgraph_test_dl_paths ${HGRAPH_PYARROW_RUNTIME_DIRS} ${_hgraph_env_dl_path})
     endif()
     catch_discover_tests(hgraph_unit_tests
         DL_PATHS ${_hgraph_test_dl_paths}
