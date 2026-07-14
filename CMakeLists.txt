@@ -165,6 +165,9 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_FETCH_SIMDJSON)
     set(SIMDJSON_INSTALL OFF CACHE BOOL "Generate simdjson install targets" FORCE)
     set(SIMDJSON_DEVELOPER_MODE OFF CACHE BOOL "Build simdjson developer targets" FORCE)
     FetchContent_MakeAvailable(simdjson)
+    # simdjson's PCH includes <bit> when the header exists. Build the fetched
+    # library in a mode where that header's contents are available on MSVC.
+    target_compile_features(simdjson PRIVATE cxx_std_20)
     target_link_libraries(hgraph_options INTERFACE
         $<BUILD_INTERFACE:simdjson::simdjson>
     )
@@ -190,7 +193,7 @@ if(NOT fmt_FOUND)
     FetchContent_Declare(
         fmt
         GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-        GIT_TAG        12.1.0
+        GIT_TAG        12.2.0
         GIT_SHALLOW    TRUE
         SYSTEM
     )
@@ -198,6 +201,9 @@ if(NOT fmt_FOUND)
     set(FMT_INSTALL OFF CACHE BOOL "Generate fmt install target" FORCE)
     set(FMT_TEST OFF CACHE BOOL "Build fmt tests" FORCE)
     FetchContent_MakeAvailable(fmt)
+    if(TARGET fmt-c)
+        set_target_properties(fmt-c PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    endif()
     set(_hgraph_fmt_fetched ON)
 endif()
 if(_hgraph_fmt_fetched)

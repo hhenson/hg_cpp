@@ -7,7 +7,7 @@
 
 #include <arrow/api.h>
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 
 #include <chrono>
 #include <memory>

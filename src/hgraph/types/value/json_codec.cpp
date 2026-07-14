@@ -7,7 +7,7 @@
 #include <hgraph/types/value/value_builder.h>
 #include <hgraph/util/date_time.h>
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 
 #include <hgraph/util/scope.h>
 
