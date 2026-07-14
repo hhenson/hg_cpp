@@ -262,7 +262,8 @@ Priority 2: Nested Graphs and Boundaries
 - two-slot ``switch_`` storage;
 - slot-observed keyed ``map_`` and ``mesh_`` instances;
 - explicit-key-only ``map_`` instances whose child inputs are all broadcast,
-  including anonymous nested maps with forwarding TSD terminals;
+  including anonymous nested maps with forwarding TSD terminals, plus
+  outputless keyed maps over native or Python-authored sink children;
 - fixed-TSL and associative dynamic-TSD ``reduce``, including live zero inputs
   and projectable fixed-composite results;
 - ``try_except_``, feedback, closed-union ``dispatch_``, closure capture, key
@@ -276,7 +277,6 @@ Priority 2: Nested Graphs and Boundaries
 
 **Remaining higher-order shapes:**
 
-- sink maps;
 - dynamic-TSL map/reduce/mesh;
 - non-associative ordered reduce;
 - dynamic-TSD reduce with pass-through combiner outputs.

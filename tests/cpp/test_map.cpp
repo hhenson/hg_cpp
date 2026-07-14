@@ -79,6 +79,61 @@ namespace
         }
     };
 
+    inline std::vector<std::pair<Int, Int>> mapped_sink_values;
+    inline std::vector<Int>                 mapped_key_sink_values;
+    inline Int                              mapped_sink_starts{0};
+    inline Int                              mapped_sink_stops{0};
+
+    struct MappedSinkNode
+    {
+        static constexpr auto name = "mapped_sink_node";
+
+        static void start() { ++mapped_sink_starts; }
+        static void stop() { ++mapped_sink_stops; }
+        static void eval(In<"key", TS<Int>> key, In<"ts", TS<Int>> ts)
+        {
+            mapped_sink_values.emplace_back(key.value(), ts.value());
+        }
+    };
+
+    struct MappedKeySinkNode
+    {
+        static constexpr auto name = "mapped_key_sink_node";
+        static void eval(In<"key", TS<Int>> key) { mapped_key_sink_values.push_back(key.value()); }
+    };
+
+    struct MappedSinkG
+    {
+        static constexpr auto name = "mapped_sink_g";
+
+        static void compose(Wiring &w, NamedPort<"key", TS<Int>> key, Port<TS<Int>> ts)
+        {
+            wire<MappedSinkNode>(w, key, ts);
+        }
+    };
+
+    struct MapSinkGraph
+    {
+        static constexpr auto name = "map_sink_graph";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TSD<Int, TS<Int>>> ts)
+        {
+            wire<stdlib::map_sink_>(w, fn<MappedSinkG>(), ts);
+            return ts;
+        }
+    };
+
+    struct MapKeySinkGraph
+    {
+        static constexpr auto name = "map_key_sink_graph";
+
+        static Port<TSS<Int>> compose(Wiring &w, Port<TSS<Int>> keys)
+        {
+            wire<stdlib::map_sink_>(w, fn<MappedKeySinkNode>(), arg<"__keys__">(keys));
+            return keys;
+        }
+    };
+
     struct AddNdxG
     {
         static constexpr auto name = "add_ndx_g";
@@ -406,6 +461,39 @@ TEST_CASE("map_: a declared key argument may be unused by the compiled child")
                                    dict_delta<Int, TS<Int>>({{2, 200}})))),
                  values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}}),
                                dict_delta<Int, TS<Int>>({{2, 200}})));
+}
+
+TEST_CASE("map_: sink children follow keyed lifecycle without allocating an output")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    mapped_sink_values.clear();
+    mapped_sink_starts = 0;
+    mapped_sink_stops  = 0;
+
+    const auto inputs = values<Value>(
+        dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}}),
+        dict_delta<Int, TS<Int>>({{2, 200}}),
+        dict_delta<Int, TS<Int>>({}, {1}),
+        dict_delta<Int, TS<Int>>({{1, 7}}));
+    CHECK_OUTPUT(eval_node<MapSinkGraph>(inputs), inputs);
+    CHECK(mapped_sink_values ==
+          std::vector<std::pair<Int, Int>>{{1, 10}, {2, 20}, {2, 200}, {1, 7}});
+    CHECK(mapped_sink_starts == 3);
+    CHECK(mapped_sink_stops == 3);
+}
+
+TEST_CASE("map_: a key-only sink map takes its key type from explicit __keys__")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    mapped_key_sink_values.clear();
+
+    const auto inputs = values<Value>(set_delta<Int>({1, 2}, {}),
+                                      set_delta<Int>({}, {1}),
+                                      set_delta<Int>({3}, {}));
+    CHECK_OUTPUT(eval_node<MapKeySinkGraph>(inputs), inputs);
+    CHECK(mapped_key_sink_values == std::vector<Int>{1, 2, 3});
 }
 
 TEST_CASE("map_: a broadcast argument binds whole to every child")

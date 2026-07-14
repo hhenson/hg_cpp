@@ -1792,6 +1792,8 @@ namespace hgraph
         template <auto Fn, std::size_t... I>
         void invoke_impl(const NodeView &view, DateTime evaluation_time, std::index_sequence<I...>)
         {
+            (void)view;
+            (void)evaluation_time;
             using args = typename fn_traits<decltype(Fn)>::args_tuple;
             Fn(arg_provider<selector_of<std::tuple_element_t<I, args>>>::get(view, evaluation_time)...);
         }

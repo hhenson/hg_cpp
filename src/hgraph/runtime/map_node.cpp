@@ -241,6 +241,15 @@ namespace hgraph
             return current;
         }
 
+        [[nodiscard]] std::optional<TSDDataMutationView> begin_map_output_mutation(
+            const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.has_output()) { return std::nullopt; }
+            auto output = view.output(evaluation_time);
+            auto dict   = output.as_dict();
+            return dict.begin_mutation(evaluation_time);
+        }
+
         [[nodiscard]] SourceRepointStatus update_source_handles(const TSInputView &root_input,
                                                                 MapNodeStorage &storage,
                                                                 const std::vector<std::size_t> &multiplexed_inputs,
@@ -275,12 +284,13 @@ namespace hgraph
         void clear_entry_output_binding(const NodeView &view, const MapNodeContext &context,
                                         const MapKeyEntry &entry, DateTime evaluation_time)
         {
+            if (!context.spec.child.output_binding.has_value()) { return; }
             runtime_detail::clear_mapped_output_element_binding(
                 view, evaluation_time, entry.key.view(), context.spec.output_binding_mode);
         }
 
         void remove_entry_at_slot(const NodeView &view, const MapNodeContext &context,
-                                  MapNodeStorage &storage, TSDDataMutationView &output_mutation,
+                                  MapNodeStorage &storage, TSDDataMutationView *output_mutation,
                                   std::size_t slot, DateTime evaluation_time)
         {
             auto *entry = storage.entries.entry_at(slot);
@@ -288,11 +298,11 @@ namespace hgraph
 
             clear_entry_output_binding(view, context, *entry, evaluation_time);
             if (entry->graph.has_value() && entry->graph.view().started()) { entry->graph.view().stop(); }
-            (void)output_mutation.erase(entry->key.view());
+            if (output_mutation != nullptr) { (void)output_mutation->erase(entry->key.view()); }
         }
 
         void remove_all_entries(const NodeView &view, const MapNodeContext &context,
-                                MapNodeStorage &storage, TSDDataMutationView &output_mutation,
+                                MapNodeStorage &storage, TSDDataMutationView *output_mutation,
                                 DateTime evaluation_time)
         {
             for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
@@ -302,7 +312,7 @@ namespace hgraph
         }
 
         void create_entry_at_slot(const NodeView &view, const MapNodeContext &context, MapNodeStorage &storage,
-                                  TSDDataMutationView &output_mutation, const TSSInputView &keys_set,
+                                  TSDDataMutationView *output_mutation, const TSSInputView &keys_set,
                                   std::size_t slot, DateTime evaluation_time)
         {
             const MapNodeSpec &spec     = context.spec;
@@ -316,7 +326,7 @@ namespace hgraph
             auto rollback = UnwindCleanupGuard([&] {
                 clear_entry_output_binding(view, context, entry, evaluation_time);
                 if (entry.graph.has_value() && entry.graph.view().started()) { entry.graph.view().stop(); }
-                (void)output_mutation.erase(entry.key.view());
+                if (output_mutation != nullptr) { (void)output_mutation->erase(entry.key.view()); }
                 if (existing == nullptr) { storage.entries.destroy_at(slot); }
             });
 
@@ -332,10 +342,9 @@ namespace hgraph
                 entry.key_source.bind(*spec.key_output_schema, entry.key, evaluation_time);
             }
 
-            // Instantiate the key's element in the owned TSD output and attach
-            // the child's terminal forwarding output to it (stable for the
-            // entry's lifetime).
-            (void)output_mutation[key_view];
+            // Output maps instantiate one stable parent element before binding
+            // the child's terminal. Sink maps have no parent output.
+            if (output_mutation != nullptr) { (void)(*output_mutation)[key_view]; }
 
             const TSOutputView key_source = entry.key_source.bound()
                                                 ? entry.key_source.view(evaluation_time)
@@ -353,7 +362,7 @@ namespace hgraph
         }
 
         void create_live_key_entries(const NodeView &view, const MapNodeContext &context, MapNodeStorage &storage,
-                                     TSDDataMutationView &output_mutation, const TSSInputView &keys_set,
+                                     TSDDataMutationView *output_mutation, const TSSInputView &keys_set,
                                      DateTime evaluation_time)
         {
             storage.entries.reserve_to(keys_set.slot_capacity());
@@ -406,11 +415,10 @@ namespace hgraph
             const bool keys_source_replaced = keys_handle_changed || source_status.keys_repointed;
             if (keys_source_replaced && storage.entries.has_entries())
             {
-                auto output          = view.output(evaluation_time);
-                auto output_dict     = output.as_dict();
-                auto output_mutation = output_dict.begin_mutation(evaluation_time);
-                remove_all_entries(view, context, storage, output_mutation, evaluation_time);
-                output_mutation.clear();
+                auto output_mutation = begin_map_output_mutation(view, evaluation_time);
+                remove_all_entries(view, context, storage,
+                                   output_mutation ? &*output_mutation : nullptr, evaluation_time);
+                if (output_mutation) { output_mutation->clear(); }
                 storage.unsubscribe_keys_noexcept();
                 storage.retire_entries(evaluation_time);
                 storage.primed = false;
@@ -418,11 +426,10 @@ namespace hgraph
             const bool keys_observer_changed = storage.observe_keys_source(keys_source.handle());
             if (!keys_input.valid())
             {
-                auto output          = view.output(evaluation_time);
-                auto output_dict     = output.as_dict();
-                auto output_mutation = output_dict.begin_mutation(evaluation_time);
-                remove_all_entries(view, context, storage, output_mutation, evaluation_time);
-                output_mutation.clear();
+                auto output_mutation = begin_map_output_mutation(view, evaluation_time);
+                remove_all_entries(view, context, storage,
+                                   output_mutation ? &*output_mutation : nullptr, evaluation_time);
+                if (output_mutation) { output_mutation->clear(); }
                 storage.primed = false;
             }
             else
@@ -433,25 +440,23 @@ namespace hgraph
                 const bool rebuild = !storage.primed || source_status.keys_repointed || keys_observer_changed;
                 if (rebuild)
                 {
-                    auto output          = view.output(evaluation_time);
-                    auto output_dict     = output.as_dict();
-                    auto output_mutation = output_dict.begin_mutation(evaluation_time);
-                    remove_all_entries(view, context, storage, output_mutation, evaluation_time);
-                    output_mutation.clear();
-                    create_live_key_entries(view, context, storage, output_mutation, key_set, evaluation_time);
+                    auto output_mutation = begin_map_output_mutation(view, evaluation_time);
+                    auto *mutation = output_mutation ? &*output_mutation : nullptr;
+                    remove_all_entries(view, context, storage, mutation, evaluation_time);
+                    if (output_mutation) { output_mutation->clear(); }
+                    create_live_key_entries(view, context, storage, mutation, key_set, evaluation_time);
                     storage.primed = true;
                 }
                 else if (keys_input.modified())
                 {
-                    auto output          = view.output(evaluation_time);
-                    auto output_dict     = output.as_dict();
-                    auto output_mutation = output_dict.begin_mutation(evaluation_time);
+                    auto output_mutation = begin_map_output_mutation(view, evaluation_time);
+                    auto *mutation = output_mutation ? &*output_mutation : nullptr;
 
                     for (std::size_t slot = 0; slot < key_set.slot_capacity(); ++slot)
                     {
                         if (key_set.slot_removed(slot))
                         {
-                            remove_entry_at_slot(view, context, storage, output_mutation, slot, evaluation_time);
+                            remove_entry_at_slot(view, context, storage, mutation, slot, evaluation_time);
                         }
                     }
 
@@ -459,7 +464,7 @@ namespace hgraph
                     {
                         if (key_set.slot_live(slot) && key_set.slot_added(slot))
                         {
-                            create_entry_at_slot(view, context, storage, output_mutation, key_set, slot,
+                            create_entry_at_slot(view, context, storage, mutation, key_set, slot,
                                                  evaluation_time);
                         }
                     }
@@ -536,31 +541,56 @@ namespace hgraph
             auto  map_view = view.as<MapNodeView>();
             auto &storage  = *MemoryUtils::cast<MapNodeStorage>(map_view.internal_storage());
 
-            auto output          = view.output(evaluation_time);
-            auto output_dict     = output.as_dict();
-            auto output_mutation = output_dict.begin_mutation(evaluation_time);
+            auto output_mutation = begin_map_output_mutation(view, evaluation_time);
             const auto &context  = *static_cast<const MapNodeContext *>(map_view.internal_context());
-            remove_all_entries(view, context, storage, output_mutation, evaluation_time);
-            output_mutation.clear();
+            remove_all_entries(view, context, storage,
+                               output_mutation ? &*output_mutation : nullptr, evaluation_time);
+            if (output_mutation) { output_mutation->clear(); }
             storage.unsubscribe_keys_noexcept();
             storage.primed = false;
         }
 
         void validate_map_node_spec(const NodeTypeMetaData &meta, const MapNodeSpec &spec)
         {
-            if (!spec.child.output_binding.has_value())
+            const bool has_output = meta.output_schema != nullptr;
+            if (spec.child.output_binding.has_value() != has_output)
             {
-                throw std::invalid_argument("map_node requires a child output binding (sink maps are not supported yet)");
+                throw std::invalid_argument(
+                    "map_node child output binding must be present exactly when the map has an output");
             }
             if (meta.input_schema == nullptr || meta.input_schema->kind != TSTypeKind::TSB)
             {
                 throw std::invalid_argument("map_node requires a TSB input schema");
             }
-            if (meta.output_schema == nullptr || meta.output_schema->kind != TSTypeKind::TSD)
+            if (has_output && meta.output_schema->kind != TSTypeKind::TSD)
             {
-                throw std::invalid_argument("map_node requires a TSD output schema");
+                throw std::invalid_argument("map_node output must be a TSD");
             }
             const auto *input_fields = meta.input_schema->fields();
+
+            if (!spec.keys_input_index.has_value())
+            {
+                throw std::invalid_argument(
+                    "map_node requires a __keys__ input (the lifecycle is keys-driven; map_ wiring derives it "
+                    "from the multiplexed inputs when not supplied)");
+            }
+            if (*spec.keys_input_index >= meta.input_schema->field_count())
+            {
+                throw std::invalid_argument("map_node __keys__ input index is out of range");
+            }
+            const auto *keys_schema =
+                TypeRegistry::instance().dereference(input_fields[*spec.keys_input_index].type);
+            if (keys_schema == nullptr || keys_schema->kind != TSTypeKind::TSS ||
+                keys_schema->value_schema == nullptr || keys_schema->value_schema->element_type == nullptr)
+            {
+                throw std::invalid_argument("map_node __keys__ input must be a concrete TSS");
+            }
+            const ValueTypeMetaData *mapped_key_type = keys_schema->value_schema->element_type;
+            if (has_output && meta.output_schema->key_type() != mapped_key_type)
+            {
+                throw std::invalid_argument("map_node output key type must match the __keys__ element type");
+            }
+
             std::vector<std::size_t> seen_mux_inputs;
             seen_mux_inputs.reserve(spec.multiplexed_inputs.size());
             for (const std::size_t mux_index : spec.multiplexed_inputs)
@@ -580,40 +610,15 @@ namespace hgraph
                 {
                     throw std::invalid_argument("map_node multiplexed input index must select a TSD input field");
                 }
-                if (tsd_schema->key_type() != meta.output_schema->key_type())
+                if (tsd_schema->key_type() != mapped_key_type)
                 {
                     throw std::invalid_argument(
-                        "map_node output key type must match every multiplexed input key type");
-                }
-            }
-
-            if (!spec.keys_input_index.has_value())
-            {
-                throw std::invalid_argument(
-                    "map_node requires a __keys__ input (the lifecycle is keys-driven; map_ wiring derives it "
-                    "from the multiplexed inputs when not supplied)");
-            }
-            {
-                if (*spec.keys_input_index >= meta.input_schema->field_count())
-                {
-                    throw std::invalid_argument("map_node __keys__ input index is out of range");
-                }
-                const auto *keys_schema =
-                    TypeRegistry::instance().dereference(input_fields[*spec.keys_input_index].type);
-                if (keys_schema == nullptr || keys_schema->kind != TSTypeKind::TSS)
-                {
-                    throw std::invalid_argument("map_node __keys__ input must be a TSS");
-                }
-                if (keys_schema != TypeRegistry::instance().tss(meta.output_schema->key_type()))
-                {
-                    throw std::invalid_argument(
-                        "map_node __keys__ element type must match the mapped key type");
+                        "map_node __keys__ element type must match every multiplexed input key type");
                 }
             }
 
             const std::size_t child_node_count = spec.child.graph_builder.node_count();
-            const auto       &output_binding   = *spec.child.output_binding;
-            if (!output_binding.target_path.empty())
+            if (spec.child.output_binding.has_value() && !spec.child.output_binding->target_path.empty())
             {
                 throw std::invalid_argument("map_node child output binding must target the map element root");
             }
@@ -653,35 +658,39 @@ namespace hgraph
             // valid and disappear from the compiled child graph.
             for (const MapArgSource &arg : spec.args) { mark_source_arg(arg); }
 
-            switch (output_binding.kind)
+            if (spec.child.output_binding.has_value())
             {
-                case NestedGraphOutputBinding::Kind::ChildOutput:
-                    if (output_binding.source.node >= child_node_count)
-                    {
-                        throw std::invalid_argument("map_node child output source node is out of range");
-                    }
-                    if (spec.output_binding_mode == MapOutputBindingMode::OutputElementForwardsToParentSource)
-                    {
-                        throw std::invalid_argument(
-                            "map_node child output binding cannot use parent-source forwarding mode");
-                    }
-                    break;
+                const auto &output_binding = *spec.child.output_binding;
+                switch (output_binding.kind)
+                {
+                    case NestedGraphOutputBinding::Kind::ChildOutput:
+                        if (output_binding.source.node >= child_node_count)
+                        {
+                            throw std::invalid_argument("map_node child output source node is out of range");
+                        }
+                        if (spec.output_binding_mode == MapOutputBindingMode::OutputElementForwardsToParentSource)
+                        {
+                            throw std::invalid_argument(
+                                "map_node child output binding cannot use parent-source forwarding mode");
+                        }
+                        break;
 
-                case NestedGraphOutputBinding::Kind::ParentInput:
-                    if (output_binding.parent_source_path.empty())
-                    {
-                        throw std::invalid_argument("map_node parent-input output binding requires a source ordinal");
-                    }
-                    if (output_binding.parent_source_path[0] >= spec.args.size())
-                    {
-                        throw std::invalid_argument("map_node parent-input output source ordinal is out of range");
-                    }
-                    if (spec.output_binding_mode != MapOutputBindingMode::OutputElementForwardsToParentSource)
-                    {
-                        throw std::invalid_argument(
-                            "map_node parent-input output binding requires parent-source forwarding mode");
-                    }
-                    break;
+                    case NestedGraphOutputBinding::Kind::ParentInput:
+                        if (output_binding.parent_source_path.empty())
+                        {
+                            throw std::invalid_argument("map_node parent-input output binding requires a source ordinal");
+                        }
+                        if (output_binding.parent_source_path[0] >= spec.args.size())
+                        {
+                            throw std::invalid_argument("map_node parent-input output source ordinal is out of range");
+                        }
+                        if (spec.output_binding_mode != MapOutputBindingMode::OutputElementForwardsToParentSource)
+                        {
+                            throw std::invalid_argument(
+                                "map_node parent-input output binding requires parent-source forwarding mode");
+                        }
+                        break;
+                }
             }
 
             for (const NestedGraphInputBinding &binding : spec.child.input_bindings)
@@ -711,7 +720,7 @@ namespace hgraph
                     throw std::invalid_argument("map_node key argument requires a key output schema");
                 }
                 if (spec.key_output_schema->kind != TSTypeKind::TS ||
-                    spec.key_output_schema->value_schema != meta.output_schema->key_type())
+                    spec.key_output_schema->value_schema != mapped_key_type)
                 {
                     throw std::invalid_argument("map_node key output schema must be TS<K> for the mapped key type");
                 }
@@ -778,9 +787,10 @@ namespace hgraph
 
         meta.node_kind = NodeKind::Nested;
         meta.valid_inputs = std::vector<std::size_t>{};
-        if (spec.output_binding_mode != MapOutputBindingMode::ChildTerminalWritesElement)
+        if (meta.output_schema != nullptr &&
+            spec.output_binding_mode != MapOutputBindingMode::ChildTerminalWritesElement)
         {
-            if (meta.output_schema == nullptr || meta.output_schema->kind != TSTypeKind::TSD ||
+            if (meta.output_schema->kind != TSTypeKind::TSD ||
                 meta.output_schema->element_ts() == nullptr)
             {
                 throw std::invalid_argument("map_node forwarding-element output requires a TSD output schema");
@@ -790,8 +800,10 @@ namespace hgraph
                 TSEndpointSchema::peered(meta.output_schema->element_ts()));
         }
 
-        const ValueTypeRef key_type =
-            ValuePlanFactory::instance().type_for(meta.output_schema->key_type());
+        const auto *keys_schema = TypeRegistry::instance().dereference(
+            meta.input_schema->fields()[*spec.keys_input_index].type);
+        const ValueTypeRef key_type = ValuePlanFactory::instance().type_for(
+            keys_schema->value_schema->element_type);
         const GraphTypeRef child_graph_type = spec.child.graph_builder.nested_type();
         if (!key_type || !child_graph_type)
             throw std::logic_error("map_node could not resolve debugger child types");
@@ -803,8 +815,9 @@ namespace hgraph
             .name = map_storage_field_name,
             .plan = &MemoryUtils::plan_for<MapNodeStorage>(),
         }};
-        // The map field destroys BEFORE the owned TSD output: the children's
-        // terminal forwarding outputs hold links INTO it.
+        // For output maps the field destroys before the owned TSD output: child
+        // terminal forwarding outputs may hold links into it. Sink maps use the
+        // same layout without an output component.
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, {}, fields);
 
         descriptor.callbacks.stop            = &map_node_stop;

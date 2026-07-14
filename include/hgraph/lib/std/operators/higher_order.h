@@ -250,15 +250,16 @@ namespace hgraph::stdlib
      *   match the time-series arguments: multiplexed inputs pass the
      *   per-key/per-index element and broadcast inputs pass the whole
      *   time-series;
-     * - the output is an owned ``TSD<K, OUT>`` with a real element
-     *   instantiated per key; the child's terminal output is a forwarding
-     *   endpoint bound onto that element, so the child **writes the parent's
-     *   storage directly** (no copy);
+     * - for value-producing functions, the output is an owned ``TSD<K, OUT>``
+     *   with a real element instantiated per key; the child's terminal output
+     *   is a forwarding endpoint bound onto that element, so the child
+     *   **writes the parent's storage directly** (no copy);
      * - broadcast arguments are variadic; ``pass_through(port)`` forces an
      *   argument to bind whole (broadcast, whatever its kind) and
      *   ``no_key(port)`` keeps a TSD demultiplexed but excludes it from
      *   key-set inference (Python's wrappers, as wiring-time port tags);
-     *   sink maps arrive later.
+     * - outputless functions use ``map_sink_`` from C++. They share the same
+     *   keyed child lifecycle but do not allocate a parent TSD output.
      */
     /**
      * Python's ``pass_through()`` — tag a ``map_`` input so it is NOT
@@ -306,6 +307,14 @@ namespace hgraph::stdlib
                            VarIn<"args", TsVar<"A">>,         // *args — multiplexed / broadcast inputs (positional)
                            VarKwIn<"kwargs">,                 // **kwargs — resolved onto func's named parameters
                            Out<TsVar<"O">>>
+    {
+    };
+
+    /** Outputless keyed map. Resolves through the same ``map_`` registry name. */
+    struct map_sink_ : Operator<"map_",
+                                Scalar<"func", WiredFn>,
+                                VarIn<"args", TsVar<"A">>,
+                                VarKwIn<"kwargs">>
     {
     };
 

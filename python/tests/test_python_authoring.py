@@ -419,6 +419,55 @@ def test_python_graphs_work_as_native_higher_order_functions():
     check(eval_node(app, [{"a": 2}, {"b": 3}]) == [{"a": 5}, {"b": 7}], "Python WiredFn")
 
 
+def test_python_sink_nodes_work_as_native_keyed_map_children():
+    seen = []
+    lifecycle = []
+
+    @hg.sink_node
+    def collect(key: TS[int], value: TS[int]):
+        seen.append((key.value, value.value))
+
+    @collect.start
+    def collect_start():
+        lifecycle.append("start")
+
+    @collect.stop
+    def collect_stop():
+        lifecycle.append("stop")
+
+    @graph
+    def collect_graph(key: TS[int], value: TS[int]) -> None:
+        collect(key, value)
+
+    @graph
+    def app(values: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
+        check(hg.map_(collect_graph, values) is None, "sink map wiring result")
+        return values
+
+    inputs = [{1: 10, 2: 20}, {2: 200}, {1: hg.REMOVE}, {1: 7}]
+    check(eval_node(app, inputs) == inputs, "sink map wrapper output")
+    check(seen == [(1, 10), (2, 20), (2, 200), (1, 7)], f"sink map calls: {seen}")
+    check(lifecycle.count("start") == 3, f"sink map starts: {lifecycle}")
+    check(lifecycle.count("stop") == 3, f"sink map stops: {lifecycle}")
+
+
+def test_python_key_only_sink_map_uses_explicit_keys():
+    seen = []
+
+    @hg.sink_node
+    def collect(key: TS[int]):
+        seen.append(key.value)
+
+    @graph
+    def app(keys: TSS[int]) -> TSS[int]:
+        check(hg.map_(collect, __keys__=keys) is None, "key-only sink map wiring result")
+        return keys
+
+    inputs = [{1, 2}, {hg.Removed(1)}, {3}]
+    check(eval_node(app, inputs) == inputs, "key-only sink map wrapper output")
+    check(seen == [1, 2, 3], f"key-only sink map calls: {seen}")
+
+
 def test_reference_service_path_and_scalar_configuration():
     @hg.reference_service
     def configured_value() -> TS[int]: ...

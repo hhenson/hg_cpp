@@ -341,9 +341,8 @@ def _as_wired(func):
 
 
 def map_(func, *args, **kwargs):
-    """hgraph's map_. ``func`` may be a registered operator name or the
-    module-level operator function (Python-defined @graph callables cannot
-    compile as C++ sub-graphs yet - a recorded divergence)."""
+    """hgraph's map_. ``func`` may be a native operator or a Python-authored
+    graph/node; outputless functions create keyed sink child graphs."""
     return wire("map_", _as_wired(func), *args, **kwargs)
 
 

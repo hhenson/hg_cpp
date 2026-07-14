@@ -1769,10 +1769,11 @@ namespace hgraph::stdlib
 
         /**
          * Compile the ``map_`` child template over the classified time-series
-         * args, deriving the boundary-arg source table and the ``TSD<K, OUT>``
-         * output schema. The caller has already resolved name-based key
-         * consumption, so this helper sees a schema count that either matches
-         * ``func`` directly or has one extra slot for the key.
+         * args, deriving the boundary-arg source table and, for an output
+         * function, the ``TSD<K, OUT>`` output schema. The caller has already
+         * resolved name-based key consumption, so this helper sees a schema
+         * count that either matches ``func`` directly or has one extra slot
+         * for the key.
          */
         [[nodiscard]] inline MapNodeSpec compile_map_child(const WiredFn &func,
                                                            std::span<const TSValueTypeMetaData *const> ts_schemas,
@@ -1807,24 +1808,29 @@ namespace hgraph::stdlib
             schemas.insert(schemas.end(), classified.child_schemas.begin(), classified.child_schemas.end());
 
             CompiledSubGraph compiled = func.compile({schemas.data(), schemas.size()});
-            if (compiled.output_schema == nullptr)
+            const bool child_has_output = compiled.output_schema != nullptr;
+            if (compiled.output_binding.has_value() != child_has_output)
             {
-                throw std::invalid_argument("map_: 'func' must produce an output (sink maps are not supported yet)");
+                throw std::invalid_argument(
+                    "map_: the function output schema and nested output binding must agree");
             }
-            if (!compiled.output_binding.has_value())
-            {
-                throw std::invalid_argument("map_: the function output must bind to a nested output source");
-            }
-            if (compiled.output_binding->kind == NestedGraphOutputBinding::Kind::ChildOutput &&
+            if (child_has_output &&
+                compiled.output_binding->kind == NestedGraphOutputBinding::Kind::ChildOutput &&
                 !compiled.output_binding->source.path.empty())
             {
                 throw std::invalid_argument("map_: the function output must be a whole node output");
             }
-            const auto *out = compiled.output_schema;
-            // TSD / dynamic-TSL elements embed since the storage-stability
-            // ruling (938a125): slot-backed TSData is construct-only in
-            // stable slots, so container children never relocate.
-            output_schema = registry.tsd(classified.key_meta, out);
+            if (child_has_output)
+            {
+                // TSD / dynamic-TSL elements embed since the storage-stability
+                // ruling (938a125): slot-backed TSData is construct-only in
+                // stable slots, so container children never relocate.
+                output_schema = registry.tsd(classified.key_meta, compiled.output_schema);
+            }
+            else
+            {
+                output_schema = nullptr;
+            }
 
             MapNodeSpec spec;
             spec.child.graph_builder  = std::move(compiled.graph_builder);
@@ -1832,11 +1838,12 @@ namespace hgraph::stdlib
             spec.child.output_binding = compiled.output_binding;
             spec.key_output_schema    = takes_key ? key_ts : nullptr;
 
-            if (spec.child.output_binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
+            if (child_has_output &&
+                spec.child.output_binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
             {
                 spec.output_binding_mode = MapOutputBindingMode::OutputElementForwardsToParentSource;
             }
-            else
+            else if (child_has_output)
             {
                 // The design intent: every key has a REAL element instantiated in
                 // the parent's owned TSD output, and the child's terminal node
@@ -1844,6 +1851,7 @@ namespace hgraph::stdlib
                 // endpoint that the map node points at the parent element. No copy.
                 NodeBuilder &terminal =
                     spec.child.graph_builder.node_at(spec.child.output_binding->source.node);
+                const auto *out = compiled.output_schema;
                 const TSEndpointSchema &terminal_override = terminal.output_endpoint();
                 const NodeTypeMetaData *terminal_meta = terminal.type().schema();
                 const TSEndpointSchema &terminal_declared =
@@ -1945,6 +1953,21 @@ namespace hgraph::stdlib
             });
         }
 
+        [[nodiscard]] inline std::optional<bool> try_resolve_map_output_mode(
+            const WiredFn &func,
+            std::span<const TSValueTypeMetaData *const> ts_schemas,
+            std::span<const std::uint8_t> arg_tags,
+            const ValueTypeMetaData *fallback_key_meta = nullptr)
+        {
+            return fallback_on_exception<std::optional<bool>>(std::nullopt, [&] {
+                const TSValueTypeMetaData *output_schema = nullptr;
+                std::vector<WiringPortRef> captured;
+                (void)compile_map_child(func, ts_schemas, arg_tags, output_schema, &captured,
+                                        fallback_key_meta);
+                return std::optional<bool>{output_schema != nullptr};
+            });
+        }
+
         /**
          * The shared map wiring over the **func-parameter-ordered** time-series
          * list (positional + keyword arguments already resolved onto the
@@ -1953,7 +1976,8 @@ namespace hgraph::stdlib
         [[nodiscard]] inline WiringPortRef wire_map(Wiring &w, const Scalar<"func", WiredFn> &func,
                                                     std::string_view key_arg,
                                                     std::vector<WiringPortRef> ordered,
-                                                    std::optional<WiringPortRef> keys = std::nullopt)
+                                                    std::optional<WiringPortRef> keys,
+                                                    bool output_required)
         {
             std::vector<const TSValueTypeMetaData *> ts_schemas;
             std::vector<std::uint8_t>                arg_tags;
@@ -1975,10 +1999,19 @@ namespace hgraph::stdlib
                     explicit_key_meta = keys_schema->value_schema->element_type;
                 }
             }
+            const MapArgClassification classified = classify_map_args(
+                {ts_schemas.data(), ts_schemas.size()}, {arg_tags.data(), arg_tags.size()},
+                explicit_key_meta);
             std::vector<WiringPortRef> captured;
             MapNodeSpec spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
                                                  {arg_tags.data(), arg_tags.size()}, output_schema, &captured,
                                                  explicit_key_meta);
+            if ((output_schema != nullptr) != output_required)
+            {
+                throw std::invalid_argument(output_required
+                                                ? "map_: 'func' must produce an output"
+                                                : "map_sink_: 'func' must be a sink");
+            }
             // Captured outer ports join the node's inputs as PASS-THROUGH
             // broadcasts after the declared arguments (spec.args already
             // references these positions).
@@ -2027,7 +2060,7 @@ namespace hgraph::stdlib
                                .output.erased();
                 }
             }
-            if (registry.dereference(keys->schema) != registry.tss(output_schema->key_type()))
+            if (registry.dereference(keys->schema) != registry.tss(classified.key_meta))
             {
                 throw std::invalid_argument("map_: '__keys__' must be a TSS of the mapped key type");
             }
@@ -2469,7 +2502,49 @@ namespace hgraph::stdlib
                                                                {pos.data(), pos.size()},
                                                                {named.data(), named.size()},
                                                                key_arg.value());
-                return wire_map(w, func, key_arg.value(), std::move(bound.ordered), std::move(keys));
+                return wire_map(w, func, key_arg.value(), std::move(bound.ordered), std::move(keys), true);
+            }
+        };
+
+        struct map_sink_impl_tsd
+        {
+            static constexpr auto name = "map_sink_impl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                const auto *collection = first_map_collection(context);
+                const bool tsd_shape = collection != nullptr
+                                           ? time_series_schema_as<AnyTSD>(collection) != nullptr
+                                           : keys_kwarg_element(context) != nullptr;
+                if (!tsd_shape) { return false; }
+
+                const WiredFn *func = context.scalar_as<WiredFn>("func");
+                if (func == nullptr) { return false; }
+                auto ordered = ordered_map_schemas(context, "key");
+                if (!ordered.has_value()) { return false; }
+                const auto mode = try_resolve_map_output_mode(
+                    *func, {ordered->schemas.data(), ordered->schemas.size()},
+                    {ordered->arg_tags.data(), ordered->arg_tags.size()}, keys_kwarg_element(context));
+                return mode.has_value() && !*mode;
+            }
+
+            static std::vector<std::pair<std::string_view, Value>> defaults()
+            {
+                return {{"__key_arg__", Value{Str{"key"}}}};
+            }
+
+            static void compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                VarIn<"args", TsVar<"B">> positional,
+                                Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
+            {
+                const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
+                std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
+                std::optional<WiringPortRef> keys = split_keys_kwarg(named);
+                auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(),
+                                                               {pos.data(), pos.size()},
+                                                               {named.data(), named.size()},
+                                                               key_arg.value());
+                (void)wire_map(w, func, key_arg.value(), std::move(bound.ordered), std::move(keys), false);
             }
         };
 

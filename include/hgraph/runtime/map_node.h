@@ -46,10 +46,10 @@ namespace hgraph
         /**
          * Outer-input indices of ALL multiplexed TSDs. The live key set is
          * their **union** (Python parity): a key builds a child when it
-         * appears in any of them and the child (and output entry) is
-         * destroyed only when it has left all of them — unless an explicit
-         * ``__keys__`` set is wired (below), which then drives the lifecycle
-         * alone.
+         * appears in any of them and the child (plus its output entry, when
+         * present) is destroyed only when it has left all of them — unless an
+         * explicit ``__keys__`` set is wired (below), which then drives the
+         * lifecycle alone.
          */
         std::vector<std::size_t> multiplexed_inputs{};
         /**
@@ -61,7 +61,7 @@ namespace hgraph
         std::optional<std::size_t> keys_input_index{};
         /** ``TS<K>`` for the entry-owned key outputs (when any arg sources ``Key``). */
         const TSValueTypeMetaData *key_output_schema{nullptr};
-        /** Direction used when connecting the child terminal to the map output element. */
+        /** Child-terminal connection direction; ignored for sink maps. */
         MapOutputBindingMode output_binding_mode{MapOutputBindingMode::ChildTerminalWritesElement};
     };
 
@@ -94,13 +94,13 @@ namespace hgraph
     /**
      * Build a node owning **one child graph per key** of its ``__keys__``
      * input. Wiring derives that key set from the multiplexed TSD inputs when
-     * the caller does not supply it explicitly. A new key instantiates a real
-     * element in the owned TSD output and builds,
-     * binds and starts a fresh child instance whose terminal **forwarding
-     * output is bound onto that element** — the child writes the parent's
-     * storage directly (no copy). A missing key stops the child and removes the
-     * element; the source slot's later erase destroys the child in place (see
-     * *Nested Graphs*).
+     * the caller does not supply it explicitly. A new key builds, binds and
+     * starts a fresh child instance. For an output map it also instantiates a
+     * real element in the owned TSD and binds the child's terminal
+     * **forwarding output onto that element**, so the child writes the parent's
+     * storage directly (no copy). A sink map omits the parent output entirely.
+     * A missing key stops the child and removes any output element; the source
+     * slot's later erase destroys the child in place (see *Nested Graphs*).
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder map_node(NodeTypeMetaData meta, MapNodeSpec spec);
 }  // namespace hgraph

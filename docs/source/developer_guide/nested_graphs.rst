@@ -617,7 +617,13 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   key-set inference** (its key *type* still participates) — if every
   multiplexed input is ``no_key`` an explicit ``__keys__`` is required, and
   ``no_key`` is rejected on non-TSD arguments and on TSL maps.
-- Deferred: dynamic-TSL multiplexing and sink maps.
+- **Sink maps use the same keyed slot lifecycle without an output.**  A C++
+  caller selects ``map_sink_``; Python infers it from an outputless graph or
+  sink-node function.  Key observation, in-place child allocation,
+  stop-on-remove, and destroy-on-erase are unchanged.  No parent ``TSD`` or
+  per-key output element is allocated.  Key-only sink maps derive ``K`` from
+  their explicit ``__keys__: TSS[K]`` input.
+- Deferred: dynamic-TSL multiplexing.
 
 Tests: ``tests/cpp/test_map.cpp``. ASAN/UBSAN-verified (keyed
 create/destroy churn).
