@@ -384,6 +384,11 @@ def no_key(ts):
 
 def feedback(tp, initial=None):
     w = _current_wiring()
+    if isinstance(tp, WiringPort):
+        port = tp
+        result = Feedback(w, w.feedback(_unwrap(port).ts_type, initial))
+        result(port)
+        return result
     return Feedback(w, w.feedback(_unwrap(tp), initial))
 
 

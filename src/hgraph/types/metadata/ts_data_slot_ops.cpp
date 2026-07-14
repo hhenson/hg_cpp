@@ -306,6 +306,10 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 return slot < modified_.size() && modified_.test(slot);
             }
+            [[nodiscard]] bool slot_value_published(std::size_t slot) const noexcept
+            {
+                return slot < value_published_.size() && value_published_.test(slot);
+            }
             [[nodiscard]] const void *key_at_slot(std::size_t slot) const { return keys_[slot]; }
             [[nodiscard]] std::size_t find_slot(const ValueView &key) const
             {
@@ -325,6 +329,11 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] void *child_memory_for_write(std::size_t slot)
             {
                 return values_.value_memory(slot);
+            }
+            [[nodiscard]] bool child_has_current_value(std::size_t slot) const
+            {
+                const auto &ops = element_type_.ops_ref();
+                return ops.has_current_value_impl(ops.context, values_.value_memory(slot));
             }
 
             void reserve(std::size_t capacity)
@@ -349,8 +358,16 @@ namespace hgraph::ts_data_plan_factory_detail
                 ensure_delta_capacity();
                 if (!result.inserted) { return {.slot = result.slot, .changed = false}; }
 
-                if (slot_removed(result.slot)) { removed_.reset(result.slot); }
-                else { added_.set(result.slot); }
+                if (slot_removed(result.slot))
+                {
+                    removed_.reset(result.slot);
+                    value_published_.set(result.slot);
+                }
+                else if (child_has_current_value(result.slot))
+                {
+                    value_published_.set(result.slot);
+                    added_.set(result.slot);
+                }
                 (void)key_set_tracking_.record_modified(modified_time);
                 return mutation_result(result.slot);
             }
@@ -364,8 +381,16 @@ namespace hgraph::ts_data_plan_factory_detail
                 ensure_delta_capacity();
                 if (!result.inserted) { return {.slot = result.slot, .changed = false}; }
 
-                if (slot_removed(result.slot)) { removed_.reset(result.slot); }
-                else { added_.set(result.slot); }
+                if (slot_removed(result.slot))
+                {
+                    removed_.reset(result.slot);
+                    value_published_.set(result.slot);
+                }
+                else if (child_has_current_value(result.slot))
+                {
+                    value_published_.set(result.slot);
+                    added_.set(result.slot);
+                }
                 (void)key_set_tracking_.record_modified(modified_time);
                 return mutation_result(result.slot);
             }
@@ -381,8 +406,12 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
 
                 ensure_delta_capacity();
-                if (slot_added(slot)) { added_.reset(slot); }
-                else { removed_.set(slot); }
+                if (slot_value_published(slot))
+                {
+                    if (slot_added(slot)) { added_.reset(slot); }
+                    else { removed_.set(slot); }
+                    value_published_.reset(slot);
+                }
                 modified_.reset(slot);
                 (void)key_set_tracking_.record_modified(modified_time);
                 return mutation_result(slot);
@@ -401,8 +430,12 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
 
                 ensure_delta_capacity();
-                if (slot_added(slot)) { added_.reset(slot); }
-                else { removed_.set(slot); }
+                if (slot_value_published(slot))
+                {
+                    if (slot_added(slot)) { added_.reset(slot); }
+                    else { removed_.set(slot); }
+                    value_published_.reset(slot);
+                }
                 modified_.reset(slot);
                 (void)key_set_tracking_.record_modified(modified_time);
                 return mutation_result(slot);
@@ -416,6 +449,11 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
                 if (!slot_live(slot)) { return; }
                 prepare_delta(modified_time);
+                if (!slot_value_published(slot))
+                {
+                    value_published_.set(slot);
+                    added_.set(slot);
+                }
                 modified_.set(slot);
             }
 
@@ -487,6 +525,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 added_.resize(capacity);
                 removed_.resize(capacity);
                 modified_.resize(capacity);
+                value_published_.resize(capacity);
             }
 
             [[nodiscard]] SlotTSDataMutationResult mutation_result(std::size_t slot) const noexcept
@@ -503,12 +542,13 @@ namespace hgraph::ts_data_plan_factory_detail
             sul::dynamic_bitset<>       added_{};
             sul::dynamic_bitset<>       removed_{};
             sul::dynamic_bitset<>       modified_{};
+            sul::dynamic_bitset<>       value_published_{};
             DateTime               delta_time_{MIN_DT};
         };
 
 #if defined(__APPLE__) && defined(__aarch64__)
         static_assert(sizeof(TSSSlotStorage) <= 392);
-        static_assert(sizeof(TSDSlotStorage) <= 680);
+        static_assert(sizeof(TSDSlotStorage) <= 720);
 #endif
 
         struct TSSStoragePlanContext

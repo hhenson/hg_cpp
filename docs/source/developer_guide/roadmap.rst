@@ -1,191 +1,318 @@
 Roadmap
 =======
 
-This page records the remaining work needed to bring the C++ implementation in
-line with the Python graph feature set. The order matters: graph capability
-comes before catalogue completeness, and the C++ runtime remains the source of
-truth.
+This page records the remaining work needed to replace the Python hgraph
+engine for the supported user base while keeping the C++ runtime as the source
+of truth.  It distinguishes four states deliberately:
+
+``Landed``
+   Implemented through the C++ runtime and covered by native and/or bridge
+   tests.
+
+``In progress``
+   The design is accepted and implementation is under way, but it has not yet
+   passed the repository acceptance gates.
+
+``Remaining``
+   A genuine compatibility or product capability still to implement.
+
+``Accepted deviation``
+   Behaviour intentionally differs from Python hgraph and must not quietly
+   return as a second Python runtime implementation.
+
+Review Snapshot: 2026-07-14
+---------------------------
+
+This review was made against the working tree based on ``02bf29f8``, including
+the completed mutable-output work described below.  Evidence came from the
+public implementation and tests, the commit history, :doc:`parity_matrix`,
+:doc:`python_integration`, :doc:`nested_graphs`, and :doc:`services`.
+
+The important corrections to the previous roadmap are:
+
+- The Python graph bridge, Python user nodes, type conversion, services,
+  adaptors, contexts, real-time execution, push sources, components, dispatch,
+  and stable-ABI packaging have **landed**.  They are not future bridge work.
+- Runtime-defined Python ``Enum`` classes have **landed** as nominal C++ enum
+  schemas (``enum_vt`` / ``TypeRegistry::enum_type``) with conversion back to
+  the registered Python class.  They are not a bridge blocker.
+- Closed CompoundScalar hierarchies have landed as C++ Bundle unions, including
+  namespace-qualified identity, graph-realization closure, dispatch, largest-
+  leaf planned storage, and owner-backed recursive fields.
+- ``@component`` and all record/replay modes, including Recover seeding and
+  Compare, have landed in both languages.  General process checkpointing is a
+  different feature and is not required to preserve this compatibility
+  surface.
+- All 48 upstream operator-test files are present under
+  ``python/tests/ported/_operators``.  The wiring tier is only a selected port:
+  19 files are present under ``python/tests/ported/_wiring``.  It must not be
+  described as the entire upstream wiring suite.
+- The current operator inventory is **133 registered**, **1 declared-only**,
+  **7 missing**, and **24 equivalent APIs** out of the 165 upstream public
+  definitions.  Use :doc:`parity_matrix` for the per-module inventory.  The
+  bridge registry also contains internal and compatibility operators, so its
+  raw ``operator_names()`` count is intentionally larger and is not the parity
+  numerator.
+
+The completed A3 working tree passed the full acceptance gates on both local
+platforms:
+
+- macOS arm64, AppleClang 21, Release with warnings as errors: 998/998 native
+  tests; a ``cp312-abi3`` wheel installed under Python 3.14.6 produced 975
+  passed, 32 skipped, 4 xfailed, and 6 deselected;
+- Ubuntu 24.04 x86_64, GCC 13.3, Release with warnings as errors: 998/998 native
+  tests; the Linux ``cp312-abi3`` wheel under Python 3.14.6 produced the same
+  Python result; and
+- Ubuntu 24.04 x86_64, GCC 13.3, Debug with AddressSanitizer and the Python
+  bridge enabled: the full non-WIP suite under Python 3.12.3 produced 975
+  passed, 32 skipped, 4 xfailed, and 6 deselected with no sanitizer report.
+
+These are execution results, not collection-only inventory.
+
+Replacement Readiness
+---------------------
+
+The C++ engine already replaces the Python runtime for the surface exercised by
+the current package and compatibility suite.  The remaining work is not a
+foundational bridge rewrite.  It is a finite set of Python-authoring gaps,
+structural wiring cases, nested-boundary extensions, and additive catalogue
+work.
+
+A broad claim that the Python engine can be replaced should wait until all of
+the following are true:
+
+1. **Met (2026-07-14):** mutable Python ``_output`` views work for the
+   supported output kinds and are callback-scoped, with equivalent native C++
+   output-mutation coverage.
+2. The remaining common structural REF and generic-graph cases are either
+   implemented through C++ wiring or explicitly accepted as restrictions.
+3. The unported upstream ``_wiring`` and ``ts_tests`` inventories have been
+   reviewed against a recorded upstream revision.  Required cases must be
+   ported; irrelevant internals and accepted deviations must be listed rather
+   than silently omitted.  The old ``ext/main`` checkout is gone, so future
+   inventories must name the upstream tag or commit used as the baseline.
+4. Every supported Python-visible runtime behaviour has an equivalent public
+   C++ wiring route and comparable behavioural tests.  Bridge-only syntax and
+   arbitrary Python-object adaptation are the narrow exceptions.
+5. **Met for A3:** the full macOS native and Python 3.14 gates pass.  Large
+   ownership, nested-graph, or cross-language changes must additionally pass
+   the local Linux and sanitizer gates specified in ``AGENTS.md``; A3 passed
+   those gates as recorded above.
+
+Priority 0: Mutable Python Outputs
+----------------------------------
+
+**Landed (A3).**  Python compute nodes receive a callback-scoped mutable
+``_output`` adapter over their C++-owned output.  Root and child views share a
+lifetime guard and fail after the callback returns.  No Python-owned runtime
+state was introduced.
+
+Landed behaviour:
+
+- mutable scalar ``TS_OUT.value`` assignment;
+- mutable ``TSD_OUT`` access, including ``get_or_create``, key removal,
+  ``clear``, removed-key reporting, and add/remove in one engine cycle;
+- mutable ``TSB_OUT`` field access;
+- mutable ``TSS_OUT`` add, remove, and clear operations;
+- callback lifetime enforcement for every root and child view;
+- mutations applied through the normal C++ ``TSOutputView`` APIs and node-owned
+  storage; and
+- public C++ ``eval_node`` tests at the same behavioural level as the Python
+  tests.
+
+Four A3 skips were removed: the TSD add/remove, invalid-child removal, clear,
+and TSB output-access cases now execute.  The nearby
+``test_removal_and_unbind_in_the_same_cycle`` case is not mutable-output work;
+it remains classified under the same-cycle structural TSD REF-unbind gap.
+
+The C++ coverage uses public ``eval_node`` wiring for TSS mutation, TSD
+same-cycle cancellation, invalid-child removal, and prior TSB output access.
+TSD storage now records whether a child value was ever published, so removing
+an invalid child cannot emit a dictionary removal that had no corresponding
+add.  Structurally live keys remain visible through the key-set view, which is
+required by mesh key discovery.  C++ output views remain the implementation;
+the Python adapter does not form a second output runtime.
+
+Priority 1: Authoring Compatibility
+-----------------------------------
+
+These are the highest-value remaining gaps for existing Python graph authors.
+
+Structural references
+~~~~~~~~~~~~~~~~~~~~~
+
+**Remaining:**
+
+- REF-flipping composition for ``TSL`` and ``TSB`` structural ports;
+- empty-REF propagation through ``if_`` / ``key_set``;
+- the TSS rebind-to-nothing removal delta; and
+- the still-rejected REF adaptation modes at compiled sub-graph boundaries.
+
+The current value-only Python REF contract remains in force: a Python REF has
+no ``.output``.  Fixes must use the C++ binding alternatives and sampled
+retarget semantics, not expose a borrowed output pointer to Python.
+
+Generic wiring
+~~~~~~~~~~~~~~
+
+**Landed:** node-level ``TsVar`` / ``ScalarVar`` resolution, Python ``TypeVar``
+matching, ``AUTO_RESOLVE``, overload requirements, variadics, and registry-
+owned Python overload dispatch.
+
+**Remaining:**
+
+- graph-level constrained ``typing.TypeVar`` cases;
+- generic ``TimeSeriesSchema`` / ``Generic[SCALAR]`` realization;
+- ``eval_node`` ``resolution_dict`` over a raw operator; and
+- a decision on whether remaining ``Type[...]``-style call-site resolution is
+  useful public syntax or sufficiently covered by expected-output resolution.
+
+Compatibility inventory
+~~~~~~~~~~~~~~~~~~~~~~~
+
+**Landed:** all 48 operator files and a selected 19-file wiring pack.
+
+**Remaining:** review the rest of upstream ``_wiring`` and ``ts_tests``.  Port
+behavioural contracts, not Python runtime internals.  Each retained Python test
+needs a native test for the underlying C++ behaviour.  In particular, duration-
+based TSW execution is covered from Python and by lower-level native storage
+tests, but needs a public C++ ``eval_node`` wiring test; its exact duration
+shape also has no compile-time static marker.
+
+Priority 2: Nested Graphs and Boundaries
+----------------------------------------
+
+**Landed:**
+
+- planned, in-place nested storage with stop-before-destroy lifetimes;
+- two-slot ``switch_`` storage;
+- slot-observed keyed ``map_`` and ``mesh_`` instances;
+- fixed-TSL and associative dynamic-TSD ``reduce``;
+- ``try_except_``, feedback, closed-union ``dispatch_``, closure capture, key
+  injection, ``pass_through`` / ``no_key``, and keyed write-through outputs;
+- reference, subscription, and request/reply services;
+- source, sink, duplex, and service-adaptor foundations; and
+- same-wiring contexts and the source/capture context runtime primitive.
+
+**Remaining higher-order shapes:**
+
+- sink maps and all-sink switches;
+- dynamic-TSL map/reduce/mesh;
+- non-associative ordered reduce;
+- dynamic-TSD reduce with pass-through combiner outputs; and
+- graph-level generic ``TsVar`` sub-graphs.
+
+**Remaining boundary modes:**
+
+- context import/export across compiled nested graphs;
+- ``Context<>`` parameters on implementations registered through
+  ``register_overload``;
+- recordable-state pass-through across nested boundaries; and
+- push sources inside nested graphs if a concrete adaptor requires them.
+
+**Remaining external-resource work:** subscription-adaptor flows not already
+covered by the service-adaptor exchange, scheduler integration for external
+events, explicit lifecycle ownership, and concrete adaptor families such as
+catalogue, messaging, or database adaptors.  Build these from the common C++
+boundary model when demanded by a real integration.
+
+Priority 3: Catalogue and Operations
+------------------------------------
+
+The catalogue is no longer the critical path for Python authoring.  Additions
+should be driven by supported applications or the compatibility inventory.
+
+**Landed:** 133 upstream public operator definitions are registry-resolvable;
+the stream, window, analytical, conversion, JSON, table, dataframe/Frame,
+Series, TSD/TSL/TSS, IO, compare, and record/replay families all have usable
+coverage.  ``Frame`` and ``Series`` use Arrow-native storage and bridge through
+the Arrow C interfaces.
+
+**Remaining inventory:**
+
+- declared-only: ``downcast_ref``;
+- missing public names: ``apply``, ``dedup_builder``, ``stop_engine``,
+  ``collect_builder``, ``table_shape``, ``table_shape_from_schema``, and
+  ``shape_of_table_type``; and
+- larger optional libraries such as the ``hgraph.stream`` status model and the
+  arrow-combinator package.
+
+``dedup_builder`` and ``collect_builder`` are Python implementation-injection
+hooks and probably do not need direct C++ counterparts.  The table-shape trio
+is convenience sugar.  ``apply`` and ``stop_engine`` require explicit API and
+ownership decisions before implementation.
+
+Native lifecycle observers and the executor ``request_stop()`` primitive have
+landed and cover nested graphs.  Remaining observability work is the public
+Python ``stop_engine`` operator, evaluation tracing, profiling, and the
+node-self injectable.  These are additive unless a target application
+demonstrates that one is required for migration.
+
+Priority 4: Boundary Products
+-----------------------------
+
+The common runtime model should precede concrete products.
+
+**Remaining:**
+
+- durable/pluggable record and replay stores beyond the default in-memory
+  stores and current Arrow frame backend;
+- data-catalogue publish/subscribe;
+- concrete external adaptor families and their operational lifecycle; and
+- broader JSON/table/Arrow scalar and serialization forms only where a real
+  data path requires them.
+
+These are product capabilities, not blockers for Python-authored compute,
+sink, generator, graph, service, adaptor, or component code already covered by
+the bridge.
+
+Accepted Deviations
+-------------------
+
+The following are intentional unless separately re-opened:
+
+- Python ``REF`` is an opaque value and does not expose ``.output``.
+- ``None`` in CompoundScalar/Bundle construction means an unset field.
+- TSB deltas are canonically dense; sparse-bundle delta parity is not required.
+- CompoundScalar is a C++ Bundle closed union, not an independent Python object
+  runtime.  Its diagnostic string representation may therefore differ.
+- Arrow is the table/frame substrate.  Polars interop is through Arrow rather
+  than a Polars runtime dependency.
+- C++ contexts are name-based.  The Python bridge preserves the compatible
+  type/name authoring syntax by lowering it onto that model.
+- Arbitrary Python object-class dispatch is a bridge adaptation; native
+  CompoundScalar dispatch uses the closed-union C++ path.
+- Python-only implementation hooks and private ``hgraph._impl`` internals are
+  not compatibility targets when the public behaviour is available.
+- ``GlobalState`` keeps C++ copy-in/copy-out ownership.  Python's thread-local
+  seed and ``GlobalContext`` are authoring adapters, not alternate runtime
+  global state.
+
+Recorded Residue Requiring a Decision
+-------------------------------------
+
+The following existing skips/deviations should be classified during the
+compatibility-inventory pass rather than being assumed accepted:
+
+- map children over EMPTY-REF projections retain their last value;
+- frame-to-TSD key type is not inferred from a selected frame column;
+- ``convert`` from ``TS[object]`` dispatches on the wiring-time schema;
+- the engine's naive-datetime contract versus upstream time-zone-aware cases;
+- constrained generic graphs involving a Polars frame annotation;
+- the legacy ``const_fn`` path and old wiring-node introspection details; and
+- the upstream arrow-combinator library.
 
 Implementation Standards
 ------------------------
 
-- Keep code compact and readable. Prefer direct, local logic over long call
-  chains with little behaviour in each hop.
-- Review each implementation after writing it: the code should match the
-  objective, avoid convenience-only state expansion, and avoid unnecessary work.
-- Treat memory size and runtime cost as first-class design constraints.
-- Prefer operation tables and typed dispatch over ``switch`` statements when
-  behaviour belongs to a type or runtime operation. ``switch`` is acceptable in
-  factory or builder code that selects a runtime builder.
-- Do not add helper functions unless they have at least two real call sites, or
-  the local complexity is high enough to justify the separation.
-- External interfaces need examples that compile or are otherwise directly
-  usable.
-- User-facing wiring APIs require explicit approval before implementation. They
-  should preserve the simplicity of the Python model while taking advantage of
-  C++ type information where that improves safety or ergonomics.
-
-Priority 1: Adaptors, Services, and Contexts
---------------------------------------------
-
-These features define the full graph boundary model and therefore come first.
-
-Landed (design record: :doc:`services`):
-
-- Graph services and service implementations: **reference**, **subscription**,
-  and **request/reply** services execute end-to-end with path-aware addressing
-  (``types/service_wiring.h``, ``runtime/service_node.*``,
-  ``tests/cpp/test_service_wiring.cpp``); implementation registration
-  (``register_*_service``) is separate from client wiring.
-- Request/reply services use feedback-style request dictionaries exactly as
-  designed below: capture sinks update a source-owned request-delta state for
-  ``TSD<int, request_schema>`` and the source emits the cumulative delta on its
-  next scheduled tick before resetting the delta state.
-- Shared outputs (``runtime/shared_output_node.*``) and the context
-  source/capture **runtime primitive** (``runtime/context_node.*``).
-- Adaptor foundations for source, sink, and duplex flows:
-  ``adaptor::interface`` descriptors, ``register_adaptor``/``register_adaptors``,
-  client ``wire<Interface>``, implementation-side ``from_graph``/``to_graph``
-  (``types/adaptor_wiring.h``, ``tests/cpp/test_adaptor_wiring.cpp``).
-- **Service adaptors** (the request/reply adaptor flow): per-client keyed
-  exchange via ``service_adaptor::interface`` + ``from_graph``/``to_graph``
-  over ``TSD<Int, schema>``.
-- Multi-interface implementations: ``register_services<Impl, Services…>`` with
-  ``impl_input``/``impl_output``.
-- Scalar-qualified paths (``path("p", arg<"k">(v))``), per-descriptor
-  ``default_path``, template service descriptors, and build-time rejection of
-  duplicate registrations.
-- Real-time wall-clock scheduler alarms
-  (``NodeScheduler(..., on_wall_clock=true)``).
-
-Planned work:
-
-- Nested graph context import/export: importing a context into a compiled
-  sub-graph (``map_``/``switch_``/``nested_`` children), lowering onto the
-  context source/capture runtime primitive. (The user-facing wiring surface —
-  ``context::scope<"name">`` / ``Context<"name", S>`` / ``context::get`` —
-  landed 2026-07-04; see *Contexts* in :doc:`services`. Cross-wiring lookups
-  are detected and reported as unsupported.)
-- ``Context<>`` parameters on operator implementations registered through
-  ``register_overload`` (the lifted-kernel path); today the marker is
-  supported on directly-wired nodes.
-- Subscription adaptor flows (request/reply landed as service adaptors).
-- Integrate remaining adaptor external events with the scheduler and real-time
-  executor.
-- Define lifecycle ownership for external resources.
-- Support data-catalogue-style publish/subscribe as a graph feature.
-- Build concrete adaptor families only after the common runtime model is
-  established.
-
-Boundary design decisions (implemented; the authoritative record is
-:doc:`services`):
-
-- Runtime boundary outputs follow the normal graph rule: every non-sink node
-  owns its output, and nested or adaptor-specific machinery forwards into that
-  output instead of copying values between outputs.
-- Shared outputs use a feedback-style source/capture pair. The source is a
-  pull-source node that owns a ``REF<T>`` output and graph-local REF state. The
-  capture node is a sink that captures the producer reference and writes that
-  reference into the paired source node state.
-- Shared outputs do not use global-state subscribers or shared ownership for
-  graph-local state. Consumers bind to the source node output and are woken by
-  ordinary output notification.
-- Boundary scheduling splits by kind (authoritative statement:
-  :doc:`services` / :doc:`architecture` *Lifecycle Teardown*): shared-output
-  relays are rank-correct (paired source ranked after every capture,
-  re-ranked by ``Wiring::finish`` once all captures are known) and relay
-  **same-cycle**; subscription/request-reply **request stubs** are rank-free
-  and forward at ``evaluation_time + MIN_TD`` (current time during ``start``)
-  — the sanctioned next-cycle break that lets requests derive from responses.
-- The source clears its captured reference on ``stop``. A restarted graph must
-  republish through capture before the source can produce a live shared output.
-- Context capture/lookup uses the same source/capture runtime primitive. Context
-  keys remain wiring-time identifiers for scope resolution; they are not runtime
-  ``GlobalState`` storage locations for copied reference values.
-- Subscription services collect keys through a source/capture pair. The service
-  source owns a ``TSS<K>`` output and graph-local reference counts; capture sinks
-  enqueue add/remove intents and schedule the source. The source mutates only
-  its own output, so client key changes do not copy values between outputs.
-- Request/reply services collect client request values through a
-  feedback-style source/capture pair. The source owns
-  ``TSD<int, request_schema>``; each client has a stable wiring-time request id;
-  capture sinks update source-local mutable delta state; the source applies
-  that delta in one mutation when scheduled and then resets it. Multiple
-  captures can update before the source emits, so the final request delta is
-  cumulative.
-- Real-time wall-clock scheduler alarms use the normal graph schedule queue:
-  ``NodeScheduler(..., on_wall_clock=true)`` is enabled only for real-time graph
-  executors, where engine time is wall-clock-aligned. Simulation rejects
-  wall-clock alarms because simulated time cannot be advanced by host time.
-
-Priority 2: Graph and Higher-Order Completeness
------------------------------------------------
-
-Once graph boundaries are in place, complete the internal graph model against
-the Python semantics.
-
-Planned work:
-
-- Sink maps.
-- All-sink switches.
-- Dynamic ``TSL`` map, reduce, and mesh.
-- Non-associative reduce.
-- Dynamic ``TSD`` reduce pass-through combiner outputs.
-- Graph-level generic ``TsVar`` subgraphs.
-- Remaining nested graph boundary modes, including REF adaptation and
-  recordable-state pass-through.
-- Structural reference alternatives that are still unsupported.
-- Push sources inside nested graphs, if the service/adaptor model requires them.
-
-Priority 3: Parity Matrix and Operators
----------------------------------------
-
-The Python-to-C++ parity matrix is built and maintained at
-:doc:`parity_matrix` (snapshot 2026-07-04: 102 of 165 Python operator
-definitions registered, 23 declared-only, 40 missing — update it in the same
-change as any operator addition). Complete operator families against that
-inventory.
-
-Landed:
-
-- ``record`` / ``replay`` are registered operators (the testing toolkit's
-  in-memory GlobalState buffer is the registered backend); pluggable backends
-  (Python's model registry / DataWriter) remain planned.
-- ``time`` (time-of-day) and ``bytes`` scalar atoms — distinct strong types
-  with schema identity, hash/compare/to_string, standard-vocabulary aliases
-  and ``TS``/``TSS`` pre-interning (``util/date_time.h`` /
-  ``types/primitive_types.h``).
-
-Planned work:
-
-- IO and compare operators; pluggable record/replay backends.
-- Stream, window, and analytical operators.
-- ``TSD`` and ``TSL`` convenience operators.
-- Conversion and serialization operators.
-- JSON, table, dataframe, numpy, and related scalar value types.
-- Scalar and compound type coverage required by the Python tests. C++ ``enum``
-  scalars already register (the ``DivideByZero`` pattern); *runtime-defined*
-  enums (Python-created, no C++ type) are bridge-time work.
-
-Priority 4: Python Support
---------------------------
-
-Python support is built on top of the C++ runtime, not the other way around.
-
-The wiring contract for the bridge is **runtime-schema dispatch** — build
-``WiringArg`` values, ``OperatorRegistry::resolve`` by name, ``impl->wire`` —
-and it is proven template-free by ``tests/cpp/test_erased_wiring.cpp``: full
-graphs wire and run via name resolution only (positional and keyword args,
-defaults, expected-output-driven generic resolution, resolution errors). Any
-capability that test suite cannot reach is by definition unreachable from
-Python; extend it as new wiring surface lands.
-
-Planned work:
-
-- Python graph wiring bridge.
-- Python user-node execution inside the C++ runtime.
-- Python/C++ type metadata conversion and identity.
-- Python object lifetime, GIL handling, callback scheduling, and exception
-  translation.
-- Python operator registration.
-- Compatibility tests that exercise the Python surface through the C++ runtime.
+- Preserve C++ as the single runtime implementation.  Python adapters convert
+  syntax, values, and callables into C++ wiring and views.
+- Treat static memory size, keyed-slot capacity, and stop/erase lifetime as
+  design inputs for every nested feature.
+- Prefer operation tables and typed dispatch when behaviour belongs to a type;
+  use selection switches only in builders and factories.
+- Keep the parity matrix and this review snapshot current when a listed gap
+  lands or a deviation is accepted.
+- User-facing wiring APIs require explicit review.  Tests should use public
+  wiring and ``eval_node`` rather than constructing runtime internals, except
+  for focused low-level contracts.

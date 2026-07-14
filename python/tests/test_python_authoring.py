@@ -207,6 +207,33 @@ def test_compute_state_clock_scheduler_and_output_view():
     check(eval_node(delayed_delta, [4]) == [4, 4], "state/scheduler/output injection")
 
 
+def test_mutable_output_view_set_operations():
+    @hg.compute_node
+    def mutate(trigger: TS[bool], _output: TSS[int] = None) -> TSS[int]:
+        _output.add(1)
+        _output.add(2)
+        _output.remove(1)
+
+    check(eval_node(mutate, [True]) == [{2}], "mutable TSS output")
+
+
+def test_mutable_output_views_expire_after_evaluation():
+    retained = []
+
+    @hg.compute_node
+    def mutate(trigger: TS[bool], _output: TSD = None) -> TSD[str, TS[int]]:
+        child = _output.get_or_create("a")
+        child.value = 1
+        retained.extend((_output, child))
+
+    check(eval_node(mutate, [True]) == [{"a": 1}], "mutable TSD output")
+    for view in retained:
+        expect_raises(RuntimeError, lambda view=view: view.value,
+                      "outside its node's evaluation")
+        expect_raises(RuntimeError, lambda view=view: setattr(view, "value", None),
+                      "outside its node's evaluation")
+
+
 def test_compute_and_sink_lifecycle_callbacks():
     events = []
 

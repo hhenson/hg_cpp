@@ -1198,6 +1198,15 @@ namespace hgraph
 
         void apply(const TKey &key, const ValueView &value) const { (*this)[key].apply(value); }
 
+        /** Remove ``key`` if it is live; same-cycle additions are cancelled by the slot protocol. */
+        [[nodiscard]] bool erase(const TKey &key) const
+        {
+            return TSDOutputView::begin_mutation(evaluation_time()).erase(Value{key}.view());
+        }
+
+        /** Remove every live entry while retaining slots until normal end-of-cycle cleanup. */
+        void clear() const { TSDOutputView::begin_mutation(evaluation_time()).clear(); }
+
         [[nodiscard]] Range<Out<TValueSchema>> values() const
         {
             return typed_values(&live_slot);

@@ -267,7 +267,6 @@ def test_tsb_ref_index():
     eval_(True, "") | if_then(c(1) / c("a")) >> g >> assert_(1)
 
 
-@pytest.mark.skip(reason="gap: mutable _output views land with A3")
 def test_tsb_output_access():
     @compute_node
     def f(tsb: TSB[MyTsb], _output: TSB_OUT[MyTsb] = None) -> TSB[MyTsb]:

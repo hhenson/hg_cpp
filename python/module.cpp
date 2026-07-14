@@ -755,8 +755,11 @@ namespace
      * accessed. Kind-specific methods dispatch on the schema (TS/TSS/TSD/
      * TSL/TSB); child access returns child views sharing the same guard.
      */
-    /** Read-only view of the node's OWN OUTPUT (hgraph's ``_output``
-        injection): ``valid`` / ``value`` for delta-computing nodes. */
+    /** Mutable, call-scoped view of the node's own output (``_output``).
+
+        All writes go through the native TSOutput mutation API. Child views
+        share the callback guard, so Python cannot retain an output cursor
+        beyond the evaluation that produced it. */
     struct PyOutput
     {
         TSOutputHandle             handle;
@@ -783,6 +786,133 @@ namespace
             auto view = checked();
             if (!view.valid() || !view.data_view().has_current_value()) { return nb::none(); }
             return value_to_py(view.data_view().value());
+        }
+
+        void set_value(nb::object value) const
+        {
+            auto view = checked();
+            if (value.is_none()) { return; }
+            Out<TsVar<"O">> out{std::move(view), now};
+            apply_py_result(value, out);
+        }
+
+        [[nodiscard]] PyOutput child(nb::handle key) const
+        {
+            auto view = checked();
+            switch (view.schema()->kind)
+            {
+                case TSTypeKind::TSD: {
+                    Value key_value = py_to_value_as(key, view.schema()->key_type());
+                    auto  dict      = view.as_dict();
+                    if (!dict.contains(key_value.view()))
+                    {
+                        throw nb::key_error("output key not found");
+                    }
+                    return PyOutput{dict.at(key_value.view()).handle(), now, guard};
+                }
+                case TSTypeKind::TSL: {
+                    auto list = view.as_list();
+                    return PyOutput{list.at(nb::cast<std::size_t>(key)).handle(), now, guard};
+                }
+                case TSTypeKind::TSB: {
+                    auto bundle = view.as_bundle();
+                    TSOutputView result = nb::isinstance<nb::str>(key)
+                                              ? bundle.field(nb::cast<std::string>(key))
+                                              : bundle.at(nb::cast<std::size_t>(key));
+                    return PyOutput{result.handle(), now, guard};
+                }
+                default: throw nb::type_error("this output kind has no children");
+            }
+        }
+
+        [[nodiscard]] PyOutput get_or_create(nb::handle key) const
+        {
+            auto view = checked();
+            if (view.schema()->kind != TSTypeKind::TSD)
+            {
+                throw nb::type_error("get_or_create: not a keyed output");
+            }
+            Value key_value = py_to_value_as(key, view.schema()->key_type());
+            auto  mutation  = view.as_dict().begin_mutation(now);
+            auto  child     = mutation.at(key_value.view());
+            return PyOutput{TSOutputHandle{view.output(), child}, now, guard};
+        }
+
+        void erase(nb::handle key) const
+        {
+            auto view = checked();
+            if (view.schema()->kind != TSTypeKind::TSD)
+            {
+                throw nb::type_error("item deletion: not a keyed output");
+            }
+            Value key_value = py_to_value_as(key, view.schema()->key_type());
+            static_cast<void>(view.as_dict().begin_mutation(now).erase(key_value.view()));
+        }
+
+        void clear() const
+        {
+            auto view = checked();
+            switch (view.schema()->kind)
+            {
+                case TSTypeKind::TSD: view.as_dict().begin_mutation(now).clear(); return;
+                case TSTypeKind::TSS: view.as_set().begin_mutation(now).clear(); return;
+                default: throw nb::type_error("clear: not a mutable collection output");
+            }
+        }
+
+        [[nodiscard]] bool contains(nb::handle key) const
+        {
+            auto view = checked();
+            switch (view.schema()->kind)
+            {
+                case TSTypeKind::TSD: {
+                    Value key_value = py_to_value_as(key, view.schema()->key_type());
+                    return view.as_dict().contains(key_value.view());
+                }
+                case TSTypeKind::TSS: {
+                    Value element = py_to_value_as(key, view.schema()->value_schema->element_type);
+                    return view.as_set().contains(element.view());
+                }
+                default: throw nb::type_error("contains: not a keyed collection output");
+            }
+        }
+
+        [[nodiscard]] std::size_t size() const
+        {
+            auto view = checked();
+            switch (view.schema()->kind)
+            {
+                case TSTypeKind::TSD: return view.as_dict().size();
+                case TSTypeKind::TSS: return view.as_set().size();
+                case TSTypeKind::TSL: return view.as_list().size();
+                case TSTypeKind::TSB: return view.as_bundle().size();
+                default: throw nb::type_error("this output kind has no size");
+            }
+        }
+
+        [[nodiscard]] nb::list removed_keys() const
+        {
+            nb::list result;
+            auto     view = checked();
+            auto     dict = view.as_dict();
+            for (const ValueView &key : dict.removed_keys()) { result.append(value_to_py(key)); }
+            return result;
+        }
+
+        [[nodiscard]] bool add(nb::handle value) const
+        {
+            auto view = checked();
+            if (view.schema()->kind != TSTypeKind::TSS) { throw nb::type_error("add: not a set output"); }
+            Value element = py_to_value_as(value, view.schema()->value_schema->element_type);
+            return view.as_set().begin_mutation(now).add(element.view());
+        }
+
+        [[nodiscard]] bool remove(nb::handle value) const
+        {
+            auto view = checked();
+            if (view.schema()->kind != TSTypeKind::TSS) { throw nb::type_error("remove: not a set output"); }
+            Value element = py_to_value_as(value, view.schema()->value_schema->element_type);
+            return view.as_set().begin_mutation(now).remove(element.view());
         }
     };
 
@@ -2977,7 +3107,21 @@ NB_MODULE(_hgraph, m)
     nb::class_<PySender>(m, "Sender").def("send", &PySender::send, nb::arg("value"));
     nb::class_<PyOutput>(m, "OutputView")
         .def_prop_ro("valid", &PyOutput::valid)
-        .def_prop_ro("value", &PyOutput::value);
+        .def_prop_rw("value", &PyOutput::value, &PyOutput::set_value,
+                     nb::for_setter(nb::arg("value").none()))
+        .def("get_or_create", &PyOutput::get_or_create)
+        .def("clear", &PyOutput::clear)
+        .def("removed_keys", &PyOutput::removed_keys)
+        .def("add", &PyOutput::add)
+        .def("remove", &PyOutput::remove)
+        .def("__getitem__", &PyOutput::child)
+        .def("__delitem__", &PyOutput::erase)
+        .def("__contains__", &PyOutput::contains)
+        .def("__len__", &PyOutput::size)
+        .def("__getattr__",
+             [](const PyOutput &self, const std::string &name) {
+                 return self.child(nb::str(name.c_str()));
+             });
     nb::class_<PyRecordableState>(m, "RecordableStateView")
         .def_prop_ro("valid", &PyRecordableState::valid)
         .def_prop_ro("modified", &PyRecordableState::modified)

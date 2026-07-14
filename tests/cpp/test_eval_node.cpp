@@ -128,6 +128,77 @@ namespace
             for (Int a : s.added()) { out.add(a); }
         }
     };
+
+    struct MutateOwnSetOutput
+    {
+        static constexpr auto name = "eval_mutate_own_set_output";
+        static void eval(In<"trigger", TS<Bool>>, Out<TSS<Int>> out)
+        {
+            REQUIRE(out.add(Int{1}));
+            REQUIRE(out.add(Int{2}));
+            REQUIRE(out.remove(Int{1}));
+        }
+    };
+
+    struct AddThenEraseDict
+    {
+        static constexpr auto name = "eval_add_then_erase_dict";
+        static void eval(In<"trigger", TS<Bool>>, Out<TSD<Str, TS<Int>>> out)
+        {
+            out.set(Str{"a"}, Int{1});
+            REQUIRE(out.erase(Str{"a"}));
+            REQUIRE_FALSE(out.contains(Str{"a"}));
+            auto removed = out.removed_keys();
+            REQUIRE(removed.begin() == removed.end());
+        }
+    };
+
+    struct AddThenClearDict
+    {
+        static constexpr auto name = "eval_add_then_clear_dict";
+        static void eval(In<"trigger", TS<Bool>>, Out<TSD<Str, TS<Int>>> out)
+        {
+            out.set(Str{"a"}, Int{1});
+            out.clear();
+            REQUIRE_FALSE(out.contains(Str{"a"}));
+            auto removed = out.removed_keys();
+            REQUIRE(removed.begin() == removed.end());
+        }
+    };
+
+    struct CreateInvalidThenEraseDict
+    {
+        static constexpr auto name = "eval_create_invalid_then_erase_dict";
+        static void eval(In<"erase", TS<Bool>> erase, Out<TSD<Str, TS<Int>>> out)
+        {
+            static_cast<void>(out.at(Str{"a"}));
+            REQUIRE(out.contains(Str{"a"}));
+            if (erase.value())
+            {
+                REQUIRE(out.erase(Str{"a"}));
+                REQUIRE_FALSE(out.contains(Str{"a"}));
+                auto removed = out.removed_keys();
+                REQUIRE(removed.begin() == removed.end());
+            }
+        }
+    };
+
+    using OutputAccessBundle = TSB<"OutputAccessBundle",
+                                   Field<"p1", TS<Int>>,
+                                   Field<"p2", TS<Str>>>;
+
+    struct ReadOwnBundleOutput
+    {
+        static constexpr auto name = "eval_read_own_bundle_output";
+        static void eval(In<"value", OutputAccessBundle> value, Out<OutputAccessBundle> out)
+        {
+            auto previous = out.field<"p1">();
+            if (!previous.valid() || value.field<"p1">().value() != previous.value().checked_as<Int>())
+            {
+                apply_delta(out.base(), value.delta());
+            }
+        }
+    };
 }  // namespace
 
 TEST_CASE("eval_node: maps each input tick through a compute node")
@@ -247,4 +318,43 @@ TEST_CASE("eval_node: TSS on both input and output round-trips the delta")
     const std::vector<std::optional<Value>> deltas{
         set_delta<Int>({1, 2}, {}), set_delta<Int>({3}, {1}), set_delta<Int>({}, {2, 3})};
     CHECK_OUTPUT(testing::eval_node<MirrorSet>(deltas), deltas);
+}
+
+TEST_CASE("eval_node: a TSS output supports direct same-cycle mutation")
+{
+    using namespace hgraph;
+    CHECK_OUTPUT(testing::eval_node<MutateOwnSetOutput>(values<Bool>(true)),
+                 values<Value>(set_delta<Int>({2}, {})));
+}
+
+TEST_CASE("eval_node: TSD output cancels an add followed by erase in the same cycle")
+{
+    using namespace hgraph;
+    CHECK_OUTPUT(testing::eval_node<AddThenEraseDict>(values<Bool>(true)),
+                 values<Value>(dict_delta<Str, TS<Int>>({})));
+}
+
+TEST_CASE("eval_node: TSD output clear cancels same-cycle additions")
+{
+    using namespace hgraph;
+    CHECK_OUTPUT(testing::eval_node<AddThenClearDict>(values<Bool>(true)),
+                 values<Value>(dict_delta<Str, TS<Int>>({})));
+}
+
+TEST_CASE("eval_node: TSD output can create and remove an invalid child")
+{
+    using namespace hgraph;
+    CHECK_OUTPUT(testing::eval_node<CreateInvalidThenEraseDict>(values<Bool>(false, true)),
+                 values<Value>(dict_delta<Str, TS<Int>>({}), dict_delta<Str, TS<Int>>({})));
+}
+
+TEST_CASE("eval_node: a node can inspect its prior TSB output before emitting a delta")
+{
+    using namespace hgraph;
+    CHECK_OUTPUT(testing::eval_node<ReadOwnBundleOutput>(
+                     values<Value>(tsb_delta<OutputAccessBundle>(Int{1}, Str{"a"}),
+                                   tsb_delta<OutputAccessBundle>(Int{1}, Str{"b"}),
+                                   tsb_delta<OutputAccessBundle>(Int{2}, Str{"c"}))),
+                 values<Value>(tsb_delta<OutputAccessBundle>(Int{1}, Str{"a"}), none,
+                               tsb_delta<OutputAccessBundle>(Int{2}, Str{"c"})));
 }

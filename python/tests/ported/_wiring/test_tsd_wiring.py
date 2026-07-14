@@ -103,7 +103,6 @@ def test_fast_non_peer_tsd():
     ]
 
 
-@pytest.mark.skip(reason="gap: mutable _output views land with A3")
 def test_tsd_add_remove_in_same_cycle():
     @compute_node
     def add_remove(a: TS[bool], _output: TSD = None) -> TSD[str, TS[int]]:
@@ -114,7 +113,6 @@ def test_tsd_add_remove_in_same_cycle():
     assert eval_node(add_remove, [True]) == [{}]
 
 
-@pytest.mark.skip(reason="gap: mutable _output views land with A3")
 def test_tsd_add_invalid_and_remove():
     @compute_node
     def add_remove(a: TS[bool], _output: TSD = None) -> TSD[str, TS[int]]:
@@ -127,7 +125,6 @@ def test_tsd_add_invalid_and_remove():
     assert eval_node(add_remove, [False, True]) == [{}, {}]
 
 
-@pytest.mark.skip(reason="gap: mutable _output views land with A3")
 def test_tsd_add_clear_in_same_cycle():
     @compute_node
     def add_remove(a: TS[bool], _output: TSD = None) -> TSD[str, TS[int]]:
@@ -202,7 +199,7 @@ def test_signal_in_branch():
     assert eval_node(g, [None, {"a": 1}, {"a": 2}, {}]) == [None, {"a": True}, {"a": True}, None]
 
 
-@pytest.mark.skip(reason="gap: mutable _output views land with A3")
+@pytest.mark.skip(reason="gap: same-cycle structural TSD REF unbind removal")
 def test_removal_and_unbind_in_the_same_cycle():
     @graph
     def main(tsd: TSD[str, TSD[int, TS[int]]], g: TS[bool]) -> TIME_SERIES_TYPE:
@@ -215,4 +212,3 @@ def test_removal_and_unbind_in_the_same_cycle():
                     ) == [
                         {"a": {1: 1}, "b": {2: 2}}, None, {"a": REMOVE, "b": REMOVE}, None, {"a": {1: 3}, "b": {3: 3}}
                     ]
-
