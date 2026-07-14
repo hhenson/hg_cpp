@@ -137,7 +137,7 @@ def test_tsd_add_clear_in_same_cycle():
 
     assert eval_node(main, [True]) == [None, {}]
 
-@pytest.mark.skip(reason="gap: REF-flipping TSB composition")
+@pytest.mark.skip(reason="gap: nested anonymous map output resolution (graph-level generic TsVar sub-graphs)")
 def test_tsd_in_bundle_ref():
     from hgraph import switch_, const, combine, pass_through
 

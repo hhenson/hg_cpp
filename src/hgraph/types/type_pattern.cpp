@@ -474,6 +474,34 @@ namespace hgraph
         return nullptr;
     }
 
+    ScalarPattern substitute_scalar_patterns(
+        ScalarPattern pattern,
+        const std::unordered_map<std::string, ScalarPattern> &replacements)
+    {
+        if (pattern.kind == ScalarPattern::Kind::Var)
+        {
+            const auto replacement = replacements.find(pattern.name);
+            if (replacement != replacements.end()) { return replacement->second; }
+        }
+        for (ScalarPattern &child : pattern.children)
+        {
+            child = substitute_scalar_patterns(std::move(child), replacements);
+        }
+        return pattern;
+    }
+
+    TypePattern substitute_scalar_patterns(
+        TypePattern pattern,
+        const std::unordered_map<std::string, ScalarPattern> &replacements)
+    {
+        pattern.scalar = substitute_scalar_patterns(std::move(pattern.scalar), replacements);
+        for (TypePattern &child : pattern.children)
+        {
+            child = substitute_scalar_patterns(std::move(child), replacements);
+        }
+        return pattern;
+    }
+
     std::string scalar_pattern_to_string(const ScalarPattern &pattern)
     {
         switch (pattern.kind)

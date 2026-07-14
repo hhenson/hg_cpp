@@ -186,21 +186,30 @@ Generic wiring
 ~~~~~~~~~~~~~~
 
 **Landed:** node-level ``TsVar`` / ``ScalarVar`` resolution, Python ``TypeVar``
-matching, ``AUTO_RESOLVE``, overload requirements, variadics, and registry-
-owned Python overload dispatch.
+matching, ``AUTO_RESOLVE``, overload requirements, variadics, registry-owned
+Python overload dispatch, and ``eval_node`` ``resolution_dict`` typing for raw
+operators.  Fixed-TSL integer ``getitem_`` uses the same zero-copy structural
+projection as normal Python indexing and the public C++ ``tsl_element`` wiring
+API.  Both routes have executable tests.  ``Generic[SCALAR]``
+``TimeSeriesSchema`` aliases also specialize through the C++ ``TypePattern``
+system: generic fields remain structural patterns, scalar variables may be
+renamed between graph signatures, and concrete arguments produce distinct
+interned TSB specializations.  The corresponding upstream Python contract and
+the C++ pattern substitution contract execute in the test suites.
 
 **Remaining:**
 
 - graph-level constrained ``typing.TypeVar`` cases;
-- generic ``TimeSeriesSchema`` / ``Generic[SCALAR]`` realization;
-- ``eval_node`` ``resolution_dict`` over a raw operator; and
 - a decision on whether remaining ``Type[...]``-style call-site resolution is
   useful public syntax or sufficiently covered by expected-output resolution.
 
 Compatibility inventory
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-**Landed:** all 48 operator files and a selected 19-file wiring pack.
+**Landed:** all 48 operator files and a selected 19-file wiring pack.  The
+ported TSS union contract for retargeting to an empty reference now executes;
+its stale skip was removed after the keyed structural-REF implementation
+landed.
 
 **Remaining:** review the rest of upstream ``_wiring`` and ``ts_tests``.  Port
 behavioural contracts, not Python runtime internals.  Each retained Python test

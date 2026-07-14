@@ -1,5 +1,3 @@
-import pytest
-
 from hgraph import graph, TSS, union, difference, symmetric_difference, if_then_else, TS, nothing, Removed
 from hgraph.test import eval_node
 
@@ -11,7 +9,6 @@ def test_union_tss_multi():
     assert eval_node(app, [{1, 2, 3}], [{3, 4, 5}], [{4, 5, 6}]) == [{1, 2, 3, 4, 5, 6}]
 
 
-@pytest.mark.skip(reason="gap: TSS rebind-to-nothing does not emit removal deltas")
 def test_union_tss_multi_rebind_to_nothing():
     @graph
     def app(ts1_flag: TS[bool], ts1: TSS[int], ts2_flag: TS[bool], ts2: TSS[int]) -> TSS[int]:

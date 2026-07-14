@@ -802,6 +802,19 @@ TEST_CASE("operators: TypePattern matches generic TSW and TSB structures")
         ResolutionMap map;
         REQUIRE(ts_pattern_match(pattern, ts_type<ConcreteBundle>(), map));
         CHECK(map.find_scalar("T") == scalar_type<Int>());
+
+        const TypePattern renamed = substitute_scalar_patterns(
+            pattern,
+            {{"T", ScalarPattern::var("U")}});
+        ResolutionMap renamed_map;
+        REQUIRE(ts_pattern_match(renamed, ts_type<ConcreteBundle>(), renamed_map));
+        CHECK(renamed_map.find_scalar("T") == nullptr);
+        CHECK(renamed_map.find_scalar("U") == scalar_type<Int>());
+
+        const TypePattern specialized = substitute_scalar_patterns(
+            pattern,
+            {{"T", ScalarPattern::concrete(scalar_type<Int>())}});
+        CHECK(ts_pattern_resolve(specialized, ResolutionMap{}) == ts_type<ConcreteBundle>());
     }
 }
 

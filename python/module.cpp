@@ -2749,6 +2749,32 @@ NB_MODULE(_hgraph, m)
     m.def("type_pattern_tsb", [](const std::string &schema_variable) {
         return PyTypePattern{TypePattern::tsb_var(schema_variable)};
     });
+    m.def("type_pattern_tsb_fields", [](nb::list field_names, nb::list children) {
+        if (nb::len(field_names) != nb::len(children))
+        {
+            throw nb::value_error("TSB pattern field names and child patterns must have the same size");
+        }
+        std::vector<std::string> names;
+        std::vector<TypePattern> patterns;
+        names.reserve(nb::len(field_names));
+        patterns.reserve(nb::len(children));
+        for (nb::handle name : field_names) { names.push_back(nb::cast<std::string>(name)); }
+        for (nb::handle child : children)
+        {
+            patterns.push_back(nb::cast<PyTypePattern &>(child).pattern);
+        }
+        return PyTypePattern{TypePattern::tsb(std::move(names), std::move(patterns))};
+    });
+    m.def("type_pattern_substitute_scalars", [](PyTypePattern pattern, nb::dict replacements) {
+        std::unordered_map<std::string, ScalarPattern> values;
+        values.reserve(nb::len(replacements));
+        for (auto [name, replacement] : replacements)
+        {
+            values.emplace(nb::cast<std::string>(name),
+                           nb::cast<PyScalarPattern &>(replacement).pattern);
+        }
+        return PyTypePattern{substitute_scalar_patterns(std::move(pattern.pattern), values)};
+    });
     m.def("type_pattern_ref", [](PyTypePattern target) {
         return PyTypePattern{TypePattern::ref(std::move(target.pattern))};
     });

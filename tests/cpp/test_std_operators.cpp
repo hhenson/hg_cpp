@@ -311,6 +311,16 @@ namespace
         }
     };
 
+    struct FixedTslFirstGraph
+    {
+        static constexpr auto name = "fixed_tsl_first_graph";
+
+        static Port<TS<Int>> compose(Wiring &, Port<IntTslPair> ts)
+        {
+            return tsl_element(ts, 0);
+        }
+    };
+
     struct TsbReferenceFlipGraph
     {
         static constexpr auto name = "tsb_reference_flip_graph";
@@ -1229,6 +1239,17 @@ TEST_CASE("std operators: active reference topology receives one explicit startu
     CHECK_OUTPUT(eval_node<CombineTsdReferenceTopologyGraph>(values<Int>(1, 2), values<Int>(3, none)),
                  values<Value>(dict_delta<Str, TS<Int>>({{"a", 1}, {"b", 3}}),
                                dict_delta<Str, TS<Int>>({{"a", 2}})));
+}
+
+TEST_CASE("std operators: fixed TSL scalar indexing is a structural projection")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<FixedTslFirstGraph>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}}),
+                                   list_delta<TS<Int>>({{0, 3}, {1, 4}}),
+                                   list_delta<TS<Int>>({{1, 5}}))),
+                 values<Int>(1, 3, none));
 }
 
 TEST_CASE("std operators: TSB len and is_empty are schema metadata")

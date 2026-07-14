@@ -75,7 +75,6 @@ def test_tsl_compatible_types():
     assert eval_node(tsl_test, ts1=[1, 2], ts2=[3, 4]) == [{0: 1, 1: 3}, {0: 2, 1: 4}]
 
 
-@pytest.mark.skip(reason="gap: eval_node resolution_dict over a raw operator")
 def test_tsl_get_item():
     assert eval_node(getitem_, [(1, 2), (2, 3), (4, 5)], 0, resolution_dict={"ts": TSL[TS[int], Size[2]]}) == [1, 2, 4]
 

@@ -5,8 +5,7 @@
 // the real utility nodes (replay/record/const_).
 
 #include <hgraph/lib/testing/check_output.h>
-#include <hgraph/lib/testing/record_replay.h>
-#include <hgraph/runtime/runtime.h>
+#include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/static_node.h>
@@ -39,6 +38,20 @@ namespace
         }
     };
 
+    using GenericScalarBundle = UnNamedTSB<Field<"p1", TS<ScalarVar<"T">>>>;
+    using IntScalarBundle     = UnNamedTSB<Field<"p1", TS<Int>>>;
+
+    struct GenericBundleFromScalar
+    {
+        static constexpr auto name = "rt_generic_bundle_from_scalar";
+
+        static void eval(In<"p1", TS<ScalarVar<"T">>> p1, Out<GenericScalarBundle> out)
+        {
+            const Value delta = capture_delta(p1.base());
+            apply_delta(out.field<"p1">(), delta.view());
+        }
+    };
+
     // Generic source: emit a configured constant. The scalar variable ``T`` is
     // inferred from the supplied value; the default resolver binds output ``S`` to
     // ``TS<T>`` when no explicit output schema is supplied.
@@ -56,15 +69,14 @@ namespace
         }
     };
 
-    // replay<TS<Int>> -> Passthrough (resolved from the port) -> record<TS<Int>>.
+    // The concrete graph signature lets eval_node supply the harness while the
+    // wrapped node still resolves its generic schema from the connected port.
     struct PassthroughGraph
     {
         static constexpr auto name = "rt_passthrough_graph";
-        static void           compose(Wiring &w)
+        static Port<TS<Int>>   compose(Wiring &w, Port<TS<Int>> in)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, "in"_str);
-            auto pt  = wire<Passthrough>(w, src);   // generic; returns an erased Port
-            wire<testing::record>(w, pt, "out"_str);
+            return wire<Passthrough>(w, in).as<TS<Int>>();
         }
     };
 
@@ -72,77 +84,56 @@ namespace
     struct PassthroughSetGraph
     {
         static constexpr auto name = "rt_passthrough_set_graph";
-        static void           compose(Wiring &w)
+        static Port<TSS<Int>>  compose(Wiring &w, Port<TSS<Int>> in)
         {
-            auto src = wire<testing::replay, TSS<Int>>(w, "in"_str);
-            auto pt  = wire<Passthrough>(w, src);
-            wire<testing::record>(w, pt, "out"_str);
+            return wire<Passthrough>(w, in).as<TSS<Int>>();
         }
     };
 
-    // GenConst resolved to TS<Int> from the value 7 -> record<TS<Int>>.
-    struct GenConstGraph
+    // The leaf input, not an already-resolved bundle, forces T = Int on the
+    // generic node. The concrete return type makes that resolution visible to
+    // eval_node's output harness.
+    struct GenericBundleFromIntGraph
     {
-        static constexpr auto name = "rt_gen_const_graph";
-        static void           compose(Wiring &w)
+        static constexpr auto name = "rt_generic_bundle_from_int_graph";
+
+        static Port<IntScalarBundle> compose(Wiring &w, Port<TS<Int>> p1)
         {
-            auto src = wire<GenConst>(w, 7_i);   // T inferred = Int; output TS<Int> (erased Port)
-            wire<testing::record>(w, src, "out"_str);
+            return wire<GenericBundleFromScalar>(w, p1).as<IntScalarBundle>();
         }
     };
 
-    // The SAME GenConst definition resolved to TS<Float> from the value 2.5 — proves
-    // two resolutions of one generic source do not collide when interned.
-    struct GenConstDoubleGraph
-    {
-        static constexpr auto name = "rt_gen_const_double_graph";
-        static void           compose(Wiring &w)
-        {
-            auto src = wire<GenConst>(w, 2.5_f);
-            wire<testing::record>(w, src, "out"_str);
-        }
-    };
-
-    template <typename Graph, typename Seed>
-    GraphExecutorValue run_graph(Seed seed)
-    {
-        GraphBuilder gb = build_graph<Graph>();
-        seed(gb.global_state());
-        GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
-        GraphExecutorValue ex = eb.make_executor();
-        ex.view().run();
-        return ex;
-    }
 }  // namespace
 
 TEST_CASE("type_resolution: a generic node resolves its TS type from the connected input port")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");
-    auto ex = run_graph<PassthroughGraph>(
-        [](const GlobalStateView &gs) { set_replay_values<Int>(gs, "in", {1, none, 3}); });
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {1, none, 3});
+    CHECK_OUTPUT(eval_node<PassthroughGraph>(values<Int>(1, none, 3)), {1, none, 3});
 }
 
 TEST_CASE("type_resolution: the same generic node resolves to TSS from a set-valued port")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     const std::vector<std::optional<Value>> deltas{set_delta<Int>({1, 2}, {}), set_delta<Int>({3}, {1})};
-    auto ex = run_graph<PassthroughSetGraph>([&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
-    CHECK_OUTPUT(get_recorded_deltas(ex.view().graph().global_state(), "out"),
-                 {set_delta<Int>({1, 2}, {}), set_delta<Int>({3}, {1})});
+    CHECK_OUTPUT(eval_node<PassthroughSetGraph>(deltas), deltas);
+}
+
+TEST_CASE("type_resolution: a concrete input resolves a scalar-generic TSB output")
+{
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    CHECK_OUTPUT(eval_node<GenericBundleFromIntGraph>(values<Int>(1, 2)),
+                 values<Value>(tsb_delta<IntScalarBundle>(Int{1}),
+                               tsb_delta<IntScalarBundle>(Int{2})));
 }
 
 TEST_CASE("type_resolution: a generic source infers its type from the configured scalar value")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");
-    auto ex = run_graph<GenConstGraph>([](const GlobalStateView &) {});
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {7_i});
+    CHECK_OUTPUT(eval_node<GenConst>(7_i), values<Value>(Value{7_i}));
 }
 
 TEST_CASE("type_resolution: a second resolution of the same generic source does not collide")
 {
     (void)TypeRegistry::instance().register_scalar<Float>("float");
-    auto ex = run_graph<GenConstDoubleGraph>([](const GlobalStateView &) {});
-    CHECK_OUTPUT(get_recorded_values<Float>(ex.view().graph().global_state(), "out"), {2.5_f});
+    CHECK_OUTPUT(eval_node<GenConst>(2.5_f), values<Value>(Value{2.5_f}));
 }

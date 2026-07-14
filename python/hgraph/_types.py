@@ -40,6 +40,8 @@ def _substitute_typevars(tp, substitutions):
 def _compound_specialization_token(tp):
     import typing
 
+    if isinstance(tp, _hgraph.ValueType):
+        return tp.local_name or tp.name
     origin = typing.get_origin(tp)
     if origin is not None:
         args = ",".join(_compound_specialization_token(arg) for arg in typing.get_args(tp))
@@ -203,6 +205,8 @@ def _compound_value_type(scalar, type_args=()):
 
 
 def _value_type(scalar):
+    if isinstance(scalar, _hgraph.ValueType):
+        return scalar
     if isinstance(scalar, _SeriesType):
         return _hgraph.series_vt(_value_type(scalar.element))
     if scalar is Series:
@@ -839,38 +843,83 @@ class _TSBMeta(type):
             fields = [(s.start, _resolve(s.stop)) for s in schema]
             label = ", ".join(f"{n}: {t!r}" for n, t in fields)
             return _TsExpr(_hgraph.un_named_tsb_type(fields), f"TSB[{label}]")
+        # ``typing.Generic`` produces an alias rather than a class. Resolve
+        # the origin for MRO/field discovery and specialize its field patterns
+        # through the shared C++ TypePattern substitution primitive.
+        import typing
+        from ._compat import CompoundScalar as _CS
+
+        origin = typing.get_origin(schema) or schema
+        type_args = tuple(typing.get_args(schema))
+        # Compatibility schemas such as BoolResult manufacture a plain
+        # annotated class. TimeSeriesSchema remains the public authoring base,
+        # but the structural legacy form is intentionally accepted here.
+        if not isinstance(origin, type):
+            raise TypeError(f"TSB expects an annotated schema class, got {schema!r}")
+        parameters = tuple(getattr(origin, "__parameters__", ()))
+        if type_args and len(type_args) != len(parameters):
+            raise TypeError(
+                f"TimeSeriesSchema {origin.__qualname__} expects {len(parameters)} generic arguments, "
+                f"got {len(type_args)}")
+
+        scalar_replacements = {}
+        for parameter, argument in zip(parameters, type_args):
+            if isinstance(argument, _TypeVarSentinel):
+                replacement = _hgraph.scalar_pattern_var(_type_var_name(argument))
+            else:
+                replacement = _scalar_pattern(argument)
+            scalar_replacements[_type_var_name(parameter)] = replacement
+
         # hgraph parity: schema INHERITANCE - base-class fields first (MRO
         # reversed), subclass fields after; later duplicates override.
         annotations = {}
-        for klass in reversed(schema.__mro__):
+        for klass in reversed(origin.__mro__):
             annotations.update(getattr(klass, "__annotations__", {}))
-        from ._compat import CompoundScalar as _CS
-
-        is_cs = isinstance(schema, type) and issubclass(schema, _CS)
+        is_cs = issubclass(origin, _CS)
         compound_meta = None
         if is_cs:
             # TSB[CompoundScalar]: scalar annotations LIFT to TS fields; the
             # bundle keeps the CS NAME (and registers the class) so its
             # value side IS the CS bundle and reads back as the dataclass.
             compound_meta = _value_type(schema)
-            annotations = {name: TS[tp] for name, tp in annotations.items()}
-        if any(isinstance(ts, (_GenericTsExpr, _TypeVarSentinel)) for ts in annotations.values()):
-            # A GENERIC schema (e.g. WindowResult[SCALAR]): resolve from the
-            # wired port by bundle NAME - the operator's own resolution
-            # produces the concrete same-named bundle.
-            return _GenericTsExpr(f"TSB[{schema.__name__}]",
-                                  pattern=_hgraph.type_pattern_tsb(schema.__name__))
-        fields = [(name, _resolve(ts)) for name, ts in annotations.items()]
+            substitutions = dict(zip(parameters, type_args))
+            annotations = {
+                name: TS[_substitute_typevars(tp, substitutions)]
+                for name, tp in annotations.items()
+            }
+
+        field_names = []
+        field_patterns = []
+        fields = []
+        generic = False
+        for name, ts in annotations.items():
+            pattern = _pattern_of(ts)
+            if scalar_replacements:
+                pattern = _hgraph.type_pattern_substitute_scalars(pattern, scalar_replacements)
+            resolved = _hgraph.ResolutionScope().resolve_ts(pattern)
+            field_names.append(name)
+            field_patterns.append(pattern)
+            if resolved is None:
+                generic = True
+            else:
+                fields.append((name, resolved))
+        if generic:
+            return _GenericTsExpr(
+                f"TSB[{origin.__name__}]",
+                pattern=_hgraph.type_pattern_tsb_fields(field_names, field_patterns))
+
         # The registry's TSB namespace is GLOBAL; python classes are scoped
         # (tests re-define same-named local schemas freely). Qualify with the
         # module + qualname so distinct classes never collide; the plain
         # __name__ stays for stable top-level classes (nicer diagnostics).
-        name = compound_meta.name if compound_meta is not None else schema.__name__
-        qualname = getattr(schema, "__qualname__", schema.__name__)
+        name = compound_meta.name if compound_meta is not None else origin.__name__
+        qualname = getattr(origin, "__qualname__", origin.__name__)
         if compound_meta is None and "<locals>" in qualname:
             # Function-local TimeSeriesSchema classes need nominal isolation.
-            name = f"{schema.__module__}.{qualname}"
-        return _TsExpr(_hgraph.tsb(name, fields), f"TSB[{schema.__name__}]")
+            name = f"{origin.__module__}.{qualname}"
+        if compound_meta is None and type_args:
+            name += "[" + ",".join(_compound_specialization_token(arg) for arg in type_args) + "]"
+        return _TsExpr(_hgraph.tsb(name, fields), f"TSB[{origin.__name__}]")
 
 
 class TSB(metaclass=_TSBMeta):

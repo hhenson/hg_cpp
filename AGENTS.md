@@ -111,6 +111,10 @@ the edited documentation, commands, links, or configuration directly.
 - Test behavior through public wiring APIs. Graph and node behavior tests should
   use `eval_node`; construct runtime internals directly only for lower-level unit
   tests whose subject is that internal contract.
+- When generic or erased wiring needs a concrete test signature, wrap the item
+  in a minimal graph with concrete `Port` parameters and return type, then call
+  `eval_node` on that graph. Do not hand-wire replay/record or run an executor
+  directly to work around type inference in a behavior test.
 - Every Python-visible behavior needs equivalent C++ wiring coverage at the same
   behavioral level. Python tests additionally prove bridge and authoring parity.
 - Scale coverage with risk, including lifecycle, teardown, invalid input, and

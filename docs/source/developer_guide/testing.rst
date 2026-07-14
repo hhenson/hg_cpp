@@ -73,14 +73,18 @@ element is ``T``; for ``SIGNAL`` it is ``bool``; for the collection kinds
 which uses ``Value::equals`` (order-independent for sets/maps) for erased
 elements and ``==`` otherwise.
 
-**Overloads.** Three forms: a source-node form (no time-series inputs; scalar
-arguments follow directly), an input-driven form (input sequences first, then
-scalars — supports multiple TS inputs, named arguments via ``arg<"name">(v)``,
-and node ``defaults()``), and an operator form ``eval_node<Op>(…)`` that
-dispatches through the ``OperatorRegistry`` at wiring time and returns
-type-erased ``vector<optional<Value>>``. Callable arguments (for higher-order
-operators such as ``map_`` / ``switch_`` / ``reduce``) are passed as the
-``WiredFn`` scalar ``fn<X>()``.
+**Overloads.** Node forms cover sources (no time-series inputs; scalar arguments
+follow directly) and input-driven nodes (input sequences first, then scalars;
+multiple TS inputs, named arguments via ``arg<"name">(v)``, and node
+``defaults()`` are supported). The operator form ``eval_node<Op>(…)`` dispatches
+through the ``OperatorRegistry`` at wiring time and returns type-erased
+``vector<optional<Value>>``. Graph forms mirror the source and input-driven node
+forms. Use a minimal graph with concrete ``Port`` parameters and return type when
+the item under test is generic or returns an erased port: the graph fixes the
+signature, while ``eval_node`` still owns replay, record, execution, and result
+collection. Do not hand-wire that harness in a behavior test. Callable arguments
+(for higher-order operators such as ``map_`` / ``switch_`` / ``reduce``) are
+passed as the ``WiredFn`` scalar ``fn<X>()``.
 
 **Sources are not scheduled by default.** A source node in a test graph
 initiates via ``schedule_on_start = true`` (declarative), a

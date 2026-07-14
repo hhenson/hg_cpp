@@ -146,7 +146,6 @@ def test_tsb_from_scalar():
     assert eval_node(g, MyScalar(1, "a")) == [1]
 
 
-@pytest.mark.skip(reason="gap: Generic[SCALAR] time-series schemas (A2 generic graphs)")
 def test_generic_tsb():
     from frozendict import frozendict as fd
 
@@ -252,7 +251,7 @@ def test_tsb_integer_index():
     assert eval_node(g, [{"p1": 1, "p2": "a"}, {"p1": 2}]) == [1, 2]
 
 
-@pytest.mark.skip(reason="gap: REF-flipping TSB composition")
+@pytest.mark.skip(reason="gap: hgraph.arrow combinator library")
 def test_tsb_ref_index():
 
     @graph

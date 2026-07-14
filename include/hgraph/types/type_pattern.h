@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -324,6 +325,19 @@ namespace hgraph
     /** Scalar-layer counterpart of ``ts_pattern_resolve``. */
     [[nodiscard]] HGRAPH_EXPORT const ValueTypeMetaData *scalar_pattern_resolve(const ScalarPattern &pattern,
                                                                                const ResolutionMap &map);
+
+    /**
+     * Replace scalar-variable leaves in a copied pattern. This is the shared
+     * specialization primitive for runtime-authored generic schemas: a
+     * replacement may be another variable (renaming) or a concrete/nested
+     * scalar pattern. Unmentioned variables remain unresolved.
+     */
+    [[nodiscard]] HGRAPH_EXPORT ScalarPattern substitute_scalar_patterns(
+        ScalarPattern pattern,
+        const std::unordered_map<std::string, ScalarPattern> &replacements);
+    [[nodiscard]] HGRAPH_EXPORT TypePattern substitute_scalar_patterns(
+        TypePattern pattern,
+        const std::unordered_map<std::string, ScalarPattern> &replacements);
 
     /** Human-readable rendering, for error messages. */
     [[nodiscard]] HGRAPH_EXPORT std::string ts_pattern_to_string(const TypePattern &pattern);

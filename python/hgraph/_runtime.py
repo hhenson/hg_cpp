@@ -101,6 +101,15 @@ class _OperatorFunction:
         while args and args[-1] is None:
             args = args[:-1]
         args, kwargs = self._normalise_type_arguments(args, kwargs)
+        # Fixed-TSL integer access is a structural projection, not a runtime
+        # node. Keep direct calls to getitem_ consistent with ``port[index]``;
+        # other shapes and dynamic keys fall back to the registered operator.
+        if (self.__name__ == "getitem_" and len(args) == 2
+                and isinstance(args[0], WiringPort)
+                and isinstance(args[1], int) and not isinstance(args[1], bool)):
+            raw = _unwrap(args[0])
+            if raw.ts_type.is_fixed_tsl:
+                return WiringPort(_hgraph.tsl_element(raw, args[1]))
         return wire(self.__name__, *args, **kwargs)
 
     def __getitem__(self, item):
@@ -900,6 +909,14 @@ def _graph_auto_resolve(signature, arguments):
         ts = scope.find_ts(_type_var_name(sentinel))
         if ts is not None:
             resolved[name] = _TsExpr(ts, f"resolved[{sentinel!r}]")
+            continue
+        scalar = scope.find_scalar(_type_var_name(sentinel))
+        if scalar is not None:
+            # Like _ResolvedSize, this is a wiring-time type carrier. The
+            # type-expression frontend accepts ValueType directly, avoiding a
+            # lossy round trip from an interned C++ scalar back to a Python
+            # class (which is not defined for every runtime scalar family).
+            resolved[name] = scalar
             continue
         raise WiringError(
             f"AUTO_RESOLVE could not resolve '{name}' ({sentinel!r}) from the wired arguments")
@@ -2978,12 +2995,19 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                     annotation = _TS[annotation]
             if resolution_dict and i < len(params) and params[i].name in resolution_dict:
                 annotation = resolution_dict[params[i].name]
-            elif resolution_dict and not params and len(resolution_dict) == len(inputs):
+            elif (resolution_dict and not params
+                  and (len(resolution_dict) == len(inputs)
+                       or (isinstance(fn, _OperatorFunction)
+                           and fn.__name__ == "getitem_"
+                           and i < len(resolution_dict)))):
                 # OPERATOR functions have no python signature: when the dict
                 # has one entry per positional input, its entries type them
-                # in order (keys are the operator's own parameter names). A
-                # SHORTER dict types a variadic collection - inference per
-                # input applies then.
+                # in order (keys are the operator's own parameter names).
+                # getitem_ is the supported partial form: ``ts`` types the
+                # first input while the scalar index retains value inference.
+                # Other shorter dictionaries may describe a variadic
+                # collection (for example merge's single ``tsl`` entry), so
+                # they deliberately retain per-input inference.
                 annotation = list(resolution_dict.values())[i]
             from ._types import _GenericTsExpr
             if isinstance(annotation, _GenericTsExpr):
