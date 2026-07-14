@@ -5,7 +5,12 @@
 #include <hgraph/types/time_series/ts_delta.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/record_replay.h>
+#include <hgraph/types/wired_fn.h>
 
+#include <array>
+#include <concepts>
+#include <functional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -32,7 +37,8 @@ namespace hgraph::stdlib
             {
                 const auto &erased = static_cast<const TSOutputView &>(out);
                 Value recovered =
-                    record_replay::recorded_seed_resolver(gs, fq_key.value(), erased.schema()->value_schema, now);
+                    record_replay::recorded_seed_resolver(
+                        gs, fq_key.value(), erased.schema(), now);
                 if (recovered.has_value()) { out.apply(recovered.view()); }
             }
 
@@ -53,16 +59,67 @@ namespace hgraph::stdlib
             else { return "arg_" + std::to_string(I); }
         }
 
-        template <typename S>
-        [[nodiscard]] Port<S> wrap_input(Wiring &w, Port<S> port, const std::string &key, const std::string &fq,
-                                         record_replay::Mode mode)
+        [[nodiscard]] inline WiringArg ts_arg(WiringPortRef port)
+        {
+            WiringArg arg;
+            arg.kind = WiringArg::Kind::TimeSeries;
+            arg.port = std::move(port);
+            return arg;
+        }
+
+        [[nodiscard]] inline WiringArg str_arg(std::string_view value, std::string_view name = {})
+        {
+            WiringArg arg;
+            arg.kind         = WiringArg::Kind::Scalar;
+            arg.scalar_value = Value{Str{value}};
+            arg.scalar_meta  = scalar_descriptor<Str>::value_meta();
+            arg.name         = name;
+            return arg;
+        }
+
+        [[nodiscard]] inline WiringPortRef replay(Wiring &w, std::string_view key,
+                                                  std::string_view fq,
+                                                  const TSValueTypeMetaData *schema)
+        {
+            std::array args{
+                str_arg(key),
+                str_arg(fq, "recordable_id"),
+            };
+            return wire_operator(w, stdlib::replay::name, args, true, schema).output.erased();
+        }
+
+        inline void record(Wiring &w, const WiringPortRef &port,
+                           std::string_view key, std::string_view fq)
+        {
+            std::array args{
+                ts_arg(port),
+                str_arg(key),
+                str_arg(fq, "recordable_id"),
+            };
+            (void)wire_operator(w, stdlib::record::name, args, false);
+        }
+
+        inline void compare(Wiring &w, const WiringPortRef &actual,
+                            const WiringPortRef &recorded, std::string_view fq)
+        {
+            std::array args{
+                ts_arg(actual),
+                ts_arg(recorded),
+                str_arg(fq, "recordable_id"),
+            };
+            (void)wire_operator(w, stdlib::compare::name, args, false);
+        }
+
+        [[nodiscard]] inline WiringPortRef wrap_input(
+            Wiring &w, WiringPortRef port, std::string_view key,
+            const std::string &fq, record_replay::Mode mode)
         {
             using record_replay::has_mode;
             using record_replay::Mode;
             if (has_mode(mode, Mode::Replay) || has_mode(mode, Mode::Compare))
             {
                 // The live input is REPLACED by the recorded one (Python parity).
-                port = wire<stdlib::replay, S>(w, Str{key}, arg<"recordable_id">(Str{fq})).template as<S>();
+                port = replay(w, key, fq, port.schema);
             }
             if (has_mode(mode, Mode::Recover))
             {
@@ -70,11 +127,13 @@ namespace hgraph::stdlib
                 // recovering pass-through publishes the recorded value from
                 // its own start, and live ticks flow through (and override)
                 // thereafter. Costs only the components that recover.
-                port = wire<recovering_pass_through>(w, port, Str{fq + "." + key}).template as<S>();
+                port = wire<recovering_pass_through>(
+                           w, Port<void>{w, std::move(port)}, Str{fq + "." + std::string{key}})
+                           .erased();
             }
             if (has_mode(mode, Mode::Record))
             {
-                wire<stdlib::record>(w, port, Str{key}, arg<"recordable_id">(Str{fq}));
+                record(w, port, key, fq);
             }
             return port;
         }
@@ -111,15 +170,13 @@ namespace hgraph::stdlib
      *   Combine with ``Record`` to continue recording the recovered stream.
      *
      */
-    template <typename G, typename... S>
-    [[nodiscard]] auto component(Wiring &w, std::string_view recordable_id, Port<S>... inputs)
+    template <typename Compose>
+        requires std::invocable<Compose &, std::span<const WiringPortRef>> &&
+                 std::convertible_to<std::invoke_result_t<Compose &, std::span<const WiringPortRef>>, WiringPortRef>
+    [[nodiscard]] WiringPortRef component(Wiring &w, std::string_view recordable_id,
+                                          std::span<const WiringNamedPortRef> inputs,
+                                          Compose &&compose)
     {
-        using sig    = StaticGraphSignature<G>;
-        using params = typename sig::param_types;
-        static_assert(sig::scalar_count() == 0,
-                      "component<G>: scalar compose parameters are not supported yet (time-series inputs only)");
-        static_assert(sizeof...(S) == sig::input_count(),
-                      "component<G>: pass exactly the graph's time-series inputs");
         using record_replay::has_mode;
         using record_replay::Mode;
 
@@ -134,50 +191,87 @@ namespace hgraph::stdlib
         if (mode != Mode::None && fq.empty())
         {
             throw std::invalid_argument(
-                "component<G>: a recordable id is required under an active record/replay mode");
+                "component: a recordable id is required under an active record/replay mode");
         }
         if (has_mode(mode, Mode::Recover) && (has_mode(mode, Mode::Replay) || has_mode(mode, Mode::ReplayOutput)))
         {
-            throw std::invalid_argument("component<G>: cannot recover and replay at the same time");
+            throw std::invalid_argument("component: cannot recover and replay at the same time");
         }
 
         if (!fq.empty()) { w.claim_component_id(fq); }
 
-        auto input_tuple = std::make_tuple(std::move(inputs)...);
-        auto wrapped     = [&]<std::size_t... I>(std::index_sequence<I...>) {
-            return std::make_tuple(component_detail::wrap_input(
-                w, std::move(std::get<I>(input_tuple)),
-                component_detail::input_key<std::tuple_element_t<I, params>, I>(), fq, mode)...);
-        }(std::index_sequence_for<S...>{});
+        std::vector<WiringPortRef> wrapped;
+        wrapped.reserve(inputs.size());
+        for (const WiringNamedPortRef &input : inputs)
+        {
+            wrapped.push_back(component_detail::wrap_input(
+                w, input.source, input.name, fq, mode));
+        }
 
         // Nested components chain their ids through the scope (mode carries).
         record_replay::scope nested{mode, fq};
+        WiringPortRef out = std::invoke(
+            compose, std::span<const WiringPortRef>{wrapped.data(), wrapped.size()});
 
-        auto out = std::apply([&](auto &...ports) { return wire<G>(w, ports...); }, wrapped);
-
-        using OutPort = decltype(out);
-        if constexpr (!std::is_void_v<OutPort>)
+        if (!out.is_unbound_source())
         {
-            using OutSchema = typename OutPort::schema;
             if (has_mode(mode, Mode::ReplayOutput))
             {
-                out = wire<stdlib::replay, OutSchema>(w, Str{"__out__"}, arg<"recordable_id">(Str{fq}))
-                          .template as<OutSchema>();
+                out = component_detail::replay(w, "__out__", fq, out.schema);
             }
             if (has_mode(mode, Mode::Record))
             {
-                wire<stdlib::record>(w, out, Str{"__out__"}, arg<"recordable_id">(Str{fq}));
+                component_detail::record(w, out, "__out__", fq);
             }
             if (has_mode(mode, Mode::Compare))
             {
                 // Backtesting regression: the recomputed output (from the
                 // replayed inputs) against the recorded output; per-tick
                 // equality lands in the store under ``fq.__compare__``.
-                auto recorded = wire<stdlib::replay, OutSchema>(w, Str{"__out__"}, arg<"recordable_id">(Str{fq}))
-                                    .template as<OutSchema>();
-                wire<stdlib::compare>(w, out, recorded, arg<"recordable_id">(Str{fq}));
+                WiringPortRef recorded = component_detail::replay(
+                    w, "__out__", fq, out.schema);
+                component_detail::compare(w, out, recorded, fq);
             }
-            return out;
+        }
+        return out;
+    }
+
+    [[nodiscard]] inline WiringPortRef component(
+        Wiring &w, std::string_view recordable_id,
+        std::span<const WiringNamedPortRef> inputs, const WiredFn &compose)
+    {
+        return component(
+            w, recordable_id, inputs,
+            [&](std::span<const WiringPortRef> ports) { return compose.wire(w, ports); });
+    }
+
+    template <typename G, typename... S>
+    [[nodiscard]] auto component(Wiring &w, std::string_view recordable_id, Port<S>... inputs)
+    {
+        using sig    = StaticGraphSignature<G>;
+        using params = typename sig::param_types;
+        static_assert(sig::scalar_count() == 0,
+                      "component<G>: scalar compose parameters are not supported yet (time-series inputs only)");
+        static_assert(sizeof...(S) == sig::input_count(),
+                      "component<G>: pass exactly the graph's time-series inputs");
+
+        auto input_tuple = std::make_tuple(std::move(inputs)...);
+        auto named       = [&]<std::size_t... I>(std::index_sequence<I...>) {
+            return std::array<WiringNamedPortRef, sizeof...(I)>{
+                WiringNamedPortRef{
+                    component_detail::input_key<std::tuple_element_t<I, params>, I>(),
+                    std::get<I>(input_tuple).erased()}...};
+        }(std::index_sequence_for<S...>{});
+
+        WiringPortRef out = component(
+            w, recordable_id,
+            std::span<const WiringNamedPortRef>{named.data(), named.size()}, fn<G>());
+        if constexpr (!std::is_void_v<std::remove_cvref_t<
+                          typename StaticGraphSignature<G>::output_type>>)
+        {
+            using OutSchema = typename graph_wiring_detail::port_static_schema<
+                typename StaticGraphSignature<G>::output_type>::type;
+            return Port<OutSchema>{w, std::move(out)};
         }
     }
 }  // namespace hgraph::stdlib

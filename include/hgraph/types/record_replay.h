@@ -191,10 +191,9 @@ namespace hgraph
          * honouring the configured as-of override. Registered on seeds by
          * ``component<G>`` under ``Mode::Recover``.
          */
-        [[nodiscard]] HGRAPH_EXPORT Value recorded_seed_resolver(GlobalStateView state,
-                                                                 std::string_view fq_key,
-                                                                 const ValueTypeMetaData *meta,
-                                                                 DateTime start_time);
+        [[nodiscard]] HGRAPH_EXPORT Value recorded_seed_resolver(
+            GlobalStateView state, std::string_view fq_key,
+            const TSValueTypeMetaData *schema, DateTime start_time);
 
         /**
          * Comparison-result summary: (rows compared, mismatches) from the

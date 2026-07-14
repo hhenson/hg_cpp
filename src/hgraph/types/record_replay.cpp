@@ -2,6 +2,8 @@
 
 #include <hgraph/runtime/graph.h>
 #include <hgraph/types/primitive_types.h>
+#include <hgraph/types/time_series/ts_delta.h>
+#include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/value/table_codec.h>
 
 #include <arrow/table.h>
@@ -148,10 +150,32 @@ namespace hgraph::record_replay
         return summary;
     }
 
-    Value recorded_seed_resolver(GlobalStateView state, std::string_view fq_key, const ValueTypeMetaData *meta,
+    Value recorded_seed_resolver(GlobalStateView state, std::string_view fq_key,
+                                 const TSValueTypeMetaData *schema,
                                  DateTime start_time)
     {
-        return replay_const_value(state, fq_key, meta, start_time, config(state).as_of.value_or(MAX_DT));
+        if (schema == nullptr) { return {}; }
+        if (!model_is(state, IN_MEMORY))
+        {
+            return replay_const_value(
+                state, fq_key, schema->value_schema, start_time,
+                config(state).as_of.value_or(MAX_DT));
+        }
+
+        const ValueView buffer = state.get(":memory:" + std::string{fq_key});
+        if (!buffer.valid()) { return {}; }
+
+        TSOutput accumulated{schema};
+        const auto entries = buffer.as_list();
+        for (std::size_t i = 0; i < entries.size(); ++i)
+        {
+            const auto entry = entries.at(i).as_indexed_view();
+            const DateTime when = entry.at(0).checked_as<DateTime>();
+            if (when > start_time) { break; }
+            apply_delta(accumulated.view(when), entry.at(1));
+        }
+        const auto view = accumulated.view(start_time);
+        return view.valid() ? Value{view.value()} : Value{};
     }
 
     void reset() noexcept

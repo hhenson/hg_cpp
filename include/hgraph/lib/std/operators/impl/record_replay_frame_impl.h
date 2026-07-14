@@ -200,6 +200,12 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "compare";
 
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return !record_replay::model_is(
+                context.global_state, record_replay::IN_MEMORY);
+        }
+
         static std::vector<std::pair<std::string_view, Value>> defaults()
         {
             return {{"recordable_id", Value{Str{}}}};

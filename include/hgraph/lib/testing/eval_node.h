@@ -121,6 +121,11 @@ namespace hgraph::testing
 
     namespace eval_node_detail
     {
+        inline void copy_completed_global_state(const GraphView &graph)
+        {
+            if (auto *state = GlobalContext::active_state()) { state->view().copy_from(graph.global_state()); }
+        }
+
         // The node's wire-time parameters (In + Scalar, in eval order).
         template <typename NodeT>
         using wire_params_t = typename StaticNodeSignature<NodeT>::wire_param_types;
@@ -422,6 +427,7 @@ namespace hgraph::testing
             GraphExecutorValue executor = eb.make_executor();
             auto               view     = executor.view();
             view.run();
+            copy_completed_global_state(view.graph());
 
             return ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
         }
@@ -490,6 +496,7 @@ namespace hgraph::testing
             GraphExecutorValue executor = eb.make_executor();
             auto               view     = executor.view();
             view.run();
+            copy_completed_global_state(view.graph());
 
             // Cycle-align: pad to the longest input, never truncate (see record).
             auto out = ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
@@ -539,6 +546,7 @@ namespace hgraph::testing
             GraphExecutorValue executor = eb.make_executor();
             auto               view     = executor.view();
             view.run();
+            copy_completed_global_state(view.graph());
 
             return ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
         }
@@ -611,6 +619,7 @@ namespace hgraph::testing
             GraphExecutorValue executor = eb.make_executor();
             auto               view     = executor.view();
             view.run();
+            copy_completed_global_state(view.graph());
 
             auto out = [&] {
                 if constexpr (std::is_void_v<out_schema>)
@@ -791,6 +800,7 @@ namespace hgraph::testing
         GraphExecutorValue executor = eb.make_executor();
         auto               view     = executor.view();
         view.run();
+        eval_node_detail::copy_completed_global_state(view.graph());
 
         // Type-erased per-cycle deltas, read at the wiring-resolved output schema; pad to
         // the longest input, never truncate.
@@ -822,6 +832,7 @@ namespace hgraph::testing
         GraphExecutorValue executor = eb.make_executor();
         auto               view     = executor.view();
         view.run();
+        eval_node_detail::copy_completed_global_state(view.graph());
 
         return get_recorded_deltas(view.graph().global_state(), "eval_node::out");
     }
@@ -843,6 +854,7 @@ namespace hgraph::testing
         GraphExecutorValue executor = eb.make_executor();
         auto               view     = executor.view();
         view.run();
+        eval_node_detail::copy_completed_global_state(view.graph());
 
         return get_recorded_deltas(view.graph().global_state(), "eval_node::out");
     }

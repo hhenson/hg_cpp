@@ -160,7 +160,53 @@ namespace
             return stdlib::component<SumGraph>(w, "calc", lhs, rhs);
         }
     };
+
+    using DedupState = TSB<"ComponentDedupState", Field<"last", TS<Int>>>;
+
+    struct DedupNode
+    {
+        static constexpr auto name = "component_dedup_node";
+
+        static void eval(In<"ts", TS<Int>> ts,
+                         RecordableState<DedupState> state,
+                         Out<TS<Int>> out)
+        {
+            auto last = state.field<"last">();
+            if (!last.valid() || last.value().checked_as<Int>() != ts.value())
+            {
+                last.set(ts.value());
+                out.set(ts.value());
+            }
+        }
+    };
+
+    struct DedupGraph
+    {
+        static constexpr auto name = "component_dedup_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, NamedPort<"ts", TS<Int>> ts)
+        {
+            return wire<DedupNode>(w, ts);
+        }
+    };
+
+    struct DedupHarness
+    {
+        static constexpr auto name = "component_dedup_harness";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> ts)
+        {
+            return stdlib::component<DedupGraph>(w, "dedup", ts);
+        }
+    };
 }  // namespace
+
+TEST_CASE("component: C++ recordable state works through eval_node")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<DedupHarness>(values<Int>(1, 2, 3, 3, 4)),
+                 values<Int>(1, 2, 3, none, 4));
+}
 
 TEST_CASE("component: Record mode records the named inputs and __out__ while passing values through")
 {
@@ -177,6 +223,43 @@ TEST_CASE("component: Record mode records the named inputs and __out__ while pas
     CHECK(record_replay::store_contains("calc.__out__"));
     CHECK(frame_rows(record_replay::store_read("calc.lhs")) == 2);
     CHECK(frame_rows(record_replay::store_read("calc.__out__")) == 3);
+}
+
+TEST_CASE("component: in-memory mode records timestamped values and replays them")
+{
+    stdlib::register_standard_operators();
+    GlobalContext context;
+    record_replay::set_config(
+        context.state().view(),
+        record_replay::Config{.model = std::string{record_replay::IN_MEMORY}});
+
+    {
+        record_replay::scope mode{Mode::Record};
+        CHECK_OUTPUT(
+            eval_node<RecordingHarness>(
+                values<Int>(1, none, 3), values<Int>(10, 20, none)),
+            values<Int>(11, 21, 23));
+    }
+
+    const auto state = context.state().view();
+    REQUIRE(state.contains(":memory:calc.lhs"));
+    REQUIRE(state.contains(":memory:calc.rhs"));
+    REQUIRE(state.contains(":memory:calc.__out__"));
+    CHECK(state.get(":memory:calc.lhs").as_list().size() == 2);
+    CHECK(state.get(":memory:calc.rhs").as_list().size() == 2);
+    CHECK(state.get(":memory:calc.__out__").as_list().size() == 3);
+
+    {
+        record_replay::scope mode{Mode::Replay};
+        CHECK_OUTPUT(
+            eval_node<ReplayHarness>(values<Int>(), values<Int>()),
+            values<Int>(11, 21, 23));
+    }
+
+    CHECK_THROWS_AS(
+        (void)eval_node<CompareHarness<ProductGraph>>(
+            values<Int>(), values<Int>()),
+        std::runtime_error);
 }
 
 TEST_CASE("component: Replay mode replaces live inputs with the recordings")

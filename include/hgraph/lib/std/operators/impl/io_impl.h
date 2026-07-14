@@ -121,6 +121,128 @@ namespace hgraph::stdlib
         }
     };
 
+    namespace io_impl_detail
+    {
+        [[nodiscard]] inline std::string memory_recording_key(
+            TraitsView traits, std::string_view recordable_id, std::string_view key)
+        {
+            return ":memory:" + record_replay::fq_recordable_id(traits, recordable_id) +
+                   "." + std::string{key};
+        }
+    }
+
+    /** Persistent in-GlobalState record backend used by components. Unlike the
+        cycle-aligned testing harness, this preserves absolute evaluation times
+        and appends across runs so Recover|Record can continue a recording. */
+    struct memory_record_impl
+    {
+        static constexpr auto name = "memory_record";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return record_replay::model_is(
+                context.global_state, record_replay::IN_MEMORY);
+        }
+
+        static void eval(
+            In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+            Scalar<"key", Str> key,
+            Scalar<"recordable_id", Str> recordable_id,
+            TraitsView traits, GlobalStateView gs, DateTime now)
+        {
+            if (!ts.modified()) { return; }
+            const auto *delta_schema = ts.base().schema()->delta_value_schema;
+            const std::string fq_key = io_impl_detail::memory_recording_key(
+                traits, recordable_id.value(), key.value());
+            ValueView buffer = gs.get(fq_key);
+            if (!buffer.valid())
+            {
+                gs.set(fq_key, testing::make_sparse_buffer(delta_schema));
+                buffer = gs.get(fq_key);
+            }
+            auto mutation = buffer.as_list().begin_mutation();
+            Value entry = testing::make_sparse_entry(
+                delta_schema, now, capture_delta(ts.base()));
+            mutation.push_back(entry.view());
+        }
+    };
+
+    /** Absolute-time replay counterpart to ``memory_record_impl``. */
+    struct memory_replay_impl
+    {
+        static constexpr auto name = "memory_replay";
+        static constexpr bool schedule_on_start = true;
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return record_replay::model_is(
+                context.global_state, record_replay::IN_MEMORY);
+        }
+
+        static void eval(
+            Scalar<"key", Str> key,
+            Scalar<"recordable_id", Str> recordable_id,
+            TraitsView traits, GlobalStateView gs, State<Int> index,
+            NodeScheduler scheduler, DateTime now, Out<TsVar<"O">> out)
+        {
+            const std::string fq_key = io_impl_detail::memory_recording_key(
+                traits, recordable_id.value(), key.value());
+            const ValueView buffer = gs.get(fq_key);
+            if (!buffer.valid()) { return; }
+
+            const auto entries = buffer.as_list();
+            std::size_t current = static_cast<std::size_t>(index.get());
+            while (current < entries.size())
+            {
+                const auto entry = entries.at(current).as_indexed_view();
+                const DateTime when = entry.at(0).checked_as<DateTime>();
+                if (when < now)
+                {
+                    ++current;
+                    continue;
+                }
+                if (when > now)
+                {
+                    break;
+                }
+                apply_delta(out, entry.at(1));
+                ++current;
+            }
+            index.set(static_cast<Int>(current));
+            if (current < entries.size())
+            {
+                const auto next = entries.at(current).as_indexed_view();
+                const DateTime when = next.at(0).checked_as<DateTime>();
+                if (when > now) { scheduler.schedule(when); }
+            }
+        }
+    };
+
+    /** In-memory compare follows the interactive Python contract: a
+        mismatch fails the run instead of writing a deferred report. */
+    struct memory_compare_impl
+    {
+        static constexpr auto name = "memory_compare";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return record_replay::model_is(
+                context.global_state, record_replay::IN_MEMORY);
+        }
+
+        static void eval(
+            In<"lhs", TsVar<"S">, InputValidity::Unchecked> lhs,
+            In<"rhs", TsVar<"S">, InputValidity::Unchecked> rhs,
+            Scalar<"recordable_id", Str> recordable_id)
+        {
+            static_cast<void>(recordable_id);
+            if (!lhs.valid() || !rhs.valid() || !lhs.value().equals(rhs.value()))
+            {
+                throw std::runtime_error("record/replay comparison failed");
+            }
+        }
+    };
+
     /** ``null_sink`` implementation: a single generic sink that consumes ``ts`` and does nothing. */
     struct null_sink_impl
     {

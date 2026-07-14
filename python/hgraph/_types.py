@@ -214,7 +214,7 @@ def _value_type(scalar):
     if isinstance(scalar, str):
         return _hgraph.value_type(scalar)
     if isinstance(scalar, _TypeVarSentinel):
-        raise _GenericType(pattern=_hgraph.scalar_pattern_var(scalar.name))
+        raise _GenericType(pattern=_hgraph.scalar_pattern_var(_type_var_name(scalar)))
     # typing generics: tuple[X, ...] / tuple[A, B] / frozenset[X] / dict[K, V]
     import enum as _enum
     import typing
@@ -570,7 +570,7 @@ def _scalar_pattern(scalar):
 
 def _type_pattern(ts):
     if isinstance(ts, _TypeVarSentinel):
-        return _hgraph.type_pattern_var(ts.name)
+        return _hgraph.type_pattern_var(_type_var_name(ts))
     if isinstance(ts, _GenericTsExpr):
         if ts.pattern is None:
             raise TypeError(f"generic time-series {ts!r} did not provide a C++ pattern")
@@ -591,13 +591,13 @@ def _pattern_of(annotation):
             raise TypeError(f"generic annotation {annotation!r} carries no C++ pattern")
         return annotation.pattern
     if isinstance(annotation, _TypeVarSentinel):
-        return _hgraph.type_pattern_var(annotation.name)
+        return _hgraph.type_pattern_var(_type_var_name(annotation))
     raise TypeError(f"not a time-series annotation: {annotation!r}")
 
 
 def _size_pattern(size):
     if isinstance(size, _TypeVarSentinel):
-        return _hgraph.size_pattern_var(size.name)
+        return _hgraph.size_pattern_var(_type_var_name(size))
     return _hgraph.size_pattern_value(int(size))
 
 
@@ -829,7 +829,8 @@ class TimeSeriesSchema:
 class _TSBMeta(type):
     def __getitem__(cls, schema):
         if isinstance(schema, _TypeVarSentinel):
-            return _GenericTsExpr(f"TSB[{schema!r}]", pattern=_hgraph.type_pattern_tsb(schema.name))
+            return _GenericTsExpr(
+                f"TSB[{schema!r}]", pattern=_hgraph.type_pattern_tsb(_type_var_name(schema)))
         # hgraph's INLINE schema: TSB["lhs": TS[int], "rhs": TS[int]] - an
         # un-named structural bundle with the given fields.
         if isinstance(schema, slice):
@@ -919,7 +920,14 @@ class _Required:
 REQUIRED = _Required()
 
 
-class _TypeVarSentinel:
+class _TypeVarSentinelMeta(type):
+    def __instancecheck__(cls, instance):
+        import typing
+
+        return super().__instancecheck__(instance) or isinstance(instance, typing.TypeVar)
+
+
+class _TypeVarSentinel(metaclass=_TypeVarSentinelMeta):
     """hgraph's generic type variables (SCALAR / TIME_SERIES_TYPE / ...):
     usable as annotations - resolution happens from the wired arguments,
     exactly like an un-annotated parameter. ``is_scalar`` mirrors upstream's
@@ -936,7 +944,20 @@ class _TypeVarSentinel:
         return self.name
 
 
-SCALAR = _TypeVarSentinel("SCALAR", is_scalar=True)
+import typing as _typing
+
+
+def _type_var_name(value):
+    """Return the resolution name without mutating ``typing.TypeVar`` objects."""
+    return getattr(value, "name", getattr(value, "__name__", str(value)))
+
+
+def _type_var_is_scalar(value):
+    """Real Python TypeVars are used only for scalar generics in this API."""
+    return isinstance(value, _typing.TypeVar) or bool(getattr(value, "is_scalar", False))
+
+
+SCALAR = _typing.TypeVar("SCALAR")
 SCHEMA = _TypeVarSentinel("SCHEMA", is_scalar=True)
 TS_SCHEMA = _TypeVarSentinel("TS_SCHEMA")
 SCALAR_1 = _TypeVarSentinel("SCALAR_1", is_scalar=True)
@@ -1131,7 +1152,8 @@ class _REFMeta(type):
         if isinstance(item, (_TypeVarSentinel, _GenericTsExpr)):
             # REF over a generic: resolved at call time from the actual arg.
             pattern = _hgraph.type_pattern_ref(
-                _hgraph.type_pattern_var(item.name) if isinstance(item, _TypeVarSentinel) else _type_pattern(item)
+                _hgraph.type_pattern_var(_type_var_name(item))
+                if isinstance(item, _TypeVarSentinel) else _type_pattern(item)
             )
             return _GenericTsExpr(f"REF[{item!r}]", is_ref=True, inner=item, pattern=pattern)
         expr = _TsExpr(_m.ref_ts(_resolve(item)), f"REF[{item!r}]")

@@ -8,7 +8,10 @@ import threading
 
 import _hgraph
 
-from ._types import _TsExpr, _ContextExpr, _Required, _GenericTsExpr, _TypeVarSentinel
+from ._types import (
+    _TsExpr, _ContextExpr, _Required, _GenericTsExpr, _TypeVarSentinel,
+    _type_var_is_scalar, _type_var_name,
+)
 
 _wiring_stack = []
 
@@ -656,6 +659,39 @@ _global_state_local = threading.local()
 _GLOBAL_MISSING = object()
 
 
+def _friendly_recording_delta(delta):
+    if isinstance(delta, dict) and set(delta) == {"removed", "modified"}:
+        compact = dict(delta["modified"])
+        compact.update((key, REMOVED) for key in delta["removed"])
+        return compact
+    if isinstance(delta, dict) and set(delta) == {"added", "removed"}:
+        return _SetDelta(
+            tuple(delta["added"]) + tuple(Removed(value) for value in delta["removed"]))
+    return delta
+
+
+class _MemoryRecording(list):
+    """Python compatibility view over a typed C++ in-memory recording."""
+
+    def __init__(self, owner, key, entries):
+        self._owner = owner
+        self._key = key
+        super().__init__((when, _friendly_recording_delta(delta))
+                         for when, delta in entries)
+
+    def __setitem__(self, index, value):
+        if isinstance(index, slice):
+            raise TypeError("slice replacement is not supported for memory recordings")
+        if index < 0:
+            index += len(self)
+        if index < 0 or index >= len(self):
+            raise IndexError("memory recording assignment index out of range")
+        when, delta = value
+        self._owner._impl._set_memory_recording_entry(
+            self._key, index, when, delta)
+        super().__setitem__(index, value)
+
+
 class GlobalState:
     """Python seed/result owner for the C++ graph GlobalState copy lifecycle."""
 
@@ -672,7 +708,8 @@ class GlobalState:
         return key in self._impl
 
     def __getitem__(self, key):
-        return self._impl[key]
+        value = self._impl[key]
+        return _MemoryRecording(self, key, value) if key.startswith(":memory:") else value
 
     def __setitem__(self, key, value):
         self._impl[key] = value
@@ -681,7 +718,9 @@ class GlobalState:
         del self._impl[key]
 
     def get(self, key, default=None):
-        return self._impl.get(key, default)
+        if key not in self:
+            return default
+        return self[key]
 
     def keys(self):
         return self._impl.keys()
@@ -849,11 +888,11 @@ def _graph_auto_resolve(signature, arguments):
         if not isinstance(sentinel, _TypeVarSentinel):
             raise WiringError(
                 f"AUTO_RESOLVE parameter '{name}' needs a type[TYPEVAR] annotation")
-        size = scope.find_size(sentinel.name)
+        size = scope.find_size(_type_var_name(sentinel))
         if size is not None:
             resolved[name] = _ResolvedSize(size)
             continue
-        ts = scope.find_ts(sentinel.name)
+        ts = scope.find_ts(_type_var_name(sentinel))
         if ts is not None:
             resolved[name] = _TsExpr(ts, f"resolved[{sentinel!r}]")
             continue
@@ -1036,6 +1075,9 @@ class _PyNode:
         self.__signature__ = sig
         self._out_tp = sig.return_annotation if has_output else None
         self._params = list(sig.parameters.values())
+        self._recordable_state = next(
+            (param.annotation for param in self._params
+             if isinstance(param.annotation, _RecordableStateExpr)), None)
         ts_names = {
             param.name
             for param in self._params
@@ -1053,10 +1095,19 @@ class _PyNode:
         # Injectable parameters MUST default to None (hgraph convention):
         # the default guarantees user code in a graph never supplies them.
         for param in self._params:
-            if param.annotation in _INJECTABLE_MARKERS and param.default is not None:
+            is_injectable = (param.annotation in _INJECTABLE_MARKERS or
+                             isinstance(param.annotation, _RecordableStateExpr))
+            if is_injectable and param.default is not None:
                 raise TypeError(
                     f"injectable parameter '{param.name}' of '{self.__name__}' must default to None"
                 )
+        if sum(isinstance(param.annotation, _RecordableStateExpr)
+               for param in self._params) > 1:
+            raise TypeError(f"'{self.__name__}' supports at most one RECORDABLE_STATE parameter")
+        if self._recordable_state is not None and any(
+                param.annotation is STATE for param in self._params):
+            raise TypeError(
+                f"'{self.__name__}' cannot combine STATE with RECORDABLE_STATE")
 
     @staticmethod
     def _policy_names(policy, names):
@@ -1073,6 +1124,9 @@ class _PyNode:
         return result
 
     def _set_lifecycle(self, phase, fn):
+        if self._recordable_state is not None:
+            raise TypeError(
+                f"@{self.__name__}.{phase} is not supported with RECORDABLE_STATE")
         for param in inspect.signature(fn).parameters.values():
             if param.annotation in _INJECTABLE_MARKERS:
                 if param.default is not None:
@@ -1114,7 +1168,7 @@ class _PyNode:
         items = item if isinstance(item, tuple) else (item,)
         for entry in items:
             if isinstance(entry, slice) and isinstance(entry.start, _TypeVarSentinel):
-                pinned._pins[entry.start.name] = entry.stop
+                pinned._pins[_type_var_name(entry.start)] = entry.stop
         return pinned
 
     @staticmethod
@@ -1208,9 +1262,47 @@ class _PyNode:
             name = getattr(sentinel, "name", str(sentinel))
             self._bind_resolved(scope, name, resolved)
 
+    @staticmethod
+    def _resolve_recordable_state(annotation, scope):
+        from ._types import _TsExpr, _pattern_of, _value_type
+        import typing
+
+        schema = annotation.schema
+        origin = typing.get_origin(schema) or schema
+        args = typing.get_args(schema)
+        for parameter, resolved in zip(getattr(origin, "__parameters__", ()), args):
+            if isinstance(resolved, _TypeVarSentinel):
+                continue
+            name = getattr(parameter, "name", getattr(parameter, "__name__", str(parameter)))
+            if isinstance(resolved, _TsExpr):
+                scope.bind_ts(name, resolved.handle)
+            else:
+                scope.bind_scalar(name, _value_type(resolved))
+
+        annotations = {}
+        for klass in reversed(origin.__mro__):
+            annotations.update(getattr(klass, "__annotations__", {}))
+        fields = []
+        for name, field_type in annotations.items():
+            if isinstance(field_type, _TsExpr):
+                resolved = field_type.handle
+            else:
+                resolved = scope.resolve_ts(_pattern_of(field_type))
+            if resolved is None:
+                raise TypeError(
+                    f"cannot resolve recordable-state field '{name}' of {origin.__name__}")
+            fields.append((name, resolved))
+
+        state_name = origin.__name__
+        qualname = getattr(origin, "__qualname__", state_name)
+        if "<locals>" in qualname:
+            state_name = f"{origin.__module__}.{qualname}"
+        return _TsExpr(_hgraph.tsb(state_name, fields), f"TSB[{origin.__name__}]")
+
     def __call__(self, *args, **kwargs):
         from ._types import _pattern_of
 
+        kwargs.pop("__recordable_id__", None)
         ref = _hgraph.node_ref(self.fn)
         layout, ports, scalars, keep_ref = [], [], [], []
         # The wiring-time RESOLUTION SCOPE: the C++ type-variable map. Every
@@ -1224,7 +1316,8 @@ class _PyNode:
         # Pre-collect scalar values so callable active=/valid= policies can
         # evaluate before layout letters are chosen.
         for param in self._params:
-            if isinstance(param.annotation, (_TsExpr, _ContextExpr, _GenericTsExpr, _TypeVarSentinel)):
+            if (isinstance(param.annotation, (_TsExpr, _ContextExpr, _GenericTsExpr,
+                                              _TypeVarSentinel, _RecordableStateExpr))):
                 continue
             if param.annotation in _INJECTABLE_MARKERS or param.annotation is LOGGER:
                 continue
@@ -1294,6 +1387,13 @@ class _PyNode:
                 continue
             if param.kind is inspect.Parameter.KEYWORD_ONLY:
                 by_name = True
+            if isinstance(param.annotation, _RecordableStateExpr):
+                if param.name in bound.arguments:
+                    raise TypeError(
+                        f"{self.__name__}: injectable '{param.name}' cannot be supplied")
+                layout.append("R")
+                _note(param.name)
+                continue
             marker = _INJECTABLE_MARKERS.get(param.annotation)
             if marker is not None:
                 if param.name in bound.arguments:
@@ -1381,6 +1481,8 @@ class _PyNode:
             if verdict is not True:
                 reason = verdict if isinstance(verdict, str) else "requirements not met"
                 raise RequirementsNotMetWiringError(f"{self.__name__}: {reason}")
+        if self._resolvers:
+            self._apply_resolvers(scope, scalar_values)
         packed = WiringPort(_hgraph.bundle_port(ports, keep_ref))
         config = "".join(layout)
         kw_names = [n for n, named in zip(layout_names, layout_by_name) if named]
@@ -1390,6 +1492,11 @@ class _PyNode:
             # else the keyword-only tail).
             config += "|" + ",".join(kw_names)
         node_kwargs = {"fn": ref, "config": config, "scalars": _hgraph.any_list(scalars)}
+        recordable_state_type = None
+        if self._recordable_state is not None:
+            recordable_state_type = self._resolve_recordable_state(
+                self._recordable_state, scope)
+            node_kwargs["recordable_state_schema"] = recordable_state_type.handle
         for phase in ("start", "stop"):
             lifecycle_fn = getattr(self, f"_{phase}_fn")
             lifecycle_layout, lifecycle_scalars = [], []
@@ -1414,15 +1521,15 @@ class _PyNode:
             node_kwargs[f"{phase}_scalars"] = _hgraph.any_list(lifecycle_scalars)
         if self.has_output:
             out_tp = self._out_tp
-            if self._resolvers:
-                self._apply_resolvers(scope, scalar_values)
             if isinstance(out_tp, (_GenericTsExpr, _TypeVarSentinel)):
                 resolved = scope.resolve_ts(_pattern_of(out_tp))
                 if resolved is not None:
                     out_tp = _TsExpr(resolved, f"resolved[{out_tp!r}]")
             if not isinstance(out_tp, _TsExpr):
                 raise TypeError(f"@compute_node '{self.__name__}' needs a TS[...] return annotation")
-            return wire("__py_compute", packed, output_type=out_tp, **node_kwargs)
+            op_name = ("__py_compute_recordable" if recordable_state_type is not None
+                       else "__py_compute")
+            return wire(op_name, packed, output_type=out_tp, **node_kwargs)
         return wire("__py_sink", packed, **node_kwargs)
 
 
@@ -2438,30 +2545,8 @@ class record_replay_scope:
         return False
 
 
-_COMPONENT_IDS_BY_ROOT = {}
-
-
-def _claim_component_id(fq):
-    """One component instance per recordable id within a wiring (hgraph
-    parity: a duplicate id in one graph build raises)."""
-    if not _wiring_stack:
-        return
-    root = id(_wiring_stack[0])
-    ids = _COMPONENT_IDS_BY_ROOT.setdefault(root, set())
-    if fq in ids:
-        raise RuntimeError(f"duplicate component recordable id '{fq}' in one graph")
-    ids.add(fq)
-
-
-def _release_component_ids(wiring):
-    _COMPONENT_IDS_BY_ROOT.pop(id(wiring), None)
-
-
 class _Component:
-    """@component: Python's component decorator over the C++ wrapping
-    rules (the design record's mode set). Consults the ambient mode scope;
-    wraps inputs/outputs with the name-resolved record/replay operators;
-    fq ids chain through nested scopes."""
+    """Python signature adapter for the C++ component wiring primitive."""
 
     def __init__(self, fn, recordable_id=None):
         self.fn = fn
@@ -2478,48 +2563,26 @@ class _Component:
             param.annotation, (_TsExpr, _GenericTsExpr, _TypeVarSentinel))
 
     def __call__(self, *args, **kwargs):
-        mode, ambient_id = _hgraph.current_record_replay_mode()
-        fq = f"{ambient_id}.{self.recordable_id}" if ambient_id else self.recordable_id
-        if mode != _RecordReplayModes.NONE and not fq:
-            raise ValueError("component requires a recordable id under an active record/replay mode")
-        if (mode & _RecordReplayModes.RECOVER) and (
-            mode & (_RecordReplayModes.REPLAY | _RecordReplayModes.REPLAY_OUTPUT)
-        ):
-            raise ValueError("component cannot recover and replay at the same time")
-
-        _claim_component_id(fq)
         bound = self._signature.bind(*args, **kwargs)
         call_args = dict(bound.arguments)
+        input_names = []
+        input_ports = []
         for param in self._params:
             key = param.name
             if key not in call_args or not self._is_ts(param, call_args[key]):
-                continue   # scalar parameters pass through unwrapped
-            port = call_args[key]
-            if mode & (_RecordReplayModes.REPLAY | _RecordReplayModes.COMPARE):
-                port = wire("replay", key, recordable_id=fq,
-                            output_type=param.annotation if isinstance(param.annotation, _TsExpr) else None)
-            if mode & _RecordReplayModes.RECOVER:
-                port = wire("__recovering_pass_through", port, f"{fq}.{key}")
-            if mode & _RecordReplayModes.RECORD:
-                wire("record", port, key, recordable_id=fq)
-            call_args[key] = port
+                continue
+            input_names.append(key)
+            input_ports.append(_unwrap(call_args[key]))
 
-        with record_replay_scope(mode, fq):
+        def compose(wrapped_ports):
+            for key, port in zip(input_names, wrapped_ports):
+                call_args[key] = WiringPort(port)
             out = self.fn(**call_args)
+            return None if out is None else _unwrap(out)
 
-        if out is None:
-            return None
-        out_tp = inspect.signature(self.fn).return_annotation
-        if mode & _RecordReplayModes.REPLAY_OUTPUT:
-            out = wire("replay", "__out__", recordable_id=fq,
-                       output_type=out_tp if isinstance(out_tp, _TsExpr) else None)
-        if mode & _RecordReplayModes.RECORD:
-            wire("record", out, "__out__", recordable_id=fq)
-        if mode & _RecordReplayModes.COMPARE:
-            recorded = wire("replay", "__out__", recordable_id=fq,
-                            output_type=out_tp if isinstance(out_tp, _TsExpr) else None)
-            wire("compare", out, recorded, recordable_id=fq)
-        return out
+        out = _hgraph.component(
+            _current_wiring(), self.recordable_id, input_names, input_ports, compose)
+        return None if out is None else WiringPort(out)
 
 
 def component(fn=None, *, recordable_id=None):
@@ -2542,22 +2605,32 @@ def set_record_replay_model(model):
 
 
 class _RecordableStateMarker:
-    """RECORDABLE_STATE[Schema]: importable placeholder - the recordable
-    state injectable lands with the recorded-state increment."""
+    """RECORDABLE_STATE[Schema]: a C++ hidden output-backed node state."""
 
     def __getitem__(self, item):
-        raise NotImplementedError("gap: RECORDABLE_STATE lands with the recorded-state increment")
+        return _RecordableStateExpr(item)
+
+
+class _RecordableStateExpr:
+    __slots__ = ("schema",)
+
+    def __init__(self, schema):
+        self.schema = schema
+
+    def __repr__(self):
+        return f"RECORDABLE_STATE[{self.schema!r}]"
 
 
 RECORDABLE_STATE = _RecordableStateMarker()
 
 
 class _TsOutMarker:
-    """TS_OUT[X]: importable placeholder (upstream's output-typed state
-    field annotation) - lands with the recorded-state increment."""
+    """TS_OUT[X]: output-backed state field, represented by TS[X]."""
 
     def __getitem__(self, item):
-        raise NotImplementedError("gap: TS_OUT lands with the recorded-state increment")
+        from ._types import TS, _TsExpr, _GenericTsExpr
+
+        return item if isinstance(item, (_TsExpr, _GenericTsExpr)) else TS[item]
 
 
 TS_OUT = _TsOutMarker()
@@ -2775,7 +2848,6 @@ def run_graph(graph_fn, *args, start_time=None, end_time=None,
                     realtime=run_mode == EvaluationMode.REAL_TIME)
     finally:
         w._release_seed_context()
-        _release_component_ids(_wiring_stack[-1])
         _wiring_stack.pop()
     if out is None:
         return None
@@ -2836,7 +2908,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         if k not in param_names or not isinstance(v, (list, tuple)):
             return False
         annotation = annotations_by_name.get(k)
-        if isinstance(annotation, _TypeVarSentinel) and annotation.is_scalar:
+        if isinstance(annotation, _TypeVarSentinel) and _type_var_is_scalar(annotation):
             return False
         if isinstance(v, tuple) and not isinstance(
                 annotation, (_TsExpr, _GenericTsExpr, _TypeVarSentinel)):
@@ -2996,7 +3068,6 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         run = w.run(start_time=__start_time__, end_time=__end_time__)
     finally:
         w._release_seed_context()
-        _release_component_ids(_wiring_stack[-1])
         _wiring_stack.pop()
     if __elide__:
         # hgraph parity: elide keeps only the ticked cycles, in order (the

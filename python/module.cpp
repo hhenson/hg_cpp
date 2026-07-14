@@ -70,6 +70,14 @@ namespace
         const TSValueTypeMetaData *meta{nullptr};
     };
 
+    /** Internal scalar used to carry a resolved TS schema into a generic
+        Python node implementation (for its hidden recordable-state output). */
+    struct PyTsMetaRef
+    {
+        const TSValueTypeMetaData *meta{nullptr};
+        friend bool operator==(const PyTsMetaRef &, const PyTsMetaRef &) noexcept = default;
+    };
+
     struct PyValueType
     {
         const ValueTypeMetaData *meta{nullptr};
@@ -238,6 +246,12 @@ namespace
             {
                 arg.kind = WiringArg::Kind::TimeSeries;
                 arg.port = nb::cast<PyPort &>(object).ref;
+            }
+            else if (nb::isinstance<PyTsType>(object))
+            {
+                arg.kind         = WiringArg::Kind::Scalar;
+                arg.scalar_value = Value{PyTsMetaRef{nb::cast<PyTsType &>(object).meta}};
+                arg.scalar_meta  = arg.scalar_value.schema();
             }
             else if (nb::isinstance<PyWiredFn>(object))
             {
@@ -772,6 +786,70 @@ namespace
         }
     };
 
+    /** Mutable, call-scoped view over a node's C++ recordable-state output. */
+    struct PyRecordableState
+    {
+        TSOutputHandle             handle;
+        DateTime                   now{};
+        std::shared_ptr<PyTsGuard> guard;
+
+        [[nodiscard]] TSOutputView checked() const
+        {
+            if (guard == nullptr || !guard->alive)
+            {
+                throw std::logic_error(
+                    "a recordable-state view was accessed outside its node's evaluation");
+            }
+            return handle.view(now);
+        }
+
+        [[nodiscard]] bool valid() const
+        {
+            auto view = checked();
+            return view.valid() && view.data_view().has_current_value();
+        }
+
+        [[nodiscard]] bool modified() const { return checked().modified(); }
+
+        [[nodiscard]] nb::object value() const
+        {
+            auto view = checked();
+            return view.valid() && view.data_view().has_current_value()
+                       ? value_to_py(view.data_view().value())
+                       : nb::none();
+        }
+
+        void set_value(nb::handle value) const
+        {
+            auto  view  = checked();
+            Value delta = py_to_delta(value, view.schema());
+            apply_delta(view, delta.view());
+        }
+
+        [[nodiscard]] PyRecordableState child(nb::handle key) const
+        {
+            auto view = checked();
+            switch (view.schema()->kind)
+            {
+                case TSTypeKind::TSB: {
+                    auto bundle = view.as_bundle();
+                    TSOutputView child = nb::isinstance<nb::str>(key)
+                                             ? bundle.field(nb::cast<std::string>(key))
+                                             : bundle.at(nb::cast<std::size_t>(key));
+                    return PyRecordableState{child.handle(), now, guard};
+                }
+                case TSTypeKind::TSL: {
+                    auto list = view.as_list();
+                    TSOutputView child = list.at(nb::cast<std::size_t>(key));
+                    return PyRecordableState{child.handle(), now, guard};
+                }
+                default:
+                    throw nb::type_error(
+                        "recordable-state value has no statically addressable children");
+            }
+        }
+    };
+
     struct PyTimeSeries
     {
         TSInputView                view;
@@ -1165,9 +1243,15 @@ namespace
         args.make_passive();
     }
 
+    struct PyInvocationState
+    {
+        State<PyStateRef> *local{nullptr};
+        TSOutputView      *recordable{nullptr};
+    };
+
     /** Assemble the python call args per the layout; false = a ts arg is not yet valid. */
     [[nodiscard]] bool py_assemble_args(std::string_view layout, const TSInputView &args, const ValueView &scalars,
-                                        State<PyStateRef> &state, NodeScheduler scheduler, DateTime now,
+                                        PyInvocationState state, NodeScheduler scheduler, DateTime now,
                                         nb::list &call_args, nb::list &context_values,
                                         const std::shared_ptr<PyTsGuard> &guard,
                                         const nb::object &runtime_global_state,
@@ -1210,7 +1294,23 @@ namespace
                     call_args.append(value_to_py((*scalar_list)[scalar_index++].as_any().get()));
                     break;
                 }
-                case 'S': call_args.append(py_state_namespace(state)); break;
+                case 'S':
+                    if (state.local == nullptr)
+                    {
+                        throw std::logic_error(
+                            "python node: local STATE is unavailable on a recordable-state node");
+                    }
+                    call_args.append(py_state_namespace(*state.local));
+                    break;
+                case 'R':
+                    if (state.recordable == nullptr)
+                    {
+                        throw std::logic_error(
+                            "python node: RECORDABLE_STATE is unavailable on this node");
+                    }
+                    call_args.append(nb::cast(PyRecordableState{
+                        state.recordable->handle(), now, guard}));
+                    break;
                 case 'o': {
                     if (output == nullptr)
                     {
@@ -1374,7 +1474,8 @@ namespace
             auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
             const auto &out_view = static_cast<const TSOutputView &>(out);
             nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
-            if (!py_assemble_args(shape.layout, args.base(), scalars.value(), state, scheduler, now, call_args,
+            if (!py_assemble_args(shape.layout, args.base(), scalars.value(),
+                                  PyInvocationState{.local = &state}, scheduler, now, call_args,
                                   context_values, guard, runtime_state, &out_view))
             {
                 return;
@@ -1405,6 +1506,95 @@ namespace
                               global_state);
             release.release();
             py_release_state(state);
+        }
+    };
+
+    struct py_compute_recordable_node
+    {
+        static constexpr auto name = "__py_compute_recordable";
+        static constexpr std::string_view implementation_label =
+            "hgraph.python.compute_recordable";
+
+        static void resolve_default_types(ResolutionMap &resolution,
+                                          OperatorCallContext context)
+        {
+            const auto *schema = context.scalar_as<PyTsMetaRef>(
+                "recordable_state_schema");
+            if (schema == nullptr || schema->meta == nullptr)
+            {
+                throw std::invalid_argument(
+                    "python recordable-state node requires a concrete state schema");
+            }
+            resolution.bind_ts("RS", schema->meta);
+        }
+
+        static void start(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+                          Scalar<"config", Str> eval_config)
+        {
+            py_apply_input_activity(
+                parse_py_call_shape(eval_config.value()).layout, args.base());
+        }
+
+        static void eval(
+            In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+            Scalar<"fn", PyNodeRef> fn, Scalar<"config", Str> config,
+            Scalar<"scalars", ScalarVar<"SV">> scalars,
+            Scalar<"recordable_state_schema", PyTsMetaRef> recordable_state_schema,
+            Scalar<"start_fn", PyNodeRef> start_fn,
+            Scalar<"start_enabled", Bool> start_enabled,
+            Scalar<"start_config", Str> start_config,
+            Scalar<"start_scalars", ScalarVar<"SSV">> start_scalars,
+            Scalar<"stop_fn", PyNodeRef> stop_fn,
+            Scalar<"stop_enabled", Bool> stop_enabled,
+            Scalar<"stop_config", Str> stop_config,
+            Scalar<"stop_scalars", ScalarVar<"XSV">> stop_scalars,
+            RecordableState<TsVar<"RS">> state, NodeScheduler scheduler,
+            DateTime now, GlobalStateView global_state, Out<TsVar<"O">> out)
+        {
+            static_cast<void>(recordable_state_schema);
+            static_cast<void>(start_fn);
+            static_cast<void>(start_enabled);
+            static_cast<void>(start_config);
+            static_cast<void>(start_scalars);
+            static_cast<void>(stop_fn);
+            static_cast<void>(stop_enabled);
+            static_cast<void>(stop_config);
+            static_cast<void>(stop_scalars);
+            const PyCallShape shape = parse_py_call_shape(config.value());
+            if (!py_node_should_evaluate(shape.layout, args.base(), scheduler)) { return; }
+
+            nb::gil_scoped_acquire gil;
+            nb::list call_args;
+            nb::list context_values;
+            auto guard = std::make_shared<PyTsGuard>();
+            auto invalid = UnwindCleanupGuard([&] { guard->alive = false; });
+            const auto &out_view = static_cast<const TSOutputView &>(out);
+            TSOutputView state_view =
+                static_cast<const TSOutputView &>(state).borrowed_ref();
+            nb::object runtime_state = nb::cast(
+                PyRuntimeGlobalState{global_state, guard});
+            if (!py_assemble_args(
+                    shape.layout, args.base(), scalars.value(),
+                    PyInvocationState{.recordable = &state_view}, scheduler, now,
+                    call_args, context_values, guard, runtime_state, &out_view))
+            {
+                return;
+            }
+            nb::dict call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
+            apply_py_result(
+                py_call_with_contexts(fn.value().record->fn, call_args,
+                                      context_values, runtime_state,
+                                      std::move(call_kwargs)),
+                out);
+            invalid.release();
+            guard->alive = false;
+        }
+
+        static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+                         Scalar<"config", Str> eval_config)
+        {
+            py_clear_input_activity(
+                parse_py_call_shape(eval_config.value()).layout, args.base());
         }
     };
 
@@ -1453,7 +1643,8 @@ namespace
             auto     guard   = std::make_shared<PyTsGuard>();
             auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
             nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
-            if (!py_assemble_args(shape.layout, args.base(), scalars.value(), state, scheduler, now, call_args,
+            if (!py_assemble_args(shape.layout, args.base(), scalars.value(),
+                                  PyInvocationState{.local = &state}, scheduler, now, call_args,
                                   context_values, guard, runtime_state))
             {
                 return;
@@ -1569,6 +1760,17 @@ namespace
                                      Scalar<"stop_fn", PyNodeRef>, Scalar<"stop_enabled", Bool>,
                                      Scalar<"stop_config", Str>,
                                      Scalar<"stop_scalars", ScalarVar<"XSV">>, Out<TsVar<"O">>> {};
+    struct op_py_compute_recordable
+        : Operator<"__py_compute_recordable", In<"args", TsVar<"A">>,
+                   Scalar<"fn", PyNodeRef>, Scalar<"config", Str>,
+                   Scalar<"scalars", ScalarVar<"SV">>,
+                   Scalar<"recordable_state_schema", PyTsMetaRef>,
+                   Scalar<"start_fn", PyNodeRef>, Scalar<"start_enabled", Bool>,
+                   Scalar<"start_config", Str>,
+                   Scalar<"start_scalars", ScalarVar<"SSV">>,
+                   Scalar<"stop_fn", PyNodeRef>, Scalar<"stop_enabled", Bool>,
+                   Scalar<"stop_config", Str>,
+                   Scalar<"stop_scalars", ScalarVar<"XSV">>, Out<TsVar<"O">>> {};
     struct op_py_sink : Operator<"__py_sink", In<"args", TsVar<"A">>, Scalar<"fn", PyNodeRef>,
                                  Scalar<"config", Str>, Scalar<"scalars", ScalarVar<"SV">>,
                                  Scalar<"start_fn", PyNodeRef>, Scalar<"start_enabled", Bool>,
@@ -1777,6 +1979,15 @@ struct std::hash<PyNodeRef>
 };
 
 template <>
+struct std::hash<PyTsMetaRef>
+{
+    [[nodiscard]] std::size_t operator()(const PyTsMetaRef &ref) const noexcept
+    {
+        return std::hash<const void *>{}(ref.meta);
+    }
+};
+
+template <>
 struct std::hash<PyStateRef>
 {
     [[nodiscard]] std::size_t operator()(const PyStateRef &ref) const noexcept
@@ -1806,6 +2017,12 @@ namespace hgraph::static_schema_detail
     struct scalar_name<PyStateRef>
     {
         static constexpr std::string_view value{"py_state"};
+    };
+
+    template <>
+    struct scalar_name<PyTsMetaRef>
+    {
+        static constexpr std::string_view value{"PyTsMetaRef"};
     };
 
     template <>
@@ -1872,6 +2089,7 @@ NB_MODULE(_hgraph, m)
     (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar
     register_overload<op_materialize, materialize_node>();
     register_overload<op_py_compute, py_compute_node>();
+    register_overload<op_py_compute_recordable, py_compute_recordable_node>();
     register_overload<op_py_sink, py_sink_node>();
     register_overload<op_py_generator, py_generator_node>();
     register_overload<op_recover_pt, stdlib::component_detail::recovering_pass_through>();
@@ -2476,6 +2694,48 @@ NB_MODULE(_hgraph, m)
                  return state.contains(key) ? value_to_py(state.get(key)) : fallback;
              },
              nb::arg("key"), nb::arg("default") = nb::none())
+        .def("_set_memory_recording_entry",
+             [](GlobalState &self, const std::string &key, std::size_t index,
+                DateTime when, nb::handle python_delta) {
+                 ValueView buffer = self.view().get(key);
+                 if (!buffer.valid()) { throw nb::key_error(key.c_str()); }
+                 const auto entries = buffer.as_list();
+                 if (index >= entries.size())
+                 {
+                     throw nb::index_error("recording entry index is out of range");
+                 }
+                 const auto current = entries.at(index).as_indexed_view();
+                 const auto *delta_schema = current.at(1).schema();
+                 nb::object canonical = nb::borrow(python_delta);
+                 if (delta_schema != nullptr &&
+                     delta_schema->value_kind() == ValueTypeKind::Bundle &&
+                     delta_schema->field_count == 2 &&
+                     std::string_view{delta_schema->fields[0].name} == "removed" &&
+                     std::string_view{delta_schema->fields[1].name} == "modified")
+                 {
+                     nb::set removed;
+                     nb::dict modified;
+                     for (auto [item_key, item_value] : nb::cast<nb::dict>(python_delta))
+                     {
+                         if (removed_sentinel_slot().is_valid() &&
+                             item_value.ptr() == removed_sentinel_slot().ptr())
+                         {
+                             removed.add(item_key);
+                         }
+                         else { modified[item_key] = item_value; }
+                     }
+                     nb::dict shaped;
+                     shaped["removed"]  = std::move(removed);
+                     shaped["modified"] = std::move(modified);
+                     canonical = std::move(shaped);
+                 }
+                 Value delta = py_to_value_as(canonical, delta_schema);
+                 Value replacement = testing::make_sparse_entry(
+                     delta_schema, when, delta);
+                 buffer.as_list().begin_mutation().set(index, replacement.view());
+             },
+             nb::arg("key"), nb::arg("index"), nb::arg("when"),
+             nb::arg("delta"))
         .def("__setitem__",
              [](GlobalState &self, const std::string &key, nb::handle value) {
                  self.view().set(key, py_to_value(value));
@@ -2718,6 +2978,16 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyOutput>(m, "OutputView")
         .def_prop_ro("valid", &PyOutput::valid)
         .def_prop_ro("value", &PyOutput::value);
+    nb::class_<PyRecordableState>(m, "RecordableStateView")
+        .def_prop_ro("valid", &PyRecordableState::valid)
+        .def_prop_ro("modified", &PyRecordableState::modified)
+        .def_prop_rw("value", &PyRecordableState::value,
+                     &PyRecordableState::set_value)
+        .def("__getitem__", &PyRecordableState::child)
+        .def("__getattr__",
+             [](const PyRecordableState &self, const std::string &name) {
+                 return self.child(nb::str(name.c_str()));
+             });
     nb::class_<PyRuntimeGlobalState>(m, "RuntimeGlobalState")
         .def("__len__", [](const PyRuntimeGlobalState &self) { return self.checked().size(); })
         .def("__contains__", [](const PyRuntimeGlobalState &self, const std::string &key) {
@@ -3338,6 +3608,55 @@ NB_MODULE(_hgraph, m)
              nb::arg("on_start") = nb::none());
 
     m.def(
+        "component",
+        [](PyWiring &wiring, const std::string &recordable_id,
+           nb::list names, nb::list ports, nb::object compose) -> nb::object {
+            if (nb::len(names) != nb::len(ports))
+            {
+                throw nb::value_error("component names and ports must have the same length");
+            }
+
+            std::vector<WiringNamedPortRef> inputs;
+            inputs.reserve(nb::len(names));
+            for (std::size_t index = 0; index < nb::len(names); ++index)
+            {
+                inputs.emplace_back(
+                    nb::cast<std::string>(names[index]),
+                    nb::cast<PyPort &>(ports[index]).ref);
+            }
+
+            try
+            {
+                WiringPortRef out = stdlib::component(
+                    wiring.wiring_ref(), recordable_id,
+                    std::span<const WiringNamedPortRef>{inputs.data(), inputs.size()},
+                    [&](std::span<const WiringPortRef> wrapped) {
+                        nb::list args;
+                        for (const WiringPortRef &port : wrapped)
+                        {
+                            args.append(nb::cast(PyPort{port}));
+                        }
+                        nb::object result = compose(nb::tuple(args));
+                        return result.is_none() ? WiringPortRef{}
+                                                : nb::cast<PyPort &>(result).ref;
+                    });
+                return out.is_unbound_source() ? nb::none()
+                                               : nb::cast(PyPort{std::move(out)});
+            }
+            catch (const std::invalid_argument &error)
+            {
+                if (std::string_view{error.what()}.starts_with(
+                        "component: duplicate recordable id"))
+                {
+                    throw std::runtime_error(error.what());
+                }
+                throw;
+            }
+        },
+        nb::arg("wiring"), nb::arg("recordable_id"), nb::arg("names"),
+        nb::arg("ports"), nb::arg("compose"));
+
+    m.def(
         "_evaluate_const",
         [](GlobalState &state, const std::string &name, nb::tuple args, nb::dict kwargs,
            std::optional<PyTsType> output_type) {
@@ -3360,6 +3679,7 @@ NB_MODULE(_hgraph, m)
     (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar
     register_overload<op_materialize, materialize_node>();
     register_overload<op_py_compute, py_compute_node>();
+    register_overload<op_py_compute_recordable, py_compute_recordable_node>();
     register_overload<op_py_sink, py_sink_node>();
     register_overload<op_py_generator, py_generator_node>();
     register_overload<op_recover_pt, stdlib::component_detail::recovering_pass_through>();
