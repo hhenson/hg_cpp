@@ -30,4 +30,12 @@ namespace hgraph::log
     {
         g_logger = logger != nullptr ? std::move(logger) : make_default_logger();
     }
+
+    void reset_logger()
+    {
+        // Drop from the spdlog registry too — make_default_logger() would
+        // otherwise hand back the same instance with its stale sinks.
+        spdlog::drop("hgraph");
+        g_logger = nullptr;
+    }
 }  // namespace hgraph::log

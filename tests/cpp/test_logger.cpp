@@ -191,3 +191,20 @@ TEST_CASE("logger: log_ sample_count emits every nth evaluation")
     CHECK_THAT(all, !Catch::Matchers::ContainsSubstring("sampled d"));
     CHECK_THAT(all, !Catch::Matchers::ContainsSubstring("sampled e"));
 }
+
+TEST_CASE("logger: reset_logger drops the cached logger and rebuilds the default")
+{
+    auto sink = std::make_shared<spdlog::sinks::ringbuffer_sink_mt>(4);
+    log::set_logger(std::make_shared<spdlog::logger>("hgraph-custom", sink));
+    CHECK(log::logger().name() == "hgraph-custom");
+
+    log::reset_logger();
+
+    // The registry copy is gone too, so the next access builds a genuinely
+    // fresh default logger (fresh sinks — the point of the reset: Windows
+    // stdout sinks cache the raw OS handle at construction).
+    CHECK(spdlog::get("hgraph") == nullptr);
+    CHECK(log::logger().name() == "hgraph");
+
+    log::reset_logger();   // leave no cached logger behind for other tests
+}

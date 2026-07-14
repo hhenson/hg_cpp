@@ -19,6 +19,7 @@
 #include <hgraph/lib/std/operators/json.h>
 #include <hgraph/lib/std/operators/impl/io_impl.h>   // io_write_slot (sys.stdout routing)
 #include <hgraph/lib/std/operators/impl/table_impl.h>   // ts_table_layout (table_schema_info)
+#include <hgraph/runtime/logger.h>       // log::reset_logger (test support)
 #include <hgraph/runtime/node_error.h>   // node_error_ts_meta (exception_time_series)
 #include <hgraph/types/value/json_codec.h>          // to_json_string / from_json_string (builders)
 #include <hgraph/types/context_wiring.h>
@@ -3885,6 +3886,10 @@ NB_MODULE(_hgraph, m)
         nb::arg("output_type") = nb::none());
 
     m.def("_registry_generation", [] { return python_registry_generation; });
+    // Rebuild the process logger (and its sinks) on demand: spdlog's Windows
+    // stdout sinks cache the raw OS handle at construction, so tests that
+    // redirect fds per-test (pytest capfd) must reset before logging.
+    m.def("reset_logger", [] { hgraph::log::reset_logger(); });
     m.def("reset_registries", [] {
         python_bridge::enum_class_registry().clear();   // meta pointers are re-interned
         python_bridge::bundle_class_registry().clear();

@@ -9,6 +9,17 @@ from hgraph.nodes import tsl_to_tsd
 from hgraph.test import eval_node
 
 
+@pytest.fixture(autouse=True)
+def _fresh_logger():
+    # deviation: the C++ LOGGER's Windows stdout sink caches the raw OS
+    # handle when the logger is first built, so a sink created under an
+    # earlier test's fd capture writes past this test's capfd. Rebuild the
+    # logger per test so its sink binds to the active capture.
+    import _hgraph
+
+    _hgraph.reset_logger()
+    yield
+
 
 def test_debug_print(capsys):
 

@@ -201,7 +201,12 @@ components:
   via the bridge's writer hook, so redirection and pytest capture behave as
   in hgraph; ``DebugContext`` is wiring-scope sugar over ``debug_print``,
   and the ``LOGGER`` injectable resolves to the process ``hgraph`` logger
-  as a wiring-time object scalar. Plain-value keyword arguments to
+  as a wiring-time object scalar. The native ``log_`` operator writes through
+  the C++ spdlog logger, not the Python writer hook; because spdlog's Windows
+  stdout sinks cache the raw OS handle when the logger is first built, tests
+  that redirect file descriptors per-test (pytest ``capfd``) must call
+  ``_hgraph.reset_logger()`` first so the sink rebinds to the active capture
+  (``log::reset_logger`` on the C++ side). Plain-value keyword arguments to
   ``**kwargs``-collecting operators auto-lift to ``const`` ports on a
   resolution retry;
 - ``@generator`` sources with captured scalar arguments, distinct state per

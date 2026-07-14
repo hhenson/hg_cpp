@@ -120,6 +120,16 @@ namespace hgraph
          * default.
          */
         HGRAPH_EXPORT void set_logger(std::shared_ptr<spdlog::logger> logger);
+
+        /**
+         * Drop the process logger so the next ``logger()`` call rebuilds it
+         * (including its sinks). Needed wherever the log destination's file
+         * descriptor is redirected after the logger was first created:
+         * spdlog's Windows stdout sinks cache the raw OS handle at
+         * construction, so a redirect (e.g. pytest's per-test fd capture)
+         * is only honoured by a freshly built sink.
+         */
+        HGRAPH_EXPORT void reset_logger();
     }  // namespace log
 
     namespace static_node_detail
