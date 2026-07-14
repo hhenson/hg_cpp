@@ -427,18 +427,22 @@ namespace hgraph::detail
             return {};
         }
 
-        void unbind_target_link_at(const TSDataView &target, DateTime, bool teardown)
+        void unbind_target_link_at(const TSDataView &target, DateTime modified_time, bool teardown)
         {
             auto *link = mutable_target_link_storage(target);
             if (link == nullptr)
             {
                 throw std::logic_error("TSOutput from-REF target unbinding requires TargetLink storage");
             }
-            // UNBIND IS SILENT (hgraph parity, linking_strategies.rst): an
-            // EMPTY reference detaches the input - it reads not-valid from
-            // here on - but does NOT notify consumers. Only a rebind to a
-            // live target samples.
             if (teardown) { link->unbind_noexcept(); }
+            else if (target.schema() != nullptr &&
+                     (target.schema()->kind == TSTypeKind::TSS || target.schema()->kind == TSTypeKind::TSD))
+            {
+                // Keyed structures must reconcile the published key set. The
+                // source slot store remains allocated until erase, so the link
+                // can project removals without copying its keys.
+                link->unbind_structural(modified_time);
+            }
             else { link->unbind(); }
         }
 
@@ -453,13 +457,23 @@ namespace hgraph::detail
             {
                 return;
             }
-            bind_target_link(target, output);
             auto *link = mutable_target_link_storage(target);
             if (link == nullptr)
             {
                 throw std::logic_error("TSOutput from-REF target binding requires TargetLink storage");
             }
-            // Only a rebind to a LIVE (valid) target samples
+            const auto *schema = target_link_schema(target);
+            if (schema == nullptr)
+            {
+                throw std::logic_error("TSOutput from-REF target binding requires a target schema");
+            }
+            if (schema->kind == TSTypeKind::TSS || schema->kind == TSTypeKind::TSD)
+            {
+                link->bind_sampled(*schema, output, modified_time);
+                return;
+            }
+            bind_target_link(target, output);
+            // Only a scalar/fixed-shape rebind to a LIVE (valid) target samples
             // (linking_strategies.rst): binding to a target that has never
             // ticked must not fabricate a tick - the target's first real
             // tick notifies through the link's subscription.

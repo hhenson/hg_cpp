@@ -62,7 +62,8 @@ namespace hgraph
 
     TSDDataView TSDInputView::data_view() const
     {
-        return view_.checked_target_data_view("TSDInputView::data_view").as_dict();
+        auto data = view_.input_data_view();
+        return data.as_dict();
     }
 
     std::size_t TSDInputView::size() const { return data_view().size(); }

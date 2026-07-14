@@ -246,6 +246,8 @@ namespace
     using FloatTsbBundle        = UnNamedTSB<Field<"a", TS<Float>>, Field<"b", TS<Float>>>;
     using IntTsbBundle          = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Int>>>;
     using IfIntRefBundle        = UnNamedTSB<Field<"true", REF<TS<Int>>>, Field<"false", REF<TS<Int>>>>;
+    using IfIntTsdRefBundle = UnNamedTSB<Field<"true", REF<TSD<Int, TS<Int>>>>,
+                                         Field<"false", REF<TSD<Int, TS<Int>>>>>;
     using RoutedIntRefList      = TSL<REF<TS<Int>>, 3>;
     using IntTslPair            = TSL<TS<Int>, 2>;
     using IntTsd                = TSD<Int, TS<Int>>;
@@ -422,6 +424,56 @@ namespace
         {
             auto routed = wire<stdlib::if_, IfIntRefBundle>(w, condition, ts).as<IfIntRefBundle>();
             return wire<stdlib::getitem_>(w, routed, Str{"false"}).as<TS<Int>>();
+        }
+    };
+
+    struct IfTrueTsdFilterGraph
+    {
+        static constexpr auto name = "if_true_tsd_filter_graph";
+
+        static Port<IntTsd> compose(Wiring &w, Port<IntTsd> tsd, Port<TS<Bool>> condition)
+        {
+            auto routed = wire<stdlib::if_, IfIntTsdRefBundle>(w, condition, tsd).as<IfIntTsdRefBundle>();
+            auto branch = wire<stdlib::getitem_>(w, routed, Str{"true"}).as<IntTsd>();
+            auto enabled = wire<stdlib::const_, TS<Bool>>(w, Bool{true});
+            return wire<stdlib::filter_>(w, enabled, branch).as<IntTsd>();
+        }
+    };
+
+    struct IfTrueTsdKeySetGraph
+    {
+        static constexpr auto name = "if_true_tsd_key_set_graph";
+
+        static Port<TSS<Int>> compose(Wiring &w, Port<IntTsd> tsd, Port<TS<Bool>> condition)
+        {
+            auto routed = wire<stdlib::if_, IfIntTsdRefBundle>(w, condition, tsd).as<IfIntTsdRefBundle>();
+            auto branch = wire<stdlib::getitem_>(w, routed, Str{"true"}).as<IntTsd>();
+            return wire<stdlib::keys_>(w, branch).as<TSS<Int>>();
+        }
+    };
+
+    struct CreateInvalidTsdChild
+    {
+        static constexpr auto name = "create_invalid_tsd_child";
+
+        static void eval(In<"erase", TS<Bool>> erase, Out<IntTsd> out)
+        {
+            static_cast<void>(out.at(Int{9}));
+            if (erase.value()) { static_cast<void>(out.erase(Int{9})); }
+        }
+    };
+
+    struct InvalidTsdChildUnbindGraph
+    {
+        static constexpr auto name = "invalid_tsd_child_unbind_graph";
+
+        static Port<IntTsd> compose(Wiring &w, Port<TS<Bool>> erase, Port<TS<Bool>> condition)
+        {
+            auto source = wire<CreateInvalidTsdChild>(w, erase).as<IntTsd>();
+            auto routed = wire<stdlib::if_, IfIntTsdRefBundle>(w, condition, source).as<IfIntTsdRefBundle>();
+            auto branch = wire<stdlib::getitem_>(w, routed, Str{"true"}).as<IntTsd>();
+            auto enabled = wire<stdlib::const_, TS<Bool>>(w, Bool{true});
+            return wire<stdlib::filter_>(w, enabled, branch).as<IntTsd>();
         }
     };
 
@@ -1356,6 +1408,31 @@ TEST_CASE("std operators: control operators cover variadic booleans merge and se
                                            values<Int>(10, 20, 30),
                                            values<Int>(100, 200, 300)),
                  values<Int>(1, 20, 300));
+}
+
+TEST_CASE("std operators: structural REF unbind publishes only previously visible removals")
+{
+    stdlib::register_standard_operators();
+
+    const auto source = values<Value>(none,
+                                      dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}}),
+                                      dict_delta<Int, TS<Int>>({{3, 3}}, {2}),
+                                      none);
+    const auto condition = values<Bool>(true, true, false, true);
+
+    CHECK_OUTPUT(eval_node<IfTrueTsdFilterGraph>(source, condition),
+                 values<Value>(none,
+                               dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}}),
+                               dict_delta<Int, TS<Int>>({}, {1, 2}),
+                               dict_delta<Int, TS<Int>>({{1, 1}, {3, 3}})));
+    CHECK_OUTPUT(eval_node<IfTrueTsdKeySetGraph>(source, condition),
+                 values<Value>(none,
+                               set_delta<Int>({1, 2}, {}),
+                               set_delta<Int>({}, {1, 2}),
+                               set_delta<Int>({1, 3}, {})));
+    CHECK_OUTPUT(eval_node<InvalidTsdChildUnbindGraph>(values<Bool>(false, true),
+                                                       values<Bool>(true, false)),
+                 values<Value>(none, none));
 }
 
 TEST_CASE("std operators: date component operators extract day month year and explode")

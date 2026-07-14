@@ -186,7 +186,9 @@ else()
 endif()
 
 if(NOT HGRAPH_BUILD_PYTHON_BINDINGS)
-    find_package(fmt CONFIG QUIET)
+    # spdlog 1.15 includes fmt/base.h, which is unavailable in older distro
+    # releases such as Ubuntu 24.04's fmt 9 package.
+    find_package(fmt 11 CONFIG QUIET)
 endif()
 set(_hgraph_fmt_fetched OFF)
 if(NOT fmt_FOUND)
@@ -536,7 +538,7 @@ write_basic_package_version_file(
 
 set(_hgraph_config_dependencies
     "find_dependency(Threads)\n"
-    "find_dependency(fmt CONFIG)\n"
+    "find_dependency(fmt 11 CONFIG)\n"
     "find_dependency(Arrow CONFIG)\n"
     "find_dependency(ArrowCompute CONFIG)\n"
     "find_dependency(spdlog 1.15 CONFIG)\n"

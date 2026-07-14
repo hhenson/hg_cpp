@@ -23,10 +23,11 @@ of truth.  It distinguishes four states deliberately:
 Review Snapshot: 2026-07-14
 ---------------------------
 
-This review was made against the working tree based on ``02bf29f8``, including
-the completed mutable-output work described below.  Evidence came from the
-public implementation and tests, the commit history, :doc:`parity_matrix`,
-:doc:`python_integration`, :doc:`nested_graphs`, and :doc:`services`.
+This review was made against the working tree based on ``022f3982``, including
+the completed mutable-output and keyed structural-REF work described below.
+Evidence came from the public implementation and tests, the commit history,
+:doc:`parity_matrix`, :doc:`python_integration`, :doc:`nested_graphs`, and
+:doc:`services`.
 
 The important corrections to the previous roadmap are:
 
@@ -54,18 +55,18 @@ The important corrections to the previous roadmap are:
   raw ``operator_names()`` count is intentionally larger and is not the parity
   numerator.
 
-The completed A3 working tree passed the full acceptance gates on both local
-platforms:
+The completed A3 and keyed structural-REF working tree passed the full
+acceptance gates on both local platforms:
 
-- macOS arm64, AppleClang 21, Release with warnings as errors: 998/998 native
-  tests; a ``cp312-abi3`` wheel installed under Python 3.14.6 produced 975
-  passed, 32 skipped, 4 xfailed, and 6 deselected;
-- Ubuntu 24.04 x86_64, GCC 13.3, Release with warnings as errors: 998/998 native
+- macOS arm64, AppleClang 21, Release with warnings as errors: 999/999 native
+  tests; a ``cp312-abi3`` wheel installed under Python 3.14.6 produced 977
+  passed, 30 skipped, 4 xfailed, and 6 deselected;
+- Ubuntu 24.04 x86_64, GCC 13.3, Release with warnings as errors: 999/999 native
   tests; the Linux ``cp312-abi3`` wheel under Python 3.14.6 produced the same
   Python result; and
 - Ubuntu 24.04 x86_64, GCC 13.3, Debug with AddressSanitizer and the Python
-  bridge enabled: the full non-WIP suite under Python 3.12.3 produced 975
-  passed, 32 skipped, 4 xfailed, and 6 deselected with no sanitizer report.
+  bridge enabled: the full non-WIP suite under Python 3.12.3 produced 977
+  passed, 30 skipped, 4 xfailed, and 6 deselected with no sanitizer report.
 
 These are execution results, not collection-only inventory.
 
@@ -94,7 +95,8 @@ the following are true:
 4. Every supported Python-visible runtime behaviour has an equivalent public
    C++ wiring route and comparable behavioural tests.  Bridge-only syntax and
    arbitrary Python-object adaptation are the narrow exceptions.
-5. **Met for A3:** the full macOS native and Python 3.14 gates pass.  Large
+5. **Met for A3 and keyed structural REFs:** the full macOS native and Python
+   3.14 gates pass.  Large
    ownership, nested-graph, or cross-language changes must additionally pass
    the local Linux and sanitizer gates specified in ``AGENTS.md``; A3 passed
    those gates as recorded above.
@@ -122,8 +124,8 @@ Landed behaviour:
 
 Four A3 skips were removed: the TSD add/remove, invalid-child removal, clear,
 and TSB output-access cases now execute.  The nearby
-``test_removal_and_unbind_in_the_same_cycle`` case is not mutable-output work;
-it remains classified under the same-cycle structural TSD REF-unbind gap.
+``test_removal_and_unbind_in_the_same_cycle`` case was not mutable-output work;
+it has since landed as part of the keyed structural REF work below.
 
 The C++ coverage uses public ``eval_node`` wiring for TSS mutation, TSD
 same-cycle cancellation, invalid-child removal, and prior TSB output access.
@@ -141,11 +143,20 @@ These are the highest-value remaining gaps for existing Python graph authors.
 Structural references
 ~~~~~~~~~~~~~~~~~~~~~
 
+**Landed for keyed structures (2026-07-14):** sampled ``TSS`` and ``TSD``
+retargets reconcile their old and new published key sets.  Unbinding to an
+EMPTY REF makes the current collection invalid but publishes one removal cycle
+for keys that were previously visible.  A same-cycle source add that was never
+published through the branch, or a ``TSD`` child that never became valid,
+cannot produce a removal.  The implementation borrows the source slot store
+only until its normal erase phase rather than copying keys into retired side
+storage.  Public C++ ``eval_node`` tests cover ``if_`` through both ``filter_``
+and the zero-copy ``keys_`` projection; the Python empty-REF/key-set and
+same-cycle removal cases now execute.
+
 **Remaining:**
 
 - REF-flipping composition for ``TSL`` and ``TSB`` structural ports;
-- empty-REF propagation through ``if_`` / ``key_set``;
-- the TSS rebind-to-nothing removal delta; and
 - the still-rejected REF adaptation modes at compiled sub-graph boundaries.
 
 The current value-only Python REF contract remains in force: a Python REF has

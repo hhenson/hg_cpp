@@ -598,6 +598,27 @@ namespace hgraph::stdlib
                     apply_delta(out, capture_delta(ts.base()).view());
                 }
             }
+            else if (condition_true && was_true && ts.modified() && ts.base().schema() != nullptr &&
+                     (ts.base().schema()->kind == TSTypeKind::TSS ||
+                      ts.base().schema()->kind == TSTypeKind::TSD))
+            {
+                // Structural REF unbinds are invalid current values with a
+                // removal delta over the previously published key set.
+                bool has_removal = false;
+                if (ts.base().schema()->kind == TSTypeKind::TSS)
+                {
+                    const auto input = ts.base().as_set();
+                    const auto removed = input.removed();
+                    has_removal = removed.begin() != removed.end();
+                }
+                else
+                {
+                    const auto input = ts.base().as_dict();
+                    const auto removed = input.removed_keys();
+                    has_removal = removed.begin() != removed.end();
+                }
+                if (has_removal) { apply_delta(out, capture_delta(ts.base()).view()); }
+            }
             last_condition.set(condition_true);
         }
     };

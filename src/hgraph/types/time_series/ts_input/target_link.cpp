@@ -13,6 +13,20 @@
 
 namespace hgraph::detail
 {
+    struct TSInputTargetLinkStorage::StructuralTransition
+    {
+        TSOutputHandle previous_target{};
+        DateTime       modified_time{MIN_DT};
+        bool           sampled_current{false};
+
+        void clear() noexcept
+        {
+            previous_target.reset();
+            modified_time = MIN_DT;
+            sampled_current = false;
+        }
+    };
+
     namespace
     {
         void unsubscribe_node(TSInputTargetActiveNode &node,
@@ -92,6 +106,37 @@ namespace hgraph::detail
             if (target.schema()->kind == TSTypeKind::TSD) { return target.as_dict().key_set(); }
             if (target.schema()->kind == TSTypeKind::TSS) { return target.as_set(); }
             throw std::logic_error("Target-link slot observer requires a TSS or TSD target");
+        }
+
+        [[nodiscard]] bool has_published_structural_key(const TSDataView &target,
+                                                        DateTime transition_time)
+        {
+            if (!target.valid() || target.schema() == nullptr) { return false; }
+            const bool modified_now = target.modified(transition_time);
+            if (target.schema()->kind == TSTypeKind::TSS)
+            {
+                auto set = target.as_set();
+                for (std::size_t slot = 0; slot < set.slot_capacity(); ++slot)
+                {
+                    if (!set.slot_occupied(slot) || (modified_now && set.slot_added(slot))) { continue; }
+                    if (set.slot_live(slot) || set.slot_removed(slot)) { return true; }
+                }
+                return false;
+            }
+            if (target.schema()->kind == TSTypeKind::TSD)
+            {
+                auto dict = target.as_dict();
+                for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                {
+                    if (!dict.slot_occupied(slot) || (modified_now && dict.slot_added(slot))) { continue; }
+                    if (dict.slot_removed(slot) ||
+                        (dict.slot_live(slot) && dict.at_slot(slot).has_current_value()))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         [[nodiscard]] bool project_target_path(TSDataView &current,
@@ -309,7 +354,8 @@ namespace hgraph::detail
         : tracking(std::move(other.tracking)),
           state_(*this),
           slot_observers_(std::move(other.slot_observers_)),
-          slot_observers_subscribed_(std::exchange(other.slot_observers_subscribed_, false))
+          slot_observers_subscribed_(std::exchange(other.slot_observers_subscribed_, false)),
+          structural_transition_(std::move(other.structural_transition_))
     {
         other.slot_observers_.clear();
         state_.move_from(other.state_);
@@ -336,6 +382,7 @@ namespace hgraph::detail
             }
             tracking = std::move(other.tracking);
             state_.move_from(other.state_);
+            structural_transition_ = std::move(other.structural_transition_);
             static_cast<void>(fallback_on_exception(false, [&] {
                 subscribe_slot_observers();
                 return true;
@@ -356,6 +403,25 @@ namespace hgraph::detail
 
     void TSInputTargetLinkStorage::bind(const TSValueTypeMetaData &schema, const TSOutputView &output)
     {
+        bind_impl(schema, output, MIN_DT, false);
+    }
+
+    void TSInputTargetLinkStorage::bind_sampled(const TSValueTypeMetaData &schema,
+                                                const TSOutputView &output,
+                                                DateTime modified_time)
+    {
+        if (modified_time == MIN_DT)
+        {
+            throw std::invalid_argument("Sampled TSInput target binding requires an evaluation time");
+        }
+        bind_impl(schema, output, modified_time, true);
+    }
+
+    void TSInputTargetLinkStorage::bind_impl(const TSValueTypeMetaData &schema,
+                                             const TSOutputView &output,
+                                             DateTime modified_time,
+                                             bool sampled)
+    {
         if (!output_view_bound(output))
         {
             throw std::invalid_argument("TSInput target binding requires a bound output view");
@@ -367,7 +433,15 @@ namespace hgraph::detail
             throw std::invalid_argument("TSInput target binding schema does not match the input slot schema");
         }
 
-        unbind();
+        const bool previous_has_published_key =
+            sampled && state_.target.bound() &&
+            has_published_structural_key(state_.target.data_view(), modified_time);
+        if (state_.target.bound()) { detach_target(sampled, modified_time); }
+        else if (!sampled || structural_transition_time() != modified_time)
+        {
+            if (structural_transition_) { structural_transition_->clear(); }
+        }
+
         auto &state = state_;
         state.target = target;
         auto rollback = make_scope_exit<true>([this] { unbind(); });
@@ -378,10 +452,42 @@ namespace hgraph::detail
         }
         subscribe_slot_observers();
         resubscribe_active_target(schema);
+        const bool publish_sampled_transition =
+            sampled && (output.valid() || previous_has_published_key);
+        if (publish_sampled_transition)
+        {
+            if (!structural_transition_)
+            {
+                structural_transition_ = std::make_unique<StructuralTransition>();
+            }
+            structural_transition_->modified_time = modified_time;
+            structural_transition_->sampled_current = true;
+            record_target_modified(modified_time);
+        }
+        else if (sampled && structural_transition_) { structural_transition_->clear(); }
         rollback.release();
     }
 
     void TSInputTargetLinkStorage::unbind()
+    {
+        detach_target(false, MIN_DT);
+    }
+
+    void TSInputTargetLinkStorage::unbind_structural(DateTime modified_time)
+    {
+        if (modified_time == MIN_DT)
+        {
+            throw std::invalid_argument("Structural TSInput target unbinding requires an evaluation time");
+        }
+        if (!state_.target.bound()) { return; }
+        const bool has_published_key =
+            has_published_structural_key(state_.target.data_view(), modified_time);
+        detach_target(has_published_key, modified_time);
+        if (!has_published_key) { return; }
+        record_target_modified(modified_time);
+    }
+
+    void TSInputTargetLinkStorage::detach_target(bool retain_structural_target, DateTime modified_time)
     {
         if (state_.target.bound() && slot_observers_subscribed_)
         {
@@ -390,6 +496,17 @@ namespace hgraph::detail
         }
         unsubscribe_active_target();
         if (state_.target.bound()) { state_.target.data_view().unsubscribe(&state_); }
+        if (retain_structural_target)
+        {
+            if (!structural_transition_)
+            {
+                structural_transition_ = std::make_unique<StructuralTransition>();
+            }
+            structural_transition_->previous_target = state_.target;
+            structural_transition_->modified_time = modified_time;
+            structural_transition_->sampled_current = false;
+        }
+        else if (structural_transition_) { structural_transition_->clear(); }
         state_.target.reset();
     }
 
@@ -405,6 +522,7 @@ namespace hgraph::detail
         }
         if (state_.active_root_node) { unsubscribe_tree_noexcept(*state_.active_root_node, state_.scheduling_notifier); }
         unsubscribe_handle_noexcept(state_.target, &state_);
+        structural_transition_.reset();
     }
 
     void TSInputTargetLinkStorage::source_invalidated(const TSDataTracking *source) noexcept
@@ -414,6 +532,7 @@ namespace hgraph::detail
         slot_observers_subscribed_ = false;
         state_.clear_active_observed();
         state_.target.reset();
+        structural_transition_.reset();
         if (notify_slot_clear)
         {
             static_cast<void>(fallback_on_exception(false, [&] {
@@ -564,9 +683,33 @@ namespace hgraph::detail
         return target_output().data_view();
     }
 
+    TSDataView TSInputTargetLinkStorage::previous_target_view() const noexcept
+    {
+        return structural_transition_ != nullptr
+                   ? structural_transition_->previous_target.data_view()
+                   : TSDataView{};
+    }
+
     const TSOutputHandle &TSInputTargetLinkStorage::target_output() const noexcept
     {
         return state_.target;
+    }
+
+    bool TSInputTargetLinkStorage::structural_transition_active() const noexcept
+    {
+        return structural_transition_ != nullptr &&
+               structural_transition_->modified_time != MIN_DT &&
+               tracking.last_modified_time == structural_transition_->modified_time;
+    }
+
+    bool TSInputTargetLinkStorage::sampled_structural_transition() const noexcept
+    {
+        return structural_transition_active() && structural_transition_->sampled_current;
+    }
+
+    DateTime TSInputTargetLinkStorage::structural_transition_time() const noexcept
+    {
+        return structural_transition_ != nullptr ? structural_transition_->modified_time : MIN_DT;
     }
 
     const TSInputTargetLinkState *TSInputTargetLinkStorage::state() const noexcept

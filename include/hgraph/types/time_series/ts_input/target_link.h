@@ -64,6 +64,8 @@ namespace hgraph::detail
 
     struct TSInputTargetLinkStorage
     {
+        struct StructuralTransition;
+
         TSInputTargetLinkStorage() noexcept;
         TSInputTargetLinkStorage(const TSInputTargetLinkStorage &other);
         TSInputTargetLinkStorage &operator=(const TSInputTargetLinkStorage &other);
@@ -73,7 +75,10 @@ namespace hgraph::detail
 
         [[nodiscard]] bool bound() const noexcept;
         void bind(const TSValueTypeMetaData &schema, const TSOutputView &output);
+        void bind_sampled(const TSValueTypeMetaData &schema, const TSOutputView &output,
+                          DateTime modified_time);
         void unbind();
+        void unbind_structural(DateTime modified_time);
         void unbind_noexcept() noexcept;
         void source_invalidated(const TSDataTracking *source) noexcept;
         void record_target_modified(DateTime modified_time);
@@ -90,15 +95,23 @@ namespace hgraph::detail
         void remove_slot_observer(SlotObserver *observer);
 
         [[nodiscard]] TSDataView target_view() const noexcept;
+        [[nodiscard]] TSDataView previous_target_view() const noexcept;
         [[nodiscard]] const TSOutputHandle &target_output() const noexcept;
+        [[nodiscard]] bool structural_transition_active() const noexcept;
+        [[nodiscard]] bool sampled_structural_transition() const noexcept;
+        [[nodiscard]] DateTime structural_transition_time() const noexcept;
         [[nodiscard]] const TSInputTargetLinkState *state() const noexcept;
 
         TSDataTracking tracking{};
         TSInputTargetLinkState state_;
         SlotObserverList slot_observers_{};
         bool slot_observers_subscribed_{false};
+        std::unique_ptr<StructuralTransition> structural_transition_{};
 
       private:
+        void bind_impl(const TSValueTypeMetaData &schema, const TSOutputView &output,
+                       DateTime modified_time, bool sampled);
+        void detach_target(bool retain_structural_target, DateTime modified_time);
         void subscribe_slot_observers();
         void unsubscribe_slot_observers();
         void unsubscribe_slot_observers_noexcept() noexcept;

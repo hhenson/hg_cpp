@@ -46,7 +46,6 @@ def test_tsd_key_set():
     assert eval_node(_extract_key_set, tsd=[{"a": 1}, {"b": 2}]) == [{"a"}, {"b"}]
 
 
-@pytest.mark.skip(reason="gap: REF emptiness through if_/key_set")
 def test_tsd_key_set_empty_ref():
     @graph
     def _extract_key_set(tsd: TSD[str, TS[int]], clear: TS[bool]) -> TSS[str]:
@@ -199,7 +198,6 @@ def test_signal_in_branch():
     assert eval_node(g, [None, {"a": 1}, {"a": 2}, {}]) == [None, {"a": True}, {"a": True}, None]
 
 
-@pytest.mark.skip(reason="gap: same-cycle structural TSD REF unbind removal")
 def test_removal_and_unbind_in_the_same_cycle():
     @graph
     def main(tsd: TSD[str, TSD[int, TS[int]]], g: TS[bool]) -> TIME_SERIES_TYPE:

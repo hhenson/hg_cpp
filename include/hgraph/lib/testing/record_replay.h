@@ -295,15 +295,28 @@ namespace hgraph::testing
         {
             // Record every TICK, plus TICK-window TSW pre-validity ticks: a
             // window below its min period is invalid yet its delta stream
-            // already flows (hgraph records those). DURATION windows and all
-            // other kinds keep the validity gate - e.g. a duration window
-            // below its span, or a rerouted branch's unbind (modified with
-            // an EMPTY delta), must not record.
+            // already flows (hgraph records those). Invalid structural
+            // collection unbinds are also recorded when they carry a real
+            // removal delta over a previously published key set.
             if (!ts.modified()) { return; }
             if (!ts.valid())
             {
                 const auto *schema = ts.base().schema();
-                if (schema->kind != TSTypeKind::TSW || schema->data.tsw.is_duration_based) { return; }
+                const bool tick_window = schema->kind == TSTypeKind::TSW && !schema->data.tsw.is_duration_based;
+                bool structural_removal = false;
+                if (schema->kind == TSTypeKind::TSS)
+                {
+                    const auto input = ts.base().as_set();
+                    const auto removed = input.removed();
+                    structural_removal = removed.begin() != removed.end();
+                }
+                else if (schema->kind == TSTypeKind::TSD)
+                {
+                    const auto input = ts.base().as_dict();
+                    const auto removed = input.removed_keys();
+                    structural_removal = removed.begin() != removed.end();
+                }
+                if (!structural_removal && !tick_window) { return; }
             }
             // The canonical per-tick delta, rebuilt as an owned value-layer Value (the
             // runtime's transient delta storage omits copy hooks).

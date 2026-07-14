@@ -950,6 +950,8 @@ TEST_CASE("TimeSeriesReference: from-REF set alternative rebinds target links")
     REQUIRE(rebound_set.size() == 1);
     REQUIRE_FALSE(rebound_set.contains(one.view()));
     REQUIRE(rebound_set.contains(three.view()));
+    REQUIRE(std::ranges::equal(rebound_set.added(), std::array{three.view()}));
+    REQUIRE(std::ranges::is_permutation(rebound_set.removed(), std::array{one.view(), two.view()}));
 
     add_set_values(second_target, {std::int32_t{4}}, t4);
     auto after_target_tick = handle.view(t4);
@@ -964,9 +966,10 @@ TEST_CASE("TimeSeriesReference: from-REF set alternative rebinds target links")
     auto after_unbind = handle.view(t5);
     auto unbound_set  = after_unbind.as_set();
     REQUIRE_FALSE(after_unbind.valid());
-    REQUIRE_FALSE(after_unbind.modified());   // unbind is silent
+    REQUIRE(after_unbind.modified());
     REQUIRE(unbound_set.size() == 0);
     REQUIRE_FALSE(unbound_set.contains(three.view()));
+    REQUIRE(std::ranges::is_permutation(unbound_set.removed(), std::array{three.view(), four.view()}));
 }
 
 TEST_CASE("TimeSeriesReference: elementwise from-REF dict alternative follows per-key references")
@@ -1515,6 +1518,8 @@ TEST_CASE("TimeSeriesReference: from-REF dict alternative rebinds target links")
     REQUIRE_FALSE(rebound_dict.contains(key_one.view()));
     REQUIRE(rebound_dict.contains(key_two.view()));
     REQUIRE(rebound_dict.at(key_two.view()).value().checked_as<std::int32_t>() == 22);
+    REQUIRE(std::ranges::equal(rebound_dict.removed_keys(), std::array{key_one.view()}));
+    REQUIRE(std::ranges::equal(rebound_dict.modified_keys(), std::array{key_two.view()}));
 
     set_dict_value(second_target, std::int32_t{2}, std::int32_t{23}, t4);
     auto after_target_tick = handle.view(t4);
@@ -1529,9 +1534,10 @@ TEST_CASE("TimeSeriesReference: from-REF dict alternative rebinds target links")
     auto after_unbind = handle.view(t5);
     auto unbound_dict = after_unbind.as_dict();
     REQUIRE_FALSE(after_unbind.valid());
-    REQUIRE_FALSE(after_unbind.modified());   // unbind is silent
+    REQUIRE(after_unbind.modified());
     REQUIRE(unbound_dict.size() == 0);
     REQUIRE_FALSE(unbound_dict.contains(key_two.view()));
+    REQUIRE(std::ranges::equal(unbound_dict.removed_keys(), std::array{key_two.view()}));
 }
 
 TEST_CASE("TimeSeriesReference: from-REF alternative expands non-peered bundle references")

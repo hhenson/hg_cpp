@@ -19,6 +19,7 @@ namespace hgraph::detail
         bool (*slot_live)(const TSDataView &target, std::size_t slot) = nullptr;
         bool (*slot_added)(const TSDataView &target, std::size_t slot) = nullptr;
         bool (*slot_removed)(const TSDataView &target, std::size_t slot) = nullptr;
+        bool (*slot_published)(const TSDataView &target, std::size_t slot) = nullptr;
         const void *(*key_at_slot)(const TSDataView &target, std::size_t slot) = nullptr;
         bool (*contains)(const TSDataView &target, const ValueView &key) = nullptr;
         std::size_t (*find_slot)(const TSDataView &target, const ValueView &key) = nullptr;
@@ -113,6 +114,79 @@ namespace hgraph::detail
             return link != nullptr ? link->target_view() : TSDataView{};
         }
 
+        [[nodiscard]] const TSInputTargetLinkStorage *target_link_for(const void *context,
+                                                                      const void *memory) noexcept
+        {
+            return target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
+        }
+
+        [[nodiscard]] TSDataView target_link_previous_view(const void *context, const void *memory) noexcept
+        {
+            const auto *link = target_link_for(context, memory);
+            return link != nullptr && link->structural_transition_active()
+                       ? link->previous_target_view()
+                       : TSDataView{};
+        }
+
+        [[nodiscard]] ValueView target_link_key_view(const TSInputTargetLinkContext &state,
+                                                     const TSDataView &target,
+                                                     std::size_t slot)
+        {
+            const auto *layout = static_cast<const TSSDataLayout *>(state.active_layout);
+            return ValueView{layout->key_binding, state.slot_access->key_at_slot(target, slot)};
+        }
+
+        [[nodiscard]] bool target_link_previous_slot_was_published(const void *context,
+                                                                    const void *memory,
+                                                                    std::size_t slot)
+        {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
+            const auto *link = target_link_for(context, memory);
+            const auto previous = target_link_previous_view(context, memory);
+            if (link == nullptr || !previous.valid() || state->slot_access == nullptr ||
+                !state->slot_access->slot_occupied(previous, slot))
+            {
+                return false;
+            }
+
+            const bool added_in_transition =
+                previous.modified(link->structural_transition_time()) &&
+                state->slot_access->slot_added(previous, slot);
+            return state->slot_access->slot_published(previous, slot) && !added_in_transition;
+        }
+
+        [[nodiscard]] bool target_link_previous_contains_published(const void *context,
+                                                                   const void *memory,
+                                                                   const ValueView &key)
+        {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
+            const auto *link = target_link_for(context, memory);
+            const auto previous = target_link_previous_view(context, memory);
+            if (link == nullptr || !previous.valid() || state->slot_access == nullptr) { return false; }
+
+            const auto capacity = state->slot_access->slot_capacity(previous);
+            const auto live_slot = state->slot_access->find_slot(previous, key);
+            if (live_slot < capacity)
+            {
+                return target_link_previous_slot_was_published(context, memory, live_slot);
+            }
+            if (!previous.modified(link->structural_transition_time())) { return false; }
+
+            // find_slot deliberately exposes only live keys. A key removed
+            // earlier in this transition can still have been published, so
+            // fall back to the small per-cycle removed set for that case.
+            for (std::size_t slot = 0; slot < capacity; ++slot)
+            {
+                if (state->slot_access->slot_removed(previous, slot) &&
+                    target_link_previous_slot_was_published(context, memory, slot) &&
+                    target_link_key_view(*state, previous, slot).equals(key))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         [[nodiscard]] std::size_t set_access_size(const TSDataView &target)
         {
             return target.as_set().size();
@@ -141,6 +215,12 @@ namespace hgraph::detail
         [[nodiscard]] bool set_access_slot_removed(const TSDataView &target, std::size_t slot)
         {
             return target.as_set().slot_removed(slot);
+        }
+
+        [[nodiscard]] bool set_access_slot_published(const TSDataView &target, std::size_t slot)
+        {
+            auto set = target.as_set();
+            return set.slot_live(slot) || set.slot_removed(slot);
         }
 
         [[nodiscard]] const void *set_access_key_at_slot(const TSDataView &target, std::size_t slot)
@@ -188,6 +268,13 @@ namespace hgraph::detail
             return target.as_dict().slot_removed(slot);
         }
 
+        [[nodiscard]] bool dict_access_slot_published(const TSDataView &target, std::size_t slot)
+        {
+            auto dict = target.as_dict();
+            return dict.slot_removed(slot) ||
+                   (dict.slot_live(slot) && dict.at_slot(slot).has_current_value());
+        }
+
         [[nodiscard]] const void *dict_access_key_at_slot(const TSDataView &target, std::size_t slot)
         {
             return target.as_dict().key_at_slot(slot).data();
@@ -232,6 +319,7 @@ namespace hgraph::detail
             .slot_live = &set_access_slot_live,
             .slot_added = &set_access_slot_added,
             .slot_removed = &set_access_slot_removed,
+            .slot_published = &set_access_slot_published,
             .key_at_slot = &set_access_key_at_slot,
             .contains = &set_access_contains,
             .find_slot = &set_access_find_slot,
@@ -244,6 +332,7 @@ namespace hgraph::detail
             .slot_live = &dict_access_slot_live,
             .slot_added = &dict_access_slot_added,
             .slot_removed = &dict_access_slot_removed,
+            .slot_published = &dict_access_slot_published,
             .key_at_slot = &dict_access_key_at_slot,
             .contains = &dict_access_contains,
             .find_slot = &dict_access_find_slot,
@@ -327,6 +416,13 @@ namespace hgraph::detail
         {
             const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
             auto target = target_link_target_view(context, memory);
+            const auto *link = target_link_for(context, memory);
+            if (target.valid() && link != nullptr && link->sampled_structural_transition() &&
+                state->slot_access != nullptr && state->slot_access->slot_live(target, slot))
+            {
+                const auto key = target_link_key_view(*state, target, slot);
+                return !target_link_previous_contains_published(context, memory, key);
+            }
             return target.valid() && state->slot_access != nullptr && state->slot_access->slot_added(target, slot);
         }
 
@@ -334,7 +430,23 @@ namespace hgraph::detail
         {
             const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
             auto target = target_link_target_view(context, memory);
+            const auto *link = target_link_for(context, memory);
+            if (link != nullptr && link->structural_transition_active()) { return false; }
             return target.valid() && state->slot_access != nullptr && state->slot_access->slot_removed(target, slot);
+        }
+
+        [[nodiscard]] bool target_link_previous_slot_removed(const void *context,
+                                                             const void *memory,
+                                                             std::size_t slot)
+        {
+            if (!target_link_previous_slot_was_published(context, memory, slot)) { return false; }
+
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
+            const auto previous = target_link_previous_view(context, memory);
+            const auto current = target_link_target_view(context, memory);
+            const auto key = target_link_key_view(*state, previous, slot);
+            return !current.valid() || state->slot_access == nullptr ||
+                   !state->slot_access->contains(current, key);
         }
 
         [[nodiscard]] const void *target_link_set_key_at_slot(const void *context,
@@ -376,6 +488,14 @@ namespace hgraph::detail
             return ValueView{layout->key_binding, target_link_set_key_at_slot(context, memory, slot)};
         }
 
+        [[nodiscard]] ValueView target_link_previous_key_projector(const void *context,
+                                                                   const void *memory,
+                                                                   std::size_t slot)
+        {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
+            return target_link_key_view(*state, target_link_previous_view(context, memory), slot);
+        }
+
         [[nodiscard]] Range<ValueView> target_link_set_range(
             const void *context,
             const void *memory,
@@ -402,6 +522,15 @@ namespace hgraph::detail
 
         [[nodiscard]] Range<ValueView> target_link_set_removed_range(const void *context, const void *memory)
         {
+            const auto previous = target_link_previous_view(context, memory);
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
+            if (previous.valid() && state->slot_access != nullptr)
+            {
+                return Range<ValueView>{.context = context, .memory = memory,
+                                        .limit = state->slot_access->slot_capacity(previous),
+                                        .predicate = &target_link_previous_slot_removed,
+                                        .projector = &target_link_previous_key_projector};
+            }
             return target_link_set_range(context, memory, &target_link_set_slot_removed);
         }
 
@@ -503,6 +632,11 @@ namespace hgraph::detail
                                                           std::size_t slot)
         {
             auto target = target_link_target_view(context, memory);
+            const auto *link = target_link_for(context, memory);
+            if (target.valid() && link != nullptr && link->sampled_structural_transition())
+            {
+                return target.as_dict().slot_live(slot);
+            }
             return target.valid() && target.as_dict().slot_modified(slot);
         }
 
@@ -520,12 +654,29 @@ namespace hgraph::detail
             return target_link_dict_view(context, memory).at_slot(slot);
         }
 
+        [[nodiscard]] TSDataView target_link_previous_dict_ts_projector(const void *context,
+                                                                        const void *memory,
+                                                                        std::size_t slot)
+        {
+            auto previous = target_link_previous_view(context, memory);
+            return previous.as_dict().at_slot(slot);
+        }
+
         [[nodiscard]] std::pair<ValueView, TSDataView> target_link_dict_kv_projector(const void *context,
                                                                                      const void *memory,
                                                                                      std::size_t slot)
         {
             return {target_link_set_key_projector(context, memory, slot),
                     target_link_dict_ts_projector(context, memory, slot)};
+        }
+
+        [[nodiscard]] std::pair<ValueView, TSDataView> target_link_previous_dict_kv_projector(
+            const void *context,
+            const void *memory,
+            std::size_t slot)
+        {
+            return {target_link_previous_key_projector(context, memory, slot),
+                    target_link_previous_dict_ts_projector(context, memory, slot)};
         }
 
         [[nodiscard]] bool target_link_dict_slot_valid(const void *context, const void *memory, std::size_t slot)
@@ -596,6 +747,15 @@ namespace hgraph::detail
 
         [[nodiscard]] Range<TSDataView> target_link_dict_removed_values_range(const void *context, const void *memory)
         {
+            const auto previous = target_link_previous_view(context, memory);
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
+            if (previous.valid() && state->slot_access != nullptr)
+            {
+                return Range<TSDataView>{.context = context, .memory = memory,
+                                         .limit = state->slot_access->slot_capacity(previous),
+                                         .predicate = &target_link_previous_slot_removed,
+                                         .projector = &target_link_previous_dict_ts_projector};
+            }
             return target_link_dict_ts_range(context, memory, &target_link_set_slot_removed);
         }
 
@@ -626,6 +786,16 @@ namespace hgraph::detail
         [[nodiscard]] KeyValueRange<ValueView, TSDataView> target_link_dict_removed_items_range(const void *context,
                                                                                                 const void *memory)
         {
+            const auto previous = target_link_previous_view(context, memory);
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
+            if (previous.valid() && state->slot_access != nullptr)
+            {
+                return KeyValueRange<ValueView, TSDataView>{
+                    .context = context, .memory = memory,
+                    .limit = state->slot_access->slot_capacity(previous),
+                    .predicate = &target_link_previous_slot_removed,
+                    .projector = &target_link_previous_dict_kv_projector};
+            }
             return target_link_dict_kv_range(context, memory, &target_link_set_slot_removed);
         }
 

@@ -419,14 +419,30 @@ never dereferenced via ``.output``); code needing the dereferenced value
 accepts it as a (passive) input. Retargeting therefore must LOOK like a
 tick to consumers — the sampled-runtime contract at the input boundary:
 
-**Unbind is silent (hgraph parity).** The inverse case does *not* sample:
-when a reference goes EMPTY, the from-REF input unbinds - it reads
-not-valid from that point - but consumers are NOT notified. A node
-observing the input (e.g. ``valid``) keeps its last output until
-something else evaluates it. Only a rebind to a live target records
-modified and samples. (``test_tsd_validity_rebind`` pins this: routing
-away from a branch must not tick ``valid`` False, and routing back to
-an unchanged target re-evaluates but dedups.)
+**Scalar and fixed-shape unbind is silent (hgraph parity).** When such a
+reference goes EMPTY, the from-REF input unbinds - it reads not-valid from
+that point - but consumers are NOT notified. A node observing the input
+(e.g. ``valid``) keeps its last output until something else evaluates it.
+Only a rebind to a live target records modified and samples.
+(``test_tsd_validity_rebind`` pins this for scalar validity: routing away
+from a branch must not tick ``valid`` False, and routing back to an unchanged
+target re-evaluates but dedups.)
+
+**Keyed structural unbind reconciles the published key set.** ``TSS`` and
+``TSD`` are the exception: an EMPTY reference still makes the current value
+invalid, but a previously visible collection produces one modified cycle with
+removals for its published keys. A key added to the source in the same cycle
+as the unbind was never published through the branch and therefore cannot
+produce a removal. Likewise, a ``TSD`` slot whose child never became valid is
+not a published dictionary entry and cannot produce a removal. A sampled
+structural rebind similarly reports old-only keys as removed and new-only keys
+as added; live ``TSD`` children in the new target are sampled as modified.
+
+The link borrows the prior output's slot store for that reconciliation cycle.
+It unsubscribes and stops the old graph on delete, while the slot protocol
+keeps its storage alive until erase. No key/value snapshot or retired-entry
+allocation is required. The borrowed handle is considered only while the
+link's modification time matches the structural transition time.
 
 - ``TSInputView::delta_value()``: when the position's LINK was modified
   after the target's own last tick (a from-REF retarget bound an
