@@ -648,6 +648,11 @@ namespace hgraph
                 }
             };
 
+            // Validate declared sources independently of whether compilation
+            // retained a binding for each one. Unused formal parameters are
+            // valid and disappear from the compiled child graph.
+            for (const MapArgSource &arg : spec.args) { mark_source_arg(arg); }
+
             switch (output_binding.kind)
             {
                 case NestedGraphOutputBinding::Kind::ChildOutput:
@@ -676,7 +681,6 @@ namespace hgraph
                         throw std::invalid_argument(
                             "map_node parent-input output binding requires parent-source forwarding mode");
                     }
-                    mark_source_arg(spec.args[output_binding.parent_source_path[0]]);
                     break;
             }
 
@@ -694,13 +698,10 @@ namespace hgraph
                 {
                     throw std::invalid_argument("map_node child input target node is out of range");
                 }
-
-                const MapArgSource &arg = spec.args[binding.source_path[0]];
-                mark_source_arg(arg);
             }
             if (!element_source_seen && !spec.multiplexed_inputs.empty())
             {
-                throw std::invalid_argument("map_node requires one child input sourced from the mapped TSD element");
+                throw std::invalid_argument("map_node requires one child argument sourced from the mapped TSD element");
             }
 
             if (key_source_seen)

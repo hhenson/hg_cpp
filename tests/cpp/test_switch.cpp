@@ -96,6 +96,34 @@ namespace
         static Port<TS<Int>>  compose(Wiring &w) { return wire<stdlib::const_, TS<Int>>(w, Int{2}); }
     };
 
+    struct ConstOneString
+    {
+        static constexpr auto name = "const_one_string";
+        static Port<TS<Str>> compose(Wiring &w) { return wire<stdlib::const_, TS<Str>>(w, Str{"one"}); }
+    };
+
+    struct ConstTwoString
+    {
+        static constexpr auto name = "const_two_string";
+        static Port<TS<Str>> compose(Wiring &w) { return wire<stdlib::const_, TS<Str>>(w, Str{"two"}); }
+    };
+
+    struct SwitchRefKeyGraph
+    {
+        static constexpr auto name = "switch_ref_key_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> key)
+        {
+            auto fallback = wire<stdlib::const_, TS<Str>>(w, Str{"two"});
+            auto selected = wire<stdlib::default_>(w, key, fallback);
+            return wire<stdlib::switch_>(
+                       w, selected,
+                       stdlib::switch_cases({{Value{Str{"one"}}, fn<ConstOneString>()},
+                                             {Value{Str{"two"}}, fn<ConstTwoString>()}}))
+                .as<TS<Str>>();
+        }
+    };
+
     // A stateful NODE branch (exercises node-as-branch through the WiredFn
     // compile thunk): counts its input ticks.
     struct CounterNode
@@ -115,6 +143,32 @@ namespace
         static void eval(In<"ts", TS<Int>, InputActivity::Passive> ts, Out<TS<Int>> out)
         {
             out.set(ts.value());
+        }
+    };
+
+    inline std::vector<Str> switch_sink_values;
+
+    struct SwitchSinkBranch
+    {
+        static constexpr auto name = "switch_sink_branch";
+
+        static void eval(In<"key", TS<Str>> key)
+        {
+            switch_sink_values.push_back(key.value());
+        }
+    };
+
+    struct SwitchSinkGraph
+    {
+        static constexpr auto name = "switch_sink_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> key)
+        {
+            wire<stdlib::switch_sink_>(
+                w, key,
+                stdlib::switch_cases({{Value{Str{"one"}}, fn<SwitchSinkBranch>()},
+                                      {Value{Str{"two"}}, fn<SwitchSinkBranch>()}}));
+            return key;
         }
     };
 
@@ -324,6 +378,26 @@ TEST_CASE("switch_: the key selects the branch and a swap samples the held input
                      stdlib::switch_cases({{Value{Str{"a"}}, fn<Doubler>()}, {Value{Str{"b"}}, fn<Negator>()}}),
                      values<Int>(3, 4, none, 5)),
                  values<Int>(6, 8, -4, -5));
+}
+
+TEST_CASE("switch_: sink branches use the native outputless wiring contract")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    switch_sink_values.clear();
+
+    CHECK_OUTPUT(eval_node<SwitchSinkGraph>(values<Str>(Str{"one"}, Str{"two"})),
+                 values<Str>(Str{"one"}, Str{"two"}));
+    CHECK(switch_sink_values == std::vector<Str>{Str{"one"}, Str{"two"}});
+}
+
+TEST_CASE("switch_: a REF-shaped key is selected by its dereferenced value")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<SwitchRefKeyGraph>(values<Str>(Str{"one"}, Str{"two"})),
+                 values<Str>(Str{"one"}, Str{"two"}));
 }
 
 TEST_CASE("switch_: selecting a branch does not sample a passive held input")

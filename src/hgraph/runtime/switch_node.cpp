@@ -172,6 +172,7 @@ namespace hgraph
 
         void reset_switch_output(const NodeView &view, DateTime evaluation_time)
         {
+            if (!view.has_output()) { return; }
             auto output = view.output(evaluation_time);
             if (!output.bound()) { return; }
 

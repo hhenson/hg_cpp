@@ -169,6 +169,99 @@ namespace hgraph
             std::size_t index{0};
         };
 
+        [[nodiscard]] TSEndpointSchema reduce_output_endpoint_schema(const TSValueTypeMetaData *schema)
+        {
+            if (schema == nullptr)
+            {
+                throw std::invalid_argument("reduce_ output endpoint requires a schema");
+            }
+
+            std::vector<TSEndpointSchema> children;
+            if (schema->kind == TSTypeKind::TSB)
+            {
+                children.reserve(schema->field_count());
+                for (std::size_t index = 0; index < schema->field_count(); ++index)
+                {
+                    children.push_back(reduce_output_endpoint_schema(schema->fields()[index].type));
+                }
+                return TSEndpointSchema::non_peered(schema, std::move(children));
+            }
+            if (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0)
+            {
+                children.reserve(schema->fixed_size());
+                for (std::size_t index = 0; index < schema->fixed_size(); ++index)
+                {
+                    children.push_back(reduce_output_endpoint_schema(schema->element_ts()));
+                }
+                return TSEndpointSchema::non_peered(schema, std::move(children));
+            }
+            return TSEndpointSchema::peered(schema);
+        }
+
+        void clear_reduce_output(TSOutputView target)
+        {
+            if (target.forwarding())
+            {
+                if (target.forwarding_bound()) { target.clear_forwarding_target(); }
+                return;
+            }
+
+            const auto *schema = target.schema();
+            const std::size_t child_count = schema != nullptr && schema->kind == TSTypeKind::TSB
+                                                ? schema->field_count()
+                                                : schema != nullptr && schema->kind == TSTypeKind::TSL
+                                                      ? schema->fixed_size()
+                                                      : 0;
+            if (child_count == 0)
+            {
+                throw std::logic_error("reduce_ output has a non-forwarding leaf endpoint");
+            }
+            for (std::size_t index = 0; index < child_count; ++index)
+            {
+                clear_reduce_output(target.indexed_child_at(index));
+            }
+        }
+
+        void bind_reduce_output(TSOutputView target, const TSOutputView &source, DateTime evaluation_time)
+        {
+            if (target.forwarding())
+            {
+                const TSOutputHandle before = target.forwarding_target();
+                bind_forwarding_output_to_source(target, source);
+                const TSOutputHandle after = target.forwarding_target();
+                if (after.bound() && !after.same_as(before) && after.view(evaluation_time).valid())
+                {
+                    target.begin_mutation(evaluation_time).mark_modified();
+                }
+                return;
+            }
+
+            if (!source.bound())
+            {
+                clear_reduce_output(std::move(target));
+                return;
+            }
+            if (!time_series_schema_equivalent(target.schema(), source.schema()))
+            {
+                throw std::logic_error("reduce_ output source schema does not match its forwarding endpoint");
+            }
+
+            const auto *schema = target.schema();
+            const std::size_t child_count = schema != nullptr && schema->kind == TSTypeKind::TSB
+                                                ? schema->field_count()
+                                                : schema != nullptr && schema->kind == TSTypeKind::TSL
+                                                      ? schema->fixed_size()
+                                                      : 0;
+            if (child_count == 0)
+            {
+                throw std::logic_error("reduce_ output has a non-forwarding leaf endpoint");
+            }
+            for (std::size_t index = 0; index < child_count; ++index)
+            {
+                bind_reduce_output(target.indexed_child_at(index), source.indexed_child_at(index), evaluation_time);
+            }
+        }
+
         // Tree layout: internal nodes are heap positions 0..capacity-2 (root =
         // 0, children of i at 2i+1 / 2i+2); leaves are logical positions
         // internal_count + dense_leaf.
@@ -446,14 +539,7 @@ namespace hgraph
             {
                 source = view.input(evaluation_time).indexed_child_at(1).bound_output();
             }
-            auto                 output = view.output(evaluation_time);
-            const TSOutputHandle before = output.forwarding_target();
-            if (source.bound()) { bind_forwarding_output_to_source(output, source); }
-            else if (output.forwarding_bound()) { output.clear_forwarding_target(); }
-            if (source.bound() && source.valid() && !output.forwarding_target().same_as(before))
-            {
-                output.begin_mutation(evaluation_time).mark_modified();
-            }
+            bind_reduce_output(view.output(evaluation_time), source, evaluation_time);
             storage.published = true;
 
             // Phase 3 — stop root-first, but keep the retired graph storage
@@ -676,7 +762,7 @@ namespace hgraph
 
         meta.node_kind              = NodeKind::Nested;
         meta.valid_inputs          = std::vector<std::size_t>{};
-        meta.output_endpoint_schema = TSEndpointSchema::peered(meta.output_schema);
+        meta.output_endpoint_schema = reduce_output_endpoint_schema(meta.output_schema);
 
         NodeTypeDescriptor descriptor;
         descriptor.schema = std::move(meta);

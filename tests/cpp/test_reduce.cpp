@@ -14,6 +14,7 @@
 // eval_node<const_, TSL<...>>(...)).
 
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
@@ -147,6 +148,47 @@ namespace
                                                      {Value{Str{"none"}}, fn<NoReduceDict>()}}))
                               .as<TSD<Str, TS<Int>>>();
             return wire<stdlib::reduce_>(w, fn<stdlib::add_>(), source, Int{100}).as<TS<Int>>();
+        }
+    };
+
+    struct ReduceLiveZeroGraph
+    {
+        static constexpr auto name = "reduce_live_zero_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TSD<Str, TS<Int>>> ts, Port<TS<Int>> zero)
+        {
+            return wire<stdlib::reduce_>(w, fn<stdlib::add_>(), ts, zero).as<TS<Int>>();
+        }
+    };
+
+    using ReduceBundle = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Int>>>;
+
+    struct SumBundleCombiner
+    {
+        static constexpr auto name = "sum_bundle_combiner";
+
+        static Port<ReduceBundle> compose(Wiring &w, Port<ReduceBundle> lhs, Port<ReduceBundle> rhs)
+        {
+            auto lhs_a = wire<stdlib::getitem_>(w, lhs, Str{"a"}).as<TS<Int>>();
+            auto lhs_b = wire<stdlib::getitem_>(w, lhs, Str{"b"}).as<TS<Int>>();
+            auto rhs_a = wire<stdlib::getitem_>(w, rhs, Str{"a"}).as<TS<Int>>();
+            auto rhs_b = wire<stdlib::getitem_>(w, rhs, Str{"b"}).as<TS<Int>>();
+            auto result = stdlib::to_tsb<ReduceBundle>(
+                w, wire<stdlib::add_>(w, lhs_a, rhs_a), wire<stdlib::add_>(w, lhs_b, rhs_b));
+            return wire<stdlib::pass_through_node>(w, result).as<ReduceBundle>();
+        }
+    };
+
+    struct ReduceBundleGraph
+    {
+        static constexpr auto name = "reduce_bundle_graph";
+
+        static Port<ReduceBundle> compose(Wiring &w, Port<TSD<Str, ReduceBundle>> ts)
+        {
+            auto zero = stdlib::to_tsb<ReduceBundle>(
+                w, wire<stdlib::const_, TS<Int>>(w, Int{0}),
+                wire<stdlib::const_, TS<Int>>(w, Int{0}));
+            return wire<stdlib::reduce_>(w, fn<SumBundleCombiner>(), ts, zero).as<ReduceBundle>();
         }
     };
 
@@ -471,6 +513,39 @@ TEST_CASE("reduce over TSD: a single live key aliases the element — no zero pa
                                    dict_delta<Str, TS<Int>>({}, {"a"s})),
                      Int{100})),
                  values<Int>(1, 7, 100));
+}
+
+TEST_CASE("reduce over TSD: a live time-series zero drives the empty result")
+{
+    using namespace hgraph;
+    using namespace std::string_literals;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<ReduceLiveZeroGraph>(
+                     values<Value>(dict_delta<Str, TS<Int>>({}),
+                                   none,
+                                   dict_delta<Str, TS<Int>>({{"a"s, 5}}),
+                                   dict_delta<Str, TS<Int>>({}, {"a"s})),
+                     values<Int>(10, 20, none, 30)),
+                 values<Int>(10, 20, 5, 30));
+}
+
+TEST_CASE("reduce over TSD: fixed composite results remain projectable and follow structural changes")
+{
+    using namespace hgraph;
+    using namespace std::string_literals;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        eval_node<ReduceBundleGraph>(
+            values<Value>(dict_delta<Str, ReduceBundle>({}),
+                          dict_delta<Str, ReduceBundle>({{"one"s, tsb_delta<ReduceBundle>(Int{1}, Int{2})}}),
+                          dict_delta<Str, ReduceBundle>({{"two"s, tsb_delta<ReduceBundle>(Int{3}, Int{4})}}),
+                          dict_delta<Str, ReduceBundle>({}, {"one"s}))),
+        values<Value>(tsb_delta<ReduceBundle>(Int{0}, Int{0}),
+                      tsb_delta<ReduceBundle>(Int{1}, Int{2}),
+                      tsb_delta<ReduceBundle>(Int{4}, Int{6}),
+                      tsb_delta<ReduceBundle>(Int{3}, Int{4})));
 }
 
 TEST_CASE("reduce over TSD: keys added over time grow the tree")

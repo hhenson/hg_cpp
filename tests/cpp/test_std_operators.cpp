@@ -1403,6 +1403,13 @@ TEST_CASE("std operators: stream operators cover sampling filtering slicing and 
     CHECK_OUTPUT(eval_node<stdlib::count>(values<Int>(3, none, 2, 1)), values<Int>(1, none, 2, 3));
     CHECK_OUTPUT(eval_node<stdlib::dedup>(values<Int>(1, 2, 2, 3, 3, 3, 4)),
                  values<Int>(1, 2, none, 3, none, none, 4));
+    CHECK_OUTPUT((eval_node<stdlib::dedup, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1}, {}),
+                                   set_delta<Int>({1}, {}),
+                                   set_delta<Int>({}, {1}),
+                                   set_delta<Int>({}, {1})))),
+                 values<Value>(set_delta<Int>({1}, {}), none,
+                               set_delta<Int>({}, {1}), none));
     CHECK_OUTPUT(eval_node<stdlib::diff>(values<Int>(1, 2, 4, 7)), values<Int>(none, 1, 2, 3));
     CHECK_OUTPUT(eval_node<stdlib::diff>(values<Float>(1.0, 1.5, 3.0)), values<Float>(none, 0.5, 1.5));
     CHECK_OUTPUT(eval_node<stdlib::clip>(values<Float>(-1.0, 0.5, 2.0), Float{0.0}, Float{1.0}),

@@ -473,6 +473,14 @@ namespace hgraph::stdlib
                     "reduce: the combiner output schema must match the collection's element schema");
             }
 
+            // The empty result aliases one root output. A structural fixed
+            // collection has only child sources, so materialise that uncommon
+            // zero shape through the standard native pass-through node.
+            if (zero.is_structural_source())
+            {
+                zero = wire<pass_through_node>(w, Port<void>{w, std::move(zero)}).erased();
+            }
+
             ReduceNodeSpec spec;
             spec.child.graph_builder  = std::move(combiner_graph.graph_builder);
             spec.child.input_bindings = std::move(combiner_graph.input_bindings);
@@ -578,6 +586,30 @@ namespace hgraph::stdlib
                     wire_operator(w, "const", {&zero_arg, 1}, true, element).output.erased();
 
                 return wire_reduce_tsd(w, func, ts.erased(), zero);
+            }
+        };
+
+        /** ``reduce(func, ts: TSD[K, V], zero: V) -> V`` with a live TS zero. */
+        struct reduce_tsd_ts_zero
+        {
+            static constexpr auto name = "reduce_tsd_ts_zero";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return reduce_ts_is_tsd(context, 3) &&
+                       context.args[2].kind == WiringArg::Kind::TimeSeries;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_reduce_tsd_output(resolution, context);
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts,
+                                         NamedPort<"zero", TsVar<"V">> zero)
+            {
+                return wire_reduce_tsd(w, func, ts.erased(), zero.erased());
             }
         };
 
@@ -735,7 +767,8 @@ namespace hgraph::stdlib
             std::span<const WiringPortRef> slot_sources,
             std::size_t positional_count,
             std::span<const std::pair<std::string, std::size_t>> named_slots,
-            const TSValueTypeMetaData *&output_schema)
+            const TSValueTypeMetaData *&output_schema,
+            std::optional<bool> &branches_have_output)
         {
             if (!branch.valid())
             {
@@ -760,12 +793,16 @@ namespace hgraph::stdlib
                     "switch_: a branch captured outer ports - outer-port capture is only supported by map_ yet");
             }
 
-            if (compiled.output_schema == nullptr)
+            const bool branch_has_output = compiled.output_schema != nullptr;
+            if (!branches_have_output.has_value()) { branches_have_output = branch_has_output; }
+            else if (*branches_have_output != branch_has_output)
             {
-                throw std::invalid_argument("switch_: every branch must produce an output");
+                throw std::invalid_argument(
+                    "switch_: branches must either all produce an output or all be sinks");
             }
-            if (output_schema == nullptr) { output_schema = compiled.output_schema; }
-            else if (!time_series_schema_equivalent(output_schema, compiled.output_schema))
+            if (branch_has_output && output_schema == nullptr) { output_schema = compiled.output_schema; }
+            else if (branch_has_output &&
+                     !time_series_schema_equivalent(output_schema, compiled.output_schema))
             {
                 // Branches may differ only in REF-ness (one produces the
                 // value, another the reference - hgraph parity): the switch
@@ -884,9 +921,10 @@ namespace hgraph::stdlib
             SwitchNodeSpec spec, const TSValueTypeMetaData *output_schema,
             Value config, std::type_index definition, const char *display_name)
         {
+            const auto *key_schema = TypeRegistry::instance().dereference(key.schema);
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
             fields.reserve(1 + ts.size());
-            fields.emplace_back("key", key.schema);
+            fields.emplace_back("key", key_schema);
             for (std::size_t i = 0; i < ts.size(); ++i)
             {
                 fields.emplace_back(std::to_string(i), ts[i].schema);
@@ -921,7 +959,8 @@ namespace hgraph::stdlib
         /** The shared switch wiring: compile every branch, then add one switch node. */
         [[nodiscard]] inline WiringPortRef wire_switch(Wiring &w, WiringPortRef key, const SwitchCases &cases,
                                                        std::vector<WiringPortRef> ts,
-                                                       std::vector<std::pair<std::string, WiringPortRef>> kwargs)
+                                                       std::vector<std::pair<std::string, WiringPortRef>> kwargs,
+                                                       bool output_required)
         {
             if (cases.cases.empty() && !cases.default_branch.has_value())
             {
@@ -932,6 +971,8 @@ namespace hgraph::stdlib
             // call order. Branches resolve their parameters onto these slots
             // (keywords by each branch's own parameter names).
             const std::size_t positional_count = ts.size();
+            WiringPortRef key_boundary = key;
+            key_boundary.schema = TypeRegistry::instance().dereference(key.schema);
             std::vector<std::pair<std::string, std::size_t>> named_slots;
             named_slots.reserve(kwargs.size());
             for (std::size_t i = 0; i < kwargs.size(); ++i)
@@ -941,6 +982,7 @@ namespace hgraph::stdlib
             }
 
             const TSValueTypeMetaData *output_schema = nullptr;
+            std::optional<bool>        branches_have_output;
             SwitchNodeSpec             spec;
             spec.reload_on_ticked = cases.reload_on_ticked;
             spec.branches.reserve(cases.cases.size());
@@ -948,32 +990,81 @@ namespace hgraph::stdlib
             {
                 spec.branches.push_back(SwitchBranch{
                     .key  = entry.key,
-                    .spec = compile_switch_branch(entry.branch, key,
+                    .spec = compile_switch_branch(entry.branch, key_boundary,
                                                   {ts.data(), ts.size()}, positional_count,
-                                                  {named_slots.data(), named_slots.size()}, output_schema),
+                                                  {named_slots.data(), named_slots.size()}, output_schema,
+                                                  branches_have_output),
                 });
             }
             if (cases.default_branch.has_value())
             {
-                spec.default_branch = compile_switch_branch(*cases.default_branch, key,
+                spec.default_branch = compile_switch_branch(*cases.default_branch, key_boundary,
                                                             {ts.data(), ts.size()},
                                                             positional_count,
                                                             {named_slots.data(), named_slots.size()},
-                                                            output_schema);
+                                                            output_schema, branches_have_output);
             }
 
-            for (SwitchBranch &branch : spec.branches)
+            if (!branches_have_output.has_value() || *branches_have_output != output_required)
             {
-                configure_switch_branch_output(branch.spec, output_schema);
+                throw std::invalid_argument(output_required
+                                                ? "switch_: every branch must produce an output"
+                                                : "switch_sink_: every branch must be a sink");
             }
-            if (spec.default_branch.has_value())
+            if (output_required)
             {
-                configure_switch_branch_output(*spec.default_branch, output_schema);
+                for (SwitchBranch &branch : spec.branches)
+                {
+                    configure_switch_branch_output(branch.spec, output_schema);
+                }
+                if (spec.default_branch.has_value())
+                {
+                    configure_switch_branch_output(*spec.default_branch, output_schema);
+                }
             }
 
             return add_compiled_switch(
                 w, std::move(key), std::move(ts), std::move(spec), output_schema,
                 Value{cases}, std::type_index(typeid(switch_node_tag)), "switch_");
+        }
+
+        [[nodiscard]] inline std::optional<bool> probe_switch_output_mode(
+            OperatorCallContext context, const TSValueTypeMetaData *&output_schema)
+        {
+            const SwitchCases *cases = context.scalar_as<SwitchCases>("cases");
+            if (cases == nullptr) { return std::nullopt; }
+            const WiredFn *branch = !cases->cases.empty()
+                                        ? &cases->cases.front().branch
+                                        : (cases->default_branch.has_value() ? &*cases->default_branch : nullptr);
+            if (branch == nullptr || context.args.empty() ||
+                context.args[0].kind != WiringArg::Kind::TimeSeries)
+            {
+                return std::nullopt;
+            }
+            WiringPortRef key_source = context.args[0].port;
+            key_source.schema = TypeRegistry::instance().dereference(key_source.schema);
+
+            std::vector<WiringPortRef> slot_sources;
+            for (std::size_t i = 2; i < context.args.size(); ++i)
+            {
+                if (context.args[i].kind != WiringArg::Kind::TimeSeries) { return std::nullopt; }
+                slot_sources.push_back(context.args[i].port);
+            }
+            const std::size_t positional_count = slot_sources.size();
+            std::vector<std::pair<std::string, std::size_t>> named_slots;
+            for (const auto &[name, kw_arg] : context.kwargs)
+            {
+                if (kw_arg.kind != WiringArg::Kind::TimeSeries) { continue; }
+                named_slots.emplace_back(name, slot_sources.size());
+                slot_sources.push_back(kw_arg.port);
+            }
+
+            std::optional<bool> branches_have_output;
+            (void)compile_switch_branch(*branch, key_source,
+                                        {slot_sources.data(), slot_sources.size()}, positional_count,
+                                        {named_slots.data(), named_slots.size()}, output_schema,
+                                        branches_have_output);
+            return branches_have_output;
         }
 
         /**
@@ -986,38 +1077,12 @@ namespace hgraph::stdlib
         {
             if (resolution.find_ts("__out__") != nullptr) { return; }
 
-            const SwitchCases *cases = context.scalar_as<SwitchCases>("cases");
-            if (cases == nullptr) { return; }
-            const WiredFn *branch = !cases->cases.empty()
-                                        ? &cases->cases.front().branch
-                                        : (cases->default_branch.has_value() ? &*cases->default_branch : nullptr);
-            if (branch == nullptr) { return; }
-
-            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
-            const WiringPortRef &key_source = context.args[0].port;
-
-            std::vector<WiringPortRef> slot_sources;
-            for (std::size_t i = 2; i < context.args.size(); ++i)
-            {
-                if (context.args[i].kind != WiringArg::Kind::TimeSeries) { return; }
-                slot_sources.push_back(context.args[i].port);
-            }
-            const std::size_t positional_count = slot_sources.size();
-            std::vector<std::pair<std::string, std::size_t>> named_slots;
-            for (const auto &[name, kw_arg] : context.kwargs)
-            {
-                if (kw_arg.kind != WiringArg::Kind::TimeSeries) { continue; }
-                named_slots.emplace_back(name, slot_sources.size());
-                slot_sources.push_back(kw_arg.port);
-            }
-
             // A resolution probe: leave unresolved on failure — the real
             // wiring path reports the error.
             (void)fallback_on_exception(false, [&] {
                 const TSValueTypeMetaData *output_schema = nullptr;
-                (void)compile_switch_branch(*branch, key_source, {slot_sources.data(), slot_sources.size()},
-                                            positional_count, {named_slots.data(), named_slots.size()},
-                                            output_schema);
+                const auto mode = probe_switch_output_mode(context, output_schema);
+                if (!mode.value_or(false)) { return false; }
                 bind_graph_output(resolution, output_schema, "O");
                 return true;
             });
@@ -1040,7 +1105,33 @@ namespace hgraph::stdlib
                 return wire_switch(w, key.erased(), cases.value(),
                                    std::vector<WiringPortRef>{ts.begin(), ts.end()},
                                    std::vector<std::pair<std::string, WiringPortRef>>{kwargs.begin(),
-                                                                                      kwargs.end()});
+                                                                                      kwargs.end()},
+                                   true);
+            }
+        };
+
+        struct switch_sink_impl
+        {
+            static constexpr auto name = "switch_sink_impl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return fallback_on_exception(false, [&] {
+                    const TSValueTypeMetaData *output_schema = nullptr;
+                    const auto mode = probe_switch_output_mode(context, output_schema);
+                    return mode.has_value() && !*mode;
+                });
+            }
+
+            static void compose(Wiring &w, NamedPort<"key", TS<ScalarVar<"K">>> key,
+                                Scalar<"cases", SwitchCases> cases, VarIn<"ts", TsVar<"TS">> ts,
+                                VarKwIn<"kwargs"> kwargs)
+            {
+                (void)wire_switch(w, key.erased(), cases.value(),
+                                  std::vector<WiringPortRef>{ts.begin(), ts.end()},
+                                  std::vector<std::pair<std::string, WiringPortRef>>{kwargs.begin(),
+                                                                                     kwargs.end()},
+                                  false);
             }
         };
 

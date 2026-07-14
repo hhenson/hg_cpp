@@ -238,10 +238,12 @@ undeclared schema.
 Compatibility inventory
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-**Landed:** all 48 operator files and a selected 19-file wiring pack.  The
+**Landed:** all 48 operator files and a selected 21-file wiring pack.  The
 ported TSS union contract for retargeting to an empty reference now executes;
 its stale skip was removed after the keyed structural-REF implementation
-landed.
+landed.  The upstream switch pack now covers output and all-sink branches,
+scalar branch configuration, lifecycle hooks, nested switch/map composition,
+fixed bundles, TSS, and both switch/reduce nesting directions.
 
 **Remaining:** review the rest of upstream ``_wiring`` and ``ts_tests``.  Port
 behavioural contracts, not Python runtime internals.  Each retained Python test
@@ -261,17 +263,20 @@ Priority 2: Nested Graphs and Boundaries
 - slot-observed keyed ``map_`` and ``mesh_`` instances;
 - explicit-key-only ``map_`` instances whose child inputs are all broadcast,
   including anonymous nested maps with forwarding TSD terminals;
-- fixed-TSL and associative dynamic-TSD ``reduce``;
+- fixed-TSL and associative dynamic-TSD ``reduce``, including live zero inputs
+  and projectable fixed-composite results;
 - ``try_except_``, feedback, closed-union ``dispatch_``, closure capture, key
   injection, ``pass_through`` / ``no_key``, keyed write-through outputs, and
   sampled transfer of unchanged nested collections into a new switch branch;
+- value-producing and all-sink ``switch_`` branches, including scalar Python
+  branch configuration adapted onto the native runtime;
 - reference, subscription, and request/reply services;
 - source, sink, duplex, and service-adaptor foundations; and
 - same-wiring contexts and the source/capture context runtime primitive.
 
 **Remaining higher-order shapes:**
 
-- sink maps and all-sink switches;
+- sink maps;
 - dynamic-TSL map/reduce/mesh;
 - non-associative ordered reduce;
 - dynamic-TSD reduce with pass-through combiner outputs.

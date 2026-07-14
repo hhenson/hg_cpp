@@ -284,8 +284,10 @@ Wiring and node-authoring surface
    * - ``map_`` / ``switch_`` / ``reduce`` / ``mesh_`` / ``try_except_``
      - Full
      - Full Python call shapes (``__keys__``, key detection,
-       ``pass_through``/``no_key``…). Deferred: dynamic-TSL multiplexing,
-       non-associative reduce, sink maps, all-sink switches.
+       ``pass_through``/``no_key``…), all-sink switches, scalar-configured
+       Python switch branches, live dynamic-TSD reduce zeros, and projectable
+       fixed-composite reduce results. Deferred: dynamic-TSL multiplexing,
+       non-associative reduce, and sink maps.
    * - ``dispatch_``
      - Full for Bundle values
      - Native ``dispatch_cases`` / ``dispatch_case`` wiring builds a closed

@@ -1645,6 +1645,24 @@ namespace hgraph::stdlib
         }
     };
 
+    /**
+     * TSS deltas are already canonical membership changes: applying an add
+     * for a present key or a remove for an absent key does not tick.
+     * Reapplying only that canonical delta filters empty replay ticks while
+     * preserving real additions and removals.
+     */
+    struct dedup_tss_impl
+    {
+        static void eval(In<"ts", TSS<ScalarVar<"K">>> ts,
+                         Out<TSS<ScalarVar<"K">>> out)
+        {
+            const TSSInputView &set = ts;
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            for (const ValueView &key : set.removed()) { (void)mutation.remove(key); }
+            for (const ValueView &key : set.added()) { (void)mutation.add(key); }
+        }
+    };
+
     struct dedup_float_tol_impl
     {
         /* ``dedup(ts, abs_tol=...)``: floats within ``abs_tol`` of the last

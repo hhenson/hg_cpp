@@ -50,6 +50,7 @@ namespace hgraph::stdlib
         register_overload<dedup, dedup_scalar_impl>();
         register_overload<dedup, dedup_float_tol_impl>();
         register_graph_overload<dedup, dedup_tsd_map>();
+        register_overload<dedup, dedup_tss_impl>();
         register_graph_overload<dedup, tsl_itemwise_impl_detail::tsl_unary_map<dedup>>();
         register_overload<lag, lag_time_ts_impl>();
         register_overload<batch, batch_impl>();

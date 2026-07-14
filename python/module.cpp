@@ -563,7 +563,10 @@ namespace
         }
         WiringPortRef out =
             py_graph_fn_wire(context, child, {boundary.data(), boundary.size()});
-        if (record.has_output)
+        // The call result is authoritative. An unannotated lambda is
+        // provisionally output-producing for generic inference, but may
+        // compile to an actual sink.
+        if (out.schema != nullptr)
         {
             return std::move(child).finish_subgraph(out, std::move(schemas));
         }

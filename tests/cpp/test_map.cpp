@@ -70,6 +70,15 @@ namespace
         }
     };
 
+    struct UnusedKeyG
+    {
+        static constexpr auto name = "unused_key_g";
+        static Port<TS<Int>> compose(Wiring &, NamedPort<"key", TS<Int>>, Port<TS<Int>> ts)
+        {
+            return ts;
+        }
+    };
+
     struct AddNdxG
     {
         static constexpr auto name = "add_ndx_g";
@@ -384,6 +393,19 @@ TEST_CASE("map_: the function may consume the key as its first argument")
                                    dict_delta<Int, TS<Int>>({{2, 200}})))),
                  values<Value>(dict_delta<Int, TS<Int>>({{1, 11}, {2, 22}}),
                                dict_delta<Int, TS<Int>>({{2, 202}})));
+}
+
+TEST_CASE("map_: a declared key argument may be unused by the compiled child")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSD<Int, TS<Int>>>(
+                     fn<UnusedKeyG>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}}),
+                                   dict_delta<Int, TS<Int>>({{2, 200}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}}),
+                               dict_delta<Int, TS<Int>>({{2, 200}})));
 }
 
 TEST_CASE("map_: a broadcast argument binds whole to every child")

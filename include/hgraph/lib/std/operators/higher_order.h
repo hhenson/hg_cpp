@@ -129,6 +129,19 @@ namespace hgraph::stdlib
     {
     };
 
+    /**
+     * The outputless form of ``switch_``. Both markers resolve through the
+     * same operator registry name; this marker makes the output contract
+     * explicit to C++'s static ``wire<>`` return type.
+     */
+    struct switch_sink_ : Operator<"switch_",
+                                   In<"key", TS<ScalarVar<"K">>>,
+                                   Scalar<"cases", SwitchCases>,
+                                   VarIn<"ts", TsVar<"TS">>,
+                                   VarKwIn<"kwargs">>
+    {
+    };
+
     /** One closed-union runtime-dispatch branch.
 
         ``types`` has one named Bundle schema for every selected dispatch

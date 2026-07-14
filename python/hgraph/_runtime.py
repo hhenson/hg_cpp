@@ -522,18 +522,76 @@ def filter_by(ts, expr, **kwargs):
     return wire("filter_tsd_by_matches", ts, matches)
 
 
+def _bind_switch_scalar_args(branch, args, kwargs):
+    """Capture Python scalar branch arguments before creating a C++ WiredFn.
+
+    WiredFn deliberately models only runtime time-series inputs. Python graph
+    callables may additionally accept wiring-time scalar configuration, so an
+    adapter closes over those values and exposes only the remaining TS inputs
+    to the native switch compiler.
+    """
+    if isinstance(branch, (str, _hgraph.WiredFn)):
+        raise TypeError(
+            "switch_ scalar arguments require Python callable branches; "
+            "capture scalar configuration in a C++ branch type instead")
+
+    target = getattr(branch, "fn", branch)
+    signature = inspect.signature(target)
+    parameters = list(signature.parameters.values())
+    takes_key = bool(parameters) and parameters[0].name == "key"
+    key_marker = object()
+    bound = signature.bind(*((key_marker, *args) if takes_key else args), **kwargs)
+    bound.apply_defaults()
+
+    dynamic_names = []
+    dynamic_parameters = []
+    for parameter in parameters:
+        value = bound.arguments[parameter.name]
+        if value is key_marker or isinstance(value, WiringPort):
+            dynamic_names.append(parameter.name)
+            dynamic_parameters.append(parameter)
+        elif parameter.kind in (inspect.Parameter.VAR_POSITIONAL,
+                                inspect.Parameter.VAR_KEYWORD):
+            raise TypeError("switch_ scalar binding does not support variadic branch parameters")
+
+    captured = dict(bound.arguments)
+
+    def adapter(*dynamic_args, **dynamic_kwargs):
+        dynamic_bound = inspect.Signature(dynamic_parameters).bind(
+            *dynamic_args, **dynamic_kwargs)
+        call_bound = signature.bind_partial()
+        call_bound.arguments.update(captured)
+        call_bound.arguments.update(dynamic_bound.arguments)
+        return branch(*call_bound.args, **call_bound.kwargs)
+
+    # _as_wired intentionally accepts anonymous convenience callables. The
+    # precise signature is what lets C++ bind its key and TS slots normally.
+    adapter.__name__ = "<lambda>"
+    adapter.__signature__ = signature.replace(parameters=dynamic_parameters)
+    return adapter
+
+
 def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
     """hgraph's switch_ - cases is {key_value: operator-name-or-WiredFn};
     a None key is the default branch."""
     from ._types import DEFAULT
 
+    has_scalar_args = any(not isinstance(value, WiringPort) for value in args)
+    has_scalar_args = has_scalar_args or any(
+        not isinstance(value, WiringPort) for value in kwargs.values())
+    ts_args = tuple(value for value in args if isinstance(value, WiringPort))
+    ts_kwargs = {name: value for name, value in kwargs.items()
+                 if isinstance(value, WiringPort)}
+
     prepared = {}
     for case_key, branch in cases.items():
         if case_key is DEFAULT:
             case_key = None   # hgraph's DEFAULT marker = the default branch
+        if has_scalar_args:
+            branch = _bind_switch_scalar_args(branch, args, kwargs)
         prepared[case_key] = branch if isinstance(branch, str) else _as_wired(branch)
     erased = _hgraph.switch_cases(prepared, reload=reload_on_ticked)
-    return wire("switch_", key, erased, *args, **kwargs)
+    return wire("switch_", key, erased, *ts_args, **ts_kwargs)
 
 
 def _type_pattern_for_target(target):
