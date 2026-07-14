@@ -1,8 +1,8 @@
 // Static node authoring: declare compute / source / sink nodes as stateless
 // structs with a typed eval(In<>, Out<>, State<>) signature, and have
 // NodeBuilder::implementation<T>() build the runtime node. This is the C++
-// static wiring port from ext/2603, adjusted to the current type-erased
-// runtime (see docs: Wiring, Schemas > Static Schema).
+// static wiring coverage derived from the earlier implementation and adjusted
+// to the current type-erased runtime (see docs: Wiring, Schemas > Static Schema).
 
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/metadata/type_registry.h>

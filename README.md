@@ -48,5 +48,4 @@ then `sphinx-build -W -b html docs/source docs/_build/html`):
 - [`CLAUDE.md`](CLAUDE.md) — the operational working guide: the enforced
   design-first workflow (docs change in the same commit as code), guardrails,
   architecture map, and current state.
-- Reference trees under `ext/` are read-only: `ext/main` is the canonical
-  Python `hgraph` reference; `ext/2603` / `ext/2604` are earlier C++ snapshots.
+- The read-only `ext/main` tree is the canonical Python `hgraph` reference.

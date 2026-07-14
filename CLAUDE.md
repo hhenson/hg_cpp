@@ -15,8 +15,8 @@ does not restate project direction.
 
 A clean-slate, **C++-first** reimplementation of the `hgraph` runtime. The C++ runtime
 is the source of truth; Python is a wiring/compat bridge, never the foundation
-(`AGENTS.md`). It is a deliberate re-do of the working-but-messy `ext/2603` attempt:
-keep its proven runtime ideas, drop its Python-first build assumptions and accumulated
+(`AGENTS.md`). It is a deliberate re-do of an earlier working-but-messy attempt:
+keep the proven runtime ideas, drop the Python-first build assumptions and accumulated
 implicit state. Main target: `hgraph_core` (alias `hgraph::core`), C++23, CMake.
 
 ---
@@ -91,13 +91,9 @@ over an `InternTable`.
 - `ts_input` = the **input proxies** (non-owning endpoints that bind to an output and
   read it).
 
-**Reference trees (read-only, never edit):** `ext/main` is the **canonical Python
-`hgraph` reference — use it (not `ext/2603`) whenever you look at the Python code** (e.g.
-operator/node signatures, `_operators/`, semantics). `ext/2603` (mature design + *working*
-runtime; reference for node/graph/execution; works in-sample only) and `ext/2604`
-(structural cleanup) are older snapshots — keep them for prior C++ runtime ideas, but
-treat `ext/main` as authoritative for Python behaviour. Memory: `reference_branches`,
-`ext_2603_design_corpus`, `ext_2604_cleanup_steps`.
+**Reference tree (read-only, never edit):** `ext/main` is the **canonical Python
+`hgraph` reference** for operator/node signatures, `_operators/`, semantics, and Python
+behaviour. Memory: `reference_branches`.
 
 ---
 
@@ -140,7 +136,7 @@ Sources are
 **not scheduled by default** — they initiate via `schedule_on_start = true` (declarative),
 `SingleShotScheduler` (lightweight one-shot in `start`), or `NodeScheduler` (full,
 stateful). See `docs/.../testing_graphs_cpp.rst` + memory `value-any-globalstate-testing-plan`.
-`ext/2603` is the working reference.
+The current implementation and tests are the working reference.
 
 **Real-time execution + push sources — DONE.** The executor now runs in
 `GraphExecutorMode::RealTime`: wall-clock waiting on a condition variable,
@@ -323,9 +319,6 @@ ctest --test-dir build --output-on-failure
 - **Developer guide** (authoritative): `docs/source/developer_guide/`, esp.
   `data_structures/` (`core_concepts`, `overview/`, `schemas/`, `plans_and_ops/`,
   `linking_strategies`, `refinements`).
-- **`ext/2603/docs/`** (intent; ranked in memory `ext_2603_design_corpus`): Tier 1 =
-  `ts_value/design/09_SIMPLIFIED_RUNTIME.md`, `08_IMPLEMENTATION_REVIEW.md`, nested-graphs
-  RFC, builder-lifetime rules, sampled-runtime contract.
 - **Auto-memory** (`MEMORY.md` index): `v2_design_principles`,
   `core_data_structure_model`, `developer_guide_doc_decisions`, branch maps. Memory is
   point-in-time — verify file:line claims against current code.

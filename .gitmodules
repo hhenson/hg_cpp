@@ -1,11 +1,3 @@
-[submodule "ext/2603"]
-	path = ext/2603
-	url = /Users/hhenson/CLionProjects/hgraph_2
-	branch = ts_value_2603
-[submodule "ext/2604"]
-	path = ext/2604
-	url = /Users/hhenson/CLionProjects/hgraph_1
-	branch = ts_value_26_04
 [submodule "ext/main"]
 	path = ext/main
 	url = git@github.com:hhenson/hgraph.git

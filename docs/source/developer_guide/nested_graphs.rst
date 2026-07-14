@@ -264,9 +264,9 @@ wired function's identity, mirroring ``ext/main``'s ``test_map_overload``).
 
 The dynamic kernel is a further registered overload of ``reduce`` — one
 **runtime node** owning a balanced binary tree of combiner child graphs over
-the live keys of its TSD input. This section is the port of the 2603 design
-record (``ext/2603/docs/design/2026-04-v2-reduce-design.md``), reconciled to
-the current substrate; where the two differ, this section is authoritative.
+the live keys of its TSD input. This section is derived from the earlier 2603
+design record and reconciled to the current substrate; where the two differ,
+this section is authoritative.
 
 **Vocabulary reconciliation** (2603 → current): ``ChildGraphTemplate`` /
 ``ChildGraphInstance`` → ``CompiledSubGraph`` (compiled once at wiring from
@@ -695,10 +695,9 @@ completion and inherited unchanged by nested graph instances.
 Reconciliation with the 2603 RFC
 --------------------------------
 
-The 2603 design corpus (``ext/2603/docs/design/2026-04-v2-nested-graphs-rfc.md``,
-the implementation notes, and the sampled-runtime contract) defines the intent;
-where it conflicts with decisions already recorded for this codebase, the
-current code wins:
+The earlier 2603 nested-graph RFC, implementation notes, and sampled-runtime
+contract informed the design; where they conflict with decisions recorded for
+this codebase, the current code wins:
 
 - **No ``NestedEvaluationEngine`` / clock-delegate objects.** The separate
   engine/clock split was rejected for this runtime (run-level state folds into

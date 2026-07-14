@@ -267,9 +267,8 @@ A process-wide singleton maps an operator name to its candidates:
        void reset();                                           // test isolation
    };
 
-``resolve`` ports ``ext/2603``'s
-``OverloadedWiringNodeHelper.get_best_overload``
-(``ext/2603/hgraph/_wiring/_wiring_node_class/_operator_wiring_node.py``):
+``resolve`` follows the earlier
+``OverloadedWiringNodeHelper.get_best_overload`` algorithm:
 
 1. **Filter by arity** — drop candidates whose parameter count does not match.
 2. **Try-match each** — match every parameter, apply any default resolver,
@@ -292,7 +291,8 @@ Ranking (specificity)
 ----------------------
 
 Lower rank = more specific = preferred. The integer model reproduces the
-**partial order** of ``ext/2603`` (``_generic_rank_util.py`` + ``_calc_rank``)
+**partial order** of the earlier implementation (``_generic_rank_util.py`` +
+``_calc_rank``)
 without its floating-point constants:
 
 .. code-block:: text
@@ -313,13 +313,13 @@ without its floating-point constants:
 
 This yields ``TS<Int>`` < ``TS<ScalarVar>`` < a bare ``TsVar``, recursively
 (``TSL<TS<Int>,N>`` < ``TSL<TS<ScalarVar>,N>`` < ``TSL<Var,N>``) — the
-``ext/2603`` rule that a top-level generic is always less specific than a generic
+earlier rule that a top-level generic is always less specific than a generic
 *inside* a collection. The abstract operator signature is **not** a candidate
-(it has no ``eval``), so unlike ``ext/2603`` there is no need for a sentinel
-"never win" rank.
+(it has no ``eval``), so there is no need for the earlier implementation's
+sentinel "never win" rank.
 
 The candidate rank intentionally de-duplicates repeated generic variables by name
-using their minimum contribution. That mirrors ``ext/2603``'s shared-variable
+using their minimum contribution. That mirrors the earlier shared-variable
 ranking rule: ``TS<T>, TS<T>`` ranks ahead of ``TS<A>, TS<B>`` for two equal
 operands, because a repeated variable is a real alignment constraint rather than
 two independent generic choices.
@@ -785,7 +785,8 @@ Roadmap
    ``explode(Date)``, time-series properties (``valid`` / ``modified`` /
    ``last_modified_*``), and optional
    wiring-time ``DivideByZero`` policy overloads (``Error`` / ``Nan`` / ``Inf`` /
-   ``NoTick`` / ``Zero`` / ``One``, mirroring ``ext/2603`` where applicable).
+   ``NoTick`` / ``Zero`` / ``One``, mirroring the earlier implementation where
+   applicable).
    ``DivideByZero`` is a registered *enum scalar*. These optional scalar policies predate
    framework parameter defaults (see *Named arguments, defaults and kwargs* above) and
    remain modelled as two overloads selected by
