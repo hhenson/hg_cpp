@@ -218,7 +218,13 @@ def _value_type(scalar):
     if isinstance(scalar, str):
         return _hgraph.value_type(scalar)
     if isinstance(scalar, _TypeVarSentinel):
-        raise _GenericType(pattern=_hgraph.scalar_pattern_var(_type_var_name(scalar)))
+        constraints = [
+            _value_type(constraint)
+            for constraint in getattr(scalar, "__constraints__", ())
+        ]
+        raise _GenericType(
+            pattern=_hgraph.scalar_pattern_var(_type_var_name(scalar), constraints)
+            if constraints else _hgraph.scalar_pattern_var(_type_var_name(scalar)))
     # typing generics: tuple[X, ...] / tuple[A, B] / frozenset[X] / dict[K, V]
     import enum as _enum
     import typing
@@ -574,7 +580,15 @@ def _scalar_pattern(scalar):
 
 def _type_pattern(ts):
     if isinstance(ts, _TypeVarSentinel):
-        return _hgraph.type_pattern_var(_type_var_name(ts))
+        constraints = [
+            constraint.handle
+            for constraint in getattr(ts, "__constraints__", ())
+            if isinstance(constraint, _TsExpr)
+        ]
+        if len(constraints) != len(getattr(ts, "__constraints__", ())):
+            raise TypeError(f"time-series TypeVar {ts!r} has a non-concrete constraint")
+        return (_hgraph.type_pattern_var(_type_var_name(ts), constraints)
+                if constraints else _hgraph.type_pattern_var(_type_var_name(ts)))
     if isinstance(ts, _GenericTsExpr):
         if ts.pattern is None:
             raise TypeError(f"generic time-series {ts!r} did not provide a C++ pattern")
@@ -595,7 +609,7 @@ def _pattern_of(annotation):
             raise TypeError(f"generic annotation {annotation!r} carries no C++ pattern")
         return annotation.pattern
     if isinstance(annotation, _TypeVarSentinel):
-        return _hgraph.type_pattern_var(_type_var_name(annotation))
+        return _type_pattern(annotation)
     raise TypeError(f"not a time-series annotation: {annotation!r}")
 
 

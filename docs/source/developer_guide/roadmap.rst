@@ -195,11 +195,15 @@ API.  Both routes have executable tests.  ``Generic[SCALAR]``
 system: generic fields remain structural patterns, scalar variables may be
 renamed between graph signatures, and concrete arguments produce distinct
 interned TSB specializations.  The corresponding upstream Python contract and
-the C++ pattern substitution contract execute in the test suites.
+the C++ pattern substitution contract execute in the test suites.  Constrained
+``typing.TypeVar`` annotations now lower their complete alternative lists into
+the same C++ matcher for both whole time-series and scalar variables.  Direct
+C++ node wiring enforces the equivalent ``TsVar`` / ``ScalarVar`` constraints;
+public ``eval_node`` tests cover every accepted alternative and rejection of an
+undeclared schema.
 
 **Remaining:**
 
-- graph-level constrained ``typing.TypeVar`` cases;
 - a decision on whether remaining ``Type[...]``-style call-site resolution is
   useful public syntax or sufficiently covered by expected-output resolution.
 
@@ -338,7 +342,6 @@ compatibility-inventory pass rather than being assumed accepted:
 - frame-to-TSD key type is not inferred from a selected frame column;
 - ``convert`` from ``TS[object]`` dispatches on the wiring-time schema;
 - the engine's naive-datetime contract versus upstream time-zone-aware cases;
-- constrained generic graphs involving a Polars frame annotation;
 - the legacy ``const_fn`` path and old wiring-node introspection details; and
 - the upstream arrow-combinator library.
 

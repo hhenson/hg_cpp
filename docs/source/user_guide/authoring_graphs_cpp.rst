@@ -1262,14 +1262,14 @@ today — as do standalone sub-graph building / boundary binding (the substrate 
 non-flattening nested graphs), the higher-order operators ``map_`` / ``reduce`` /
 ``switch_`` / ``mesh_`` and ``feedback`` (see the developer guide's *Nested
 graphs* and *Mesh* pages), and ``try_except_`` error handling (see *Error
-handling*). Beyond those the following are deferred (and map onto Python
-features):
+handling*). Generic ``TsVar`` / ``ScalarVar`` signatures, including constrained
+variables, resolve from concrete graph inputs through the same C++ type-pattern
+machinery used by nodes and operators. Beyond those the following are deferred
+(and map onto Python features):
 
 - **multiple outputs** — a graph returning a ``TSB`` becomes a bundle ``Port``
   with ``.field<"x">()`` to take a sub-port; as syntactic sugar a graph's outputs
   may instead be returned as an array;
-- **generic graphs** — ``TsVar`` / ``ScalarVar`` in the ``compose`` signature
-  (``TIME_SERIES_TYPE`` / ``SCALAR`` / ``K`` / ``V`` in Python);
 - **dynamic-TSL multiplexing** in ``map_`` / ``reduce`` / ``mesh_``,
   non-associative ``reduce``, and sink maps / all-sink switches.
 

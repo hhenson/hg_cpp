@@ -92,6 +92,17 @@ class _OperatorFunction:
         self._ts_hint = ts_hint
 
     def __call__(self, *args, **kwargs):
+        if (self.__name__ == "const" and args
+                and "tp" not in kwargs and "output_type" not in kwargs):
+            from ._compat import CompoundScalar
+            from ._types import TS
+
+            if isinstance(args[0], CompoundScalar):
+                # Schema-free C++ value inference intentionally treats an
+                # arbitrary Python object as ``object``. A CompoundScalar's
+                # Python class is its nominal Bundle schema, so retain that
+                # information at the Python boundary before wiring const.
+                kwargs["output_type"] = TS[type(args[0])]
         if self._output_type is not None and "tp" not in kwargs and "output_type" not in kwargs:
             kwargs["output_type"] = self._output_type
         if self._sizes is not None:

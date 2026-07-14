@@ -992,6 +992,39 @@ A passthrough generic over any time-series type:
    def passthrough(in_: TIME_SERIES_TYPE) -> TIME_SERIES_TYPE:
        return in_.delta_value
 
+A variable may name its closed set of accepted schemas.  Constraint lists are
+enforced identically when a static node is wired directly and when its pattern
+participates in operator dispatch:
+
+.. code-block:: cpp
+
+   using SupportedSeries = TsVar<"S", TS<Int>, TS<Str>>;
+   using SupportedScalar = ScalarVar<"T", Int, Str>;
+
+   struct constrained_passthrough
+   {
+       static void eval(In<"in", SupportedSeries> in, Out<SupportedSeries> out)
+       {
+           Value delta = capture_delta(in.base());
+           apply_delta(out, delta.view());
+       }
+   };
+
+.. code-block:: python
+
+   from typing import TypeVar
+
+   SupportedSeries = TypeVar("SupportedSeries", TS[int], TS[str])
+   SupportedScalar = TypeVar("SupportedScalar", int, str)
+
+   @compute_node
+   def constrained_passthrough(ts: SupportedSeries) -> SupportedSeries:
+       return ts.delta_value
+
+   @compute_node
+   def constrained_scalar(ts: TS[SupportedScalar]) -> TS[SupportedScalar]:
+       return ts.value
+
 A node generic over a scalar type and a source output type (this is exactly
 ``stdlib::const_``) — the scalar variable ``T`` is inferred from the configured
 value. If the caller does not supply an explicit output schema, the node's

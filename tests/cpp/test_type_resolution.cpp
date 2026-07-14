@@ -38,6 +38,32 @@ namespace
         }
     };
 
+    using ConstrainedTs = TsVar<"S", TS<Int>, TS<Str>>;
+
+    struct ConstrainedPassthrough
+    {
+        static constexpr auto name = "rt_constrained_passthrough";
+
+        static void eval(In<"in", ConstrainedTs> in, Out<ConstrainedTs> out)
+        {
+            const Value delta = capture_delta(in.base());
+            apply_delta(out, delta.view());
+        }
+    };
+
+    using ConstrainedScalarTs = TS<ScalarVar<"T", Int, Str>>;
+
+    struct ConstrainedScalarPassthrough
+    {
+        static constexpr auto name = "rt_constrained_scalar_passthrough";
+
+        static void eval(In<"in", ConstrainedScalarTs> in, Out<ConstrainedScalarTs> out)
+        {
+            const Value delta = capture_delta(in.base());
+            apply_delta(out, delta.view());
+        }
+    };
+
     using GenericScalarBundle = UnNamedTSB<Field<"p1", TS<ScalarVar<"T">>>>;
     using IntScalarBundle     = UnNamedTSB<Field<"p1", TS<Int>>>;
 
@@ -90,6 +116,66 @@ namespace
         }
     };
 
+    struct ConstrainedIntGraph
+    {
+        static constexpr auto name = "rt_constrained_int_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> in)
+        {
+            return wire<ConstrainedPassthrough>(w, in).as<TS<Int>>();
+        }
+    };
+
+    struct ConstrainedStrGraph
+    {
+        static constexpr auto name = "rt_constrained_str_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> in)
+        {
+            return wire<ConstrainedPassthrough>(w, in).as<TS<Str>>();
+        }
+    };
+
+    struct ConstrainedFloatGraph
+    {
+        static constexpr auto name = "rt_constrained_float_graph";
+
+        static Port<TS<Float>> compose(Wiring &w, Port<TS<Float>> in)
+        {
+            return wire<ConstrainedPassthrough>(w, in).as<TS<Float>>();
+        }
+    };
+
+    struct ConstrainedScalarIntGraph
+    {
+        static constexpr auto name = "rt_constrained_scalar_int_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> in)
+        {
+            return wire<ConstrainedScalarPassthrough>(w, in).as<TS<Int>>();
+        }
+    };
+
+    struct ConstrainedScalarStrGraph
+    {
+        static constexpr auto name = "rt_constrained_scalar_str_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> in)
+        {
+            return wire<ConstrainedScalarPassthrough>(w, in).as<TS<Str>>();
+        }
+    };
+
+    struct ConstrainedScalarFloatGraph
+    {
+        static constexpr auto name = "rt_constrained_scalar_float_graph";
+
+        static Port<TS<Float>> compose(Wiring &w, Port<TS<Float>> in)
+        {
+            return wire<ConstrainedScalarPassthrough>(w, in).as<TS<Float>>();
+        }
+    };
+
     // The leaf input, not an already-resolved bundle, forces T = Int on the
     // generic node. The concrete return type makes that resolution visible to
     // eval_node's output harness.
@@ -116,6 +202,32 @@ TEST_CASE("type_resolution: the same generic node resolves to TSS from a set-val
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     const std::vector<std::optional<Value>> deltas{set_delta<Int>({1, 2}, {}), set_delta<Int>({3}, {1})};
     CHECK_OUTPUT(eval_node<PassthroughSetGraph>(deltas), deltas);
+}
+
+TEST_CASE("type_resolution: a constrained generic node accepts each declared TS schema")
+{
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    (void)TypeRegistry::instance().register_scalar<Str>("str");
+    CHECK_OUTPUT(eval_node<ConstrainedIntGraph>(values<Int>(1, 2)), values<Int>(1, 2));
+    CHECK_OUTPUT(eval_node<ConstrainedStrGraph>(values<Str>(Str{"a"}, Str{"b"})),
+                 values<Str>(Str{"a"}, Str{"b"}));
+}
+
+TEST_CASE("type_resolution: a constrained generic node rejects an undeclared TS schema")
+{
+    (void)TypeRegistry::instance().register_scalar<Float>("float");
+    REQUIRE_THROWS(eval_node<ConstrainedFloatGraph>(values<Float>(1.0, 2.0)));
+}
+
+TEST_CASE("type_resolution: scalar constraints apply through public generic-node wiring")
+{
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    (void)TypeRegistry::instance().register_scalar<Str>("str");
+    (void)TypeRegistry::instance().register_scalar<Float>("float");
+    CHECK_OUTPUT(eval_node<ConstrainedScalarIntGraph>(values<Int>(1, 2)), values<Int>(1, 2));
+    CHECK_OUTPUT(eval_node<ConstrainedScalarStrGraph>(values<Str>(Str{"a"}, Str{"b"})),
+                 values<Str>(Str{"a"}, Str{"b"}));
+    REQUIRE_THROWS(eval_node<ConstrainedScalarFloatGraph>(values<Float>(1.0, 2.0)));
 }
 
 TEST_CASE("type_resolution: a concrete input resolves a scalar-generic TSB output")

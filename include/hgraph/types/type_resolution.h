@@ -336,7 +336,18 @@ namespace hgraph
     template <fixed_string Name, typename... C>
     struct scalar_unifier<ScalarVar<Name, C...>>
     {
-        static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m) { m.bind_scalar(Name.sv(), concrete); }
+        static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
+        {
+            if constexpr (sizeof...(C) > 0)
+            {
+                if (!((concrete == scalar_descriptor<C>::value_meta()) || ...))
+                {
+                    throw std::logic_error(
+                        fmt::format("scalar variable '{}' resolved outside its constraints", Name.sv()));
+                }
+            }
+            m.bind_scalar(Name.sv(), concrete);
+        }
     };
 
     namespace type_resolution_detail
@@ -476,7 +487,16 @@ namespace hgraph
     {
         static void unify(const TSValueTypeMetaData *concrete, ResolutionMap &m)
         {
-            m.bind_ts(Name.sv(), unify_dereference(concrete));
+            concrete = unify_dereference(concrete);
+            if constexpr (sizeof...(C) > 0)
+            {
+                if (!((concrete == schema_descriptor<C>::ts_meta()) || ...))
+                {
+                    throw std::logic_error(
+                        fmt::format("type variable '{}' resolved outside its constraints", Name.sv()));
+                }
+            }
+            m.bind_ts(Name.sv(), concrete);
         }
     };
 

@@ -2597,6 +2597,15 @@ NB_MODULE(_hgraph, m)
     m.def("scalar_pattern_var", [](const std::string &name) {
         return PyScalarPattern{ScalarPattern::var(name)};
     });
+    m.def("scalar_pattern_var", [](const std::string &name, nb::list constraints) {
+        std::vector<const ValueTypeMetaData *> metas;
+        metas.reserve(nb::len(constraints));
+        for (nb::handle constraint : constraints)
+        {
+            metas.push_back(nb::cast<PyValueType &>(constraint).meta);
+        }
+        return PyScalarPattern{ScalarPattern::var(name, std::move(metas))};
+    });
     m.def("scalar_pattern_value", [](PyValueType value) {
         return PyScalarPattern{ScalarPattern::concrete(value.meta)};
     });
@@ -2706,6 +2715,15 @@ NB_MODULE(_hgraph, m)
 
     m.def("type_pattern_var", [](const std::string &name) {
         return PyTypePattern{TypePattern::var(name)};
+    });
+    m.def("type_pattern_var", [](const std::string &name, nb::list constraints) {
+        std::vector<const TSValueTypeMetaData *> metas;
+        metas.reserve(nb::len(constraints));
+        for (nb::handle constraint : constraints)
+        {
+            metas.push_back(nb::cast<PyTsType &>(constraint).meta);
+        }
+        return PyTypePattern{TypePattern::var(name, std::move(metas))};
     });
     m.def("type_pattern_concrete", [](PyTsType type) {
         return PyTypePattern{TypePattern::concrete(type.meta)};
