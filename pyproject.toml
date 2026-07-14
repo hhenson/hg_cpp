@@ -1,8 +1,6 @@
 [build-system]
 requires = [
     "scikit-build-core>=0.12",
-    "cmake>=3.26",
-    "ninja",
     "nanobind>=2.12",
     "pyarrow>=24,<25",
 ]
