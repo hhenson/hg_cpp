@@ -213,10 +213,11 @@ landed.
 
 **Remaining:** review the rest of upstream ``_wiring`` and ``ts_tests``.  Port
 behavioural contracts, not Python runtime internals.  Each retained Python test
-needs a native test for the underlying C++ behaviour.  In particular, duration-
-based TSW execution is covered from Python and by lower-level native storage
-tests, but needs a public C++ ``eval_node`` wiring test; its exact duration
-shape also has no compile-time static marker.
+needs a native test for the underlying C++ behaviour.  Duration-based TSW
+execution now has matching Python and public C++ ``eval_node`` operator tests in
+addition to its lower-level native storage coverage.  Its exact duration shape
+still has no compile-time static marker; the public C++ route is the erased
+``to_window`` operator with a ``TimeDelta`` period.
 
 Priority 2: Nested Graphs and Boundaries
 ----------------------------------------

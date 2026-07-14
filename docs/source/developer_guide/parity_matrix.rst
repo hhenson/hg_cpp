@@ -182,10 +182,10 @@ Ported operator-test suite (the behaviour yardstick)
 ``python/tests/ported`` (the ctest gate ``hgraph_python_ported_suite``).
 Standing residue, each marked precisely in the test file:
 
-- **3 accepted gaps** — TSS rebind-to-nothing removal deltas (REF-rebind
-  semantics; ``linking_strategies`` doc-first), sparse TSB deltas (the
-  canonical bundle delta is dense), and the ``hgraph.stream`` status library
-  (``Base[COMPOUND_SCALAR]`` python generics).
+- **2 accepted gaps** — sparse TSB deltas (the canonical bundle delta is
+  dense) and the ``hgraph.stream`` status library
+  (``Base[COMPOUND_SCALAR]`` Python generics). TSS rebind-to-empty removal
+  semantics now execute through the keyed structural-REF implementation.
 - **Recorded deviations** — naive-datetime handling (4 xfails), the TSD key
   type resolved from a frame column, python wiring-node signature
   introspection, map children over EMPTY-REF projections, CompoundScalar
@@ -220,9 +220,10 @@ Types and scalars
        (``test_ref_executor.cpp``, std REF operators).
    * - ``TSW``
      - Partial
-     - Tick-based windows execute end-to-end; duration-based windows have
-       registry+runtime ops but **no compile-time marker** and no executing
-       test.
+     - Tick- and duration-based windows execute end-to-end in Python and through
+       public C++ ``eval_node`` wiring. Duration windows have registry/runtime
+       schemas but **no exact duration-valued compile-time marker**; C++ wires
+       them through ``to_window`` with a ``TimeDelta`` period.
    * - ``CONTEXT``
      - Full (divergent)
      - ``context::scope<"name">`` / ``Context<"name", S>`` /
