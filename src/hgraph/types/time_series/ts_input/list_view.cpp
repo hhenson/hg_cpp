@@ -115,6 +115,12 @@ namespace hgraph
         if (view_.is_target_position())
         {
             const auto &data = view_.data_view();
+            if (detail::has_input_children(data))
+            {
+                // A from-REF alternative owns per-child input links. Preserve
+                // their sampled rebind tracking when projecting the list.
+                return view_.child_from_resolved_input(data, index);
+            }
             auto list = data.as_list();
             return view_.child_from_target(list.at(index), index);
         }

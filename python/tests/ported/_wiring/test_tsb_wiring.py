@@ -281,7 +281,6 @@ def test_tsb_output_access():
     assert eval_node(g, [1, 1, 2], ["a", "b", "c"]) == ["a", None, "c"]
     
 
-@pytest.mark.skip(reason="gap: REF-flipping TSB composition")
 def test_tsb_ref_flipping():
     @generator
     def null_ref(tpe: type[TSB[MyTsb]]) -> REF[TSB[MyTsb]]:

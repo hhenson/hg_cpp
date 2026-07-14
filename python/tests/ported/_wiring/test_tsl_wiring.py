@@ -80,7 +80,6 @@ def test_tsl_get_item():
     assert eval_node(getitem_, [(1, 2), (2, 3), (4, 5)], 0, resolution_dict={"ts": TSL[TS[int], Size[2]]}) == [1, 2, 4]
 
 
-@pytest.mark.skip(reason="gap: REF-flipping TSL composition")
 def test_tsl_ref_flipping():
     @generator
     def null_ref() -> REF[TSL[TS[int], Size[2]]]:

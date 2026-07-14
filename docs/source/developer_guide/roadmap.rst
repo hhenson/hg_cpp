@@ -23,8 +23,8 @@ of truth.  It distinguishes four states deliberately:
 Review Snapshot: 2026-07-14
 ---------------------------
 
-This review was made against the working tree based on ``022f3982``, including
-the completed mutable-output and keyed structural-REF work described below.
+This review was made against the working tree based on ``d672ba52``, including
+the completed mutable-output and structural-REF work described below.
 Evidence came from the public implementation and tests, the commit history,
 :doc:`parity_matrix`, :doc:`python_integration`, :doc:`nested_graphs`, and
 :doc:`services`.
@@ -55,17 +55,18 @@ The important corrections to the previous roadmap are:
   raw ``operator_names()`` count is intentionally larger and is not the parity
   numerator.
 
-The completed A3 and keyed structural-REF working tree passed the full
-acceptance gates on both local platforms:
+The completed A3 and structural-REF working tree passed the full acceptance
+gates on both local platforms:
 
-- macOS arm64, AppleClang 21, Release with warnings as errors: 999/999 native
-  tests; a ``cp312-abi3`` wheel installed under Python 3.14.6 produced 977
-  passed, 30 skipped, 4 xfailed, and 6 deselected;
-- Ubuntu 24.04 x86_64, GCC 13.3, Release with warnings as errors: 999/999 native
+- macOS arm64, AppleClang 21, Release with warnings as errors: 1001/1001 native
+  tests; a ``cp312-abi3`` wheel installed under Python 3.14.6 produced 979
+  passed, 28 skipped, 4 xfailed, and 6 deselected;
+- Ubuntu 24.04 x86_64, GCC 13.3, Release with warnings as errors: 1001/1001 native
   tests; the Linux ``cp312-abi3`` wheel under Python 3.14.6 produced the same
   Python result; and
-- Ubuntu 24.04 x86_64, GCC 13.3, Debug with AddressSanitizer and the Python
-  bridge enabled: the full non-WIP suite under Python 3.12.3 produced 977
+- the preceding keyed structural-REF baseline also passed Ubuntu 24.04 x86_64,
+  GCC 13.3, Debug with AddressSanitizer and the Python bridge enabled: the full
+  non-WIP suite under Python 3.12.3 produced 977
   passed, 30 skipped, 4 xfailed, and 6 deselected with no sanitizer report.
 
 These are execution results, not collection-only inventory.
@@ -85,7 +86,7 @@ the following are true:
 1. **Met (2026-07-14):** mutable Python ``_output`` views work for the
    supported output kinds and are callback-scoped, with equivalent native C++
    output-mutation coverage.
-2. The remaining common structural REF and generic-graph cases are either
+2. The remaining compiled-boundary REF and generic-graph cases are either
    implemented through C++ wiring or explicitly accepted as restrictions.
 3. The unported upstream ``_wiring`` and ``ts_tests`` inventories have been
    reviewed against a recorded upstream revision.  Required cases must be
@@ -95,11 +96,10 @@ the following are true:
 4. Every supported Python-visible runtime behaviour has an equivalent public
    C++ wiring route and comparable behavioural tests.  Bridge-only syntax and
    arbitrary Python-object adaptation are the narrow exceptions.
-5. **Met for A3 and keyed structural REFs:** the full macOS native and Python
-   3.14 gates pass.  Large
-   ownership, nested-graph, or cross-language changes must additionally pass
-   the local Linux and sanitizer gates specified in ``AGENTS.md``; A3 passed
-   those gates as recorded above.
+5. **Met for A3 and structural REFs:** the full macOS and Linux native and
+   Python 3.14 gates pass.  Large ownership, nested-graph, or cross-language
+   changes must additionally pass the local Linux and sanitizer gates specified
+   in ``AGENTS.md``; A3 passed those gates as recorded above.
 
 Priority 0: Mutable Python Outputs
 ----------------------------------
@@ -154,9 +154,19 @@ storage.  Public C++ ``eval_node`` tests cover ``if_`` through both ``filter_``
 and the zero-copy ``keys_`` projection; the Python empty-REF/key-set and
 same-cycle removal cases now execute.
 
+**Landed for fixed shapes (2026-07-14):** REF-flipping composition for
+fixed-size ``TSL`` and ``TSB`` structural ports preserves sampled retarget
+semantics across live, EMPTY, and replacement references.  From-REF output
+projection now works over either ordinary output storage or its planned
+input-shaped alternative, and fixed-list child projection preserves the
+per-child link tracking already used by bundles.  Public C++ ``eval_node``
+tests cover both shapes and the corresponding ported Python tests now execute.
+Those Python contracts also exercise generator sources yielding an EMPTY
+reference at relative ``timedelta(0)``, so the bridge generator accepts both
+relative ``timedelta`` and absolute ``datetime`` schedules.
+
 **Remaining:**
 
-- REF-flipping composition for ``TSL`` and ``TSB`` structural ports;
 - the still-rejected REF adaptation modes at compiled sub-graph boundaries.
 
 The current value-only Python REF contract remains in force: a Python REF has

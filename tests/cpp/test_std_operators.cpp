@@ -252,6 +252,48 @@ namespace
     using IntTslPair            = TSL<TS<Int>, 2>;
     using IntTsd                = TSD<Int, TS<Int>>;
 
+    template <typename Schema>
+    struct EmptyReferenceSource
+    {
+        static constexpr auto name              = "empty_reference_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Out<REF<Schema>> out)
+        {
+            out.set(TimeSeriesReference::empty(ts_type<Schema>()));
+        }
+    };
+
+    struct TslReferenceFlipGraph
+    {
+        static constexpr auto name = "tsl_reference_flip_graph";
+
+        static Port<IntTslPair> compose(Wiring &w,
+                                        Port<IntTslPair> first,
+                                        Port<IntTslPair> second,
+                                        Port<TS<Int>> index)
+        {
+            auto empty = wire<EmptyReferenceSource<IntTslPair>>(w);
+            auto choices = stdlib::to_tsl<TSL<IntTslPair, 3>>(w, first, second, empty);
+            return wire<stdlib::getitem_>(w, choices, index).as<IntTslPair>();
+        }
+    };
+
+    struct TsbReferenceFlipGraph
+    {
+        static constexpr auto name = "tsb_reference_flip_graph";
+
+        static Port<ContainerAccessBundle> compose(Wiring &w,
+                                                   Port<ContainerAccessBundle> first,
+                                                   Port<ContainerAccessBundle> second,
+                                                   Port<TS<Int>> index)
+        {
+            auto empty = wire<EmptyReferenceSource<ContainerAccessBundle>>(w);
+            auto choices = stdlib::to_tsl<TSL<ContainerAccessBundle, 3>>(w, first, second, empty);
+            return wire<stdlib::getitem_>(w, choices, index).as<ContainerAccessBundle>();
+        }
+    };
+
     struct MakeContainerAccessBundle
     {
         static constexpr auto name = "make_container_access_bundle";
@@ -1433,6 +1475,36 @@ TEST_CASE("std operators: structural REF unbind publishes only previously visibl
     CHECK_OUTPUT(eval_node<InvalidTsdChildUnbindGraph>(values<Bool>(false, true),
                                                        values<Bool>(true, false)),
                  values<Value>(none, none));
+}
+
+TEST_CASE("std operators: fixed TSL REF composition flips through an empty reference")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<TslReferenceFlipGraph>(
+                     values<Value>(list_delta<TS<Int>>({1, 1}), none, none, none),
+                     values<Value>(list_delta<TS<Int>>({2, 2}), none, none, none),
+                     values<Int>(0, 2, 1, 2)),
+                 values<Value>(list_delta<TS<Int>>({1, 1}), none,
+                               list_delta<TS<Int>>({2, 2}), none));
+}
+
+TEST_CASE("std operators: TSB REF composition flips through an empty reference")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<TsbReferenceFlipGraph>(
+                     values<Value>(tsb_delta<ContainerAccessBundle>(Int{1}, std::nullopt),
+                                   tsb_delta<ContainerAccessBundle>(std::nullopt, Str{"a"}),
+                                   none, none),
+                     values<Value>(tsb_delta<ContainerAccessBundle>(Int{2}, std::nullopt),
+                                   tsb_delta<ContainerAccessBundle>(std::nullopt, Str{"b"}),
+                                   none, none),
+                     values<Int>(0, 2, 1, 2)),
+                 values<Value>(tsb_delta<ContainerAccessBundle>(Int{1}, std::nullopt),
+                               none,
+                               tsb_delta<ContainerAccessBundle>(Int{2}, Str{"b"}),
+                               none));
 }
 
 TEST_CASE("std operators: date component operators extract day month year and explode")

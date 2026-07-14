@@ -503,7 +503,7 @@ class _TsExpr:
                 if strict_cs is False:
                     return wire("combine", structural, __strict__=False, output_type=self)
                 return wire("combine", structural, output_type=self)
-            return WiringPort(_m.tsl_port([_unwrap(p) for p in ports]))
+            return WiringPort(_m.tsl_port([_unwrap(p) for p in ports], self.handle))
         field_ports = {}
         field_types = dict(_m.ts_field_types(self.handle))
         for name, value in kwargs.items():

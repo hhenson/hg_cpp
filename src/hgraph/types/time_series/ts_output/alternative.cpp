@@ -484,14 +484,13 @@ namespace hgraph::detail
                                                      const TSValueTypeMetaData &parent_schema,
                                                      std::size_t index)
         {
-            const auto &ops = input_endpoint_ops_for(&parent_schema);
-            if (ops.target_child == nullptr || ops.child_schema == nullptr)
+            if (parent_schema.kind != TSTypeKind::TSL && parent_schema.kind != TSTypeKind::TSB)
             {
                 throw std::logic_error("TSOutput from-REF cannot project a child from this output schema");
             }
-            auto child = ops.target_child(parent.data_view(), index);
-            if (!child.valid()) { throw std::logic_error("TSOutput from-REF output child projection failed"); }
-            return source_child_view(parent, child);
+            auto child = parent.indexed_child_at(index);
+            if (!child.bound()) { throw std::logic_error("TSOutput from-REF output child projection failed"); }
+            return child;
         }
 
         void unbind_from_ref_data(const TSDataView &target,

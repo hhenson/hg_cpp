@@ -1838,7 +1838,16 @@ namespace
         {
             throw nb::value_error("a Python generator must yield (datetime, value) pairs");
         }
-        const DateTime when = nb::cast<DateTime>(pair[0]);
+        DateTime when;
+        if (!nb::try_cast<DateTime>(pair[0], when))
+        {
+            TimeDelta delay;
+            if (!nb::try_cast<TimeDelta>(pair[0], delay))
+            {
+                throw nb::type_error("a Python generator time must be a datetime or timedelta");
+            }
+            when = sched.now() + delay;
+        }
         if (handle.last_time.has_value() && when <= *handle.last_time)
         {
             throw std::invalid_argument("Python generator output times must be strictly increasing");
@@ -3434,24 +3443,34 @@ NB_MODULE(_hgraph, m)
         return PyPort{subgraph_wiring_detail::tsl_element_ref(port.ref, index, element_schema)};
     });
 
-    m.def("tsl_port", [](nb::list ports) {
+    m.def("tsl_port", [](nb::list ports, std::optional<PyTsType> output_type) {
         if (nb::len(ports) == 0) { throw nb::value_error("tsl_port requires at least one port"); }
         std::vector<WiringPortRef> children;
         children.reserve(nb::len(ports));
-        const TSValueTypeMetaData *element = nullptr;
+        const TSValueTypeMetaData *schema = output_type.has_value() ? output_type->meta : nullptr;
+        if (schema != nullptr && schema->kind != TSTypeKind::TSL)
+        {
+            throw nb::value_error("TSL.from_ts output type must be a TSL");
+        }
+        if (schema != nullptr && schema->fixed_size() != 0 && schema->fixed_size() != nb::len(ports))
+        {
+            throw nb::value_error("TSL.from_ts port count does not match the fixed output size");
+        }
+        const TSValueTypeMetaData *element = schema != nullptr ? schema->element_ts() : nullptr;
         for (nb::handle port : ports)
         {
             const WiringPortRef &ref = nb::cast<PyPort &>(port).ref;
             if (element == nullptr) { element = ref.schema; }
-            else if (element != ref.schema)
+            else if (schema == nullptr ? element != ref.schema
+                                       : !graph_wiring_detail::input_accepts_output_schema(element, ref.schema))
             {
                 throw nb::value_error("TSL.from_ts requires ports of one element type");
             }
             children.push_back(ref);
         }
-        const auto *schema = TypeRegistry::instance().tsl(element, children.size());
+        if (schema == nullptr) { schema = TypeRegistry::instance().tsl(element, children.size()); }
         return PyPort{WiringPortRef::structural_source(schema, std::move(children))};
-    });
+    }, nb::arg("ports"), nb::arg("output_type") = nb::none());
 
     m.def("bundle_port", [](nb::list ports, nb::list keep_ref) {
         if (nb::len(ports) == 0) { throw nb::value_error("bundle_port requires at least one port"); }
