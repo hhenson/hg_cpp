@@ -81,6 +81,37 @@ namespace
             return wire<stdlib::downcast_ref, REF<TS<Int>>>(w, source_ref).template as<TS<Int>>();
         }
     };
+
+    struct NestedStructuralRefProbe
+    {
+        static constexpr auto name = "nested_structural_ref_probe";
+
+        static void eval(In<"refs", TSL<REF<TSL<TS<Int>, 2>>, 2>> refs,
+                         Out<TS<Bool>> out)
+        {
+            const auto first = refs[0].value();
+            const auto second = refs[1].value();
+            const auto *target = schema_descriptor<TSL<TS<Int>, 2>>::ts_meta();
+            out.set(first.is_non_peered() && second.is_non_peered() &&
+                    time_series_schema_equivalent(first.target_schema(), target) &&
+                    time_series_schema_equivalent(second.target_schema(), target) &&
+                    first.items().size() == 2 && second.items().size() == 2);
+        }
+    };
+
+    struct NestedStructuralRefGraph
+    {
+        static constexpr auto name = "nested_structural_ref_graph";
+
+        static Port<TS<Bool>> compose(Wiring &w, Port<TS<Int>> a, Port<TS<Int>> b,
+                                      Port<TS<Int>> c, Port<TS<Int>> d)
+        {
+            auto lhs = stdlib::to_tsl<TSL<TS<Int>, 2>>(w, a, b);
+            auto rhs = stdlib::to_tsl<TSL<TS<Int>, 2>>(w, c, d);
+            auto refs = stdlib::to_tsl<TSL<TSL<TS<Int>, 2>, 2>>(w, lhs, rhs);
+            return wire<NestedStructuralRefProbe>(w, refs);
+        }
+    };
 }  // namespace
 
 TEST_CASE("REF executor: a user REF output retargets between independent producers mid-run")
@@ -123,4 +154,13 @@ TEST_CASE("downcast_ref: C++ wiring still forwards the referenced output")
 
     CHECK_OUTPUT(eval_node<ForwardDowncastRefGraph>(values<Int>(1, 2, 3)),
                  values<Int>(1, 2, 3));
+}
+
+TEST_CASE("REF executor: nested structural sources adapt to fixed REF children")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<NestedStructuralRefGraph>(values<Int>(1, 10), values<Int>(2, 20),
+                                                      values<Int>(3, 30), values<Int>(4, 40)),
+                 values<Bool>(true, none));
 }

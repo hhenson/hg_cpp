@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
 
+# Modern Apple and MSVC linkers rescan static archives without repeated inputs.
+if(POLICY CMP0156)
+    cmake_policy(SET CMP0156 NEW)
+endif()
+
 project(
     hgraph
     VERSION 0.3.0

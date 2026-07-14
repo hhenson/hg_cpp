@@ -179,7 +179,13 @@ namespace hgraph
             auto ts     = bundle.field("ts");
 
             Value reference{ts.reference()};
-            auto  output   = view.output(evaluation_time);
+            auto  output = view.output(evaluation_time);
+            if (output.valid() &&
+                output.value().checked_as<TimeSeriesReference>() ==
+                    reference.view().checked_as<TimeSeriesReference>())
+            {
+                return;
+            }
             auto  mutation = output.begin_mutation(evaluation_time);
             if (!mutation.move_value_from(std::move(reference)))
             {
@@ -522,7 +528,9 @@ namespace hgraph
                                                               const TSValueTypeMetaData *input_schema,
                                                               WiringPortRef source)
     {
-        if (input_schema != nullptr && input_schema->kind == TSTypeKind::REF && source.is_structural_source())
+        if (input_schema == nullptr || !source.is_structural_source()) { return source; }
+
+        if (input_schema->kind == TSTypeKind::REF)
         {
             const TSValueTypeMetaData *target_schema = input_schema->referenced_ts();
             if (!input_accepts_output_schema(input_schema, source.schema))
@@ -535,7 +543,35 @@ namespace hgraph
             return w.add_node(std::type_index(typeid(StructuralRefNodeTag)), std::move(builder),
                               std::span<const WiringPortRef>{inputs.data(), inputs.size()}, Value{});
         }
-        return source;
+
+        const auto &source_children = source.structural_children();
+        std::vector<WiringPortRef> adapted;
+        switch (input_schema->kind)
+        {
+            case TSTypeKind::TSL:
+                if (input_schema->fixed_size() == 0 || source_children.size() != input_schema->fixed_size())
+                {
+                    return source;
+                }
+                adapted.reserve(source_children.size());
+                for (const WiringPortRef &child : source_children)
+                {
+                    adapted.push_back(adapt_source_for_input(w, input_schema->element_ts(), child));
+                }
+                return WiringPortRef::structural_source(input_schema, std::move(adapted));
+
+            case TSTypeKind::TSB:
+                if (source_children.size() != input_schema->field_count()) { return source; }
+                adapted.reserve(source_children.size());
+                for (std::size_t index = 0; index < source_children.size(); ++index)
+                {
+                    adapted.push_back(
+                        adapt_source_for_input(w, input_schema->fields()[index].type, source_children[index]));
+                }
+                return WiringPortRef::structural_source(input_schema, std::move(adapted));
+
+            default: return source;
+        }
     }
 
     WiringPortRef graph_wiring_detail::resolve_context_source(const Wiring &w, std::string_view name)

@@ -119,6 +119,7 @@ namespace
     };
 
     using SwitchSignalBundle = UnNamedTSB<Field<"p1", TS<Int>>, Field<"p2", TS<Str>>>;
+    using SwitchIntList = TSL<TS<Int>, 2>;
 
     struct PeeredBundleBranch
     {
@@ -141,6 +142,52 @@ namespace
         {
             auto structural = stdlib::to_tsb<SwitchSignalBundle>(w, p1, p2);
             return wire<stdlib::pass_through_node>(w, structural).as<SwitchSignalBundle>();
+        }
+    };
+
+    struct DirectBundleBranch
+    {
+        static constexpr auto name = "direct_bundle_branch";
+
+        static Port<SwitchSignalBundle> compose(Wiring &, Port<SwitchSignalBundle> bundle)
+        {
+            return bundle;
+        }
+    };
+
+    struct ConstantBundleBranch
+    {
+        static constexpr auto name = "constant_bundle_branch";
+
+        static Port<SwitchSignalBundle> compose(Wiring &w, Port<SwitchSignalBundle>)
+        {
+            auto p1 = wire<stdlib::const_, TS<Int>>(w, Int{1});
+            auto p2 = wire<stdlib::const_, TS<Str>>(w, Str{"fixed"});
+            auto bundle = stdlib::to_tsb<SwitchSignalBundle>(w, p1, p2);
+            return wire<stdlib::pass_through_node>(w, bundle).as<SwitchSignalBundle>();
+        }
+    };
+
+    struct DirectListBranch
+    {
+        static constexpr auto name = "direct_list_branch";
+
+        static Port<SwitchIntList> compose(Wiring &, Port<SwitchIntList> list)
+        {
+            return list;
+        }
+    };
+
+    struct ConstantListBranch
+    {
+        static constexpr auto name = "constant_list_branch";
+
+        static Port<SwitchIntList> compose(Wiring &w, Port<SwitchIntList>)
+        {
+            auto first = wire<stdlib::const_, TS<Int>>(w, Int{1});
+            auto second = wire<stdlib::const_, TS<Int>>(w, Int{2});
+            auto list = stdlib::to_tsl<SwitchIntList>(w, first, second);
+            return wire<stdlib::pass_through_node>(w, list).as<SwitchIntList>();
         }
     };
 
@@ -169,6 +216,44 @@ namespace
                                       {Value{true}, fn<StructuralBundleBranch>()}}),
                 p1, p2);
             return wire<SignalTick>(w, bundle);
+        }
+    };
+
+    struct SwitchBundleValueGraph
+    {
+        static constexpr auto name = "switch_bundle_value_graph";
+
+        static Port<SwitchSignalBundle> compose(Wiring &w,
+                                                Port<TS<Bool>> direct,
+                                                Port<TS<Int>> p1,
+                                                Port<TS<Str>> p2)
+        {
+            auto bundle = stdlib::to_tsb<SwitchSignalBundle>(w, p1, p2);
+            return wire<stdlib::switch_>(
+                       w, direct,
+                       stdlib::switch_cases({{Value{false}, fn<ConstantBundleBranch>()},
+                                             {Value{true}, fn<DirectBundleBranch>()}}),
+                       bundle)
+                .as<SwitchSignalBundle>();
+        }
+    };
+
+    struct SwitchListValueGraph
+    {
+        static constexpr auto name = "switch_list_value_graph";
+
+        static Port<SwitchIntList> compose(Wiring &w,
+                                          Port<TS<Bool>> direct,
+                                          Port<TS<Int>> first,
+                                          Port<TS<Int>> second)
+        {
+            auto list = stdlib::to_tsl<SwitchIntList>(w, first, second);
+            return wire<stdlib::switch_>(
+                       w, direct,
+                       stdlib::switch_cases({{Value{false}, fn<ConstantListBranch>()},
+                                             {Value{true}, fn<DirectListBranch>()}}),
+                       list)
+                .as<SwitchIntList>();
         }
     };
 
@@ -288,6 +373,34 @@ TEST_CASE("switch_: peered and structural TSB branches notify SIGNAL on every re
                                                      values<Int>(none, 1, none, none),
                                                      values<Str>(none, none, Str{"b"})),
                  values<Bool>(none, true, true, true));
+}
+
+TEST_CASE("switch_: a direct structural branch samples held bundle values on activation")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<SwitchBundleValueGraph>(values<Bool>(false, true, false, true),
+                                                    values<Int>(10, 20, 30, 40),
+                                                    values<Str>(Str{"a"}, Str{"b"}, Str{"c"}, Str{"d"})),
+                 values<Value>(tsb_delta<SwitchSignalBundle>(Int{1}, Str{"fixed"}),
+                               tsb_delta<SwitchSignalBundle>(Int{20}, Str{"b"}),
+                               tsb_delta<SwitchSignalBundle>(Int{1}, Str{"fixed"}),
+                               tsb_delta<SwitchSignalBundle>(Int{40}, Str{"d"})));
+}
+
+TEST_CASE("switch_: a direct structural branch samples held list values on activation")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<SwitchListValueGraph>(values<Bool>(false, true, false, true),
+                                                 values<Int>(10, 20, 30, 40),
+                                                 values<Int>(-10, -20, -30, -40)),
+                 values<Value>(list_delta<TS<Int>>({1, 2}),
+                               list_delta<TS<Int>>({20, -20}),
+                               list_delta<TS<Int>>({1, 2}),
+                               list_delta<TS<Int>>({40, -40})));
 }
 
 TEST_CASE("switch_: a branch may consume the key as its first argument (mixed arities)")

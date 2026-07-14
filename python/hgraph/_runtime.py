@@ -448,8 +448,19 @@ def combine(*args, __output_type__=None, **kwargs):
             return structural
         raise TypeError("combine requires a subscripted type: combine[TSB[Schema]](...)")
     target = __output_type__
+    if not isinstance(target, _TsExpr):
+        # A bare generic target (combine[TSL], combine[TSS], ...) needs the
+        # operand schemas before C++ can resolve its concrete output. Lift
+        # plain values first so resolution sees the same ports the resolved
+        # target's from_ts implementation will consume.
+        args = tuple(a if isinstance(a, WiringPort) else wire("const", a) for a in args)
+        kwargs = {
+            name: value if name == "__strict__" or isinstance(value, WiringPort)
+            else wire("const", value)
+            for name, value in kwargs.items()
+        }
     ports = [a for a in args if isinstance(a, WiringPort)] or [
-        v for v in kwargs.values() if isinstance(v, WiringPort)]
+        v for k, v in kwargs.items() if k != "__strict__" and isinstance(v, WiringPort)]
     if ports or not isinstance(target, _TsExpr):
         # Every target - generic or concrete - resolves through the C++
         # pattern machinery (resolve_combine_target); concrete targets pass
@@ -1216,12 +1227,14 @@ class _PyNode:
     @staticmethod
     def _bind_resolved(scope, name, resolved):
         """Seed a pinned/resolved type variable into the C++ scope: a ts
-        expression binds the ts var; a python scalar type binds the scalar
-        var of the same name."""
+        expression binds the ts var, a fixed-size value binds the size var,
+        and a python scalar type binds the scalar var of the same name."""
         from ._types import _TsExpr, _value_type
 
         if isinstance(resolved, _TsExpr):
             scope.bind_ts(name, resolved.handle)
+        elif isinstance(resolved, int) and not isinstance(resolved, bool):
+            scope.bind_size(name, resolved)
         else:
             scope.bind_scalar(name, _value_type(resolved))
 
@@ -1294,6 +1307,26 @@ class _PyNode:
         raise IncorrectTypeBinding(
             f"{self.__name__}: '{param.name}' expects {annotation!r}, got {port_tp!r}")
 
+    @staticmethod
+    def _requested_input_shape(scope, annotation, value):
+        """Resolve the exact input shape used when packing a Python node.
+
+        Union inputs are validated member-by-member, so they do not have one
+        TypePattern to resolve. Preserve the member that matched the port;
+        ordinary inputs continue through the shared C++ resolution scope.
+        """
+        import types
+        import typing
+        from ._types import _pattern_of
+
+        if typing.get_origin(annotation) in (typing.Union, types.UnionType):
+            port_type = _unwrap(value).ts_type
+            for member in typing.get_args(annotation):
+                if isinstance(member, _TsExpr) and member.handle == port_type:
+                    return member.handle
+            return port_type
+        return scope.resolve_ts(_pattern_of(annotation))
+
     def _apply_resolvers(self, scope, scalar_values):
         """resolvers={TYPEVAR: lambda mapping, <scalars...>: type}: bind the
         computed types into the scope (mapping = the scope's bindings)."""
@@ -1346,7 +1379,7 @@ class _PyNode:
 
         kwargs.pop("__recordable_id__", None)
         ref = _hgraph.node_ref(self.fn)
-        layout, ports, scalars, keep_ref = [], [], [], []
+        layout, ports, scalars, reference_shapes = [], [], [], []
         # The wiring-time RESOLUTION SCOPE: the C++ type-variable map. Every
         # generic input pattern matches into it; outputs/resolvers/pins read
         # and write the same map - no python-side type classification.
@@ -1409,7 +1442,7 @@ class _PyNode:
                     layout.append(_group_layout(param))
                     _note(param.name)
                     ports.append(packed_group)
-                    keep_ref.append(False)
+                    reference_shapes.append(False)
                 continue
             if param.kind is inspect.Parameter.VAR_KEYWORD:
                 extras = {k: _unwrap(_lift(v)) for k, v in bound.arguments.get(param.name, {}).items()}
@@ -1425,7 +1458,7 @@ class _PyNode:
                     layout.append(_group_layout(param))
                     _note(param.name)
                     ports.append(packed_group)
-                    keep_ref.append(False)
+                    reference_shapes.append(False)
                 continue
             if param.kind is inspect.Parameter.KEYWORD_ONLY:
                 by_name = True
@@ -1475,7 +1508,7 @@ class _PyNode:
                 layout.append("C" if is_active else "P")
                 _note(param.name)
                 ports.append(_unwrap(resolved))
-                keep_ref.append(False)
+                reference_shapes.append(False)
                 continue
             if param.name == "_output":
                 # hgraph's _output injection: the node's own output view.
@@ -1508,7 +1541,11 @@ class _PyNode:
                                (False, True): "T", (False, False): "U"}[(is_active, required)])
                 _note(param.name)
                 ports.append(_unwrap(value))
-                keep_ref.append(getattr(param.annotation, "is_ref", False))
+                requested = self._requested_input_shape(scope, param.annotation, value)
+                reference_shapes.append(
+                    requested
+                    if requested is not None and _hgraph.ref_target(requested) != requested
+                    else False)
             else:
                 layout.append("s")
                 _note(param.name)
@@ -1525,7 +1562,7 @@ class _PyNode:
                 raise RequirementsNotMetWiringError(f"{self.__name__}: {reason}")
         if self._resolvers:
             self._apply_resolvers(scope, scalar_values)
-        packed = WiringPort(_hgraph.bundle_port(ports, keep_ref))
+        packed = WiringPort(_hgraph.bundle_port(ports, reference_shapes))
         config = "".join(layout)
         kw_names = [n for n, named in zip(layout_names, layout_by_name) if named]
         if kw_names:
@@ -2943,6 +2980,28 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     param_names = {p.name for p in params}
     annotations_by_name = {p.name: p.annotation for p in params}
 
+    pinned_scope = None
+    if isinstance(fn, _PyNode) and fn._pins:
+        from ._types import (
+            _GenericTsExpr as _PinnedGenericTsExpr,
+            _TsExpr as _PinnedTsExpr,
+            _pattern_of,
+        )
+
+        pinned_scope = _hgraph.ResolutionScope()
+        for name, resolved in fn._pins.items():
+            fn._bind_resolved(pinned_scope, name, resolved)
+
+        for name, annotation in tuple(annotations_by_name.items()):
+            if not isinstance(annotation, _PinnedGenericTsExpr):
+                continue
+            resolved = pinned_scope.resolve_ts(_pattern_of(annotation))
+            if resolved is not None:
+                # eval_node replays ordinary producer values. REF-transparent
+                # input binding performs the reference adaptation at wiring.
+                resolved = _hgraph.ref_target(resolved)
+                annotations_by_name[name] = _PinnedTsExpr(resolved, repr(annotation))
+
     def _named_series_value(k, v):
         """A list/tuple kwarg is a per-cycle SERIES only on a time-series
         parameter: SCALAR-kind type variables (upstream's HgScalarTypeVar)
@@ -3001,7 +3060,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         deferred_replay = []
         scalar_positions = set()
         for i, series in enumerate(inputs):
-            annotation = params[i].annotation if i < len(params) else None
+            annotation = annotations_by_name.get(params[i].name) if i < len(params) else None
             if annotation is None and getattr(fn, "_ts_hint", None) is not None:
                 hints = fn._ts_hint       # op[TYPEVAR: TYPE, ...] types the inputs
                 if not isinstance(hints, list):

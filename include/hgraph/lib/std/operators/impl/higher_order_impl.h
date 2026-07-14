@@ -731,8 +731,8 @@ namespace hgraph::stdlib
          */
         [[nodiscard]] inline SingleNestedGraphNodeSpec compile_switch_branch(
             const WiredFn &branch,
-            const TSValueTypeMetaData *key_schema,
-            std::span<const TSValueTypeMetaData *const> slot_schemas,
+            const WiringPortRef &key_source,
+            std::span<const WiringPortRef> slot_sources,
             std::size_t positional_count,
             std::span<const std::pair<std::string, std::size_t>> named_slots,
             const TSValueTypeMetaData *&output_schema)
@@ -750,8 +750,8 @@ namespace hgraph::stdlib
 
             std::vector<const TSValueTypeMetaData *> schemas;
             schemas.reserve(branch.arity);
-            if (bound_slots.takes_leading_key) { schemas.push_back(key_schema); }
-            for (const std::size_t slot : bound_slots.ordered) { schemas.push_back(slot_schemas[slot]); }
+            if (bound_slots.takes_leading_key) { schemas.push_back(key_source.schema); }
+            for (const std::size_t slot : bound_slots.ordered) { schemas.push_back(slot_sources[slot].schema); }
 
             CompiledSubGraph compiled = branch.compile({schemas.data(), schemas.size()});
             if (!compiled.captured_inputs.empty())
@@ -826,6 +826,44 @@ namespace hgraph::stdlib
 
                 NodeBuilder terminal;
                 terminal.implementation<pass_through_node>(resolution);
+
+                const auto &source_path = spec.output_binding->parent_source_path;
+                const WiringPortRef *terminal_source = nullptr;
+                if (source_path[0] == 0)
+                {
+                    terminal_source = &key_source;
+                }
+                else
+                {
+                    const std::size_t slot = source_path[0] - 1;
+                    if (slot >= slot_sources.size())
+                    {
+                        throw std::logic_error("switch_: direct branch output source is outside the input slots");
+                    }
+                    terminal_source = &slot_sources[slot];
+                }
+                for (std::size_t path_index = 1;
+                     path_index < source_path.size() && terminal_source->is_structural_source();
+                     ++path_index)
+                {
+                    const auto &children = terminal_source->structural_children();
+                    if (source_path[path_index] >= children.size())
+                    {
+                        throw std::logic_error("switch_: direct branch output path is outside a structural source");
+                    }
+                    terminal_source = &children[source_path[path_index]];
+                }
+
+                const NodeTypeMetaData *terminal_meta = terminal.type().schema();
+                if (terminal_meta == nullptr || terminal_meta->input_schema == nullptr)
+                {
+                    throw std::logic_error("switch_: direct branch terminal has no input schema");
+                }
+                std::vector<TSEndpointSchema> terminal_inputs;
+                terminal_inputs.push_back(graph_wiring_detail::endpoint_for_source(
+                    compiled.output_schema, *terminal_source));
+                terminal.input_endpoint(TSEndpointSchema::non_peered(
+                    terminal_meta->input_schema, std::move(terminal_inputs)));
 
                 const std::size_t terminal_index = spec.graph_builder.node_count();
                 spec.graph_builder.add_node(std::move(terminal));
@@ -902,10 +940,6 @@ namespace hgraph::stdlib
                 ts.push_back(kwargs[i].second);
             }
 
-            std::vector<const TSValueTypeMetaData *> ts_schemas;
-            ts_schemas.reserve(ts.size());
-            for (const WiringPortRef &port : ts) { ts_schemas.push_back(port.schema); }
-
             const TSValueTypeMetaData *output_schema = nullptr;
             SwitchNodeSpec             spec;
             spec.reload_on_ticked = cases.reload_on_ticked;
@@ -914,15 +948,15 @@ namespace hgraph::stdlib
             {
                 spec.branches.push_back(SwitchBranch{
                     .key  = entry.key,
-                    .spec = compile_switch_branch(entry.branch, key.schema,
-                                                  {ts_schemas.data(), ts_schemas.size()}, positional_count,
+                    .spec = compile_switch_branch(entry.branch, key,
+                                                  {ts.data(), ts.size()}, positional_count,
                                                   {named_slots.data(), named_slots.size()}, output_schema),
                 });
             }
             if (cases.default_branch.has_value())
             {
-                spec.default_branch = compile_switch_branch(*cases.default_branch, key.schema,
-                                                            {ts_schemas.data(), ts_schemas.size()},
+                spec.default_branch = compile_switch_branch(*cases.default_branch, key,
+                                                            {ts.data(), ts.size()},
                                                             positional_count,
                                                             {named_slots.data(), named_slots.size()},
                                                             output_schema);
@@ -960,28 +994,28 @@ namespace hgraph::stdlib
             if (branch == nullptr) { return; }
 
             if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
-            const TSValueTypeMetaData *key_schema = context.args[0].port.schema;
+            const WiringPortRef &key_source = context.args[0].port;
 
-            std::vector<const TSValueTypeMetaData *> slot_schemas;
+            std::vector<WiringPortRef> slot_sources;
             for (std::size_t i = 2; i < context.args.size(); ++i)
             {
                 if (context.args[i].kind != WiringArg::Kind::TimeSeries) { return; }
-                slot_schemas.push_back(context.args[i].port.schema);
+                slot_sources.push_back(context.args[i].port);
             }
-            const std::size_t positional_count = slot_schemas.size();
+            const std::size_t positional_count = slot_sources.size();
             std::vector<std::pair<std::string, std::size_t>> named_slots;
             for (const auto &[name, kw_arg] : context.kwargs)
             {
                 if (kw_arg.kind != WiringArg::Kind::TimeSeries) { continue; }
-                named_slots.emplace_back(name, slot_schemas.size());
-                slot_schemas.push_back(kw_arg.port.schema);
+                named_slots.emplace_back(name, slot_sources.size());
+                slot_sources.push_back(kw_arg.port);
             }
 
             // A resolution probe: leave unresolved on failure — the real
             // wiring path reports the error.
             (void)fallback_on_exception(false, [&] {
                 const TSValueTypeMetaData *output_schema = nullptr;
-                (void)compile_switch_branch(*branch, key_schema, {slot_schemas.data(), slot_schemas.size()},
+                (void)compile_switch_branch(*branch, key_source, {slot_sources.data(), slot_sources.size()},
                                             positional_count, {named_slots.data(), named_slots.size()},
                                             output_schema);
                 bind_graph_output(resolution, output_schema, "O");

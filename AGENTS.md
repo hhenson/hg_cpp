@@ -43,22 +43,15 @@ every code change, completion requires both of these local gates to pass:
 2. The complete non-WIP Python compatibility suite using the newest supported
    Python version (currently Python 3.14).
 
-Run a clean native build rather than relying on a stale IDE build:
+Run the native acceptance preset with `--fresh` rather than relying on a stale
+IDE build. The preset selects `.venv/bin/python` for PyArrow discovery; do not
+replace this with an ad hoc configure command that may select the system Python:
 
 ```sh
-native_root="$(mktemp -d)"
-cmake -S . -B "$native_root/build" -GNinja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_TESTING=ON \
-  -DHGRAPH_BUILD_PYTHON_BINDINGS=OFF \
-  -DHGRAPH_ENABLE_PYTHON_USER_NODES=OFF \
-  -DHGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS=OFF \
-  -DHGRAPH_USE_PYARROW_ARROW=ON \
-  -DHGRAPH_FETCH_SIMDJSON=ON \
-  -DHGRAPH_WARNINGS_AS_ERRORS=ON \
-  -DPython_EXECUTABLE="$PWD/.venv/bin/python"
-cmake --build "$native_root/build" --parallel
-ctest --test-dir "$native_root/build" --output-on-failure --parallel 2
+cmake --preset cpp --fresh
+cmake --build --preset cpp --target clean
+cmake --build --preset cpp --parallel
+ctest --preset cpp --parallel 2
 ```
 
 Build the stable-ABI wheel with Python 3.12, install that wheel into a fresh

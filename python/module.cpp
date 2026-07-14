@@ -3525,7 +3525,7 @@ NB_MODULE(_hgraph, m)
         return PyPort{WiringPortRef::structural_source(schema, std::move(children))};
     }, nb::arg("ports"), nb::arg("output_type") = nb::none());
 
-    m.def("bundle_port", [](nb::list ports, nb::list keep_ref) {
+    m.def("bundle_port", [](nb::list ports, nb::list reference_shapes) {
         if (nb::len(ports) == 0) { throw nb::value_error("bundle_port requires at least one port"); }
         std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
         std::vector<WiringPortRef> children;
@@ -3540,12 +3540,17 @@ NB_MODULE(_hgraph, m)
             // accepts the DEREFERENCED value (binding inserts the from-REF
             // adaptation); a REF parameter receives the reference itself as
             // an opaque value.
-            const bool as_ref = index < nb::len(keep_ref) && nb::cast<bool>(keep_ref[index]);
-            const auto *field_schema =
-                as_ref ? (ref.schema != nullptr && ref.schema->kind == TSTypeKind::REF
-                              ? ref.schema
-                              : registry.ref(registry.dereference(ref.schema)))
-                       : registry.dereference(ref.schema);
+            const bool has_shape = index < nb::len(reference_shapes) &&
+                                   nb::isinstance<PyTsType>(reference_shapes[index]);
+            const bool as_ref = !has_shape && index < nb::len(reference_shapes) &&
+                                nb::cast<bool>(reference_shapes[index]);
+            const auto *field_schema = has_shape
+                                           ? nb::cast<PyTsType &>(reference_shapes[index]).meta
+                                           : as_ref
+                                                 ? (ref.schema != nullptr && ref.schema->kind == TSTypeKind::REF
+                                                        ? ref.schema
+                                                        : registry.ref(registry.dereference(ref.schema)))
+                                                 : registry.dereference(ref.schema);
             fields.emplace_back("_" + std::to_string(index++), field_schema);
             children.push_back(ref);
         }

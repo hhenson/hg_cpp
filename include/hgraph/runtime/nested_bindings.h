@@ -146,6 +146,62 @@ namespace hgraph
     }
 
     /**
+     * Bind a nested child input from an outer input position.
+     *
+     * A peered outer position has one bound output and takes the normal fast
+     * path. A fixed TSB/TSL assembled structurally has no root output; recurse
+     * into its children so each peered leaf is carried across the boundary.
+     */
+    inline void bind_nested_input_to_source(TSInputView target, TSInputView source,
+                                            DateTime evaluation_time, bool sampled)
+    {
+        const auto source_output = source.bound_output();
+        if (source_output.bound())
+        {
+            if (sampled)
+            {
+                bind_sampled_input_to_source(std::move(target), source_output, evaluation_time);
+            }
+            else { bind_input_to_source(std::move(target), source_output); }
+            return;
+        }
+
+        if (source.is_bindable())
+        {
+            if (sampled)
+            {
+                bind_sampled_input_to_source(std::move(target), source_output, evaluation_time);
+            }
+            else { bind_input_to_source(std::move(target), source_output); }
+            return;
+        }
+
+        const auto *source_schema = source.schema();
+        const auto *target_schema = target.schema();
+        const auto fixed_child_count = [](const TSValueTypeMetaData *schema) -> std::size_t {
+            if (schema == nullptr) { return 0; }
+            if (schema->kind == TSTypeKind::TSB) { return schema->field_count(); }
+            if (schema->kind == TSTypeKind::TSL) { return schema->fixed_size(); }
+            return 0;
+        };
+        const std::size_t source_children = fixed_child_count(source_schema);
+        const std::size_t target_children = fixed_child_count(target_schema);
+        if (source_schema == nullptr || target_schema == nullptr ||
+            source_schema->kind != target_schema->kind || source_children != target_children ||
+            target.is_bindable())
+        {
+            throw std::logic_error(
+                "Nested structural input binding requires matching non-peered fixed structures");
+        }
+
+        for (std::size_t index = 0; index < source_children; ++index)
+        {
+            bind_nested_input_to_source(target.indexed_child_at(index), source.indexed_child_at(index),
+                                        evaluation_time, sampled);
+        }
+    }
+
+    /**
      * Resolve a source through any already-bound forwarding-output chain.
      *
      * If a keyed parent has re-homed a nested terminal (for example a switch

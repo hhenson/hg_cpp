@@ -23,7 +23,7 @@ of truth.  It distinguishes four states deliberately:
 Review Snapshot: 2026-07-14
 ---------------------------
 
-This review was made against the working tree based on ``f77bbc2d``, including
+This review was made against the working tree based on ``675ce8ca``, including
 the completed mutable-output, structural-REF, constrained-generic, and nested
 explicit-key map work described below, plus the logging compatibility follow-on.
 Evidence came from the public implementation and tests, the commit history,
@@ -47,7 +47,7 @@ The important corrections to the previous roadmap are:
   surface.
 - All 48 upstream operator-test files are present under
   ``python/tests/ported/_operators``.  The wiring tier is only a selected port:
-  19 files are present under ``python/tests/ported/_wiring``.  It must not be
+  20 files are present under ``python/tests/ported/_wiring``.  It must not be
   described as the entire upstream wiring suite.
 - The current operator inventory is **134 registered**, **0 declared-only**,
   **7 missing**, and **24 equivalent APIs** out of the 165 upstream public
@@ -87,6 +87,15 @@ working tree also passed the Ubuntu GCC 13.3 Debug bridge build with
 AddressSanitizer enabled: the full suite under Python 3.12.3 produced 991
 passed, 22 skipped, and 6 deselected with no sanitizer report.
 
+The structural-REF wiring follow-on passed clean macOS arm64/AppleClang 21 and
+Ubuntu 24.04 x86_64/GCC 13.3 Release gates with warnings as errors.  The native
+results were 1030/1030 on macOS after the logging follow-on landed and
+1029/1029 on Linux immediately before it landed.  Rebuilt ``cp312-abi3`` wheels
+installed in fresh Python 3.14.6 environments produced 1007 passed, 22 skipped,
+and 6 deselected on each platform.  This increment adds the pinned upstream REF
+wiring pack, exact nested REF-shape adaptation for Python user nodes, and direct
+structural TSB/TSL branch binding through the C++ switch runtime.
+
 These are execution results, not collection-only inventory.
 
 Replacement Readiness
@@ -110,8 +119,9 @@ the following are true:
 3. The unported upstream ``_wiring`` and ``ts_tests`` inventories have been
    reviewed against a recorded upstream revision.  Required cases must be
    ported; irrelevant internals and accepted deviations must be listed rather
-   than silently omitted.  The old ``ext/main`` checkout is gone, so future
-   inventories must name the upstream tag or commit used as the baseline.
+   than silently omitted.  The current audit baseline is the ``ext/main``
+   submodule at upstream commit ``4760fccadd5368b0482393e5acb0ceaac48518e9``;
+   future inventory updates must record any baseline change explicitly.
 4. Every supported Python-visible runtime behaviour has an equivalent public
    C++ wiring route and comparable behavioural tests.  Bridge-only syntax and
    arbitrary Python-object adaptation are the narrow exceptions.
