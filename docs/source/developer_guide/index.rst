@@ -11,6 +11,7 @@ The developer guide describes the internal design of the C++ implementation. The
    documentation_conventions
    roadmap
    architecture
+   binding_vocabulary
    data_structures
    wiring
    graph_wiring

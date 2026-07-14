@@ -1,6 +1,9 @@
 Linking Strategies
 ==================
 
+The terms structural, peered, sampled, active, and published follow the
+definitions in :doc:`../binding_vocabulary`.
+
 Time-series instances rarely operate in isolation. A node's input
 borrows another node's output; a ``REF`` value resolves into a target
 output; a nested graph's output is presented as a parent's output

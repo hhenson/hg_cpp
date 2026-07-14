@@ -459,15 +459,16 @@ embedded records while strict checked conversion of a raw Data-role handle to
 Output-role composed type directly; excluded alternative families remain
 binding-backed ownership leaves.
 
-Active target-link inputs also notify on live bind operations. Binding
-or rebinding an active input to an already-valid source schedules the
-owning node at the current evaluation time, even if the source did not
-modify during that cycle. Rebinding an existing active target schedules
-for the same reason: the sampled source identity changed. Unbinding a
-valid active target schedules so the owning node can observe the input
-becoming invalid. This is the sampled-input mechanism used by nested
-operators such as ``switch_``; it writes the graph schedule table through
-the normal notification path rather than bypassing node evaluation.
+Active target-link inputs also notify on sampled live bind operations. Binding
+or rebinding an active input to an already-valid source schedules the owning
+node at the current evaluation time, even if the source did not modify during
+that cycle. Rebinding an existing active target schedules for the same reason:
+the sampled source identity changed. Scalar and fixed-shape REF unbinds remain
+silent; keyed ``TSS``/``TSD`` unbinds schedule only when they reconcile a
+previously published key set. This is the sampled-input mechanism used by
+nested operators such as ``switch_``; it writes the graph schedule table
+through the normal notification path rather than bypassing node evaluation.
+See :doc:`../../binding_vocabulary` for the terminology.
 
 Non-peered input prefixes are structural TSData projections with Input-role
 type records and value projections. They do not copy the bound output's

@@ -5,6 +5,9 @@ This page starts with the logical data structures used by the runtime. The goal 
 
 The first implementation should keep these structures simple and explicit. Once the relationships are stable, each element can be refined into arena storage, packed arrays, intrusive handles, or type-specialized storage where that provides measurable value.
 
+The binding and scheduling terms reused by these chapters are defined in
+:doc:`binding_vocabulary`.
+
 The chapters below split the description by responsibility:
 
 - *Core Concepts* introduces the Plan / Schema / Ops / Builder / Value /
