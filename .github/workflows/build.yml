@@ -134,12 +134,15 @@ jobs:
         include:
           - os: ubuntu-latest
             parallel: "2"
+            cmake_generator: Ninja
             cmake_args: -DHGRAPH_WARNINGS_AS_ERRORS=ON
           - os: windows-latest
             parallel: "2"
+            cmake_generator: Visual Studio 18 2026
             cmake_args: -DHGRAPH_WARNINGS_AS_ERRORS=OFF
           - os: macos-26
             parallel: "1"
+            cmake_generator: Ninja
             cmake_args: -DHGRAPH_WARNINGS_AS_ERRORS=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
 
     steps:
@@ -161,6 +164,7 @@ jobs:
         run: python -m pip install --upgrade build abi3audit
       - name: Build stable ABI wheel
         env:
+          CMAKE_GENERATOR: ${{ matrix.cmake_generator }}
           CMAKE_ARGS: ${{ matrix.cmake_args }}
           CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.parallel }}
         run: python -m build --wheel
@@ -290,26 +294,14 @@ jobs:
       - reuse-build
     if: needs.reuse-build.outputs.run-id == ''
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             parallel: "2"
-            generator: Ninja
-            warnings_as_errors: "ON"
-            experimental: false
           - os: macos-26
             parallel: "1"
-            generator: Ninja
-            warnings_as_errors: "ON"
-            experimental: false
-          - os: windows-2025-vs2026
-            parallel: "2"
-            generator: Visual Studio 18 2026
-            warnings_as_errors: "OFF"
-            experimental: true
 
     steps:
       - uses: actions/checkout@v6
@@ -334,20 +326,14 @@ jobs:
           from pathlib import Path
           import pyarrow
 
-          root = Path(pyarrow.__file__).resolve().parent
-          runtime_dirs = [root]
-          support_dir = root.parent / "pyarrow.libs"
-          if support_dir.is_dir():
-              runtime_dirs.append(support_dir)
           with open(os.environ["GITHUB_PATH"], "a", encoding="utf-8") as path_file:
-              for runtime_dir in runtime_dirs:
-                  path_file.write(str(runtime_dir) + "\n")
+              path_file.write(str(Path(pyarrow.__file__).resolve().parent) + "\n")
       - name: Configure native C++ tests
-        run: cmake -S . -B build-native -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DHGRAPH_BUILD_PYTHON_BINDINGS=OFF -DHGRAPH_ENABLE_PYTHON_USER_NODES=OFF -DHGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS=OFF -DHGRAPH_USE_PYARROW_ARROW=ON -DHGRAPH_FETCH_SIMDJSON=ON -DHGRAPH_ENABLE_DEBUGGER_SMOKE_TESTS=ON -DHGRAPH_WARNINGS_AS_ERRORS=${{ matrix.warnings_as_errors }}
+        run: cmake -S . -B build-native -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DHGRAPH_BUILD_PYTHON_BINDINGS=OFF -DHGRAPH_ENABLE_PYTHON_USER_NODES=OFF -DHGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS=OFF -DHGRAPH_USE_PYARROW_ARROW=ON -DHGRAPH_FETCH_SIMDJSON=ON -DHGRAPH_ENABLE_DEBUGGER_SMOKE_TESTS=ON -DHGRAPH_WARNINGS_AS_ERRORS=ON
       - name: Build native C++ tests
-        run: cmake --build build-native --config Release --parallel ${{ matrix.parallel }}
+        run: cmake --build build-native --parallel ${{ matrix.parallel }}
       - name: Run native C++ tests
-        run: ctest --test-dir build-native -C Release --output-on-failure --parallel ${{ matrix.parallel }}
+        run: ctest --test-dir build-native --output-on-failure --parallel ${{ matrix.parallel }}
 
   native-install:
     name: Native C++ / Linux shared install
