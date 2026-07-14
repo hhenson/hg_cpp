@@ -44,8 +44,10 @@ namespace hgraph::stdlib
     {
     };
 
-    /** ``log_`` — format and log the supplied values at ``level`` (a sink, variadic args). */
-    struct log_ : Operator<"log_", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>, Scalar<"level", Int>>
+    /** ``log_`` — format and log the supplied values at ``level`` (a sink,
+        with positional and named time-series arguments). */
+    struct log_ : Operator<"log_", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>,
+                           Scalar<"level", Int>, Scalar<"sample_count", Int>>
     {
     };
 
@@ -58,6 +60,14 @@ namespace hgraph::stdlib
         the print_ compose with the arguments packed into one bundle). */
     struct print_sink_op
         : Operator<"__print_sink", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>, Scalar<"to_stdout", Bool>>
+    {
+    };
+
+    /** ``__log_sink`` — the runtime half of ``log_`` after its positional and
+        named arguments have been packed into one bundle. */
+    struct log_sink_op
+        : Operator<"__log_sink", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>,
+                   Scalar<"level", Int>, Scalar<"sample_count", Int>>
     {
     };
 

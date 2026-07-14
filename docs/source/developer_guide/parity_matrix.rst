@@ -186,7 +186,7 @@ Standing residue, each marked precisely in the test file:
   dense) and the ``hgraph.stream`` status library
   (``Base[COMPOUND_SCALAR]`` Python generics). TSS rebind-to-empty removal
   semantics now execute through the keyed structural-REF implementation.
-- **Recorded deviations** — naive-datetime handling (4 xfails), the TSD key
+- **Recorded deviations** — naive-datetime handling (4 skips), the TSD key
   type resolved from a frame column, python wiring-node signature
   introspection, map children over EMPTY-REF projections, CompoundScalar
   string representation, ``convert`` from ``TS[object]`` dispatching on the

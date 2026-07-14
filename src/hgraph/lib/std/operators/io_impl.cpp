@@ -13,7 +13,8 @@ namespace hgraph::stdlib
         register_overload<record, memory_record_impl>();
         register_overload<replay, memory_replay_impl>();
         register_overload<compare, memory_compare_impl>();
-        register_overload<log_, log_impl>();
+        register_overload<log_sink_op, log_sink_impl>();
+        register_graph_overload<log_, log_compose>();
         register_overload<print_sink_op, print_sink_impl>();
         register_graph_overload<print_, print_compose>();
         register_overload<assert_, assert_plain_impl>();

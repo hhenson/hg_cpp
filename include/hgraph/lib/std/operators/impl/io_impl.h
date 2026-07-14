@@ -21,8 +21,7 @@ namespace hgraph::stdlib
     /**
      * Implementations + registration for the I/O / debug operators. The abstract markers
      * are in ``<hgraph/lib/std/operators/io.h>``; this file provides the concrete sinks and
-     * ``register_io_operators`` to register them. Only the diagnostic sinks (``debug_print``
-     * / ``null_sink``) are implemented so far.
+     * ``register_io_operators`` to register them.
      */
 
     /** The diagnostic-sink WRITER hook: defaults to C stdout/stderr; the
@@ -95,29 +94,27 @@ namespace hgraph::stdlib
         }
     };
 
-    /**
-     * ``log_`` implementation: formats the (runtime) format string with the
-     * rendered argument and logs through the LOGGER injectable. ``level``
-     * uses the spdlog scale (0 trace .. 5 critical; default info).
-     */
-    struct log_impl
+    /** ``__log_sink``: formats the packed arguments and logs through the
+        LOGGER injectable. Native levels use the spdlog 0..5 scale; Python's
+        standard 10..50 levels are normalized onto the same scale. */
+    struct log_sink_impl
     {
-        static constexpr auto name = "log_";
-
-        static std::vector<std::pair<std::string_view, Value>> defaults()
-        {
-            return {{"level", Value{Int{2}}}};   // info
-        }
+        static constexpr auto name = "log_sink";
 
         static void eval(In<"fmt", TS<Str>> format, In<"args", TsVar<"A">, InputValidity::Unchecked> args,
-                         Scalar<"level", Int> level, LoggerView log)
+                         Scalar<"level", Int> level, Scalar<"sample_count", Int> sample_count,
+                         State<Int> ticks, LoggerView log)
         {
-            // Check the level FIRST: no formatting (and no erased to_string
-            // rendering) when the message would be filtered out anyway.
-            const auto lvl = static_cast<int>(level.value());
+            const Int seen = ticks.get() + 1;
+            ticks.set(seen);
+            if (sample_count.value() > 1 && seen % sample_count.value() != 0) { return; }
+
+            const Int raw_level = level.value();
+            const auto lvl = static_cast<int>(raw_level >= 10 && raw_level <= 50 && raw_level % 10 == 0
+                                                  ? raw_level / 10
+                                                  : raw_level);
             if (!log.should_log(lvl)) { return; }
-            log.log(lvl, fmt::format(fmt::runtime(format.value()),
-                                     args.valid() ? args.value().to_string() : std::string{"<n/a>"}));
+            log.log(lvl, io_impl_detail::format_bundle(format.value(), args.base()));
         }
     };
 
@@ -275,6 +272,32 @@ namespace hgraph::stdlib
         static std::vector<std::pair<std::string_view, Value>> defaults()
         {
             return {{"__std_out__", Value{true}}};
+        }
+    };
+
+    /** ``log_(fmt, *args, level=..., sample_count=..., **kwargs)`` — pack the
+        format inputs once at wiring time and delegate runtime work to the
+        native logging sink. */
+    struct log_compose
+    {
+        static constexpr auto name = "log_compose";
+
+        static auto compose(Wiring &w, NamedPort<"fmt", TS<Str>> fmt,
+                            VarIn<"args", TsVar<"B">> positional,
+                            Scalar<"level", Int> level,
+                            Scalar<"sample_count", Int> sample_count,
+                            VarKwIn<"kwargs"> kwargs)
+        {
+            WiringPortRef packed = io_impl_detail::pack_format_args(
+                std::vector<WiringPortRef>{positional.begin(), positional.end()},
+                std::vector<std::pair<std::string, WiringPortRef>>{kwargs.begin(), kwargs.end()});
+            return wire<log_sink_op>(w, fmt, Port<void>{w, std::move(packed)},
+                                     level.value(), sample_count.value());
+        }
+
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"level", Value{Int{2}}}, {"sample_count", Value{Int{1}}}};
         }
     };
 

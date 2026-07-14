@@ -89,15 +89,16 @@ def test_print_stderr(capsys):
     assert "Contents" in capsys.readouterr().err
 
 
-@pytest.mark.xfail(reason="This passes when run on its own but not part of a suite. Something not cleaned up")
-def test_log_kwargs(capsys):
+# The C++ LOGGER writes through spdlog's native stream, so these tests use
+# file-descriptor capture rather than replacing Python's sys.stdout object.
+def test_log_kwargs(capfd):
     @graph
     def main(ts1: TS[str], ts2: TS[int]):
         log_("Error output {ts1} {ts2}", ts1=ts1, ts2=ts2, level=logging.ERROR)
         log_("Info output {ts1} {ts2}", ts1=ts1, ts2=ts2, level=logging.INFO)
 
     eval_node(main, ["Test"], [1])
-    out = capsys.readouterr()
+    out = capfd.readouterr()
     if out.err:
         output = out.err
     else:
@@ -107,14 +108,13 @@ def test_log_kwargs(capsys):
     # assert "[INFO] Info output Test 1" in output
 
 
-@pytest.mark.xfail(reason="This passes when run on its own but not part of a suite. Something not cleaned up")
-def test_log_args(capsys):
+def test_log_args(capfd):
     @graph
     def main(ts1: TS[str], ts2: TS[int]):
         log_("Error output {} {}", ts1, ts2, level=logging.ERROR)
 
     eval_node(main, ["Test"], [1])
-    out = capsys.readouterr()
+    out = capfd.readouterr()
     if out.err:
         output = out.err
     else:
@@ -122,14 +122,13 @@ def test_log_args(capsys):
     assert "Error output Test 1" in output
 
 
-@pytest.mark.xfail(reason="This passes when run on its own but not part of a suite. Something not cleaned up")
-def test_log_no_args_or_kwargs(capsys):
+def test_log_no_args_or_kwargs(capfd):
     @graph
     def main():
         log_("Error output Test 1", level=logging.ERROR)
 
     eval_node(main)
-    out = capsys.readouterr()
+    out = capfd.readouterr()
     if out.err:
         output = out.err
     else:
@@ -137,15 +136,14 @@ def test_log_no_args_or_kwargs(capsys):
     assert "Error output Test 1" in output
 
 
-@pytest.mark.xfail(reason="This passes when run on its own but not part of a suite. Something not cleaned up")
-def test_log_sample(capsys):
+def test_log_sample(capfd):
 
     @graph
     def g(ts: TS[str]):
         log_("Sample output {}", ts, sample_count=3, level=logging.ERROR)
 
     eval_node(g, ["a", "b", "c", "d", "e"])
-    out = capsys.readouterr()
+    out = capfd.readouterr()
     if out.err:
         output = out.err
     else:

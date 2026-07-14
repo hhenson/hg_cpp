@@ -23,9 +23,9 @@ of truth.  It distinguishes four states deliberately:
 Review Snapshot: 2026-07-14
 ---------------------------
 
-This review was made against the working tree based on ``1c98e6fe``, including
+This review was made against the working tree based on ``f77bbc2d``, including
 the completed mutable-output, structural-REF, constrained-generic, and nested
-explicit-key map work described below.
+explicit-key map work described below, plus the logging compatibility follow-on.
 Evidence came from the public implementation and tests, the commit history,
 :doc:`parity_matrix`, :doc:`python_integration`, :doc:`nested_graphs`, and
 :doc:`services`.
@@ -56,8 +56,8 @@ The important corrections to the previous roadmap are:
   raw ``operator_names()`` count is intentionally larger and is not the parity
   numerator.
 
-The current A3, compiled-boundary REF, constrained-generic, and nested-map
-working tree passed the full acceptance gates on both local platforms:
+The A3, compiled-boundary REF, constrained-generic, and nested-map baseline
+passed the full acceptance gates on both local platforms:
 
 - macOS arm64, AppleClang 21, Release with warnings as errors: 1018/1018 native
   tests; a ``cp312-abi3`` wheel installed under Python 3.14.6 produced 986
@@ -69,6 +69,13 @@ working tree passed the full acceptance gates on both local platforms:
   AddressSanitizer and the Python bridge enabled: the full non-WIP suite under
   Python 3.12.3 produced 986 passed, 22 skipped, 4 xfailed, and 6 deselected
   with no sanitizer report.
+
+The subsequent C++-first ``log_`` compatibility work passed the clean macOS
+Release gate with 1021/1021 native tests.  Its rebuilt ``cp312-abi3`` wheel,
+installed under Python 3.14.6, produced 990 passed, 22 skipped, and 6
+deselected, with no remaining xfails.  This follow-on did not change nested
+storage, ownership, or cross-language lifetime behaviour, so the Linux and
+sanitizer evidence above remains the applicable baseline for those areas.
 
 These are execution results, not collection-only inventory.
 

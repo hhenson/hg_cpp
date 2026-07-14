@@ -76,6 +76,48 @@ namespace
             return ts;
         }
     };
+
+    struct VariadicLogGraph
+    {
+        static constexpr auto name = "variadic_log_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> text, Port<TS<Int>> number)
+        {
+            auto positional = wire<stdlib::const_>(w, Str{"positional {} {}"}).as<TS<Str>>();
+            wire<stdlib::log_>(w, positional, text, number, arg<"level">(Int{40}));
+
+            auto named = wire<stdlib::const_>(w, Str{"named {text} {number}"}).as<TS<Str>>();
+            wire<stdlib::log_>(w, named, arg<"text">(text), arg<"number">(number),
+                               arg<"level">(Int{40}));
+            return text;
+        }
+    };
+
+    struct EmptyLogGraph
+    {
+        static constexpr auto name = "empty_log_graph";
+
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            auto value = wire<stdlib::const_>(w, Int{1}).as<TS<Int>>();
+            auto format = wire<stdlib::const_>(w, Str{"no arguments"}).as<TS<Str>>();
+            wire<stdlib::log_>(w, format, arg<"level">(Int{40}));
+            return value;
+        }
+    };
+
+    struct SampledLogGraph
+    {
+        static constexpr auto name = "sampled_log_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> text)
+        {
+            auto format = wire<stdlib::const_>(w, Str{"sampled {}"}).as<TS<Str>>();
+            wire<stdlib::log_>(w, format, text, arg<"level">(Int{40}),
+                               arg<"sample_count">(Int{3}));
+            return text;
+        }
+    };
 }  // namespace
 
 TEST_CASE("logger: the LoggerView injectable logs from start and eval hooks")
@@ -110,4 +152,42 @@ TEST_CASE("logger: log_ skips formatting when the level is filtered out")
     CHECK_THAT(captured.joined(), !Catch::Matchers::ContainsSubstring("quiet 1"));
     CHECK(!LoggerView{&log::logger()}.should_log(2));   // info filtered
     CHECK(LoggerView{&log::logger()}.should_log(4));    // error passes
+}
+
+TEST_CASE("logger: log_ formats positional and named time-series arguments")
+{
+    stdlib::register_standard_operators();
+    CapturedLog captured;
+
+    CHECK_OUTPUT(eval_node<VariadicLogGraph>(values<Str>("value"), values<Int>(42)),
+                 values<Str>("value"));
+
+    const std::string all = captured.joined();
+    CHECK_THAT(all, Catch::Matchers::ContainsSubstring("positional value 42"));
+    CHECK_THAT(all, Catch::Matchers::ContainsSubstring("named value 42"));
+}
+
+TEST_CASE("logger: log_ supports an empty format-argument pack")
+{
+    stdlib::register_standard_operators();
+    CapturedLog captured;
+
+    CHECK_OUTPUT(eval_node<EmptyLogGraph>(), values<Int>(1));
+    CHECK_THAT(captured.joined(), Catch::Matchers::ContainsSubstring("no arguments"));
+}
+
+TEST_CASE("logger: log_ sample_count emits every nth evaluation")
+{
+    stdlib::register_standard_operators();
+    CapturedLog captured;
+
+    CHECK_OUTPUT(eval_node<SampledLogGraph>(values<Str>("a", "b", "c", "d", "e")),
+                 values<Str>("a", "b", "c", "d", "e"));
+
+    const std::string all = captured.joined();
+    CHECK_THAT(all, Catch::Matchers::ContainsSubstring("sampled c"));
+    CHECK_THAT(all, !Catch::Matchers::ContainsSubstring("sampled a"));
+    CHECK_THAT(all, !Catch::Matchers::ContainsSubstring("sampled b"));
+    CHECK_THAT(all, !Catch::Matchers::ContainsSubstring("sampled d"));
+    CHECK_THAT(all, !Catch::Matchers::ContainsSubstring("sampled e"));
 }
