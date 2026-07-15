@@ -11,6 +11,7 @@
 #include <hgraph/runtime/ordered_reduce_node.h>
 #include <hgraph/runtime/reduce_node.h>
 #include <hgraph/runtime/switch_node.h>
+#include <hgraph/runtime/tsl_map_node.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/wired_fn.h>
@@ -1859,6 +1860,9 @@ namespace hgraph::stdlib
         {
         };
 
+        struct dynamic_tsl_map_node_tag
+        {};
+
         /**
          * Classify the ``map_`` time-series arguments, Python-style: every
          * TSD argument is **multiplexed** (the key types must all agree —
@@ -1869,9 +1873,9 @@ namespace hgraph::stdlib
          */
         struct MapArgClassification
         {
-            std::vector<bool>                        is_multiplexed{};   ///< per ts arg (call order)
-            std::vector<bool>                        exclude_from_keys{};///< per ts arg: ``no_key`` tag
-            std::vector<const TSValueTypeMetaData *> child_schemas{};    ///< per ts arg: element or whole schema
+            std::vector<bool>                        is_multiplexed{};     ///< per ts arg (call order)
+            std::vector<bool>                        exclude_from_keys{};  ///< per ts arg: ``no_key`` tag
+            std::vector<const TSValueTypeMetaData *> child_schemas{};      ///< per ts arg: element or whole schema
             const ValueTypeMetaData                 *key_meta{nullptr};
         };
 
@@ -1881,11 +1885,9 @@ namespace hgraph::stdlib
          * ``no_key`` keeps the TSD multiplexed but excludes it from key-set
          * inference.
          */
-        [[nodiscard]] inline MapArgClassification classify_map_args(
-            std::span<const TSValueTypeMetaData *const> ts_schemas,
-            std::span<const std::uint8_t> arg_tags,
-            const ValueTypeMetaData *fallback_key_meta = nullptr)
-        {
+        [[nodiscard]] inline MapArgClassification classify_map_args(std::span<const TSValueTypeMetaData *const> ts_schemas,
+                                                                    std::span<const std::uint8_t>               arg_tags,
+                                                                    const ValueTypeMetaData *fallback_key_meta = nullptr) {
             MapArgClassification result;
             result.is_multiplexed.reserve(ts_schemas.size());
             result.exclude_from_keys.reserve(ts_schemas.size());
@@ -2579,7 +2581,6 @@ namespace hgraph::stdlib
             bind_graph_output(resolution, *output_schema, "O");
         }
 
-        /** The first collection in ``func`` parameter order decides which map kernel applies. */
         /** The first NON-pass-through collection decides the map kernel. */
         [[nodiscard]] inline const TSValueTypeMetaData *first_map_collection(OperatorCallContext context)
         {
@@ -2598,8 +2599,7 @@ namespace hgraph::stdlib
                 {
                     return schema;
                 }
-                if (const auto *schema = time_series_schema_as<AnyTSL>(ordered->schemas[i]);
-                    schema != nullptr && schema->fixed_size() > 0)
+                if (const auto *schema = time_series_schema_as<AnyTSL>(ordered->schemas[i]))
                 {
                     return schema;
                 }
@@ -3008,191 +3008,325 @@ namespace hgraph::stdlib
                 input_schema, std::span<const WiringPortRef>{ordered.data(), ordered.size()}));
 
             (void)scalar_descriptor<MapCallConfig>::value_meta();
-            WiringPortRef out = w.add_node(std::type_index(typeid(lifted_map_tsl_node_tag)),
-                                           std::move(builder),
+            WiringPortRef out = w.add_node(std::type_index(typeid(lifted_map_tsl_node_tag)), std::move(builder),
                                            std::span<const WiringPortRef>{ordered.data(), ordered.size()},
                                            Value{MapCallConfig{func, Str{key_arg}, Str{}, arg_tags}});
             return out;
         }
 
-        [[nodiscard]] inline WiringPortRef wire_map_tsl(Wiring &w, const WiredFn &func, bool takes_key,
-                                                        std::vector<WiringPortRef> ordered)
-        {
+        [[nodiscard]] inline WiringPortRef wire_fixed_map_tsl(Wiring &w, const WiredFn &func, bool takes_key,
+                                                              std::vector<WiringPortRef> ordered, bool output_required) {
             auto &registry = TypeRegistry::instance();
 
             // The first fixed TSL anchors the size; every same-size fixed TSL
             // multiplexes per index, the rest broadcast whole.
             std::size_t size = 0;
-            for (const WiringPortRef &port : ordered)
-            {
-                if (port.arg_tag == WiringPortRef::ArgTag::NoKey)
-                {
+            for (const WiringPortRef &port : ordered) {
+                if (port.arg_tag == WiringPortRef::ArgTag::NoKey) {
                     throw std::invalid_argument("map_: 'no_key' applies to TSD maps only");
                 }
                 if (port.arg_tag == WiringPortRef::ArgTag::PassThrough) { continue; }
                 const auto *schema = time_series_schema_as<AnyTSL>(port.schema);
-                if (schema != nullptr && schema->fixed_size() > 0)
-                {
+                if (schema != nullptr && schema->fixed_size() > 0) {
                     size = schema->fixed_size();
                     break;
                 }
             }
-            if (size == 0)
-            {
-                throw std::invalid_argument("map_: at least one input must be a fixed-size TSL");
-            }
-            if (!func.has_output)
-            {
-                throw std::invalid_argument("map_: 'func' must produce an output");
+            if (size == 0) { throw std::invalid_argument("map_: at least one input must be a fixed-size TSL"); }
+            if (func.has_output != output_required) {
+                throw std::invalid_argument(output_required ? "map_: 'func' must produce an output"
+                                                            : "map_sink_: 'func' must be a sink");
             }
 
             const auto *key_meta = scalar_descriptor<Int>::value_meta();
             const auto *key_ts   = registry.ts(key_meta);
 
             std::vector<WiringPortRef> children;
-            children.reserve(size);
-            for (std::size_t i = 0; i < size; ++i)
-            {
+            if (output_required) { children.reserve(size); }
+            for (std::size_t i = 0; i < size; ++i) {
                 std::vector<WiringPortRef> args;
                 args.reserve(func.arity);
-                if (takes_key)
-                {
+                if (takes_key) {
                     WiringArg key_arg;
                     key_arg.kind         = WiringArg::Kind::Scalar;
                     key_arg.scalar_value = Value{static_cast<Int>(i)};
                     key_arg.scalar_meta  = key_meta;
                     args.push_back(wire_operator(w, "const", {&key_arg, 1}, true, key_ts).output.erased());
                 }
-                for (const WiringPortRef &tail : ordered)
-                {
-                    if (tail.arg_tag != WiringPortRef::ArgTag::PassThrough &&
-                        tsl_arg_is_multiplexed(tail.schema, size))
-                    {
+                for (const WiringPortRef &tail : ordered) {
+                    if (tail.arg_tag != WiringPortRef::ArgTag::PassThrough && tsl_arg_is_multiplexed(tail.schema, size)) {
                         const auto *tail_element = time_series_schema_as<AnyTSL>(tail.schema)->element_ts();
                         args.push_back(subgraph_wiring_detail::tsl_element_ref(tail, i, tail_element));
+                    } else {
+                        args.push_back(tail);
                     }
-                    else { args.push_back(tail); }
                 }
 
                 WiringPortRef out = func.wire(w, {args.data(), args.size()});
-                if (!children.empty() &&
-                    !time_series_schema_equivalent(registry.dereference(out.schema),
-                                                   registry.dereference(children.front().schema)))
-                {
-                    throw std::invalid_argument(
-                        "map_: 'func' produced differing output schemas across the TSL indices");
+                if (!output_required) { continue; }
+                if (out.schema == nullptr) { throw std::invalid_argument("map_: 'func' must produce an output"); }
+                if (!children.empty() && !time_series_schema_equivalent(registry.dereference(out.schema),
+                                                                        registry.dereference(children.front().schema))) {
+                    throw std::invalid_argument("map_: 'func' produced differing output schemas across the TSL indices");
                 }
                 children.push_back(std::move(out));
             }
 
+            if (!output_required) { return {}; }
             const auto *output_schema = registry.tsl(children.front().schema, size);
             return WiringPortRef::structural_source(output_schema, std::move(children));
         }
 
+        [[nodiscard]] inline TslMapNodeSpec compile_dynamic_tsl_map_child(const WiredFn &func, bool takes_index,
+                                                                          std::span<const TSValueTypeMetaData *const> ts_schemas,
+                                                                          std::span<const std::uint8_t>               arg_tags,
+                                                                          const TSValueTypeMetaData                 *&output_schema,
+                                                                          std::vector<WiringPortRef>                 &captured) {
+            if (!func.valid()) { throw std::invalid_argument("map_: 'func' must be a wirable function (fn<X>())"); }
+
+            auto       &registry = TypeRegistry::instance();
+            const auto *index_ts = registry.ts(scalar_descriptor<Int>::value_meta());
+
+            std::vector<bool>                        multiplexed;
+            std::vector<const TSValueTypeMetaData *> child_schemas;
+            multiplexed.reserve(ts_schemas.size());
+            child_schemas.reserve(ts_schemas.size() + (takes_index ? 1 : 0));
+            if (takes_index) { child_schemas.push_back(index_ts); }
+
+            bool found_dynamic_tsl = false;
+            for (std::size_t i = 0; i < ts_schemas.size(); ++i) {
+                const auto tag =
+                    i < arg_tags.size() ? static_cast<WiringPortRef::ArgTag>(arg_tags[i]) : WiringPortRef::ArgTag::None;
+                if (tag == WiringPortRef::ArgTag::NoKey) { throw std::invalid_argument("map_: 'no_key' applies to TSD maps only"); }
+                const auto *tsl            = time_series_schema_as<AnyTSL>(ts_schemas[i]);
+                const bool  is_multiplexed = tag != WiringPortRef::ArgTag::PassThrough && tsl != nullptr && tsl->fixed_size() == 0;
+                multiplexed.push_back(is_multiplexed);
+                child_schemas.push_back(is_multiplexed ? tsl->element_ts() : ts_schemas[i]);
+                found_dynamic_tsl = found_dynamic_tsl || is_multiplexed;
+            }
+            if (!found_dynamic_tsl) { throw std::invalid_argument("map_: at least one input must be a dynamic TSL"); }
+
+            CompiledSubGraph compiled         = func.compile({child_schemas.data(), child_schemas.size()});
+            const bool       child_has_output = compiled.output_schema != nullptr;
+            if (compiled.output_binding.has_value() != child_has_output) {
+                throw std::invalid_argument("map_: the function output schema and nested "
+                                            "output binding must agree");
+            }
+
+            TslMapNodeSpec spec;
+            spec.child.graph_builder  = std::move(compiled.graph_builder);
+            spec.child.input_bindings = std::move(compiled.input_bindings);
+            spec.child.output_binding = compiled.output_binding;
+            spec.index_output_schema  = takes_index ? index_ts : nullptr;
+
+            if (child_has_output) {
+                const auto &binding = *spec.child.output_binding;
+                if (binding.kind == NestedGraphOutputBinding::Kind::ParentInput) {
+                    throw std::invalid_argument("map_: dynamic TSL child pass-through outputs are not supported");
+                }
+                if (!binding.source.path.empty()) {
+                    throw std::invalid_argument("map_: dynamic TSL function output must be a whole node output");
+                }
+                if (binding.source.node >= spec.child.graph_builder.node_count()) {
+                    throw std::invalid_argument("map_: dynamic TSL function output node is out of range");
+                }
+
+                NodeBuilder            &terminal          = spec.child.graph_builder.node_at(binding.source.node);
+                const TSEndpointSchema &terminal_override = terminal.output_endpoint();
+                const NodeTypeMetaData *terminal_meta     = terminal.type().schema();
+                const TSEndpointSchema &terminal_declared =
+                    terminal_meta != nullptr ? terminal_meta->output_endpoint_schema : terminal_override;
+                const TSEndpointSchema &terminal_endpoint = !terminal_override.empty() ? terminal_override : terminal_declared;
+                if (!terminal_endpoint.empty() && (terminal_endpoint.is_peered() || terminal_endpoint.is_non_peered())) {
+                    throw std::invalid_argument("map_: dynamic TSL functions must return an "
+                                                "ordinary owned terminal output");
+                }
+                terminal.output_endpoint(TSEndpointSchema::peered(compiled.output_schema));
+                output_schema = registry.tsl(compiled.output_schema, 0);
+            } else {
+                output_schema = nullptr;
+            }
+
+            spec.args.reserve(child_schemas.size() + compiled.captured_inputs.size());
+            if (takes_index) { spec.args.push_back(MapArgSource{.kind = MapArgSourceKind::Key}); }
+            for (std::size_t i = 0; i < ts_schemas.size(); ++i) {
+                if (multiplexed[i]) {
+                    spec.args.push_back(MapArgSource{
+                        .kind        = MapArgSourceKind::Element,
+                        .outer_index = i,
+                    });
+                    spec.multiplexed_inputs.push_back(i);
+                } else {
+                    spec.args.push_back(MapArgSource{
+                        .kind        = MapArgSourceKind::OuterInput,
+                        .outer_index = i,
+                    });
+                }
+            }
+            for (std::size_t i = 0; i < compiled.captured_inputs.size(); ++i) {
+                spec.args.push_back(MapArgSource{
+                    .kind        = MapArgSourceKind::OuterInput,
+                    .outer_index = ts_schemas.size() + i,
+                });
+            }
+            captured = std::move(compiled.captured_inputs);
+            return spec;
+        }
+
+        [[nodiscard]] inline WiringPortRef wire_dynamic_map_tsl(Wiring &w, const WiredFn &func, std::string_view key_arg,
+                                                                bool takes_index, std::vector<WiringPortRef> ordered,
+                                                                bool output_required) {
+            std::vector<const TSValueTypeMetaData *> ts_schemas;
+            std::vector<std::uint8_t>                arg_tags;
+            ts_schemas.reserve(ordered.size());
+            arg_tags.reserve(ordered.size());
+            for (const WiringPortRef &port : ordered) {
+                ts_schemas.push_back(port.schema);
+                arg_tags.push_back(static_cast<std::uint8_t>(port.arg_tag));
+            }
+
+            const TSValueTypeMetaData *output_schema = nullptr;
+            std::vector<WiringPortRef> captured;
+            TslMapNodeSpec spec = compile_dynamic_tsl_map_child(func, takes_index, {ts_schemas.data(), ts_schemas.size()},
+                                                                {arg_tags.data(), arg_tags.size()}, output_schema, captured);
+            if ((output_schema != nullptr) != output_required) {
+                throw std::invalid_argument(output_required ? "map_: 'func' must produce an output"
+                                                            : "map_sink_: 'func' must be a sink");
+            }
+
+            for (WiringPortRef &outer : captured) {
+                ts_schemas.push_back(outer.schema);
+                arg_tags.push_back(static_cast<std::uint8_t>(WiringPortRef::ArgTag::PassThrough));
+                ordered.push_back(std::move(outer));
+            }
+
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+            fields.reserve(ts_schemas.size());
+            for (std::size_t i = 0; i < ts_schemas.size(); ++i) { fields.emplace_back(std::to_string(i), ts_schemas[i]); }
+            const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
+
+            WiringNodeSchema node_schema;
+            node_schema.input  = input_schema;
+            node_schema.output = output_schema;
+
+            (void)scalar_descriptor<MapCallConfig>::value_meta();
+            return w.add_node(std::type_index(typeid(dynamic_tsl_map_node_tag)), node_schema,
+                              std::span<const WiringPortRef>{ordered.data(), ordered.size()},
+                              Value{MapCallConfig{func, Str{key_arg}, Str{}, arg_tags}}, [&]() {
+                                  NodeTypeMetaData meta;
+                                  meta.display_name  = "map_";
+                                  meta.input_schema  = input_schema;
+                                  meta.output_schema = output_schema;
+
+                                  NodeBuilder builder = tsl_map_node(std::move(meta), std::move(spec));
+                                  builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                                      input_schema, std::span<const WiringPortRef>{ordered.data(), ordered.size()}));
+                                  return builder;
+                              });
+        }
+
+        [[nodiscard]] inline WiringPortRef wire_map_tsl(Wiring &w, const WiredFn &func, std::string_view key_arg, bool takes_key,
+                                                        std::vector<WiringPortRef> ordered, bool output_required) {
+            bool        found_collection = false;
+            std::size_t size             = 0;
+            for (const WiringPortRef &port : ordered) {
+                if (port.arg_tag == WiringPortRef::ArgTag::NoKey) {
+                    throw std::invalid_argument("map_: 'no_key' applies to TSD maps only");
+                }
+                if (port.arg_tag == WiringPortRef::ArgTag::PassThrough) { continue; }
+                const auto *schema = time_series_schema_as<AnyTSL>(port.schema);
+                if (schema != nullptr) {
+                    found_collection = true;
+                    size             = schema->fixed_size();
+                    break;
+                }
+            }
+            if (!found_collection) { throw std::invalid_argument("map_: at least one input must be a TSL"); }
+            if (size == 0) { return wire_dynamic_map_tsl(w, func, key_arg, takes_key, std::move(ordered), output_required); }
+            return wire_fixed_map_tsl(w, func, takes_key, std::move(ordered), output_required);
+        }
+
         /** Bind the output var ``O`` for the resolver: ``TSL<OUT(func), SIZE>``. */
-        inline void resolve_map_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
-        {
+        inline void resolve_map_tsl_output(ResolutionMap &resolution, OperatorCallContext context) {
             if (resolution.find_ts("__out__") != nullptr) { return; }
 
             const WiredFn *func = context.scalar_as<WiredFn>("func");
             if (func == nullptr) { return; }
 
             auto &registry = TypeRegistry::instance();
-            auto ordered = ordered_map_schemas(context, "ndx");
+            auto  ordered  = ordered_map_schemas(context, "ndx");
             if (!ordered.has_value()) { return; }
 
-            try
-            {
+            try {
                 auto tag_at = [&](std::size_t index) {
-                    return index < ordered->arg_tags.size()
-                               ? static_cast<WiringPortRef::ArgTag>(ordered->arg_tags[index])
-                               : WiringPortRef::ArgTag::None;
+                    return index < ordered->arg_tags.size() ? static_cast<WiringPortRef::ArgTag>(ordered->arg_tags[index])
+                                                            : WiringPortRef::ArgTag::None;
                 };
 
                 // A no_key TSL still anchors the size here so resolution
                 // succeeds and compose can reject it with the clear message.
-                std::size_t size = 0;
-                for (std::size_t i = 0; i < ordered->schemas.size(); ++i)
-                {
+                bool        found_collection = false;
+                std::size_t size             = 0;
+                for (std::size_t i = 0; i < ordered->schemas.size(); ++i) {
                     if (tag_at(i) == WiringPortRef::ArgTag::PassThrough) { continue; }
                     const auto *tsl = time_series_schema_as<AnyTSL>(ordered->schemas[i]);
-                    if (tsl != nullptr && tsl->fixed_size() > 0)
-                    {
-                        size = tsl->fixed_size();
+                    if (tsl != nullptr) {
+                        found_collection = true;
+                        size             = tsl->fixed_size();
                         break;
                     }
                 }
-                if (size == 0) { return; }
+                if (!found_collection) { return; }
 
                 std::vector<const TSValueTypeMetaData *> schemas;
                 schemas.reserve(func->arity);
                 if (ordered->takes_key) { schemas.push_back(registry.ts(scalar_descriptor<Int>::value_meta())); }
-                for (std::size_t i = 0; i < ordered->schemas.size(); ++i)
-                {
-                    if (tag_at(i) != WiringPortRef::ArgTag::PassThrough &&
-                        tsl_arg_is_multiplexed(ordered->schemas[i], size))
-                    {
+                for (std::size_t i = 0; i < ordered->schemas.size(); ++i) {
+                    if (tag_at(i) != WiringPortRef::ArgTag::PassThrough && tsl_arg_is_multiplexed(ordered->schemas[i], size)) {
                         schemas.push_back(time_series_schema_as<AnyTSL>(ordered->schemas[i])->element_ts());
+                    } else {
+                        schemas.push_back(ordered->schemas[i]);
                     }
-                    else { schemas.push_back(ordered->schemas[i]); }
                 }
 
                 CompiledSubGraph compiled = func->compile({schemas.data(), schemas.size()});
-                if (compiled.output_schema != nullptr)
-                {
+                if (compiled.output_schema != nullptr) {
                     bind_graph_output(resolution, registry.tsl(compiled.output_schema, size), "O");
                 }
-            }
-            catch (...)
-            {
+            } catch (...) {
                 // Leave unresolved; the real wiring path reports the error.
             }
         }
 
-        inline void resolve_lifted_map_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
-        {
+        inline void resolve_lifted_map_tsl_output(ResolutionMap &resolution, OperatorCallContext context) {
             auto plan = lifted_map_tsl_plan(context);
-            if (plan.has_value() && plan->output_schema != nullptr)
-            {
-                bind_graph_output(resolution, plan->output_schema, "O");
-            }
+            if (plan.has_value() && plan->output_schema != nullptr) { bind_graph_output(resolution, plan->output_schema, "O"); }
         }
 
         struct map_lifted_tsl
         {
             static constexpr auto name = "map_lifted_tsl";
 
-            static bool requires_(const ResolutionMap &, OperatorCallContext context)
-            {
+            static bool requires_(const ResolutionMap &, OperatorCallContext context) {
                 return lifted_map_tsl_plan(context).has_value();
             }
 
-            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
-            {
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context) {
                 resolve_lifted_map_tsl_output(resolution, context);
             }
 
-            static std::vector<std::pair<std::string_view, Value>> defaults()
-            {
-                return {{"__key_arg__", Value{Str{"ndx"}}}};
-            }
+            static std::vector<std::pair<std::string_view, Value>> defaults() { return {{"__key_arg__", Value{Str{"ndx"}}}}; }
 
-            static auto compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                VarIn<"args", TsVar<"B">> positional,
-                                Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
-            {
-                const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
+            static auto compose(Wiring &w, Scalar<"func", WiredFn> func, VarIn<"args", TsVar<"B">> positional,
+                                Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs) {
+                const std::vector<WiringPortRef>                   pos{positional.begin(), positional.end()};
                 std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
-                if (split_keys_kwarg(named).has_value())
-                {
+                if (split_keys_kwarg(named).has_value()) {
                     throw std::invalid_argument("map_: '__keys__' applies to TSD maps only");
                 }
-                auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(),
-                                                               {pos.data(), pos.size()},
-                                                               {named.data(), named.size()},
-                                                               key_arg.value());
-                if (bound.takes_leading_key)
-                {
+                auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(), {pos.data(), pos.size()},
+                                                               {named.data(), named.size()}, key_arg.value());
+                if (bound.takes_leading_key) {
                     throw std::invalid_argument("map_: lifted TSL fast path does not support index arguments yet");
                 }
                 return wire_lifted_map_tsl(w, func.value(), key_arg.value(), std::move(bound.ordered));
@@ -3209,38 +3343,58 @@ namespace hgraph::stdlib
         {
             static constexpr auto name = "map_impl";
 
-            static bool requires_(const ResolutionMap &, OperatorCallContext context)
-            {
+            static bool requires_(const ResolutionMap &, OperatorCallContext context) {
                 const auto *collection = first_map_collection(context);
-                return time_series_schema_as<AnyTSL>(collection) != nullptr &&
-                       !lifted_map_tsl_plan(context).has_value();
+                if (time_series_schema_as<AnyTSL>(collection) == nullptr || lifted_map_tsl_plan(context).has_value()) {
+                    return false;
+                }
+                const auto *func = context.scalar_as<WiredFn>("func");
+                return func != nullptr && func->has_output;
             }
 
-            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
-            {
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context) {
                 resolve_map_tsl_output(resolution, context);
             }
 
-            static std::vector<std::pair<std::string_view, Value>> defaults()
-            {
-                return {{"__key_arg__", Value{Str{"ndx"}}}};
-            }
+            static std::vector<std::pair<std::string_view, Value>> defaults() { return {{"__key_arg__", Value{Str{"ndx"}}}}; }
 
-            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                         VarIn<"args", TsVar<"B">> positional,
-                                         Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
-            {
-                const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func, VarIn<"args", TsVar<"B">> positional,
+                                         Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs) {
+                const std::vector<WiringPortRef>                   pos{positional.begin(), positional.end()};
                 std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
-                if (split_keys_kwarg(named).has_value())
-                {
+                if (split_keys_kwarg(named).has_value()) {
                     throw std::invalid_argument("map_: '__keys__' applies to TSD maps only");
                 }
-                auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(),
-                                                               {pos.data(), pos.size()},
-                                                               {named.data(), named.size()},
-                                                               key_arg.value());
-                return wire_map_tsl(w, func.value(), bound.takes_leading_key, std::move(bound.ordered));
+                auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(), {pos.data(), pos.size()},
+                                                               {named.data(), named.size()}, key_arg.value());
+                return wire_map_tsl(w, func.value(), key_arg.value(), bound.takes_leading_key, std::move(bound.ordered), true);
+            }
+        };
+
+        /** Outputless ``map_`` over fixed or dynamic TSLs. */
+        struct map_sink_impl_tsl
+        {
+            static constexpr auto name = "map_sink_impl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context) {
+                const auto *collection = first_map_collection(context);
+                if (time_series_schema_as<AnyTSL>(collection) == nullptr) { return false; }
+                const auto *func = context.scalar_as<WiredFn>("func");
+                return func != nullptr && !func->has_output;
+            }
+
+            static std::vector<std::pair<std::string_view, Value>> defaults() { return {{"__key_arg__", Value{Str{"ndx"}}}}; }
+
+            static void compose(Wiring &w, Scalar<"func", WiredFn> func, VarIn<"args", TsVar<"B">> positional,
+                                Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs) {
+                const std::vector<WiringPortRef>                   pos{positional.begin(), positional.end()};
+                std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
+                if (split_keys_kwarg(named).has_value()) {
+                    throw std::invalid_argument("map_: '__keys__' applies to TSD maps only");
+                }
+                auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(), {pos.data(), pos.size()},
+                                                               {named.data(), named.size()}, key_arg.value());
+                (void)wire_map_tsl(w, func.value(), key_arg.value(), bound.takes_leading_key, std::move(bound.ordered), false);
             }
         };
     }  // namespace higher_order_impl_detail
@@ -3253,8 +3407,7 @@ namespace hgraph::stdlib
      * element type; ``name`` optionally selects an enclosing named mesh.
      */
     template <typename OutS, typename KeyPort>
-    [[nodiscard]] Port<OutS> mesh_ref(Wiring &w, KeyPort key, std::string_view name = {})
-    {
+    [[nodiscard]] Port<OutS> mesh_ref(Wiring &w, KeyPort key, std::string_view name = {}) {
         // A never-ticking placeholder seeds the dynamic ``value`` input; mesh_subscribe
         // rebinds it to the sibling output (self[item]) at runtime.
         Port<OutS> placeholder = wire<nothing, OutS>(w);

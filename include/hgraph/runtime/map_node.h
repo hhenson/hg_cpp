@@ -16,7 +16,7 @@ namespace hgraph
     enum class MapArgSourceKind : std::uint8_t
     {
         Key,         ///< the per-key constant (an entry-owned ``TS<K>`` output)
-        Element,     ///< the multiplexed TSD's child output at the entry's key
+        Element,     ///< the multiplexed TSD/TSL child output at the entry's key/index
         OuterInput,  ///< an outer (broadcast) input, bound whole
     };
 

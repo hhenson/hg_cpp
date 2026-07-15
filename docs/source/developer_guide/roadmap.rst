@@ -261,6 +261,8 @@ Priority 2: Nested Graphs and Boundaries
 - planned, in-place nested storage with stop-before-destroy lifetimes;
 - two-slot ``switch_`` storage;
 - slot-observed keyed ``map_`` and ``mesh_`` instances;
+- stable-slot arbitrary-function and sink ``map_`` instances over grow-only
+  dynamic TSLs, with lifted scalar kernels retaining their single-node path;
 - explicit-key-only ``map_`` instances whose child inputs are all broadcast,
   including anonymous nested maps with forwarding TSD terminals, plus
   outputless keyed maps over native or Python-authored sink children;
@@ -278,8 +280,7 @@ Priority 2: Nested Graphs and Boundaries
 
 **Remaining higher-order shapes:**
 
-- arbitrary-function dynamic-TSL map and dynamic-TSL reduce/mesh (lifted
-  scalar ``map_`` kernels already use a grow-only native path);
+- dynamic-TSL reduce/mesh;
 - dynamic-TSD reduce with pass-through combiner outputs.
 
 **Remaining boundary modes:**

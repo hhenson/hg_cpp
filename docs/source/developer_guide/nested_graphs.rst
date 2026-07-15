@@ -526,8 +526,9 @@ Tests: ``tests/cpp/test_switch.cpp``.
 ``map_``
 --------
 
-``map_(func, *args, **kwargs)`` owns **one child graph instance per key**
-of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
+At runtime, ``map_(func, *args, **kwargs)`` owns **one child graph instance per
+key or dynamic-list index** of its multiplexed ``TSD`` / dynamic ``TSL``
+input(s) — an operator like the rest of the family
 (``wire<stdlib::map_>(w, fn<G>(), tsd_port[, ts…])``).
 
 - **Key lifecycle is driven by ``__keys__: TSS[K]``**. Wiring supplies either
@@ -593,20 +594,36 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   through the nested-graph delegation as everywhere else.
 - The output schema resolver discovers ``TSD<K, OUT>`` by compiling ``func``
   at the element schema (``resolve_default_types``, like ``switch_``).
-- **TSL multiplexing is a wiring-time expansion**, not a runtime node —
+- **Fixed TSL multiplexing is a wiring-time expansion**, not a runtime node —
   Python's ``_map_no_index``: the fixed-TSL overloads inline one application
   of ``func`` per index (key = ``const(i)`` at ``TS<Int>`` when ``func``
   takes it first, broadcasts passed whole), validate the per-index output
   schemas agree, and assemble a **structural TSL** output. Selected by the
   same ``map_`` name (``requires_`` gates on a fixed-size TSL input); the
   resolver discovers ``TSL<OUT, SIZE>`` by compiling ``func`` once.
+- **Dynamic TSL multiplexing uses stable runtime child slots.** The maximum
+  current length of every multiplexed dynamic TSL drives monotonic growth.
+  Each index owns an ``InPlaceGraphSlotStore`` entry containing its ``Int``
+  index value, optional read-only ``TS<Int>`` source, child handle, and the
+  child's statically planned graph payload. Existing addresses never move and
+  no separate per-child graph allocation occurs. A shorter peer list leaves that
+  child's argument unbound until the peer grows to the index; scalar and
+  ``pass_through`` inputs broadcast whole. The owned dynamic TSL output grows
+  before binding each ordinary child terminal, which writes the real parent
+  element directly. Index entries are grow-only: node stop stops and destroys
+  all constructed children; there is no keyed remove/erase protocol because a
+  dynamic TSL does not remove positions. Pass-through child outputs and
+  terminals that already require forwarding/non-peered topology are rejected;
+  this initial path supports ordinary owned whole-node outputs and sink
+  functions.
 - **The variadic tail is classified, Python-style**: every TSD argument is
   multiplexed alongside the anchor (key types must agree) — the live key set
   is the **union** of their key sets; a key absent from one dict leaves that
   child input unbound (invalid) until it appears there (the phantom-element
   behaviour), and the output entry is removed only when the key has left
   every multiplexed input. Non-TSD args broadcast whole; in the TSL form a
-  tail arg that is a fixed TSL of the same size multiplexes per index.
+  tail arg with the same TSL shape (the same fixed size, or dynamic size zero)
+  multiplexes per index.
   Positional arguments map onto ``func`` parameters in order (after the
   key) and **keyword arguments resolve by the function's parameter names**
   (``NamedPort`` on sub-graph ports, ``In<"name">`` on nodes — the
@@ -655,21 +672,23 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   key-set inference** (its key *type* still participates) — if every
   multiplexed input is ``no_key`` an explicit ``__keys__`` is required, and
   ``no_key`` is rejected on non-TSD arguments and on TSL maps.
-- **Sink maps use the same keyed slot lifecycle without an output.**  A C++
+- **Sink maps use the same keyed or indexed slot lifecycle without an output.**  A C++
   caller selects ``map_sink_``; Python infers it from an outputless graph or
   sink-node function.  Key observation, in-place child allocation,
   stop-on-remove, and destroy-on-erase are unchanged.  No parent ``TSD`` or
-  per-key output element is allocated.  Key-only sink maps derive ``K`` from
-  their explicit ``__keys__: TSS[K]`` input.
-- **Dynamic TSLs have a native lifted-kernel path.**  A lifted scalar kernel
+  per-key/index output element is allocated.  Key-only sink maps derive ``K``
+  from their explicit ``__keys__: TSS[K]`` input.
+- **Dynamic TSLs retain a native lifted-kernel fast path.**  A lifted scalar kernel
   (including a standard operator whose implementation exposes one) maps in a
   single native node.  It discovers the grow-only runtime length from its
-  multiplexed inputs and grows its dynamic TSL output in place.  Arbitrary
-  nested graph/node functions remain deferred because they require a distinct
-  slot-backed index lifecycle rather than wiring-time expansion.
+  multiplexed inputs and grows its dynamic TSL output in place without child
+  graphs. Arbitrary graph/node functions select the slot-backed indexed
+  runtime above.
 
-Tests: ``tests/cpp/test_map.cpp``. ASAN/UBSAN-verified (keyed
-create/destroy churn).
+Tests: ``tests/cpp/test_map.cpp`` and
+``python/tests/test_python_authoring.py``. Keyed create/destroy churn is
+ASan/UBSan-verified; indexed ownership is ASan-verified by the current
+acceptance gate.
 
 
 ``mesh_``

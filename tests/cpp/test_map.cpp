@@ -258,7 +258,8 @@ namespace
                                         std::span<const WiringPortRef> triggers,
                                         std::vector<std::size_t> &counts,
                                         std::vector<std::size_t> *constructed_counts = nullptr,
-                                        std::vector<NestedLifecycleSnapshot> *lifecycle = nullptr)
+                                        std::vector<NestedLifecycleSnapshot> *lifecycle = nullptr,
+                                        std::vector<std::size_t> *slot_block_counts = nullptr)
     {
         std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
         fields.reserve(1 + triggers.size());
@@ -284,32 +285,33 @@ namespace
         meta.valid_inputs = std::vector<std::size_t>{};
 
         NodeCallbacks callbacks;
-        callbacks.evaluate = [&counts, constructed_counts, lifecycle](const NodeView &view, DateTime) {
+        callbacks.evaluate = [&counts, constructed_counts, lifecycle, slot_block_counts](const NodeView &view, DateTime) {
             auto graph = view.graph();
-            for (std::size_t i = 0; i < graph.node_count(); ++i)
-            {
+            for (std::size_t i = 0; i < graph.node_count(); ++i) {
                 auto node = graph.node_at(i);
-                if (node.is<MapNodeView>())
-                {
+                if (node.is<MapNodeView>()) {
                     auto map = node.as<MapNodeView>();
                     counts.push_back(map.active_count());
-                    if (constructed_counts != nullptr)
-                    {
-                        constructed_counts->push_back(map.child_graph_count());
+                    if (constructed_counts != nullptr) { constructed_counts->push_back(map.child_graph_count()); }
+                    if (lifecycle != nullptr) { lifecycle->push_back(NestedLifecycleCounters::snapshot()); }
+                    return;
+                }
+                if (node.is<TslMapNodeView>()) {
+                    auto map = node.as<TslMapNodeView>();
+                    if (!map.child_graphs_use_in_place_storage()) {
+                        throw std::logic_error("dynamic TSL map child graph is not stored in place");
                     }
-                    if (lifecycle != nullptr)
-                    {
-                        lifecycle->push_back(NestedLifecycleCounters::snapshot());
-                    }
+                    counts.push_back(map.active_count());
+                    if (constructed_counts != nullptr) { constructed_counts->push_back(map.child_graph_count()); }
+                    if (slot_block_counts != nullptr) { slot_block_counts->push_back(map.child_slot_block_count()); }
                     return;
                 }
             }
             throw std::logic_error("map_active_count_recorder could not find a map node");
         };
 
-        NodeBuilder builder = NodeBuilder::native(
-            std::move(meta), std::move(callbacks),
-            TSEndpointSchema::non_peered(input_schema, std::move(endpoint_fields)));
+        NodeBuilder builder = NodeBuilder::native(std::move(meta), std::move(callbacks),
+                                                  TSEndpointSchema::non_peered(input_schema, std::move(endpoint_fields)));
 
         std::vector<WiringPortRef> inputs;
         inputs.reserve(1 + triggers.size());
@@ -1498,12 +1500,122 @@ namespace
     {
         static constexpr auto name = "map_lifted_dynamic_add_tsl_g";
 
-        static Port<TSL<TS<Int>>> compose(Wiring &w,
-                                          Port<TSL<TS<Int>>> lhs,
-                                          Port<TSL<TS<Int>>> rhs)
-        {
-            return wire<stdlib::map_>(w, lift<stdlib::scalar_add<Int>>(), lhs, rhs)
-                .as<TSL<TS<Int>>>();
+        static Port<TSL<TS<Int>>> compose(Wiring &w, Port<TSL<TS<Int>>> lhs, Port<TSL<TS<Int>>> rhs) {
+            return wire<stdlib::map_>(w, lift<stdlib::scalar_add<Int>>(), lhs, rhs).as<TSL<TS<Int>>>();
+        }
+    };
+
+    struct AddDynamicPairOffsetNdxG
+    {
+        static constexpr auto name = "add_dynamic_pair_offset_ndx_g";
+
+        static Port<TS<Int>> compose(Wiring &, NamedPort<"ndx", TS<Int>> ndx, Port<TS<Int>> lhs, Port<TS<Int>> rhs,
+                                     Port<TS<Int>> offset) {
+            using namespace hgraph::stdlib::syntax;
+            return (((lhs + rhs) + offset) + ndx).as<TS<Int>>();
+        }
+    };
+
+    struct MapDynamicPairOffsetNdxG
+    {
+        static constexpr auto name = "map_dynamic_pair_offset_ndx_g";
+
+        static Port<TSL<TS<Int>>> compose(Wiring &w, Port<TSL<TS<Int>>> lhs, Port<TSL<TS<Int>>> rhs, Port<TS<Int>> offset) {
+            return wire<stdlib::map_>(w, fn<AddDynamicPairOffsetNdxG>(), lhs, rhs, offset).as<TSL<TS<Int>>>();
+        }
+    };
+
+    struct MapDynamicCounterG
+    {
+        static constexpr auto name = "map_dynamic_counter_g";
+
+        static Port<TSL<TS<Int>>> compose(Wiring &w, Port<TSL<TS<Int>>> ts) {
+            return wire<stdlib::map_>(w, fn<CounterNode>(), ts).as<TSL<TS<Int>>>();
+        }
+    };
+
+    inline std::vector<std::size_t> dynamic_tsl_active_counts;
+    inline std::vector<std::size_t> dynamic_tsl_constructed_counts;
+    inline std::vector<std::size_t> dynamic_tsl_slot_block_counts;
+
+    struct MapDynamicCounterObservedG
+    {
+        static constexpr auto name = "map_dynamic_counter_observed_g";
+
+        static Port<TSL<TS<Int>>> compose(Wiring &w, Port<TSL<TS<Int>>> ts) {
+            auto                               mapped = wire<stdlib::map_>(w, fn<CounterNode>(), ts).as<TSL<TS<Int>>>();
+            const std::array<WiringPortRef, 1> triggers{ts.erased()};
+            wire_map_active_count_recorder(w, mapped.erased(), triggers, dynamic_tsl_active_counts,
+                                           &dynamic_tsl_constructed_counts, nullptr,
+                                           &dynamic_tsl_slot_block_counts);
+            return mapped;
+        }
+    };
+
+    inline std::vector<std::pair<Int, Int>> dynamic_tsl_sink_values;
+
+    struct DynamicTslSinkNode
+    {
+        static constexpr auto name = "dynamic_tsl_sink_node";
+
+        static void eval(In<"ndx", TS<Int>> ndx, In<"ts", TS<Int>> ts) {
+            dynamic_tsl_sink_values.emplace_back(ndx.value(), ts.value());
+        }
+    };
+
+    struct MapDynamicSinkG
+    {
+        static constexpr auto name = "map_dynamic_sink_g";
+
+        static Port<TSL<TS<Int>>> compose(Wiring &w, Port<TSL<TS<Int>>> ts) {
+            wire<stdlib::map_sink_>(w, fn<DynamicTslSinkNode>(), ts);
+            return ts;
+        }
+    };
+
+    struct MapFixedTslSinkG
+    {
+        static constexpr auto name = "map_fixed_tsl_sink_g";
+
+        static Port<TSL<TS<Int>, 2>> compose(Wiring &w, Port<TSL<TS<Int>, 2>> ts) {
+            wire<stdlib::map_sink_>(w, fn<DynamicTslSinkNode>(), ts);
+            return ts;
+        }
+    };
+
+    struct ElemPlusDynamicListSizeNode
+    {
+        static constexpr auto name = "elem_plus_dynamic_list_size_node";
+
+        static void eval(In<"ts", TS<Int>> ts, In<"whole", TSL<TS<Int>>> whole, Out<TS<Int>> out) {
+            out.set(ts.value() + static_cast<Int>(whole.size()));
+        }
+    };
+
+    struct ElemPlusDynamicListSizeG
+    {
+        static constexpr auto name = "elem_plus_dynamic_list_size_g";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> ts, Port<TSL<TS<Int>>> whole) {
+            return wire<ElemPlusDynamicListSizeNode>(w, ts, whole);
+        }
+    };
+
+    struct MapDynamicPassThroughG
+    {
+        static constexpr auto name = "map_dynamic_pass_through_g";
+
+        static Port<TSL<TS<Int>>> compose(Wiring &w, Port<TSL<TS<Int>>> source, Port<TSL<TS<Int>>> whole) {
+            return wire<stdlib::map_>(w, fn<ElemPlusDynamicListSizeG>(), source, stdlib::pass_through(whole)).as<TSL<TS<Int>>>();
+        }
+    };
+
+    struct MapDynamicIdentityG
+    {
+        static constexpr auto name = "map_dynamic_identity_g";
+
+        static Port<TSL<TS<Int>>> compose(Wiring &w, Port<TSL<TS<Int>>> ts) {
+            return wire<stdlib::map_>(w, fn<IdentityG>(), ts).as<TSL<TS<Int>>>();
         }
     };
 
@@ -1511,10 +1623,8 @@ namespace
     {
         static constexpr auto name = "map_lifted_add_broadcast_g";
 
-        static Port<TSL<TS<Int>, 3>> compose(Wiring &w, Port<TSL<TS<Int>, 3>> lhs, Port<TS<Int>> rhs)
-        {
-            return wire<stdlib::map_>(w, lift<stdlib::scalar_add<Int>>(), lhs, rhs)
-                .as<TSL<TS<Int>, 3>>();
+        static Port<TSL<TS<Int>, 3>> compose(Wiring &w, Port<TSL<TS<Int>, 3>> lhs, Port<TS<Int>> rhs) {
+            return wire<stdlib::map_>(w, lift<stdlib::scalar_add<Int>>(), lhs, rhs).as<TSL<TS<Int>, 3>>();
         }
     };
 
@@ -1522,10 +1632,7 @@ namespace
     {
         static constexpr auto name = "map_lifted_sub_tsl_g";
 
-        static Port<TSL<TS<Int>, 3>> compose(Wiring &w,
-                                             Port<TSL<TS<Int>, 3>> lhs,
-                                             Port<TSL<TS<Int>, 3>> rhs)
-        {
+        static Port<TSL<TS<Int>, 3>> compose(Wiring &w, Port<TSL<TS<Int>, 3>> lhs, Port<TSL<TS<Int>, 3>> rhs) {
             return wire<stdlib::map_>(w, lift<stdlib::scalar_sub<Int>>(), lhs, rhs)
                 .as<TSL<TS<Int>, 3>>();
         }
@@ -1725,31 +1832,102 @@ TEST_CASE("map_ over dynamic TSL: lifted scalar kernels follow grow-only runtime
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    CHECK_OUTPUT((eval_node<MapLiftedDynamicAddTslG>(
-                     values<Value>(list_delta<TS<Int>>({{0, 1}}),
-                                   list_delta<TS<Int>>({{1, 2}}),
-                                   list_delta<TS<Int>>({{0, 3}})),
-                     values<Value>(list_delta<TS<Int>>({{0, 10}}),
-                                   list_delta<TS<Int>>({{1, 20}}),
-                                   list_delta<TS<Int>>({{0, 100}})))),
-                 values<Value>(list_delta<TS<Int>>({{0, 11}}),
-                               list_delta<TS<Int>>({{1, 22}}),
-                               list_delta<TS<Int>>({{0, 103}})));
+    CHECK_OUTPUT(
+        (eval_node<MapLiftedDynamicAddTslG>(
+            values<Value>(list_delta<TS<Int>>({{0, 1}}), list_delta<TS<Int>>({{1, 2}}), list_delta<TS<Int>>({{0, 3}})),
+            values<Value>(list_delta<TS<Int>>({{0, 10}}), list_delta<TS<Int>>({{1, 20}}), list_delta<TS<Int>>({{0, 100}})))),
+        values<Value>(list_delta<TS<Int>>({{0, 11}}), list_delta<TS<Int>>({{1, 22}}), list_delta<TS<Int>>({{0, 103}})));
 }
 
-TEST_CASE("map_ over TSL: lifted standard kernels cover subtraction division and min")
-{
+TEST_CASE("map_ over dynamic TSL: arbitrary graphs grow stable children and "
+          "bind peers by index") {
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    CHECK_OUTPUT((eval_node<MapLiftedSubTslG>(
-                     values<Value>(list_delta<TS<Int>>({10, 20, 30})),
-                     values<Value>(list_delta<TS<Int>>({1, 2, 3})))),
+    // lhs creates indices 0 and 1 immediately. rhs initially has only index
+    // 0, so child 1 remains pending until rhs grows on the next cycle. The
+    // scalar offset broadcasts to every child and ndx is an entry-owned TS.
+    CHECK_OUTPUT(
+        (eval_node<MapDynamicPairOffsetNdxG>(
+            values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}}), none, list_delta<TS<Int>>({{0, 5}})),
+            values<Value>(list_delta<TS<Int>>({{0, 10}}), list_delta<TS<Int>>({{1, 20}}), none), values<Int>(100, none, 200))),
+        values<Value>(list_delta<TS<Int>>({{0, 111}}), list_delta<TS<Int>>({{1, 123}}), list_delta<TS<Int>>({{0, 215}, {1, 223}})));
+}
+
+TEST_CASE("map_ over dynamic TSL: each index preserves isolated child state") {
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MapDynamicCounterG>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}}), list_delta<TS<Int>>({{1, 2}}), list_delta<TS<Int>>({{0, 3}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 1}}), list_delta<TS<Int>>({{1, 1}}), list_delta<TS<Int>>({{0, 2}})));
+}
+
+TEST_CASE("map_ over dynamic TSL: child graphs use stable in-place slots") {
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    dynamic_tsl_active_counts.clear();
+    dynamic_tsl_constructed_counts.clear();
+    dynamic_tsl_slot_block_counts.clear();
+
+    CHECK_OUTPUT((eval_node<MapDynamicCounterObservedG>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}, {2, 3}}), list_delta<TS<Int>>({{0, 4}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 1}, {2, 1}}), list_delta<TS<Int>>({{0, 2}})));
+    CHECK(dynamic_tsl_active_counts == std::vector<std::size_t>{3, 3});
+    CHECK(dynamic_tsl_constructed_counts == std::vector<std::size_t>{3, 3});
+    CHECK(dynamic_tsl_slot_block_counts == std::vector<std::size_t>{1, 1});
+}
+
+TEST_CASE("map_ over dynamic TSL: sink functions use the same indexed child "
+          "runtime") {
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    dynamic_tsl_sink_values.clear();
+
+    const auto input =
+        values<Value>(list_delta<TS<Int>>({{0, 10}}), list_delta<TS<Int>>({{1, 20}}), list_delta<TS<Int>>({{0, 30}}));
+    CHECK_OUTPUT(eval_node<MapDynamicSinkG>(input), input);
+    CHECK(dynamic_tsl_sink_values == std::vector<std::pair<Int, Int>>{{0, 10}, {1, 20}, {0, 30}});
+}
+
+TEST_CASE("map_ over fixed TSL: sink functions expand once per index") {
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    dynamic_tsl_sink_values.clear();
+
+    const auto input = values<Value>(list_delta<TS<Int>>({10, 20}), list_delta<TS<Int>>({{1, 30}}));
+    CHECK_OUTPUT(eval_node<MapFixedTslSinkG>(input), input);
+    CHECK(dynamic_tsl_sink_values == std::vector<std::pair<Int, Int>>{{0, 10}, {1, 20}, {1, 30}});
+}
+
+TEST_CASE("map_ over dynamic TSL: pass_through broadcasts the whole peer list") {
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        (eval_node<MapDynamicPassThroughG>(values<Value>(list_delta<TS<Int>>({{0, 1}}), none),
+                                           values<Value>(list_delta<TS<Int>>({{0, 10}, {1, 20}}), list_delta<TS<Int>>({{2, 30}})))),
+        values<Value>(list_delta<TS<Int>>({{0, 3}}), list_delta<TS<Int>>({{0, 4}})));
+}
+
+TEST_CASE("map_ over dynamic TSL: pass-through child outputs are rejected "
+          "explicitly") {
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    REQUIRE_THROWS((eval_node<MapDynamicIdentityG>(values<Value>(list_delta<TS<Int>>({{0, 1}})))));
+}
+
+TEST_CASE("map_ over TSL: lifted standard kernels cover subtraction division and min") {
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MapLiftedSubTslG>(values<Value>(list_delta<TS<Int>>({10, 20, 30})),
+                                              values<Value>(list_delta<TS<Int>>({1, 2, 3})))),
                  values<Value>(list_delta<TS<Int>>({9, 18, 27})));
 
-    CHECK_OUTPUT((eval_node<MapLiftedDivTslG>(
-                     values<Value>(list_delta<TS<Int>>({10, 20, 30})),
-                     values<Value>(list_delta<TS<Int>>({2, 5, 4})))),
+    CHECK_OUTPUT((eval_node<MapLiftedDivTslG>(values<Value>(list_delta<TS<Int>>({10, 20, 30})),
+                                              values<Value>(list_delta<TS<Int>>({2, 5, 4})))),
                  values<Value>(list_delta<TS<Float>>({Float{5.0}, Float{4.0}, Float{7.5}})));
 
     CHECK_OUTPUT((eval_node<MapOperatorDivTslG>(

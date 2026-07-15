@@ -23,6 +23,8 @@ namespace hgraph::stdlib
         register_graph_overload<map_, higher_order_impl_detail::map_lifted_tsl>();
         register_graph_overload<map_, higher_order_impl_detail::map_impl_tsl>();
 
+        register_graph_overload<map_, higher_order_impl_detail::map_sink_impl_tsl>();
+
         register_graph_overload<mesh_, higher_order_impl_detail::mesh_impl_tsd>();
     }
 }  // namespace hgraph::stdlib

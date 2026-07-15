@@ -236,18 +236,19 @@ namespace hgraph::stdlib
 
     /**
      * ``map_`` — apply ``func`` element-wise over a multiplexed collection,
-     * one child graph instance **per key**. This is the current C++ subset of
+     * with one runtime child graph instance **per key or dynamic-list index**.
+     * This is the current C++ subset of
      * Python ``map_(func, *args)``:
      *
-     * - the multiplexed input is a ``TSD`` (keyed runtime children) or a
+     * - the multiplexed input is a ``TSD`` (keyed runtime children), a
      *   fixed-size ``TSL`` (wiring-time expansion: one inline application of
-     *   ``func`` per index, key = the ``Int`` index — Python's
-     *   ``_map_no_index``, no runtime node). TSD child lifecycle follows a
-     *   required ``__keys__`` TSS input; wiring may supply it explicitly or
-     *   infer it from the union of multiplexed TSD keys. EVERY TSD in the tail
-     *   is multiplexed for per-key element binding, but membership changes
-     *   only create/destroy children through ``__keys__``. Same-size TSLs in
-     *   the TSL form multiplex per index; non-collection args broadcast whole;
+     *   ``func`` per index), or a grow-only dynamic ``TSL`` (one stable,
+     *   in-place child graph slot per observed index). TSD child lifecycle follows
+     *   a required ``__keys__`` TSS input; wiring may supply it explicitly or infer
+     *   it from the union of multiplexed TSD keys. EVERY TSD in the tail is
+     *   multiplexed for per-key element binding, but membership changes only
+     *   create/destroy children through ``__keys__``. Same-size TSLs in the TSL form
+     *   multiplex per index; non-collection args broadcast whole;
      * - ``func`` may take the key/index as its first argument when that
      *   parameter is named ``key`` for TSD maps or ``ndx`` for TSL maps.
      *   ``arg<"__key_arg__">(Str{...})`` renames that parameter and ``""``
@@ -256,15 +257,20 @@ namespace hgraph::stdlib
      *   per-key/per-index element and broadcast inputs pass the whole
      *   time-series;
      * - for value-producing functions, the output is an owned ``TSD<K, OUT>``
-     *   with a real element instantiated per key; the child's terminal output
-     *   is a forwarding endpoint bound onto that element, so the child
-     *   **writes the parent's storage directly** (no copy);
+     *   or dynamic ``TSL<OUT>`` with a real element instantiated per key/index;
+     *   the child's terminal output is a forwarding endpoint bound onto that
+     *   element, so the child **writes the parent's storage directly** (no copy);
      * - broadcast arguments are variadic; ``pass_through(port)`` forces an
      *   argument to bind whole (broadcast, whatever its kind) and
      *   ``no_key(port)`` keeps a TSD demultiplexed but excludes it from
      *   key-set inference (Python's wrappers, as wiring-time port tags);
      * - outputless functions use ``map_sink_`` from C++. They share the same
-     *   keyed child lifecycle but do not allocate a parent TSD output.
+     *   keyed/indexed child lifecycle but do not allocate a parent output.
+     *
+     * Dynamic-TSL children currently require an ordinary owned whole-node
+     * terminal output. Pass-through and already-forwarding child outputs are
+     * rejected because a grow-only TSL cannot represent their non-peered
+     * endpoint shape safely.
      */
     /**
      * Python's ``pass_through()`` — tag a ``map_`` input so it is NOT

@@ -116,6 +116,66 @@ def test_native_map_lifted_kernel_grows_dynamic_tsl_output():
     check(result == [{0: 11}, {1: 22}, {0: 103}], f"dynamic TSL map: {result}")
 
 
+def test_native_dynamic_tsl_map_runs_python_child_nodes_by_index():
+    @hg.compute_node
+    def combine(
+        ndx: TS[int], lhs: TS[int], rhs: TS[int], offset: TS[int]
+    ) -> TS[int]:
+        return ndx.value + lhs.value + rhs.value + offset.value
+
+    @graph
+    def app(
+        lhs: TSL[TS[int], Size[0]],
+        rhs: TSL[TS[int], Size[0]],
+        offset: TS[int],
+    ) -> TSL[TS[int], Size[0]]:
+        return hg.map_(combine, lhs, rhs, offset)
+
+    result = eval_node(
+        app,
+        [{0: 1, 1: 2}, None, {0: 5}],
+        [{0: 10}, {1: 20}, None],
+        [100, None, 200],
+    )
+    check(
+        result == [{0: 111}, {1: 123}, {0: 215, 1: 223}],
+        f"Python child in native dynamic TSL map: {result}",
+    )
+
+    @graph
+    def captured_offset(
+        values: TSL[TS[int], Size[0]], offset: TS[int]
+    ) -> TSL[TS[int], Size[0]]:
+        return hg.map_(lambda value: value + offset, values)
+
+    captured_result = eval_node(
+        captured_offset,
+        [{0: 1}, {1: 2}, {0: 3}],
+        [10, None, 100],
+    )
+    check(
+        captured_result == [{0: 11}, {1: 12}, {0: 103, 1: 102}],
+        f"captured Python input in native dynamic TSL map: {captured_result}",
+    )
+
+
+def test_python_sink_nodes_work_as_native_dynamic_tsl_map_children():
+    seen = []
+
+    @hg.sink_node
+    def collect(ndx: TS[int], value: TS[int]):
+        seen.append((ndx.value, value.value))
+
+    @graph
+    def app(values: TSL[TS[int], Size[0]]) -> TSL[TS[int], Size[0]]:
+        check(hg.map_(collect, values) is None, "dynamic TSL sink map wiring result")
+        return values
+
+    inputs = [{0: 10}, {1: 20}, {0: 30}]
+    check(eval_node(app, inputs) == inputs, "dynamic TSL sink map wrapper output")
+    check(seen == [(0, 10), (1, 20), (0, 30)], f"dynamic TSL sink calls: {seen}")
+
+
 def test_non_associative_reduce_uses_ordered_native_paths():
     @graph
     def reduce_tsl(

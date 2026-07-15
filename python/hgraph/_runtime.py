@@ -282,9 +282,10 @@ def _wrap_graph_fn(gfn):
         p.name for p in sig.parameters.values()
         if p.annotation not in _INJECTABLE_MARKERS and not isinstance(p.annotation, _ContextExpr)
     ]
-    # Only an explicit ``-> None`` marks a sink: un-annotated callables
-    # (lambdas as reduce/map combiners) are assumed to produce a value.
-    has_output = sig.return_annotation is not None
+    # Node decorators are authoritative even when the wrapped user function is
+    # unannotated. For graphs/lambdas, only explicit ``-> None`` marks a sink;
+    # an unannotated callable remains provisionally output-producing.
+    has_output = gfn.has_output if isinstance(gfn, _PyNode) else sig.return_annotation is not None
 
     def wrapper(borrowed_wiring, ports):
         _wiring_stack.append(borrowed_wiring)

@@ -3,8 +3,12 @@
 
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/nested_bindings.h>
+#include <hgraph/types/primitive_types.h>
+#include <hgraph/types/static_schema.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -26,6 +30,22 @@ namespace hgraph::runtime_detail
         return std::span<const std::size_t>{path}.subspan(1);
     }
 
+    [[nodiscard]] inline std::size_t mapped_list_index(const ValueView &key)
+    {
+        if (!key.has_value() || key.schema() != scalar_descriptor<Int>::value_meta())
+        {
+            throw std::invalid_argument("mapped TSL child requires an int64 index");
+        }
+        const Int index = key.as<Int>();
+        if (index < 0 ||
+            static_cast<std::uint64_t>(index) >
+                static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
+        {
+            throw std::out_of_range("mapped TSL child index is out of range");
+        }
+        return static_cast<std::size_t>(index);
+    }
+
     [[nodiscard]] inline TSOutputView mapped_child_input_source(
         const TSInputView &root_input,
         const MapArgSource &arg,
@@ -41,10 +61,20 @@ namespace hgraph::runtime_detail
             {
                 auto mux_source = root_input.indexed_child_at(arg.outer_index).bound_output();
                 if (!mux_source.bound()) { return {}; }
-
-                auto dict = mux_source.as_dict();
-                if (!dict.contains(key)) { return {}; }
-                return walk_ts_path(dict.at(key), mapped_child_path_suffix(source_path));
+                if (mux_source.schema()->kind == TSTypeKind::TSD)
+                {
+                    auto dict = mux_source.as_dict();
+                    if (!dict.contains(key)) { return {}; }
+                    return walk_ts_path(dict.at(key), mapped_child_path_suffix(source_path));
+                }
+                if (mux_source.schema()->kind == TSTypeKind::TSL)
+                {
+                    auto              list  = mux_source.as_list();
+                    const std::size_t index = mapped_list_index(key);
+                    if (index >= list.size()) { return {}; }
+                    return walk_ts_path(list.at(index), mapped_child_path_suffix(source_path));
+                }
+                throw std::invalid_argument("mapped child element source must be a TSD or TSL");
             }
             case MapArgSourceKind::OuterInput:
             {
@@ -53,6 +83,25 @@ namespace hgraph::runtime_detail
             }
         }
         return {};
+    }
+
+    [[nodiscard]] inline TSOutputView mapped_output_element(
+        const NodeView &parent,
+        DateTime evaluation_time,
+        const ValueView &key)
+    {
+        auto output = parent.output(evaluation_time);
+        if (output.schema()->kind == TSTypeKind::TSD)
+        {
+            auto dict = output.as_dict();
+            return dict.contains(key) ? dict.at(key) : TSOutputView{};
+        }
+        if (output.schema()->kind == TSTypeKind::TSL)
+        {
+            auto list = output.as_list();
+            return list[mapped_list_index(key)];
+        }
+        throw std::invalid_argument("mapped child output must be a TSD or TSL");
     }
 
     inline void bind_mapped_child_inputs(
@@ -106,10 +155,8 @@ namespace hgraph::runtime_detail
     {
         if (!output_binding.has_value()) { return; }
 
-        auto output = parent.output(evaluation_time);
-        auto dict   = output.as_dict();
-        if (!dict.contains(key)) { return; }
-        auto element = dict.at(key);
+        auto element = mapped_output_element(parent, evaluation_time, key);
+        if (!element.bound()) { return; }
 
         if (output_binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
         {
@@ -158,11 +205,8 @@ namespace hgraph::runtime_detail
     {
         if (mode == MapOutputBindingMode::ChildTerminalWritesElement) { return; }
 
-        auto output = parent.output(evaluation_time);
-        auto dict   = output.as_dict();
-        if (!dict.contains(key)) { return; }
-
-        auto element = dict.at(key);
+        auto element = mapped_output_element(parent, evaluation_time, key);
+        if (!element.bound()) { return; }
         if (element.forwarding() && element.forwarding_bound()) { element.clear_forwarding_target(); }
     }
 }  // namespace hgraph::runtime_detail

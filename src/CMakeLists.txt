@@ -8,6 +8,7 @@ set(HGRAPH_RUNTIME_SOURCES
     hgraph/runtime/graph.cpp
     hgraph/runtime/logger.cpp
     hgraph/runtime/map_node.cpp
+    hgraph/runtime/tsl_map_node.cpp
     hgraph/runtime/mesh_node.cpp
     hgraph/runtime/nested_graph_node.cpp
     hgraph/runtime/node.cpp

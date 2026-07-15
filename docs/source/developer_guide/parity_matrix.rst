@@ -288,8 +288,9 @@ Wiring and node-authoring surface
        Python switch branches, outputless keyed maps, live dynamic-TSD reduce
        zeros, projectable fixed-composite reduce results, ordered fixed-TSL
        folds, and ordered contiguous-integer TSD/tuple reduction with a live
-       seed. Deferred: arbitrary-function dynamic-TSL multiplexing; lifted
-       scalar kernels support grow-only dynamic TSL ``map_`` today.
+       seed. Arbitrary graph/node and sink functions map over grow-only dynamic
+       TSLs through stable in-place child slots; compatible lifted scalar
+       kernels retain their single-node fast path.
    * - ``dispatch_``
      - Full for Bundle values
      - Native ``dispatch_cases`` / ``dispatch_case`` wiring builds a closed
@@ -361,5 +362,5 @@ contract itself is proven template-free.
 **Additive** (each lands independently and becomes available to Python
 through the registry): every declared-only/missing operator above, the
 serialization value kinds, observability (observers/trace),
-``@component`` + traits, nested context import/export, dynamic-TSL
-higher-order support.
+``@component`` + traits, nested context import/export, and remaining
+dynamic-TSL reduce/mesh shapes.
