@@ -528,8 +528,9 @@ Semantics:
   required.
 - **Rank**: consumption is a direct port binding — an ordinary
   rank-constraining edge, so context consumers rank after the published
-  port's producer. Contexts are therefore rank-correct by construction (no
-  entry in the boundary scheduling matrix is needed for the same-graph case).
+  port's producer. Across a compiled child boundary the port becomes an
+  appended captured input, so the outer node retains the same rank dependency
+  and the child sees an ordinary boundary binding.
 - **Interning**: a node consuming a context is interned with the resolved
   source in its input identity, exactly as if the caller had passed the port.
 
@@ -538,20 +539,27 @@ by **type**, nearest-match; the C++ surface resolves by **name**. Names make
 shadowing and multi-context graphs explicit and cheap to diagnose; the future
 Python bridge can derive stable names for ``CONTEXT[T]`` compatibility.
 
-Deferred (see *Status* below): crossing a **compiled sub-graph boundary**
-(``map_`` / ``switch_`` / ``nested_`` children compile in a fresh ``Wiring``;
-a context port from the outer wiring cannot bind there directly). That is the
-context **import/export** step, which lowers onto the runtime source/capture
-primitive above (REF publication under ``context_output_key``); the wiring
-surface stays the same. A cross-wiring lookup is detected and reported as
-unsupported rather than mis-wired. Also deferred: ``Context<>`` params on
-operator implementations registered via ``register_overload`` (the
-lifted-kernel path builds its inputs separately) — supported today on
-directly-wired nodes.
+Crossing a **compiled sub-graph boundary** uses the normal outer-port capture
+protocol. A lookup from a fresh child ``Wiring`` registers the published port
+as an implicit boundary argument; ``finish_subgraph`` appends its schema and
+reports the actual outer source in ``CompiledSubGraph::captured_inputs``.
+``nested_``, ``try_except_``, ``switch_``, ``dispatch_``, ``map_``, and
+``mesh_`` all bind those captures through their existing outer input. Fixed
+structural sources retain their shape and bind leaf by leaf. This is static
+wiring metadata: it adds no runtime context relay, global lookup, or per-child
+allocation. Captures are deduplicated against explicit inputs by source
+identity.
+
+Still deferred: ``Context<>`` params on operator implementations registered
+via ``register_overload`` (the lifted-kernel path builds its inputs
+separately). They are supported on directly wired nodes and graphs.
 
 Tests: ``tests/cpp/test_context_wiring.cpp`` (scope binding, mixed
 caller/context params, shadowing, keyword override, ``get``/``has``, generic
-resolution, missing-context error).
+resolution, missing-context errors, direct and structural ``nested_`` imports,
+switch/map/mesh imports, and stacked ``try_except_``); dispatch capture is
+covered in ``tests/cpp/test_dispatch.cpp``. Python map/switch parity uses the
+public ``eval_node`` path in ``python/tests/test_hgraph_api.py``.
 
 Runtime service identity (the Python bridge)
 --------------------------------------------
@@ -610,8 +618,7 @@ shared outputs, the context source/capture primitive, the user-facing
 
 Deferred (see :doc:`roadmap` Priority 1):
 
-- nested graph context **import/export** (contexts across compiled sub-graph
-  boundaries) and ``Context<>`` on registered operator implementations;
+- ``Context<>`` on registered operator implementations;
 - **request/reply and subscription adaptor flows**, integration of adaptor
   external events with the scheduler/real-time executor, lifecycle ownership
   for external resources, and concrete adaptor families (kafka/sql/…);

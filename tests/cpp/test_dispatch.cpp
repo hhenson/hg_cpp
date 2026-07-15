@@ -1,6 +1,7 @@
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
+#include <hgraph/types/context_wiring.h>
 #include <hgraph/types/value/value_builder.h>
 #include <hgraph/types/wired_fn.h>
 
@@ -283,6 +284,29 @@ namespace
     using CatBranch = ConstantBranch<"cat", 2>;
     using LeftBranch = ConstantBranch<"left", 1>;
     using RightBranch = ConstantBranch<"right", 1>;
+
+    struct CapturedDispatchContext
+    {
+        static constexpr auto name = "captured_dispatch_context";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<void>)
+        {
+            return context::get<TS<Str>>(w, "label");
+        }
+    };
+
+    struct DispatchContextGraph
+    {
+        static constexpr auto name = "dispatch_context_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Animal>> animal,
+                                     Port<TS<Str>> label,
+                                     Scalar<"cases", stdlib::DispatchCases> cases)
+        {
+            context::scope<"label"> ctx{w, label};
+            return wire<stdlib::dispatch_>(w, cases.value(), animal).as<TS<Str>>();
+        }
+    };
 }
 
 TEST_CASE("dispatch_: C++ wiring selects exact and inherited Bundle cases")
@@ -305,6 +329,24 @@ TEST_CASE("dispatch_: C++ wiring selects exact and inherited Bundle cases")
                 cat_value(types, 3)),
             arg<"count">(testing::values<Int>(1, 2, 3)))),
         string_values({"woof", "yip", "meow"}));
+}
+
+TEST_CASE("dispatch_: compiled branches import an enclosing context")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    const auto types = register_dispatch_types();
+    const auto cases = stdlib::dispatch_cases({
+        stdlib::dispatch_case(types.dog, fn<CapturedDispatchContext>()),
+    });
+
+    CHECK_OUTPUT(
+        testing::eval_node<DispatchContextGraph>(
+            testing::values<Value>(dog_value(types, 1, "woof"), testing::none,
+                                   dog_value(types, 2, "bark")),
+            testing::values<Str>(Str{"alpha"}, Str{"beta"}, testing::none),
+            arg<"cases">(cases)),
+        testing::values<Str>(Str{"alpha"}, Str{"beta"}, testing::none));
 }
 
 TEST_CASE("downcast_ref: C++ wiring reads a registered derived Bundle without materializing it")

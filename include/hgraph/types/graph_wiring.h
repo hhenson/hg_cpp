@@ -74,9 +74,9 @@ namespace hgraph
         };
 
         /**
-         * A sub-graph boundary placeholder: the source is the ``arg_index``-th
-         * time-series input of the enclosing sub-graph (``path`` walks within
-         * it). Boundary sources exist only while compiling a sub-graph
+         * A sub-graph boundary placeholder: the source is either the
+         * ``arg_index``-th declared input or a local captured-input index
+         * (``path`` walks within it). Boundary sources exist only while compiling a sub-graph
          * (``compile_subgraph<G>``); ``Wiring::finish_subgraph`` converts them
          * into nested-graph input bindings — no stub node is ever created.
          */
@@ -84,6 +84,7 @@ namespace hgraph
         {
             std::size_t              arg_index{0};
             std::vector<std::size_t> path{};
+            bool                     captured{false};
         };
 
         enum class SourceKind
@@ -160,7 +161,28 @@ namespace hgraph
             if (schema == nullptr) { throw std::logic_error("WiringPortRef::boundary_source requires a schema"); }
             WiringPortRef ref;
             ref.schema  = schema;
-            ref.source_ = BoundarySource{arg_index, std::move(path)};
+            ref.source_ = BoundarySource{arg_index, std::move(path), false};
+            return ref;
+        }
+
+        /**
+         * A placeholder for an enclosing-wiring source captured by a compiled
+         * child. ``finish_subgraph`` appends the real source after the child's
+         * declared arguments and resolves this local capture index to that
+         * final boundary ordinal.
+         */
+        [[nodiscard]] static WiringPortRef captured_boundary_source(
+            std::size_t capture_index,
+            std::vector<std::size_t> path,
+            const TSValueTypeMetaData *schema)
+        {
+            if (schema == nullptr)
+            {
+                throw std::logic_error("WiringPortRef::captured_boundary_source requires a schema");
+            }
+            WiringPortRef ref;
+            ref.schema  = schema;
+            ref.source_ = BoundarySource{capture_index, std::move(path), true};
             return ref;
         }
 
@@ -177,11 +199,30 @@ namespace hgraph
         [[nodiscard]] bool is_null_source() const noexcept { return source_kind() == SourceKind::Null; }
         [[nodiscard]] bool is_unbound_source() const noexcept { return source_kind() == SourceKind::Unbound; }
         [[nodiscard]] bool is_boundary_source() const noexcept { return source_kind() == SourceKind::Boundary; }
+        [[nodiscard]] bool is_captured_boundary_source() const noexcept
+        {
+            const auto *source = std::get_if<BoundarySource>(&source_);
+            return source != nullptr && source->captured;
+        }
 
         [[nodiscard]] std::size_t boundary_arg_index() const
         {
             const auto *source = std::get_if<BoundarySource>(&source_);
             if (source == nullptr) { throw std::logic_error("WiringPortRef source is not a sub-graph boundary"); }
+            if (source->captured)
+            {
+                throw std::logic_error("WiringPortRef source is a captured sub-graph boundary");
+            }
+            return source->arg_index;
+        }
+
+        [[nodiscard]] std::size_t boundary_capture_index() const
+        {
+            const auto *source = std::get_if<BoundarySource>(&source_);
+            if (source == nullptr || !source->captured)
+            {
+                throw std::logic_error("WiringPortRef source is not a captured sub-graph boundary");
+            }
             return source->arg_index;
         }
 
@@ -190,6 +231,20 @@ namespace hgraph
             const auto *source = std::get_if<BoundarySource>(&source_);
             if (source == nullptr) { throw std::logic_error("WiringPortRef source is not a sub-graph boundary"); }
             return source->path;
+        }
+
+        [[nodiscard]] WiringPortRef projected_boundary_source(
+            std::vector<std::size_t> path,
+            const TSValueTypeMetaData *projected_schema) const
+        {
+            const auto *source = std::get_if<BoundarySource>(&source_);
+            if (source == nullptr)
+            {
+                throw std::logic_error("WiringPortRef source is not a sub-graph boundary");
+            }
+            return source->captured
+                       ? captured_boundary_source(source->arg_index, std::move(path), projected_schema)
+                       : boundary_source(source->arg_index, std::move(path), projected_schema);
         }
 
         [[nodiscard]] const WiringInstance *peered_node() const
@@ -238,6 +293,40 @@ namespace hgraph
         {
             const auto *source = std::get_if<PeeredSource>(&source_);
             return source != nullptr ? source->output_kind : GraphEdgeSourceKind::Output;
+        }
+
+        /** Source identity used for capture deduplication; argument tags are usage metadata. */
+        [[nodiscard]] bool same_source_as(const WiringPortRef &other) const noexcept
+        {
+            if (schema != other.schema || source_kind() != other.source_kind()) { return false; }
+            switch (source_kind())
+            {
+                case SourceKind::Unbound:
+                case SourceKind::Null:
+                    return true;
+                case SourceKind::Peered:
+                    return peered_node() == other.peered_node() &&
+                           peered_path() == other.peered_path() &&
+                           peered_output_kind() == other.peered_output_kind();
+                case SourceKind::Boundary:
+                    return is_captured_boundary_source() == other.is_captured_boundary_source() &&
+                           (is_captured_boundary_source()
+                                ? boundary_capture_index() == other.boundary_capture_index()
+                                : boundary_arg_index() == other.boundary_arg_index()) &&
+                           boundary_path() == other.boundary_path();
+                case SourceKind::Structural:
+                {
+                    const auto &left  = structural_children();
+                    const auto &right = other.structural_children();
+                    if (left.size() != right.size()) { return false; }
+                    for (std::size_t index = 0; index < left.size(); ++index)
+                    {
+                        if (!left[index].same_source_as(right[index])) { return false; }
+                    }
+                    return true;
+                }
+            }
+            return false;
         }
 
       private:
@@ -748,13 +837,16 @@ namespace hgraph
          * Compile this wiring as a **sub-graph**: rank the nodes into a child
          * ``GraphBuilder`` and convert every boundary-sourced input into a
          * nested-graph input binding instead of an edge. ``output`` is the
-         * sub-graph's returned output port (must be a peered port on a node of
-         * this wiring), ``input_schemas`` the boundary arg schemas in arg
+         * sub-graph's returned output port, ``input_schemas`` the declared
+         * boundary arg schemas in arg
          * order. Used by ``compile_subgraph<G>`` (see ``subgraph_wiring.h``).
          */
         [[nodiscard]] CompiledSubGraph finish_subgraph(
             std::optional<WiringPortRef> output,
             std::vector<const TSValueTypeMetaData *> input_schemas) &&;
+
+        /** Register an enclosing-wiring source as an implicit child input. */
+        [[nodiscard]] WiringPortRef capture_outer_source(WiringPortRef source);
 
         /** Claim a component's fully-qualified recordable id for this wiring;
             a second claim of the same id throws (one component instance per
@@ -1516,9 +1608,9 @@ namespace hgraph
         // The wiring-time context stack lives on the OperatorRegistry singleton
         // (mesh-scope precedent); these free functions keep operator_dispatch.h
         // out of this header. `resolve` throws a precise wiring error when the
-        // context is missing or was published by a DIFFERENT Wiring (the
-        // unsupported compiled-sub-graph import case).
-        [[nodiscard]] WiringPortRef resolve_context_source(const Wiring &w, std::string_view name);
+        // context is missing. A publication from an enclosing Wiring becomes
+        // an implicit captured boundary input on the child.
+        [[nodiscard]] WiringPortRef resolve_context_source(Wiring &w, std::string_view name);
         [[nodiscard]] bool          has_context_source(const Wiring &w, std::string_view name) noexcept;
         void push_context_source(const Wiring &w, std::string_view name, WiringPortRef port);
         void pop_context_source() noexcept;

@@ -96,6 +96,15 @@ and 6 deselected on each platform.  This increment adds the pinned upstream REF
 wiring pack, exact nested REF-shape adaptation for Python user nodes, and direct
 structural TSB/TSL branch binding through the C++ switch runtime.
 
+The compiled-context boundary follow-on passed clean macOS
+arm64/AppleClang 21 and Ubuntu 24.04 x86_64/GCC 13.3 Release gates with
+warnings as errors: 1056/1056 native tests passed on each platform.  Rebuilt
+``cp312-abi3`` wheels installed in fresh Python 3.14.6 environments produced
+1025 passed, 22 skipped, and 6 deselected on each platform.  The coverage
+includes direct, fixed-structural, two-level, branch, keyed-child, mesh,
+dispatch, and stacked error-boundary context imports through public
+``eval_node`` APIs.
+
 These are execution results, not collection-only inventory.
 
 Replacement Readiness
@@ -255,7 +264,6 @@ are saved in :doc:`parity_matrix`.
 
 **Required compatibility slices:**
 
-- context import/export across compiled nested boundaries;
 - Python service-adaptor declarations/implementations and the engine-stop
   injectable/operator;
 - rich Python error result schemas, keyed-map capture, and trace settings; and
@@ -300,7 +308,10 @@ Priority 2: Nested Graphs and Boundaries
   branch configuration adapted onto the native runtime;
 - reference, subscription, and request/reply services;
 - source, sink, duplex, and service-adaptor foundations; and
-- same-wiring contexts and the source/capture context runtime primitive.
+- contexts in the same wiring and across compiled ``nested_``, ``try_except_``,
+  ``switch_``, ``dispatch_``, ``map_``, and ``mesh_`` boundaries. Context
+  imports reuse static outer-port capture, including leaf-wise fixed structural
+  bindings, rather than adding a runtime relay.
 
 **Remaining higher-order shapes:**
 
@@ -309,7 +320,6 @@ Priority 2: Nested Graphs and Boundaries
 
 **Remaining boundary modes:**
 
-- context import/export across compiled nested graphs;
 - ``Context<>`` parameters on implementations registered through
   ``register_overload``;
 - recordable-state pass-through across nested boundaries; and

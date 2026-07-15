@@ -140,12 +140,14 @@ wiring is a CAPTURE: it converts to a fresh boundary argument appended
 after the declared inputs (deduplicated by source identity), and the
 compile result reports the captured outer ports in
 ``CompiledSubGraph::captured_inputs`` (parallel to the appended
-boundary indices). The CALLER binds them: ``map_`` appends each
-captured port to its argument list as a pass-through (broadcast,
-never multiplexed) input. Consumers that do not yet support captures
-reject a compile whose ``captured_inputs`` is non-empty rather than
-mis-bind. A plain ``finish`` (root graphs) reports a foreign source as
-an error - captures only make sense across a sub-graph boundary.
+boundary indices). The CALLER binds them: ``nested_`` / ``try_except_`` append
+ordinary inputs, branch operators retarget them onto shared switch/dispatch
+slots, and ``map_`` / ``mesh_`` append pass-through (broadcast, never
+multiplexed) inputs. Captures are deduplicated against existing outer slots.
+Named contexts use this same mechanism when a child lookup resolves a port
+published by an enclosing ``Wiring``. Fixed structural captures preserve their
+shape and cross leaf by leaf. A plain ``finish`` (root graphs) reports a
+foreign source as an error - captures only make sense across a sub-graph boundary.
 Captured producers contribute no rank edge inside the child (they rank
 in the OUTER graph; the child sees them as boundary inputs).
 
@@ -806,8 +808,9 @@ this codebase, the current code wins:
   output-binding kind), key-value injection (with ``switch_``/``map_`` /
   ``mesh_``), and keyed write-through forwarding for ``map_`` / ``mesh_``
   output. REF adaptation is ordinary endpoint negotiation around those modes,
-  not a separate binding kind. Context import/export and recordable-state
-  pass-through remain rejected explicitly at wiring time until designed here.
+  not a separate binding kind. Context import/export is ordinary outer-port
+  capture; recordable-state pass-through remains rejected explicitly at wiring
+  time until designed here.
 - **Sampled semantics on rebind.** Per the sampled-runtime contract, when
   ``switch_`` retargets the active branch at time *t*, the new child samples any
   already-valid bound inputs at *t*. Branch construction records an explicit

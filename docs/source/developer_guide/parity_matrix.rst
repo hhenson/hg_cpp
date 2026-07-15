@@ -227,10 +227,11 @@ Python builder objects that deliberately do not exist in the C++-first model.
    * - ``test_context.py``
      - 17
      - Same-wiring named/default/required, shadowing, graph consumption, and
-       explicit override are covered.  **Required boundary work:** import and
-       export contexts through compiled ``switch_``/``map_``/``nested_``/
-       ``try_except_`` children and support ``Context<>`` on registered
-       overload implementations.
+       explicit override are covered.  **Compiled boundary import has landed**
+       for ``switch_``/``dispatch_``/``map_``/``mesh_``/``nested_``/
+       ``try_except_`` children in the C++ capture path, with public C++ and
+       Python ``eval_node`` coverage.  ``Context<>`` on registered overload
+       implementations remains.
    * - ``test_de_dupping_of_nodes.py`` + root ``test_wiring.py``
      - 4
      - **Private-internal tests.** Native interning, scalar identity, sink
@@ -341,12 +342,11 @@ annotation, recording-shape, or private-topology assumptions.  Retained cases
 must be rewritten around public ``eval_node`` graphs and paired with equivalent
 C++ wiring tests.
 
-The audit leaves four implementation groups, in priority order:
+The audit leaves three implementation groups, in priority order:
 
-1. Context import/export across compiled nested boundaries.
-2. Python service adaptors plus the engine-stop/injectable surface.
-3. Rich Python error-result schemas, keyed-map capture, and trace settings.
-4. Small bridge compatibility work: ``nested_graph`` and vocabulary aliases,
+1. Python service adaptors plus the engine-stop/injectable surface.
+2. Rich Python error-result schemas, keyed-map capture, and trace settings.
+3. Small bridge compatibility work: ``nested_graph`` and vocabulary aliases,
    ``SetDelta`` recording shape, safe REF metadata, output-view conveniences,
    and the two TSW view differences.
 
@@ -484,8 +484,9 @@ Wiring and node-authoring surface
        covered.  Python ``service_adaptor`` / ``service_adaptor_impl`` syntax,
        subscription/request-reply adaptor flows, and concrete families remain.
    * - Contexts
-     - Full (same-wiring)
-     - See *Types* row; nested import/export deferred.
+     - Full (wiring and compiled children)
+     - Named/default/required compatibility plus native context capture across
+       compiled nested operators. Registered-overload injection remains.
    * - ``@component``
      - Full (first pass)
      - ``stdlib::component<G>`` over the mode scope + record/replay

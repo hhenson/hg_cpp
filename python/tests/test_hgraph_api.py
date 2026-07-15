@@ -528,6 +528,43 @@ def test_context_publish_and_get():
     eval_node(unpublished, [1])
 
 
+def test_context_imports_into_compiled_higher_order_graphs():
+    @graph
+    def add_price(value: TS[int]) -> TS[int]:
+        return value + hg.context.get("price")
+
+    @graph
+    def subtract_price(value: TS[int]) -> TS[int]:
+        return value - hg.context.get("price")
+
+    @graph
+    def mapped(values: TSD[str, TS[int]], price: TS[int]) -> TSD[str, TS[int]]:
+        with hg.context("price", price):
+            return hg.map_(add_price, values)
+
+    assert eval_node(
+        mapped,
+        [{"a": 1, "b": 2}, None, {"a": 5}],
+        [10, 20, None],
+    ) == [
+        {"a": 11, "b": 12},
+        {"a": 21, "b": 22},
+        {"a": 25},
+    ]
+
+    @graph
+    def switched(key: TS[str], value: TS[int], price: TS[int]) -> TS[int]:
+        with hg.context("price", price):
+            return hg.switch_(key, {"add": add_price, "sub": subtract_price}, value)
+
+    assert eval_node(
+        switched,
+        ["add", None, None, "sub", None],
+        [1, 2, None, None, 3],
+        [10, None, 20, None, None],
+    ) == [11, 12, 22, -18, -17]
+
+
 class _TestContext:
     # Transcribed from ext/main hgraph_unit_tests/_wiring/test_context.py.
     __instance__ = None

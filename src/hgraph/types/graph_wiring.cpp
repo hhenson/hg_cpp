@@ -49,6 +49,7 @@ namespace hgraph
             std::vector<SourceKey>     structural_children{};
             std::size_t                boundary_arg{static_cast<std::size_t>(-1)};
             std::vector<std::size_t>   boundary_path{};
+            bool                       captured_boundary{false};
 
             bool operator==(const SourceKey &) const noexcept = default;
         };
@@ -118,6 +119,7 @@ namespace hgraph
                 combine(h, 0xC8C8C8C8ULL);  // children separator
                 combine(h, std::hash<std::size_t>{}(source.boundary_arg));
                 for (std::size_t p : source.boundary_path) { combine(h, std::hash<std::size_t>{}(p)); }
+                combine(h, std::hash<bool>{}(source.captured_boundary));
                 combine(h, 0xB0B0B0B0ULL);  // boundary separator
             }
         };
@@ -139,8 +141,11 @@ namespace hgraph
             }
             else if (source.is_boundary_source())
             {
-                key.boundary_arg  = source.boundary_arg_index();
-                key.boundary_path = source.boundary_path();
+                key.boundary_arg = source.is_captured_boundary_source()
+                                       ? source.boundary_capture_index()
+                                       : source.boundary_arg_index();
+                key.boundary_path     = source.boundary_path();
+                key.captured_boundary = source.is_captured_boundary_source();
             }
             return key;
         }
@@ -304,16 +309,21 @@ namespace hgraph
             {
                 for (std::size_t index = 0; index < captured.size(); ++index)
                 {
-                    const auto &existing = captured[index];
-                    if (existing.peered_node() == outer.peered_node() &&
-                        existing.peered_path() == outer.peered_path() &&
-                        existing.peered_output_kind() == outer.peered_output_kind())
-                    {
-                        return index;
-                    }
+                    if (captured[index].same_source_as(outer)) { return index; }
                 }
                 captured.push_back(outer);
                 return captured.size() - 1;
+            }
+
+            [[nodiscard]] std::size_t boundary_ordinal(const WiringPortRef &source) const
+            {
+                if (!source.is_captured_boundary_source()) { return source.boundary_arg_index(); }
+                const std::size_t capture_index = source.boundary_capture_index();
+                if (capture_index >= captured.size())
+                {
+                    throw std::logic_error("captured sub-graph boundary index is out of range");
+                }
+                return base_index + capture_index;
             }
         };
 
@@ -355,7 +365,7 @@ namespace hgraph
             if (source.is_null_source()) { return; }
             if (source.is_boundary_source())
             {
-                if (boundary_bindings == nullptr)
+                if (boundary_bindings == nullptr || (source.is_captured_boundary_source() && captures == nullptr))
                 {
                     throw std::logic_error(
                         "Wiring::finish encountered a sub-graph boundary source; compile with finish_subgraph "
@@ -363,7 +373,9 @@ namespace hgraph
                 }
                 std::vector<std::size_t> source_path;
                 source_path.reserve(1 + source.boundary_path().size());
-                source_path.push_back(source.boundary_arg_index());
+                source_path.push_back(captures != nullptr
+                                          ? captures->boundary_ordinal(source)
+                                          : source.boundary_arg_index());
                 source_path.insert(source_path.end(), source.boundary_path().begin(), source.boundary_path().end());
                 boundary_bindings->push_back(NestedGraphInputBinding{
                     .source_path = std::move(source_path),
@@ -574,7 +586,7 @@ namespace hgraph
         }
     }
 
-    WiringPortRef graph_wiring_detail::resolve_context_source(const Wiring &w, std::string_view name)
+    WiringPortRef graph_wiring_detail::resolve_context_source(Wiring &w, std::string_view name)
     {
         const auto *entry = OperatorRegistry::instance().resolve_context_scope(name);
         if (entry == nullptr)
@@ -584,18 +596,16 @@ namespace hgraph
         }
         if (entry->wiring != static_cast<const void *>(&w))
         {
-            throw std::logic_error(
-                "context '" + std::string{name} +
-                "' was published in a different wiring: importing a context into a compiled "
-                "sub-graph (map_/switch_/nested_ child) is not supported yet (see services.rst, Contexts)");
+            return w.capture_outer_source(entry->port);
         }
         return entry->port;
     }
 
     bool graph_wiring_detail::has_context_source(const Wiring &w, std::string_view name) noexcept
     {
+        (void)w;
         const auto *entry = OperatorRegistry::instance().resolve_context_scope(name);
-        return entry != nullptr && entry->wiring == static_cast<const void *>(&w);
+        return entry != nullptr;
     }
 
     void graph_wiring_detail::push_context_source(const Wiring &w, std::string_view name, WiringPortRef port)
@@ -648,6 +658,7 @@ namespace hgraph
         std::unordered_map<std::string, const WiringInstance *>            service_rank_anchors{};
         std::vector<ServiceClientRank>                                      service_client_ranks{};
         std::vector<SameCyclePair>                                          same_cycle_pairs{};
+        std::vector<WiringPortRef>                                          captured_inputs{};
         GlobalState                                                         traits{};   // value-layer Map<string, Any>
         std::vector<ServiceImplementationScopeState>                       implementation_scopes{};
         GlobalState                                                        global_state{};
@@ -667,6 +678,54 @@ namespace hgraph
     Wiring::~Wiring()                              = default;
     Wiring::Wiring(Wiring &&) noexcept             = default;
     Wiring &Wiring::operator=(Wiring &&) noexcept  = default;
+
+    WiringPortRef Wiring::capture_outer_source(WiringPortRef source)
+    {
+        if (impl_->kind != WiringKind::SubGraph)
+        {
+            throw std::logic_error("only a compiled sub-graph may capture an enclosing wiring source");
+        }
+        if (source.schema == nullptr)
+        {
+            throw std::logic_error("cannot capture an unbound enclosing wiring source");
+        }
+
+        const auto captured_shape = [](const WiringPortRef &outer, std::size_t capture_index) {
+            const auto build = [&](auto &&self, const WiringPortRef &part,
+                                   std::vector<std::size_t> path) -> WiringPortRef {
+                if (part.is_structural_source())
+                {
+                    std::vector<WiringPortRef> children;
+                    children.reserve(part.structural_children().size());
+                    for (std::size_t child_index = 0;
+                         child_index < part.structural_children().size(); ++child_index)
+                    {
+                        std::vector<std::size_t> child_path = path;
+                        child_path.push_back(child_index);
+                        children.push_back(self(self, part.structural_children()[child_index],
+                                                std::move(child_path)));
+                    }
+                    return WiringPortRef::structural_source(part.schema, std::move(children));
+                }
+                if (part.is_null_source()) { return part; }
+                return WiringPortRef::captured_boundary_source(
+                    capture_index, std::move(path), part.schema);
+            };
+            return build(build, outer, {});
+        };
+
+        for (std::size_t index = 0; index < impl_->captured_inputs.size(); ++index)
+        {
+            if (impl_->captured_inputs[index].same_source_as(source))
+            {
+                return captured_shape(impl_->captured_inputs[index], index);
+            }
+        }
+
+        const std::size_t index = impl_->captured_inputs.size();
+        impl_->captured_inputs.push_back(std::move(source));
+        return captured_shape(impl_->captured_inputs.back(), index);
+    }
 
     WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder, std::span<const WiringInputRef> inputs,
                                    Value scalars)
@@ -1154,13 +1213,11 @@ namespace hgraph
         CompiledSubGraph compiled;
         compiled.input_schemas = std::move(input_schemas);
 
-        OuterCaptureCollector captures{.base_index = compiled.input_schemas.size()};
+        OuterCaptureCollector captures{
+            .base_index = compiled.input_schemas.size(),
+            .captured   = std::move(impl_->captured_inputs),
+        };
         RankedGraphBuild build = build_ranked_graph(impl_->instances, &compiled.input_bindings, &captures);
-        for (const WiringPortRef &outer : captures.captured)
-        {
-            compiled.input_schemas.push_back(outer.schema);
-        }
-        compiled.captured_inputs = std::move(captures.captured);
         validate_same_cycle_pairs(build.index_of);
         // GraphBuilder's default construction honours an active top-level
         // GlobalContext. A compiled child must instead share its root graph's
@@ -1182,7 +1239,7 @@ namespace hgraph
                 // output the outer input is bound to.
                 std::vector<std::size_t> parent_path;
                 parent_path.reserve(1 + output->boundary_path().size());
-                parent_path.push_back(output->boundary_arg_index());
+                parent_path.push_back(captures.boundary_ordinal(*output));
                 parent_path.insert(parent_path.end(), output->boundary_path().begin(),
                                    output->boundary_path().end());
                 compiled.output_binding = NestedGraphOutputBinding{
@@ -1201,13 +1258,19 @@ namespace hgraph
                 const auto it = index_of.find(output->peered_node());
                 if (it == index_of.end())
                 {
-                    throw std::invalid_argument(
-                        "Wiring::finish_subgraph: the sub-graph output port does not belong to this sub-graph");
+                    compiled.output_binding = NestedGraphOutputBinding{
+                        .kind = NestedGraphOutputBinding::Kind::ParentInput,
+                        .parent_source_path = {captures.base_index + captures.index_for(*output)},
+                    };
+                    compiled.output_schema = output->schema;
                 }
-                compiled.output_binding = NestedGraphOutputBinding{
-                    .source = NestedGraphEndpoint{.node = it->second, .path = output->peered_path()},
-                };
-                compiled.output_schema = output->schema;
+                else
+                {
+                    compiled.output_binding = NestedGraphOutputBinding{
+                        .source = NestedGraphEndpoint{.node = it->second, .path = output->peered_path()},
+                    };
+                    compiled.output_schema = output->schema;
+                }
             }
             else
             {
@@ -1216,6 +1279,12 @@ namespace hgraph
                     "(structural outputs are not supported)");
             }
         }
+
+        for (const WiringPortRef &outer : captures.captured)
+        {
+            compiled.input_schemas.push_back(outer.schema);
+        }
+        compiled.captured_inputs = std::move(captures.captured);
 
         // Wiring-time GlobalState entries cannot be carried by a sub-graph:
         // nested graphs delegate global state to the root graph at runtime, so

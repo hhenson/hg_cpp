@@ -314,6 +314,13 @@ namespace hgraph
                     std::forward_as_tuple(std::get<scalar_positions[S]>(arg_tuple)...));
             }(std::make_index_sequence<sig::scalar_count()>{});
 
+            inputs.reserve(inputs.size() + compiled.captured_inputs.size());
+            for (WiringPortRef &captured : compiled.captured_inputs)
+            {
+                inputs.push_back(std::move(captured));
+            }
+            compiled.captured_inputs.clear();
+
             // 3. The outer node's input TSB over the boundary args.
             const TSValueTypeMetaData *input_schema = nullptr;
             if (!compiled.input_schemas.empty())
@@ -582,7 +589,7 @@ namespace hgraph
                 {
                     std::vector<std::size_t> path = ts.boundary_path();
                     path.push_back(index);
-                    return WiringPortRef::boundary_source(ts.boundary_arg_index(), std::move(path), element_schema);
+                    return ts.projected_boundary_source(std::move(path), element_schema);
                 }
                 case WiringPortRef::SourceKind::Null:
                     return WiringPortRef::null_source(element_schema);
@@ -614,7 +621,7 @@ namespace hgraph
                 {
                     std::vector<std::size_t> path = ts.boundary_path();
                     path.push_back(index);
-                    return WiringPortRef::boundary_source(ts.boundary_arg_index(), std::move(path), field_schema);
+                    return ts.projected_boundary_source(std::move(path), field_schema);
                 }
                 case WiringPortRef::SourceKind::Null:
                     return WiringPortRef::null_source(field_schema);
@@ -654,8 +661,7 @@ namespace hgraph
                 {
                     std::vector<std::size_t> path = ts.boundary_path();
                     path.push_back(ts_key_set_path_component);
-                    return WiringPortRef::boundary_source(ts.boundary_arg_index(), std::move(path),
-                                                          key_set_schema);
+                    return ts.projected_boundary_source(std::move(path), key_set_schema);
                 }
                 case WiringPortRef::SourceKind::Null:
                     return WiringPortRef::null_source(key_set_schema);
