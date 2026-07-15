@@ -27,6 +27,8 @@ A node evaluation can throw. The framework's contract:
   ``try_except_`` boundary, else out of the graph).
 - ``exception_time_series(port)`` is the **per-node** extractor: it activates
   error capture on the producing node and returns its error-output time series.
+  For a TSD ``map_`` this is a sparse ``TSD[K, TS[NodeError]]`` with one
+  retained error series per live mapped child.
 - ``try_except_(func, …)`` wraps a **whole sub-graph** in one node that runs the
   child graph under try/catch and produces ``TSB[{exception, out}]`` — the
   ``out`` field forwards the wrapped graph's output, the ``exception`` field
@@ -99,16 +101,34 @@ The node storage already reserves an error-output ``TSOutput`` when
   producing node: ``NodeBuilder::with_error_capture(error_schema)`` clones the
   node's type record with ``error_output_schema = TS[NodeError]`` and
   ``captures_errors = true`` (reusing the original native callbacks; only
-  supported for native nodes — a custom-ops node such as ``map_`` raises a clear
-  error), and ``Wiring`` swaps the instance's builder before ``finish``. The
-  later-built storage plan then includes the error output. The returned port is
-  the node's error output, addressed by the existing ``ErrorOutput`` source
-  kind.
+  supported for ordinary native nodes), and ``Wiring`` swaps the instance's
+  builder before ``finish``. TSD ``map_`` is the custom-ops exception: it
+  rebuilds its descriptor with a keyed error-output schema and catches each
+  child evaluation independently. The later-built storage plan then includes
+  the error output. The returned port is the node's error output, addressed by
+  the existing ``ErrorOutput`` source kind.
 
 Because activation happens during wiring (before ``finish``) the storage plan
 is built from the amended schema. The error-output schema joins the interning
 identity; in the rare case where a structurally identical node without an error
 reference deduped to one that has it, the unused error port is harmless.
+
+
+Keyed ``map_`` capture
+----------------------
+
+TSD ``map_`` owns a hidden ``TSD[K, TS[NodeError]]`` alongside its ordinary
+output when capture is activated. A child exception updates only that key and
+does not prevent other due children from evaluating. The error entry retains
+its last value while the child remains live; logical key removal stops the
+child and publishes the error-key removal, while slot erase performs the
+existing in-place child destruction. Clean children never create empty error
+entries or tick an empty dictionary.
+
+The map error dictionary uses the same key schema as the ordinary map output
+and ordinary ``TS[NodeError]`` elements. It is therefore planned as part of the
+node's single allocation and follows the same stable key/slot lifetime rather
+than maintaining a side table.
 
 
 ``try_except_`` over a sub-graph
@@ -157,14 +177,13 @@ Files
 Roadmap / deferrals
 -------------------
 
-Done in this increment: ``NodeError``, per-node capture + ``exception_time_series``,
-``try_except_`` over a sub-graph (value + sink), ASAN/UBSAN-verified.
+Done: ``NodeError``, per-node capture + ``exception_time_series``,
+``try_except_`` over a sub-graph (value + sink), and keyed TSD ``map_`` capture.
 
 Deferred (recorded, not yet built):
 
-- the ``map_`` error variant — ``exception_time_series`` over a ``map_``
-  yielding ``TSD[K, TS[NodeError]]`` (Python's ``TryExceptTsdMapResult``);
 - ``__trace_back_depth__`` / ``__capture_values__`` knobs and richer
   ``stack_trace`` / ``activation_back_trace`` content;
-- error capture on custom-ops nodes (nested/map/switch) via their own evaluate;
+- error capture on the remaining custom-ops nodes (nested/switch/mesh) via
+  their own evaluate paths;
 - child-graph reset/rebuild policy after an exception (currently kept as-is).

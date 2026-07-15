@@ -505,11 +505,21 @@ namespace hgraph
         return Port<void>{w, std::move(out)};
     }
 
+    /** Per-key error capture for a TSD ``map_`` output. */
+    template <typename Key, typename ValueSchema>
+    [[nodiscard]] Port<TSD<Key, TS<NodeError>>> exception_time_series(
+        const Port<TSD<Key, ValueSchema>> &port)
+    {
+        Wiring &w = port.checked_wiring();
+        w.activate_error_capture(port.erased().peered_node(), node_error_ts_meta());
+        return error_output(port).template as<TSD<Key, TS<NodeError>>>();
+    }
+
     /**
      * Python's ``exception_time_series(port)`` — activate error capture on the
-     * port's producing node and return its error-output time series
-     * (``TS<NodeError>``). The node now runs its evaluation under a try/catch; on
-     * an exception it ticks the returned series instead of its normal output.
+     * port's producing node and return its scalar error-output time series.
+     * TSD ``map_`` outputs select the overload above and return one error
+     * series per mapped key.
      */
     template <typename Schema>
     [[nodiscard]] Port<TS<NodeError>> exception_time_series(const Port<Schema> &port)

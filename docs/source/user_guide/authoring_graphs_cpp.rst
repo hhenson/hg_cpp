@@ -787,6 +787,9 @@ Two levels, mirroring Python (design record: developer guide *Error handling*):
   produces ``port`` and returns ``Port<TS<NodeError>>``. When that node's
   ``eval`` throws, a ``NodeError`` ticks on the error output and the graph
   keeps running.
+- For ``Port<TSD<K, V>>`` produced by ``map_``, the same function returns
+  ``Port<TSD<K, TS<NodeError>>>``. Errors are isolated per mapped child and an
+  error key is removed when that child leaves the map.
 - ``try_except_<G>(w, args…)`` wraps a whole sub-graph: the result is a ``TSB``
   with fields ``exception`` (``TS<NodeError>``) and ``out`` (the wrapped
   graph's output); a sink sub-graph yields a bare ``TS<NodeError>``.

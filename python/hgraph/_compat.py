@@ -22,7 +22,9 @@ class DivideByZero(Enum):
 
 def exception_time_series(ts):
     """Activate error capture on ``ts``'s producing node; returns the
-    TS[NodeError] error output (the C++ error-capture machinery)."""
+    native error output. Ordinary nodes expose ``TS[NodeError]``; a TSD
+    ``map_`` exposes ``TSD[K, TS[NodeError]]`` with one retained error series
+    per live mapped child."""
     from ._wiring import WiringPort, _current_wiring, _unwrap
 
     return WiringPort(_current_wiring().exception_time_series(_unwrap(ts)))

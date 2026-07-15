@@ -1,4 +1,5 @@
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/runtime/map_node.h>
 #include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/operator_dispatch.h>   // context scope stack (OperatorRegistry)
 #include <hgraph/types/subgraph_wiring.h>
@@ -1125,7 +1126,10 @@ namespace hgraph
         const NodeTypeMetaData *meta     = instance.builder.type().schema();
         if (meta == nullptr || meta->error_output_schema == nullptr)
         {
-            instance.builder = instance.builder.with_error_capture(error_schema);
+            const NodeOps &ops = instance.builder.type().ops_ref();
+            instance.builder = ops.extended_view_type_id == MapNodeView::node_view_type_id()
+                                   ? map_node_with_error_capture(instance.builder, error_schema)
+                                   : instance.builder.with_error_capture(error_schema);
         }
         return instance.builder.type().schema()->error_output_schema;
     }

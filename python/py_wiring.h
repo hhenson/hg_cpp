@@ -126,7 +126,8 @@ namespace hgraph::python_bridge
         }
 
         /** hgraph's exception_time_series(port): activate error capture on
-            the producing node and return its TS[NodeError] error output. */
+            the producing node. Ordinary nodes return TS[NodeError]; TSD map_
+            nodes return TSD[K, TS[NodeError]]. */
         [[nodiscard]] nb::object exception_time_series(PyPort port)
         {
             ensure_open();

@@ -242,9 +242,10 @@ Python builder objects that deliberately do not exist in the C++-first model.
    * - ``test_error_handling.py``
      - 10
      - Native ``NodeError``, ``exception_time_series``, and ``try_except_``
-       execution are covered.  **Required Python work:** public result schema
-       aliases and call syntax, keyed-map error results, and capture/traceback
-       configuration.
+       execution are covered. TSD ``map_`` now captures child errors as
+       ``TSD[K, TS[NodeError]]`` with native and Python ``eval_node`` coverage.
+       **Required Python work:** public result schema aliases and call syntax,
+       plus capture/traceback configuration.
    * - ``test_lift.py``
      - 4
      - Basic lift and explicit output override are covered.  ``dedup_output``
@@ -257,7 +258,8 @@ Python builder objects that deliberately do not exist in the C++-first model.
        variadic arguments, injectables, lifecycle, reference retargeting,
        nested maps, and overloads have native and Python coverage.  Six tests
        inspect the old private ``_build_map_wiring`` structures and are not
-       portable.  Keyed-map error capture belongs to the error-handling gap.
+       portable. Keyed-map error capture is covered by the error-handling
+       runtime and public ``eval_node`` tests.
    * - ``test_mesh.py``
      - 7
      - Named and anonymous meshes, dependency ordering/cycles, on-demand
@@ -345,7 +347,7 @@ C++ wiring tests.
 
 The audit leaves two implementation groups, in priority order:
 
-1. Rich Python error-result schemas, keyed-map capture, and trace settings.
+1. Public Python error-result schemas/call syntax and trace settings.
 2. Small bridge compatibility work: ``nested_graph`` and vocabulary aliases,
    ``SetDelta`` recording shape, safe REF metadata, output-view conveniences,
    and the two TSW view differences.
@@ -525,9 +527,9 @@ Runtime
 -------
 
 Both evaluation modes (Simulation, RealTime) are at full parity — Python has
-no additional modes. Error handling is functional but shallower than Python
-(``__trace_back_depth__`` / ``__capture_values__`` / ``map_`` error variant
-``TSD[K, TS[NodeError]]`` are deferred; see :doc:`error_handling`).
+no additional modes. Error handling is functional but shallower than Python:
+``__trace_back_depth__`` / ``__capture_values__`` and public ``TryExcept*``
+result/call conveniences are deferred; see :doc:`error_handling`.
 
 What blocks the bridge vs. what is additive
 -------------------------------------------

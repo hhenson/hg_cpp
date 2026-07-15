@@ -103,6 +103,15 @@ namespace hgraph
      * slot's later erase destroys the child in place (see *Nested Graphs*).
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder map_node(NodeTypeMetaData meta, MapNodeSpec spec);
+
+    /**
+     * Rebuild an existing TSD ``map_`` node with a sparse per-key error
+     * output. ``error_element_schema`` is the error series for one child
+     * (normally ``TS<NodeError>``); the hidden node output is
+     * ``TSD<K, error_element_schema>`` using the map's existing key type.
+     */
+    [[nodiscard]] HGRAPH_EXPORT NodeBuilder map_node_with_error_capture(
+        const NodeBuilder &builder, const TSValueTypeMetaData *error_element_schema);
 }  // namespace hgraph
 
 #endif  // HGRAPH_RUNTIME_MAP_NODE_H

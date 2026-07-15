@@ -1,9 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <hgraph/lib/testing/check_output.h>
+#include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/mock_runtime.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/lib/testing/runtime_support.h>
+#include <hgraph/lib/std/std_operators.h>
 #include <hgraph/runtime/nested_bindings.h>
 #include <hgraph/runtime/node_error.h>
 #include <hgraph/types/graph_wiring.h>
@@ -132,6 +134,52 @@ namespace
         static void           eval(In<"e", TS<NodeError>> e, Out<TS<Str>> out)
         {
             out.set(e.base().value().as_bundle().at("error_msg").checked_as<Str>());
+        }
+    };
+
+    struct DivideOrThrow
+    {
+        static constexpr auto name = "divide_or_throw";
+
+        static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out)
+        {
+            if (rhs.value() == 0) { throw std::runtime_error("division by zero"); }
+            out.set(lhs.value() / rhs.value());
+        }
+    };
+
+    struct DivideOrThrowG
+    {
+        static constexpr auto name = "divide_or_throw_g";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            return wire<DivideOrThrow>(w, lhs, rhs);
+        }
+    };
+
+    struct ErrorMsgG
+    {
+        static constexpr auto name = "error_msg_g";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<NodeError>> error)
+        {
+            return wire<ErrorMsgOf>(w, error);
+        }
+    };
+
+    struct MappedErrorMessagesGraph
+    {
+        static constexpr auto name = "mapped_error_messages_graph";
+
+        static Port<TSD<Int, TS<Str>>> compose(Wiring &w,
+                                               Port<TSD<Int, TS<Int>>> lhs,
+                                               Port<TSD<Int, TS<Int>>> rhs)
+        {
+            auto mapped = wire<stdlib::map_>(w, fn<DivideOrThrowG>(), lhs, rhs)
+                              .as<TSD<Int, TS<Int>>>();
+            Port<TSD<Int, TS<NodeError>>> errors = exception_time_series(mapped);
+            return wire<stdlib::map_>(w, fn<ErrorMsgG>(), errors).as<TSD<Int, TS<Str>>>();
         }
     };
 
@@ -284,6 +332,31 @@ TEST_CASE("error handling: exception_time_series catches non-standard exceptions
 
     CHECK_OUTPUT(get_recorded_values<Int>(gs, "out"), values<Int>(15, none, 21));
     CHECK_OUTPUT(get_recorded_values<Str>(gs, "err"), values<Str>(none, "unknown error"s));
+}
+
+TEST_CASE("error handling: mapped child errors are keyed and erased with child lifetime")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+
+    stdlib::register_standard_operators();
+
+    const auto lhs = values<Value>(
+        dict_delta<Int, TS<Int>>({{0, 10}}),
+        dict_delta<Int, TS<Int>>({{1, 9}}),
+        dict_delta<Int, TS<Int>>({{2, 8}}),
+        dict_delta<Int, TS<Int>>({}, {1}));
+    const auto rhs = values<Value>(
+        dict_delta<Int, TS<Int>>({{0, 2}}),
+        dict_delta<Int, TS<Int>>({{1, 0}}),
+        dict_delta<Int, TS<Int>>({{2, 4}}),
+        dict_delta<Int, TS<Int>>({}, {1}));
+
+    CHECK_OUTPUT(eval_node<MappedErrorMessagesGraph>(lhs, rhs),
+                 values<Value>(none,
+                               dict_delta<Int, TS<Str>>({{1, "division by zero"s}}),
+                               none,
+                               dict_delta<Int, TS<Str>>({}, {1})));
 }
 
 TEST_CASE("error handling: a clean run never ticks the error output")

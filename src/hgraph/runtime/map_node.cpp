@@ -1,6 +1,7 @@
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/nested_bindings.h>
 #include <hgraph/runtime/nested_graph_storage.h>
+#include <hgraph/runtime/node_error.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/util/scope.h>
 
@@ -250,6 +251,15 @@ namespace hgraph
             return dict.begin_mutation(evaluation_time);
         }
 
+        [[nodiscard]] std::optional<TSDDataMutationView> begin_map_error_mutation(
+            const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.has_error_output()) { return std::nullopt; }
+            auto output = view.error_output(evaluation_time);
+            auto dict   = output.as_dict();
+            return dict.begin_mutation(evaluation_time);
+        }
+
         [[nodiscard]] SourceRepointStatus update_source_handles(const TSInputView &root_input,
                                                                 MapNodeStorage &storage,
                                                                 const std::vector<std::size_t> &multiplexed_inputs,
@@ -291,6 +301,7 @@ namespace hgraph
 
         void remove_entry_at_slot(const NodeView &view, const MapNodeContext &context,
                                   MapNodeStorage &storage, TSDDataMutationView *output_mutation,
+                                  TSDDataMutationView *error_mutation,
                                   std::size_t slot, DateTime evaluation_time)
         {
             auto *entry = storage.entries.entry_at(slot);
@@ -299,15 +310,21 @@ namespace hgraph
             clear_entry_output_binding(view, context, *entry, evaluation_time);
             if (entry->graph.has_value() && entry->graph.view().started()) { entry->graph.view().stop(); }
             if (output_mutation != nullptr) { (void)output_mutation->erase(entry->key.view()); }
+            if (error_mutation != nullptr && error_mutation->contains(entry->key.view()))
+            {
+                (void)error_mutation->erase(entry->key.view());
+            }
         }
 
         void remove_all_entries(const NodeView &view, const MapNodeContext &context,
                                 MapNodeStorage &storage, TSDDataMutationView *output_mutation,
+                                TSDDataMutationView *error_mutation,
                                 DateTime evaluation_time)
         {
             for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
             {
-                remove_entry_at_slot(view, context, storage, output_mutation, slot, evaluation_time);
+                remove_entry_at_slot(view, context, storage, output_mutation, error_mutation,
+                                     slot, evaluation_time);
             }
         }
 
@@ -416,8 +433,10 @@ namespace hgraph
             if (keys_source_replaced && storage.entries.has_entries())
             {
                 auto output_mutation = begin_map_output_mutation(view, evaluation_time);
+                auto error_mutation  = begin_map_error_mutation(view, evaluation_time);
                 remove_all_entries(view, context, storage,
-                                   output_mutation ? &*output_mutation : nullptr, evaluation_time);
+                                   output_mutation ? &*output_mutation : nullptr,
+                                   error_mutation ? &*error_mutation : nullptr, evaluation_time);
                 if (output_mutation) { output_mutation->clear(); }
                 storage.unsubscribe_keys_noexcept();
                 storage.retire_entries(evaluation_time);
@@ -427,8 +446,10 @@ namespace hgraph
             if (!keys_input.valid())
             {
                 auto output_mutation = begin_map_output_mutation(view, evaluation_time);
+                auto error_mutation  = begin_map_error_mutation(view, evaluation_time);
                 remove_all_entries(view, context, storage,
-                                   output_mutation ? &*output_mutation : nullptr, evaluation_time);
+                                   output_mutation ? &*output_mutation : nullptr,
+                                   error_mutation ? &*error_mutation : nullptr, evaluation_time);
                 if (output_mutation) { output_mutation->clear(); }
                 storage.primed = false;
             }
@@ -441,8 +462,10 @@ namespace hgraph
                 if (rebuild)
                 {
                     auto output_mutation = begin_map_output_mutation(view, evaluation_time);
-                    auto *mutation = output_mutation ? &*output_mutation : nullptr;
-                    remove_all_entries(view, context, storage, mutation, evaluation_time);
+                    auto error_mutation  = begin_map_error_mutation(view, evaluation_time);
+                    auto *mutation       = output_mutation ? &*output_mutation : nullptr;
+                    auto *errors         = error_mutation ? &*error_mutation : nullptr;
+                    remove_all_entries(view, context, storage, mutation, errors, evaluation_time);
                     if (output_mutation) { output_mutation->clear(); }
                     create_live_key_entries(view, context, storage, mutation, key_set, evaluation_time);
                     storage.primed = true;
@@ -450,13 +473,16 @@ namespace hgraph
                 else if (keys_input.modified())
                 {
                     auto output_mutation = begin_map_output_mutation(view, evaluation_time);
-                    auto *mutation = output_mutation ? &*output_mutation : nullptr;
+                    auto error_mutation  = begin_map_error_mutation(view, evaluation_time);
+                    auto *mutation       = output_mutation ? &*output_mutation : nullptr;
+                    auto *errors         = error_mutation ? &*error_mutation : nullptr;
 
                     for (std::size_t slot = 0; slot < key_set.slot_capacity(); ++slot)
                     {
                         if (key_set.slot_removed(slot))
                         {
-                            remove_entry_at_slot(view, context, storage, mutation, slot, evaluation_time);
+                            remove_entry_at_slot(view, context, storage, mutation, errors,
+                                                 slot, evaluation_time);
                         }
                     }
 
@@ -471,6 +497,27 @@ namespace hgraph
                 }
             }
             return bindings_need_refresh;
+        }
+
+        void write_map_error(const NodeView &view, const ValueView &key,
+                             DateTime evaluation_time, std::string error_msg)
+        {
+            const NodeTypeMetaData *schema = view.schema();
+            NodeErrorFields         fields;
+            fields.signature_name = schema != nullptr && schema->display_name != nullptr
+                                        ? std::string{schema->display_name}
+                                        : std::string{};
+            fields.label       = std::string{view.label()};
+            fields.wiring_path = fields.label.empty() ? fields.signature_name : fields.label;
+            fields.error_msg   = std::move(error_msg);
+
+            Value error_value = make_node_error_value(fields);
+            auto  output      = view.error_output(evaluation_time);
+            auto  error_dict  = output.as_dict();
+            auto  errors      = error_dict.begin_mutation(evaluation_time);
+            auto  child       = errors[key];
+            auto  mutation    = child.begin_mutation(evaluation_time);
+            (void)mutation.move_value_from(std::move(error_value));
         }
 
         // Evaluates the keyed children, supporting pause/resume: a child that pauses (a
@@ -490,6 +537,8 @@ namespace hgraph
             const bool resuming = storage.resume_slot != MapNodeStorage::npos;
             const bool bindings_need_refresh =
                 resuming ? false : map_reconcile_keys(view, context, storage, evaluation_time);
+            const bool captures_errors = view.has_error_output() && view.schema() != nullptr &&
+                                         view.schema()->captures_errors;
 
             // Due children write their TSD elements directly via their terminal forwarding
             // outputs (no post-evaluation collection). A child evaluation propagates its own
@@ -521,7 +570,16 @@ namespace hgraph
                 const bool resume_this = resuming && slot == storage.resume_slot;
                 if (child.next_scheduled_time() <= evaluation_time || resume_this)
                 {
-                    if (!child.evaluate(evaluation_time))
+                    const bool completed = captures_errors
+                                               ? fallback_on_exception(
+                                                     true,
+                                                     [&] { return child.evaluate(evaluation_time); },
+                                                     [&](const char *error) {
+                                                         write_map_error(view, entry->key.view(),
+                                                                         evaluation_time, error);
+                                                     })
+                                               : child.evaluate(evaluation_time);
+                    if (!completed)
                     {
                         storage.resume_slot = slot;  // pause here; resume from this slot
                         return false;
@@ -542,9 +600,11 @@ namespace hgraph
             auto &storage  = *MemoryUtils::cast<MapNodeStorage>(map_view.internal_storage());
 
             auto output_mutation = begin_map_output_mutation(view, evaluation_time);
+            auto error_mutation  = begin_map_error_mutation(view, evaluation_time);
             const auto &context  = *static_cast<const MapNodeContext *>(map_view.internal_context());
             remove_all_entries(view, context, storage,
-                               output_mutation ? &*output_mutation : nullptr, evaluation_time);
+                               output_mutation ? &*output_mutation : nullptr,
+                               error_mutation ? &*error_mutation : nullptr, evaluation_time);
             if (output_mutation) { output_mutation->clear(); }
             storage.unsubscribe_keys_noexcept();
             storage.primed = false;
@@ -846,5 +906,39 @@ namespace hgraph
             graph_layout);
 
         return NodeBuilder::from_descriptor(std::move(descriptor));
+    }
+
+    NodeBuilder map_node_with_error_capture(const NodeBuilder &builder,
+                                            const TSValueTypeMetaData *error_element_schema)
+    {
+        if (error_element_schema == nullptr)
+        {
+            throw std::invalid_argument("map_node_with_error_capture requires an error element schema");
+        }
+
+        const NodeTypeRef type = builder.type();
+        const NodeOps    &ops  = type.ops_ref();
+        if (ops.extended_view_type_id != MapNodeView::node_view_type_id() ||
+            ops.extended_view_context == nullptr)
+        {
+            throw std::invalid_argument("map_node_with_error_capture requires a TSD map node");
+        }
+
+        const auto &context = *static_cast<const MapNodeContext *>(ops.extended_view_context);
+        NodeTypeMetaData meta = *type.schema();
+        if (meta.output_schema == nullptr || meta.output_schema->kind != TSTypeKind::TSD)
+        {
+            throw std::invalid_argument("map_node_with_error_capture requires a TSD map output");
+        }
+        meta.error_output_schema = TypeRegistry::instance().tsd(
+            meta.output_schema->key_type(), error_element_schema);
+        meta.captures_errors = true;
+
+        NodeBuilder result = map_node(std::move(meta), context.spec);
+        result.input_endpoint(builder.input_endpoint());
+        if (!builder.output_endpoint().empty()) { result.output_endpoint(builder.output_endpoint()); }
+        result.label(std::string{builder.label()});
+        result.scalars(Value{builder.scalars()});
+        return result;
     }
 }  // namespace hgraph

@@ -275,7 +275,7 @@ are saved in :doc:`parity_matrix`.
 
 **Required compatibility slices:**
 
-- rich Python error result schemas, keyed-map capture, and trace settings; and
+- public Python error result schemas/call syntax and trace settings; and
 - selected bridge conveniences: ``nested_graph``, vocabulary aliases,
   ``SetDelta`` recording shape, safe opaque-REF metadata, mutable-output view
   conveniences, and the two recorded TSW view differences.
@@ -313,6 +313,9 @@ Priority 2: Nested Graphs and Boundaries
 - ``try_except_``, feedback, closed-union ``dispatch_``, closure capture, key
   injection, ``pass_through`` / ``no_key``, keyed write-through outputs, and
   sampled transfer of unchanged nested collections into a new switch branch;
+- keyed TSD ``map_`` exception capture with a planned
+  ``TSD[K, TS[NodeError]]`` hidden output whose entries follow child slot
+  lifetimes;
 - value-producing and all-sink ``switch_`` branches, including scalar Python
   branch configuration adapted onto the native runtime;
 - reference, subscription, and request/reply services;
