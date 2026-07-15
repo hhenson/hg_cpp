@@ -1134,8 +1134,9 @@ namespace hgraph
         }
         if (meta == nullptr || meta->error_output_schema == nullptr || merged != meta->error_capture)
         {
-            const NodeOps &ops = instance.builder.type().ops_ref();
-            instance.builder = ops.extended_view_type_id == MapNodeView::node_view_type_id()
+            const NodeTypeRef node_type   = instance.builder.type();
+            const bool        is_map_node = node_type.ops_ref().extended_view_type_id == MapNodeView::node_view_type_id();
+            instance.builder = is_map_node
                                    ? map_node_with_error_capture(instance.builder, error_schema, merged)
                                    : instance.builder.with_error_capture(error_schema, merged);
         }
