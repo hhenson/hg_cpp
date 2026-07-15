@@ -57,6 +57,11 @@ C++ user-authored nodes receive this through ``EvaluationClockView``, a borrowed
 read-only type-erased view. The engine/runtime owns and mutates the clock state;
 node code only observes it.
 
+Run-level control is exposed separately through ``EngineControlView``. This
+copyable borrowed injectable exposes mode, bounds, clock, stop state, and
+``request_stop()`` without exposing executor ownership or ``run()``. A stop
+request is processed after the current graph evaluation cycle completes.
+
 Execution Modes
 ~~~~~~~~~~~~~~~
 

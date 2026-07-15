@@ -124,8 +124,8 @@ build the selector from the type-erased ``NodeView``:
 - ``State<T>`` ← ``view.state()``
 - ``RecordableState<TSchema>`` ← ``view.recordable_state(t)``
 - ``Scalar<"name", T>`` ← the node's scalar configuration bundle
-- ``GlobalStateView`` / ``EvaluationClockView`` / ``NodeScheduler`` ← graph and
-  node runtime injectables
+- ``GlobalStateView`` / ``EvaluationClockView`` / ``EngineControlView`` /
+  ``NodeScheduler`` ← graph and node runtime injectables
 
 Because the static layer produces the same ``native`` inputs the hand-written
 path uses, there is **one** runtime node model; static authoring is sugar over
@@ -171,7 +171,7 @@ Implemented: static C++ nodes support ``In`` / ``Out`` selectors over ``TS``,
 ``TSS``, ``TSD``, fixed and dynamic ``TSL``, ``TSW``, ``TSB``, ``REF`` and
 ``SIGNAL``; ``State<T>``; ``RecordableState<TSchema>``; wiring-time
 ``Scalar<"name", T>`` arguments; ``GlobalStateView`` / ``EvaluationClockView`` /
-``NodeScheduler`` injectables; input ``InputActivity`` / ``InputValidity``
+``EngineControlView`` / ``NodeScheduler`` injectables; input ``InputActivity`` / ``InputValidity``
 policy flags; ``TsVar`` / ``ScalarVar`` generic node resolution; and
 ``StaticNodeSignature`` / ``NodeBuilder::implementation<T>()`` over
 ``start`` / ``stop`` / ``eval`` hooks. Node-kind inference covers Compute /

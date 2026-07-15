@@ -6,6 +6,7 @@ namespace hgraph::stdlib
     {
         register_overload<debug_print, debug_print_impl>();
         register_overload<null_sink, null_sink_impl>();
+        register_overload<stop_engine, stop_engine_impl>();
         // The cycle-aligned testing harness and persistent component backend
         // are distinct overloads, selected from call shape and GlobalState.
         register_overload<record, testing::record>();

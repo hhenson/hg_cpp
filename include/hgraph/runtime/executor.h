@@ -16,6 +16,7 @@ namespace hgraph
     class GraphExecutorBuilder;
     class GraphExecutorValue;
     class GraphExecutorView;
+    class EngineControlView;
     struct LifecycleObserver;
     class LifecycleObserverList;
     class PushQueueEngineView;
@@ -75,6 +76,37 @@ namespace hgraph
         ExecutorPtr pointer_{};
     };
 
+    /**
+     * Borrowed, copyable control projection over the active graph executor.
+     *
+     * This is the user-node injectable for run-level control. It deliberately
+     * exposes neither ``run()`` nor graph/push-queue internals: the owning
+     * ``GraphExecutorValue`` remains the only executor lifetime owner, while
+     * authored nodes can inspect run configuration and request an orderly
+     * stop after the current evaluation cycle.
+     */
+    class HGRAPH_EXPORT EngineControlView
+    {
+      public:
+        EngineControlView() noexcept;
+        explicit EngineControlView(ExecutorPtr pointer) noexcept;
+
+        [[nodiscard]] bool valid() const noexcept;
+        [[nodiscard]] GraphExecutorMode mode() const noexcept;
+        [[nodiscard]] DateTime start_time() const noexcept;
+        [[nodiscard]] DateTime end_time() const noexcept;
+        [[nodiscard]] bool stop_requested() const noexcept;
+        [[nodiscard]] EvaluationClockView evaluation_clock() const noexcept;
+
+        void request_stop() const noexcept;
+
+      private:
+        ExecutorPtr pointer_{};
+    };
+
+    static_assert(sizeof(EngineControlView) == sizeof(ExecutorPtr));
+    static_assert(std::is_trivially_copyable_v<EngineControlView>);
+
     /** Borrowed type-erased executor view. */
     class HGRAPH_EXPORT GraphExecutorView
     {
@@ -100,6 +132,7 @@ namespace hgraph
         [[nodiscard]] ClockPtr evaluation_clock_ptr() const noexcept;
         [[nodiscard]] EvaluationClockView evaluation_clock() const noexcept;
         [[nodiscard]] PushQueueEngineView push_queue_engine() const noexcept;
+        [[nodiscard]] EngineControlView engine_control() const noexcept;
 
         /**
          * The lifecycle observer list for this run (design record:

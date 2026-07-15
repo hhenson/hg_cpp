@@ -50,8 +50,8 @@ The important corrections to the previous roadmap are:
   ``python/tests/ported/_operators``.  The wiring tier is only a selected port:
   21 files are present under ``python/tests/ported/_wiring``.  It must not be
   described as the entire upstream wiring suite.
-- The current operator inventory is **134 registered**, **0 declared-only**,
-  **7 missing**, and **24 equivalent APIs** out of the 165 upstream public
+- The current operator inventory is **135 registered**, **0 declared-only**,
+  **6 missing**, and **24 equivalent APIs** out of the 165 upstream public
   definitions.  Use :doc:`parity_matrix` for the per-module inventory.  The
   bridge registry also contains internal and compatibility operators, so its
   raw ``operator_names()`` count is intentionally larger and is not the parity
@@ -275,7 +275,6 @@ are saved in :doc:`parity_matrix`.
 
 **Required compatibility slices:**
 
-- the engine-stop injectable/operator;
 - rich Python error result schemas, keyed-map capture, and trace settings; and
 - selected bridge conveniences: ``nested_graph``, vocabulary aliases,
   ``SetDelta`` recording shape, safe opaque-REF metadata, mutable-output view
@@ -356,7 +355,7 @@ the Arrow C interfaces.
 
 **Remaining inventory:**
 
-- missing public names: ``apply``, ``dedup_builder``, ``stop_engine``,
+- missing public names: ``apply``, ``dedup_builder``,
   ``collect_builder``, ``table_shape``, ``table_shape_from_schema``, and
   ``shape_of_table_type``; and
 - larger optional libraries such as the ``hgraph.stream`` status model and the
@@ -364,14 +363,14 @@ the Arrow C interfaces.
 
 ``dedup_builder`` and ``collect_builder`` are Python implementation-injection
 hooks and probably do not need direct C++ counterparts.  The table-shape trio
-is convenience sugar.  ``apply`` and ``stop_engine`` require explicit API and
-ownership decisions before implementation.
+is convenience sugar. ``apply`` remains an explicit API/design decision.
 
-Native lifecycle observers and the executor ``request_stop()`` primitive have
-landed and cover nested graphs.  Remaining observability work is the public
-Python ``stop_engine`` operator, evaluation tracing, profiling, and the
-node-self injectable.  These are additive unless a target application
-demonstrates that one is required for migration.
+Native lifecycle observers, ``EngineControlView``, the C++ ``stop_engine``
+sink, and Python's guarded ``EvaluationEngineApi`` projection have landed and
+cover nested graphs through the root executor. Remaining observability work is
+evaluation tracing, profiling, and the node-self injectable. These are
+additive unless a target application demonstrates that one is required for
+migration.
 
 Priority 4: Boundary Products
 -----------------------------

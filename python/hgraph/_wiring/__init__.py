@@ -16,7 +16,7 @@ from ._state import (
     set_table_schema_as_of_key, set_table_schema_date_key
 )
 from ._markers import (
-    CLOCK, LOGGER, RECORDABLE_STATE, SCHEDULER, STATE, TSB_OUT, TS_OUT, _INJECTABLE_MARKERS,
+    CLOCK, EvaluationEngineApi, LOGGER, RECORDABLE_STATE, SCHEDULER, STATE, TSB_OUT, TS_OUT, _INJECTABLE_MARKERS,
     _MISSING, _RecordableStateExpr, _RecordableStateMarker, _TSW_KIND, _TsOutMarker,
     _UNBOUNDED_TUPLE_KIND, _annotation_ts_kind, _is_object_vt, _tsw_kind, _unbounded_tuple_kind
 )
@@ -60,7 +60,7 @@ from ._runner import (
 )
 
 __all__ = [
-    "CLOCK", "DebugContext", "EvaluationMode", "Feedback", "GlobalContext", "GlobalState",
+    "CLOCK", "DebugContext", "EvaluationEngineApi", "EvaluationMode", "Feedback", "GlobalContext", "GlobalState",
     "GraphConfiguration", "IncorrectTypeBinding", "LOGGER", "ParseError", "RECORDABLE_STATE",
     "REMOVED", "RecordReplayContext", "RecordReplayEnum", "Removed",
     "RequirementsNotMetWiringError", "SCHEDULER", "STATE", "TSB_OUT", "TS_OUT", "WiringError",

@@ -8,6 +8,8 @@ from hgraph import (
     evaluate_graph,
     GraphConfiguration,
     GlobalState,
+    EvaluationEngineApi,
+    EvaluationMode,
     TIME_SERIES_TYPE,
     LOGGER,
     TS,
@@ -37,6 +39,37 @@ def test_global_state_injectable_for_node():
 
     with GlobalState(offset=10):
         assert eval_node(add_offset, [1, None, 2]) == [11, None, 12]
+
+
+def test_evaluation_engine_api_is_native_and_call_scoped():
+    retained = []
+    phases = []
+
+    @compute_node
+    def stop_on_two(ts: TS[int], engine: EvaluationEngineApi = None) -> TS[int]:
+        retained.append(engine)
+        assert engine.evaluation_mode == EvaluationMode.SIMULATION
+        assert engine.start_time is not None
+        assert engine.end_time is not None
+        assert engine.evaluation_clock.evaluation_time is not None
+        assert not engine.is_stop_requested
+        if ts.value == 2:
+            engine.request_engine_stop()
+            assert engine.is_stop_requested
+        return ts.value
+
+    @stop_on_two.start
+    def start(engine: EvaluationEngineApi = None):
+        phases.append(("start", engine.evaluation_mode))
+
+    @stop_on_two.stop
+    def stop(engine: EvaluationEngineApi = None):
+        phases.append(("stop", engine.is_stop_requested))
+
+    assert eval_node(stop_on_two, [1, 2, 3]) == [1, 2, None]
+    assert phases == [("start", EvaluationMode.SIMULATION), ("stop", True)]
+    with pytest.raises(RuntimeError, match="outside its node's evaluation"):
+        _ = retained[-1].is_stop_requested
 
 
 def test_global_state_injectable_for_graph():

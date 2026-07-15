@@ -60,6 +60,21 @@ namespace hgraph::stdlib
         }
     };
 
+    /** Stop requests are observed by the executor after the graph completes
+        the current evaluation cycle. */
+    struct stop_engine_impl
+    {
+        static auto defaults() { return std::tuple{arg<"msg">(Str{"Stopping"})}; }
+
+        static void eval(In<"ts", SIGNAL> ts, Scalar<"msg", Str> msg,
+                         EngineControlView engine, LoggerView log)
+        {
+            static_cast<void>(ts);
+            log.info("stop_engine: {}", msg.value());
+            engine.request_stop();
+        }
+    };
+
     namespace io_impl_detail
     {
         /** python-style ``{}`` / ``{name}`` formatting over a packed

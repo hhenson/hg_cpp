@@ -18,7 +18,8 @@ class _PyNode:
     """@compute_node / @sink_node: a Python function as a runtime node. The
     function runs on the graph thread (both modes) under the GIL, receives
     time-series inputs as plain Python VALUES and wiring-time scalars as
-    supplied; STATE/CLOCK/SCHEDULER-annotated parameters are injected. A
+    supplied; STATE/CLOCK/SCHEDULER/EvaluationEngineApi-annotated parameters
+    are injected. A
     compute node's return value ticks its output (None = no tick). It must
     have no side effects beyond its output."""
 

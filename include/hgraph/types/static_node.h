@@ -60,8 +60,8 @@ namespace hgraph
      * ``SIGNAL`` / ``REF`` / ``TSS`` / ``TSD`` / ``TSL`` / ``TSB`` / tick-count
      * ``TSW``), scalar ``State<T>``, wiring-time ``Scalar<Name, T>`` values,
      * graph-level ``GlobalState<T>``, input activity/validity policy flags,
-     * output-backed ``RecordableState<TSchema>``, evaluation-clock injection,
-     * and scheduler injection.
+     * output-backed ``RecordableState<TSchema>``, evaluation-clock and engine-
+     * control injection, and scheduler injection.
      * Push-source nodes are intentionally outside this generic static-node path:
      * they use a specialized builder/node implementation that owns the message
      * queue and sender.
@@ -1776,6 +1776,17 @@ namespace hgraph
             static EvaluationClockView get(const NodeView &view, DateTime)
             {
                 return view.evaluation_clock();
+            }
+        };
+
+        // Copyable borrowed projection over the owning root executor. Nested
+        // graphs resolve the same root executor through GraphView::executor().
+        template <>
+        struct arg_provider<EngineControlView>
+        {
+            static EngineControlView get(const NodeView &view, DateTime)
+            {
+                return view.graph().executor().engine_control();
             }
         };
 

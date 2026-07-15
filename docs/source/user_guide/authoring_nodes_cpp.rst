@@ -639,7 +639,8 @@ A node can ask for runtime services by listing them as parameters, exactly as
 Python injects ``_clock`` / ``_scheduler``. Injectables are **not** part of the
 node's data contract — they add no input, output, scalar or state, and do not
 affect node-kind inference; the node simply receives them at evaluation.
-``GlobalStateView``, ``EvaluationClockView`` and ``NodeScheduler`` are implemented:
+``GlobalStateView``, ``EvaluationClockView``, ``EngineControlView`` and
+``NodeScheduler`` are implemented:
 
 .. list-table::
    :header-rows: 1
@@ -650,7 +651,7 @@ affect node-kind inference; the node simply receives them at evaluation.
      - Python injectable
    * - global state
      - ``GlobalStateView`` *(available)*
-     - ``GLOBAL_STATE``
+     - ``_global_state: GlobalState``
    * - node scheduler
      - ``NodeScheduler`` *(available)*
      - ``_scheduler: SCHEDULER``
@@ -662,12 +663,20 @@ affect node-kind inference; the node simply receives them at evaluation.
      - ``_clock.evaluation_time``
    * - evaluation clock
      - ``EvaluationClockView`` *(available)*
-     - ``_clock: EvaluationClock``
+     - ``_clock: CLOCK``
+   * - engine control
+     - ``EngineControlView`` *(available)*
+     - ``_engine: EvaluationEngineApi``
 
 ``EvaluationClockView`` is a borrowed read-only view over the active evaluation
 clock. It exposes ``evaluation_time()``, ``now()``, ``cycle_time()`` and
 ``next_cycle_evaluation_time()``. ``DateTime`` remains available as a shorthand
 injectable for ``clock.evaluation_time()``.
+
+``EngineControlView`` is a borrowed projection over the root executor. It
+exposes the evaluation mode, start/end bounds, evaluation clock, stop state,
+and ``request_stop()``. The registered C++ ``stop_engine`` sink uses this view;
+a request completes the current evaluation cycle before ending the run.
 
 ``GlobalStateView`` is a borrowing **view** over the graph's shared, mutable
 ``string -> value`` store. The root graph owns the run-time state, initialized by
@@ -1341,6 +1350,9 @@ Feature status
    * - ``EvaluationClock`` injection
      - available as ``EvaluationClockView``
      - available
+   * - Engine control / ``stop_engine``
+     - available as ``EngineControlView`` and the native sink
+     - available as ``EvaluationEngineApi`` and native-operator wiring
    * - ``Scalar<"name", T>`` (named scalar arguments)
      - available
      - available

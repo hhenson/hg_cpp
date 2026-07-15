@@ -38,7 +38,7 @@ Operator catalogue
 ------------------
 
 Of the **165** public operator definitions in ``hgraph/_operators``:
-**134 registered**, **0 declared-only**, **7 missing** — **24** further names
+**135 registered**, **0 declared-only**, **6 missing** — **24** further names
 are covered by equivalent C++/bridge APIs (snapshot regenerated 2026-07-13 at
 the close of the operator-test port; the counts come from comparing
 ``operator_names()`` and the catalogue markers against the upstream scan).
@@ -83,10 +83,10 @@ the close of the operator-test port; the counts come from comparing
      - 0
      - —
    * - Graph (``graph_operators``)
-     - 6
+     - 7
      - 0
-     - 1
-     - **stop_engine** · equiv-API: pass_through_node
+     - 0
+     - equiv-API: pass_through_node
    * - ``json``
      - 2
      - 0
@@ -162,9 +162,8 @@ Notes on the residue:
 
 - ``dedup_builder`` / ``collect_builder`` are Python implementation-injection
   hooks, not user operators — the C++ overload registry covers the need
-  natively. ``apply`` (arbitrary-callable node lifting; ``call`` IS
-  registered) and ``stop_engine`` (engine-control surface) await design
-  decisions. The ``table_shape`` helper trio is upstream sugar over
+  natively. ``apply`` is arbitrary-callable node lifting (``call`` IS
+  registered). The ``table_shape`` helper trio is upstream sugar over
   ``table_schema`` (add on demand).
 - ``downcast_`` performs checked narrowing from a graph-realized closed
   CompoundScalar Bundle union to a derived ``TS``. ``downcast_ref`` performs
@@ -222,10 +221,10 @@ Python builder objects that deliberately do not exist in the C++-first model.
      - Native source/sink/duplex and service-adaptor machinery is covered.
        Python ``service_adaptor`` / ``service_adaptor_impl`` declarations,
        automatic registration, and explicit multi-interface implementation
-       stubs now use that erased native machinery.  **Required Python work:**
-       expose the engine-stop injectable/operator and public real-time
-       lifecycle behaviour.  Private ``nodes._service_utils`` helpers are not
-       API targets.
+       stubs now use that erased native machinery.  Native ``stop_engine`` and
+       the call-scoped ``EvaluationEngineApi`` injectable are public in both
+       languages. Public real-time lifecycle behaviour remains. Private
+       ``nodes._service_utils`` helpers are not API targets.
    * - ``test_context.py``
      - 17
      - Same-wiring named/default/required, shadowing, graph consumption, and
@@ -344,11 +343,10 @@ annotation, recording-shape, or private-topology assumptions.  Retained cases
 must be rewritten around public ``eval_node`` graphs and paired with equivalent
 C++ wiring tests.
 
-The audit leaves three implementation groups, in priority order:
+The audit leaves two implementation groups, in priority order:
 
-1. The engine-stop/injectable surface.
-2. Rich Python error-result schemas, keyed-map capture, and trace settings.
-3. Small bridge compatibility work: ``nested_graph`` and vocabulary aliases,
+1. Rich Python error-result schemas, keyed-map capture, and trace settings.
+2. Small bridge compatibility work: ``nested_graph`` and vocabulary aliases,
    ``SetDelta`` recording shape, safe REF metadata, output-view conveniences,
    and the two TSW view differences.
 
@@ -506,13 +504,18 @@ Wiring and node-authoring surface
        transparent stateless injectable borrowing the process logger
        (``log::logger()`` / ``log::set_logger``); per-tick logging is
        allocation-light and refcount-free.
+   * - Engine control / ``stop_engine``
+     - Full
+     - Native ``EngineControlView`` is a copyable borrowed projection over the
+       root executor. ``stop_engine`` is a C++ sink; Python wiring delegates to
+       that registered operator. ``EvaluationEngineApi`` is a guarded Python
+       projection over the same view, not a second engine object.
    * - Injectables: node self
      - Missing
      -
-   * - ``stop_engine``, lifecycle observers, evaluation trace/profiling
-     - Native primitive; Python surface missing
-     - ``GraphExecutorView::request_stop`` and lifecycle observers are native;
-       Python's engine injectable/operator plus trace/profiling remain.
+   * - Lifecycle observers, evaluation trace/profiling
+     - Native lifecycle observers; trace/profiling missing
+     - Evaluation trace/profiling and the public node-self injectable remain.
    * - Graph recovery (start-from-state)
      - Missing
      - Note: restart of a stopped instance is out of contract by design;

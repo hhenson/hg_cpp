@@ -35,8 +35,19 @@ from hgraph import (
     reduce_tsd_of_bundles_with_race,
     TimeSeriesReference,
     CompoundScalar, DEFAULT,
+    SIGNAL,
+    stop_engine,
 )
 from hgraph.test import eval_node
+
+
+def test_stop_engine_completes_the_current_cycle():
+    @graph
+    def app(signal: SIGNAL) -> SIGNAL:
+        stop_engine(signal)
+        return signal
+
+    assert eval_node(app, [True, True, True]) == [True, None, None]
 
 
 

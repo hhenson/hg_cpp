@@ -23,8 +23,9 @@ namespace hgraph::python_bridge
      * un-named TSB, wiring-time SCALARS ride a list-of-Any scalar, and the
      * LAYOUT string (part of node identity) maps the python call positions:
      * ``t`` = next ts field, ``s`` = next scalar, ``S`` = STATE namespace,
-     * ``c`` = CLOCK, ``d`` = SCHEDULER. All ts fields must hold values
-     * before the python function is called (the all-valid gate).
+     * ``c`` = CLOCK, ``d`` = SCHEDULER, ``e`` = EvaluationEngineApi. All ts
+     * fields must hold values before the python function is called (the
+     * all-valid gate).
      */
     struct PyStateRef
     {
@@ -35,6 +36,15 @@ namespace hgraph::python_bridge
     struct PyEvalClock
     {
         DateTime evaluation_time{};
+        DateTime now{};
+        TimeDelta cycle_time{};
+        DateTime next_cycle_evaluation_time{};
+
+        explicit PyEvalClock(EvaluationClockView clock) noexcept
+            : evaluation_time(clock.evaluation_time()), now(clock.now()), cycle_time(clock.cycle_time()),
+              next_cycle_evaluation_time(clock.next_cycle_evaluation_time())
+        {
+        }
     };
 
     struct PyScheduler
@@ -83,6 +93,27 @@ namespace hgraph::python_bridge
                 throw std::logic_error("a GlobalState view was accessed outside its node's evaluation");
             }
             return state;
+        }
+    };
+
+    /** Call-scoped Python projection over the native engine-control view. */
+    struct PyEvaluationEngineApi
+    {
+        EngineControlView           engine;
+        std::shared_ptr<PyTsGuard> guard;
+
+        [[nodiscard]] EngineControlView checked() const
+        {
+            if (guard == nullptr || !guard->alive)
+            {
+                throw std::logic_error(
+                    "an EvaluationEngineApi view was accessed outside its node's evaluation");
+            }
+            if (!engine.valid())
+            {
+                throw std::logic_error("the active graph has no evaluation engine");
+            }
+            return engine;
         }
     };
 

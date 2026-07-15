@@ -32,6 +32,11 @@ namespace hgraph::stdlib
     {
     };
 
+    /** ``stop_engine`` — request an orderly engine stop after this cycle. */
+    struct stop_engine : Operator<"stop_engine", In<"ts", SIGNAL>, Scalar<"msg", Str>>
+    {
+    };
+
     /** ``call`` — invoke a callable with the ticked value (a side-effect
         sink; hgraph's helper for e.g. ``call(print, ts)``). The callable
         rides an erased scalar — the python bridge registers the PyObj form. */

@@ -686,6 +686,43 @@ namespace hgraph
         return ExecutorTypeRef{pointer_.record()}.ops_ref();
     }
 
+    EngineControlView::EngineControlView() noexcept = default;
+
+    EngineControlView::EngineControlView(ExecutorPtr pointer) noexcept : pointer_(pointer) {}
+
+    bool EngineControlView::valid() const noexcept { return pointer_.valid(); }
+
+    GraphExecutorMode EngineControlView::mode() const noexcept
+    {
+        const auto *metadata = valid() ? GraphExecutorView{pointer_}.schema() : nullptr;
+        return metadata != nullptr ? metadata->mode : GraphExecutorMode::Simulation;
+    }
+
+    DateTime EngineControlView::start_time() const noexcept
+    {
+        return GraphExecutorView{pointer_}.start_time();
+    }
+
+    DateTime EngineControlView::end_time() const noexcept
+    {
+        return GraphExecutorView{pointer_}.end_time();
+    }
+
+    bool EngineControlView::stop_requested() const noexcept
+    {
+        return GraphExecutorView{pointer_}.stop_requested();
+    }
+
+    EvaluationClockView EngineControlView::evaluation_clock() const noexcept
+    {
+        return GraphExecutorView{pointer_}.evaluation_clock();
+    }
+
+    void EngineControlView::request_stop() const noexcept
+    {
+        GraphExecutorView{pointer_}.request_stop();
+    }
+
     GraphExecutorView::GraphExecutorView() noexcept = default;
 
     GraphExecutorView::GraphExecutorView(ExecutorPtr pointer) noexcept : pointer_(pointer) {}
@@ -737,6 +774,11 @@ namespace hgraph
     PushQueueEngineView GraphExecutorView::push_queue_engine() const noexcept
     {
         return PushQueueEngineView{pointer_};
+    }
+
+    EngineControlView GraphExecutorView::engine_control() const noexcept
+    {
+        return EngineControlView{pointer_};
     }
 
     LifecycleObserverList &GraphExecutorView::lifecycle_observers() const

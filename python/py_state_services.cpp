@@ -471,7 +471,23 @@ namespace hgraph::python_bridge
     });
 
     nb::class_<PyEvalClock>(m, "EvaluationClock")
-        .def_prop_ro("evaluation_time", [](const PyEvalClock &clock) { return clock.evaluation_time; });
+        .def_prop_ro("evaluation_time", [](const PyEvalClock &clock) { return clock.evaluation_time; })
+        .def_prop_ro("now", [](const PyEvalClock &clock) { return clock.now; })
+        .def_prop_ro("cycle_time", [](const PyEvalClock &clock) { return clock.cycle_time; })
+        .def_prop_ro("next_cycle_evaluation_time",
+                     [](const PyEvalClock &clock) { return clock.next_cycle_evaluation_time; });
+    nb::class_<PyEvaluationEngineApi>(m, "EvaluationEngineApi")
+        .def_prop_ro("evaluation_mode", [](const PyEvaluationEngineApi &self) {
+            return self.checked().mode() == GraphExecutorMode::RealTime ? "real_time" : "simulation";
+        })
+        .def_prop_ro("start_time", [](const PyEvaluationEngineApi &self) { return self.checked().start_time(); })
+        .def_prop_ro("end_time", [](const PyEvaluationEngineApi &self) { return self.checked().end_time(); })
+        .def_prop_ro("evaluation_clock", [](const PyEvaluationEngineApi &self) {
+            return PyEvalClock{self.checked().evaluation_clock()};
+        })
+        .def_prop_ro("is_stop_requested",
+                     [](const PyEvaluationEngineApi &self) { return self.checked().stop_requested(); })
+        .def("request_engine_stop", [](const PyEvaluationEngineApi &self) { self.checked().request_stop(); });
     nb::class_<PyScheduler>(m, "Scheduler")
         .def("schedule", [](const PyScheduler &self, DateTime when) { self.scheduler.schedule(when); })
         .def("schedule_delta", [](const PyScheduler &self, TimeDelta delta) { self.scheduler.schedule(delta); });
