@@ -23,4 +23,5 @@ The developer guide describes the internal design of the C++ implementation. The
    parity_matrix
    record_replay_table
    python_integration
+   python_bridge
    testing

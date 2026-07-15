@@ -3,6 +3,11 @@ Python Integration
 
 Python integration exists to preserve the current ecosystem and to support Python user-authored nodes. It should not define the core runtime architecture.
 
+This page records the behavioural contract of the bridge. For the
+*implementation* layout and the non-obvious invariants (immortal registries,
+GIL boundaries, the wiring stack, the facade structure), see
+:doc:`python_bridge`.
+
 Supported Roles
 ---------------
 
