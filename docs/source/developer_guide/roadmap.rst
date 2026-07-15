@@ -48,7 +48,7 @@ The important corrections to the previous roadmap are:
   surface.
 - All 48 upstream operator-test files are present under
   ``python/tests/ported/_operators``.  The wiring tier is only a selected port:
-  21 files are present under ``python/tests/ported/_wiring``.  It must not be
+  22 files are present under ``python/tests/ported/_wiring``.  It must not be
   described as the entire upstream wiring suite.
 - The current operator inventory is **135 registered**, **0 declared-only**,
   **6 missing**, and **24 equivalent APIs** out of the 165 upstream public
@@ -259,27 +259,29 @@ undeclared schema.
 Compatibility inventory
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-**Landed:** all 48 operator files and a selected 21-file wiring pack.  The
+**Landed:** all 48 operator files and a selected 22-file wiring pack.  The
 ported TSS union contract for retargeting to an empty reference now executes;
 its stale skip was removed after the keyed structural-REF implementation
 landed.  The upstream switch pack now covers output and all-sink branches,
 scalar branch configuration, lifecycle hooks, nested switch/map composition,
 fixed bundles, TSS, and both switch/reduce nesting directions.
 
-**Audit complete (2026-07-15):** the 11 unported ``_wiring`` modules plus root
-``test_wiring.py`` contain 130 tests.  The 215 ``ts_tests`` cases were also run
-diagnostically; 159 passed without behavioural adaptation after aliasing
-``REMOVE_IF_EXISTS`` to ``REMOVE`` in the temporary test copy.  The module
-dispositions, per-type results, accepted restrictions, and upstream revision
-are saved in :doc:`parity_matrix`.
+**Audit complete (2026-07-15):** the baseline had 11 unported ``_wiring``
+modules plus root ``test_wiring.py`` containing 130 tests. Error handling has
+since joined the ported tier, leaving 10 modules plus the root file (120
+tests). The 215 ``ts_tests`` cases were also run diagnostically; 159 passed
+without behavioural adaptation after aliasing ``REMOVE_IF_EXISTS`` to
+``REMOVE`` in the temporary test copy.  The module dispositions, per-type
+results, accepted restrictions, and upstream revision are saved in
+:doc:`parity_matrix`.
 
 **Required compatibility slices:**
 
 - **Landed:** public Python error result schemas/call syntax and native
   activation-trace settings; and
-- selected bridge conveniences: ``nested_graph``, vocabulary aliases,
-  ``SetDelta`` recording shape, safe opaque-REF metadata, mutable-output view
-  conveniences, and the two recorded TSW view differences.
+- selected bridge conveniences: vocabulary aliases, ``SetDelta`` recording
+  shape, safe opaque-REF metadata, mutable-output view conveniences, and the
+  two recorded TSW view differences.
 
 **Accepted from this audit:** old ``GraphBuilder``/``WiringNodeInstance`` and
 peering/binding introspection are private; ``const_fn`` remains replaced by
@@ -414,6 +416,9 @@ The following are intentional unless separately re-opened:
   not compatibility targets when the public behaviour is available.
 - Python ``GraphBuilder``/``WiringNodeInstance`` layouts and peering/binding
   topology are private diagnostics; public graph behaviour is the contract.
+- ``nested_<G>`` is a C++ authoring primitive. Python constructs that need a
+  child graph expose registered C++ higher-order operators; a generic Python
+  ``nested_graph(...)`` primitive is not a compatibility target.
 - Bare ``TS[tuple]``, ``TS[dict]``, and ``TS[frozenset]`` inputs specialize
   from their connected concrete source.  The same annotations are rejected as
   outputs because there is no source from which to resolve their parameters;

@@ -198,10 +198,10 @@ Compatibility audit: wiring and time-series tiers
 
 The follow-on inventory was reviewed on 2026-07-15 against ``ext/main`` at
 ``4760fccadd5368b0482393e5acb0ceaac48518e9``.  Upstream has 32 ``_wiring``
-test modules containing 244 tests; 21 modules are already represented under
-``python/tests/ported/_wiring``.  The 11 unported modules contain 128 tests,
-and the separate root ``test_wiring.py`` contributes two tests.  These 130
-tests are an inventory, not 130 missing features: several assert private
+test modules containing 244 tests; 22 modules are already represented under
+``python/tests/ported/_wiring``.  The 10 unported modules contain 118 tests,
+and the separate root ``test_wiring.py`` contributes two tests.  These 120
+tests are an inventory, not 120 missing features: several assert private
 Python builder objects that deliberately do not exist in the C++-first model.
 
 .. list-table:: Unported wiring inventory
@@ -269,9 +269,11 @@ Python builder objects that deliberately do not exist in the C++-first model.
        regression coverage; no new runtime design is implied.
    * - ``test_nested_graph.py``
      - 4
-     - Native ``nested_`` covers source, value, compute, sink, REF, and
-       structural boundaries.  A Python ``nested_graph(...)`` spelling is a
-       small missing syntax adapter; the runtime is already native.
+     - **Accepted design difference.** Native ``nested_`` is the C++ authoring
+       primitive and covers source, value, compute, sink, REF, and structural
+       boundaries. Python higher-order constructs expose registered C++
+       operators that own their nested children; a generic Python
+       ``nested_graph(...)`` primitive is not part of the supported surface.
    * - ``test_reduce.py``
      - 16
      - Fixed TSL, dynamic TSD, ordered non-associative folds, nested
@@ -346,12 +348,11 @@ annotation, recording-shape, or private-topology assumptions.  Retained cases
 must be rewritten around public ``eval_node`` graphs and paired with equivalent
 C++ wiring tests.
 
-The audit leaves two implementation groups, in priority order:
-
-1. Public Python error-result schemas/call syntax and trace settings.
-2. Small bridge compatibility work: ``nested_graph`` and vocabulary aliases,
-   ``SetDelta`` recording shape, safe REF metadata, output-view conveniences,
-   and the two TSW view differences.
+The error-result schemas, call syntax, and native trace settings have landed.
+The remaining finite bridge work is vocabulary aliases, ``SetDelta`` recording
+shape, safe REF metadata, output-view conveniences, and the two TSW view
+differences. Generic Python ``nested_graph(...)`` syntax is deliberately
+excluded as described above.
 
 Bare container **inputs** are generic family patterns.  ``TS[tuple]``,
 ``TS[dict]``, and ``TS[frozenset]`` accept only their respective Python value

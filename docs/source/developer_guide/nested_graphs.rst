@@ -12,6 +12,12 @@ Scope of this page: the wiring-side sub-graph compilation and the runtime
 design decisions for the nested operators implemented so far. Sections are added
 in the same change as the code they describe.
 
+``nested_<G>`` is a C++ authoring primitive, not a generic Python API. Python
+constructs that require nested execution, such as error handling and
+higher-order operators, lower to registered C++ operators that compile and own
+their child graphs. The bridge exposes those public constructs rather than a
+second, user-facing ``nested_graph(...)`` mechanism.
+
 
 The model
 ---------
