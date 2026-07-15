@@ -6,7 +6,7 @@ Python ``hgraph`` surface (the ``ext/main`` reference tree) offers, what the
 C++ runtime provides today, and precisely what is missing — so "done" for the
 Python bridge is measurable rather than discovered.
 
-**Snapshot: 2026-07-11.** Regenerate the operator section by scanning
+**Snapshot: 2026-07-15.** Regenerate the operator section by scanning
 ``ext/main/hgraph/_operators/*.py`` for public ``def`` names and comparing
 against ``lib/std``'s ``Operator<"name">`` markers and ``register_*``
 call sites (three states below). Update this page in the same change as any
@@ -194,8 +194,176 @@ Standing residue, each marked precisely in the test file:
   wiring-time schema, and ``test_to_table_dispatch`` (upstream ``_impl``
   internals; behaviour covered through the public surface).
 
-Follow-on tiers (recorded, not planned): upstream ``ts_tests/`` (215) and
-``_wiring/`` (244).
+Compatibility audit: wiring and time-series tiers
+-------------------------------------------------
+
+The follow-on inventory was reviewed on 2026-07-15 against ``ext/main`` at
+``4760fccadd5368b0482393e5acb0ceaac48518e9``.  Upstream has 32 ``_wiring``
+test modules containing 244 tests; 21 modules are already represented under
+``python/tests/ported/_wiring``.  The 11 unported modules contain 128 tests,
+and the separate root ``test_wiring.py`` contributes two tests.  These 130
+tests are an inventory, not 130 missing features: several assert private
+Python builder objects that deliberately do not exist in the C++-first model.
+
+.. list-table:: Unported wiring inventory
+   :header-rows: 1
+   :widths: 24 8 68
+
+   * - Upstream module
+     - Tests
+     - Disposition
+   * - ``_test_const_fn.py``
+     - 4
+     - **Accepted design difference.** Ordinary C++ functions are the
+       wiring-time form; registered const-evaluable operators provide the
+       dual eager/wired behaviour.  Do not add a ``const_fn`` node class.
+   * - ``test_adaptor.py``
+     - 13
+     - Native source/sink/duplex and service-adaptor machinery is covered.
+       **Required Python work:** expose service-adaptor declarations and
+       implementations, the engine-stop injectable/operator, and public
+       real-time lifecycle behaviour.  Private ``nodes._service_utils``
+       helpers are not API targets.
+   * - ``test_context.py``
+     - 17
+     - Same-wiring named/default/required, shadowing, graph consumption, and
+       explicit override are covered.  **Required boundary work:** import and
+       export contexts through compiled ``switch_``/``map_``/``nested_``/
+       ``try_except_`` children and support ``Context<>`` on registered
+       overload implementations.
+   * - ``test_de_dupping_of_nodes.py`` + root ``test_wiring.py``
+     - 4
+     - **Private-internal tests.** Native interning, scalar identity, sink
+       non-interning, resolution, and graph topology have direct C++ tests.
+       Python ``GraphBuilder``/``WiringNodeInstance`` object layouts are not a
+       compatibility contract.
+   * - ``test_error_handling.py``
+     - 10
+     - Native ``NodeError``, ``exception_time_series``, and ``try_except_``
+       execution are covered.  **Required Python work:** public result schema
+       aliases and call syntax, keyed-map error results, and capture/traceback
+       configuration.
+   * - ``test_lift.py``
+     - 4
+     - Basic lift and explicit output override are covered.  ``dedup_output``
+       remains additive.  Old ``Hg*TypeMetaData`` signature assertions are
+       private; Polars ``lower`` is an accepted non-target because Arrow is the
+       table substrate.
+   * - ``test_map.py``
+     - 32
+     - Public TSD/TSL mapping, key inference, explicit keys, broadcast and
+       variadic arguments, injectables, lifecycle, reference retargeting,
+       nested maps, and overloads have native and Python coverage.  Six tests
+       inspect the old private ``_build_map_wiring`` structures and are not
+       portable.  Keyed-map error capture belongs to the error-handling gap.
+   * - ``test_mesh.py``
+     - 7
+     - Named and anonymous meshes, dependency ordering/cycles, on-demand
+       instances, membership, removal, and value-typed keys are represented by
+       the public C++ and Python suites.  Port selected Python cases only as
+       regression coverage; no new runtime design is implied.
+   * - ``test_nested_graph.py``
+     - 4
+     - Native ``nested_`` covers source, value, compute, sink, REF, and
+       structural boundaries.  A Python ``nested_graph(...)`` spelling is a
+       small missing syntax adapter; the runtime is already native.
+   * - ``test_reduce.py``
+     - 16
+     - Fixed TSL, dynamic TSD, ordered non-associative folds, nested
+       composition, removals, retargeting, and teardown are covered.  Dynamic
+       TSL and pass-through-combiner shapes remain separately listed nested
+       work; ``REMOVE_IF_EXISTS`` can be a compatibility alias of ``REMOVE``.
+   * - ``test_service.py``
+     - 19
+     - Reference, subscription, request/reply, multi-interface, generic,
+       node-backed, mesh-nested, path-qualified, and multi-client service
+       behaviour is native.  Port a public Python subset after adding any
+       required vocabulary aliases (for example ``NUMBER``); do not reproduce
+       Python service internals.
+
+The 215 upstream ``ts_tests`` tests were also copied mechanically to a
+temporary directory and run against the current bridge under Python 3.12.8.
+``REMOVE_IF_EXISTS`` was changed only in that temporary copy to the current
+``REMOVE`` spelling so that the TSD module could collect.  The diagnostic
+result was **159 passed, 56 failed**:
+
+.. list-table:: Direct upstream time-series diagnostic
+   :header-rows: 1
+   :widths: 16 12 12 60
+
+   * - Kind
+     - Passed
+     - Failed
+     - Failure concentration
+   * - ``REF``
+     - 18
+     - 12
+     - Opaque-reference introspection and direct ``eval_node`` replay into a
+       REF parameter.  Runtime retargeting and structural REF behaviour have
+       stronger native/ported coverage.  ``.output`` remains prohibited.
+   * - ``TS``
+     - 39
+     - 4
+     - Two unparameterized ``TS[tuple]`` results, private ``bound`` topology,
+       and the optional ``_output.can_apply_result`` helper.
+   * - ``TSB``
+     - 21
+     - 5
+     - Unparameterized ``TS[dict]``/``TS[tuple]`` results and private
+       peered/non-peered topology inspection.
+   * - ``TSD``
+     - 20
+     - 13
+     - Mostly unparameterized container result annotations and mutable-output
+       root inspection (``modified``/``delta_value`` after child mutation),
+       not keyed storage or removal semantics.
+   * - ``TSL``
+     - 24
+     - 7
+     - Unparameterized tuple results, private peering, and mutable fixed-list
+       ``clear``/inspection.
+   * - ``TSS``
+     - 24
+     - 10
+     - Unparameterized container results, mutable-output delta inspection, and
+       recording a friendly set delta as a plain ``frozenset`` rather than the
+       public ``SetDelta``-compatible subclass.
+   * - ``TSW``
+     - 13
+     - 5
+     - Pre-minimum validity suppresses consumer evaluation instead of ticking
+       ``False``; ``removed_value`` throws before an eviction instead of
+       returning ``None``; one failure is an unparameterized tuple result.
+
+This run is deliberately **diagnostic**, not an acceptance gate: the files
+were not adapted to the public C++-first test harness and several failures are
+annotation, recording-shape, or private-topology assumptions.  Retained cases
+must be rewritten around public ``eval_node`` graphs and paired with equivalent
+C++ wiring tests.
+
+The audit leaves four implementation groups, in priority order:
+
+1. Context import/export across compiled nested boundaries.
+2. Python service adaptors plus the engine-stop/injectable surface.
+3. Rich Python error-result schemas, keyed-map capture, and trace settings.
+4. Small bridge compatibility work: ``nested_graph`` and vocabulary aliases,
+   ``SetDelta`` recording shape, safe REF metadata, output-view conveniences,
+   and the two TSW view differences.
+
+Bare container **inputs** are generic family patterns.  ``TS[tuple]``,
+``TS[dict]``, and ``TS[frozenset]`` accept only their respective Python value
+families and specialize at wiring from the connected concrete source (for
+example to ``TS[tuple[int, ...]]``, ``TS[dict[str, int]]``, or
+``TS[frozenset[int]]``).  They do not erase a resolved input to ``object``.
+
+A bare container **output** has no input-side fact from which its element,
+key, or value types can be resolved.  It is therefore an intentional wiring
+error for now.  Authors must declare the concrete container type, or explicitly
+return ``TS[object]`` when an opaque Python object is the desired contract.
+This makes schema loss visible and leaves a future runtime-validated bare
+output adapter as an evidence-driven compatibility addition.  Peering,
+binding, and old Python wiring-object layouts remain private diagnostics rather
+than public compatibility targets.
 
 
 Types and scalars
@@ -218,7 +386,8 @@ Types and scalars
    * - ``REF``
      - Full
      - Wiring marker + runtime retargeting; executor-level tests
-       (``test_ref_executor.cpp``, std REF operators).
+       (``test_ref_executor.cpp``, std REF operators).  The Python value is
+       intentionally opaque and never exposes a borrowed ``.output`` pointer.
    * - ``TSW``
      - Partial
      - Tick- and duration-based windows execute end-to-end in Python and through
@@ -244,10 +413,10 @@ Types and scalars
      - Landed 2026-07-04 as distinct strong types with standard-vocabulary
        registration.
    * - Enums
-     - Partial
-     - C++ ``enum`` scalars register (the ``DivideByZero`` pattern);
-       **runtime-defined** enums (Python-created, no C++ type) are
-       bridge-time work.
+     - Full
+     - C++ ``enum`` scalars register directly.  Runtime-defined Python enums
+       lower to nominal C++ enum schemas and convert back to the registered
+       Python class.
    * - DataFrame / Series, numpy arrays, JSON scalar
      - ``Frame`` landed; rest missing
      - Value kinds; gate the serialization operator families. **Ruling
@@ -310,9 +479,10 @@ Wiring and node-authoring surface
      - Full
      - Path-aware, multi-interface impls, template descriptors.
    * - ``@adaptor`` / service adaptors
-     - Full (first pass)
-     - Source/sink/duplex + per-client keyed exchange; subscription and
-       request/reply *adaptor flows* and concrete families deferred.
+     - Native full; Python partial
+     - Source/sink/duplex and native per-client service-adaptor exchange are
+       covered.  Python ``service_adaptor`` / ``service_adaptor_impl`` syntax,
+       subscription/request-reply adaptor flows, and concrete families remain.
    * - Contexts
      - Full (same-wiring)
      - See *Types* row; nested import/export deferred.
@@ -335,8 +505,9 @@ Wiring and node-authoring surface
      - Missing
      -
    * - ``stop_engine``, lifecycle observers, evaluation trace/profiling
-     - Missing
-     - Observability is the weakest runtime dimension.
+     - Native primitive; Python surface missing
+     - ``GraphExecutorView::request_stop`` and lifecycle observers are native;
+       Python's engine injectable/operator plus trace/profiling remain.
    * - Graph recovery (start-from-state)
      - Missing
      - Note: restart of a stopped instance is out of contract by design;
@@ -354,13 +525,14 @@ What blocks the bridge vs. what is additive
 -------------------------------------------
 
 **Bridge-blocking** (must exist before the Python surface is useful):
-runtime-defined enums; ``Type[...]``-style explicit resolution where a Python
-call supplies types (covered by the ``expected_output`` / resolution-map path
-— verify per-operator as the bridge lands); nothing else — the wiring
-contract itself is proven template-free.
+no foundational bridge blocker remains.  The erased wiring contract, stable
+ABI package, Python user nodes, runtime-defined enums, and expected-output /
+resolution-map paths are operational.  Broad engine replacement still depends
+on the required authoring slices identified by the compatibility audit above.
 
 **Additive** (each lands independently and becomes available to Python
 through the registry): every declared-only/missing operator above, the
-serialization value kinds, observability (observers/trace),
-``@component`` + traits, nested context import/export, and remaining
-dynamic-TSL reduce/mesh shapes.
+remaining serialization value kinds, trace/profiling and node-self
+introspection, Python service-adaptor/engine-control syntax, nested context
+import/export, richer error-result compatibility, and remaining dynamic-TSL
+reduce/mesh shapes.

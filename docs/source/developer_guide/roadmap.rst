@@ -20,10 +20,10 @@ of truth.  It distinguishes four states deliberately:
    Behaviour intentionally differs from Python hgraph and must not quietly
    return as a second Python runtime implementation.
 
-Review Snapshot: 2026-07-14
+Review Snapshot: 2026-07-15
 ---------------------------
 
-This review was made against the working tree based on ``675ce8ca``, including
+This review is current through ``9dcc8f83``, including
 the completed mutable-output, structural-REF, constrained-generic, and nested
 explicit-key map work described below, plus the logging compatibility follow-on.
 Evidence came from the public implementation and tests, the commit history,
@@ -47,7 +47,7 @@ The important corrections to the previous roadmap are:
   surface.
 - All 48 upstream operator-test files are present under
   ``python/tests/ported/_operators``.  The wiring tier is only a selected port:
-  20 files are present under ``python/tests/ported/_wiring``.  It must not be
+  21 files are present under ``python/tests/ported/_wiring``.  It must not be
   described as the entire upstream wiring suite.
 - The current operator inventory is **134 registered**, **0 declared-only**,
   **7 missing**, and **24 equivalent APIs** out of the 165 upstream public
@@ -116,12 +116,13 @@ the following are true:
 2. Compiled-boundary REF adaptation is met.  The remaining generic-graph cases
    are either implemented through C++ wiring or explicitly accepted as
    restrictions.
-3. The unported upstream ``_wiring`` and ``ts_tests`` inventories have been
-   reviewed against a recorded upstream revision.  Required cases must be
-   ported; irrelevant internals and accepted deviations must be listed rather
-   than silently omitted.  The current audit baseline is the ``ext/main``
-   submodule at upstream commit ``4760fccadd5368b0482393e5acb0ceaac48518e9``;
-   future inventory updates must record any baseline change explicitly.
+3. **Met (inventory, 2026-07-15):** the unported upstream ``_wiring`` and
+   ``ts_tests`` tiers have been reviewed and classified in
+   :doc:`parity_matrix`.  The baseline is ``ext/main`` at
+   ``4760fccadd5368b0482393e5acb0ceaac48518e9``; future inventory updates must
+   record any baseline change explicitly.  Required behavioural cases still
+   need implementation and paired public C++/Python tests before replacement
+   readiness is complete.
 4. Every supported Python-visible runtime behaviour has an equivalent public
    C++ wiring route and comparable behavioural tests.  Bridge-only syntax and
    arbitrary Python-object adaptation are the narrow exceptions.
@@ -245,13 +246,36 @@ landed.  The upstream switch pack now covers output and all-sink branches,
 scalar branch configuration, lifecycle hooks, nested switch/map composition,
 fixed bundles, TSS, and both switch/reduce nesting directions.
 
-**Remaining:** review the rest of upstream ``_wiring`` and ``ts_tests``.  Port
-behavioural contracts, not Python runtime internals.  Each retained Python test
-needs a native test for the underlying C++ behaviour.  Duration-based TSW
-execution now has matching Python and public C++ ``eval_node`` operator tests in
-addition to its lower-level native storage coverage.  Its exact duration shape
-still has no compile-time static marker; the public C++ route is the erased
-``to_window`` operator with a ``TimeDelta`` period.
+**Audit complete (2026-07-15):** the 11 unported ``_wiring`` modules plus root
+``test_wiring.py`` contain 130 tests.  The 215 ``ts_tests`` cases were also run
+diagnostically; 159 passed without behavioural adaptation after aliasing
+``REMOVE_IF_EXISTS`` to ``REMOVE`` in the temporary test copy.  The module
+dispositions, per-type results, accepted restrictions, and upstream revision
+are saved in :doc:`parity_matrix`.
+
+**Required compatibility slices:**
+
+- context import/export across compiled nested boundaries;
+- Python service-adaptor declarations/implementations and the engine-stop
+  injectable/operator;
+- rich Python error result schemas, keyed-map capture, and trace settings; and
+- selected bridge conveniences: ``nested_graph``, vocabulary aliases,
+  ``SetDelta`` recording shape, safe opaque-REF metadata, mutable-output view
+  conveniences, and the two recorded TSW view differences.
+
+**Accepted from this audit:** old ``GraphBuilder``/``WiringNodeInstance`` and
+peering/binding introspection are private; ``const_fn`` remains replaced by
+plain functions plus const-evaluable operators; Polars ``lower`` is not a
+runtime target; REF never exposes ``.output``; and unparameterized container
+outputs must either declare concrete element/value types or explicitly use
+``TS[object]``.  Bare container inputs remain generic family patterns and
+specialize from their connected source.
+
+Duration-based TSW execution already has matching Python and public C++
+``eval_node`` operator tests in addition to lower-level native storage
+coverage.  Its exact duration shape still has no compile-time static marker;
+the public C++ route is the erased ``to_window`` operator with a ``TimeDelta``
+period.
 
 Priority 2: Nested Graphs and Boundaries
 ----------------------------------------
@@ -364,6 +388,15 @@ The following are intentional unless separately re-opened:
   CompoundScalar dispatch uses the closed-union C++ path.
 - Python-only implementation hooks and private ``hgraph._impl`` internals are
   not compatibility targets when the public behaviour is available.
+- Python ``GraphBuilder``/``WiringNodeInstance`` layouts and peering/binding
+  topology are private diagnostics; public graph behaviour is the contract.
+- Bare ``TS[tuple]``, ``TS[dict]``, and ``TS[frozenset]`` inputs specialize
+  from their connected concrete source.  The same annotations are rejected as
+  outputs because there is no source from which to resolve their parameters;
+  use a concrete container type or explicit ``TS[object]`` instead.
+- ``const_fn`` is represented by ordinary wiring-time functions and
+  const-evaluable operators, not a separate node class.
+- Polars ``lower`` is not a runtime target; dataframe interop is Arrow-based.
 - ``GlobalState`` keeps C++ copy-in/copy-out ownership.  Python's thread-local
   seed and ``GlobalContext`` are authoring adapters, not alternate runtime
   global state.
@@ -371,14 +404,13 @@ The following are intentional unless separately re-opened:
 Recorded Residue Requiring a Decision
 -------------------------------------
 
-The following existing skips/deviations should be classified during the
-compatibility-inventory pass rather than being assumed accepted:
+The following existing skips/deviations still require a product decision; the
+inventory did not silently classify them as accepted:
 
 - map children over EMPTY-REF projections retain their last value;
 - frame-to-TSD key type is not inferred from a selected frame column;
 - ``convert`` from ``TS[object]`` dispatches on the wiring-time schema;
 - the engine's naive-datetime contract versus upstream time-zone-aware cases;
-- the legacy ``const_fn`` path and old wiring-node introspection details; and
 - the upstream arrow-combinator library.
 
 Implementation Standards
