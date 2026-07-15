@@ -45,17 +45,18 @@ namespace hgraph
     };
 
     /**
-     * Build the dynamic associative ``reduce`` node over a multiplexed TSD
+     * Build the dynamic associative ``reduce`` node over a multiplexed TSD or
+     * grow-only dynamic TSL
      * input: a balanced binary tree whose **leaves alias the live source
      * elements** and whose internal combine points own combiner child graphs
      * — instantiated only when both subtrees are non-empty. The node's
      * forwarding output publishes the root aggregate (``zero`` input when
      * empty, the single element when one key is live, else the root
      * combiner's output). The live key set is reconciled against the current
-     * TSD input when the input modifies, re-points, becomes invalid, or is
+     * collection input when it modifies, re-points, becomes invalid, or is
      * first observed. See *Nested Graphs > reduce over dynamic TSD*.
      *
-     * Outer inputs: ``[ts (TSD), zero (element)]``.
+     * Outer inputs: ``[ts (TSD or dynamic TSL), zero (element)]``.
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder reduce_node(NodeTypeMetaData meta, ReduceNodeSpec spec);
 }  // namespace hgraph

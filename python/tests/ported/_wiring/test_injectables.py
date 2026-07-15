@@ -12,6 +12,8 @@ from hgraph import (
     EvaluationMode,
     TIME_SERIES_TYPE,
     LOGGER,
+    NODE,
+    sink_node,
     TS,
 )
 from hgraph.test import eval_node
@@ -81,6 +83,48 @@ def test_global_state_injectable_for_graph():
         result = evaluate_graph(read_from_state, GraphConfiguration())
 
     assert [v for _, v in result] == [42]
+
+
+def test_node_self_injectable_is_native_and_call_scoped():
+    retained = []
+    phases = []
+
+    @compute_node
+    def source(trigger: TS[int], node: NODE = None) -> TS[int]:
+        retained.append(node)
+        assert node.started
+        assert node.has_input
+        assert node.has_output
+        assert node.node_id[-1] == node.node_ndx
+        return trigger.value
+
+    @source.start
+    def start(node: NODE = None):
+        phases.append(("start", node.started))
+        node.notify()
+
+    @source.stop
+    def stop(node: NODE = None):
+        phases.append(("stop", node.started))
+
+    assert eval_node(source, [42]) == [42]
+    assert phases == [("start", False), ("stop", True)]
+    with pytest.raises(RuntimeError, match="outside its node's evaluation"):
+        _ = retained[-1].node_id
+
+
+def test_node_self_injectable_for_sink_nodes():
+    seen = []
+
+    @sink_node
+    def inspect(ts: TS[int], node: NODE = None):
+        seen.append((ts.value, node.has_input, node.has_output, node.node_ndx))
+
+    assert eval_node(inspect, [1, 2]) is None
+    assert [(value, has_input, has_output) for value, has_input, has_output, _ in seen] == [
+        (1, True, False),
+        (2, True, False),
+    ]
 
 
 @pytest.mark.skip(reason="deviation: const_fn is not ported (record_replay_table.rst P1 - "

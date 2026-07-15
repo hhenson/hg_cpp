@@ -351,6 +351,15 @@ namespace hgraph
         /** Move from externally owned writable storage without fabricating an owner. */
         [[nodiscard]] bool move_value_from(ValueView source);
 
+        /**
+         * Invalidate this value and its statically indexed descendants.
+         *
+         * Observers are notified at the mutation time before the local
+         * validity timestamp is cleared. Repeating the operation on an
+         * already-invalid value is a no-op.
+         */
+        [[nodiscard]] bool invalidate();
+
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         /** Apply a Python object through the TSData binding's type-erased conversion op. */
         [[nodiscard]] bool from_python(nb::handle source);

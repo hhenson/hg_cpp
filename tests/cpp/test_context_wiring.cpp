@@ -44,6 +44,21 @@ namespace
         }
     };
 
+    struct context_scaled_ : Operator<"context_scaled", In<"scale", TS<Int>>, Out<TS<Int>>>
+    {
+    };
+
+    struct ContextScaledOverload
+    {
+        static constexpr auto name = "context_scaled_overload";
+
+        static void eval(Context<"price", TS<Int>> price, In<"scale", TS<Int>> scale,
+                         Out<TS<Int>> out)
+        {
+            out.set(scale.value() * price.value());
+        }
+    };
+
     // A generic consumer: the context schema resolves from whatever is published.
     struct EchoConsumer
     {
@@ -75,6 +90,17 @@ namespace
         {
             context::scope<"price"> ctx{w, price};
             return wire<ScaledConsumer>(w, scale);   // positional arg maps to ``scale``, not ``price``
+        }
+    };
+
+    struct RegisteredContextGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "registered_context_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> scale, Port<TS<Int>> price)
+        {
+            context::scope<"price"> ctx{w, price};
+            return wire<context_scaled_>(w, scale).as<TS<Int>>();
         }
     };
 
@@ -347,6 +373,13 @@ TEST_CASE("context wiring: positional caller args skip Context params")
 {
     stdlib::register_standard_operators();
     CHECK_OUTPUT(eval_node<MixedArgsGraph>(values<Int>(2, 3), values<Int>(10, none)),
+                 values<Int>(20, 30));
+}
+
+TEST_CASE("context wiring: registered C++ overloads inject Context inputs")
+{
+    register_overload<context_scaled_, ContextScaledOverload>();
+    CHECK_OUTPUT(eval_node<RegisteredContextGraph>(values<Int>(2, 3), values<Int>(10, none)),
                  values<Int>(20, 30));
 }
 

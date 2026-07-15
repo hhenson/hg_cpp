@@ -1,5 +1,5 @@
 # Ported from ext/main/hgraph_unit_tests/_wiring/test_tss.py
-from hgraph import graph, TS, TSS, compute_node, Removed, contains_, set_delta
+from hgraph import _SetDelta, graph, TS, TSS, compute_node, Removed, contains_, set_delta
 from hgraph import pass_through_node
 from hgraph.test import eval_node
 
@@ -80,3 +80,12 @@ def test_large_tss(n):
         return ts.delta_value
 
     assert eval_node(copy_tss, [set(range(n))]) == [set_delta(added=set(range(n)), removed=set(), tp=int)]
+
+
+def test_tss_delta_value_preserves_set_delta_type():
+    @compute_node
+    def is_set_delta(ts: TSS[int]) -> TS[bool]:
+        delta = ts.delta_value
+        return isinstance(delta, _SetDelta) and delta.added == frozenset({1}) and not delta.removed
+
+    assert eval_node(is_set_delta, [{1}]) == [True]

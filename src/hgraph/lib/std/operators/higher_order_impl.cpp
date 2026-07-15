@@ -13,6 +13,10 @@ namespace hgraph::stdlib
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsd_ts_zero>();
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsd_zero>();
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_ordered_tsd>();
+        register_graph_overload<reduce_, higher_order_impl_detail::reduce_dynamic_tsl>();
+        register_graph_overload<reduce_, higher_order_impl_detail::reduce_dynamic_tsl_ts_zero>();
+        register_graph_overload<reduce_, higher_order_impl_detail::reduce_dynamic_tsl_zero>();
+        register_graph_overload<reduce_, higher_order_impl_detail::reduce_ordered_dynamic_tsl>();
 
         register_graph_overload<switch_, higher_order_impl_detail::switch_impl>();
         register_graph_overload<switch_, higher_order_impl_detail::switch_sink_impl>();

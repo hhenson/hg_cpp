@@ -50,6 +50,33 @@ namespace
         }
     };
 
+    struct NodeSelfProbe
+    {
+        static constexpr auto name = "node_self_probe";
+
+        static void eval(NodeView node, In<"in", TS<Int>> in, Out<TS<Bool>> out)
+        {
+            out.set(node.valid() && node.started() && node.node_kind() == NodeKind::Compute &&
+                    node.has_input() && node.has_output() && node.label() == name &&
+                    in.value() > 0);
+        }
+    };
+
+    struct NodeSelfSource
+    {
+        static constexpr auto name = "node_self_source";
+
+        static void start(NodeView node)
+        {
+            node.graph().schedule_node(node.node_index(), MIN_ST);
+        }
+
+        static void eval(NodeView node, Out<TS<Int>> out)
+        {
+            if (node.started() && node.node_kind() == NodeKind::PullSource) { out.set(Int{42}); }
+        }
+    };
+
     // In + Scalar config: shifts each input by a fixed delta.
     struct Shift
     {
@@ -318,6 +345,19 @@ TEST_CASE("eval_node: TSS on both input and output round-trips the delta")
     const std::vector<std::optional<Value>> deltas{
         set_delta<Int>({1, 2}, {}), set_delta<Int>({3}, {1}), set_delta<Int>({}, {2, 3})};
     CHECK_OUTPUT(testing::eval_node<MirrorSet>(deltas), deltas);
+}
+
+TEST_CASE("eval_node: NodeView is a transparent node-self injectable")
+{
+    using namespace hgraph;
+    CHECK_OUTPUT(testing::eval_node<NodeSelfProbe>(values<Int>(1, none, 2)),
+                 values<Bool>(true, none, true));
+}
+
+TEST_CASE("eval_node: NodeView can schedule a pull source from start")
+{
+    using namespace hgraph;
+    CHECK_OUTPUT(testing::eval_node<NodeSelfSource>(), values<Int>(42));
 }
 
 TEST_CASE("eval_node: a TSS output supports direct same-cycle mutation")

@@ -475,6 +475,17 @@ namespace hgraph::stdlib
         {
         };
 
+        [[nodiscard]] inline const TSValueTypeMetaData *dynamic_reduce_element(const WiringPortRef &ts)
+        {
+            if (const auto *tsd = time_series_schema_as<AnyTSD>(ts.schema)) { return tsd->element_ts(); }
+            if (const auto *tsl = time_series_schema_as<AnyTSL>(ts.schema);
+                tsl != nullptr && tsl->fixed_size() == 0)
+            {
+                return tsl->element_ts();
+            }
+            return nullptr;
+        }
+
         /**
          * The dynamic-TSD reduce wiring core (see *Nested Graphs > reduce over
          * dynamic TSD*): compile the binary combiner once, add ONE reduce node
@@ -491,12 +502,11 @@ namespace hgraph::stdlib
                     "reduce: 'func' must be a wirable (lhs, rhs) -> value function (fn<X>())");
             }
 
-            const auto *tsd_schema = time_series_schema_as<AnyTSD>(ts.schema);
-            if (tsd_schema == nullptr)
+            const auto *element = dynamic_reduce_element(ts);
+            if (element == nullptr)
             {
-                throw std::invalid_argument("reduce: the collection input must be a TSD");
+                throw std::invalid_argument("reduce: the collection input must be a TSD or dynamic TSL");
             }
-            const auto *element = tsd_schema->element_ts();
             auto       &registry = TypeRegistry::instance();
 
             const std::array<const TSValueTypeMetaData *, 2> schemas{element, element};
@@ -509,11 +519,6 @@ namespace hgraph::stdlib
             if (combiner_graph.output_schema == nullptr || !combiner_graph.output_binding.has_value())
             {
                 throw std::invalid_argument("reduce: the combiner must produce an output");
-            }
-            if (combiner_graph.output_binding->kind != NestedGraphOutputBinding::Kind::ChildOutput)
-            {
-                throw std::invalid_argument(
-                    "reduce: pass-through combiner outputs are not supported by dynamic TSD reduce yet");
             }
             if (!time_series_schema_equivalent(registry.dereference(combiner_graph.output_schema),
                                                registry.dereference(element)))
@@ -576,11 +581,13 @@ namespace hgraph::stdlib
             }
 
             const auto *tsd_schema = time_series_schema_as<AnyTSD>(ts.schema);
-            if (tsd_schema == nullptr || tsd_schema->key_type() != scalar_descriptor<Int>::value_meta())
+            const auto *tsl_schema = time_series_schema_as<AnyTSL>(ts.schema);
+            if ((tsd_schema == nullptr || tsd_schema->key_type() != scalar_descriptor<Int>::value_meta()) &&
+                (tsl_schema == nullptr || tsl_schema->fixed_size() != 0))
             {
-                throw std::invalid_argument("ordered reduce requires a TSD[int, E] collection");
+                throw std::invalid_argument("ordered reduce requires TSD[int, E] or dynamic TSL[E]");
             }
-            const auto *element = tsd_schema->element_ts();
+            const auto *element = tsd_schema != nullptr ? tsd_schema->element_ts() : tsl_schema->element_ts();
             const std::array<const TSValueTypeMetaData *, 2> schemas{zero.schema, element};
             CompiledSubGraph combiner_graph = combiner.compile({schemas.data(), schemas.size()});
             if (!combiner_graph.captured_inputs.empty())
@@ -590,10 +597,6 @@ namespace hgraph::stdlib
             if (combiner_graph.output_schema == nullptr || !combiner_graph.output_binding.has_value())
             {
                 throw std::invalid_argument("ordered reduce combiner must produce an output");
-            }
-            if (combiner_graph.output_binding->kind != NestedGraphOutputBinding::Kind::ChildOutput)
-            {
-                throw std::invalid_argument("ordered reduce requires a real child output from its combiner");
             }
             auto &registry = TypeRegistry::instance();
             if (!time_series_schema_equivalent(registry.dereference(combiner_graph.output_schema),
@@ -650,6 +653,14 @@ namespace hgraph::stdlib
         {
             if (context.args.size() != expected_args) { return false; }
             return time_series_schema_at_as<AnyTSD>(context, 1) != nullptr;
+        }
+
+        [[nodiscard]] inline bool reduce_ts_is_dynamic_tsl(OperatorCallContext context,
+                                                            std::size_t expected_args)
+        {
+            if (context.args.size() != expected_args) { return false; }
+            const auto *schema = time_series_schema_at_as<AnyTSL>(context, 1);
+            return schema != nullptr && schema->fixed_size() == 0;
         }
 
         struct reduce_ordered_tsd
@@ -776,6 +787,118 @@ namespace hgraph::stdlib
                                          NamedPort<"zero", TsVar<"V">> zero)
             {
                 return wire_reduce_tsd(w, func, ts.erased(), zero.erased());
+            }
+        };
+
+        /** Dynamic TSL associative reduction uses the same in-place tree as TSD. */
+        struct reduce_dynamic_tsl
+        {
+            static constexpr auto name = "reduce_dynamic_tsl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return reduce_ts_is_dynamic_tsl(context, 2);
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_reduce_tsl_output(resolution, context);
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         NamedPort<"ts", TSL<TsVar<"V">>> ts)
+            {
+                const auto *element = ts.erased().schema->element_ts();
+                const std::array<WiringArg, 1> zero_args{operator_dispatch_detail::make_wiring_arg(func)};
+                const WiringPortRef zero =
+                    wire_operator(w, "zero", {zero_args.data(), zero_args.size()}, true, element).output.erased();
+                return wire_reduce_tsd(w, func, ts.erased(), zero);
+            }
+        };
+
+        struct reduce_dynamic_tsl_zero
+        {
+            static constexpr auto name = "reduce_dynamic_tsl_zero";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return reduce_ts_is_dynamic_tsl(context, 3) &&
+                       context.args[2].kind == WiringArg::Kind::Scalar;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_reduce_tsl_output(resolution, context);
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         NamedPort<"ts", TSL<TsVar<"V">>> ts,
+                                         Scalar<"zero", ScalarVar<"Z">> zero_value)
+            {
+                const auto *element = ts.erased().schema->element_ts();
+                WiringArg zero_arg;
+                zero_arg.kind = WiringArg::Kind::Scalar;
+                zero_arg.scalar_value = Value{zero_value.value()};
+                zero_arg.scalar_meta = zero_arg.scalar_value.schema();
+                const WiringPortRef zero =
+                    wire_operator(w, "const", {&zero_arg, 1}, true, element).output.erased();
+                return wire_reduce_tsd(w, func, ts.erased(), zero);
+            }
+        };
+
+        struct reduce_dynamic_tsl_ts_zero
+        {
+            static constexpr auto name = "reduce_dynamic_tsl_ts_zero";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return reduce_ts_is_dynamic_tsl(context, 3) &&
+                       context.args[2].kind == WiringArg::Kind::TimeSeries;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_reduce_tsl_output(resolution, context);
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         NamedPort<"ts", TSL<TsVar<"V">>> ts,
+                                         NamedPort<"zero", TsVar<"V">> zero)
+            {
+                return wire_reduce_tsd(w, func, ts.erased(), zero.erased());
+            }
+        };
+
+        struct reduce_ordered_dynamic_tsl
+        {
+            static constexpr auto name = "reduce_ordered_dynamic_tsl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return reduce_ts_is_dynamic_tsl(context, 4) &&
+                       context.args[2].kind == WiringArg::Kind::TimeSeries &&
+                       ordered_reduce_requested(context);
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (!output_bound(resolution) && context.args.size() >= 3 &&
+                    context.args[2].kind == WiringArg::Kind::TimeSeries)
+                {
+                    bind_graph_output(resolution, context.args[2].port.schema, "V");
+                }
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         NamedPort<"ts", TSL<TsVar<"E">>> ts,
+                                         NamedPort<"zero", TsVar<"V">> zero,
+                                         Scalar<"is_associative", Bool> is_associative)
+            {
+                if (is_associative.value())
+                {
+                    throw std::invalid_argument("ordered reduce requires is_associative=false");
+                }
+                return wire_ordered_reduce_tsd(w, func, ts.erased(), zero.erased());
             }
         };
 

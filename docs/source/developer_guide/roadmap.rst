@@ -293,9 +293,10 @@ results, accepted restrictions, and upstream revision are saved in
   activation-trace settings; and
 - **Landed:** the ``NUMBER``/``NUMBER_2`` constrained vocabulary and public
   generic reference/request-reply service specializations; and
-- selected bridge conveniences: ``SetDelta`` recording shape, safe opaque-REF
-  metadata, mutable-output view conveniences, and the two recorded TSW view
-  differences.
+- **Landed:** ``SetDelta`` recording shape, safe opaque-REF metadata,
+  mutable-output status/delta/clear/invalidation conveniences, and the two
+  recorded TSW view differences (valid from the first value and
+  ``removed_value is None`` before eviction).
 
 **Accepted from this audit:** old ``GraphBuilder``/``WiringNodeInstance`` and
 peering/binding introspection are private; ``const_fn`` remains replaced by
@@ -327,6 +328,9 @@ Priority 2: Nested Graphs and Boundaries
 - fixed-TSL and associative dynamic-TSD ``reduce``, including live zero inputs
   and projectable fixed-composite results, plus non-associative fixed-TSL and
   contiguous-integer dynamic-TSD/tuple ordered reduction;
+- associative and ordered dynamic-TSL ``reduce``, plus dynamic-TSD
+  pass-through combiner outputs resolved through the compiled parent-input
+  boundary;
 - ``try_except_``, feedback, closed-union ``dispatch_``, closure capture, key
   injection, ``pass_through`` / ``no_key``, keyed write-through outputs, and
   sampled transfer of unchanged nested collections into a new switch branch;
@@ -341,19 +345,17 @@ Priority 2: Nested Graphs and Boundaries
 - contexts in the same wiring and across compiled ``nested_``, ``try_except_``,
   ``switch_``, ``dispatch_``, ``map_``, and ``mesh_`` boundaries. Context
   imports reuse static outer-port capture, including leaf-wise fixed structural
-  bindings, rather than adding a runtime relay.
+  bindings, rather than adding a runtime relay;
+- ``Context<>`` injection on implementations selected through
+  ``register_overload``; and
+- recordable-state pass-through across nested graph boundaries.
 
-**Remaining higher-order shapes:**
+Dynamic-TSL mesh is not a Python parity target: the upstream Python mesh
+contract is TSD-only and :doc:`mesh` records the same accepted restriction.
+Dynamic TSL mapping and reduction remain fully supported independently.
 
-- dynamic-TSL reduce/mesh;
-- dynamic-TSD reduce with pass-through combiner outputs.
-
-**Remaining boundary modes:**
-
-- ``Context<>`` parameters on implementations registered through
-  ``register_overload``;
-- recordable-state pass-through across nested boundaries; and
-- push sources inside nested graphs if a concrete adaptor requires them.
+**Remaining boundary mode:** push sources inside nested graphs if a concrete
+adaptor requires them.
 
 **Remaining external-resource work:** subscription-adaptor flows not already
 covered by the service-adaptor exchange, scheduler integration for external

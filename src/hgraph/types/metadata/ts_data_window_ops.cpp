@@ -1341,8 +1341,8 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] static bool size_has_current_value(const void *context, const void *memory) noexcept
             {
-                return window_tracking(context, memory)->last_modified_time != MIN_DT &&
-                       window_size(context, memory) >= layout_for(context).min_period;
+                static_cast<void>(context);
+                return window_tracking(context, memory)->last_modified_time != MIN_DT;
             }
         };
 
@@ -1364,9 +1364,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 ops.capacity_impl          = &time_capacity;
                 ops.full_impl              = &time_full;
                 ops.all_valid_impl         = &time_all_valid;
-                // A duration window is VALID only once its span reaches the
-                // minimum range (the tick-window min_period rule's time
-                // form); consumers below the span see an invalid input.
+                // A window is valid from its first value. ``all_valid`` is the
+                // separate minimum-range readiness predicate.
                 ops.has_current_value_impl = &time_has_current_value;
             }
 
@@ -1398,8 +1397,8 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] static bool time_has_current_value(const void *context, const void *memory) noexcept
             {
-                return window_tracking(context, memory)->last_modified_time != MIN_DT &&
-                       time_all_valid(context, memory);
+                static_cast<void>(context);
+                return window_tracking(context, memory)->last_modified_time != MIN_DT;
             }
         };
 

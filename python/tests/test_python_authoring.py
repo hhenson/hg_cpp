@@ -220,7 +220,7 @@ def test_python_compute_produces_tick_and_duration_tsw():
         return value.value
 
     check(eval_node(tick_window, [1, 2, 3, 4]) == [1, 2, 3, 4], "tick TSW output")
-    check(eval_node(duration_window, [1, 2, 3, 4]) == [None, 2, 3, 4], "duration TSW output")
+    check(eval_node(duration_window, [1, 2, 3, 4]) == [1, 2, 3, 4], "duration TSW output")
 
 
 def test_compute_validity_optional_inputs_and_no_tick():
@@ -322,6 +322,34 @@ def test_mutable_output_view_set_operations():
         _output.remove(1)
 
     check(eval_node(mutate, [True]) == [{2}], "mutable TSS output")
+
+
+def test_mutable_output_view_status_delta_and_invalidation():
+    observations = []
+
+    @hg.compute_node
+    def mutate(value: TS[int], _output: TS[int] = None) -> TS[int]:
+        observations.append((_output.modified, _output.can_apply_result(value.value)))
+        _output.value = value.value
+        observations.append(
+            (_output.modified, _output.delta_value, _output.can_apply_result(value.value + 1))
+        )
+        if value.value == 2:
+            _output.invalidate()
+
+    check(eval_node(mutate, [1, 2, 3]) == [1, None, 3], "mutable output invalidation")
+    check(
+        observations
+        == [
+            (False, True),
+            (True, 1, False),
+            (False, True),
+            (True, 2, False),
+            (False, True),
+            (True, 3, False),
+        ],
+        "mutable output status/delta",
+    )
 
 
 def test_mutable_output_views_expire_after_evaluation():

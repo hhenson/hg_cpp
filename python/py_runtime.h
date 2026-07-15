@@ -10,6 +10,8 @@
 
 #include "py_carriers.h"
 
+#include <algorithm>
+
 namespace hgraph::python_bridge
 {
     /** Applies a python node's return value to its output (REF whole-move,
@@ -23,7 +25,8 @@ namespace hgraph::python_bridge
      * un-named TSB, wiring-time SCALARS ride a list-of-Any scalar, and the
      * LAYOUT string (part of node identity) maps the python call positions:
      * ``t`` = next ts field, ``s`` = next scalar, ``S`` = STATE namespace,
-     * ``c`` = CLOCK, ``d`` = SCHEDULER, ``e`` = EvaluationEngineApi. All ts
+     * ``c`` = CLOCK, ``d`` = SCHEDULER, ``e`` = EvaluationEngineApi,
+     * ``n`` = NODE. All ts
      * fields must hold values before the python function is called (the
      * all-valid gate).
      */
@@ -117,6 +120,51 @@ namespace hgraph::python_bridge
         }
     };
 
+    /** Callback-scoped Python projection over the current native node. */
+    struct PyNode
+    {
+        NodePtr                    node;
+        NodeScheduler              scheduler;
+        std::shared_ptr<PyTsGuard> guard;
+
+        [[nodiscard]] NodeView checked() const
+        {
+            if (guard == nullptr || !guard->alive)
+            {
+                throw std::logic_error("a Node view was accessed outside its node's evaluation");
+            }
+            if (!node.has_value()) { throw std::logic_error("the active node is unavailable"); }
+            return NodeView{node};
+        }
+
+        [[nodiscard]] std::vector<std::size_t> node_id() const
+        {
+            NodeView current = checked();
+            std::vector<std::size_t> result{current.node_index()};
+            GraphView graph = current.graph();
+            while (graph.is_nested())
+            {
+                NodeView parent = graph.as_nested().parent_node();
+                result.push_back(parent.node_index());
+                graph = parent.graph();
+            }
+            std::ranges::reverse(result);
+            return result;
+        }
+
+        void notify() const
+        {
+            static_cast<void>(checked());
+            scheduler.schedule(scheduler.now());
+        }
+
+        void notify_next_cycle() const
+        {
+            static_cast<void>(checked());
+            scheduler.schedule(MIN_TD);
+        }
+    };
+
     /**
      * The hgraph TimeSeries object handed to python user nodes: a LAZY,
      * C++-bound view over the node's live input - nothing converts unless
@@ -159,9 +207,29 @@ namespace hgraph::python_bridge
         void set_value(nb::object value) const
         {
             auto view = checked();
-            if (value.is_none()) { return; }
+            if (value.is_none())
+            {
+                auto mutation = view.begin_mutation(now);
+                static_cast<void>(mutation.invalidate());
+                return;
+            }
             Out<TsVar<"O">> out{std::move(view), now};
             apply_py_result(value, out);
+        }
+
+        [[nodiscard]] bool modified() const { return checked().modified(); }
+
+        [[nodiscard]] nb::object delta_value() const
+        {
+            auto view = checked();
+            nb::object delta = view.data_view().delta_value_to_python(now);
+            nb::object &shape = delta_shaper_slot();
+            return shape.is_valid() ? shape(delta) : delta;
+        }
+
+        [[nodiscard]] bool can_apply_result(nb::handle result) const
+        {
+            return result.is_none() || !checked().modified();
         }
 
         [[nodiscard]] PyOutput child(nb::handle key) const
@@ -220,12 +288,16 @@ namespace hgraph::python_bridge
         void clear() const
         {
             auto view = checked();
-            switch (view.schema()->kind)
+            if (!view.data_view().clear_collection(now))
             {
-                case TSTypeKind::TSD: view.as_dict().begin_mutation(now).clear(); return;
-                case TSTypeKind::TSS: view.as_set().begin_mutation(now).clear(); return;
-                default: throw nb::type_error("clear: not a mutable collection output");
+                throw nb::type_error("clear: not a mutable collection output");
             }
+        }
+
+        void invalidate() const
+        {
+            auto mutation = checked().begin_mutation(now);
+            static_cast<void>(mutation.invalidate());
         }
 
         [[nodiscard]] bool contains(nb::handle key) const
@@ -282,6 +354,7 @@ namespace hgraph::python_bridge
             Value element = py_to_value_as(value, view.schema()->value_schema->element_type);
             return view.as_set().begin_mutation(now).remove(element.view());
         }
+
     };
 
     /** Mutable, call-scoped view over a node's C++ recordable-state output. */
@@ -392,7 +465,7 @@ namespace hgraph::python_bridge
                 // A REF input's value is the REFERENCE - TSInputView::
                 // reference() reads the to-REF alternative's populated value
                 // (peered at the true upstream output).
-                return nb::cast(python_bridge::PyOpaqueRef{Value{v.reference()}});
+                return nb::cast(python_bridge::PyOpaqueRef{Value{v.reference()}, v.evaluation_time()});
             }
             nb::object result = value_to_py(v.value());
             if (v.schema() != nullptr && v.schema()->kind == TSTypeKind::TS && PySet_CheckExact(result.ptr()))
@@ -407,51 +480,9 @@ namespace hgraph::python_bridge
         [[nodiscard]] nb::object delta_value() const
         {
             const auto &ts = checked();
-            switch (ts.schema()->kind)
-            {
-                case TSTypeKind::TS: {
-                    nb::object result = value_to_py(ts.value());
-                    if (PySet_CheckExact(result.ptr()))
-                    {
-                        // hgraph parity: scalar sets are frozensets.
-                        return nb::steal(PyFrozenSet_New(result.ptr()));
-                    }
-                    return result;
-                }
-                case TSTypeKind::TSD: {
-                    // hgraph's friendly shape: {key: child delta, removed: REMOVED}
-                    nb::dict result;
-                    auto dict = ts.as_dict();
-                    for (auto &&[key, child] : dict.modified_items())
-                    {
-                        result[value_to_py(key)] = PyTimeSeries{std::move(child), guard}.delta_value();
-                    }
-                    for (const ValueView &key : dict.removed_keys()) { result[value_to_py(key)] = removed_sentinel(); }
-                    return result;
-                }
-                case TSTypeKind::TSS: {
-                    // hgraph's SetDelta shape: added items plain, removals
-                    // wrapped in Removed(...). Built as the registered
-                    // SetDelta class so a node returning it applies as a
-                    // DELTA (a plain frozenset return replaces the value).
-                    auto     set = ts.as_set();
-                    nb::list items;
-                    for (const ValueView &element : set.added()) { items.append(value_to_py(element)); }
-                    nb::object &removed_cls = python_bridge::removed_class_slot();
-                    for (const ValueView &element : set.removed())
-                    {
-                        items.append(removed_cls.is_valid() ? removed_cls(value_to_py(element))
-                                                            : value_to_py(element));
-                    }
-                    nb::object result = nb::steal(PyFrozenSet_New(nb::list(items).ptr()));
-                    nb::object &set_delta_cls = python_bridge::set_delta_class_slot();
-                    return set_delta_cls.is_valid() ? set_delta_cls(result) : result;
-                }
-                default: {
-                    Value delta = capture_delta(ts);
-                    return delta.has_value() ? value_to_py(delta.view()) : nb::none();
-                }
-            }
+            nb::object delta = ts.data_view().delta_value_to_python(ts.evaluation_time());
+            nb::object &shape = delta_shaper_slot();
+            return shape.is_valid() ? shape(delta) : delta;
         }
 
         [[nodiscard]] bool modified() const { return checked().modified(); }

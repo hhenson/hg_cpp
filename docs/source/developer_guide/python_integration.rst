@@ -196,7 +196,12 @@ components:
   Activation itself never schedules or fabricates a modified tick. An active,
   already-valid ``REF`` argument requests one explicit startup sample because
   its initial binding predates graph start. Scheduler events still wake nodes
-  declared with ``active=()``;
+  declared with ``active=()``. ``NODE`` injects a callback-scoped projection
+  over the same native ``NodeView`` used by C++ nodes, including identity,
+  graph identity, kind, lifecycle state, input/output presence, and scheduling
+  notification. Retaining that Python projection beyond the callback is an
+  error; C++ node implementations receive the zero-storage borrowed
+  ``NodeView`` directly;
 - ``lift(fn, inputs=..., output=...)`` wraps a plain scalar function as a
   compute node (scalar annotations become ``TS[...]``; time-series views
   unwrap to ``value if valid else None`` before the call);

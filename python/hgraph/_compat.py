@@ -304,6 +304,13 @@ class TimeSeriesReference:
             "TimeSeriesReference instances come from REF inputs (ref.value) or make()")
 
     @staticmethod
+    def is_instance(value):
+        """True when ``value`` is an opaque native time-series reference."""
+        import _hgraph
+
+        return isinstance(value, _hgraph.TimeSeriesRef)
+
+    @staticmethod
     def make():
         """An EMPTY reference (binds nothing)."""
         import _hgraph

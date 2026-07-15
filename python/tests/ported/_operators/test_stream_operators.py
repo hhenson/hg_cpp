@@ -777,6 +777,23 @@ def test_to_window_removed_int():
     assert eval_node(g, [1, 2, 3, 4, 5]) == [None, None, None, 1, 2]
 
 
+def test_to_window_validity_and_absent_removed_value():
+    @compute_node
+    def inspect(ts: TSW[int, WindowSize[3], WindowSize[2]]) -> TS[tuple[bool, bool, object]]:
+        return ts.valid, ts.all_valid, ts.removed_value
+
+    @graph
+    def g(ts: TS[int]) -> TS[tuple[bool, bool, object]]:
+        return inspect(to_window(ts, 3, 2))
+
+    assert eval_node(g, [1, 2, 3, 4]) == [
+        (True, False, None),
+        (True, True, None),
+        (True, True, None),
+        (True, True, 1),
+    ]
+
+
 def test_to_window_delta():
     result = eval_node(to_window[SCALAR:int], [1, 2, 3, 4, 5], 3)
     assert result == [1, 2, 3, 4, 5]
@@ -789,7 +806,7 @@ def test_to_window_delta_min_period():
 
 def test_to_window_delta_td():
     result = eval_node(to_window[SCALAR:int], [1, 2, 3, 4, 5], MIN_TD * 2)
-    assert result == [None, None, 3, 4, 5]
+    assert result == [1, 2, 3, 4, 5]
 
 
 def test_to_window_value():
@@ -802,11 +819,14 @@ def test_to_window_value():
         return _as_value(to_window(ts, 3))
 
     result = eval_node(g, [1, 2, 3, 4, 5])
-    assert all(
-        (a == b).all()
-        for a, b in zip(result, [None, None, np.array((1, 2, 3)), np.array((2, 3, 4)), np.array((3, 4, 5))])
-        if not (a is None and b is None)
-    )
+    expected = [
+        np.array((1,)),
+        np.array((1, 2)),
+        np.array((1, 2, 3)),
+        np.array((2, 3, 4)),
+        np.array((3, 4, 5)),
+    ]
+    assert all(np.array_equal(a, b) for a, b in zip(result, expected))
 
 
 def test_to_window_value_min_size():
@@ -819,24 +839,14 @@ def test_to_window_value_min_size():
         return _as_value(to_window(ts, 3, 2))
 
     result = eval_node(g, [1, 2, 3, 4, 5])
-    print(f"result: '{result}'")
-    assert all(
-        (a == b).all()
-        for a, b in zip(
-            result,
-            [
-                None,
-                np.array((
-                    1,
-                    2,
-                )),
-                np.array((1, 2, 3)),
-                np.array((2, 3, 4)),
-                np.array((3, 4, 5)),
-            ],
-        )
-        if not (a is None and b is None)
-    )
+    expected = [
+        np.array((1,)),
+        np.array((1, 2)),
+        np.array((1, 2, 3)),
+        np.array((2, 3, 4)),
+        np.array((3, 4, 5)),
+    ]
+    assert all(np.array_equal(a, b) for a, b in zip(result, expected))
 
 
 def test_to_window_value_td():
@@ -849,11 +859,14 @@ def test_to_window_value_td():
         return _as_value(to_window(ts, MIN_TD * 2))
 
     result = eval_node(g, [1, 2, 3, 4, 5])
-    assert all(
-        (a == b).all()
-        for a, b in zip(result, [None, None, np.array((1, 2, 3)), np.array((2, 3, 4)), np.array((3, 4, 5))])
-        if not (a is None and b is None)
-    )
+    expected = [
+        np.array((1,)),
+        np.array((1, 2)),
+        np.array((1, 2, 3)),
+        np.array((2, 3, 4)),
+        np.array((3, 4, 5)),
+    ]
+    assert all(np.array_equal(a, b) for a, b in zip(result, expected))
 
 
 def test_gate():
@@ -962,6 +975,6 @@ def test_slice_():
 def test_combine_status_messages(messages, new_message, expected):
     register_status_message_pattern(r"Using stale price for (\w+)")
     register_status_message_pattern(r"No price for (\w+) for a week")
-    register_status_message_pattern("In UnitConversionPricingModel (in lot and USD): No price yet for (\w+)")
+    register_status_message_pattern(r"In UnitConversionPricingModel (in lot and USD): No price yet for (\w+)")
     result = eval_node(combine_status_messages, [messages], [new_message], __elide__=True)
     assert result[-1] == expected

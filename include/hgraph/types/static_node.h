@@ -61,7 +61,7 @@ namespace hgraph
      * ``TSW``), scalar ``State<T>``, wiring-time ``Scalar<Name, T>`` values,
      * graph-level ``GlobalState<T>``, input activity/validity policy flags,
      * output-backed ``RecordableState<TSchema>``, evaluation-clock and engine-
-     * control injection, and scheduler injection.
+     * control injection, node-self inspection, and scheduler injection.
      * Push-source nodes are intentionally outside this generic static-node path:
      * they use a specialized builder/node implementation that owns the message
      * queue and sender.
@@ -1709,6 +1709,18 @@ namespace hgraph
             static RecordableState<S> get(const NodeView &view, DateTime evaluation_time)
             {
                 return RecordableState<S>{view.recordable_state(evaluation_time), evaluation_time};
+            }
+        };
+
+        // The native node-self injectable is the existing compact type-erased
+        // handle. Recreate the move-only borrowed view from the current pointer;
+        // it contributes no schema fields or planned storage.
+        template <>
+        struct arg_provider<NodeView>
+        {
+            static NodeView get(const NodeView &view, DateTime) noexcept
+            {
+                return NodeView{view.pointer()};
             }
         };
 

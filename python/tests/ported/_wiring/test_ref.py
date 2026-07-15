@@ -19,6 +19,7 @@ from hgraph import (
     TSB,
     switch_,
     contains_,
+    TimeSeriesReference,
 )
 from hgraph.test import eval_node
 
@@ -34,6 +35,26 @@ def create_ref(ts: REF[TIME_SERIES_TYPE]) -> REF[TIME_SERIES_TYPE]:
 
 def test_ref():
     assert eval_node(create_ref[TIME_SERIES_TYPE : TS[int]], ts=[1, 2]) == [1, 2]
+
+
+@compute_node
+def inspect_ref_metadata(ts: REF[TS[int]]) -> TS[bool]:
+    ref = ts.value
+    return (
+        TimeSeriesReference.is_instance(ref)
+        and not ref.is_empty
+        and ref.has_output
+        and ref.is_valid
+    )
+
+
+@graph
+def inspect_bound_ref(ts: TS[int]) -> TS[bool]:
+    return inspect_ref_metadata(ts)
+
+
+def test_bound_ref_exposes_safe_metadata():
+    assert eval_node(inspect_bound_ref, [1]) == [True]
 
 
 def test_route_ref():

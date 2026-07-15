@@ -328,10 +328,14 @@ namespace hgraph::python_bridge
 
     nb::class_<PyOutput>(m, "OutputView")
         .def_prop_ro("valid", &PyOutput::valid)
+        .def_prop_ro("modified", &PyOutput::modified)
+        .def_prop_ro("delta_value", &PyOutput::delta_value)
         .def_prop_rw("value", &PyOutput::value, &PyOutput::set_value,
                      nb::for_setter(nb::arg("value").none()))
+        .def("can_apply_result", &PyOutput::can_apply_result)
         .def("get_or_create", &PyOutput::get_or_create)
         .def("clear", &PyOutput::clear)
+        .def("invalidate", &PyOutput::invalidate)
         .def("removed_keys", &PyOutput::removed_keys)
         .def("add", &PyOutput::add)
         .def("remove", &PyOutput::remove)
@@ -412,13 +416,14 @@ namespace hgraph::python_bridge
                          return view.as_window().has_removed_value();
                      })
         .def_prop_ro("removed_value",
-                     [](const PyTimeSeries &self) {
+                     [](const PyTimeSeries &self) -> nb::object {
                          const auto &view = self.checked();
                          if (view.schema()->kind != TSTypeKind::TSW)
                          {
                              throw nb::attribute_error("removed_value");
                          }
-                         return value_to_py(view.as_window().removed_value());
+                         auto window = view.as_window();
+                         return window.has_removed_value() ? value_to_py(window.removed_value()) : nb::none();
                      })
         .def_prop_ro("last_modified_time", &PyTimeSeries::last_modified_time)
         .def("added", &PyTimeSeries::added)
@@ -447,6 +452,7 @@ namespace hgraph::python_bridge
     m.def("_set_removed_sentinel", [](nb::object sentinel) { PyTimeSeries::removed_slot() = std::move(sentinel); });
     m.def("_set_removed_class", [](nb::object cls) { python_bridge::removed_class_slot() = std::move(cls); });
     m.def("_set_set_delta_class", [](nb::object cls) { python_bridge::set_delta_class_slot() = std::move(cls); });
+    m.def("_set_delta_shaper", [](nb::object fn) { python_bridge::delta_shaper_slot() = std::move(fn); });
     nb::class_<PyArrowStream>(m, "ArrowStream")
         .def("__arrow_c_stream__",
              [](const PyArrowStream &self, nb::handle) { return self.capsule(); },
@@ -490,6 +496,49 @@ namespace hgraph::python_bridge
         .def_prop_ro("is_stop_requested",
                      [](const PyEvaluationEngineApi &self) { return self.checked().stop_requested(); })
         .def("request_engine_stop", [](const PyEvaluationEngineApi &self) { self.checked().request_stop(); });
+    nb::enum_<NodeKind>(m, "NodeType")
+        .value("COMPUTE", NodeKind::Compute)
+        .value("PUSH_SOURCE", NodeKind::PushSource)
+        .value("PULL_SOURCE", NodeKind::PullSource)
+        .value("SINK", NodeKind::Sink)
+        .value("NESTED", NodeKind::Nested);
+    nb::class_<PyNode>(m, "Node")
+        .def_prop_ro("node_ndx", [](const PyNode &self) { return self.checked().node_index(); })
+        .def_prop_ro("node_index", [](const PyNode &self) { return self.checked().node_index(); })
+        .def_prop_ro("node_id", [](const PyNode &self) {
+            const auto id = self.node_id();
+            nb::tuple result = nb::steal<nb::tuple>(PyTuple_New(static_cast<Py_ssize_t>(id.size())));
+            for (std::size_t index = 0; index < id.size(); ++index)
+            {
+                if (PyTuple_SetItem(result.ptr(), static_cast<Py_ssize_t>(index),
+                                    nb::cast(id[index]).release().ptr()) != 0)
+                {
+                    throw nb::python_error();
+                }
+            }
+            return result;
+        })
+        .def_prop_ro("owning_graph_id", [](const PyNode &self) {
+            const auto id = self.node_id();
+            const std::size_t size = id.empty() ? 0 : id.size() - 1;
+            nb::tuple result = nb::steal<nb::tuple>(PyTuple_New(static_cast<Py_ssize_t>(size)));
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                if (PyTuple_SetItem(result.ptr(), static_cast<Py_ssize_t>(index),
+                                    nb::cast(id[index]).release().ptr()) != 0)
+                {
+                    throw nb::python_error();
+                }
+            }
+            return result;
+        })
+        .def_prop_ro("label", [](const PyNode &self) { return std::string{self.checked().label()}; })
+        .def_prop_ro("node_type", [](const PyNode &self) { return self.checked().node_kind(); })
+        .def_prop_ro("started", [](const PyNode &self) { return self.checked().started(); })
+        .def_prop_ro("has_input", [](const PyNode &self) { return self.checked().has_input(); })
+        .def_prop_ro("has_output", [](const PyNode &self) { return self.checked().has_output(); })
+        .def("notify", &PyNode::notify)
+        .def("notify_next_cycle", &PyNode::notify_next_cycle);
     nb::class_<PyScheduler>(m, "Scheduler")
         .def("schedule", [](const PyScheduler &self, DateTime when) { self.scheduler.schedule(when); })
         .def("schedule_delta", [](const PyScheduler &self, TimeDelta delta) { self.scheduler.schedule(delta); });

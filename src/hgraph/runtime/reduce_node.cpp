@@ -138,11 +138,23 @@ namespace hgraph
             std::size_t resume_position_plus_one{0};
         };
 
+        struct ReduceCollectionOps
+        {
+            bool (*reconcile)(ReduceNodeStorage &storage, TSInputView &input);
+            TSOutputView (*leaf_output)(TSOutputView source, std::size_t leaf, const Value &key);
+        };
+
+        [[nodiscard]] bool reconcile_dict_collection(ReduceNodeStorage &storage, TSInputView &input);
+        [[nodiscard]] bool reconcile_list_collection(ReduceNodeStorage &storage, TSInputView &input);
+        [[nodiscard]] TSOutputView dict_leaf_output(TSOutputView source, std::size_t leaf, const Value &key);
+        [[nodiscard]] TSOutputView list_leaf_output(TSOutputView source, std::size_t leaf, const Value &key);
+
         struct ReduceNodeContext
         {
             ReduceNodeSpec spec{};
             std::size_t    storage_offset{0};
             MemoryUtils::StorageLayout graph_layout{};
+            const ReduceCollectionOps *collection_ops{nullptr};
         };
 
         // Program-lifetime, intentionally-leaked context storage — same rationale
@@ -154,12 +166,14 @@ namespace hgraph
         }
 
         [[nodiscard]] const ReduceNodeContext &register_reduce_node_context(
-            ReduceNodeSpec spec, std::size_t storage_offset, MemoryUtils::StorageLayout graph_layout)
+            ReduceNodeSpec spec, std::size_t storage_offset, MemoryUtils::StorageLayout graph_layout,
+            const ReduceCollectionOps &collection_ops)
         {
             auto context = std::make_unique<ReduceNodeContext>(ReduceNodeContext{
                 .spec           = std::move(spec),
                 .storage_offset = storage_offset,
                 .graph_layout   = graph_layout,
+                .collection_ops = &collection_ops,
             });
             const auto *result = context.get();
             reduce_node_contexts().push_back(std::move(context));
@@ -230,18 +244,30 @@ namespace hgraph
             {
                 case Aggregate::Kind::Leaf:
                 {
-                    auto tsd_source = view.input(evaluation_time).indexed_child_at(0).bound_output();
-                    if (!tsd_source.bound()) { return TSOutputView{}; }
-                    auto dict = tsd_source.as_dict();
+                    auto collection = view.input(evaluation_time).indexed_child_at(0).bound_output();
+                    if (!collection.bound()) { return TSOutputView{}; }
                     const Value &key = storage.dense_to_key[aggregate.index];
-                    if (!dict.contains(key.view())) { return TSOutputView{}; }
-                    return dict.at(key.view());
+                    return context.collection_ops->leaf_output(
+                        std::move(collection), aggregate.index, key);
                 }
                 case Aggregate::Kind::Node:
                 {
+                    const auto &output_binding = context.spec.child.output_binding;
+                    if (output_binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
+                    {
+                        const std::size_t side = output_binding->parent_source_path[0];
+                        Aggregate source = resolve_aggregate(storage, 2 * aggregate.index + 1 + side);
+                        auto output = aggregate_output(view, context, storage, source, evaluation_time);
+                        if (output.bound() && output_binding->parent_source_path.size() > 1)
+                        {
+                            output = walk_ts_path(
+                                std::move(output),
+                                std::span<const std::size_t>{output_binding->parent_source_path}.subspan(1));
+                        }
+                        return output;
+                    }
                     const auto *entry = storage.combiners[aggregate.index];
                     if (entry == nullptr || !entry->graph.has_value()) { return TSOutputView{}; }
-                    const auto &output_binding = context.spec.child.output_binding;
                     return walk_ts_path(
                         entry->graph.view().node_at(output_binding->source.node).output(evaluation_time),
                         output_binding->source.path);
@@ -314,6 +340,63 @@ namespace hgraph
             }
 
             return structural;
+        }
+
+        [[nodiscard]] bool reconcile_leaf_state(ReduceNodeStorage &storage, const TSLInputView &list_input)
+        {
+            bool structural = false;
+            while (storage.dense_to_key.size() > list_input.size())
+            {
+                remove_leaf_at(storage, storage.dense_to_key.size() - 1);
+                structural = true;
+            }
+            while (storage.dense_to_key.size() < list_input.size())
+            {
+                const std::size_t index = storage.dense_to_key.size();
+                Value key{static_cast<Int>(index)};
+                storage.key_to_leaf.emplace(key, index);
+                storage.dense_to_key.push_back(std::move(key));
+                structural = true;
+            }
+            return structural;
+        }
+
+        [[nodiscard]] bool reconcile_dict_collection(ReduceNodeStorage &storage, TSInputView &input)
+        {
+            return reconcile_leaf_state(storage, input.as_dict());
+        }
+
+        [[nodiscard]] bool reconcile_list_collection(ReduceNodeStorage &storage, TSInputView &input)
+        {
+            return reconcile_leaf_state(storage, input.as_list());
+        }
+
+        [[nodiscard]] TSOutputView dict_leaf_output(TSOutputView source, std::size_t,
+                                                    const Value &key)
+        {
+            auto dict = source.as_dict();
+            return dict.contains(key.view()) ? dict.at(key.view()) : TSOutputView{};
+        }
+
+        [[nodiscard]] TSOutputView list_leaf_output(TSOutputView source, std::size_t leaf,
+                                                    const Value &)
+        {
+            auto list = source.as_list();
+            return leaf < list.size() ? list.at(leaf) : TSOutputView{};
+        }
+
+        [[nodiscard]] const ReduceCollectionOps &reduce_collection_ops_for(
+            const TSValueTypeMetaData &schema)
+        {
+            static const ReduceCollectionOps dict_ops{
+                .reconcile = &reconcile_dict_collection,
+                .leaf_output = &dict_leaf_output,
+            };
+            static const ReduceCollectionOps list_ops{
+                .reconcile = &reconcile_list_collection,
+                .leaf_output = &list_leaf_output,
+            };
+            return schema.kind == TSTypeKind::TSD ? dict_ops : list_ops;
         }
 
         /**
@@ -484,16 +567,15 @@ namespace hgraph
                               ReduceNodeStorage &storage, DateTime evaluation_time)
         {
             auto root_input = view.input(evaluation_time);
-            auto tsd_input  = root_input.indexed_child_at(0);
+            auto collection_input = root_input.indexed_child_at(0);
 
             bool structural = false;
             bool refresh_bindings = false;
-            if (tsd_input.valid())
+            if (collection_input.valid())
             {
-                auto dict_input = tsd_input.as_dict();
-                if (tsd_input.modified() || !storage.primed)
+                if (collection_input.modified() || !storage.primed)
                 {
-                    structural = reconcile_leaf_state(storage, dict_input) || structural;
+                    structural = context.collection_ops->reconcile(storage, collection_input) || structural;
                     refresh_bindings = true;
                     storage.primed  = true;
                 }
@@ -580,9 +662,11 @@ namespace hgraph
                 throw std::invalid_argument("reduce_node requires input schema [ts, zero]");
             }
             const auto *fields = meta.input_schema->fields();
-            if (fields[0].type == nullptr || fields[0].type->kind != TSTypeKind::TSD)
+            if (fields[0].type == nullptr ||
+                (fields[0].type->kind != TSTypeKind::TSD &&
+                 (fields[0].type->kind != TSTypeKind::TSL || fields[0].type->fixed_size() != 0)))
             {
-                throw std::invalid_argument("reduce_node first input must be a TSD");
+                throw std::invalid_argument("reduce_node first input must be a TSD or dynamic TSL");
             }
             if (meta.output_schema == nullptr)
             {
@@ -591,16 +675,19 @@ namespace hgraph
 
             const std::size_t child_node_count = spec.child.graph_builder.node_count();
             const auto       &output_binding   = *spec.child.output_binding;
-            if (output_binding.kind != NestedGraphOutputBinding::Kind::ChildOutput)
-            {
-                throw std::invalid_argument(
-                    "reduce_node requires the combiner output to be a real child output, not a parent-input alias");
-            }
             if (!output_binding.target_path.empty())
             {
                 throw std::invalid_argument("reduce_node combiner output binding must target the output root");
             }
-            if (output_binding.source.node >= child_node_count)
+            if (output_binding.kind == NestedGraphOutputBinding::Kind::ParentInput)
+            {
+                if (output_binding.parent_source_path.empty() || output_binding.parent_source_path[0] > 1)
+                {
+                    throw std::invalid_argument(
+                        "reduce_node parent-input combiner output must select lhs or rhs");
+                }
+            }
+            else if (output_binding.source.node >= child_node_count)
             {
                 throw std::invalid_argument("reduce_node combiner output source node is out of range");
             }
@@ -689,13 +776,15 @@ namespace hgraph
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
         const MemoryUtils::StorageLayout graph_layout = spec.child.graph_builder.nested_storage_layout();
+        const ReduceCollectionOps &collection_ops =
+            reduce_collection_ops_for(*descriptor.schema.input_schema->fields()[0].type);
 
         descriptor.callbacks.stop            = &reduce_node_stop;
         descriptor.ops.evaluate_impl         = &reduce_evaluate_impl;
         descriptor.ops.extended_view_type_id = ReduceNodeView::node_view_type_id();
         descriptor.ops.extended_view_context = &register_reduce_node_context(
             std::move(spec), descriptor.storage_plan->component(reduce_storage_field_name).offset,
-            graph_layout);
+            graph_layout, collection_ops);
 
         return NodeBuilder::from_descriptor(std::move(descriptor));
     }

@@ -231,6 +231,7 @@ namespace
                                         nb::list &call_args, nb::list &context_values,
                                         const std::shared_ptr<PyTsGuard> &guard,
                                         const nb::object &runtime_global_state, EngineControlView engine,
+                                        const NodeView &node,
                                         const TSOutputView *output = nullptr)   // borrowed for the call only
     {
         auto        bundle       = args.as_bundle();
@@ -299,6 +300,7 @@ namespace
                 case 'd': call_args.append(nb::cast(PyScheduler{scheduler})); break;
                 case 'e': call_args.append(nb::cast(PyEvaluationEngineApi{engine, guard})); break;
                 case 'g': call_args.append(runtime_global_state); break;
+                case 'n': call_args.append(nb::cast(PyNode{node.pointer(), scheduler, guard})); break;
                 default: throw std::logic_error("python node: unknown layout marker");
             }
         }
@@ -308,7 +310,8 @@ namespace
     void py_assemble_lifecycle_args(std::string_view layout, const ValueView &scalars,
                                     State<PyStateRef> &state, NodeScheduler scheduler,
                                     const nb::object &runtime_global_state, EngineControlView engine,
-                                    const std::shared_ptr<PyTsGuard> &guard, nb::list &call_args)
+                                    const std::shared_ptr<PyTsGuard> &guard, const NodeView &node,
+                                    nb::list &call_args)
     {
         std::size_t scalar_index = 0;
         auto scalar_list = scalars.valid() ? std::optional{scalars.as_list()} : std::nullopt;
@@ -328,6 +331,7 @@ namespace
                 case 'd': call_args.append(nb::cast(PyScheduler{scheduler})); break;
                 case 'e': call_args.append(nb::cast(PyEvaluationEngineApi{engine, guard})); break;
                 case 'g': call_args.append(runtime_global_state); break;
+                case 'n': call_args.append(nb::cast(PyNode{node.pointer(), scheduler, guard})); break;
                 default: throw std::logic_error("python lifecycle callback: unsupported layout marker");
             }
         }
@@ -392,7 +396,7 @@ namespace
 
     void py_call_lifecycle(const PyNodeRef &fn, bool enabled, std::string_view config, const ValueView &scalars,
                            State<PyStateRef> &state, NodeScheduler scheduler,
-                           GlobalStateView global_state, EngineControlView engine)
+                           GlobalStateView global_state, EngineControlView engine, const NodeView &node)
     {
         if (!enabled) { return; }
         nb::gil_scoped_acquire gil;
@@ -401,7 +405,8 @@ namespace
         auto guard = std::make_shared<PyTsGuard>();
         auto invalid = UnwindCleanupGuard([&] { guard->alive = false; });
         nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
-        py_assemble_lifecycle_args(config, scalars, state, scheduler, runtime_state, engine, guard, call_args);
+        py_assemble_lifecycle_args(config, scalars, state, scheduler, runtime_state, engine, guard, node,
+                                   call_args);
         (void)py_call_with_contexts(fn.record->fn, call_args, context_values, runtime_state);
         invalid.release();
         guard->alive = false;
@@ -418,13 +423,13 @@ namespace
                           Scalar<"start_config", Str> config,
                           Scalar<"start_scalars", ScalarVar<"SSV">> scalars,
                           State<PyStateRef> state, NodeScheduler scheduler, SingleShotScheduler initial_sample,
-                          GlobalStateView global_state, EngineControlView engine)
+                          GlobalStateView global_state, EngineControlView engine, NodeView node)
         {
             const auto layout = parse_py_call_shape(eval_config.value()).layout;
             py_apply_input_activity(layout, args.base());
             py_schedule_initial_reference_sample(layout, args.base(), initial_sample);
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler,
-                              global_state, engine);
+                              global_state, engine, node);
         }
 
         static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
@@ -437,7 +442,8 @@ namespace
                          Scalar<"stop_config", Str> stop_config,
                          Scalar<"stop_scalars", ScalarVar<"XSV">> stop_scalars,
                          State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
-                         GlobalStateView global_state, EngineControlView engine, Out<TsVar<"O">> out)
+                         GlobalStateView global_state, EngineControlView engine, NodeView node,
+                         Out<TsVar<"O">> out)
         {
             static_cast<void>(start_fn);
             static_cast<void>(start_enabled);
@@ -457,7 +463,7 @@ namespace
             nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
             if (!py_assemble_args(shape.layout, args.base(), scalars.value(),
                                   PyInvocationState{.local = &state}, scheduler, now, call_args,
-                                  context_values, guard, runtime_state, engine, &out_view))
+                                  context_values, guard, runtime_state, engine, node, &out_view))
             {
                 return;
             }
@@ -476,7 +482,7 @@ namespace
                          Scalar<"stop_config", Str> config,
                          Scalar<"stop_scalars", ScalarVar<"XSV">> scalars,
                          State<PyStateRef> state, NodeScheduler scheduler,
-                         GlobalStateView global_state, EngineControlView engine)
+                         GlobalStateView global_state, EngineControlView engine, NodeView node)
         {
             // Mirror the start hook: drop the per-child link subscriptions so a
             // stopped node (e.g. a removed map_ child) can never be re-scheduled
@@ -484,7 +490,7 @@ namespace
             py_clear_input_activity(parse_py_call_shape(eval_config.value()).layout, args.base());
             auto release = UnwindCleanupGuard([&] { py_release_state(state); });
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler,
-                              global_state, engine);
+                              global_state, engine, node);
             release.release();
             py_release_state(state);
         }
@@ -531,7 +537,8 @@ namespace
             Scalar<"stop_config", Str> stop_config,
             Scalar<"stop_scalars", ScalarVar<"XSV">> stop_scalars,
             RecordableState<TsVar<"RS">> state, NodeScheduler scheduler,
-            DateTime now, GlobalStateView global_state, EngineControlView engine, Out<TsVar<"O">> out)
+            DateTime now, GlobalStateView global_state, EngineControlView engine, NodeView node,
+            Out<TsVar<"O">> out)
         {
             static_cast<void>(recordable_state_schema);
             static_cast<void>(start_fn);
@@ -556,7 +563,7 @@ namespace
             if (!py_assemble_args(
                     shape.layout, args.base(), scalars.value(),
                     PyInvocationState{.recordable = &state_view}, scheduler, now,
-                    call_args, context_values, guard, runtime_state, engine, &out_view))
+                    call_args, context_values, guard, runtime_state, engine, node, &out_view))
             {
                 return;
             }
@@ -589,13 +596,13 @@ namespace
                           Scalar<"start_config", Str> config,
                           Scalar<"start_scalars", ScalarVar<"SSV">> scalars,
                           State<PyStateRef> state, NodeScheduler scheduler, SingleShotScheduler initial_sample,
-                          GlobalStateView global_state, EngineControlView engine)
+                          GlobalStateView global_state, EngineControlView engine, NodeView node)
         {
             const auto layout = parse_py_call_shape(eval_config.value()).layout;
             py_apply_input_activity(layout, args.base());
             py_schedule_initial_reference_sample(layout, args.base(), initial_sample);
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler,
-                              global_state, engine);
+                              global_state, engine, node);
         }
 
         static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
@@ -608,7 +615,7 @@ namespace
                          Scalar<"stop_config", Str> stop_config,
                          Scalar<"stop_scalars", ScalarVar<"XSV">> stop_scalars,
                          State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
-                         GlobalStateView global_state, EngineControlView engine)
+                         GlobalStateView global_state, EngineControlView engine, NodeView node)
         {
             static_cast<void>(start_fn);
             static_cast<void>(start_enabled);
@@ -627,7 +634,7 @@ namespace
             nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
             if (!py_assemble_args(shape.layout, args.base(), scalars.value(),
                                   PyInvocationState{.local = &state}, scheduler, now, call_args,
-                                  context_values, guard, runtime_state, engine))
+                                  context_values, guard, runtime_state, engine, node))
             {
                 return;
             }
@@ -644,7 +651,7 @@ namespace
                          Scalar<"stop_config", Str> config,
                          Scalar<"stop_scalars", ScalarVar<"XSV">> scalars,
                          State<PyStateRef> state, NodeScheduler scheduler,
-                         GlobalStateView global_state, EngineControlView engine)
+                         GlobalStateView global_state, EngineControlView engine, NodeView node)
         {
             // Mirror the start hook: drop the per-child link subscriptions so a
             // stopped node (e.g. a removed map_ child) can never be re-scheduled
@@ -652,7 +659,7 @@ namespace
             py_clear_input_activity(parse_py_call_shape(eval_config.value()).layout, args.base());
             auto release = UnwindCleanupGuard([&] { py_release_state(state); });
             py_call_lifecycle(fn.value(), enabled.value(), config.value(), scalars.value(), state, scheduler,
-                              global_state, engine);
+                              global_state, engine, node);
             release.release();
             py_release_state(state);
         }

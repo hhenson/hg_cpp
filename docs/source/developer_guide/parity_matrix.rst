@@ -357,10 +357,10 @@ C++ wiring tests.
 
 The error-result schemas, call syntax, and native trace settings have landed.
 The standard numeric vocabulary and selected generic service cases have
-landed. The remaining finite bridge work is ``SetDelta`` recording shape, safe
-REF metadata, output-view conveniences, and the two TSW view differences.
-Generic Python ``nested_graph(...)`` syntax is deliberately excluded as
-described above.
+landed. ``SetDelta`` recording shape, safe REF metadata, mutable output-view
+conveniences, and the two TSW view differences now have public ``eval_node``
+coverage. Generic Python ``nested_graph(...)`` syntax is deliberately excluded
+as described above.
 
 Bare container **inputs** are generic family patterns.  ``TS[tuple]``,
 ``TS[dict]``, and ``TS[frozenset]`` accept only their respective Python value
@@ -500,7 +500,7 @@ Wiring and node-authoring surface
    * - Contexts
      - Full (wiring and compiled children)
      - Named/default/required compatibility plus native context capture across
-       compiled nested operators. Registered-overload injection remains.
+       compiled nested operators and registered-overload injection.
    * - ``@component``
      - Full (first pass)
      - ``stdlib::component<G>`` over the mode scope + record/replay
@@ -523,11 +523,13 @@ Wiring and node-authoring surface
        that registered operator. ``EvaluationEngineApi`` is a guarded Python
        projection over the same view, not a second engine object.
    * - Injectables: node self
-     - Missing
-     -
+     - Full
+     - C++ implementations receive a zero-storage borrowed ``NodeView``;
+       Python ``NODE`` exposes a callback-scoped projection over the same
+       native node, including nested node/graph identity and notification.
    * - Lifecycle observers, evaluation trace/profiling
      - Native lifecycle observers; trace/profiling missing
-     - Evaluation trace/profiling and the public node-self injectable remain.
+     - Evaluation trace/profiling remains additive work.
    * - Graph recovery (start-from-state)
      - Missing
      - Note: restart of a stopped instance is out of contract by design;
@@ -552,6 +554,7 @@ on the required authoring slices identified by the compatibility audit above.
 
 **Additive** (each lands independently and becomes available to Python
 through the registry): optional catalogue additions, the remaining
-serialization value kinds, trace/profiling and node-self introspection, Python
-engine-control syntax, richer error-result compatibility, and remaining
-dynamic-TSL reduce/mesh shapes.
+serialization value kinds, trace/profiling, Python engine-control syntax, and
+richer error-result compatibility. Dynamic-TSL mesh is not included: both the
+upstream Python contract and this runtime's authoritative :doc:`mesh` design
+define mesh as a TSD-only operator.

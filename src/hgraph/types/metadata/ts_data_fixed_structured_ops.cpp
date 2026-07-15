@@ -277,6 +277,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                               : &ts_data_detail::delta_has_effect_tsl,
                 .apply_delta_impl          = schema->kind == TSTypeKind::TSB ? &ts_data_detail::apply_delta_tsb
                                                                               : &ts_data_detail::apply_delta_tsl,
+                .clear_collection_impl     = &fixed_clear_collection,
                 .indexed_child_count_impl  = &fixed_indexed_size,
                 .indexed_child_binding_impl = &fixed_indexed_element_binding,
                 .indexed_child_memory_impl = &fixed_indexed_element_memory,
@@ -1450,7 +1451,7 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         [[nodiscard]] static bool fixed_move_value_from(const void *context, void *memory, ValueView source,
-                                                        DateTime modified_time)
+                                                         DateTime modified_time)
         {
             if (memory == nullptr)
             {
@@ -1514,6 +1515,12 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
             }
             return newly_modified;
+        }
+
+        [[nodiscard]] static bool fixed_clear_collection(const TSDataView &view, DateTime modified_time)
+        {
+            auto mutation = view.begin_mutation(modified_time);
+            return mutation.invalidate();
         }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES

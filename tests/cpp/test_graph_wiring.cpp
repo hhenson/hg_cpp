@@ -692,6 +692,29 @@ namespace
         }
     };
 
+    struct RecordableStatePassthrough
+    {
+        static constexpr auto name = "recordable_state_passthrough";
+
+        static Port<RecordedStateBundle> compose(Wiring &, Port<RecordedStateBundle> state)
+        {
+            return state;
+        }
+    };
+
+    struct NestedRecordableStatePortGraph
+    {
+        static constexpr auto name = "nested_recordable_state_port_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto source   = wire<ConstantSource>(w);
+            auto previous = wire<RecordablePreviousValue>(w, source);
+            auto state = nested_<RecordableStatePassthrough>(w, recordable_state(previous));
+            wire<RecordedStateLast>(w, state);
+        }
+    };
+
     struct StructuralBundleRefProbe
     {
         static constexpr auto name              = "structural_bundle_ref_probe";
@@ -1195,6 +1218,23 @@ TEST_CASE("graph wiring: recordable_state exposes the hidden recordable-state po
     REQUIRE(graph.node_count() == 3);
     REQUIRE(graph.node_at(2).output(MIN_ST).valid());
     CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Int>() == Int{41});
+}
+
+TEST_CASE("graph wiring: recordable state passes through a compiled nested boundary")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<NestedRecordableStatePortGraph>();
+    REQUIRE(graph_builder.edges().size() == 3);
+    CHECK(graph_edge_source_kind(graph_builder.edges()[1].source_node) ==
+          GraphEdgeSourceKind::RecordableState);
+
+    GraphExecutorValue executor = testing::run_graph(std::move(graph_builder));
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 4);
+    REQUIRE(graph.node_at(3).output(MIN_ST).valid());
+    CHECK(graph.node_at(3).output(MIN_ST).value().checked_as<Int>() == Int{41});
 }
 
 TEST_CASE("graph wiring: error_output exposes the hidden error-output port")

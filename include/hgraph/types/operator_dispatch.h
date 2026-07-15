@@ -551,11 +551,12 @@ namespace hgraph
         {
             using wire_params = typename StaticNodeSignature<Impl>::wire_param_types;
             std::vector<ParamPattern> params;
-            params.reserve(std::tuple_size_v<wire_params>);
+            params.reserve(call_args_detail::caller_visible_param_count<wire_params>());
             [&]<std::size_t... I>(std::index_sequence<I...>) {
                 (
                     [&] {
                         using P = std::tuple_element_t<I, wire_params>;
+                        if constexpr (call_args_detail::auto_context_param_v<P>) { return; }
                         ParamPattern pp;
                         if constexpr (static_node_detail::is_input_selector<P>::value)
                         {
@@ -735,10 +736,13 @@ namespace hgraph
                             using P = std::tuple_element_t<I, wire_params>;
                             if constexpr (static_node_detail::is_scalar_selector<P>::value)
                             {
+                                constexpr std::size_t arg_index =
+                                    call_args_detail::caller_positional_rank<I, wire_params>();
                                 using ST = typename graph_wiring_detail::scalar_param_schema<P>::type;
                                 const auto *target = scalar_resolver<ST>::resolve(map);
                                 std::optional<Value> coerced =
-                                    operator_dispatch_detail::coerce_scalar_value_to_meta(args[I].scalar_value, target);
+                                    operator_dispatch_detail::coerce_scalar_value_to_meta(
+                                        args[arg_index].scalar_value, target);
                                 if (!coerced.has_value())
                                 {
                                     throw std::logic_error("operator scalar argument could not be coerced to the "
@@ -829,8 +833,27 @@ namespace hgraph
                         using P = std::tuple_element_t<I, wire_params>;
                         if constexpr (static_node_detail::is_input_selector<P>::value)
                         {
-                            inputs.push_back(wiring_input_ref<typename graph_wiring_detail::in_param_schema<P>::type>(
-                                w, map, args[I]));
+                            using schema = typename graph_wiring_detail::in_param_schema<P>::type;
+                            if constexpr (call_args_detail::auto_context_param_v<P>)
+                            {
+                                const auto *expected = ts_resolver<schema>::resolve(map);
+                                WiringPortRef ref = graph_wiring_detail::resolve_context_source(
+                                    w, P::field_name.sv());
+                                if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
+                                {
+                                    throw std::logic_error(
+                                        "operator context '" + std::string{P::field_name.sv()} +
+                                        "' schema does not match the selected overload input");
+                                }
+                                inputs.push_back(graph_wiring_detail::adapt_source_for_input(
+                                    w, expected, std::move(ref)));
+                            }
+                            else
+                            {
+                                constexpr std::size_t arg_index =
+                                    call_args_detail::caller_positional_rank<I, wire_params>();
+                                inputs.push_back(wiring_input_ref<schema>(w, map, args[arg_index]));
+                            }
                         }
                     }(),
                     ...);

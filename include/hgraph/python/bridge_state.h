@@ -50,6 +50,14 @@ namespace hgraph::python_bridge
         return *slot;
     }
 
+    /** Python callback that maps canonical type-erased delta values onto the
+        public compatibility shapes (SetDelta, Removed, and REMOVED). */
+    [[nodiscard]] inline nb::object &delta_shaper_slot()
+    {
+        static auto *slot = new nb::object{};
+        return *slot;
+    }
+
     /** The module-installed python->Value INFERENCE hook (schema-free
         conversion is inherently a dispatch on PYTHON types, so it lives in
         the module; core ops that need it - e.g. Any's from_python - call

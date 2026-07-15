@@ -292,7 +292,7 @@ namespace hgraph::python_bridge
         // ops).
         if (view.schema()->name() == "TimeSeriesReference")
         {
-            return nb::cast(PyOpaqueRef{Value{view}});   // opaque per the REF ruling
+            return nb::cast(PyOpaqueRef{Value{view}, MIN_DT});   // opaque per the REF ruling
         }
         return view.binding().ops_ref().to_python(view.data());
     }

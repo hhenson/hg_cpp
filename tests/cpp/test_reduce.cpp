@@ -312,6 +312,17 @@ namespace
                 .as<TS<Str>>();
         }
     };
+
+    struct OrderedSubtractDynamicTslGraph
+    {
+        static constexpr auto name = "ordered_subtract_dynamic_tsl_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TSL<TS<Int>>> values, Port<TS<Int>> zero)
+        {
+            return wire<stdlib::reduce_>(w, fn<stdlib::sub_>(), values, zero, Bool{false})
+                .as<TS<Int>>();
+        }
+    };
 }  // namespace
 
 TEST_CASE("reduce: a five-element TSL reduces through a binary tree with carry")
@@ -677,14 +688,42 @@ TEST_CASE("reduce over TSD: source retarget refreshes bindings and invalid sourc
                  values<Int>(3, 30, 100));
 }
 
-TEST_CASE("reduce over TSD: a pass-through combiner is rejected")
+TEST_CASE("reduce over TSD: a pass-through combiner aliases the selected aggregate")
 {
     using namespace hgraph;
     using namespace std::string_literals;
     stdlib::register_standard_operators();
 
-    REQUIRE_THROWS((eval_node<stdlib::reduce_, TSD<Str, TS<Int>>>(
-        fn<FirstCombiner>(),
-        values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}})),
-        Int{0})));
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSD<Int, TS<Int>>>(
+                     fn<FirstCombiner>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{0, 7}, {1, 9}}),
+                                   dict_delta<Int, TS<Int>>({{0, 11}})),
+                     Int{0})),
+                 values<Int>(7, 11));
+}
+
+TEST_CASE("reduce over dynamic TSL: associative trees follow grow-only length and updates")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSL<TS<Int>>>(
+                     fn<stdlib::add_>(),
+                     values<Value>(list_delta<TS<Int>>({{0, 1}}),
+                                   list_delta<TS<Int>>({{1, 2}, {2, 3}}),
+                                   list_delta<TS<Int>>({{0, 10}})))),
+                 values<Int>(1, 6, 15));
+}
+
+TEST_CASE("reduce over dynamic TSL: ordered reduction retains left-to-right semantics")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<OrderedSubtractDynamicTslGraph>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}}),
+                                   list_delta<TS<Int>>({{1, 2}}),
+                                   list_delta<TS<Int>>({{2, 3}})),
+                     values<Int>(100)),
+                 values<Int>(99, 97, 94));
 }

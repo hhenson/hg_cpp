@@ -44,7 +44,7 @@ class Removed:
 def _simplify_delta(value):
     """Map canonical delta bundles back to hgraph's friendly test shapes:
     TSD {removed, modified} -> {key: value, removed_key: REMOVED};
-    TSS {added, removed} -> frozenset (or a dict when removals occurred)."""
+    TSS {added, removed} -> SetDelta."""
     if isinstance(value, dict):
         if set(value.keys()) == {"removed", "modified"}:
             out = {k: _simplify_delta(v) for k, v in value["modified"].items()}
@@ -53,7 +53,7 @@ def _simplify_delta(value):
         if set(value.keys()) == {"added", "removed"}:
             # hgraph's TSS delta shape: one set - added items plain,
             # removed items wrapped in Removed(...).
-            return frozenset(value["added"]) | {Removed(r) for r in value["removed"]}
+            return _SetDelta(frozenset(value["added"]) | {Removed(r) for r in value["removed"]})
         return {k: _simplify_delta(v) for k, v in value.items()}
     return value
 

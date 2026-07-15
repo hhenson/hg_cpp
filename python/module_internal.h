@@ -70,6 +70,7 @@ namespace hgraph::python_bridge
     struct PyOpaqueRef
     {
         Value value;
+        DateTime evaluation_time{MIN_DT};
     };
 
     struct PyArrowStream

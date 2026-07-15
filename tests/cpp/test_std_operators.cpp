@@ -1421,7 +1421,8 @@ TEST_CASE("std operators: stream operators cover sampling filtering slicing and 
                  values<Int>(none, none, none, none));
 
     CHECK_OUTPUT(eval_node<stdlib::to_window>(values<Int>(1, 2, 3, 4, 5), MIN_TD * 2),
-                 values<Value>(none, none, Value{Int{3}}, Value{Int{4}}, Value{Int{5}}));
+                 values<Value>(Value{Int{1}}, Value{Int{2}}, Value{Int{3}},
+                               Value{Int{4}}, Value{Int{5}}));
 
     CHECK_OUTPUT(eval_node<stdlib::count>(values<Int>(3, none, 2, 1)), values<Int>(1, none, 2, 3));
     CHECK_OUTPUT(eval_node<stdlib::dedup>(values<Int>(1, 2, 2, 3, 3, 3, 4)),

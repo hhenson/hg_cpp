@@ -356,6 +356,16 @@ namespace hgraph::python_bridge
     });
 
     nb::class_<PyOpaqueRef>(m, "TimeSeriesRef")
+        .def_prop_ro("is_empty", [](const PyOpaqueRef &self) {
+            return self.value.view().checked_as<TimeSeriesReference>().is_empty();
+        })
+        .def_prop_ro("has_output", [](const PyOpaqueRef &self) {
+            return self.value.view().checked_as<TimeSeriesReference>().has_output();
+        })
+        .def_prop_ro("is_valid", [](const PyOpaqueRef &self) {
+            return self.evaluation_time != MIN_DT &&
+                   self.value.view().checked_as<TimeSeriesReference>().is_valid(self.evaluation_time);
+        })
         .def("__eq__",
              [](const PyOpaqueRef &self, nb::handle other) {
                  return nb::isinstance<PyOpaqueRef>(other) &&
@@ -373,7 +383,7 @@ namespace hgraph::python_bridge
         const auto *ref_meta = registry.ref(registry.ts(scalar_descriptor<Int>::value_meta()));
         const auto type = ValuePlanFactory::instance().type_for(ref_meta->value_schema);
         if (!type) { throw std::logic_error("TimeSeriesReference meta has no canonical type"); }
-        return PyOpaqueRef{Value{type}};
+        return PyOpaqueRef{Value{type}, MIN_DT};
     });
     }
 }  // namespace hgraph::python_bridge

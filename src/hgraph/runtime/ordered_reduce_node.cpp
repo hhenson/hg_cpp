@@ -101,11 +101,18 @@ namespace hgraph
             std::size_t resume_index_plus_one{0};
         };
 
+        struct OrderedReduceCollectionOps
+        {
+            std::size_t (*size)(TSInputView &input);
+            TSOutputView (*element_output)(TSOutputView source, std::size_t index);
+        };
+
         struct OrderedReduceContext
         {
             OrderedReduceNodeSpec spec{};
             std::size_t storage_offset{0};
             MemoryUtils::StorageLayout graph_layout{};
+            const OrderedReduceCollectionOps *collection_ops{nullptr};
         };
 
         [[nodiscard]] std::vector<std::unique_ptr<OrderedReduceContext>> &ordered_reduce_contexts() noexcept
@@ -117,26 +124,64 @@ namespace hgraph
         [[nodiscard]] const OrderedReduceContext &register_ordered_reduce_context(
             OrderedReduceNodeSpec spec,
             std::size_t storage_offset,
-            MemoryUtils::StorageLayout graph_layout)
+            MemoryUtils::StorageLayout graph_layout,
+            const OrderedReduceCollectionOps &collection_ops)
         {
             auto context = std::make_unique<OrderedReduceContext>(OrderedReduceContext{
                 .spec = std::move(spec),
                 .storage_offset = storage_offset,
                 .graph_layout = graph_layout,
+                .collection_ops = &collection_ops,
             });
             const auto *result = context.get();
             ordered_reduce_contexts().push_back(std::move(context));
             return *result;
         }
 
-        [[nodiscard]] TSOutputView child_output(
+        [[nodiscard]] TSOutputView collection_element_output(
+            const NodeView &view,
             const OrderedReduceContext &context,
-            const OrderedReduceEntry &entry,
+            std::size_t index,
+            DateTime evaluation_time)
+        {
+            auto source = view.input(evaluation_time).indexed_child_at(0).bound_output();
+            return source.bound() ? context.collection_ops->element_output(std::move(source), index)
+                                  : TSOutputView{};
+        }
+
+        [[nodiscard]] TSOutputView child_output(
+            const NodeView &view,
+            const OrderedReduceContext &context,
+            const InPlaceGraphSlotStore<OrderedReduceEntry> &bank,
+            std::size_t index,
             DateTime evaluation_time)
         {
             const auto &binding = *context.spec.child.output_binding;
+            if (binding.kind == NestedGraphOutputBinding::Kind::ParentInput)
+            {
+                TSOutputView source;
+                if (binding.parent_source_path[0] == 0)
+                {
+                    source = index == 0
+                                 ? view.input(evaluation_time).indexed_child_at(1).bound_output()
+                                 : child_output(view, context, bank, index - 1, evaluation_time);
+                }
+                else
+                {
+                    source = collection_element_output(view, context, index, evaluation_time);
+                }
+                if (source.bound() && binding.parent_source_path.size() > 1)
+                {
+                    source = walk_ts_path(
+                        std::move(source),
+                        std::span<const std::size_t>{binding.parent_source_path}.subspan(1));
+                }
+                return source;
+            }
+            const auto *entry = bank.entry_at(index);
+            if (entry == nullptr || !entry->graph.has_value()) { return TSOutputView{}; }
             return walk_ts_path(
-                entry.graph.view().node_at(binding.source.node).output(evaluation_time),
+                entry->graph.view().node_at(binding.source.node).output(evaluation_time),
                 binding.source.path);
         }
 
@@ -167,16 +212,41 @@ namespace hgraph
             return count;
         }
 
-        [[nodiscard]] TSOutputView dictionary_element_output(
-            const NodeView &view,
-            std::size_t index,
-            DateTime evaluation_time)
+        [[nodiscard]] std::size_t ordered_dict_size(TSInputView &input)
         {
-            auto source = view.input(evaluation_time).indexed_child_at(0).bound_output();
-            if (!source.bound()) { return {}; }
+            return ordered_input_size(input.as_dict());
+        }
+
+        [[nodiscard]] std::size_t ordered_list_size(TSInputView &input)
+        {
+            return input.as_list().size();
+        }
+
+        [[nodiscard]] TSOutputView ordered_dict_element(TSOutputView source, std::size_t index)
+        {
             Value key{static_cast<Int>(index)};
             auto dict = source.as_dict();
             return dict.contains(key.view()) ? dict.at(key.view()) : TSOutputView{};
+        }
+
+        [[nodiscard]] TSOutputView ordered_list_element(TSOutputView source, std::size_t index)
+        {
+            auto list = source.as_list();
+            return index < list.size() ? list.at(index) : TSOutputView{};
+        }
+
+        [[nodiscard]] const OrderedReduceCollectionOps &ordered_collection_ops_for(
+            const TSValueTypeMetaData &schema)
+        {
+            static const OrderedReduceCollectionOps dict_ops{
+                .size = &ordered_dict_size,
+                .element_output = &ordered_dict_element,
+            };
+            static const OrderedReduceCollectionOps list_ops{
+                .size = &ordered_list_size,
+                .element_output = &ordered_list_element,
+            };
+            return schema.kind == TSTypeKind::TSD ? dict_ops : list_ops;
         }
 
         void bind_child_inputs(
@@ -200,11 +270,11 @@ namespace hgraph
                 {
                     source = index == 0
                                  ? view.input(evaluation_time).indexed_child_at(1).bound_output()
-                                 : child_output(context, *bank.entry_at(index - 1), evaluation_time);
+                                 : child_output(view, context, bank, index - 1, evaluation_time);
                 }
                 else
                 {
-                    source = dictionary_element_output(view, index, evaluation_time);
+                    source = collection_element_output(view, context, index, evaluation_time);
                 }
                 if (binding.source_path.size() > 1 && source.bound())
                 {
@@ -231,7 +301,7 @@ namespace hgraph
             {
                 const auto *entry = bank.entry_at(count - 1);
                 if (entry == nullptr) { throw std::logic_error("ordered reduce tail entry is missing"); }
-                source = child_output(context, *entry, evaluation_time);
+                source = child_output(view, context, bank, count - 1, evaluation_time);
             }
             runtime_detail::bind_reduce_output(view.output(evaluation_time), source, evaluation_time);
         }
@@ -304,7 +374,7 @@ namespace hgraph
         {
             auto root = view.input(evaluation_time);
             auto ts = root.indexed_child_at(0);
-            const std::size_t next_count = ts.valid() ? ordered_input_size(ts.as_dict()) : 0;
+            const std::size_t next_count = ts.valid() ? context.collection_ops->size(ts) : 0;
             if (!storage.primed || next_count != storage.live_count)
             {
                 rebuild_chain(view, context, storage, next_count, evaluation_time);
@@ -374,11 +444,14 @@ namespace hgraph
                 throw std::invalid_argument("ordered_reduce_node requires input schema [ts, zero]");
             }
             const auto *fields = meta.input_schema->fields();
-            const auto *tsd = fields[0].type;
-            if (tsd == nullptr || tsd->kind != TSTypeKind::TSD ||
-                tsd->key_type() != scalar_descriptor<Int>::value_meta())
+            const auto *collection = fields[0].type;
+            if (collection == nullptr ||
+                ((collection->kind != TSTypeKind::TSD ||
+                  collection->key_type() != scalar_descriptor<Int>::value_meta()) &&
+                 (collection->kind != TSTypeKind::TSL || collection->fixed_size() != 0)))
             {
-                throw std::invalid_argument("ordered_reduce_node requires TSD[int, E] input");
+                throw std::invalid_argument(
+                    "ordered_reduce_node requires TSD[int, E] or dynamic TSL[E] input");
             }
             if (meta.output_schema == nullptr ||
                 !time_series_schema_equivalent(meta.output_schema, fields[1].type))
@@ -388,11 +461,23 @@ namespace hgraph
 
             const std::size_t child_node_count = spec.child.graph_builder.node_count();
             const auto &output_binding = *spec.child.output_binding;
-            if (output_binding.kind != NestedGraphOutputBinding::Kind::ChildOutput ||
-                !output_binding.target_path.empty() || output_binding.source.node >= child_node_count)
+            if (!output_binding.target_path.empty())
             {
                 throw std::invalid_argument(
-                    "ordered_reduce_node requires a root child-output combiner terminal");
+                    "ordered_reduce_node requires a root combiner terminal");
+            }
+            if (output_binding.kind == NestedGraphOutputBinding::Kind::ParentInput)
+            {
+                if (output_binding.parent_source_path.empty() || output_binding.parent_source_path[0] > 1)
+                {
+                    throw std::invalid_argument(
+                        "ordered_reduce_node parent-input output must select accumulator or element");
+                }
+            }
+            else if (output_binding.source.node >= child_node_count)
+            {
+                throw std::invalid_argument(
+                    "ordered_reduce_node child-output terminal is out of range");
             }
             for (const NestedGraphInputBinding &binding : spec.child.input_bindings)
             {
@@ -470,13 +555,16 @@ namespace hgraph
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
         const MemoryUtils::StorageLayout graph_layout = spec.child.graph_builder.nested_storage_layout();
+        const OrderedReduceCollectionOps &collection_ops =
+            ordered_collection_ops_for(*descriptor.schema.input_schema->fields()[0].type);
         descriptor.callbacks.stop = &ordered_reduce_stop;
         descriptor.ops.evaluate_impl = &ordered_reduce_evaluate_impl;
         descriptor.ops.extended_view_type_id = OrderedReduceNodeView::node_view_type_id();
         descriptor.ops.extended_view_context = &register_ordered_reduce_context(
             std::move(spec),
             descriptor.storage_plan->component(ordered_reduce_storage_field_name).offset,
-            graph_layout);
+            graph_layout,
+            collection_ops);
         return NodeBuilder::from_descriptor(std::move(descriptor));
     }
 }  // namespace hgraph

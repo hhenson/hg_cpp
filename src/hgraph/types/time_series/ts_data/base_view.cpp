@@ -6,6 +6,8 @@
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/value/value.h>
 
+#include "ownership.h"
+
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -495,6 +497,38 @@ namespace hgraph
             if (record_modified_local()) { notify_parent_modified(); }
         }
         return newly_modified;
+    }
+
+    bool TSDataMutationView::invalidate()
+    {
+        require_active_mutation();
+
+        TSDataView current = view();
+        if (!current.has_current_value()) { return false; }
+
+        const auto &table = current.ops();
+        if (const auto *ownership = table.ownership_ops; ownership != nullptr)
+        {
+            const std::size_t children = ownership->child_count(table.context, current.data());
+            for (std::size_t index = 0; index < children; ++index)
+            {
+                const auto child_ref = ownership->child_at(
+                    table.context, current.mutable_data(), index);
+                if (!child_ref.type || child_ref.data == nullptr) { continue; }
+                // A structural alternative can expose borrowed input-role
+                // children beneath a mutable root. Invalidating the root must
+                // not mutate those upstream sources.
+                if (!has_capability(child_ref.type.capabilities(), TypeCapabilities::Mutable)) { continue; }
+                TSDataMutationView child{TSDataView{child_ref.type, child_ref.data}, mutation_time_};
+                static_cast<void>(child.invalidate());
+            }
+        }
+
+        auto       &state = *table.mutable_tracking_impl(table.context, current.mutable_data());
+        state.observers.notify(mutation_time_);
+        state.parent.notify_child_modified(mutation_time_);
+        state.last_modified_time = MIN_DT;
+        return true;
     }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
