@@ -12,6 +12,7 @@ import _hgraph
 from ._types import Series
 from ._types import (TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, CONTEXT, REQUIRED, SCALAR, SCALAR_1, SCALAR_2, TSW, KeyValue, AUTO_RESOLVE, with_signature,
                      KEYABLE_SCALAR, TIME_SERIES_TYPE, TIME_SERIES_TYPE_1, TIME_SERIES_TYPE_2, OUT, SIZE,
+                     NUMBER, NUMBER_2,
                      DEFAULT, REF, K, V, SCHEMA, TS_SCHEMA,
                      SIGNAL, WINDOW_SIZE, WINDOW_SIZE_MIN, WindowSize, Array, ts_schema, ENUM)
 from ._compat import (CmpResult, DivideByZero, exception_time_series, try_except,
@@ -88,6 +89,7 @@ def __dir__():
 
 __all__ = [
     "TS", "TSS", "TSD", "TSL", "TSB", "Size", "TimeSeriesSchema", "CONTEXT", "REQUIRED", "WiringError", "TimeSeries",
+    "NUMBER", "NUMBER_2",
     "WiringPort", "CmpResult", "DivideByZero", "NodeError", "exception_time_series", "try_except",
     "TryExceptResult", "TryExceptTsdMapResult", "OperatorWiringNodeClass", "graph", "run_graph", "eval_node", "wire", "map_", "reduce", "mesh_", "mesh_ref", "REMOVED", "feedback", "switch_", "passive", "compute_node", "sink_node", "generator", "STATE", "SCHEDULER", "CLOCK", "EvaluationEngineApi", "component", "record_replay_scope", "RecordReplayEnum", "comparison_summary", "push_queue", "EvaluationMode", "context",
     "MIN_ST", "MIN_TD", "IN_MEMORY", "DATA_FRAME",

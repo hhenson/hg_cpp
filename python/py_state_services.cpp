@@ -159,10 +159,12 @@ namespace hgraph::python_bridge
     m.def("service_descriptor",
           [](const std::string &name, const std::string &flavour, std::optional<PyTsType> output,
              std::optional<PyTsType> key_ts, std::optional<PyTsType> value, std::optional<PyTsType> request,
-             std::optional<PyTsType> response, const std::string &default_path) {
+             std::optional<PyTsType> response, const std::string &default_path,
+             const std::string &specialization) {
               RuntimeServiceDescriptor descriptor;
-              descriptor.name         = name;
-              descriptor.default_path = default_path;
+              descriptor.name           = name;
+              descriptor.specialization = specialization;
+              descriptor.default_path   = default_path;
               if (flavour == "reference")
               {
                   descriptor.flavour       = ServiceFlavour::Reference;
@@ -201,7 +203,7 @@ namespace hgraph::python_bridge
           },
           nb::arg("name"), nb::arg("flavour"), nb::arg("output") = nb::none(), nb::arg("key_ts") = nb::none(),
           nb::arg("value") = nb::none(), nb::arg("request") = nb::none(), nb::arg("response") = nb::none(),
-          nb::arg("default_path") = std::string{});
+          nb::arg("default_path") = std::string{}, nb::arg("specialization") = std::string{});
     m.def("find_service", [](const std::string &name) -> nb::object {
         const auto *descriptor = find_service_descriptor(name);
         return descriptor != nullptr ? nb::cast(PyServiceDesc{descriptor}) : nb::none();

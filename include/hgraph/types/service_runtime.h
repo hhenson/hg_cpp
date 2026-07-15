@@ -20,8 +20,9 @@ namespace hgraph
      * identity*; rulings 2026-07-05). A ``RuntimeServiceDescriptor`` is the
      * erased form of a service interface: C++ descriptor types synthesise one
      * at first use, the Python bridge builds one from a stub's annotations.
-     * Descriptors intern BY NAME (immortal registry); re-registration with
-     * matching schemas returns the interned record, mismatches throw.
+     * Descriptors intern by name and optional generic specialization
+     * (immortal registry); re-registration with matching schemas returns the
+     * interned record, mismatches throw.
      *
      * Node identity rides the name-qualified full path (the path scalar) plus
      * the per-ROLE markers — the same key the C++ templates use — so a Python
@@ -40,6 +41,11 @@ namespace hgraph
     struct RuntimeServiceDescriptor
     {
         std::string                name;
+        /** Registry discriminator for a concrete specialization of a generic
+            interface (for example ``NUMBER=int``). It is not part of the
+            service name or runtime path; callers put the same typed suffix on
+            the user path, matching ``service::path(..., arg<...>(...))``. */
+        std::string                specialization;
         ServiceFlavour             flavour{ServiceFlavour::Reference};
         const TSValueTypeMetaData *output_schema{nullptr};     ///< reference
         const ValueTypeMetaData   *key_type{nullptr};          ///< subscription
@@ -52,8 +58,9 @@ namespace hgraph
         std::string                default_path;
     };
 
-    /** Intern by name; schema-match enforced on re-registration. The returned
-        reference is stable for the process lifetime. */
+    /** Intern by name and optional specialization; schema-match is enforced
+        on re-registration. The returned reference is stable for the process
+        lifetime. */
     [[nodiscard]] HGRAPH_EXPORT const RuntimeServiceDescriptor &intern_service_descriptor(
         RuntimeServiceDescriptor descriptor);
 

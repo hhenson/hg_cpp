@@ -987,7 +987,17 @@ namespace hgraph::service
         auto source = detail::reference_shared_output_source<Service>(w, user_path);
         w.register_service_client_rank(
             detail::reference_base_path<Service>(user_path), "reference service", source.node(), true);
-        return source.template as<output_schema>();
+        if constexpr (schema_descriptor<output_schema>::is_concrete())
+        {
+            return source.template as<output_schema>();
+        }
+        else
+        {
+            WiringPortRef output = source.erased();
+            output.schema = detail::resolved_schema_meta<output_schema>(
+                user_path.resolution, "reference service output");
+            return Port<output_schema>{w, std::move(output)};
+        }
     }
 
     template <typename Service>

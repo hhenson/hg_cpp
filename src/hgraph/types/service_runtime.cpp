@@ -17,10 +17,20 @@ namespace hgraph
     {
         [[nodiscard]] bool schemas_match(const RuntimeServiceDescriptor &lhs, const RuntimeServiceDescriptor &rhs)
         {
-            return lhs.flavour == rhs.flavour && lhs.output_schema == rhs.output_schema &&
+            return lhs.specialization == rhs.specialization && lhs.flavour == rhs.flavour &&
+                   lhs.output_schema == rhs.output_schema &&
                    lhs.key_type == rhs.key_type && lhs.value_schema == rhs.value_schema &&
                    lhs.request_schema == rhs.request_schema && lhs.response_schema == rhs.response_schema &&
                    lhs.input_schema == rhs.input_schema;
+        }
+
+        [[nodiscard]] std::string descriptor_key(const RuntimeServiceDescriptor &descriptor)
+        {
+            if (descriptor.specialization.empty()) { return descriptor.name; }
+            std::string key = descriptor.name;
+            key.push_back('\0');
+            key.append(descriptor.specialization);
+            return key;
         }
 
         /** Immortal (registry rule): descriptor addresses must stay stable. */
@@ -135,7 +145,7 @@ namespace hgraph
     {
         if (descriptor.name.empty()) { throw std::invalid_argument("service descriptor requires a name"); }
         auto &registry = descriptor_registry();
-        auto  found    = registry.find(descriptor.name);
+        auto  found    = registry.find(descriptor_key(descriptor));
         if (found != registry.end())
         {
             if (!schemas_match(*found->second, descriptor))
@@ -146,7 +156,7 @@ namespace hgraph
             return *found->second;
         }
         auto *record = new RuntimeServiceDescriptor{std::move(descriptor)};
-        registry.emplace(record->name, record);
+        registry.emplace(descriptor_key(*record), record);
         return *record;
     }
 
@@ -161,8 +171,13 @@ namespace hgraph
     {
         std::vector<std::string> names;
         names.reserve(descriptor_registry().size());
-        for (const auto &[name, descriptor] : descriptor_registry()) { names.push_back(name); }
+        for (const auto &[key, descriptor] : descriptor_registry())
+        {
+            (void)key;
+            names.push_back(descriptor->name);
+        }
         std::sort(names.begin(), names.end());
+        names.erase(std::unique(names.begin(), names.end()), names.end());
         return names;
     }
 

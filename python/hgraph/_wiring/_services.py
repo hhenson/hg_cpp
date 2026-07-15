@@ -4,9 +4,24 @@ import inspect
 
 import _hgraph
 
-from .._types import _TsExpr
+from .._types import (_GenericTsExpr, _TsExpr, _TypeVarSentinel,
+                      _pattern_of, _type_var_is_scalar, _type_var_name,
+                      _value_type)
 from ._core import WiringError, WiringPort, _current_wiring, _unwrap
 from ._graph import _wrap_graph_fn
+
+
+_TS_ANNOTATIONS = (_TsExpr, _GenericTsExpr)
+
+
+def _is_ts_annotation(annotation):
+    return isinstance(annotation, _TS_ANNOTATIONS)
+
+
+def _resolved_service_path(stub, path):
+    resolver = getattr(stub, "_resolved_path", None)
+    return resolver(path) if resolver is not None else path
+
 
 class context:
     """Publish a port as a named context for the wiring scope within:
@@ -38,27 +53,106 @@ class _ServiceStub:
     """A service interface stub (hgraph's service decorators): calling it
     wires a CLIENT; register_service registers an implementation."""
 
-    def __init__(self, fn, flavour):
+    def __init__(self, fn, flavour, *, resolution=None, specialization=""):
         self.fn = fn
         self.__name__ = fn.__name__
         self.flavour = flavour
+        self._specialization = specialization
         sig = inspect.signature(fn)
-        params = [p for p in sig.parameters.values() if isinstance(p.annotation, _TsExpr)]
+        params = [p for p in sig.parameters.values() if _is_ts_annotation(p.annotation)]
         out = sig.return_annotation
-        kwargs = {"name": fn.__name__, "flavour": flavour}
+        if not _is_ts_annotation(out):
+            raise TypeError(f"@{flavour}_service '{self.__name__}' requires a time-series return annotation")
+        path_param = sig.parameters.get("path")
+        default_path = (
+            path_param.default
+            if path_param is not None and isinstance(path_param.default, str)
+            else f"{fn.__name__}_default"
+        )
+        if specialization:
+            default_path = f"{default_path}[{specialization}]"
+        kwargs = {
+            "name": fn.__name__,
+            "flavour": flavour,
+            "default_path": default_path,
+            "specialization": specialization,
+        }
+
+        def resolved(annotation):
+            if isinstance(annotation, _TsExpr):
+                return annotation.handle
+            if isinstance(annotation, _GenericTsExpr) and resolution is not None:
+                concrete = resolution.resolve_ts(_pattern_of(annotation))
+                if concrete is not None:
+                    return concrete
+            return None
+
         if flavour == "reference":
-            kwargs["output"] = _unwrap(out)
+            kwargs["output"] = resolved(out)
         elif flavour == "subscription":
             if not params:
                 raise TypeError(f"@subscription_service '{self.__name__}' needs a TS[key] parameter")
-            kwargs["key_ts"] = _unwrap(params[0].annotation)
-            kwargs["value"] = _unwrap(out)
+            kwargs["key_ts"] = resolved(params[0].annotation)
+            kwargs["value"] = resolved(out)
         elif flavour == "request_reply":
             if not params:
                 raise TypeError(f"@request_reply_service '{self.__name__}' needs a request parameter")
-            kwargs["request"] = _unwrap(params[0].annotation)
-            kwargs["response"] = _unwrap(out)
-        self.descriptor = _hgraph.service_descriptor(**kwargs)
+            kwargs["request"] = resolved(params[0].annotation)
+            kwargs["response"] = resolved(out)
+        unresolved = [name for name, value in kwargs.items()
+                      if name in {"output", "key_ts", "value", "request", "response"}
+                      and value is None]
+        self.descriptor = None if unresolved else _hgraph.service_descriptor(**kwargs)
+
+    def __getitem__(self, item):
+        if self.descriptor is not None and not self._specialization:
+            raise TypeError(f"service '{self.__name__}' is not generic")
+
+        items = item if isinstance(item, tuple) else (item,)
+        resolution = _hgraph.ResolutionScope()
+        segments = []
+        for binding in items:
+            if not isinstance(binding, slice) or binding.step is not None:
+                raise TypeError(
+                    f"service '{self.__name__}' specialization requires TYPEVAR: concrete entries")
+            variable, concrete = binding.start, binding.stop
+            if not isinstance(variable, _TypeVarSentinel):
+                raise TypeError(f"service '{self.__name__}' specialization key is not a type variable")
+            name = _type_var_name(variable)
+            if _type_var_is_scalar(variable):
+                meta = _value_type(concrete)
+                constraints = tuple(getattr(variable, "__constraints__", ()))
+                if constraints and all(meta != _value_type(constraint) for constraint in constraints):
+                    allowed = ", ".join(getattr(value, "__name__", repr(value)) for value in constraints)
+                    raise TypeError(f"{name} must be one of {allowed}, got {meta.name}")
+                resolution.bind_scalar(name, meta)
+                label = meta.name
+            else:
+                meta = concrete.handle if isinstance(concrete, _TsExpr) else concrete
+                resolution.bind_ts(name, meta)
+                label = repr(meta)
+            segments.append(f"{name}={label}")
+
+        specialization = ",".join(segments)
+        result = _ServiceStub(
+            self.fn, self.flavour, resolution=resolution, specialization=specialization)
+        if result.descriptor is None:
+            raise TypeError(
+                f"service '{self.__name__}' specialization leaves an unresolved time-series type")
+        return result
+
+    def _require_descriptor(self):
+        if self.descriptor is None:
+            raise TypeError(
+                f"generic service '{self.__name__}' must be specialized, for example "
+                f"{self.__name__}[NUMBER:int]")
+        return self.descriptor
+
+    def _resolved_path(self, path):
+        if not path or not self._specialization:
+            return path
+        suffix = f"[{self._specialization}]"
+        return path if path.endswith(suffix) else f"{path}{suffix}"
 
     def __call__(self, ts=None, *, path=""):
         if isinstance(ts, str):
@@ -66,7 +160,7 @@ class _ServiceStub:
             # ``path`` as its (only) positional parameter.
             path, ts = ts, None
         w = _current_wiring()
-        port = _hgraph.service_client(w, self.descriptor, path,
+        port = _hgraph.service_client(w, self._require_descriptor(), self._resolved_path(path),
                                       None if ts is None else _unwrap(ts))
         return WiringPort(port)
 
@@ -270,7 +364,7 @@ class _ServiceImpl:
         ts_params = [
             p for p in inspect.signature(target).parameters.values()
             if p.name != "path"
-            and (isinstance(p.annotation, _TsExpr) or p.annotation is inspect.Signature.empty)
+            and (_is_ts_annotation(p.annotation) or p.annotation is inspect.Signature.empty)
         ]
         if len(self.interfaces) > 1:
             # Multi-interface implementations take NO wired inputs: they
@@ -305,6 +399,8 @@ class _ServiceImpl:
             return resolved
         if not isinstance(stub, (_ServiceStub, _AdaptorStub, _ServiceAdaptorStub)):
             raise TypeError(f"@service_impl interfaces must be service stubs, got {stub!r}")
+        if isinstance(stub, _ServiceStub):
+            stub._require_descriptor()
         return stub
 
 
@@ -340,7 +436,7 @@ def _bind_registered_impl(implementation, path, config):
     port_parameters = [
         param for param in parameters
         if param.name != "path"
-        and (isinstance(param.annotation, _TsExpr) or param.annotation is inspect.Signature.empty)
+        and (_is_ts_annotation(param.annotation) or param.annotation is inspect.Signature.empty)
     ]
     if len(port_parameters) != expected_ports:
         raise WiringError(
@@ -398,13 +494,15 @@ def set_service_output(path, stub, out):
 def impl_input(stub, path=""):
     """Inside a multi-interface implementation: the interface's input
     (subscription key set / request dictionary)."""
-    return WiringPort(_hgraph.service_impl_input(_current_wiring(), stub.descriptor, path))
+    return WiringPort(_hgraph.service_impl_input(
+        _current_wiring(), stub.descriptor, _resolved_service_path(stub, path)))
 
 
 def impl_output(stub, out, path=""):
     """Inside a multi-interface implementation: publish the interface's
     output explicitly."""
-    _hgraph.service_impl_output(_current_wiring(), stub.descriptor, path, out=_unwrap(out))
+    _hgraph.service_impl_output(
+        _current_wiring(), stub.descriptor, _resolved_service_path(stub, path), out=_unwrap(out))
 
 
 def register_service(path, implementation, **kwargs):
@@ -414,12 +512,20 @@ def register_service(path, implementation, **kwargs):
     takes no wired inputs and uses impl_input/impl_output per interface."""
     if not isinstance(implementation, _ServiceImpl):
         raise WiringError("register_service requires an @service_impl-decorated implementation")
-    impl_fn = _bind_registered_impl(implementation, path, kwargs)
     if len(implementation.interfaces) > 1:
+        resolved_paths = {
+            _resolved_service_path(stub, path) for stub in implementation.interfaces
+        }
+        if len(resolved_paths) != 1:
+            raise WiringError("multi-interface services require one shared type specialization")
+        resolved_path = resolved_paths.pop()
+        impl_fn = _bind_registered_impl(implementation, resolved_path, kwargs)
         _hgraph.register_multi_service_impl(
-            _current_wiring(), [stub.descriptor for stub in implementation.interfaces], path,
+            _current_wiring(), [stub.descriptor for stub in implementation.interfaces], resolved_path,
             _wrap_graph_fn(impl_fn))
         return
     stub = implementation.interfaces[0]
+    resolved_path = _resolved_service_path(stub, path)
+    impl_fn = _bind_registered_impl(implementation, resolved_path, kwargs)
     _hgraph.register_service_impl(
-        _current_wiring(), stub.descriptor, path, _wrap_graph_fn(impl_fn))
+        _current_wiring(), stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))

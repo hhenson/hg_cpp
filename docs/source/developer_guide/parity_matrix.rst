@@ -198,13 +198,15 @@ Compatibility audit: wiring and time-series tiers
 
 The follow-on inventory was reviewed on 2026-07-15 against ``ext/main`` at
 ``4760fccadd5368b0482393e5acb0ceaac48518e9``.  Upstream has 32 ``_wiring``
-test modules containing 244 tests; 22 modules are already represented under
-``python/tests/ported/_wiring``.  The 10 unported modules contain 118 tests,
-and the separate root ``test_wiring.py`` contributes two tests.  These 120
-tests are an inventory, not 120 missing features: several assert private
-Python builder objects that deliberately do not exist in the C++-first model.
+test modules containing 244 tests; 23 modules are now represented under
+``python/tests/ported/_wiring``.  The saved post-error-handling baseline had 10
+unported modules containing 118 tests, plus two tests in the separate root
+``test_wiring.py``. ``test_service.py`` is now partially represented; the 120
+tests remain the audit inventory rather than a live missing-test count. Several
+assert private Python builder objects that deliberately do not exist in the
+C++-first model.
 
-.. list-table:: Unported wiring inventory
+.. list-table:: Unported or partially ported wiring inventory
    :header-rows: 1
    :widths: 24 8 68
 
@@ -282,11 +284,13 @@ Python builder objects that deliberately do not exist in the C++-first model.
        work; ``REMOVE_IF_EXISTS`` can be a compatibility alias of ``REMOVE``.
    * - ``test_service.py``
      - 19
-     - Reference, subscription, request/reply, multi-interface, generic,
-       node-backed, mesh-nested, path-qualified, and multi-client service
-       behaviour is native.  Port a public Python subset after adding any
-       required vocabulary aliases (for example ``NUMBER``); do not reproduce
-       Python service internals.
+     - **Public subset landed.** ``NUMBER``/``NUMBER_2`` lower to constrained
+       native scalar variables, and explicit ``Int``/``Float`` reference and
+       request/reply specializations execute through Python ``eval_node``.
+       Matching public C++ tests cover constrained generic services and erased
+       specialization identity. Node-backed, mesh-nested, and multi-client
+       behaviour remains covered elsewhere; do not reproduce Python service
+       internals.
 
 The 215 upstream ``ts_tests`` tests were also copied mechanically to a
 temporary directory and run against the current bridge under Python 3.12.8.
@@ -349,10 +353,11 @@ must be rewritten around public ``eval_node`` graphs and paired with equivalent
 C++ wiring tests.
 
 The error-result schemas, call syntax, and native trace settings have landed.
-The remaining finite bridge work is vocabulary aliases, ``SetDelta`` recording
-shape, safe REF metadata, output-view conveniences, and the two TSW view
-differences. Generic Python ``nested_graph(...)`` syntax is deliberately
-excluded as described above.
+The standard numeric vocabulary and selected generic service cases have
+landed. The remaining finite bridge work is ``SetDelta`` recording shape, safe
+REF metadata, output-view conveniences, and the two TSW view differences.
+Generic Python ``nested_graph(...)`` syntax is deliberately excluded as
+described above.
 
 Bare container **inputs** are generic family patterns.  ``TS[tuple]``,
 ``TS[dict]``, and ``TS[frozenset]`` accept only their respective Python value

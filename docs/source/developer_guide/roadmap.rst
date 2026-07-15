@@ -48,7 +48,7 @@ The important corrections to the previous roadmap are:
   surface.
 - All 48 upstream operator-test files are present under
   ``python/tests/ported/_operators``.  The wiring tier is only a selected port:
-  22 files are present under ``python/tests/ported/_wiring``.  It must not be
+  23 files are present under ``python/tests/ported/_wiring``.  It must not be
   described as the entire upstream wiring suite.
 - The current operator inventory is **135 registered**, **0 declared-only**,
   **6 missing**, and **24 equivalent APIs** out of the 165 upstream public
@@ -259,7 +259,7 @@ undeclared schema.
 Compatibility inventory
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-**Landed:** all 48 operator files and a selected 22-file wiring pack.  The
+**Landed:** all 48 operator files and a selected 23-file wiring pack.  The
 ported TSS union contract for retargeting to an empty reference now executes;
 its stale skip was removed after the keyed structural-REF implementation
 landed.  The upstream switch pack now covers output and all-sink branches,
@@ -269,7 +269,9 @@ fixed bundles, TSS, and both switch/reduce nesting directions.
 **Audit complete (2026-07-15):** the baseline had 11 unported ``_wiring``
 modules plus root ``test_wiring.py`` containing 130 tests. Error handling has
 since joined the ported tier, leaving 10 modules plus the root file (120
-tests). The 215 ``ts_tests`` cases were also run diagnostically; 159 passed
+tests). A public subset of ``test_service.py`` is now represented without
+reclassifying its entire upstream module as portable. The 215 ``ts_tests``
+cases were also run diagnostically; 159 passed
 without behavioural adaptation after aliasing ``REMOVE_IF_EXISTS`` to
 ``REMOVE`` in the temporary test copy.  The module dispositions, per-type
 results, accepted restrictions, and upstream revision are saved in
@@ -279,9 +281,11 @@ results, accepted restrictions, and upstream revision are saved in
 
 - **Landed:** public Python error result schemas/call syntax and native
   activation-trace settings; and
-- selected bridge conveniences: vocabulary aliases, ``SetDelta`` recording
-  shape, safe opaque-REF metadata, mutable-output view conveniences, and the
-  two recorded TSW view differences.
+- **Landed:** the ``NUMBER``/``NUMBER_2`` constrained vocabulary and public
+  generic reference/request-reply service specializations; and
+- selected bridge conveniences: ``SetDelta`` recording shape, safe opaque-REF
+  metadata, mutable-output view conveniences, and the two recorded TSW view
+  differences.
 
 **Accepted from this audit:** old ``GraphBuilder``/``WiringNodeInstance`` and
 peering/binding introspection are private; ``const_fn`` remains replaced by
@@ -425,6 +429,9 @@ The following are intentional unless separately re-opened:
   use a concrete container type or explicit ``TS[object]`` instead.
 - ``const_fn`` is represented by ordinary wiring-time functions and
   const-evaluable operators, not a separate node class.
+- Python ``NUMBER`` and ``NUMBER_2`` mean the native ``Int | Float`` scalar
+  constraints. ``decimal.Decimal`` is not accepted until a native decimal
+  scalar and its arithmetic operators exist.
 - Polars ``lower`` is not a runtime target; dataframe interop is Arrow-based.
 - ``GlobalState`` keeps C++ copy-in/copy-out ownership.  Python's thread-local
   seed and ``GlobalContext`` are authoring adapters, not alternate runtime

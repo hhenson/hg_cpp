@@ -35,6 +35,12 @@ namespace
         }
     };
 
+    struct RuntimeNumericValue
+    {
+        static constexpr std::string_view name{"runtime_numeric_value"};
+        using output_schema = TS<ScalarVar<"NUMBER", Int, Float>>;
+    };
+
     struct ErasedRegisterTemplateClient
     {
         [[maybe_unused]] static constexpr auto name = "erased_register_template_client";
@@ -54,6 +60,27 @@ namespace
             register_reference_service_impl(w, *interned, "prices", fn<RuntimeConstGraph>());
             auto value = service::reference_service<RuntimeBaseValue>(w, service::path("prices"));
             return wire<stdlib::add_>(w, value, wire<stdlib::const_>(w, Int{1}).as<TS<Int>>()).as<TS<Int>>();
+        }
+    };
+
+    struct ErasedSpecializationRegisterTemplateClient
+    {
+        [[maybe_unused]] static constexpr auto name = "erased_specialization_register_template_client";
+
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            RuntimeServiceDescriptor descriptor;
+            descriptor.name           = std::string{RuntimeNumericValue::name};
+            descriptor.specialization = "NUMBER=int";
+            descriptor.flavour        = ServiceFlavour::Reference;
+            descriptor.output_schema  = TypeRegistry::instance().ts(scalar_descriptor<Int>::value_meta());
+            const auto *interned       = &intern_service_descriptor(std::move(descriptor));
+
+            register_reference_service_impl(
+                w, *interned, "numeric[NUMBER=int]", fn<RuntimeConstGraph>());
+            return service::reference_service<RuntimeNumericValue>(
+                       w, service::path("numeric", arg<"NUMBER">(scalar_type<Int>())))
+                .as<TS<Int>>();
         }
     };
 
@@ -104,6 +131,12 @@ TEST_CASE("service runtime: an erased registration serves a template client")
     CHECK_OUTPUT(eval_node<ErasedRegisterTemplateClient>(), values<Int>(42));
 }
 
+TEST_CASE("service runtime: an erased numeric specialization serves a generic template client")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<ErasedSpecializationRegisterTemplateClient>(), values<Int>(41));
+}
+
 TEST_CASE("service runtime: descriptor interning enforces schema match by name")
 {
     RuntimeServiceDescriptor first;
@@ -120,6 +153,26 @@ TEST_CASE("service runtime: descriptor interning enforces schema match by name")
     CHECK_THROWS_AS((void)intern_service_descriptor(conflicting), std::invalid_argument);
 
     CHECK(find_service_descriptor("intern_check") == interned);
+}
+
+TEST_CASE("service runtime: generic descriptor specializations have independent concrete schemas")
+{
+    RuntimeServiceDescriptor integer;
+    integer.name           = "specialized_service";
+    integer.specialization = "NUMBER=int";
+    integer.flavour        = ServiceFlavour::Reference;
+    integer.output_schema  = TypeRegistry::instance().ts(scalar_descriptor<Int>::value_meta());
+    const auto *integer_record = &intern_service_descriptor(integer);
+
+    RuntimeServiceDescriptor floating = integer;
+    floating.specialization = "NUMBER=float";
+    floating.output_schema  = TypeRegistry::instance().ts(scalar_descriptor<Float>::value_meta());
+    const auto *float_record = &intern_service_descriptor(floating);
+
+    CHECK(integer_record != float_record);
+    CHECK(&intern_service_descriptor(integer) == integer_record);
+    CHECK(&intern_service_descriptor(floating) == float_record);
+    CHECK(find_service_descriptor("specialized_service") == nullptr);
 }
 
 TEST_CASE("service runtime: erased service-adaptor registration serves typed clients")

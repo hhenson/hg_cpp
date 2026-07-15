@@ -302,8 +302,8 @@ namespace
     struct GenericAddOneService
     {
         static constexpr std::string_view name{"generic_add_one"};
-        using request_schema  = TS<ScalarVar<"T">>;
-        using response_schema = TS<ScalarVar<"T">>;
+        using request_schema  = TS<ScalarVar<"NUMBER", Int, Float>>;
+        using response_schema = TS<ScalarVar<"NUMBER", Int, Float>>;
     };
 
     struct GenericServiceAdaptor : service_adaptor::interface
@@ -434,9 +434,50 @@ namespace
     {
         [[maybe_unused]] static constexpr auto name = "generic_add_one_impl";
 
-        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TSD<Int, TS<ScalarVar<"T">>>> requests)
+        static Port<TSD<Int, TS<Int>>> compose(
+            Wiring &w, Port<TSD<Int, TS<ScalarVar<"NUMBER", Int, Float>>>> requests)
         {
             return wire<AddOneImplNode>(w, requests.as<TSD<Int, TS<Int>>>()).as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct AddHalfImplNode
+    {
+        static constexpr auto name = "add_half_impl_node";
+
+        static void eval(In<"requests", TSD<Int, TS<Float>>, InputValidity::Unchecked> requests,
+                         Out<TSD<Int, TS<Float>>> out)
+        {
+            if (!requests.modified()) { return; }
+
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            for (const auto &[request_id, request] : requests.removed_items())
+            {
+                (void)request;
+                static_cast<void>(mutation.erase(request_id));
+            }
+            for (const auto &[request_id, request] : requests.modified_items())
+            {
+                if (!request.valid())
+                {
+                    static_cast<void>(mutation.erase(request_id));
+                    continue;
+                }
+                Value response{request.value() + Float{0.5}};
+                mutation.set(request_id, response.view());
+            }
+        }
+    };
+
+    struct GenericAddHalfImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "generic_add_half_impl";
+
+        static Port<TSD<Int, TS<Float>>> compose(
+            Wiring &w, Port<TSD<Int, TS<ScalarVar<"NUMBER", Int, Float>>>> requests)
+        {
+            return wire<AddHalfImplNode>(w, requests.as<TSD<Int, TS<Float>>>())
+                .as<TSD<Int, TS<Float>>>();
         }
     };
 
@@ -799,8 +840,30 @@ namespace
         static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
         {
             service::register_request_reply_service<GenericAddOneService, GenericAddOneImpl>(
-                w, service::path("generic", arg<"T">(scalar_type<Int>())));
+                w, service::path("generic", arg<"NUMBER">(scalar_type<Int>())));
             return wire<GenericAddOneService>(w, service::path("generic"), request).as<TS<Int>>();
+        }
+    };
+
+    struct GenericFloatServiceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "generic_float_service_client_graph";
+
+        static Port<TS<Float>> compose(Wiring &w, Port<TS<Float>> request)
+        {
+            service::register_request_reply_service<GenericAddOneService, GenericAddHalfImpl>(
+                w, service::path("generic", arg<"NUMBER">(scalar_type<Float>())));
+            return wire<GenericAddOneService>(w, service::path("generic"), request).as<TS<Float>>();
+        }
+    };
+
+    struct GenericStringServiceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "generic_string_service_client_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> request)
+        {
+            return wire<GenericAddOneService>(w, service::path("generic"), request).as<TS<Str>>();
         }
     };
 
@@ -956,5 +1019,9 @@ TEST_CASE("service wiring: generic service descriptors resolve from client input
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<GenericServiceClientGraph>(values<Int>(3)), values<Int>(none, 4));
+    CHECK_OUTPUT(eval_node<GenericFloatServiceClientGraph>(values<Float>(1.5)),
+                 values<Float>(none, 2.0));
     CHECK_OUTPUT(eval_node<GenericServiceAdaptorClientGraph>(values<Int>(3)), values<Int>(none, 23));
+    CHECK_THROWS_AS((void)eval_node<GenericStringServiceClientGraph>(values<Str>("not numeric")),
+                    std::invalid_argument);
 }

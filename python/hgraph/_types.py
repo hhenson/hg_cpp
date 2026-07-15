@@ -997,11 +997,12 @@ class _TypeVarSentinel(metaclass=_TypeVarSentinelMeta):
     HgScalarTypeVar/HgTimeSeriesTypeVar split (a SCALAR-kind parameter is
     never a time-series input)."""
 
-    __slots__ = ("name", "is_scalar")
+    __slots__ = ("name", "is_scalar", "__constraints__")
 
-    def __init__(self, name, is_scalar=False):
+    def __init__(self, name, is_scalar=False, constraints=()):
         self.name = name
         self.is_scalar = is_scalar
+        self.__constraints__ = tuple(constraints)
 
     def __repr__(self):
         return self.name
@@ -1026,6 +1027,8 @@ TS_SCHEMA = _TypeVarSentinel("TS_SCHEMA")
 SCALAR_1 = _TypeVarSentinel("SCALAR_1", is_scalar=True)
 SCALAR_2 = _TypeVarSentinel("SCALAR_2", is_scalar=True)
 KEYABLE_SCALAR = _TypeVarSentinel("KEYABLE_SCALAR", is_scalar=True)
+NUMBER = _TypeVarSentinel("NUMBER", is_scalar=True, constraints=(int, float))
+NUMBER_2 = _TypeVarSentinel("NUMBER_2", is_scalar=True, constraints=(int, float))
 TIME_SERIES_TYPE = _TypeVarSentinel("TIME_SERIES_TYPE")
 TIME_SERIES_TYPE_1 = _TypeVarSentinel("TIME_SERIES_TYPE_1")
 TIME_SERIES_TYPE_2 = _TypeVarSentinel("TIME_SERIES_TYPE_2")

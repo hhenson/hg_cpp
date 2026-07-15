@@ -228,9 +228,12 @@ The compatibility gate intentionally does not recreate every Python-only
 runtime mechanism.  ``REF`` remains an opaque value without ``.output``;
 Python lifecycle callbacks are limited to wiring-time scalars and injectables;
 service interfaces use one time-series request/subscription argument; and
-advanced generic service resolution, custom engine control, or specialized
-threading policies should be implemented in C++ and exposed through the bridge.
-These are deliberate restrictions, not silent fallbacks.
+custom engine control or specialized threading policies should be implemented
+in C++ and exposed through the bridge. Constrained generic service interfaces
+support explicit specialization through the native resolution/path model;
+implicit specialization of a reference service with no typed client input is
+necessarily unavailable. These are deliberate restrictions, not silent
+fallbacks.
 
 Recorded divergences / gaps (the morning-summary list):
 

@@ -452,6 +452,13 @@ descriptors** are kept apart: a ``template <typename T> struct Service`` binds
 each instantiation as its own concrete interface, with a qualified path
 carrying the type tag (e.g. ``arg<"T">(Str{"Int"})``).
 
+Generic schema variables use the same path mechanism. For example,
+``ScalarVar<"NUMBER", Int, Float>`` is resolved by a client or an explicit
+``arg<"NUMBER">`` binding, and the resulting ``[NUMBER=int]`` or
+``[NUMBER=float]`` suffix identifies the concrete service instance. Python's
+``service[NUMBER:int]`` spelling resolves through the C++ ``ResolutionScope``
+and emits that identical suffix; it does not add a Python service runtime.
+
 **Duplicate registration is a wiring error.** Every registration records its
 base path on the ``Wiring`` (``register_built_service_path``); registering a
 second implementation for the same service kind + path throws
@@ -578,19 +585,20 @@ Runtime service identity (the Python bridge)
 **Rulings (Howard, 2026-07-05):** Python implementations must be able to
 serve C++ interface stubs (the reverse — C++ impls for Python-defined
 stubs — is NOT required); identity is the **name-qualified full path**;
-descriptors intern **by name** with schema-match enforced on
-re-registration; the C++ template API stays source-compatible; all three
-flavours land in one pass.
+descriptors intern **by name and optional generic specialization** with
+schema-match enforced on re-registration; the C++ template API stays
+source-compatible; all three flavours land in one pass.
 
 The design, following the ``WiredFn`` precedent (an erased core with the
 templates as sugar):
 
-- **``RuntimeServiceDescriptor``** — an immortal, name-interned record:
-  ``{ name, flavour, schemas (output | key+value | request+response),
-  default_path }``. C++ descriptor types synthesise one at first use;
+- **``RuntimeServiceDescriptor``** — an immortal, name/specialization-interned
+  record: ``{ name, specialization, flavour, schemas (output | key+value |
+  request+response), default_path }``. C++ descriptor types synthesise one at first use;
   Python's service decorators build one from the stub's annotations.
   Re-registration with matching schemas returns the interned record
-  (Python re-import tolerance); mismatched schemas throw.
+  (Python re-import tolerance); mismatched schemas throw. An empty
+  specialization retains the original one-descriptor-per-name rule.
 - **Identity** — the full path ALREADY embeds the service name
   (``ref_svc://<path>/<name>``) and already participates in node identity
   as the path scalar. The per-service marker templates
@@ -611,7 +619,10 @@ templates as sugar):
   ``@graph``/``@compute_node`` implementation — by NAME for C++-defined
   interfaces (the Q1 direction: Python impls for C++ stubs).  The corresponding
   ``@service_adaptor`` / ``@service_adaptor_impl`` surface uses the same
-  descriptor interning and erased native client/registration path.
+  descriptor interning and erased native client/registration path. Constrained
+  generic stubs are specialized explicitly (for example
+  ``prices[NUMBER:int]``); their schemas and path suffix are produced by the
+  native type resolver.
 
 Status / deferred
 -----------------
