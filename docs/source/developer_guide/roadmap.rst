@@ -23,10 +23,10 @@ of truth.  It distinguishes four states deliberately:
 Review Snapshot: 2026-07-15
 ---------------------------
 
-This review is current through ``cffd1f24`` and the catalogue follow-on
-described below, including the completed mutable-output,
-structural-REF, constrained-generic, nested explicit-key map, logging, and
-compiled-context work.
+This review is current through ``65bc05ec`` and the follow-ons described
+below, including the completed mutable-output, structural-REF,
+constrained-generic, nested explicit-key map, logging, compiled-context,
+dynamic-reduce, bridge-residue, and node-self work.
 Evidence came from the public implementation and tests, the commit history,
 :doc:`parity_matrix`, :doc:`python_integration`, :doc:`nested_graphs`, and
 :doc:`services`.
@@ -125,6 +125,26 @@ wheel was also repaired to ``manylinux_2_39_x86_64`` before its test run. This
 increment adds field-wise TSB ``dedup``, lifted-output deduplication, the
 ``drop_dups`` compatibility name, and table-shape projections over the native
 table layout.
+
+The parity-closure follow-on through ``65bc05ec`` passed clean macOS and Linux
+Release gates with warnings as errors: 1071/1071 native tests passed on each
+platform. A rebuilt macOS ``cp312-abi3`` wheel installed under Python 3.14.6,
+and a fresh Linux stable-ABI bridge build, each produced 1046 passed, 19
+skipped, and 6 deselected. The same committed baseline then passed Linux
+Debug/AddressSanitizer validation: 1071/1071 native tests and the complete
+non-WIP Python suite (1046 passed, 19 skipped, 6 deselected), with no sanitizer
+report. This increment closes registered ``Context<>`` injection,
+recordable-state nested pass-through, dynamic-TSL and pass-through-output
+reduce shapes, bridge output/REF/TSW residue, and C++/Python node-self
+injection.
+
+The projected-map follow-on closes the remaining EMPTY-REF deviation without
+copying projected child outputs. Fresh macOS and Linux Release gates passed
+1073/1073 native tests, and rebuilt ``cp312-abi3`` bridges installed under
+Python 3.14.6 produced 1047 passed, 18 skipped, and 6 deselected on each
+platform. The macOS wheel also passed strict ``abi3audit``. Linux Debug/ASan
+passed the same 1073 native tests and complete Python suite with no sanitizer
+report.
 
 These are execution results, not collection-only inventory.
 
@@ -398,9 +418,8 @@ this name.
 Native lifecycle observers, ``EngineControlView``, the C++ ``stop_engine``
 sink, and Python's guarded ``EvaluationEngineApi`` projection have landed and
 cover nested graphs through the root executor. Remaining observability work is
-evaluation tracing, profiling, and the node-self injectable. These are
-additive unless a target application demonstrates that one is required for
-migration.
+evaluation tracing and profiling. These are additive unless a target
+application demonstrates that one is required for migration.
 
 Priority 4: Boundary Products
 -----------------------------
@@ -463,7 +482,6 @@ Recorded Residue Requiring a Decision
 The following existing skips/deviations still require a product decision; the
 inventory did not silently classify them as accepted:
 
-- map children over EMPTY-REF projections retain their last value;
 - frame-to-TSD key type is not inferred from a selected frame column;
 - ``convert`` from ``TS[object]`` dispatches on the wiring-time schema;
 - the engine's naive-datetime contract versus upstream time-zone-aware cases;

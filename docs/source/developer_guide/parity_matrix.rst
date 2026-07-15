@@ -190,10 +190,11 @@ Standing residue, each marked precisely in the test file:
   semantics now execute through the keyed structural-REF implementation.
 - **Recorded deviations** — naive-datetime handling (4 skips), the TSD key
   type resolved from a frame column, python wiring-node signature
-  introspection, map children over EMPTY-REF projections, CompoundScalar
-  string representation, ``convert`` from ``TS[object]`` dispatching on the
-  wiring-time schema, and ``test_to_table_dispatch`` (upstream ``_impl``
-  internals; behaviour covered through the public surface).
+  introspection, CompoundScalar string representation, ``convert`` from
+  ``TS[object]`` dispatching on the wiring-time schema, and
+  ``test_to_table_dispatch`` (upstream ``_impl`` internals; behaviour covered
+  through the public surface). Mapped children now publish the final validity
+  of projected EMPTY-REF terminals and the corresponding test executes.
 
 Compatibility audit: wiring and time-series tiers
 -------------------------------------------------
@@ -236,8 +237,9 @@ model.
        explicit override are covered.  **Compiled boundary import has landed**
        for ``switch_``/``dispatch_``/``map_``/``mesh_``/``nested_``/
        ``try_except_`` children in the C++ capture path, with public C++ and
-       Python ``eval_node`` coverage.  ``Context<>`` on registered overload
-       implementations remains.
+       Python ``eval_node`` coverage. ``Context<>`` parameters on registered
+       overload implementations use the same scope resolution and are covered
+       through public C++ ``eval_node`` wiring.
    * - ``test_de_dupping_of_nodes.py`` + root ``test_wiring.py``
      - 4
      - **Private-internal tests.** Native interning, scalar identity, sink
@@ -283,8 +285,9 @@ model.
      - 16
      - Fixed TSL, dynamic TSD, ordered non-associative folds, nested
        composition, removals, retargeting, and teardown are covered.  Dynamic
-       TSL and pass-through-combiner shapes remain separately listed nested
-       work; ``REMOVE_IF_EXISTS`` can be a compatibility alias of ``REMOVE``.
+       TSL associative/ordered folds and dynamic-TSD pass-through-combiner
+       outputs are also covered; ``REMOVE_IF_EXISTS`` can be a compatibility
+       alias of ``REMOVE``.
    * - ``test_service.py``
      - 19
      - **Public subset landed.** ``NUMBER``/``NUMBER_2`` lower to constrained
@@ -410,7 +413,8 @@ Types and scalars
      - Full (divergent)
      - ``context::scope<"name">`` / ``Context<"name", S>`` /
        ``context::get`` — **name-based** where Python resolves by type
-       (recorded divergence); nested import/export deferred.
+       (recorded divergence); compiled children and registered overloads import
+       the resolved context through the native capture path.
    * - ``STATE`` / ``RECORDABLE_STATE``
      - Full / partial
      - RecordableState storage+eval works; graph traits + recordable-id

@@ -449,10 +449,23 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
                 if (!slot_live(slot)) { return; }
                 prepare_delta(modified_time);
+
+                if (!child_has_current_value(slot))
+                {
+                    modified_.reset(slot);
+                    if (!slot_value_published(slot)) { return; }
+
+                    value_published_.reset(slot);
+                    if (slot_added(slot)) { added_.reset(slot); }
+                    else { removed_.set(slot); }
+                    return;
+                }
+
                 if (!slot_value_published(slot))
                 {
                     value_published_.set(slot);
-                    added_.set(slot);
+                    if (slot_removed(slot)) { removed_.reset(slot); }
+                    else { added_.set(slot); }
                 }
                 modified_.set(slot);
             }

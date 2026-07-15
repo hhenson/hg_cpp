@@ -582,6 +582,12 @@ namespace hgraph
                         storage.resume_slot = slot;  // pause here; resume from this slot
                         return false;
                     }
+                    if (spec.output_binding_mode ==
+                        MapOutputBindingMode::OutputElementForwardsToChildTerminal)
+                    {
+                        runtime_detail::finalize_mapped_child_output(
+                            view, evaluation_time, spec.child.output_binding, entry->key.view());
+                    }
                 }
                 if (const DateTime next = child.next_scheduled_time(); next != MAX_DT && next > evaluation_time)
                 {

@@ -190,7 +190,18 @@ namespace hgraph::runtime_detail
                 bind_forwarding_output_to_source(child_terminal, element);
                 break;
             case MapOutputBindingMode::OutputElementForwardsToChildTerminal:
-                bind_forwarding_output_to_source(element, child_terminal);
+                // Preserve the child's stable terminal endpoint rather than
+                // flattening its current forwarding chain. Projected outputs
+                // can retarget while the child evaluates; subscribing to the
+                // terminal lets that transition propagate to the map element.
+                if (!element.forwarding())
+                {
+                    throw std::logic_error("mapped output element must be a forwarding endpoint");
+                }
+                if (!element.forwarding_target().same_as(child_terminal.handle()))
+                {
+                    element.bind_forwarding_target(child_terminal);
+                }
                 break;
             case MapOutputBindingMode::OutputElementForwardsToParentSource:
                 throw std::logic_error("mapped child child-output binding cannot use parent-source mode");
@@ -208,6 +219,26 @@ namespace hgraph::runtime_detail
         auto element = mapped_output_element(parent, evaluation_time, key);
         if (!element.bound()) { return; }
         if (element.forwarding() && element.forwarding_bound()) { element.clear_forwarding_target(); }
+    }
+
+    /**
+     * Reconcile container delta bookkeeping with a mapped child's final
+     * output state. A forwarding terminal can publish a source tick and then
+     * retarget later in the same child evaluation; observer notification is
+     * intentionally deduplicated for that cycle, but the owning container
+     * still needs to see the terminal's final validity.
+     */
+    inline void finalize_mapped_child_output(
+        const NodeView &parent,
+        DateTime evaluation_time,
+        const std::optional<NestedGraphOutputBinding> &output_binding,
+        const ValueView &key)
+    {
+        if (!output_binding.has_value()) { return; }
+
+        auto element = mapped_output_element(parent, evaluation_time, key);
+        if (!element.bound() || !element.modified()) { return; }
+        element.data_view().tracking().parent.notify_child_modified(evaluation_time);
     }
 }  // namespace hgraph::runtime_detail
 

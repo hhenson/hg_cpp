@@ -2324,12 +2324,6 @@ namespace hgraph::stdlib
                 throw std::invalid_argument(
                     "map_: the function output schema and nested output binding must agree");
             }
-            if (child_has_output &&
-                compiled.output_binding->kind == NestedGraphOutputBinding::Kind::ChildOutput &&
-                !compiled.output_binding->source.path.empty())
-            {
-                throw std::invalid_argument("map_: the function output must be a whole node output");
-            }
             if (child_has_output)
             {
                 // TSD / dynamic-TSL elements embed since the storage-stability
@@ -2355,33 +2349,44 @@ namespace hgraph::stdlib
             }
             else if (child_has_output)
             {
-                // The design intent: every key has a REAL element instantiated in
-                // the parent's owned TSD output, and the child's terminal node
-                // WRITES THROUGH to it — its output is re-homed as a forwarding
-                // endpoint that the map node points at the parent element. No copy.
-                NodeBuilder &terminal =
-                    spec.child.graph_builder.node_at(spec.child.output_binding->source.node);
-                const auto *out = compiled.output_schema;
-                const TSEndpointSchema &terminal_override = terminal.output_endpoint();
-                const NodeTypeMetaData *terminal_meta = terminal.type().schema();
-                const TSEndpointSchema &terminal_declared =
-                    terminal_meta != nullptr ? terminal_meta->output_endpoint_schema : terminal_override;
-                const TSEndpointSchema &terminal_endpoint =
-                    !terminal_override.empty() ? terminal_override : terminal_declared;
-                // A declared forwarding terminal already owns its link, and a
-                // non-peered terminal has required child endpoint topology
-                // (for example, map_ owns a TSD root whose elements forward).
-                // Preserve either shape and make the parent map element point
-                // at the terminal. Only an ordinary/owned terminal can be
-                // safely re-homed onto the parent element.
-                if (!terminal_endpoint.empty() &&
-                    (terminal_endpoint.is_peered() || terminal_endpoint.is_non_peered()))
+                if (!spec.child.output_binding->source.path.empty())
                 {
+                    // A projected child terminal is a field/element of the
+                    // source node, so its root endpoint cannot be re-homed as
+                    // the map element. Keep the child topology intact and
+                    // forward the map element to the walked terminal instead.
                     spec.output_binding_mode = MapOutputBindingMode::OutputElementForwardsToChildTerminal;
                 }
                 else
                 {
-                    terminal.output_endpoint(TSEndpointSchema::peered(out));
+                    // The design intent: every key has a REAL element instantiated in
+                    // the parent's owned TSD output, and the child's terminal node
+                    // WRITES THROUGH to it — its output is re-homed as a forwarding
+                    // endpoint that the map node points at the parent element. No copy.
+                    NodeBuilder &terminal =
+                        spec.child.graph_builder.node_at(spec.child.output_binding->source.node);
+                    const auto *out = compiled.output_schema;
+                    const TSEndpointSchema &terminal_override = terminal.output_endpoint();
+                    const NodeTypeMetaData *terminal_meta = terminal.type().schema();
+                    const TSEndpointSchema &terminal_declared =
+                        terminal_meta != nullptr ? terminal_meta->output_endpoint_schema : terminal_override;
+                    const TSEndpointSchema &terminal_endpoint =
+                        !terminal_override.empty() ? terminal_override : terminal_declared;
+                    // A declared forwarding terminal already owns its link, and a
+                    // non-peered terminal has required child endpoint topology
+                    // (for example, map_ owns a TSD root whose elements forward).
+                    // Preserve either shape and make the parent map element point
+                    // at the terminal. Only an ordinary/owned terminal can be
+                    // safely re-homed onto the parent element.
+                    if (!terminal_endpoint.empty() &&
+                        (terminal_endpoint.is_peered() || terminal_endpoint.is_non_peered()))
+                    {
+                        spec.output_binding_mode = MapOutputBindingMode::OutputElementForwardsToChildTerminal;
+                    }
+                    else
+                    {
+                        terminal.output_endpoint(TSEndpointSchema::peered(out));
+                    }
                 }
             }
 

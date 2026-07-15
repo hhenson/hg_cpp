@@ -161,6 +161,44 @@ namespace
         static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts) { return ts; }
     };
 
+    using IfIntRefBundle = UnNamedTSB<Field<"true", REF<TS<Int>>>,
+                                      Field<"false", REF<TS<Int>>>>;
+
+    struct EvenOrEmptyG
+    {
+        static constexpr auto name = "even_or_empty_g";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> ts)
+        {
+            using namespace hgraph::stdlib::syntax;
+            auto even = ((ts % Int{2}) == Int{0}).as<TS<Bool>>();
+            auto routed = wire<stdlib::if_, IfIntRefBundle>(w, even, ts).as<IfIntRefBundle>();
+            return wire<stdlib::getitem_>(w, routed, Str{"true"}).as<TS<Int>>();
+        }
+    };
+
+    struct FilterMappedEvenGraph
+    {
+        static constexpr auto name = "filter_mapped_even_graph";
+
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TS<Bool>> condition,
+                                               Port<TSD<Str, TS<Int>>> ts)
+        {
+            auto mapped = wire<stdlib::map_, TSD<Str, TS<Int>>>(w, fn<EvenOrEmptyG>(), ts);
+            return wire<stdlib::filter_>(w, condition, mapped).as<TSD<Str, TS<Int>>>();
+        }
+    };
+
+    struct MapEvenOrEmptyGraph
+    {
+        static constexpr auto name = "map_even_or_empty_graph";
+
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TSD<Str, TS<Int>>> ts)
+        {
+            return wire<stdlib::map_, TSD<Str, TS<Int>>>(w, fn<EvenOrEmptyG>(), ts);
+        }
+    };
+
     struct ConstLeftDict
     {
         static constexpr auto             name = "const_left_dict";
@@ -583,6 +621,55 @@ TEST_CASE("map_: a pass-through child output forwards the mapped element")
                  values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
                                dict_delta<Str, TS<Int>>({{"a"s, 10}}),
                                dict_delta<Str, TS<Int>>({}, {"b"s})));
+}
+
+TEST_CASE("map_: EMPTY-REF child outputs remove once and can become valid again")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MapEvenOrEmptyGraph>(
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}, {"b"s, 3}}),
+                                   dict_delta<Str, TS<Int>>({{"b"s, 4}}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 1}}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 6}}),
+                                   dict_delta<Str, TS<Int>>({}, {"b"s}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 1}}),
+                                   dict_delta<Str, TS<Int>>({}, {"a"s})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}}),
+                               dict_delta<Str, TS<Int>>({{"b"s, 4}}),
+                               dict_delta<Str, TS<Int>>({}, {"a"s}),
+                               dict_delta<Str, TS<Int>>({{"a"s, 6}}),
+                               dict_delta<Str, TS<Int>>({}, {"b"s}),
+                               dict_delta<Str, TS<Int>>({}, {"a"s}),
+                               dict_delta<Str, TS<Int>>({})));
+}
+
+TEST_CASE("map_: EMPTY-REF child removals propagate through a filtered map")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<FilterMappedEvenGraph>(
+                     values<Bool>(true, false, none, true),
+                     values<Value>(
+                         dict_delta<Str, TS<Int>>({{"1"s, 2}, {"2"s, 3}, {"3"s, 4},
+                                                           {"4"s, 5}, {"5"s, 6}, {"6"s, 7},
+                                                           {"7"s, 8}, {"8"s, 9}, {"9"s, 10}}),
+                         none,
+                         dict_delta<Str, TS<Int>>({{"1"s, 2}, {"5"s, 6}, {"7"s, 8}, {"9"s, 10}},
+                                                  {"2"s, "3"s, "4"s, "6"s, "8"s}),
+                         dict_delta<Str, TS<Int>>({{"1"s, 1}}),
+                         none,
+                         dict_delta<Str, TS<Int>>({}, {"1"s}))),
+                 values<Value>(
+                     dict_delta<Str, TS<Int>>({{"1"s, 2}, {"3"s, 4}, {"5"s, 6},
+                                                       {"7"s, 8}, {"9"s, 10}}),
+                     none,
+                     none,
+                     dict_delta<Str, TS<Int>>({}, {"1"s, "3"s}),
+                     none,
+                     none));
 }
 
 // ---------------------------------------------------------------------------

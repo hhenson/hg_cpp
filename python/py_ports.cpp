@@ -32,7 +32,8 @@ namespace hgraph::python_bridge
             return info;
         })
         // True for a CHILD projection of a node output (a non-empty peered
-        // path) - sub-graph terminals need whole node outputs.
+        // path). Compiled nested graphs retain this path in their output
+        // binding rather than materializing a copy node.
         .def_prop_ro("has_path", [](const PyPort &self) { return !self.ref.peered_path_or_empty().empty(); })
         .def_prop_ro("dereferenced", [](const PyPort &self) {
             // The descriptive-schema patch (the Port::as / reference-service

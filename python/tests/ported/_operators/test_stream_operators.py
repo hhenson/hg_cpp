@@ -533,9 +533,6 @@ def test_filter_tsd():
     ]
 
 
-@pytest.mark.skip(reason="deviation: map children over EMPTY-REF projections hold their last "
-                         "value (upstream marks this case FIXME; this runtime also emits the "
-                         "final REMOVE upstream acknowledges it drops)")
 def test_filter_str_tsd():
     @graph
     def g(condition: TS[bool], ts: TSD[str, TS[int]]) -> TSD[str, TS[int]]:
@@ -554,9 +551,9 @@ def test_filter_str_tsd():
         {"1": 2, "3": 4, "5": 6, "7": 8, "9": 10},
         None,
         None,
-        {"3": REMOVE, "5": 6, "7": 8, "9": 10},
+        {"1": REMOVE, "3": REMOVE},
         None,
-        None # {"1": REMOVE},  FIXME: Item that has gone invalid does not show up in the renmoved items ever. This is a 'feature' but really needs some re-thinking
+        None,
     ]
 
 
