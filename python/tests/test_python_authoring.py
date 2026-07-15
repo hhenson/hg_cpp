@@ -101,6 +101,21 @@ def test_python_compute_consumes_and_produces_dynamic_tsl():
     check(result == [{0: 11}, {1: 12}, {0: 13}], f"dynamic TSL: {result}")
 
 
+def test_native_map_lifted_kernel_grows_dynamic_tsl_output():
+    @graph
+    def app(
+        lhs: TSL[TS[int], Size[0]], rhs: TSL[TS[int], Size[0]]
+    ) -> TSL[TS[int], Size[0]]:
+        return hg.map_("add_", lhs, rhs)
+
+    result = eval_node(
+        app,
+        [{0: 1}, {1: 2}, {0: 3}],
+        [{0: 10}, {1: 20}, {0: 100}],
+    )
+    check(result == [{0: 11}, {1: 22}, {0: 103}], f"dynamic TSL map: {result}")
+
+
 def test_python_compute_produces_tick_and_duration_tsw():
     @hg.compute_node
     def tick_window(value: TS[int]) -> TSW[int, WindowSize[3], WindowSize[1]]:

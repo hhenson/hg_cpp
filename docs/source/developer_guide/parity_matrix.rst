@@ -287,7 +287,8 @@ Wiring and node-authoring surface
        ``pass_through``/``no_key``…), all-sink switches, scalar-configured
        Python switch branches, outputless keyed maps, live dynamic-TSD reduce
        zeros, and projectable fixed-composite reduce results. Deferred:
-       dynamic-TSL multiplexing and non-associative reduce.
+       arbitrary-function dynamic-TSL multiplexing and non-associative reduce;
+       lifted scalar kernels support grow-only dynamic TSL ``map_`` today.
    * - ``dispatch_``
      - Full for Bundle values
      - Native ``dispatch_cases`` / ``dispatch_case`` wiring builds a closed

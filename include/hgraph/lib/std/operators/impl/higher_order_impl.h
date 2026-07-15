@@ -2637,6 +2637,7 @@ namespace hgraph::stdlib
             std::vector<bool> multiplexed{};
             std::vector<std::uint8_t> arg_tags{};
             std::size_t size{0};
+            bool dynamic{false};
         };
 
         [[nodiscard]] inline std::optional<LiftedMapTslPlan> lifted_map_tsl_plan(
@@ -2652,6 +2653,7 @@ namespace hgraph::stdlib
             }
 
             std::size_t size = 0;
+            bool found_collection = false;
             for (std::size_t i = 0; i < schemas.size(); ++i)
             {
                 const auto tag = i < arg_tags.size() ? static_cast<WiringPortRef::ArgTag>(arg_tags[i])
@@ -2659,16 +2661,18 @@ namespace hgraph::stdlib
                 if (tag == WiringPortRef::ArgTag::NoKey) { return std::nullopt; }
                 if (tag == WiringPortRef::ArgTag::PassThrough) { continue; }
                 const auto *schema = time_series_schema_as<AnyTSL>(schemas[i]);
-                if (schema != nullptr && schema->fixed_size() > 0)
+                if (schema != nullptr)
                 {
                     size = schema->fixed_size();
+                    found_collection = true;
                     break;
                 }
             }
-            if (size == 0) { return std::nullopt; }
+            if (!found_collection) { return std::nullopt; }
 
             LiftedMapTslPlan plan;
             plan.size = size;
+            plan.dynamic = size == 0;
             plan.multiplexed.reserve(schemas.size());
             plan.arg_tags.assign(arg_tags.begin(), arg_tags.end());
 
@@ -2761,32 +2765,51 @@ namespace hgraph::stdlib
             const LiftedKernel *kernel = plan->kernel;
             std::vector<bool> multiplexed = plan->multiplexed;
             const std::size_t size = plan->size;
+            const bool dynamic = plan->dynamic;
             NodeCallbacks callbacks;
             callbacks.evaluate =
-                [kernel, multiplexed = std::move(multiplexed), size](const NodeView &view,
-                                                                     DateTime evaluation_time) {
+                [kernel, multiplexed = std::move(multiplexed), size, dynamic](const NodeView &view,
+                                                                              DateTime evaluation_time) {
                     auto input_root = view.input(evaluation_time);
                     auto bundle = input_root.as_bundle();
                     auto output_root = view.output(evaluation_time);
                     auto output = output_root.as_list();
 
-                    for (std::size_t i = 0; i < size; ++i)
+                    std::size_t runtime_size = size;
+                    if (dynamic)
+                    {
+                        for (std::size_t arg = 0; arg < multiplexed.size(); ++arg)
+                        {
+                            if (!multiplexed[arg]) { continue; }
+                            auto input = bundle[arg];
+                            runtime_size = std::max(runtime_size, input.as_list().size());
+                        }
+                    }
+
+                    for (std::size_t i = 0; i < runtime_size; ++i)
                     {
                         std::vector<ValueView> values;
                         values.reserve(multiplexed.size());
                         bool ready = true;
+                        bool input_modified = false;
                         for (std::size_t arg = 0; arg < multiplexed.size(); ++arg)
                         {
                             auto input = bundle[arg];
                             if (multiplexed[arg])
                             {
                                 auto list = input.as_list();
+                                if (i >= list.size())
+                                {
+                                    ready = false;
+                                    break;
+                                }
                                 auto item = list[i];
                                 if (!item.valid())
                                 {
                                     ready = false;
                                     break;
                                 }
+                                input_modified = input_modified || item.modified();
                                 values.emplace_back(item.value());
                             }
                             else
@@ -2796,10 +2819,14 @@ namespace hgraph::stdlib
                                     ready = false;
                                     break;
                                 }
+                                input_modified = input_modified || input.modified();
                                 values.emplace_back(input.value());
                             }
                         }
                         if (!ready) { continue; }
+
+                        const bool output_valid = i < output.size() && output[i].valid();
+                        if (!input_modified && output_valid) { continue; }
 
                         Value result = kernel->eval(std::span<const ValueView>{values.data(), values.size()});
                         auto output_item = output[i];

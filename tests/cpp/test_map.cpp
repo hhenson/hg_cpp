@@ -1494,6 +1494,19 @@ namespace
         }
     };
 
+    struct MapLiftedDynamicAddTslG
+    {
+        static constexpr auto name = "map_lifted_dynamic_add_tsl_g";
+
+        static Port<TSL<TS<Int>>> compose(Wiring &w,
+                                          Port<TSL<TS<Int>>> lhs,
+                                          Port<TSL<TS<Int>>> rhs)
+        {
+            return wire<stdlib::map_>(w, lift<stdlib::scalar_add<Int>>(), lhs, rhs)
+                .as<TSL<TS<Int>>>();
+        }
+    };
+
     struct MapLiftedAddBroadcastG
     {
         static constexpr auto name = "map_lifted_add_broadcast_g";
@@ -1705,6 +1718,23 @@ TEST_CASE("map_ over TSL: lifted scalar add uses one specialised vector node")
 
     GraphBuilder operator_fn_gb = build_graph<MapOperatorSubConstG>();
     CHECK(operator_fn_gb.node_count() == 3);   // two const sources + one lifted TSL map node via fn<sub_>
+}
+
+TEST_CASE("map_ over dynamic TSL: lifted scalar kernels follow grow-only runtime length")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MapLiftedDynamicAddTslG>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}}),
+                                   list_delta<TS<Int>>({{1, 2}}),
+                                   list_delta<TS<Int>>({{0, 3}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 10}}),
+                                   list_delta<TS<Int>>({{1, 20}}),
+                                   list_delta<TS<Int>>({{0, 100}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 11}}),
+                               list_delta<TS<Int>>({{1, 22}}),
+                               list_delta<TS<Int>>({{0, 103}})));
 }
 
 TEST_CASE("map_ over TSL: lifted standard kernels cover subtraction division and min")

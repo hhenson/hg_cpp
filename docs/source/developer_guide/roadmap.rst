@@ -277,7 +277,8 @@ Priority 2: Nested Graphs and Boundaries
 
 **Remaining higher-order shapes:**
 
-- dynamic-TSL map/reduce/mesh;
+- arbitrary-function dynamic-TSL map and dynamic-TSL reduce/mesh (lifted
+  scalar ``map_`` kernels already use a grow-only native path);
 - non-associative ordered reduce;
 - dynamic-TSD reduce with pass-through combiner outputs.
 

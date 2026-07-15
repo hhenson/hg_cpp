@@ -623,7 +623,12 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   stop-on-remove, and destroy-on-erase are unchanged.  No parent ``TSD`` or
   per-key output element is allocated.  Key-only sink maps derive ``K`` from
   their explicit ``__keys__: TSS[K]`` input.
-- Deferred: dynamic-TSL multiplexing.
+- **Dynamic TSLs have a native lifted-kernel path.**  A lifted scalar kernel
+  (including a standard operator whose implementation exposes one) maps in a
+  single native node.  It discovers the grow-only runtime length from its
+  multiplexed inputs and grows its dynamic TSL output in place.  Arbitrary
+  nested graph/node functions remain deferred because they require a distinct
+  slot-backed index lifecycle rather than wiring-time expansion.
 
 Tests: ``tests/cpp/test_map.cpp``. ASAN/UBSAN-verified (keyed
 create/destroy churn).
