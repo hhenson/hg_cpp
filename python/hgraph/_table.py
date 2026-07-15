@@ -8,6 +8,7 @@ C++ layout onto hgraph's python classes (the C++-first API ruling)."""
 import datetime
 from dataclasses import dataclass
 from enum import Enum
+from typing import get_args, get_origin
 
 import _hgraph
 
@@ -142,3 +143,37 @@ def table_schema(tp) -> _EagerValue:
             is_multi_row=info["is_multi_row"],
         )
     )
+
+
+def table_shape(tp):
+    """Return the Python tuple annotation emitted by ``to_table(tp)``."""
+    return table_shape_from_schema(table_schema(tp).value)
+
+
+def table_shape_from_schema(schema: TableSchema):
+    """Return the row or row-sequence annotation described by ``schema``."""
+    row = tuple[tuple(schema.types)]
+    return tuple[row, ...] if schema.partition_keys or schema.is_multi_row else row
+
+
+def shape_of_table_type(tp, expect_keys=None, expect_length=None):
+    """Extract the user columns and keyed-row flag from a table annotation."""
+    from ._wiring import WiringError
+
+    if get_origin(tp) is not tuple:
+        raise WiringError(f"shape_of_table_type({tp!r}) should be a tuple type")
+
+    args = get_args(tp)
+    is_keyed = len(args) == 2 and args[1] is Ellipsis and get_origin(args[0]) is tuple
+    row = get_args(args[0]) if is_keyed else args
+    prefix = 3 if is_keyed else 2
+    if len(row) < prefix:
+        raise WiringError(f"shape_of_table_type({tp!r}) has no table value columns")
+    shape = tuple(row[prefix:])
+
+    if expect_keys is not None and is_keyed != expect_keys:
+        qualifier = "did not expect" if is_keyed else "expected"
+        raise WiringError(f"{tp!r} {qualifier} a keyed table shape")
+    if expect_length is not None and len(shape) != expect_length:
+        raise WiringError(f"{tp!r} expected a value-column length of {expect_length}")
+    return shape, is_keyed

@@ -60,12 +60,14 @@ combine = _CombineClass()
 
 from ._types import Frame, TABLE, COMPOUND_SCALAR, compound_scalar
 from ._table import (ToTableMode, TableSchema, make_table_schema, table_schema,
+                     table_shape, table_shape_from_schema, shape_of_table_type,
                      get_table_schema_date_key, get_table_schema_as_of_key)
 
 REMOVE = REMOVED           # hgraph's TSD key-removal sentinel
 from ._wiring import Removed
 
 _OPERATOR_NAMES = frozenset(_hgraph.operator_names())
+drop_dups = operator_function("dedup")
 
 
 def __getattr__(name):
@@ -96,6 +98,7 @@ __all__ = [
     "GlobalContext", "GlobalState", "set_as_of", "set_table_schema_date_key", "set_table_schema_as_of_key",
     "set_record_replay_config", "frame_store_contains", "frame_store_read", "evaluate_const",
     "Frame", "TABLE", "COMPOUND_SCALAR", "ToTableMode", "TableSchema", "make_table_schema", "table_schema",
+    "table_shape", "table_shape_from_schema", "shape_of_table_type", "drop_dups",
     "get_table_schema_date_key", "get_table_schema_as_of_key",
     "ParseError", "IncorrectTypeBinding", "RequirementsNotMetWiringError",
     "WiringNodeType", "WiringNodeSignature", "extract_signature", "extract_kwargs",

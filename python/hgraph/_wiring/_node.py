@@ -599,8 +599,6 @@ def lift(fn, inputs=None, output=None, active=None, valid=None, all_valid=None,
     TS-lifted signature (each scalar annotation becomes TS[...]; ``inputs``/
     ``output`` override per name). Inputs cross into python nodes as plain
     values in this bridge, so the wrapped callable is the function itself."""
-    if dedup_output:
-        raise NotImplementedError("gap: lift(dedup_output=True) is not implemented yet")
     from .._types import TS
 
     sig = inspect.signature(fn)
@@ -636,7 +634,21 @@ def lift(fn, inputs=None, output=None, active=None, valid=None, all_valid=None,
     _lifted.__annotations__ = annotations
     _lifted.__signature__ = sig.replace(parameters=parameters,
                                         return_annotation=annotations["return"])
-    return _PyNode(_lifted, has_output=True, active=active, valid=valid)
+    node = _PyNode(_lifted, has_output=True, active=active, valid=valid)
+    if not dedup_output:
+        return node
+
+    def _deduplicated(*args, **kwargs):
+        return wire("dedup", node(*args, **kwargs))
+
+    _deduplicated.__name__ = _lifted.__name__
+    _deduplicated.__qualname__ = _lifted.__qualname__
+    _deduplicated.__annotations__ = annotations
+    _deduplicated.__signature__ = _lifted.__signature__
+
+    from ._graph import graph
+
+    return graph(_deduplicated)
 
 
 

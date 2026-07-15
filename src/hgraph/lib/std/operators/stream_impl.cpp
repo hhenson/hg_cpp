@@ -1,4 +1,5 @@
 #include <hgraph/lib/std/operators/impl/stream_impl.h>
+#include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/lib/std/operators/arithmetic.h>
 
@@ -52,6 +53,7 @@ namespace hgraph::stdlib
         register_graph_overload<dedup, dedup_tsd_map>();
         register_overload<dedup, dedup_tss_impl>();
         register_graph_overload<dedup, tsl_itemwise_impl_detail::tsl_unary_map<dedup>>();
+        register_graph_overload<dedup, tsb_itemwise_impl_detail::tsb_unary_map<dedup>>();
         register_overload<lag, lag_time_ts_impl>();
         register_overload<batch, batch_impl>();
         register_overload<window, window_tick_impl>();

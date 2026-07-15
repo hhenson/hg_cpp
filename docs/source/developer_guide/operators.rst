@@ -781,8 +781,8 @@ Roadmap
    ``getitem_`` plus ``match_`` / regex ``replace`` / ``substr`` / ``split`` /
    ``join`` / ``format_``, TSD ``keys_`` and TSS ``union_`` / ``intersection_`` /
    ``difference_`` / ``symmetric_difference_``, stream ``sample`` / ``filter_`` /
-   ``take`` / ``drop`` / ``step`` / ``slice_`` / scalar ``dedup`` / numeric
-   ``diff`` / ``count`` / ``clip`` / ``ewma``, ``str_``, date components /
+   ``take`` / ``drop`` / ``step`` / ``slice_`` / scalar and structural
+   ``dedup`` / numeric ``diff`` / ``count`` / ``clip`` / ``ewma``, ``str_``, date components /
    ``explode(Date)``, time-series properties (``valid`` / ``modified`` /
    ``last_modified_*``), and optional
    wiring-time ``DivideByZero`` policy overloads (``Error`` / ``Nan`` / ``Inf`` /

@@ -427,6 +427,17 @@ namespace
         }
     };
 
+    struct TsbDedupGraph
+    {
+        static constexpr auto name = "tsb_dedup_graph";
+
+        static Port<ContainerAccessBundle> compose(Wiring &w, Port<TS<Int>> a, Port<TS<Str>> b)
+        {
+            auto ts = stdlib::to_tsb<ContainerAccessBundle>(w, a, b);
+            return wire<stdlib::dedup>(w, ts).as<ContainerAccessBundle>();
+        }
+    };
+
     struct TsbBitwiseGraph
     {
         static constexpr auto name = "tsb_bitwise_graph";
@@ -1276,6 +1287,18 @@ TEST_CASE("std operators: TSB itemwise arithmetic maps each field through the sc
                  values<Value>(tsb_delta<FloatTsbBundle>(Float{2.0}, Float{3.0})));
     CHECK_OUTPUT(eval_node<TsbUnaryGraph>(values<Int>(3), values<Float>(-4.5)),
                  values<Value>(tsb_delta<NumericTsbBundle>(Int{-3}, Float{4.5})));
+}
+
+TEST_CASE("std operators: dedup suppresses unchanged TSB fields independently")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<TsbDedupGraph>(values<Int>(1, 1, 2, 2),
+                                          values<Str>(Str{"x"}, Str{"y"}, Str{"y"}, Str{"y"})),
+                 values<Value>(tsb_delta<ContainerAccessBundle>(Int{1}, Str{"x"}),
+                               tsb_delta<ContainerAccessBundle>(std::nullopt, Str{"y"}),
+                               tsb_delta<ContainerAccessBundle>(Int{2}, std::nullopt),
+                               none));
 }
 
 TEST_CASE("std operators: TSB itemwise bitwise and analytics reuse field operator resolution")

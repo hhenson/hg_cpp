@@ -38,9 +38,9 @@ Operator catalogue
 ------------------
 
 Of the **165** public operator definitions in ``hgraph/_operators``:
-**135 registered**, **0 declared-only**, **6 missing** — **24** further names
-are covered by equivalent C++/bridge APIs (snapshot regenerated 2026-07-13 at
-the close of the operator-test port; the counts come from comparing
+**135 registered**, **0 declared-only**, **1 missing** — **29** further names
+are covered by equivalent C++/bridge APIs (snapshot regenerated 2026-07-15
+after closing the catalogue residue; the counts come from comparing
 ``operator_names()`` and the catalogue markers against the upstream scan).
 
 .. list-table::
@@ -75,8 +75,8 @@ the close of the operator-test port; the counts come from comparing
    * - Dedup (``dedup``)
      - 0
      - 0
-     - 1
-     - **dedup_builder**
+     - 0
+     - equiv-API: dedup_builder
    * - Flow control (``flow_control``)
      - 9
      - 0
@@ -120,8 +120,8 @@ the close of the operator-test port; the counts come from comparing
    * - Throttle (``throttle``)
      - 0
      - 0
-     - 1
-     - **collect_builder**
+     - 0
+     - equiv-API: collect_builder
    * - Conversion (``time_series_conversion``)
      - 5
      - 0
@@ -140,8 +140,8 @@ the close of the operator-test port; the counts come from comparing
    * - Table (``to_table``)
      - 3
      - 0
-     - 3
-     - **table_shape**, **table_shape_from_schema**, **shape_of_table_type** · equiv-API: set_as_of, get_as_of, get_table_schema_date_key, get_table_schema_as_of_key, set_table_schema_as_of_key, set_table_schema_date_key, make_table_schema, table_schema
+     - 0
+     - equiv-API: table_shape, table_shape_from_schema, shape_of_table_type, set_as_of, get_as_of, get_table_schema_date_key, get_table_schema_as_of_key, set_table_schema_as_of_key, set_table_schema_date_key, make_table_schema, table_schema
    * - ``tsd_and_mapping``
      - 9
      - 0
@@ -162,9 +162,11 @@ Notes on the residue:
 
 - ``dedup_builder`` / ``collect_builder`` are Python implementation-injection
   hooks, not user operators — the C++ overload registry covers the need
-  natively. ``apply`` is arbitrary-callable node lifting (``call`` IS
-  registered). The ``table_shape`` helper trio is upstream sugar over
-  ``table_schema`` (add on demand).
+  natively. ``apply`` consumes a dynamic ``TS[Callable]`` and has no native
+  scalar schema or statically resolvable invocation ABI; it is an accepted
+  design difference rather than a reason to add a Python-object runtime
+  (``call`` is registered). The ``table_shape`` helper trio projects the
+  native ``table_schema`` layout at Python wiring time.
 - ``downcast_`` performs checked narrowing from a graph-realized closed
   CompoundScalar Bundle union to a derived ``TS``. ``downcast_ref`` performs
   the corresponding unchecked reference narrowing in C++; the Python helper
@@ -198,13 +200,14 @@ Compatibility audit: wiring and time-series tiers
 
 The follow-on inventory was reviewed on 2026-07-15 against ``ext/main`` at
 ``4760fccadd5368b0482393e5acb0ceaac48518e9``.  Upstream has 32 ``_wiring``
-test modules containing 244 tests; 23 modules are now represented under
+test modules containing 244 tests; 24 modules are now represented under
 ``python/tests/ported/_wiring``.  The saved post-error-handling baseline had 10
 unported modules containing 118 tests, plus two tests in the separate root
-``test_wiring.py``. ``test_service.py`` is now partially represented; the 120
-tests remain the audit inventory rather than a live missing-test count. Several
-assert private Python builder objects that deliberately do not exist in the
-C++-first model.
+``test_wiring.py``. ``test_service.py`` and ``test_lift.py`` are now partially
+represented; the 120 tests remain the audit inventory rather than a live
+missing-test count. Several assert
+private Python builder objects that deliberately do not exist in the C++-first
+model.
 
 .. list-table:: Unported or partially ported wiring inventory
    :header-rows: 1
@@ -251,10 +254,10 @@ C++-first model.
        native error-capture options; portable C++ stack traces remain additive.
    * - ``test_lift.py``
      - 4
-     - Basic lift and explicit output override are covered.  ``dedup_output``
-       remains additive.  Old ``Hg*TypeMetaData`` signature assertions are
-       private; Polars ``lower`` is an accepted non-target because Arrow is the
-       table substrate.
+     - Basic lift, explicit output override, and ``dedup_output`` are covered;
+       the latter wires the native ``dedup`` operator. Old ``Hg*TypeMetaData``
+       signature assertions are private; Polars ``lower`` is an accepted
+       non-target because Arrow is the table substrate.
    * - ``test_map.py``
      - 32
      - Public TSD/TSL mapping, key inference, explicit keys, broadcast and
@@ -548,7 +551,7 @@ resolution-map paths are operational.  Broad engine replacement still depends
 on the required authoring slices identified by the compatibility audit above.
 
 **Additive** (each lands independently and becomes available to Python
-through the registry): every declared-only/missing operator above, the
-remaining serialization value kinds, trace/profiling and node-self
-introspection, Python engine-control syntax, richer error-result
-compatibility, and remaining dynamic-TSL reduce/mesh shapes.
+through the registry): optional catalogue additions, the remaining
+serialization value kinds, trace/profiling and node-self introspection, Python
+engine-control syntax, richer error-result compatibility, and remaining
+dynamic-TSL reduce/mesh shapes.

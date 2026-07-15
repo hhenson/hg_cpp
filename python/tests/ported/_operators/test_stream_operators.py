@@ -458,6 +458,29 @@ def test_drop_dups_tsl():
     assert eval_node(g, [{0: 1}, {0: 1, 1: 2}, None, {0: 1, 1: 3}]) == [{0: 1}, {1: 2}, None, {1: 3}]
 
 
+def test_drop_dups_tsb():
+    schema = ts_schema(a=TS[int], b=TS[str])
+
+    @graph
+    def g(ts: TSB[schema]) -> TSB[schema]:
+        return dedup(ts)
+
+    assert eval_node(
+        g,
+        [
+            fd(a=1, b="x"),
+            fd(a=1, b="y"),
+            fd(a=2, b="y"),
+            fd(a=2, b="y"),
+        ],
+    ) == [
+        fd(a=1, b="x"),
+        fd(b="y"),
+        fd(a=2),
+        None,
+    ]
+
+
 def test_filter_int():
     @graph
     def g(condition: TS[bool], ts: TS[int]) -> TS[int]:

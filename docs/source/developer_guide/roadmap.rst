@@ -23,8 +23,8 @@ of truth.  It distinguishes four states deliberately:
 Review Snapshot: 2026-07-15
 ---------------------------
 
-This review is current through ``cbfcedd0`` and the service-adaptor bridge
-follow-on described below, including the completed mutable-output,
+This review is current through ``cffd1f24`` and the catalogue follow-on
+described below, including the completed mutable-output,
 structural-REF, constrained-generic, nested explicit-key map, logging, and
 compiled-context work.
 Evidence came from the public implementation and tests, the commit history,
@@ -48,10 +48,10 @@ The important corrections to the previous roadmap are:
   surface.
 - All 48 upstream operator-test files are present under
   ``python/tests/ported/_operators``.  The wiring tier is only a selected port:
-  23 files are present under ``python/tests/ported/_wiring``.  It must not be
+  24 files are present under ``python/tests/ported/_wiring``.  It must not be
   described as the entire upstream wiring suite.
 - The current operator inventory is **135 registered**, **0 declared-only**,
-  **6 missing**, and **24 equivalent APIs** out of the 165 upstream public
+  **1 missing**, and **29 equivalent APIs** out of the 165 upstream public
   definitions.  Use :doc:`parity_matrix` for the per-module inventory.  The
   bridge registry also contains internal and compatibility operators, so its
   raw ``operator_names()`` count is intentionally larger and is not the parity
@@ -115,6 +115,16 @@ serves typed C++ clients; the Python tests cover multiple clients, independent
 paths with scalar implementation configuration, explicit multi-interface
 stubs, definition validation, and missing implementations through public
 ``eval_node`` graphs.
+
+The catalogue-residue follow-on passed clean macOS arm64/AppleClang 21 and
+Ubuntu 24.04 x86_64/GCC 13.3 Release gates with warnings as errors: 1065/1065
+native tests passed on each platform. Rebuilt ``cp312-abi3`` wheels passed the
+strict stable-ABI audit and, when installed in fresh Python 3.14.6 environments,
+produced 1040 passed, 19 skipped, and 6 deselected on each platform. The Linux
+wheel was also repaired to ``manylinux_2_39_x86_64`` before its test run. This
+increment adds field-wise TSB ``dedup``, lifted-output deduplication, the
+``drop_dups`` compatibility name, and table-shape projections over the native
+table layout.
 
 These are execution results, not collection-only inventory.
 
@@ -259,7 +269,7 @@ undeclared schema.
 Compatibility inventory
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-**Landed:** all 48 operator files and a selected 23-file wiring pack.  The
+**Landed:** all 48 operator files and a selected 24-file wiring pack.  The
 ported TSS union contract for retargeting to an empty reference now executes;
 its stale skip was removed after the keyed structural-REF implementation
 landed.  The upstream switch pack now covers output and all-sink branches,
@@ -357,23 +367,31 @@ Priority 3: Catalogue and Operations
 The catalogue is no longer the critical path for Python authoring.  Additions
 should be driven by supported applications or the compatibility inventory.
 
-**Landed:** 134 upstream public operator definitions are registry-resolvable;
+**Landed:** 135 upstream public operator definitions are registry-resolvable;
 the stream, window, analytical, conversion, JSON, table, dataframe/Frame,
 Series, TSD/TSL/TSS, IO, compare, and record/replay families all have usable
 coverage.  ``Frame`` and ``Series`` use Arrow-native storage and bridge through
-the Arrow C interfaces.
+the Arrow C interfaces. ``dedup`` covers scalar, tolerance-aware float, TSD,
+TSS, fixed TSL, and TSB inputs; Python ``lift(..., dedup_output=True)`` and the
+``drop_dups`` compatibility name both delegate to that native operator.
+
+The ``table_shape``, ``table_shape_from_schema``, and ``shape_of_table_type``
+helpers are exposed as Python wiring-time projections of the C++-owned table
+layout. ``dedup_builder`` and ``collect_builder`` are upstream Python
+implementation-injection hooks; the native overload registry is their C++-first
+equivalent and no parallel Python builder layer should be added.
 
 **Remaining inventory:**
 
-- missing public names: ``apply``, ``dedup_builder``,
-  ``collect_builder``, ``table_shape``, ``table_shape_from_schema``, and
-  ``shape_of_table_type``; and
 - larger optional libraries such as the ``hgraph.stream`` status model and the
   arrow-combinator package.
 
-``dedup_builder`` and ``collect_builder`` are Python implementation-injection
-hooks and probably do not need direct C++ counterparts.  The table-shape trio
-is convenience sugar. ``apply`` remains an explicit API/design decision.
+**Accepted deviation:** upstream ``apply`` evaluates a dynamic ``TS[Callable]``.
+There is no native scalar schema or statically resolvable invocation ABI for
+that value. Python authors should use ``@compute_node`` or ``lift`` and C++
+authors should use statically typed nodes or lifted kernels. Do not introduce a
+Python-object callable runtime into the C++ operator catalogue merely to expose
+this name.
 
 Native lifecycle observers, ``EngineControlView``, the C++ ``stop_engine``
 sink, and Python's guarded ``EvaluationEngineApi`` projection have landed and

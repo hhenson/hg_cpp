@@ -17,6 +17,9 @@ from hgraph import (
     TS,
     to_table,
     table_schema,
+    table_shape,
+    table_shape_from_schema,
+    shape_of_table_type,
     make_table_schema,
     MIN_ST,
     GlobalState,
@@ -32,12 +35,28 @@ from hgraph import (
     TABLE,
     TableSchema,
     ToTableMode,
+    WiringError,
 )
 from hgraph.test import eval_node
 
 
 def test_table_schema_ts_simple_scalar():
     assert table_schema(TS[int]).value == make_table_schema(TS[int], ("value",), (int,))
+
+
+def test_table_shape_helpers_follow_the_native_layout():
+    scalar_schema = table_schema(TS[int]).value
+    scalar_shape = table_shape_from_schema(scalar_schema)
+    assert scalar_shape == tuple[datetime, datetime, int]
+    assert table_shape(TS[int]) == scalar_shape
+    assert shape_of_table_type(scalar_shape, expect_keys=False, expect_length=1) == ((int,), False)
+
+    keyed_shape = table_shape(TSD[str, TS[int]])
+    assert keyed_shape == tuple[tuple[datetime, datetime, bool, str, int], ...]
+    assert shape_of_table_type(keyed_shape, expect_keys=True, expect_length=2) == ((str, int), True)
+
+    with pytest.raises(WiringError, match="expected a keyed table shape"):
+        shape_of_table_type(scalar_shape, expect_keys=True)
 
 
 def test_to_table_ts_simple_scalar():
