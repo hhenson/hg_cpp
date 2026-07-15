@@ -8,6 +8,7 @@
 #include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/mesh_node.h>
+#include <hgraph/runtime/ordered_reduce_node.h>
 #include <hgraph/runtime/reduce_node.h>
 #include <hgraph/runtime/switch_node.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -94,6 +95,12 @@ namespace hgraph::stdlib
             if (context.args.size() != arity) { return false; }
             const auto *schema = time_series_schema_at_as<AnyTSL>(context, 1);
             return schema != nullptr && schema->fixed_size() > 0;
+        }
+
+        [[nodiscard]] inline bool ordered_reduce_requested(OperatorCallContext context)
+        {
+            const Bool *is_associative = context.scalar_as<Bool>("is_associative");
+            return is_associative != nullptr && !*is_associative;
         }
 
         [[nodiscard]] inline const LiftedKernel *lifted_reduce_tsl_kernel(OperatorCallContext context)
@@ -250,7 +257,8 @@ namespace hgraph::stdlib
          * element schema.
          */
         [[nodiscard]] inline WiringPortRef reduce_tsl_wire(Wiring &w, const WiredFn &combiner,
-                                                           const WiringPortRef &ts, const WiringPortRef &zero)
+                                                           const WiringPortRef &ts, const WiringPortRef &zero,
+                                                           bool associative = true)
         {
             if (!combiner.valid())
             {
@@ -284,7 +292,7 @@ namespace hgraph::stdlib
                 elements.push_back(
                     wire_operator(w, "default", {leaf_args.data(), leaf_args.size()}, true).output.erased());
             }
-            return reduce_layout(w, combiner, std::move(elements));
+            return reduce_layout(w, combiner, std::move(elements), associative);
         }
 
         /**
@@ -418,11 +426,51 @@ namespace hgraph::stdlib
                 return reduce_tsl_wire(w, func.value(), ts.erased(), zero);
             }
         };
+
+        /** Ordered fixed-TSL reduction selected explicitly by ``is_associative=false``. */
+        struct reduce_ordered_tsl
+        {
+            static constexpr auto name = "reduce_ordered_tsl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return reduce_ts_is_fixed_tsl(context, 4) &&
+                       context.args[2].kind == WiringArg::Kind::TimeSeries &&
+                       ordered_reduce_requested(context);
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (output_bound(resolution) || context.args.size() < 3 ||
+                    context.args[2].kind != WiringArg::Kind::TimeSeries)
+                {
+                    return;
+                }
+                bind_graph_output(resolution, context.args[2].port.schema, "V");
+            }
+
+            static WiringPortRef compose(Wiring &w,
+                                         Scalar<"func", WiredFn> func,
+                                         NamedPort<"ts", TSL<TsVar<"E">>> ts,
+                                         NamedPort<"zero", TsVar<"V">> zero,
+                                         Scalar<"is_associative", Bool> is_associative)
+            {
+                if (is_associative.value())
+                {
+                    throw std::invalid_argument("ordered reduce requires is_associative=false");
+                }
+                return reduce_tsl_wire(w, func.value(), ts.erased(), zero.erased(), false);
+            }
+        };
     }  // namespace higher_order_impl_detail
 
     namespace higher_order_impl_detail
     {
         struct reduce_tsd_node_tag
+        {
+        };
+
+        struct reduce_ordered_tsd_node_tag
         {
         };
 
@@ -513,6 +561,82 @@ namespace hgraph::stdlib
             return out;
         }
 
+        [[nodiscard]] inline WiringPortRef wire_ordered_reduce_tsd(
+            Wiring &w,
+            const Scalar<"func", WiredFn> &func,
+            WiringPortRef ts,
+            WiringPortRef zero)
+        {
+            const WiredFn &combiner = func.value();
+            if (!combiner.valid() || combiner.arity != 2 || !combiner.has_output)
+            {
+                throw std::invalid_argument(
+                    "ordered reduce: 'func' must be a wirable (accumulator, element) -> accumulator function");
+            }
+
+            const auto *tsd_schema = time_series_schema_as<AnyTSD>(ts.schema);
+            if (tsd_schema == nullptr || tsd_schema->key_type() != scalar_descriptor<Int>::value_meta())
+            {
+                throw std::invalid_argument("ordered reduce requires a TSD[int, E] collection");
+            }
+            const auto *element = tsd_schema->element_ts();
+            const std::array<const TSValueTypeMetaData *, 2> schemas{zero.schema, element};
+            CompiledSubGraph combiner_graph = combiner.compile({schemas.data(), schemas.size()});
+            if (!combiner_graph.captured_inputs.empty())
+            {
+                throw std::invalid_argument("ordered reduce does not support combiner captures");
+            }
+            if (combiner_graph.output_schema == nullptr || !combiner_graph.output_binding.has_value())
+            {
+                throw std::invalid_argument("ordered reduce combiner must produce an output");
+            }
+            if (combiner_graph.output_binding->kind != NestedGraphOutputBinding::Kind::ChildOutput)
+            {
+                throw std::invalid_argument("ordered reduce requires a real child output from its combiner");
+            }
+            auto &registry = TypeRegistry::instance();
+            if (!time_series_schema_equivalent(registry.dereference(combiner_graph.output_schema),
+                                               registry.dereference(zero.schema)))
+            {
+                throw std::invalid_argument(
+                    "ordered reduce combiner output schema must match the accumulator/zero schema");
+            }
+
+            if (zero.is_structural_source())
+            {
+                zero = wire<pass_through_node>(w, Port<void>{w, std::move(zero)}).erased();
+            }
+
+            OrderedReduceNodeSpec spec;
+            spec.child.graph_builder = std::move(combiner_graph.graph_builder);
+            spec.child.input_bindings = std::move(combiner_graph.input_bindings);
+            spec.child.output_binding = combiner_graph.output_binding;
+
+            const auto *input_schema = registry.un_named_tsb({{"ts", ts.schema}, {"zero", zero.schema}});
+            const std::array<WiringPortRef, 2> inputs{std::move(ts), std::move(zero)};
+
+            WiringNodeSchema node_schema;
+            node_schema.input = input_schema;
+            node_schema.output = inputs[1].schema;
+
+            return w.add_node(
+                std::type_index(typeid(reduce_ordered_tsd_node_tag)),
+                node_schema,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()},
+                Value{combiner},
+                [&]() {
+                    NodeTypeMetaData meta;
+                    meta.display_name = "reduce_ordered";
+                    meta.input_schema = input_schema;
+                    meta.output_schema = inputs[1].schema;
+
+                    NodeBuilder builder = ordered_reduce_node(std::move(meta), std::move(spec));
+                    builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                        input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                    return builder;
+                });
+        }
+
         inline void resolve_reduce_tsd_output(ResolutionMap &resolution, OperatorCallContext context)
         {
             if (output_bound(resolution)) { return; }
@@ -526,6 +650,47 @@ namespace hgraph::stdlib
             if (context.args.size() != expected_args) { return false; }
             return time_series_schema_at_as<AnyTSD>(context, 1) != nullptr;
         }
+
+        struct reduce_ordered_tsd
+        {
+            static constexpr auto name = "reduce_ordered_tsd";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                if (!reduce_ts_is_tsd(context, 4) ||
+                    context.args[2].kind != WiringArg::Kind::TimeSeries ||
+                    !ordered_reduce_requested(context))
+                {
+                    return false;
+                }
+                const auto *tsd = time_series_schema_at_as<AnyTSD>(context, 1);
+                return tsd != nullptr && tsd->key_type() == scalar_descriptor<Int>::value_meta();
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (output_bound(resolution) || context.args.size() < 3 ||
+                    context.args[2].kind != WiringArg::Kind::TimeSeries)
+                {
+                    return;
+                }
+                bind_graph_output(resolution, context.args[2].port.schema, "V");
+            }
+
+            static WiringPortRef compose(
+                Wiring &w,
+                Scalar<"func", WiredFn> func,
+                NamedPort<"ts", TSD<Int, TsVar<"E">>> ts,
+                NamedPort<"zero", TsVar<"V">> zero,
+                Scalar<"is_associative", Bool> is_associative)
+            {
+                if (is_associative.value())
+                {
+                    throw std::invalid_argument("ordered reduce requires is_associative=false");
+                }
+                return wire_ordered_reduce_tsd(w, func, ts.erased(), zero.erased());
+            }
+        };
 
         /** ``reduce(func, ts: TSD[K, V]) -> V`` — the zero is ``zero(item_tp, func)``. */
         struct reduce_tsd

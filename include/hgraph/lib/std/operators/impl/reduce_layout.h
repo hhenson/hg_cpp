@@ -13,18 +13,20 @@ namespace hgraph::stdlib::higher_order_impl_detail
 {
     /*
      * Shared wiring-time binary reduction layout, mirroring Python _reduce_tsl:
-     * linear for small sizes, otherwise balanced binary pairing with an
-     * odd-element carry. The caller owns any identity/default leaves.
+     * linear for non-associative functions and small associative inputs,
+     * otherwise balanced binary pairing with an odd-element carry. The caller
+     * owns any identity/default leaves.
      */
     [[nodiscard]] inline WiringPortRef reduce_layout(Wiring &w, const WiredFn &func,
-                                                     std::vector<WiringPortRef> elements)
+                                                     std::vector<WiringPortRef> elements,
+                                                     bool associative = true)
     {
         auto combine = [&](const WiringPortRef &lhs, const WiringPortRef &rhs) {
             const std::array<WiringPortRef, 2> args{lhs, rhs};
             return func.wire(w, std::span<const WiringPortRef>{args.data(), args.size()});
         };
 
-        if (elements.size() < 4)
+        if (!associative || elements.size() < 4)
         {
             WiringPortRef out = elements.front();
             for (std::size_t i = 1; i < elements.size(); ++i) { out = combine(out, elements[i]); }

@@ -286,9 +286,10 @@ Wiring and node-authoring surface
      - Full Python call shapes (``__keys__``, key detection,
        ``pass_through``/``no_key``…), all-sink switches, scalar-configured
        Python switch branches, outputless keyed maps, live dynamic-TSD reduce
-       zeros, and projectable fixed-composite reduce results. Deferred:
-       arbitrary-function dynamic-TSL multiplexing and non-associative reduce;
-       lifted scalar kernels support grow-only dynamic TSL ``map_`` today.
+       zeros, projectable fixed-composite reduce results, ordered fixed-TSL
+       folds, and ordered contiguous-integer TSD/tuple reduction with a live
+       seed. Deferred: arbitrary-function dynamic-TSL multiplexing; lifted
+       scalar kernels support grow-only dynamic TSL ``map_`` today.
    * - ``dispatch_``
      - Full for Bundle values
      - Native ``dispatch_cases`` / ``dispatch_case`` wiring builds a closed

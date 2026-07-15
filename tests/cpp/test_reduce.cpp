@@ -30,6 +30,7 @@
 
 #include <array>
 #include <limits>
+#include <string>
 #include <string_view>
 
 namespace
@@ -271,6 +272,46 @@ namespace
             return wire<stdlib::reduce_>(w, fn<stdlib::min_>(), ts).as<TS<Int>>();
         }
     };
+
+    struct OrderedSubtractTslGraph
+    {
+        static constexpr auto name = "ordered_subtract_tsl_graph";
+
+        static Port<TS<Int>> compose(
+            Wiring &w,
+            Port<TSL<TS<Int>, 4>> values,
+            Port<TS<Int>> zero)
+        {
+            return wire<stdlib::reduce_>(
+                       w, fn<stdlib::sub_>(), values, zero, Bool{false})
+                .as<TS<Int>>();
+        }
+    };
+
+    struct AppendIntCombiner
+    {
+        static constexpr auto name = "append_int_combiner";
+
+        static void eval(In<"lhs", TS<Str>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Str>> out)
+        {
+            out.set(lhs.value() + ", " + std::to_string(rhs.value()));
+        }
+    };
+
+    struct OrderedAppendTsdGraph
+    {
+        static constexpr auto name = "ordered_append_tsd_graph";
+
+        static Port<TS<Str>> compose(
+            Wiring &w,
+            Port<TSD<Int, TS<Int>>> values,
+            Port<TS<Str>> zero)
+        {
+            return wire<stdlib::reduce_>(
+                       w, fn<AppendIntCombiner>(), values, zero, Bool{false})
+                .as<TS<Str>>();
+        }
+    };
 }  // namespace
 
 TEST_CASE("reduce: a five-element TSL reduces through a binary tree with carry")
@@ -460,6 +501,53 @@ TEST_CASE("reduce: a user overload gated on the wired function's identity wins s
     CHECK_OUTPUT((eval_node<stdlib::reduce_, TSL<TS<Int>, 2>>(
                      fn<stdlib::add_>(), values<Value>(list_delta<TS<Int>>({3, 9})))),
                  values<Int>(12));
+}
+
+TEST_CASE("reduce: a non-associative fixed TSL uses an ordered left fold")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // A balanced layout would produce (1 - 2) - (3 - 4) == 0. The explicit
+    // ordered path is ((1 - 2) - 3) - 4 == -8. While positions are invalid,
+    // their live zero/default input participates in the same left-to-right
+    // layout and a later zero tick propagates through those default leaves.
+    CHECK_OUTPUT(
+        eval_node<OrderedSubtractTslGraph>(
+            values<Value>(list_delta<TS<Int>>({{0, 1}}),
+                          list_delta<TS<Int>>({{1, 2}, {2, 3}, {3, 4}}),
+                          none,
+                          list_delta<TS<Int>>({{0, 10}})),
+            values<Int>(100, none, 7, none)),
+        values<Int>(-299, -8, none, 1));
+}
+
+TEST_CASE("reduce: ordered TSD uses a live seed and contiguous integer order")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        eval_node<OrderedAppendTsdGraph>(
+            values<Value>(dict_delta<Int, TS<Int>>({}),
+                          dict_delta<Int, TS<Int>>({{0, 1}, {1, 2}}),
+                          dict_delta<Int, TS<Int>>({{1, 3}}),
+                          dict_delta<Int, TS<Int>>({{2, 4}}),
+                          none,
+                          dict_delta<Int, TS<Int>>({}, {2})),
+            values<Str>(Str{"a"}, none, none, none, Str{"b"}, none)),
+        values<Str>(Str{"a"}, Str{"a, 1, 2"}, Str{"a, 1, 3"},
+                    Str{"a, 1, 3, 4"}, Str{"b, 1, 3, 4"}, Str{"b, 1, 3"}));
+}
+
+TEST_CASE("reduce: ordered TSD rejects holes in its integer key sequence")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    REQUIRE_THROWS((eval_node<OrderedAppendTsdGraph>(
+        values<Value>(dict_delta<Int, TS<Int>>({{0, 1}, {2, 3}})),
+        values<Str>(Str{"seed"}))));
 }
 
 // ---------------------------------------------------------------------------

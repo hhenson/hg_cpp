@@ -33,7 +33,7 @@ namespace hgraph::stdlib
     /**
      * ``reduce`` — reduce a time-series **collection** into a single
      * time-series with the (associative) combiner ``func``. Mirrors Python
-     * ``reduce(func, ts, zero=ZERO)``:
+     * ``reduce(func, ts, zero=ZERO, is_associative=true)``:
      *
      * - ``ts`` — any multiplexed collection (``TSL`` / ``TSD``; ``TSS`` once
      *   the Python reference grows one). Each collection kind is its own
@@ -45,11 +45,16 @@ namespace hgraph::stdlib
      *   operator (``zero(item_tp, func)``); when supplied, the value is wired
      *   as ``const(zero)`` at the element schema. Elements that have not
      *   ticked yet count as the zero (``default(ts[i], zero)`` leaves).
+     * - ``is_associative=false`` — select an ordered left fold. A fixed TSL
+     *   folds statically; a contiguous ``TSD[int, E]`` uses the live ``zero``
+     *   input as its initial accumulator and permits an accumulator type that
+     *   differs from ``E``.
      */
     struct reduce_ : Operator<"reduce",
                               Scalar<"func", WiredFn>,
                               In<"ts", TsVar<"C">>,           // the collection (TSL / TSD / TSS ...)
                               Scalar<"zero", ScalarVar<"Z">>, // optional (arity): defaults to zero(item_tp, func)
+                              Scalar<"is_associative", Bool>,
                               Out<TsVar<"V">>>
     {
     };

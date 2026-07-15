@@ -265,7 +265,8 @@ Priority 2: Nested Graphs and Boundaries
   including anonymous nested maps with forwarding TSD terminals, plus
   outputless keyed maps over native or Python-authored sink children;
 - fixed-TSL and associative dynamic-TSD ``reduce``, including live zero inputs
-  and projectable fixed-composite results;
+  and projectable fixed-composite results, plus non-associative fixed-TSL and
+  contiguous-integer dynamic-TSD/tuple ordered reduction;
 - ``try_except_``, feedback, closed-union ``dispatch_``, closure capture, key
   injection, ``pass_through`` / ``no_key``, keyed write-through outputs, and
   sampled transfer of unchanged nested collections into a new switch branch;
@@ -279,7 +280,6 @@ Priority 2: Nested Graphs and Boundaries
 
 - arbitrary-function dynamic-TSL map and dynamic-TSL reduce/mesh (lifted
   scalar ``map_`` kernels already use a grow-only native path);
-- non-associative ordered reduce;
 - dynamic-TSD reduce with pass-through combiner outputs.
 
 **Remaining boundary modes:**

@@ -3,6 +3,8 @@
 #include <hgraph/runtime/reduce_node.h>
 #include <hgraph/util/scope.h>
 
+#include "reduce_output_binding.h"
+
 #include <ankerl/unordered_dense.h>
 
 #include <array>
@@ -20,6 +22,9 @@ namespace hgraph
     namespace
     {
         constexpr std::string_view reduce_storage_field_name{"reduce"};
+
+        using runtime_detail::bind_reduce_output;
+        using runtime_detail::reduce_output_endpoint_schema;
 
         struct CombinerEntry
         {
@@ -168,99 +173,6 @@ namespace hgraph
             Kind        kind{Kind::Empty};
             std::size_t index{0};
         };
-
-        [[nodiscard]] TSEndpointSchema reduce_output_endpoint_schema(const TSValueTypeMetaData *schema)
-        {
-            if (schema == nullptr)
-            {
-                throw std::invalid_argument("reduce_ output endpoint requires a schema");
-            }
-
-            std::vector<TSEndpointSchema> children;
-            if (schema->kind == TSTypeKind::TSB)
-            {
-                children.reserve(schema->field_count());
-                for (std::size_t index = 0; index < schema->field_count(); ++index)
-                {
-                    children.push_back(reduce_output_endpoint_schema(schema->fields()[index].type));
-                }
-                return TSEndpointSchema::non_peered(schema, std::move(children));
-            }
-            if (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0)
-            {
-                children.reserve(schema->fixed_size());
-                for (std::size_t index = 0; index < schema->fixed_size(); ++index)
-                {
-                    children.push_back(reduce_output_endpoint_schema(schema->element_ts()));
-                }
-                return TSEndpointSchema::non_peered(schema, std::move(children));
-            }
-            return TSEndpointSchema::peered(schema);
-        }
-
-        void clear_reduce_output(TSOutputView target)
-        {
-            if (target.forwarding())
-            {
-                if (target.forwarding_bound()) { target.clear_forwarding_target(); }
-                return;
-            }
-
-            const auto *schema = target.schema();
-            const std::size_t child_count = schema != nullptr && schema->kind == TSTypeKind::TSB
-                                                ? schema->field_count()
-                                                : schema != nullptr && schema->kind == TSTypeKind::TSL
-                                                      ? schema->fixed_size()
-                                                      : 0;
-            if (child_count == 0)
-            {
-                throw std::logic_error("reduce_ output has a non-forwarding leaf endpoint");
-            }
-            for (std::size_t index = 0; index < child_count; ++index)
-            {
-                clear_reduce_output(target.indexed_child_at(index));
-            }
-        }
-
-        void bind_reduce_output(TSOutputView target, const TSOutputView &source, DateTime evaluation_time)
-        {
-            if (target.forwarding())
-            {
-                const TSOutputHandle before = target.forwarding_target();
-                bind_forwarding_output_to_source(target, source);
-                const TSOutputHandle after = target.forwarding_target();
-                if (after.bound() && !after.same_as(before) && after.view(evaluation_time).valid())
-                {
-                    target.begin_mutation(evaluation_time).mark_modified();
-                }
-                return;
-            }
-
-            if (!source.bound())
-            {
-                clear_reduce_output(std::move(target));
-                return;
-            }
-            if (!time_series_schema_equivalent(target.schema(), source.schema()))
-            {
-                throw std::logic_error("reduce_ output source schema does not match its forwarding endpoint");
-            }
-
-            const auto *schema = target.schema();
-            const std::size_t child_count = schema != nullptr && schema->kind == TSTypeKind::TSB
-                                                ? schema->field_count()
-                                                : schema != nullptr && schema->kind == TSTypeKind::TSL
-                                                      ? schema->fixed_size()
-                                                      : 0;
-            if (child_count == 0)
-            {
-                throw std::logic_error("reduce_ output has a non-forwarding leaf endpoint");
-            }
-            for (std::size_t index = 0; index < child_count; ++index)
-            {
-                bind_reduce_output(target.indexed_child_at(index), source.indexed_child_at(index), evaluation_time);
-            }
-        }
 
         // Tree layout: internal nodes are heap positions 0..capacity-2 (root =
         // 0, children of i at 2i+1 / 2i+2); leaves are logical positions

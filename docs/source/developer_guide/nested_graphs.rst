@@ -251,7 +251,8 @@ The default overloads lay the reduction out **statically at wiring time**,
 mirroring Python ``_reduce_tsl``: every leaf is ``default(ts[i], zero)`` — an
 element that has not ticked yet counts as ``zero`` — then a linear chain below
 four elements, otherwise balanced binary pairing with an odd-element carry
-(``over_run``). No nested node is involved. Two arities, like Python:
+(``over_run``). No nested node is involved. The associative forms have two
+arities, like Python:
 
 - ``reduce(func, ts)`` — the zero is derived from the operation,
   ``zero(item_tp, func)`` (the op-aware ``zero_`` operator: ``add_`` -> 0,
@@ -260,6 +261,12 @@ four elements, otherwise balanced binary pairing with an odd-element carry
   ``KeyError``;
 - ``reduce(func, ts, zero)`` — the explicit zero value, wired as
   ``const(zero)`` at the element schema.
+
+``reduce(func, ts, zero_ts, is_associative=false)`` selects the ordered form.
+It requires a live time-series ``zero_ts`` and always lays out a left fold,
+including for four or more elements. Invalid positions still use
+``default(ts[i], zero_ts)``; once an element is valid, changes to ``zero_ts``
+do not disturb that position.
 
 The leaves dispatch ``zero`` / ``default`` / ``const`` **through the registry
 at the resolved element schema** (``wire_operator`` — the runtime-schema
@@ -272,15 +279,14 @@ path, a structural child, or a **sub-graph boundary** (so ``reduce`` composes
 inside a sub-graph ``compose`` over a boundary TSL). The overloads'
 ``requires_`` accept fixed-size TSL inputs only; the dynamic-TSD overloads
 (next section) gate on a TSD input the same way. Still deferred: dynamic-TSL
-reduction, a time-series (port) ``zero`` argument, and non-associative linear
-reduction.
+reduction and a live ``zero`` argument for the associative fixed-TSL form.
 
 Tests: ``tests/cpp/test_reduce.cpp`` (including a user overload gated on the
 wired function's identity, mirroring ``ext/main``'s ``test_map_overload``).
 
 
-``reduce`` over dynamic ``TSD``
--------------------------------
+Associative ``reduce`` over dynamic ``TSD``
+-------------------------------------------
 
 The dynamic kernel is a further registered overload of ``reduce`` — one
 **runtime node** owning a balanced binary tree of combiner child graphs over
@@ -377,15 +383,47 @@ subscription or forwarding output is left pointing at dead child storage. Future
 optimisations to the rebuild path must keep that stop-after-failure safety
 property even if they make the key/combiner update more transactional.
 
-**Deferred:** non-associative ordered reduction (a linear chain over
-``TSD[int]``; ``zero`` as a true lhs seed) and tuple reduction through it,
-``TSS`` reduction, pass-through combiner outputs for the dynamic kernel, and
-unifying the fixed-TSL overload onto this kernel (2603 §10 recommends keeping
-TSL static-shaped first — we do).
+**Deferred:** ``TSS`` reduction, pass-through combiner outputs for the dynamic
+kernel, and unifying the fixed-TSL overload onto this kernel (2603 §10
+recommends keeping TSL static-shaped first — we do).
 
 Runtime: ``runtime/reduce_node.{h,cpp}``. Tests: ``tests/cpp/test_reduce.cpp``
 (dynamic-TSD cases, including the no-spurious-zero regression from 2603
 phase 3).
+
+
+Ordered ``reduce`` over contiguous ``TSD[int, E]``
+--------------------------------------------------
+
+``reduce(func, ts, zero, is_associative=false)`` is a distinct native nested
+node. ``zero`` is a live time-series initial accumulator ``A`` and ``func`` is
+compiled once as ``(A, E) -> A``. This permits the accumulator/output schema
+to differ from the collection element schema. Empty input forwards ``zero``;
+otherwise child ``0`` consumes ``(zero, ts[0])`` and child ``i`` consumes the
+previous child output and ``ts[i]``. Children evaluate from lowest to highest
+index so a tick settles the complete suffix in one parent pass.
+
+The current ordered kernel deliberately accepts only a self-contained binary
+combiner with a real child output. Combiner captures and pass-through outputs
+are rejected at wiring time; express those advanced cases in C++ or make the
+additional inputs explicit before reducing.
+
+The input key set must be exactly ``0..n-1``. Negative keys and holes are
+wiring/runtime errors rather than an arbitrary dictionary ordering. Python
+``TS[tuple[E, ...]]`` uses the existing native enumerated-TSD conversion and
+then this same ordered kernel; it is not a second Python reduction runtime.
+
+Each chain generation occupies one ``InPlaceGraphSlotStore`` bank. A length
+change builds and binds the replacement chain in the inactive bank, forwards
+the outer output to its new tail, then stops the old chain from tail to head.
+The stopped generation remains alive through the engine cycle and is destroyed
+tail-first on a later evaluation. Stable addresses, stop-before-destroy, and
+subscriber-before-producer teardown therefore hold without per-child graph
+allocations. Value changes and live-zero ticks use standing bindings and do
+not rebuild the chain.
+
+Runtime: ``runtime/ordered_reduce_node.{h,cpp}``. Tests:
+``tests/cpp/test_reduce.cpp`` and ``python/tests/test_python_authoring.py``.
 
 
 Scheduling delegation

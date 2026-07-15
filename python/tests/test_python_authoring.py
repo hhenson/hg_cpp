@@ -116,6 +116,38 @@ def test_native_map_lifted_kernel_grows_dynamic_tsl_output():
     check(result == [{0: 11}, {1: 22}, {0: 103}], f"dynamic TSL map: {result}")
 
 
+def test_non_associative_reduce_uses_ordered_native_paths():
+    @graph
+    def reduce_tsl(
+        values: TSL[TS[int], Size[4]], zero: TS[int]
+    ) -> TS[int]:
+        return hg.reduce(
+            lambda lhs, rhs: lhs - rhs,
+            values,
+            zero,
+            is_associative=False,
+        )
+
+    result = eval_node(
+        reduce_tsl,
+        [{0: 1}, {1: 2, 2: 3, 3: 4}, None, {0: 10}],
+        [100, None, 7, None],
+    )
+    check(result == [-299, -8, None, 1], f"ordered TSL reduce: {result}")
+
+    @graph
+    def reduce_tuple(values: TS[tuple[int, ...]], zero: TS[str]) -> TS[str]:
+        return hg.reduce(
+            lambda lhs, rhs: hg.format_("{lhs}, {rhs}", lhs=lhs, rhs=rhs),
+            values,
+            zero,
+            is_associative=False,
+        )
+
+    result = eval_node(reduce_tuple, [(1, 2), (1,), tuple()], ["a"])
+    check(result == ["a, 1, 2", "a, 1", "a"], f"ordered tuple reduce: {result}")
+
+
 def test_python_compute_produces_tick_and_duration_tsw():
     @hg.compute_node
     def tick_window(value: TS[int]) -> TSW[int, WindowSize[3], WindowSize[1]]:

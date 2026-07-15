@@ -14,6 +14,7 @@
 #include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/mesh_node.h>
+#include <hgraph/runtime/ordered_reduce_node.h>
 #include <hgraph/runtime/reduce_node.h>
 #include <hgraph/runtime/switch_node.h>
 #include <hgraph/types/graph_wiring.h>
@@ -353,6 +354,12 @@ namespace
             static_cast<void>(wire<stdlib::mesh_>(w, fn<AddOneSubGraph>(), dict));
             static_cast<void>(wire<stdlib::reduce_>(w, fn<stdlib::add_>(), dict));
 
+            auto ordered_dict = wire<stdlib::const_, TSD<Int, TS<Int>>>(
+                w, stdlib::make_map<Int, Int>({{Int{0}, Int{1}}, {Int{1}, Int{2}}, {Int{2}, Int{3}}}));
+            auto ordered_zero = wire<stdlib::const_, TS<Int>>(w, Int{0});
+            static_cast<void>(wire<stdlib::reduce_>(
+                w, fn<stdlib::add_>(), ordered_dict, ordered_zero, Bool{false}));
+
             auto key = wire<stdlib::const_, TS<Str>>(w, Str{"double"});
             static_cast<void>(wire<stdlib::switch_>(
                 w, key,
@@ -390,6 +397,7 @@ TEST_CASE("nested wiring: every dynamic child graph uses planned or stable in-pl
     bool saw_map    = false;
     bool saw_mesh   = false;
     bool saw_reduce = false;
+    bool saw_ordered_reduce = false;
     bool saw_switch = false;
     for (std::size_t index = 0; index < graph.node_count(); ++index)
     {
@@ -422,6 +430,13 @@ TEST_CASE("nested wiring: every dynamic child graph uses planned or stable in-pl
             CHECK(reduce.child_graphs_use_in_place_storage());
             saw_reduce = true;
         }
+        else if (node.is<OrderedReduceNodeView>())
+        {
+            auto reduce = node.as<OrderedReduceNodeView>();
+            REQUIRE(reduce.child_graph_count() > 0);
+            CHECK(reduce.child_graphs_use_in_place_storage());
+            saw_ordered_reduce = true;
+        }
         else if (node.is<SwitchNodeView>())
         {
             auto switch_view = node.as<SwitchNodeView>();
@@ -435,6 +450,7 @@ TEST_CASE("nested wiring: every dynamic child graph uses planned or stable in-pl
     CHECK(saw_map);
     CHECK(saw_mesh);
     CHECK(saw_reduce);
+    CHECK(saw_ordered_reduce);
     CHECK(saw_switch);
 }
 

@@ -9,6 +9,7 @@
 #include <hgraph/runtime/shared_output_node.h>
 #include <hgraph/runtime/service_node.h>
 #include <hgraph/runtime/nested_graph_node.h>
+#include <hgraph/runtime/ordered_reduce_node.h>
 #include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/push_source_node.h>
 #include <hgraph/runtime/switch_node.h>

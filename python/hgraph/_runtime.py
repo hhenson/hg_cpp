@@ -252,10 +252,10 @@ def _port_getattr(self, name):
         raise
 
 
-def _port_reduce(self, fn, zero=None):
+def _port_reduce(self, fn, zero=None, is_associative=True):
     if zero is not None:
-        return reduce(fn, self, zero)
-    return reduce(fn, self)
+        return reduce(fn, self, zero, is_associative=is_associative)
+    return reduce(fn, self, is_associative=is_associative)
 
 
 def _port_keys(self):
@@ -359,8 +359,23 @@ def mesh_ref(key, name=""):
     return WiringPort(_hgraph.mesh_ref(_current_wiring(), _unwrap(key), name))
 
 
-def reduce(func, ts, zero=None, **kwargs):
-    """hgraph's reduce over a collection with an operator callable."""
+def reduce(func, ts, zero=None, is_associative=True, **kwargs):
+    """hgraph's associative tree reduce or explicit left-to-right reduce."""
+    if not is_associative:
+        if zero is None or not isinstance(zero, WiringPort):
+            raise WiringError(
+                "Non-associative reduce requires a time-series zero/initial accumulator")
+
+        raw_ts = _unwrap(ts)
+        if raw_ts.ts_type.is_ts:
+            value_type = _hgraph.ts_value_vt(raw_ts.ts_type)
+            if _hgraph.vt_kind(value_type) == _unbounded_tuple_kind():
+                element_type = _hgraph.vt_element(value_type)
+                enumerated_type = _hgraph.tsd(
+                    _hgraph.value_type("int"), _hgraph.ts(element_type))
+                ts = wire("convert", ts, output_type=enumerated_type)
+
+        kwargs["is_associative"] = False
     if zero is None:
         return wire("reduce", _as_wired(func), ts, **kwargs)
     return wire("reduce", _as_wired(func), ts, zero, **kwargs)
