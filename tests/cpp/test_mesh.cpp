@@ -579,3 +579,43 @@ TEST_CASE("mesh_: a changed input re-propagates through the dependency graph")
                  values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 10}, {3, 10}}),
                                dict_delta<Int, TS<Int>>({{1, 20}, {2, 20}, {3, 20}})));
 }
+
+TEST_CASE("mesh_: retargeting onto an existing quiescent instance settles without a pause loop")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // Cycle 1: link={1:0, 2:0} -> keys {1,2}, on-demand base 0: {0:0, 1:1, 2:2}.
+    // Cycle 2: retarget 2's link from 0 to 1. Instance 1 already EXISTS and has
+    // nothing to do this cycle (quiescent); its current output is its settled
+    // result, so mesh_ref(1) must read it directly rather than pausing for a
+    // same-cycle evaluation that will never come (the settle loop only runs
+    // due-or-paused instances). Regression: this deadlocked the settle loop
+    // ("mesh_ failed to settle within the cycle").
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Int, TS<Int>>>(
+                     fn<ChainFn>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 0}, {2, 0}}),
+                                   dict_delta<Int, TS<Int>>({{2, 1}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{0, 0}, {1, 1}, {2, 2}}),
+                               dict_delta<Int, TS<Int>>({{2, 3}})));
+}
+
+TEST_CASE("mesh_: a re-ticked link to a quiescent dependency re-reads its settled result")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // Cycle 1: link={1:0, 2:1} -> {0:0, 1:1, 2:3}. Cycle 2 re-ticks link[2]=1
+    // (same target): the subscribe node re-runs its dependency registration
+    // against instance 1, which is quiescent this cycle. Same regression shape
+    // as above via the re-tick (rather than retarget) path — the bench's churn
+    // scenario reduces to this after a source-key removal rebinds a dependent.
+    // The re-tick itself produces NO output tick (same target, dependency value
+    // unchanged); pre-fix this deadlocked the settle loop instead.
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Int, TS<Int>>>(
+                     fn<ChainFn>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 0}, {2, 1}}),
+                                   dict_delta<Int, TS<Int>>({{2, 1}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{0, 0}, {1, 1}, {2, 3}}),
+                               none));
+}

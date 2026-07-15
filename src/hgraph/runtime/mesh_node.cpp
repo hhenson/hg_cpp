@@ -1160,9 +1160,16 @@ namespace hgraph
             return false;
         }
 
-        // The dependency exists and is ranked below us: available iff it produced its
-        // result this cycle (otherwise pause so the resolver evaluates it first).
-        return dep_entry->settled_time == t;
+        // The dependency exists and is ranked below us: available if it produced its
+        // result this cycle, OR if it has nothing to do this cycle — a quiescent
+        // instance's current output IS its settled result, and the settle loop only
+        // runs due-or-paused instances, so pausing on it would never be resolved
+        // (the requester would re-pause every pass until the guard threw). Rank
+        // order makes the quiescence test sound: a due dependency ran earlier in
+        // the same pass and is already settled or paused by the time we ask.
+        if (dep_entry->settled_time == t) { return true; }
+        if (dep_entry->paused || !dep_entry->graph.has_value()) { return false; }
+        return dep_entry->graph.view().next_scheduled_time() > t;
     }
 
     void MeshNodeView::remove_dependency(const ValueView &key, const ValueView &depends_on) const

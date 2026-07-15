@@ -248,7 +248,16 @@ pause, and the mesh node is the pause *boundary* that resolves it). The model:
   yielding ``mesh_subscribe`` node, which now reads the available result and
   produces its output, after which the downstream portion runs. The committed
   prefix is never re-entered. A dependency whose result was already available
-  causes no pause.
+  causes no pause. "Already available" is precise: the dependency settled
+  *this* cycle, **or** it exists, is not itself paused, and has nothing
+  scheduled at or before the current time — a **quiescent** instance's current
+  output *is* its settled result and is read directly. Pausing on a quiescent
+  dependency would deadlock: the resolver only evaluates due-or-paused
+  instances, so the requester would re-pause on every pass until the settle
+  guard threw (regression 2026-07-15, exposed by the comparative bench's churn
+  scenario — a dependent re-registering against an instance that has no work
+  this cycle). Rank order keeps the quiescence test sound: a due dependency is
+  ranked below its requester and therefore ran earlier in the same pass.
 - The orchestration is an **iterative worklist with a waiting stack** (not deep
   recursion): a parked instance is set aside, its dependency is run, then it is
   resumed. This bounds the C++ call stack regardless of dependency depth — the
