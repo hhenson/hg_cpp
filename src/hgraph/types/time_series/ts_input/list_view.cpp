@@ -62,27 +62,27 @@ namespace hgraph
         return view_.data_view().as_list();
     }
 
-    Range<TSInputView> TSLInputView::values() const
+    Range<TSInputView> TSLInputView::values() const &
     {
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = size(), .predicate = nullptr,
                                   .projector = &tsl_input_project_value};
     }
 
-    Range<TSInputView> TSLInputView::valid_values() const
+    Range<TSInputView> TSLInputView::valid_values() const &
     {
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = size(),
                                   .predicate = &tsl_input_valid_child,
                                   .projector = &tsl_input_project_value};
     }
 
-    Range<TSInputView> TSLInputView::modified_values() const
+    Range<TSInputView> TSLInputView::modified_values() const &
     {
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = size(),
                                   .predicate = &tsl_input_modified_child,
                                   .projector = &tsl_input_project_value};
     }
 
-    KeyValueRange<std::size_t, TSInputView> TSLInputView::items() const
+    KeyValueRange<std::size_t, TSInputView> TSLInputView::items() const &
     {
         return KeyValueRange<std::size_t, TSInputView>{.context = this,
                                                        .memory = nullptr,
@@ -91,7 +91,7 @@ namespace hgraph
                                                        .projector = &tsl_input_project_item};
     }
 
-    KeyValueRange<std::size_t, TSInputView> TSLInputView::valid_items() const
+    KeyValueRange<std::size_t, TSInputView> TSLInputView::valid_items() const &
     {
         return KeyValueRange<std::size_t, TSInputView>{.context = this,
                                                        .memory = nullptr,
@@ -100,7 +100,7 @@ namespace hgraph
                                                        .projector = &tsl_input_project_item};
     }
 
-    KeyValueRange<std::size_t, TSInputView> TSLInputView::modified_items() const
+    KeyValueRange<std::size_t, TSInputView> TSLInputView::modified_items() const &
     {
         return KeyValueRange<std::size_t, TSInputView>{.context = this,
                                                        .memory = nullptr,

@@ -25,17 +25,24 @@ namespace hgraph
         [[nodiscard]] TSBDataView data_view() const;
 
         /** Field names and child views in schema order. */
-        [[nodiscard]] Range<std::string_view> keys() const;
-        [[nodiscard]] Range<TSInputView> values() const;
+        [[nodiscard]] Range<std::string_view> keys() const &;
+        Range<std::string_view> keys() && = delete;
+        [[nodiscard]] Range<TSInputView> values() const &;
+        Range<TSInputView> values() && = delete;
 
         /** Child views filtered by current validity or modification time. */
-        [[nodiscard]] Range<TSInputView> valid_values() const;
-        [[nodiscard]] Range<TSInputView> modified_values() const;
+        [[nodiscard]] Range<TSInputView> valid_values() const &;
+        Range<TSInputView> valid_values() && = delete;
+        [[nodiscard]] Range<TSInputView> modified_values() const &;
+        Range<TSInputView> modified_values() && = delete;
 
         /** ``field name -> child`` pairs in schema order, optionally filtered. */
-        [[nodiscard]] KeyValueRange<std::string_view, TSInputView> items() const;
-        [[nodiscard]] KeyValueRange<std::string_view, TSInputView> valid_items() const;
-        [[nodiscard]] KeyValueRange<std::string_view, TSInputView> modified_items() const;
+        [[nodiscard]] KeyValueRange<std::string_view, TSInputView> items() const &;
+        KeyValueRange<std::string_view, TSInputView> items() && = delete;
+        [[nodiscard]] KeyValueRange<std::string_view, TSInputView> valid_items() const &;
+        KeyValueRange<std::string_view, TSInputView> valid_items() && = delete;
+        [[nodiscard]] KeyValueRange<std::string_view, TSInputView> modified_items() const &;
+        KeyValueRange<std::string_view, TSInputView> modified_items() && = delete;
 
         [[nodiscard]] TSInputView at(std::size_t index) &;
         [[nodiscard]] TSInputView at(std::size_t index) const &;

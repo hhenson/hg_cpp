@@ -111,16 +111,16 @@ namespace hgraph
         return at(key);
     }
 
-    Range<ValueView> TSDInputView::keys() const { return data_view().keys(); }
+    Range<ValueView> TSDInputView::keys() const & { return data_view().keys(); }
 
-    Range<TSInputView> TSDInputView::values() const
+    Range<TSInputView> TSDInputView::values() const &
     {
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = slot_capacity(),
                                   .predicate = &tsd_input_live_slot,
                                   .projector = &tsd_input_project_value};
     }
 
-    KeyValueRange<ValueView, TSInputView> TSDInputView::items() const
+    KeyValueRange<ValueView, TSInputView> TSDInputView::items() const &
     {
         return KeyValueRange<ValueView, TSInputView>{.context = this,
                                                      .memory = nullptr,
@@ -129,16 +129,16 @@ namespace hgraph
                                                      .projector = &tsd_input_project_item};
     }
 
-    Range<ValueView> TSDInputView::valid_keys() const { return data_view().valid_keys(); }
+    Range<ValueView> TSDInputView::valid_keys() const & { return data_view().valid_keys(); }
 
-    Range<TSInputView> TSDInputView::valid_values() const
+    Range<TSInputView> TSDInputView::valid_values() const &
     {
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = slot_capacity(),
                                   .predicate = &tsd_input_valid_slot,
                                   .projector = &tsd_input_project_value};
     }
 
-    KeyValueRange<ValueView, TSInputView> TSDInputView::valid_items() const
+    KeyValueRange<ValueView, TSInputView> TSDInputView::valid_items() const &
     {
         return KeyValueRange<ValueView, TSInputView>{.context = this,
                                                      .memory = nullptr,
@@ -147,7 +147,7 @@ namespace hgraph
                                                      .projector = &tsd_input_project_item};
     }
 
-    Range<ValueView> TSDInputView::modified_keys() const
+    Range<ValueView> TSDInputView::modified_keys() const &
     {
         if (!modified()) { return detail::empty_input_range<ValueView>(); }
         if (!view_.inherited_sampled_transition()) { return data_view().modified_keys(view_.evaluation_time()); }
@@ -156,7 +156,7 @@ namespace hgraph
                                 .projector = &tsd_input_project_key};
     }
 
-    Range<TSInputView> TSDInputView::modified_values() const
+    Range<TSInputView> TSDInputView::modified_values() const &
     {
         if (!modified()) { return detail::empty_input_range<TSInputView>(); }
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = slot_capacity(),
@@ -164,7 +164,7 @@ namespace hgraph
                                   .projector = &tsd_input_project_value};
     }
 
-    KeyValueRange<ValueView, TSInputView> TSDInputView::modified_items() const
+    KeyValueRange<ValueView, TSInputView> TSDInputView::modified_items() const &
     {
         if (!modified()) { return detail::empty_input_kv_range<ValueView, TSInputView>(); }
         return KeyValueRange<ValueView, TSInputView>{.context = this,
@@ -174,7 +174,7 @@ namespace hgraph
                                                      .projector = &tsd_input_project_item};
     }
 
-    Range<ValueView> TSDInputView::added_keys() const
+    Range<ValueView> TSDInputView::added_keys() const &
     {
         if (!modified()) { return detail::empty_input_range<ValueView>(); }
         if (view_.inherited_sampled_transition())
@@ -186,7 +186,7 @@ namespace hgraph
         return data_view().added_keys();
     }
 
-    Range<TSInputView> TSDInputView::added_values() const
+    Range<TSInputView> TSDInputView::added_values() const &
     {
         if (!modified()) { return detail::empty_input_range<TSInputView>(); }
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = slot_capacity(),
@@ -194,7 +194,7 @@ namespace hgraph
                                   .projector = &tsd_input_project_value};
     }
 
-    KeyValueRange<ValueView, TSInputView> TSDInputView::added_items() const
+    KeyValueRange<ValueView, TSInputView> TSDInputView::added_items() const &
     {
         if (!modified()) { return detail::empty_input_kv_range<ValueView, TSInputView>(); }
         return KeyValueRange<ValueView, TSInputView>{.context = this,
@@ -204,14 +204,14 @@ namespace hgraph
                                                      .projector = &tsd_input_project_item};
     }
 
-    Range<ValueView> TSDInputView::removed_keys() const
+    Range<ValueView> TSDInputView::removed_keys() const &
     {
         if (!modified()) { return detail::empty_input_range<ValueView>(); }
         if (view_.inherited_sampled_transition()) { return detail::empty_input_range<ValueView>(); }
         return data_view().removed_keys();
     }
 
-    Range<TSInputView> TSDInputView::removed_values() const
+    Range<TSInputView> TSDInputView::removed_values() const &
     {
         if (!modified()) { return detail::empty_input_range<TSInputView>(); }
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = slot_capacity(),
@@ -219,7 +219,7 @@ namespace hgraph
                                   .projector = &tsd_input_project_value};
     }
 
-    KeyValueRange<ValueView, TSInputView> TSDInputView::removed_items() const
+    KeyValueRange<ValueView, TSInputView> TSDInputView::removed_items() const &
     {
         if (!modified()) { return detail::empty_input_kv_range<ValueView, TSInputView>(); }
         return KeyValueRange<ValueView, TSInputView>{.context = this,

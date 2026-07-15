@@ -72,33 +72,33 @@ namespace hgraph
         return view_.data_view().as_bundle();
     }
 
-    Range<std::string_view> TSBInputView::keys() const
+    Range<std::string_view> TSBInputView::keys() const &
     {
         return Range<std::string_view>{.context = this, .memory = nullptr, .limit = size(), .predicate = nullptr,
                                        .projector = &tsb_input_project_key};
     }
 
-    Range<TSInputView> TSBInputView::values() const
+    Range<TSInputView> TSBInputView::values() const &
     {
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = size(), .predicate = nullptr,
                                   .projector = &tsb_input_project_value};
     }
 
-    Range<TSInputView> TSBInputView::valid_values() const
+    Range<TSInputView> TSBInputView::valid_values() const &
     {
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = size(),
                                   .predicate = &tsb_input_valid_child,
                                   .projector = &tsb_input_project_value};
     }
 
-    Range<TSInputView> TSBInputView::modified_values() const
+    Range<TSInputView> TSBInputView::modified_values() const &
     {
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = size(),
                                   .predicate = &tsb_input_modified_child,
                                   .projector = &tsb_input_project_value};
     }
 
-    KeyValueRange<std::string_view, TSInputView> TSBInputView::items() const
+    KeyValueRange<std::string_view, TSInputView> TSBInputView::items() const &
     {
         return KeyValueRange<std::string_view, TSInputView>{.context = this,
                                                             .memory = nullptr,
@@ -107,7 +107,7 @@ namespace hgraph
                                                             .projector = &tsb_input_project_item};
     }
 
-    KeyValueRange<std::string_view, TSInputView> TSBInputView::valid_items() const
+    KeyValueRange<std::string_view, TSInputView> TSBInputView::valid_items() const &
     {
         return KeyValueRange<std::string_view, TSInputView>{.context = this,
                                                             .memory = nullptr,
@@ -116,7 +116,7 @@ namespace hgraph
                                                             .projector = &tsb_input_project_item};
     }
 
-    KeyValueRange<std::string_view, TSInputView> TSBInputView::modified_items() const
+    KeyValueRange<std::string_view, TSInputView> TSBInputView::modified_items() const &
     {
         return KeyValueRange<std::string_view, TSInputView>{.context = this,
                                                             .memory = nullptr,

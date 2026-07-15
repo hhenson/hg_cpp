@@ -71,29 +71,38 @@ namespace hgraph
             switch (schema->kind)
             {
                 case TSTypeKind::TSB:
-                    for (auto &&[name, child] : input.as_bundle().modified_items())
+                {
+                    auto bundle = input.as_bundle();
+                    for (auto &&[name, child] : bundle.modified_items())
                     {
                         static_cast<void>(name);
                         append_input_sources(out, child, evaluation_time, depth,
                                              capture_values, indent, visited);
                     }
                     break;
+                }
                 case TSTypeKind::TSL:
-                    for (auto &&[index, child] : input.as_list().modified_items())
+                {
+                    auto list = input.as_list();
+                    for (auto &&[index, child] : list.modified_items())
                     {
                         static_cast<void>(index);
                         append_input_sources(out, child, evaluation_time, depth,
                                              capture_values, indent, visited);
                     }
                     break;
+                }
                 case TSTypeKind::TSD:
-                    for (auto &&[key, child] : input.as_dict().modified_items())
+                {
+                    auto dict = input.as_dict();
+                    for (auto &&[key, child] : dict.modified_items())
                     {
                         static_cast<void>(key);
                         append_input_sources(out, child, evaluation_time, depth,
                                              capture_values, indent, visited);
                     }
                     break;
+                }
                 default:
                     break;
             }
@@ -155,7 +164,8 @@ namespace hgraph
             TSInputView input = node.input(evaluation_time);
             if (input.schema() != nullptr && input.schema()->kind == TSTypeKind::TSB)
             {
-                for (auto &&[name, child] : input.as_bundle().items())
+                auto bundle = input.as_bundle();
+                for (auto &&[name, child] : bundle.items())
                 {
                     append_input(out, name, child, evaluation_time, depth,
                                  capture_values, indent + 2, visited);
