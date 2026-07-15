@@ -229,12 +229,8 @@ namespace hgraph
                               std::string error_msg)
         {
             const NodeTypeMetaData *schema = view.schema();
-            NodeErrorFields         fields;
-            fields.signature_name =
-                schema != nullptr && schema->display_name != nullptr ? std::string{schema->display_name} : std::string{};
-            fields.label       = std::string{view.label()};
-            fields.wiring_path = fields.label.empty() ? fields.signature_name : fields.label;
-            fields.error_msg   = std::move(error_msg);
+            const ErrorCaptureOptions options = schema != nullptr ? schema->error_capture : ErrorCaptureOptions{};
+            NodeErrorFields fields = capture_node_error(view, evaluation_time, std::move(error_msg), options);
 
             Value error_value = make_node_error_value(fields);
             auto  output      = node_error_output(context, view.data()).view(evaluation_time);
@@ -1463,7 +1459,8 @@ namespace hgraph
         return type_;
     }
 
-    NodeBuilder NodeBuilder::with_error_capture(const TSValueTypeMetaData *error_schema) const
+    NodeBuilder NodeBuilder::with_error_capture(const TSValueTypeMetaData *error_schema,
+                                                ErrorCaptureOptions options) const
     {
         if (!type_) { throw std::logic_error("NodeBuilder has no type"); }
         if (error_schema == nullptr) { throw std::invalid_argument("with_error_capture requires an error schema"); }
@@ -1481,7 +1478,14 @@ namespace hgraph
 
         NodeTypeMetaData schema = *type_.schema();
         schema.error_output_schema = error_schema;
+        if (schema.captures_errors)
+        {
+            options.trace_back_depth =
+                std::max(schema.error_capture.trace_back_depth, options.trace_back_depth);
+            options.capture_values = schema.error_capture.capture_values || options.capture_values;
+        }
         schema.captures_errors     = true;
+        schema.error_capture       = options;
 
         const auto &plan = node_storage_plan_for(schema);
         const auto type =

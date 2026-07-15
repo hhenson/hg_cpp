@@ -22,7 +22,8 @@ namespace hgraph
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder try_except_node(
         NodeTypeMetaData meta,
         SingleNestedGraphNodeSpec spec,
-        SingleNestedGraphNodeOptions options = {});
+        SingleNestedGraphNodeOptions options = {},
+        ErrorCaptureOptions error_capture = {});
 }  // namespace hgraph
 
 #endif  // HGRAPH_RUNTIME_TRY_EXCEPT_NODE_H

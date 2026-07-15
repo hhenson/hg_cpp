@@ -4,7 +4,9 @@
 #include <hgraph/hgraph_export.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/value/value.h>
+#include <hgraph/util/date_time.h>
 
+#include <cstddef>
 #include <optional>
 #include <string>
 
@@ -12,6 +14,16 @@ namespace hgraph
 {
     struct ValueTypeMetaData;
     struct TSValueTypeMetaData;
+    class NodeView;
+
+    /** Diagnostic detail requested when a node or child graph captures an error. */
+    struct HGRAPH_EXPORT ErrorCaptureOptions
+    {
+        std::size_t trace_back_depth{1};
+        bool        capture_values{false};
+
+        [[nodiscard]] bool operator==(const ErrorCaptureOptions &) const noexcept = default;
+    };
 
     /**
      * ``NodeError`` — the value reported on a node's error output time series
@@ -43,6 +55,14 @@ namespace hgraph
         std::string activation_back_trace{};
         std::optional<std::string> additional_context{};
     };
+
+    /** Capture node identity and a bounded active-input trace on the error path. */
+    [[nodiscard]] HGRAPH_EXPORT NodeErrorFields capture_node_error(
+        const NodeView &node,
+        DateTime evaluation_time,
+        std::string error_msg,
+        ErrorCaptureOptions options = {},
+        std::optional<std::string> additional_context = {});
 
     /** Build an owning ``NodeError`` bundle ``Value`` from ``fields``. */
     [[nodiscard]] HGRAPH_EXPORT Value make_node_error_value(const NodeErrorFields &fields);

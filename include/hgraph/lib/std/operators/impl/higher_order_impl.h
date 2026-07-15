@@ -1357,7 +1357,8 @@ namespace hgraph::stdlib
             Wiring &w,
             const WiredFn &func,
             std::vector<WiringPortRef> positional,
-            std::vector<std::pair<std::string, WiringPortRef>> named)
+            std::vector<std::pair<std::string, WiringPortRef>> named,
+            ErrorCaptureOptions error_capture)
         {
             auto bound = bind_wired_fn_args<WiringPortRef>(
                 "try_except", func, {positional.data(), positional.size()},
@@ -1402,9 +1403,11 @@ namespace hgraph::stdlib
             node_schema.input  = input_schema;
             node_schema.output = output_schema;
 
+            (void)scalar_descriptor<TryExceptCallConfig>::value_meta();
             return w.add_node(
                 std::type_index(typeid(try_except_node_tag)), node_schema,
-                std::span<const WiringPortRef>{inputs.data(), inputs.size()}, Value{func}, [&] {
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()},
+                Value{TryExceptCallConfig{func, error_capture}}, [&] {
                     NodeTypeMetaData meta;
                     meta.display_name  = "try_except";
                     meta.input_schema  = input_schema;
@@ -1419,7 +1422,8 @@ namespace hgraph::stdlib
                         spec.output_binding->target_path = {1};
                     }
 
-                    NodeBuilder builder = try_except_node(std::move(meta), std::move(spec));
+                    NodeBuilder builder = try_except_node(
+                        std::move(meta), std::move(spec), {}, error_capture);
                     builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                         input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
                     return builder;
@@ -1435,8 +1439,10 @@ namespace hgraph::stdlib
             std::vector<const TSValueTypeMetaData *> positional;
             for (std::size_t index = 1; index < context.args.size(); ++index)
             {
-                if (context.args[index].kind != WiringArg::Kind::TimeSeries) { return std::nullopt; }
-                positional.push_back(context.args[index].port.schema);
+                if (context.args[index].kind == WiringArg::Kind::TimeSeries)
+                {
+                    positional.push_back(context.args[index].port.schema);
+                }
             }
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> named;
             for (const auto &[name, arg] : context.kwargs)
@@ -1456,6 +1462,12 @@ namespace hgraph::stdlib
         {
             static constexpr auto name = "try_except_impl";
 
+            static auto defaults()
+            {
+                return std::tuple{arg<"__trace_back_depth__">(Int{1}),
+                                  arg<"__capture_values__">(Bool{false})};
+            }
+
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (resolution.find_ts("__out__") != nullptr) { return; }
@@ -1469,12 +1481,22 @@ namespace hgraph::stdlib
 
             static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
                                          VarIn<"args", TsVar<"A">> positional,
+                                         Scalar<"__trace_back_depth__", Int> trace_back_depth,
+                                         Scalar<"__capture_values__", Bool> capture_values,
                                          VarKwIn<"kwargs"> kwargs)
             {
+                if (trace_back_depth.value() < 0)
+                {
+                    throw std::invalid_argument("try_except: trace-back depth must be non-negative");
+                }
                 return wire_try_except(
                     w, func.value(),
                     std::vector<WiringPortRef>{positional.begin(), positional.end()},
-                    std::vector<std::pair<std::string, WiringPortRef>>{kwargs.begin(), kwargs.end()});
+                    std::vector<std::pair<std::string, WiringPortRef>>{kwargs.begin(), kwargs.end()},
+                    ErrorCaptureOptions{
+                        .trace_back_depth = static_cast<std::size_t>(trace_back_depth.value()),
+                        .capture_values = capture_values.value(),
+                    });
             }
         };
 

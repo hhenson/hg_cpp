@@ -10,6 +10,7 @@
 #include <hgraph/hgraph_export.h>
 #include <hgraph/runtime/evaluation_clock.h>
 #include <hgraph/runtime/global_state.h>
+#include <hgraph/runtime/node_error.h>
 #include <hgraph/runtime/node_fwd.h>
 #include <hgraph/runtime/node_type_ref.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
@@ -78,6 +79,7 @@ namespace hgraph
         // ``start`` (the declarative form of a source doing schedule_now() itself).
         bool     schedule_on_start{false};
         bool     captures_errors{false};
+        ErrorCaptureOptions error_capture{};
 
         // nullopt means "use the runtime default"; an engaged empty vector is
         // an explicit empty selector set.
@@ -380,7 +382,9 @@ namespace hgraph
          * native nodes (the standard runtime ops); a custom-ops node throws.
          * Used by ``exception_time_series`` to activate a node's error output.
          */
-        [[nodiscard]] NodeBuilder with_error_capture(const TSValueTypeMetaData *error_schema) const;
+        [[nodiscard]] NodeBuilder with_error_capture(
+            const TSValueTypeMetaData *error_schema,
+            ErrorCaptureOptions options = {}) const;
 
         /**
          * A rebound builder whose ``active_inputs`` exclude ``slots`` (the

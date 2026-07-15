@@ -508,10 +508,11 @@ namespace hgraph
     /** Per-key error capture for a TSD ``map_`` output. */
     template <typename Key, typename ValueSchema>
     [[nodiscard]] Port<TSD<Key, TS<NodeError>>> exception_time_series(
-        const Port<TSD<Key, ValueSchema>> &port)
+        const Port<TSD<Key, ValueSchema>> &port,
+        ErrorCaptureOptions options = {})
     {
         Wiring &w = port.checked_wiring();
-        w.activate_error_capture(port.erased().peered_node(), node_error_ts_meta());
+        w.activate_error_capture(port.erased().peered_node(), node_error_ts_meta(), options);
         return error_output(port).template as<TSD<Key, TS<NodeError>>>();
     }
 
@@ -522,10 +523,12 @@ namespace hgraph
      * series per mapped key.
      */
     template <typename Schema>
-    [[nodiscard]] Port<TS<NodeError>> exception_time_series(const Port<Schema> &port)
+    [[nodiscard]] Port<TS<NodeError>> exception_time_series(
+        const Port<Schema> &port,
+        ErrorCaptureOptions options = {})
     {
         Wiring &w = port.checked_wiring();
-        w.activate_error_capture(port.erased().peered_node(), node_error_ts_meta());
+        w.activate_error_capture(port.erased().peered_node(), node_error_ts_meta(), options);
         return error_output(port).template as<TS<NodeError>>();
     }
 

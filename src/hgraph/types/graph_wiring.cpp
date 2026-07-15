@@ -1117,19 +1117,27 @@ namespace hgraph
     }
 
     const TSValueTypeMetaData *Wiring::activate_error_capture(const WiringInstance *node,
-                                                             const TSValueTypeMetaData *error_schema)
+                                                             const TSValueTypeMetaData *error_schema,
+                                                             ErrorCaptureOptions options)
     {
         if (node == nullptr) { throw std::invalid_argument("activate_error_capture: null node"); }
         // The deque owns the instances (stable addresses); the const port ref
         // names one we own and may amend before finish.
         WiringInstance         &instance = const_cast<WiringInstance &>(*node);
         const NodeTypeMetaData *meta     = instance.builder.type().schema();
-        if (meta == nullptr || meta->error_output_schema == nullptr)
+        ErrorCaptureOptions merged = options;
+        if (meta != nullptr && meta->captures_errors)
+        {
+            merged.trace_back_depth = std::max(merged.trace_back_depth,
+                                               meta->error_capture.trace_back_depth);
+            merged.capture_values = merged.capture_values || meta->error_capture.capture_values;
+        }
+        if (meta == nullptr || meta->error_output_schema == nullptr || merged != meta->error_capture)
         {
             const NodeOps &ops = instance.builder.type().ops_ref();
             instance.builder = ops.extended_view_type_id == MapNodeView::node_view_type_id()
-                                   ? map_node_with_error_capture(instance.builder, error_schema)
-                                   : instance.builder.with_error_capture(error_schema);
+                                   ? map_node_with_error_capture(instance.builder, error_schema, merged)
+                                   : instance.builder.with_error_capture(error_schema, merged);
         }
         return instance.builder.type().schema()->error_output_schema;
     }

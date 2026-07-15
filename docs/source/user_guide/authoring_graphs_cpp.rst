@@ -802,6 +802,10 @@ Two levels, mirroring Python (design record: developer guide *Error handling*):
    auto result  = try_except_<RiskyGraph>(w, x).as<TryIntResult>();  // TSB{exception, out}
    auto erased  = wire<stdlib::try_except>(w, fn<RiskyGraph>(), x)
                       .as<TryIntResult>();
+   auto error   = exception_time_series(
+                      doubled,
+                      ErrorCaptureOptions{.trace_back_depth = 2,
+                                          .capture_values = true});
 
 ``NodeError`` is a compound scalar of string fields (``error_msg`` and friends)
 readable through the normal bundle accessors.

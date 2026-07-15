@@ -1,6 +1,7 @@
 #ifndef HGRAPH_LIB_STD_OPERATORS_HIGHER_ORDER_H
 #define HGRAPH_LIB_STD_OPERATORS_HIGHER_ORDER_H
 
+#include <hgraph/runtime/node_error.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
@@ -241,9 +242,19 @@ namespace hgraph::stdlib
      * ``TS<NodeError>``. The output schema is derived from the compiled
      * ``WiredFn`` by the default overload.
      */
+    struct TryExceptCallConfig
+    {
+        WiredFn             func{};
+        ErrorCaptureOptions error_capture{};
+
+        [[nodiscard]] bool operator==(const TryExceptCallConfig &) const noexcept = default;
+    };
+
     struct try_except : Operator<"try_except",
                                  Scalar<"func", WiredFn>,
                                  VarIn<"args", TsVar<"A">>,
+                                 Scalar<"__trace_back_depth__", Int>,
+                                 Scalar<"__capture_values__", Bool>,
                                  VarKwIn<"kwargs">,
                                  Out<TsVar<"O">>>
     {
@@ -378,6 +389,11 @@ namespace hgraph::static_schema_detail
     {
         static constexpr std::string_view value{"map_config"};
     };
+    template <>
+    struct scalar_name<hgraph::stdlib::TryExceptCallConfig>
+    {
+        static constexpr std::string_view value{"try_except_config"};
+    };
 }  // namespace hgraph::static_schema_detail
 
 template <>
@@ -390,6 +406,19 @@ struct std::hash<hgraph::stdlib::MapCallConfig>
         combine(std::hash<std::string>{}(config.key_arg));
         combine(std::hash<std::string>{}(config.mesh_name));
         for (const std::uint8_t tag : config.arg_tags) { combine(tag); }
+        return h;
+    }
+};
+
+template <>
+struct std::hash<hgraph::stdlib::TryExceptCallConfig>
+{
+    [[nodiscard]] std::size_t operator()(const hgraph::stdlib::TryExceptCallConfig &config) const noexcept
+    {
+        std::size_t h       = std::hash<hgraph::WiredFn>{}(config.func);
+        const auto  combine = [&h](std::size_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); };
+        combine(std::hash<std::size_t>{}(config.error_capture.trace_back_depth));
+        combine(std::hash<bool>{}(config.error_capture.capture_values));
         return h;
     }
 };

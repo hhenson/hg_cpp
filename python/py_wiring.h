@@ -128,10 +128,21 @@ namespace hgraph::python_bridge
         /** hgraph's exception_time_series(port): activate error capture on
             the producing node. Ordinary nodes return TS[NodeError]; TSD map_
             nodes return TSD[K, TS[NodeError]]. */
-        [[nodiscard]] nb::object exception_time_series(PyPort port)
+        [[nodiscard]] nb::object exception_time_series(PyPort port,
+                                                       std::int64_t trace_back_depth = 1,
+                                                       bool capture_values = false)
         {
             ensure_open();
-            wiring_ref().activate_error_capture(port.ref.peered_node(), node_error_ts_meta());
+            if (trace_back_depth < 0)
+            {
+                throw std::invalid_argument("exception_time_series: trace-back depth must be non-negative");
+            }
+            wiring_ref().activate_error_capture(
+                port.ref.peered_node(), node_error_ts_meta(),
+                ErrorCaptureOptions{
+                    .trace_back_depth = static_cast<std::size_t>(trace_back_depth),
+                    .capture_values = capture_values,
+                });
             WiringPortRef error = graph_wiring_detail::special_output_source(
                 port.ref, GraphEdgeSourceKind::ErrorOutput, "error_output");
             return nb::cast(PyPort{error});

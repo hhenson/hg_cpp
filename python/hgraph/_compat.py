@@ -21,14 +21,15 @@ class DivideByZero(Enum):
     ONE = 5
 
 
-def exception_time_series(ts):
+def exception_time_series(ts, trace_back_depth=1, capture_values=False):
     """Activate error capture on ``ts``'s producing node; returns the
     native error output. Ordinary nodes expose ``TS[NodeError]``; a TSD
     ``map_`` exposes ``TSD[K, TS[NodeError]]`` with one retained error series
     per live mapped child."""
     from ._wiring import WiringPort, _current_wiring, _unwrap
 
-    return WiringPort(_current_wiring().exception_time_series(_unwrap(ts)))
+    return WiringPort(_current_wiring().exception_time_series(
+        _unwrap(ts), trace_back_depth, capture_values))
 
 
 # The type of a module-level operator function (hgraph exposes the wiring
@@ -264,16 +265,28 @@ def try_except(
     """
     from ._wiring import _PyNode, _as_wired, combine, map_, wire
 
-    if __trace_back_depth__ != 1 or __capture_values__:
-        raise NotImplementedError(
-            "try_except traceback depth and input-value capture are not implemented")
     if func is map_:
         output = map_(*args, **kwargs)
-        return combine(exception=exception_time_series(output), out=output)
+        return combine(
+            exception=exception_time_series(
+                output, __trace_back_depth__, __capture_values__),
+            out=output,
+        )
     if isinstance(func, _PyNode) and func.has_output:
         output = func(*args, **kwargs)
-        return combine(exception=exception_time_series(output), out=output)
-    return wire("try_except", _as_wired(func), *args, **kwargs)
+        return combine(
+            exception=exception_time_series(
+                output, __trace_back_depth__, __capture_values__),
+            out=output,
+        )
+    return wire(
+        "try_except",
+        _as_wired(func),
+        *args,
+        __trace_back_depth__=__trace_back_depth__,
+        __capture_values__=__capture_values__,
+        **kwargs,
+    )
 
 
 class JSON(str):

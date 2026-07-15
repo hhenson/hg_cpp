@@ -15,15 +15,13 @@ namespace hgraph
     {
         // Write a NodeError to the node's exception output: the "exception" field
         // of a TSB output, or the whole output for a sink (bare TS<NodeError>).
-        void write_try_except_error(const NodeView &view, DateTime evaluation_time, std::string error_msg)
+        void write_try_except_error(const NodeView &view, const NodeView &failed_node,
+                                    DateTime evaluation_time, std::string error_msg)
         {
             const NodeTypeMetaData *schema = view.schema();
-            NodeErrorFields         fields;
-            fields.signature_name =
-                schema != nullptr && schema->display_name != nullptr ? std::string{schema->display_name} : std::string{};
-            fields.label       = std::string{view.label()};
-            fields.wiring_path = fields.label.empty() ? fields.signature_name : fields.label;
-            fields.error_msg   = std::move(error_msg);
+            const ErrorCaptureOptions options = schema != nullptr ? schema->error_capture : ErrorCaptureOptions{};
+            NodeErrorFields fields = capture_node_error(
+                failed_node.valid() ? failed_node : view, evaluation_time, std::move(error_msg), options);
 
             Value error_value = make_node_error_value(fields);
             auto  output      = view.output(evaluation_time);
@@ -74,7 +72,8 @@ namespace hgraph
                                                              return nested.child_graph().evaluate(evaluation_time);
                                                          },
                                                          [&](const char *error) {
-                                                             write_try_except_error(view, evaluation_time, error);
+                                                             NodeView failed = nested.child_graph().failed_node();
+                                                             write_try_except_error(view, failed, evaluation_time, error);
                                                          });
             single_nested_graph_propagate_schedule(nested);
             return completed;
@@ -82,8 +81,10 @@ namespace hgraph
     }  // namespace
 
     NodeBuilder try_except_node(NodeTypeMetaData meta, SingleNestedGraphNodeSpec spec,
-                                SingleNestedGraphNodeOptions options)
+                                SingleNestedGraphNodeOptions options,
+                                ErrorCaptureOptions error_capture)
     {
+        meta.error_capture = error_capture;
         options.manage_output_externally = !spec.output_binding.has_value();
         NodeTypeDescriptor descriptor =
             single_nested_graph_node_descriptor(std::move(meta), std::move(spec), options);

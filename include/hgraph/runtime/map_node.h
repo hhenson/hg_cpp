@@ -111,7 +111,9 @@ namespace hgraph
      * ``TSD<K, error_element_schema>`` using the map's existing key type.
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder map_node_with_error_capture(
-        const NodeBuilder &builder, const TSValueTypeMetaData *error_element_schema);
+        const NodeBuilder &builder,
+        const TSValueTypeMetaData *error_element_schema,
+        ErrorCaptureOptions options = {});
 }  // namespace hgraph
 
 #endif  // HGRAPH_RUNTIME_MAP_NODE_H

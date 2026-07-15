@@ -297,7 +297,9 @@ namespace hgraph::python_bridge
     nb::class_<PyWiring>(m, "Wiring")
         .def(nb::init<>())
         .def(nb::init<GlobalState &>(), nb::arg("state"))
-        .def("exception_time_series", &PyWiring::exception_time_series, nb::arg("port"))
+        .def("exception_time_series", &PyWiring::exception_time_series,
+             nb::arg("port"), nb::arg("trace_back_depth") = 1,
+             nb::arg("capture_values") = false)
         .def("wire", &PyWiring::wire, nb::arg("name"), nb::arg("args") = nb::tuple(),
              nb::arg("kwargs") = nb::dict(), nb::arg("output_type") = nb::none(),
              nb::arg("sizes") = nb::none())

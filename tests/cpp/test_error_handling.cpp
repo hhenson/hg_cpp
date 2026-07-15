@@ -137,6 +137,15 @@ namespace
         }
     };
 
+    struct ErrorTraceOf
+    {
+        static constexpr auto name = "error_trace_of";
+        static void           eval(In<"e", TS<NodeError>> e, Out<TS<Str>> out)
+        {
+            out.set(e.base().value().as_bundle().at("activation_back_trace").checked_as<Str>());
+        }
+    };
+
     struct DivideOrThrow
     {
         static constexpr auto name = "divide_or_throw";
@@ -168,6 +177,16 @@ namespace
         }
     };
 
+    struct ErrorTraceG
+    {
+        static constexpr auto name = "error_trace_g";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<NodeError>> error)
+        {
+            return wire<ErrorTraceOf>(w, error);
+        }
+    };
+
     struct MappedErrorMessagesGraph
     {
         static constexpr auto name = "mapped_error_messages_graph";
@@ -180,6 +199,22 @@ namespace
                               .as<TSD<Int, TS<Int>>>();
             Port<TSD<Int, TS<NodeError>>> errors = exception_time_series(mapped);
             return wire<stdlib::map_>(w, fn<ErrorMsgG>(), errors).as<TSD<Int, TS<Str>>>();
+        }
+    };
+
+    struct MappedErrorTracesGraph
+    {
+        static constexpr auto name = "mapped_error_traces_graph";
+
+        static Port<TSD<Int, TS<Str>>> compose(Wiring &w,
+                                               Port<TSD<Int, TS<Int>>> lhs,
+                                               Port<TSD<Int, TS<Int>>> rhs)
+        {
+            auto mapped = wire<stdlib::map_>(w, fn<DivideOrThrowG>(), lhs, rhs)
+                              .as<TSD<Int, TS<Int>>>();
+            auto errors = exception_time_series(
+                mapped, ErrorCaptureOptions{.trace_back_depth = 2, .capture_values = true});
+            return wire<stdlib::map_>(w, fn<ErrorTraceG>(), errors).as<TSD<Int, TS<Str>>>();
         }
     };
 
@@ -206,6 +241,19 @@ namespace
             if (field.valid() && field.modified())
             {
                 out.set(field.base().value().as_bundle().at("error_msg").checked_as<Str>());
+            }
+        }
+    };
+
+    struct TryExcTrace
+    {
+        static constexpr auto name = "try_exc_trace";
+        static void           eval(In<"r", TryIntResult, InputValidity::Unchecked> r, Out<TS<Str>> out)
+        {
+            auto field = r.template field<"exception">();
+            if (field.valid() && field.modified())
+            {
+                out.set(field.base().value().as_bundle().at("activation_back_trace").checked_as<Str>());
             }
         }
     };
@@ -342,6 +390,47 @@ namespace
             return wire<ErrorMsgOf>(w, exception_time_series(output));
         }
     };
+
+    struct DirectCaptureTraceGraph
+    {
+        static constexpr auto name = "direct_capture_trace_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Int>> x)
+        {
+            auto output = wire<ThrowOnNegative>(w, x);
+            auto error = exception_time_series(
+                output, ErrorCaptureOptions{.trace_back_depth = 2, .capture_values = true});
+            return wire<ErrorTraceOf>(w, error);
+        }
+    };
+
+    struct ErasedTryTraceGraph
+    {
+        static constexpr auto name = "erased_try_trace_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Int>> x)
+        {
+            auto result = wire<stdlib::try_except>(
+                              w, fn<DoublerOrThrowG>(), x,
+                              arg<"__trace_back_depth__">(Int{2}),
+                              arg<"__capture_values__">(Bool{true}))
+                              .as<TryIntResult>();
+            return wire<TryExcTrace>(w, result);
+        }
+    };
+
+    struct DirectCaptureDepthZeroGraph
+    {
+        static constexpr auto name = "direct_capture_depth_zero_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Int>> x)
+        {
+            auto output = wire<ThrowOnNegative>(w, x);
+            auto error = exception_time_series(
+                output, ErrorCaptureOptions{.trace_back_depth = 0});
+            return wire<ErrorTraceOf>(w, error);
+        }
+    };
 }  // namespace
 
 TEST_CASE("NodeError: a value-layer bundle with the reference fields")
@@ -417,6 +506,12 @@ TEST_CASE("error handling: mapped child errors are keyed and erased with child l
                                dict_delta<Int, TS<Str>>({{1, "division by zero"s}}),
                                none,
                                dict_delta<Int, TS<Str>>({}, {1})));
+
+    const auto traces = eval_node<MappedErrorTracesGraph>(lhs, rhs);
+    REQUIRE(traces[1].has_value());
+    const std::string trace_delta = traces[1]->to_string();
+    CHECK(trace_delta.find("divide_or_throw") != std::string::npos);
+    CHECK(trace_delta.find("*rhs*: value=0, delta=0") != std::string::npos);
 }
 
 TEST_CASE("error handling: a clean run never ticks the error output")
@@ -491,6 +586,29 @@ TEST_CASE("error handling: registered try_except wires value graphs and sinks")
     CHECK_OUTPUT(eval_node<ErasedTrySinkGraph>(input), values<Str>(none, "sink negative"s, none));
     CHECK_OUTPUT(eval_node<DirectCaptureValueGraph>(input), values<Int>(10, none, 14));
     CHECK_OUTPUT(eval_node<DirectCaptureErrorGraph>(input), values<Str>(none, "negative input"s, none));
+}
+
+TEST_CASE("error handling: capture options include the failed node and input values")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+
+    stdlib::register_standard_operators();
+
+    const auto direct = eval_node<DirectCaptureTraceGraph>(values<Int>(-3));
+    REQUIRE(direct[0].has_value());
+    CHECK(direct[0]->find("throw_on_negative") != std::string::npos);
+    CHECK(direct[0]->find("*x*: value=-3, delta=-3") != std::string::npos);
+
+    const auto nested = eval_node<ErasedTryTraceGraph>(values<Int>(-5));
+    REQUIRE(nested[0].has_value());
+    CHECK(nested[0]->find("throw_on_negative") != std::string::npos);
+    CHECK(nested[0]->find("*x*: value=-5, delta=-5") != std::string::npos);
+
+    const auto depth_zero = eval_node<DirectCaptureDepthZeroGraph>(values<Int>(-7));
+    REQUIRE(depth_zero[0].has_value());
+    CHECK(depth_zero[0]->find("throw_on_negative") != std::string::npos);
+    CHECK(depth_zero[0]->find("*x*") == std::string::npos);
 }
 
 TEST_CASE("error handling: try_except propagates child graph pauses")

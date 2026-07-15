@@ -275,7 +275,8 @@ are saved in :doc:`parity_matrix`.
 
 **Required compatibility slices:**
 
-- public Python error result schemas/call syntax and trace settings; and
+- **Landed:** public Python error result schemas/call syntax and native
+  activation-trace settings; and
 - selected bridge conveniences: ``nested_graph``, vocabulary aliases,
   ``SetDelta`` recording shape, safe opaque-REF metadata, mutable-output view
   conveniences, and the two recorded TSW view differences.

@@ -155,6 +155,7 @@ namespace hgraph
             std::size_t                     evaluation_cursor{invalid_cursor};
             bool                            started{false};
             bool                            evaluating{false};
+            bool                            evaluation_failed{false};
             /** Graph traits (parent-chained key-value metadata; GraphView::trait_or).
                 The same value-layer ``Map<string, Any>`` store as GlobalState. */
             GlobalState traits{};
@@ -561,6 +562,16 @@ namespace hgraph
         }
 
         template <typename Storage>
+        NodeView failed_node_impl(const void *context, void *memory) noexcept
+        {
+            const auto &runtime = graph_context(context);
+            const auto &state = graph_header<Storage>(runtime, memory);
+            return state.evaluation_failed && state.evaluation_cursor < runtime.layout.node_count
+                       ? graph_node_view(runtime, memory, state.evaluation_cursor)
+                       : NodeView{};
+        }
+
+        template <typename Storage>
         ValueView graph_trait_impl(const void *context, void *memory, std::string_view name) noexcept
         {
             auto &traits = graph_header<Storage>(graph_context(context), memory).traits;
@@ -837,6 +848,7 @@ namespace hgraph
             const bool resuming = state.evaluation_cursor != 0 && state.evaluation_cursor != invalid_cursor;
 
             state.evaluation_time = evaluation_time;
+            state.evaluation_failed = false;
             state.evaluating = true;
             auto reset = make_scope_exit([&] noexcept { state.evaluating = false; });
 
@@ -881,7 +893,11 @@ namespace hgraph
                                     [&] { state.lifecycle_observers->notify_after_node_evaluation(node_view); });
                                 annotate_on_exception(
                                     [&] { node_view.evaluate(evaluation_time); },
-                                    [&] { rethrow_with_node_identity(node_view, index, "evaluate"); });
+                                    [&] {
+                                        state.evaluation_cursor = index;
+                                        state.evaluation_failed = true;
+                                        rethrow_with_node_identity(node_view, index, "evaluate");
+                                    });
                             }
                             if (scheduled > evaluation_time && scheduled < state.next_scheduled_time)
                             {
@@ -912,12 +928,15 @@ namespace hgraph
                         completed = annotate_on_exception(
                             [&] { return node_view.evaluate(state.evaluation_time); },
                             [&] {
+                                state.evaluation_failed = true;
                                 rethrow_with_node_identity(node_view, state.evaluation_cursor, "evaluate");
                             });
                     }
                     else
                     {
-                        completed = node_view.evaluate(state.evaluation_time);
+                        completed = annotate_on_exception(
+                            [&] { return node_view.evaluate(state.evaluation_time); },
+                            [&] { state.evaluation_failed = true; });
                     }
                     if (!completed)
                     {
@@ -1019,6 +1038,7 @@ namespace hgraph
                     .next_scheduled_time_impl = &next_scheduled_time_impl<RootGraphRuntimeStorage>,
                     .node_count_impl = &node_count_impl<RootGraphRuntimeStorage>,
                     .node_at_impl = &node_at_impl<RootGraphRuntimeStorage>,
+                    .failed_node_impl = &failed_node_impl<RootGraphRuntimeStorage>,
                     .node_scheduled_time_impl = &node_scheduled_time_impl<RootGraphRuntimeStorage>,
                     .global_state_impl = &root_global_state_impl,
                     .trait_impl = &graph_trait_impl<RootGraphRuntimeStorage>,
@@ -1046,6 +1066,7 @@ namespace hgraph
                     .next_scheduled_time_impl = &next_scheduled_time_impl<NestedGraphRuntimeStorage>,
                     .node_count_impl = &node_count_impl<NestedGraphRuntimeStorage>,
                     .node_at_impl = &node_at_impl<NestedGraphRuntimeStorage>,
+                    .failed_node_impl = &failed_node_impl<NestedGraphRuntimeStorage>,
                     .node_scheduled_time_impl = &node_scheduled_time_impl<NestedGraphRuntimeStorage>,
                     .global_state_impl = &nested_global_state_impl,
                     .trait_impl = &graph_trait_impl<NestedGraphRuntimeStorage>,
@@ -1238,6 +1259,12 @@ namespace hgraph
     NodeView GraphView::node_at(std::size_t index) const
     {
         return ops().node_at_impl(ops().context, data(), index);
+    }
+
+    NodeView GraphView::failed_node() const noexcept
+    {
+        if (!valid() || ops().failed_node_impl == nullptr) { return NodeView{}; }
+        return ops().failed_node_impl(ops().context, data());
     }
 
     DateTime GraphView::node_scheduled_time(std::size_t node_index) const noexcept

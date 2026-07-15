@@ -819,7 +819,8 @@ namespace hgraph
          * Used by ``exception_time_series`` (the node is the port's producer).
          */
         const TSValueTypeMetaData *activate_error_capture(const WiringInstance *node,
-                                                          const TSValueTypeMetaData *error_schema);
+                                                          const TSValueTypeMetaData *error_schema,
+                                                          ErrorCaptureOptions options = {});
 
         /**
          * A view over the wiring-time ``GlobalState``. A ``compose`` body can seed

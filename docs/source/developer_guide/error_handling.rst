@@ -74,13 +74,16 @@ It is a first-class scalar type (``scalar_descriptor<NodeError>``), so
 ``TS<NodeError>`` resolves like any other time series and nodes may declare
 ``In<"err", TS<NodeError>>`` / ``Out<TS<NodeError>>``.
 
-**Deliberate C++ adaptation — trace fidelity.** Python populates
-``stack_trace`` / ``activation_back_trace`` from Python tracebacks and an
-input-value back trace. C++ has no cheap equivalent; the first cut captures the
-structurally meaningful fields (node identity + ``error_msg``) faithfully and
-leaves the two trace fields best-effort (the node's runtime path; richer
-back traces are a recorded refinement). The *structure* matches Python so
-downstream code reads the same field names.
+**Deliberate C++ adaptation — trace fidelity.** ``activation_back_trace`` is a
+bounded native walk from the failed node through the inputs modified in that
+cycle. ``trace_back_depth`` controls the number of upstream producer levels;
+``capture_values`` additionally records current/delta values and last-modified
+times. Value rendering is bounded and runs only after an exception. Python user
+nodes appear by their C++ implementation node (for example ``__py_compute``)
+and expose their packed native ``args`` input. ``stack_trace`` remains
+best-effort because portable C++23 does not provide a usable stack trace on all
+supported compilers; a Python exception's formatted traceback is retained in
+``error_msg`` by nanobind. The field structure remains identical to Python.
 
 
 Per-node capture and activation
@@ -99,6 +102,10 @@ The node storage already reserves an error-output ``TSOutput`` when
   unspecified on an error cycle because the framework does not roll back writes
   that happened before the throw. Scheduler re-arming still runs. A node without
   ``captures_errors`` pays nothing and propagates as before.
+- **Diagnostic configuration.** ``ErrorCaptureOptions`` is immutable binding
+  metadata. Repeated capture requests on one producer merge to the larger depth
+  and enable value capture if any consumer requests it. The ordinary evaluation
+  path does not walk inputs or stringify values.
 - **Activation (wiring).** Node bindings are *interned* (schema + ops + storage
   plan are immutable and shared), so a node cannot be mutated in place to gain
   an error output. ``exception_time_series(port)`` therefore **re-binds** the
@@ -168,6 +175,11 @@ time-series arguments against that function before compiling the child:
 
    auto result = wire<stdlib::try_except>(w, fn<RiskyGraph>(), x)
                      .as<TryIntResult>();
+   auto detailed = wire<stdlib::try_except>(
+                       w, fn<RiskyGraph>(), x,
+                       arg<"__trace_back_depth__">(Int{2}),
+                       arg<"__capture_values__">(Bool{true}))
+                       .as<TryIntResult>();
 
 Python exposes the corresponding public result schemas and call:
 
@@ -205,13 +217,12 @@ Roadmap / deferrals
 
 Done: public C++/Python ``NodeError`` and ``TryExcept*`` schemas, per-node
 capture + ``exception_time_series``, typed and erased ``try_except`` over a
-sub-graph (value + sink), public Python call syntax, and keyed TSD ``map_``
-capture.
+sub-graph (value + sink), public Python call syntax, bounded activation traces
+with optional input values, and keyed TSD ``map_`` capture.
 
 Deferred (recorded, not yet built):
 
-- ``__trace_back_depth__`` / ``__capture_values__`` knobs and richer
-  ``stack_trace`` / ``activation_back_trace`` content;
+- richer portable ``stack_trace`` content;
 - error capture on the remaining custom-ops nodes (nested/switch/mesh) via
   their own evaluate paths;
 - child-graph reset/rebuild policy after an exception (currently kept as-is).

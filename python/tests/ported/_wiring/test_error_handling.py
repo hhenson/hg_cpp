@@ -42,7 +42,13 @@ def test_try_except_wraps_python_value_graph():
 
     @graph
     def protected(lhs: TS[int], rhs: TS[int]) -> TSB[TryExceptResult[TS[int]]]:
-        return try_except(risky, lhs=lhs, rhs=rhs)
+        return try_except(
+            risky,
+            lhs=lhs,
+            rhs=rhs,
+            __trace_back_depth__=2,
+            __capture_values__=True,
+        )
 
     result = eval_node(protected, lhs=[10, 9, 8], rhs=[2, 0, 4])
 
@@ -51,6 +57,8 @@ def test_try_except_wraps_python_value_graph():
     assert isinstance(result[1]["exception"], NodeError)
     assert "division by zero" in result[1]["exception"].error_msg
     assert result[1]["exception"].additional_context is None
+    assert "__py_compute" in result[1]["exception"].activation_back_trace
+    assert "*args*: value={_0: 9, _1: 0}" in result[1]["exception"].activation_back_trace
     assert result[2] == {"out": 2}
 
 
@@ -63,12 +71,20 @@ def test_try_except_uses_native_error_output_for_python_compute_node():
 
     @graph
     def protected(lhs: TS[int], rhs: TS[int]) -> TSB[TryExceptResult[TS[int]]]:
-        return try_except(divide, lhs, rhs)
+        return try_except(
+            divide,
+            lhs,
+            rhs,
+            __trace_back_depth__=2,
+            __capture_values__=True,
+        )
 
     result = eval_node(protected, lhs=[10, 9, 8], rhs=[2, 0, 4])
 
     assert result[0] == {"out": 5}
     assert "division by zero" in result[1]["exception"].error_msg
+    assert "__py_compute" in result[1]["exception"].activation_back_trace
+    assert "*args*: value={_0: 9, _1: 0}" in result[1]["exception"].activation_back_trace
     assert result[2] == {"out": 2}
 
 
@@ -101,7 +117,14 @@ def test_try_except_preserves_keyed_map_errors():
     def protected(
         lhs: TSD[int, TS[int]], rhs: TSD[int, TS[int]]
     ) -> TSB[TryExceptTsdMapResult[int, TSD[int, TS[int]]]]:
-        return try_except(map_, divide, lhs, rhs)
+        return try_except(
+            map_,
+            divide,
+            lhs,
+            rhs,
+            __trace_back_depth__=2,
+            __capture_values__=True,
+        )
 
     result = eval_node(
         protected,
@@ -112,6 +135,8 @@ def test_try_except_preserves_keyed_map_errors():
     assert result[0]["out"] == {0: 5}
     assert result[0]["exception"] == {}
     assert "division by zero" in result[1]["exception"][1].error_msg
+    assert "__py_compute" in result[1]["exception"][1].activation_back_trace
+    assert "value={_0: 9, _1: 0}" in result[1]["exception"][1].activation_back_trace
     assert result[1]["out"] == {}
     assert result[2]["out"] == {2: 2}
     assert result[2]["exception"] == {}

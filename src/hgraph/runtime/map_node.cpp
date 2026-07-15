@@ -499,17 +499,14 @@ namespace hgraph
             return bindings_need_refresh;
         }
 
-        void write_map_error(const NodeView &view, const ValueView &key,
-                             DateTime evaluation_time, std::string error_msg)
+        void write_map_error(const NodeView &view, const NodeView &failed_node,
+                             const ValueView &key, DateTime evaluation_time,
+                             std::string error_msg)
         {
             const NodeTypeMetaData *schema = view.schema();
-            NodeErrorFields         fields;
-            fields.signature_name = schema != nullptr && schema->display_name != nullptr
-                                        ? std::string{schema->display_name}
-                                        : std::string{};
-            fields.label       = std::string{view.label()};
-            fields.wiring_path = fields.label.empty() ? fields.signature_name : fields.label;
-            fields.error_msg   = std::move(error_msg);
+            const ErrorCaptureOptions options = schema != nullptr ? schema->error_capture : ErrorCaptureOptions{};
+            NodeErrorFields fields = capture_node_error(
+                failed_node.valid() ? failed_node : view, evaluation_time, std::move(error_msg), options);
 
             Value error_value = make_node_error_value(fields);
             auto  output      = view.error_output(evaluation_time);
@@ -575,7 +572,8 @@ namespace hgraph
                                                      true,
                                                      [&] { return child.evaluate(evaluation_time); },
                                                      [&](const char *error) {
-                                                         write_map_error(view, entry->key.view(),
+                                                         NodeView failed = child.failed_node();
+                                                         write_map_error(view, failed, entry->key.view(),
                                                                          evaluation_time, error);
                                                      })
                                                : child.evaluate(evaluation_time);
@@ -909,7 +907,8 @@ namespace hgraph
     }
 
     NodeBuilder map_node_with_error_capture(const NodeBuilder &builder,
-                                            const TSValueTypeMetaData *error_element_schema)
+                                            const TSValueTypeMetaData *error_element_schema,
+                                            ErrorCaptureOptions options)
     {
         if (error_element_schema == nullptr)
         {
@@ -932,7 +931,14 @@ namespace hgraph
         }
         meta.error_output_schema = TypeRegistry::instance().tsd(
             meta.output_schema->key_type(), error_element_schema);
+        if (meta.captures_errors)
+        {
+            options.trace_back_depth =
+                std::max(meta.error_capture.trace_back_depth, options.trace_back_depth);
+            options.capture_values = meta.error_capture.capture_values || options.capture_values;
+        }
         meta.captures_errors = true;
+        meta.error_capture = options;
 
         NodeBuilder result = map_node(std::move(meta), context.spec);
         result.input_endpoint(builder.input_endpoint());
