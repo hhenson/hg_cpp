@@ -34,6 +34,7 @@ namespace hgraph
         Subscription,
         RequestReply,
         Adaptor,
+        ServiceAdaptor,
     };
 
     struct RuntimeServiceDescriptor
@@ -115,6 +116,24 @@ namespace hgraph
                                         std::string_view path, const WiringPortRef &out);
     HGRAPH_EXPORT void register_adaptor_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
                                              std::string_view path, const WiredFn &impl);
+
+    /** Per-client keyed adaptor exchange (the erased counterpart of
+        ``service_adaptor::adaptor`` / ``wire<Interface>``). */
+    [[nodiscard]] HGRAPH_EXPORT WiringPortRef service_adaptor_client(
+        Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
+        const WiringPortRef &in);
+    /** Implementation-side keyed request dictionary. */
+    [[nodiscard]] HGRAPH_EXPORT WiringPortRef service_adaptor_from_graph(
+        Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path);
+    /** Implementation-side keyed reply publication. */
+    HGRAPH_EXPORT void service_adaptor_to_graph(Wiring &w, const RuntimeServiceDescriptor &descriptor,
+                                                std::string_view path, const WiringPortRef &out);
+    /** Auto-wire one implementation taking ``TSD<Int, input>`` and returning
+        ``TSD<Int, output>``. */
+    HGRAPH_EXPORT void register_service_adaptor_impl(Wiring &w,
+                                                     const RuntimeServiceDescriptor &descriptor,
+                                                     std::string_view path,
+                                                     const WiredFn &impl);
 }  // namespace hgraph
 
 #endif  // HGRAPH_TYPES_SERVICE_RUNTIME_H

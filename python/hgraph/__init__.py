@@ -34,7 +34,7 @@ from ._runtime import _PyNode as PythonWiringNodeClass
 from ._runtime import _GraphFn as GraphWiringNodeClass
 from ._runtime import _Generator as PythonGeneratorWiringNodeClass
 from ._runtime import GlobalContext, GlobalState, set_record_replay_config, set_as_of, set_table_schema_date_key, set_table_schema_as_of_key, evaluate_const
-from ._runtime import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, mesh_, mesh_ref, REMOVED, feedback, switch_, passive, compute_node, sink_node, generator, lift, STATE, SCHEDULER, CLOCK, LOGGER, DebugContext, component, record_replay_scope, RecordReplayEnum, comparison_summary, push_queue, EvaluationMode, context, WiringError, reference_service, subscription_service, request_reply_service, register_service, service_impl, adaptor, adaptor_impl, register_adaptor, from_graph, to_graph, impl_input, impl_output, get_service_inputs, set_service_output
+from ._runtime import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, mesh_, mesh_ref, REMOVED, feedback, switch_, passive, compute_node, sink_node, generator, lift, STATE, SCHEDULER, CLOCK, LOGGER, DebugContext, component, record_replay_scope, RecordReplayEnum, comparison_summary, push_queue, EvaluationMode, context, WiringError, reference_service, subscription_service, request_reply_service, register_service, service_impl, adaptor, adaptor_impl, service_adaptor, service_adaptor_impl, register_adaptor, from_graph, to_graph, impl_input, impl_output, get_service_inputs, set_service_output
 
 MIN_ST = _hgraph.MIN_ST
 MIN_TD = _hgraph.MIN_TD
@@ -98,6 +98,9 @@ __all__ = [
     "PythonWiringNodeClass", "GraphWiringNodeClass", "PythonGeneratorWiringNodeClass",
     "evaluate_graph", "GraphConfiguration", "TSB_OUT", "operator",
     "pass_through_node", "pass_through", "no_key", "downcast_ref",
+    "reference_service", "subscription_service", "request_reply_service", "service_impl", "register_service",
+    "adaptor", "adaptor_impl", "service_adaptor", "service_adaptor_impl", "register_adaptor",
+    "from_graph", "to_graph", "impl_input", "impl_output", "get_service_inputs", "set_service_output",
 ]
 
 from ._runtime import set_delta, compute_set_delta

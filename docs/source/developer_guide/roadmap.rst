@@ -23,9 +23,10 @@ of truth.  It distinguishes four states deliberately:
 Review Snapshot: 2026-07-15
 ---------------------------
 
-This review is current through ``9dcc8f83``, including
-the completed mutable-output, structural-REF, constrained-generic, and nested
-explicit-key map work described below, plus the logging compatibility follow-on.
+This review is current through ``cbfcedd0`` and the service-adaptor bridge
+follow-on described below, including the completed mutable-output,
+structural-REF, constrained-generic, nested explicit-key map, logging, and
+compiled-context work.
 Evidence came from the public implementation and tests, the commit history,
 :doc:`parity_matrix`, :doc:`python_integration`, :doc:`nested_graphs`, and
 :doc:`services`.
@@ -104,6 +105,16 @@ warnings as errors: 1056/1056 native tests passed on each platform.  Rebuilt
 includes direct, fixed-structural, two-level, branch, keyed-child, mesh,
 dispatch, and stacked error-boundary context imports through public
 ``eval_node`` APIs.
+
+The Python service-adaptor follow-on passed clean macOS arm64/AppleClang 21 and
+Ubuntu 24.04 x86_64/GCC 13.3 Release gates with warnings as errors: 1057/1057
+native tests passed on each platform.  Rebuilt ``cp312-abi3`` wheels installed
+in fresh Python 3.14.6 environments produced 1026 passed, 22 skipped, and 6
+deselected on each platform.  The native test proves an erased registration
+serves typed C++ clients; the Python tests cover multiple clients, independent
+paths with scalar implementation configuration, explicit multi-interface
+stubs, definition validation, and missing implementations through public
+``eval_node`` graphs.
 
 These are execution results, not collection-only inventory.
 
@@ -264,8 +275,7 @@ are saved in :doc:`parity_matrix`.
 
 **Required compatibility slices:**
 
-- Python service-adaptor declarations/implementations and the engine-stop
-  injectable/operator;
+- the engine-stop injectable/operator;
 - rich Python error result schemas, keyed-map capture, and trace settings; and
 - selected bridge conveniences: ``nested_graph``, vocabulary aliases,
   ``SetDelta`` recording shape, safe opaque-REF metadata, mutable-output view
@@ -307,7 +317,8 @@ Priority 2: Nested Graphs and Boundaries
 - value-producing and all-sink ``switch_`` branches, including scalar Python
   branch configuration adapted onto the native runtime;
 - reference, subscription, and request/reply services;
-- source, sink, duplex, and service-adaptor foundations; and
+- source, sink, duplex, and service-adaptor foundations, including Python
+  declarations and implementations over the erased native runtime; and
 - contexts in the same wiring and across compiled ``nested_``, ``try_except_``,
   ``switch_``, ``dispatch_``, ``map_``, and ``mesh_`` boundaries. Context
   imports reuse static outer-port capture, including leaf-wise fixed structural

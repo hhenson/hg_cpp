@@ -220,10 +220,12 @@ Python builder objects that deliberately do not exist in the C++-first model.
    * - ``test_adaptor.py``
      - 13
      - Native source/sink/duplex and service-adaptor machinery is covered.
-       **Required Python work:** expose service-adaptor declarations and
-       implementations, the engine-stop injectable/operator, and public
-       real-time lifecycle behaviour.  Private ``nodes._service_utils``
-       helpers are not API targets.
+       Python ``service_adaptor`` / ``service_adaptor_impl`` declarations,
+       automatic registration, and explicit multi-interface implementation
+       stubs now use that erased native machinery.  **Required Python work:**
+       expose the engine-stop injectable/operator and public real-time
+       lifecycle behaviour.  Private ``nodes._service_utils`` helpers are not
+       API targets.
    * - ``test_context.py``
      - 17
      - Same-wiring named/default/required, shadowing, graph consumption, and
@@ -344,7 +346,7 @@ C++ wiring tests.
 
 The audit leaves three implementation groups, in priority order:
 
-1. Python service adaptors plus the engine-stop/injectable surface.
+1. The engine-stop/injectable surface.
 2. Rich Python error-result schemas, keyed-map capture, and trace settings.
 3. Small bridge compatibility work: ``nested_graph`` and vocabulary aliases,
    ``SetDelta`` recording shape, safe REF metadata, output-view conveniences,
@@ -479,10 +481,12 @@ Wiring and node-authoring surface
      - Full
      - Path-aware, multi-interface impls, template descriptors.
    * - ``@adaptor`` / service adaptors
-     - Native full; Python partial
-     - Source/sink/duplex and native per-client service-adaptor exchange are
-       covered.  Python ``service_adaptor`` / ``service_adaptor_impl`` syntax,
-       subscription/request-reply adaptor flows, and concrete families remain.
+     - Full (core)
+     - Source/sink/duplex and per-client keyed service-adaptor exchange are
+       available from C++ and Python.  Python service-adaptor interfaces have
+       one time-series request and one time-series response; bundles carry
+       multi-field protocols.  Scheduler-owned external subscription/request
+       flows and concrete adaptor families remain.
    * - Contexts
      - Full (wiring and compiled children)
      - Named/default/required compatibility plus native context capture across
@@ -534,6 +538,5 @@ on the required authoring slices identified by the compatibility audit above.
 **Additive** (each lands independently and becomes available to Python
 through the registry): every declared-only/missing operator above, the
 remaining serialization value kinds, trace/profiling and node-self
-introspection, Python service-adaptor/engine-control syntax, nested context
-import/export, richer error-result compatibility, and remaining dynamic-TSL
-reduce/mesh shapes.
+introspection, Python engine-control syntax, richer error-result
+compatibility, and remaining dynamic-TSL reduce/mesh shapes.

@@ -853,6 +853,88 @@ def test_adaptor_from_python():
     check(out == [6, 10], f"adaptor: {out}")
 
 
+def test_service_adaptor_from_python():
+    @hg.service_adaptor
+    def echo(request: TS[int]) -> TS[int]: ...
+
+    @hg.service_adaptor_impl(interfaces=echo)
+    def echo_impl(requests: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
+        return requests
+
+    @graph
+    def two_clients(lhs: TS[int], rhs: TS[int]) -> TS[int]:
+        hg.register_adaptor("echo", echo_impl)
+        return echo(lhs, path="echo") + echo(rhs, path="echo")
+
+    out = eval_node(two_clients, [1, None, 2], [10, None, 20])
+    check(out == [None, 11, None, 22], f"service adaptor clients: {out}")
+
+    @hg.service_adaptor
+    def routed(path: str, request: TS[int]) -> TS[int]: ...
+
+    @graph
+    def add_offset(value: TS[int], offset: TS[int]) -> TS[int]:
+        return value + offset
+
+    @hg.service_adaptor_impl(interfaces=routed)
+    def routed_impl(requests: TSD[int, TS[int]], offset: int) -> TSD[int, TS[int]]:
+        return hg.map_(add_offset, requests, hg.const(offset, tp=TS[int]))
+
+    @graph
+    def separated_paths(value: TS[int]) -> TS[int]:
+        hg.register_adaptor("small", routed_impl, offset=1)
+        hg.register_adaptor("large", routed_impl, offset=10)
+        return routed("small", request=value) + routed(value, path="large")
+
+    out = eval_node(separated_paths, [1, None, 2])
+    check(out == [None, 13, None, 15], f"service adaptor paths: {out}")
+
+    @hg.service_adaptor
+    def left(request: TS[int]) -> TS[int]: ...
+
+    @hg.service_adaptor
+    def right(request: TS[int]) -> TS[int]: ...
+
+    @hg.service_adaptor_impl(interfaces=(left, right))
+    def both_impl(path: str):
+        left_requests = hg.impl_input(left, path)
+        right_requests = hg.impl_input(right, path)
+        hg.impl_output(left, left_requests, path)
+        hg.impl_output(right, right_requests, path)
+
+    @graph
+    def two_interfaces(value: TS[int]) -> TS[int]:
+        hg.register_adaptor("both", both_impl)
+        return left(value, path="both") + right(value, path="both")
+
+    out = eval_node(two_interfaces, [3, None, 4])
+    check(out == [None, 6, None, 8], f"service adaptor interfaces: {out}")
+
+    try:
+        @hg.service_adaptor
+        def invalid(lhs: TS[int], rhs: TS[int]) -> TS[int]: ...
+        check(False, f"expected invalid service adaptor definition: {invalid}")
+    except TypeError as e:
+        check("exactly one" in str(e), f"unexpected service adaptor error: {e}")
+
+    try:
+        @hg.service_adaptor_impl(interfaces=echo)
+        def invalid_impl(): ...
+        check(False, f"expected invalid service adaptor implementation: {invalid_impl}")
+    except TypeError as e:
+        check("1 time-series" in str(e), f"unexpected implementation error: {e}")
+
+    @graph
+    def missing(value: TS[int]) -> TS[int]:
+        return echo(value, path="missing")
+
+    try:
+        eval_node(missing, [1])
+        check(False, "expected missing service-adaptor implementation")
+    except (hg.WiringError, ValueError) as e:
+        check("missing implementation" in str(e), f"unexpected missing implementation error: {e}")
+
+
 def test_multi_interface_service_impl():
     # ONE implementation serving TWO interfaces (register_services +
     # impl_input/impl_output, erased): a reference rate and a request/reply

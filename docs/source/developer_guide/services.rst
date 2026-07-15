@@ -422,6 +422,17 @@ and ``ServiceAdaptorPath`` is an alias of ``ServicePath``. Proven by
 ``tests/cpp/test_service_wiring.cpp`` (two clients, each receiving its own
 keyed reply through one implementation).
 
+Python exposes the same native exchange through ``@service_adaptor`` and
+``@service_adaptor_impl``.  The interface currently declares exactly one
+time-series request and one time-series response; use a bundle schema for a
+multi-field protocol.  A client may pass the path in either normal hgraph
+form, ``stub("path", request)``, or as ``stub(request, path="path")``.
+Single-interface implementations are registered automatically through
+``register_adaptor``.  Multi-interface implementations use ``from_graph`` and
+``to_graph`` inside the implementation body, matching the C++ explicit-stub
+shape.  Both Python forms delegate to the erased C++ runtime functions; they
+do not implement a second request/reply engine in Python.
+
 **Paths.** Services are addressed by ``ServicePath`` (``service::path("…")``;
 the default when omitted, overridable per descriptor via a
 ``static constexpr std::string_view default_path`` member). Path resolution
@@ -598,10 +609,9 @@ templates as sugar):
   the schemas; calling the stub wires a client);
   ``register_service(stub_or_name, impl, path=...)`` registers a Python
   ``@graph``/``@compute_node`` implementation — by NAME for C++-defined
-  interfaces (the Q1 direction: Python impls for C++ stubs).
-
-Adaptor families keep their template-only surface for now (excluded from
-this pass; same erasure recipe when needed).
+  interfaces (the Q1 direction: Python impls for C++ stubs).  The corresponding
+  ``@service_adaptor`` / ``@service_adaptor_impl`` surface uses the same
+  descriptor interning and erased native client/registration path.
 
 Status / deferred
 -----------------
@@ -611,7 +621,8 @@ explicit and scalar-qualified paths, template descriptors,
 duplicate-registration rejection, and multi-interface implementations via
 ``register_services`` + ``impl_input``/``impl_output``), adaptor foundations
 (source/sink/duplex interfaces, ``from_graph``/``to_graph``, multi-interface
-``register_adaptors``), **service adaptors** (per-client keyed exchange),
+``register_adaptors``), **service adaptors** (per-client keyed exchange from
+both C++ and Python),
 shared outputs, the context source/capture primitive, the user-facing
 **context wiring API** (``context::scope<"name">`` / ``Context<"name", S>`` /
 ``context::get`` — see *Contexts* above), and wall-clock alarms.
@@ -623,5 +634,4 @@ Deferred (see :doc:`roadmap` Priority 1):
   external events with the scheduler/real-time executor, lifecycle ownership
   for external resources, and concrete adaptor families (kafka/sql/…);
 - ``@component`` and the recordable-id/traits ecosystem it depends on;
-- adaptor-family erasure for Python (services follow the runtime-identity
-  design above; adaptors keep the template surface until needed).
+- external adaptor families and any broader Python protocols they require.

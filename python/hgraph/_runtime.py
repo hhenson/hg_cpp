@@ -2463,25 +2463,106 @@ def adaptor(fn):
     return _AdaptorStub(fn)
 
 
+class _ServiceAdaptorStub:
+    """@service_adaptor: one request time-series per client, multiplexed as
+    ``TSD[int, request]`` for the implementation and demultiplexed from its
+    ``TSD[int, response]`` result by the native runtime."""
+
+    def __init__(self, fn):
+        self.fn = fn
+        self.__name__ = fn.__name__
+        self.flavour = "service_adaptor"
+        sig = inspect.signature(fn)
+        params = [p for p in sig.parameters.values() if isinstance(p.annotation, _TsExpr)]
+        if len(params) != 1:
+            raise TypeError(
+                f"@service_adaptor '{self.__name__}' requires exactly one time-series request parameter"
+            )
+        if not isinstance(sig.return_annotation, _TsExpr):
+            raise TypeError(f"@service_adaptor '{self.__name__}' requires a time-series return annotation")
+        self._request_name = params[0].name
+        path_param = sig.parameters.get("path")
+        default_path = (
+            path_param.default
+            if path_param is not None and isinstance(path_param.default, str)
+            else ""
+        )
+        self.descriptor = _hgraph.service_descriptor(
+            name=fn.__name__, flavour="service_adaptor",
+            request=_unwrap(params[0].annotation), output=_unwrap(sig.return_annotation),
+            default_path=default_path)
+
+    def __call__(self, *args, path="", **kwargs):
+        if args and isinstance(args[0], str):
+            if path:
+                raise TypeError(f"{self.__name__} received path twice")
+            path, args = args[0], args[1:]
+        if len(args) > 1:
+            raise TypeError(f"{self.__name__} accepts one time-series request")
+        if args:
+            if self._request_name in kwargs:
+                raise TypeError(f"{self.__name__} received its request twice")
+            request = args[0]
+        elif self._request_name in kwargs:
+            request = kwargs.pop(self._request_name)
+        else:
+            raise TypeError(f"{self.__name__} requires '{self._request_name}'")
+        if kwargs:
+            raise TypeError(f"{self.__name__} got unexpected arguments {sorted(kwargs)!r}")
+        return WiringPort(_hgraph.service_adaptor_client(
+            _current_wiring(), self.descriptor, path, _unwrap(request)))
+
+    def wire_impl_inputs_stub(self, path=""):
+        return _ServiceInputs(impl_input(self, path))
+
+    def wire_impl_out_stub(self, path, out):
+        impl_output(self, out, path)
+
+
+def service_adaptor(fn):
+    return _ServiceAdaptorStub(fn)
+
+
 def from_graph(stub, path=""):
     """Impl-side: the client input of ``stub`` (inside a registered impl)."""
+    if stub.flavour == "service_adaptor":
+        return WiringPort(_hgraph.service_adaptor_from_graph(
+            _current_wiring(), stub.descriptor, path))
     return WiringPort(_hgraph.adaptor_from_graph(_current_wiring(), stub.descriptor, path))
 
 
 def to_graph(stub, out, path=""):
     """Impl-side: publish the adaptor output of ``stub`` back to clients."""
+    if stub.flavour == "service_adaptor":
+        _hgraph.service_adaptor_to_graph(
+            _current_wiring(), stub.descriptor, path, out=_unwrap(out))
+        return
     _hgraph.adaptor_to_graph(_current_wiring(), stub.descriptor, path, out=_unwrap(out))
 
 
 def register_adaptor(path, implementation, **kwargs):
-    """Bind an @adaptor_impl to ``path`` (hgraph's shape)."""
+    """Bind an adaptor or service-adaptor implementation to ``path``."""
     if not isinstance(implementation, _ServiceImpl):
         raise WiringError("register_adaptor requires an @adaptor_impl-decorated implementation")
-    if len(implementation.interfaces) > 1:
-        raise WiringError("multi-interface adaptor implementations are not supported from Python yet")
-    stub = implementation.interfaces[0]
     impl_fn = _bind_registered_impl(implementation, path, kwargs)
-    _hgraph.register_adaptor_impl(_current_wiring(), stub.descriptor, path, _wrap_graph_fn(impl_fn))
+    flavours = {stub.flavour for stub in implementation.interfaces}
+    if not flavours <= {"adaptor", "service_adaptor"}:
+        raise WiringError("register_adaptor requires adaptor interfaces")
+    if len(implementation.interfaces) > 1:
+        if flavours != {"service_adaptor"}:
+            raise WiringError(
+                "multi-interface Python registration is supported for service adaptors only")
+        _hgraph.register_multi_service_impl(
+            _current_wiring(), [stub.descriptor for stub in implementation.interfaces], path,
+            _wrap_graph_fn(impl_fn))
+        return
+    stub = implementation.interfaces[0]
+    if stub.flavour == "service_adaptor":
+        _hgraph.register_service_adaptor_impl(
+            _current_wiring(), stub.descriptor, path, _wrap_graph_fn(impl_fn))
+    else:
+        _hgraph.register_adaptor_impl(
+            _current_wiring(), stub.descriptor, path, _wrap_graph_fn(impl_fn))
 
 
 def adaptor_impl(fn=None, *, interfaces=None):
@@ -2492,7 +2573,21 @@ def adaptor_impl(fn=None, *, interfaces=None):
     return _ServiceImpl(fn, interfaces)
 
 
-_FLAVOUR_TS_ARITY = {"reference": 0, "subscription": 1, "request_reply": 1, "adaptor": 0}
+def service_adaptor_impl(fn=None, *, interfaces=None):
+    """Implementation of a service adaptor. A single-interface implementation
+    consumes and returns dictionaries keyed by the native client id."""
+    if fn is None:
+        return lambda f: _ServiceImpl(f, interfaces)
+    return _ServiceImpl(fn, interfaces)
+
+
+_FLAVOUR_TS_ARITY = {
+    "reference": 0,
+    "subscription": 1,
+    "request_reply": 1,
+    "adaptor": 0,
+    "service_adaptor": 1,
+}
 
 
 class _ServiceImpl:
@@ -2545,7 +2640,7 @@ class _ServiceImpl:
             resolved.descriptor = descriptor
             resolved.flavour = descriptor.flavour
             return resolved
-        if not isinstance(stub, (_ServiceStub, _AdaptorStub)):
+        if not isinstance(stub, (_ServiceStub, _AdaptorStub, _ServiceAdaptorStub)):
             raise TypeError(f"@service_impl interfaces must be service stubs, got {stub!r}")
         return stub
 

@@ -215,7 +215,8 @@ components:
 - reference, subscription, and request/reply services implemented in Python,
   including path injection, scalar implementation configuration, and the
   existing multi-interface input/output API;
-- Python adaptors and push sources on the sanctioned graph-thread/cross-thread
+- Python service adaptors over the native keyed exchange; external push
+  sources remain limited to the sanctioned graph-thread/cross-thread
   boundaries.
 
 The compatibility gate intentionally does not recreate every Python-only
@@ -399,9 +400,12 @@ Recorded divergences / gaps (the morning-summary list):
   both optional), ``@adaptor_impl(interfaces=...)`` +
   ``register_adaptor(path, impl)`` with impl-side ``from_graph``/
   ``to_graph`` — the four adaptor markers de-templated to roles like the
-  services; and ``mesh_(func, ...)`` + ``mesh_ref(key[, name])`` with the
-  func's element type taken from the python fn's return annotation
-  (records carry their annotated output schema).
+  services. ``@service_adaptor`` / ``@service_adaptor_impl`` extend that
+  surface with the native per-client keyed request/reply exchange; one TS
+  request and one TS response are supported, with bundles carrying multi-field
+  protocols. ``mesh_(func, ...)`` + ``mesh_ref(key[, name])`` take the func's
+  element type from the python fn's return annotation (records carry their
+  annotated output schema).
 - **TimeSeries view objects** (Howard's rulings: proper C++ objects, all
   kinds, strictly lazy): user nodes receive a C++-bound ``TimeSeries``
   view over the LIVE input — nothing converts unless accessed.

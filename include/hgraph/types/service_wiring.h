@@ -1547,22 +1547,18 @@ namespace hgraph::service_adaptor
             return Value{Str{full_path}};
         }
 
-        template <typename Interface>
         struct request_input_source_marker
         {
         };
 
-        template <typename Interface>
         struct request_input_capture_marker
         {
         };
 
-        template <typename Interface>
         struct output_source_marker
         {
         };
 
-        template <typename Interface, typename Impl>
         struct output_capture_marker
         {
         };
@@ -1587,7 +1583,7 @@ namespace hgraph::service_adaptor
             Value path_key = path_key_value(full_path);
 
             WiringPortRef port = w.add_node(
-                std::type_index(typeid(request_input_source_marker<Interface>)), schema,
+                std::type_index(typeid(request_input_source_marker)), schema,
                 std::span<const WiringPortRef>{}, std::move(path_key),
                 [path = std::move(full_path), input_meta]() {
                     return make_request_input_source_node(path, *input_meta);
@@ -1615,7 +1611,7 @@ namespace hgraph::service_adaptor
             Value path_key = path_key_value(full_path);
 
             WiringPortRef port = w.add_node(
-                std::type_index(typeid(output_source_marker<Interface>)), schema,
+                std::type_index(typeid(output_source_marker)), schema,
                 std::span<const WiringPortRef>{}, std::move(path_key),
                 [path = std::move(full_path), target_meta]() {
                     return make_shared_output_source_node(path, *target_meta);
@@ -1651,7 +1647,7 @@ namespace hgraph::service_adaptor
                 builder.type().schema()->input_schema,
                 std::span<const WiringPortRef>{sources.data(), sources.size()}));
 
-            WiringPortRef capture = w.add_node(std::type_index(typeid(request_input_capture_marker<Interface>)),
+            WiringPortRef capture = w.add_node(std::type_index(typeid(request_input_capture_marker)),
                                                std::move(builder),
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{request_id});
@@ -1685,7 +1681,7 @@ namespace hgraph::service_adaptor
                 builder.type().schema()->input_schema,
                 std::span<const WiringPortRef>{sources.data(), sources.size()}));
 
-            WiringPortRef capture = w.add_node(std::type_index(typeid(output_capture_marker<Interface, Impl>)),
+            WiringPortRef capture = w.add_node(std::type_index(typeid(output_capture_marker)),
                                                std::move(builder),
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{});

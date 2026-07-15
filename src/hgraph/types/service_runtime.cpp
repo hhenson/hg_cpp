@@ -67,6 +67,11 @@ namespace hgraph
             return full_path("reqrepl_svc://", d, p);
         }
 
+        [[nodiscard]] std::string service_adaptor_base(const RuntimeServiceDescriptor &d, std::string_view p)
+        {
+            return full_path("service_adaptor://", d, p);
+        }
+
         void require_flavour(const RuntimeServiceDescriptor &descriptor, ServiceFlavour flavour, const char *what)
         {
             if (descriptor.flavour != flavour)
@@ -297,30 +302,46 @@ namespace hgraph
 
     namespace
     {
+        [[nodiscard]] WiringPortRef keyed_request_input_source_node(
+            Wiring &w, const TSValueTypeMetaData *request_schema, const std::string &request_path,
+            std::type_index role)
+        {
+            const auto *dict_meta = TypeRegistry::instance().tsd(
+                scalar_descriptor<Int>::value_meta(), request_schema);
+            WiringNodeSchema schema;
+            schema.output = dict_meta;
+            schema.state  = service::detail::request_input_state_schema(*request_schema);
+            return w.add_node(
+                role, schema, std::span<const WiringPortRef>{},
+                service::detail::path_key_value(request_path),
+                [request_path, request_schema]() {
+                    return make_request_input_source_node(request_path, *request_schema);
+                });
+        }
+
         [[nodiscard]] WiringPortRef request_input_source_node(Wiring &w, const RuntimeServiceDescriptor &descriptor,
                                                               const std::string &request_path)
         {
-            const auto *dict_meta = TypeRegistry::instance().tsd(scalar_descriptor<Int>::value_meta(),
-                                                                 descriptor.request_schema);
-            WiringNodeSchema schema;
-            schema.output = dict_meta;
-            schema.state  = service::detail::request_input_state_schema(*descriptor.request_schema);
-            return w.add_node(
-                std::type_index(typeid(service::detail::request_input_source_marker)), schema,
-                std::span<const WiringPortRef>{}, service::detail::path_key_value(request_path),
-                [request_path, request_meta = descriptor.request_schema]() {
-                    return make_request_input_source_node(request_path, *request_meta);
-                });
+            return keyed_request_input_source_node(
+                w, descriptor.request_schema, request_path,
+                std::type_index(typeid(service::detail::request_input_source_marker)));
+        }
+
+        [[nodiscard]] WiringPortRef keyed_reply_output_source_node(
+            Wiring &w, const TSValueTypeMetaData *response_schema, const std::string &replies_path,
+            std::type_index role)
+        {
+            const auto *dict_meta = TypeRegistry::instance().tsd(
+                scalar_descriptor<Int>::value_meta(), response_schema);
+            return shared_output_source_node(w, role, dict_meta, replies_path);
         }
 
         [[nodiscard]] WiringPortRef reply_output_source_node(Wiring &w, const RuntimeServiceDescriptor &descriptor,
                                                              const std::string &replies_path)
         {
-            const auto *dict_meta = TypeRegistry::instance().tsd(scalar_descriptor<Int>::value_meta(),
-                                                                 descriptor.response_schema);
-            return shared_output_source_node(
-                w, std::type_index(typeid(service::detail::request_reply_output_source_marker)), dict_meta,
-                replies_path);
+            return keyed_reply_output_source_node(
+                w, descriptor.response_schema, replies_path,
+                std::type_index(typeid(service::detail::request_reply_output_source_marker)));
         }
     }  // namespace
 
@@ -407,6 +428,7 @@ namespace hgraph
                 case ServiceFlavour::Reference: return reference_base(d, p);
                 case ServiceFlavour::Subscription: return subscription_base(d, p);
                 case ServiceFlavour::RequestReply: return request_reply_base(d, p);
+                case ServiceFlavour::ServiceAdaptor: return service_adaptor_base(d, p);
                 case ServiceFlavour::Adaptor: break;
             }
             throw std::invalid_argument("service '" + d.name + "': not a service flavour");
@@ -439,6 +461,8 @@ namespace hgraph
                 w.register_service_rank_anchor(endpoint, source.peered_node());
                 return source;
             }
+            case ServiceFlavour::ServiceAdaptor:
+                return service_adaptor_from_graph(w, descriptor, path);
             default:
                 throw std::invalid_argument("service '" + descriptor.name + "': flavour has no impl input");
         }
@@ -486,6 +510,9 @@ namespace hgraph
                 w.register_service_rank_anchor(endpoint, capture);
                 return;
             }
+            case ServiceFlavour::ServiceAdaptor:
+                service_adaptor_to_graph(w, descriptor, path, out);
+                return;
             default:
                 throw std::invalid_argument("service '" + descriptor.name + "': flavour has no impl output");
         }
@@ -503,9 +530,10 @@ namespace hgraph
         for (const RuntimeServiceDescriptor *descriptor : descriptors)
         {
             const std::string base = flavour_base(*descriptor, path);
-            const char *what = descriptor->flavour == ServiceFlavour::Reference    ? "reference service"
-                               : descriptor->flavour == ServiceFlavour::Subscription ? "subscription service"
-                                                                                     : "request/reply service";
+            const char *what = descriptor->flavour == ServiceFlavour::Reference       ? "reference service"
+                               : descriptor->flavour == ServiceFlavour::Subscription  ? "subscription service"
+                               : descriptor->flavour == ServiceFlavour::RequestReply  ? "request/reply service"
+                                                                                       : "service adaptor";
             w.register_built_service_path(base, what);
             description += ' ';
             description += base;
@@ -521,6 +549,10 @@ namespace hgraph
                 case ServiceFlavour::RequestReply:
                     required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/request", {}});
                     required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/replies", {}});
+                    break;
+                case ServiceFlavour::ServiceAdaptor:
+                    required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/from_graph", {}});
+                    required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/to_graph", {}});
                     break;
                 default: break;
             }
@@ -643,6 +675,128 @@ namespace hgraph
         }
         auto scope = w.service_implementation_scope("adaptor " + base, std::move(required_endpoints));
         static_cast<void>(wire_impl(w, descriptor, impl, {}));
+        scope.complete();
+    }
+
+    // ------------------------------------------------------------------
+    // Service adaptors (per-client keyed exchange)
+    // ------------------------------------------------------------------
+
+    WiringPortRef service_adaptor_from_graph(Wiring &w,
+                                             const RuntimeServiceDescriptor &descriptor,
+                                             std::string_view path)
+    {
+        require_flavour(descriptor, ServiceFlavour::ServiceAdaptor, "service adaptor");
+        if (descriptor.input_schema == nullptr)
+        {
+            throw std::invalid_argument("service adaptor '" + descriptor.name + "' has no input schema");
+        }
+        const std::string endpoint = service_adaptor_base(descriptor, path) + "/from_graph";
+        w.register_service_implementation_stub(endpoint, "service adaptor");
+        WiringPortRef source = keyed_request_input_source_node(
+            w, descriptor.input_schema, endpoint,
+            std::type_index(typeid(service_adaptor::detail::request_input_source_marker)));
+        w.register_service_rank_anchor(endpoint, source.peered_node());
+        return source;
+    }
+
+    void service_adaptor_to_graph(Wiring &w, const RuntimeServiceDescriptor &descriptor,
+                                  std::string_view path, const WiringPortRef &out)
+    {
+        require_flavour(descriptor, ServiceFlavour::ServiceAdaptor, "service adaptor");
+        if (descriptor.output_schema == nullptr)
+        {
+            throw std::invalid_argument("service adaptor '" + descriptor.name + "' has no output schema");
+        }
+        const std::string endpoint = service_adaptor_base(descriptor, path) + "/to_graph";
+        w.register_service_implementation_stub(endpoint, "service adaptor");
+        WiringPortRef shared = keyed_reply_output_source_node(
+            w, descriptor.output_schema, endpoint,
+            std::type_index(typeid(service_adaptor::detail::output_source_marker)));
+        const auto *dict_meta = TypeRegistry::instance().tsd(
+            scalar_descriptor<Int>::value_meta(), descriptor.output_schema);
+        const WiringInstance *capture = shared_output_capture_node(
+            w, std::type_index(typeid(service_adaptor::detail::output_capture_marker)),
+            out.schema != nullptr ? out.schema : dict_meta, endpoint, out, shared);
+        w.register_service_rank_anchor(endpoint, capture);
+    }
+
+    WiringPortRef service_adaptor_client(Wiring &w,
+                                         const RuntimeServiceDescriptor &descriptor,
+                                         std::string_view path,
+                                         const WiringPortRef &in)
+    {
+        require_flavour(descriptor, ServiceFlavour::ServiceAdaptor, "service adaptor");
+        if (descriptor.input_schema == nullptr || descriptor.output_schema == nullptr)
+        {
+            throw std::invalid_argument(
+                "service adaptor '" + descriptor.name + "' requires input and output schemas");
+        }
+        const std::string base          = service_adaptor_base(descriptor, path);
+        const std::string request_path  = base + "/from_graph";
+        const std::string replies_path  = base + "/to_graph";
+        const Int         request_id    = service::detail::next_request_id();
+        w.register_service_client_path(base, "service adaptor");
+
+        WiringPortRef requests = keyed_request_input_source_node(
+            w, descriptor.input_schema, request_path,
+            std::type_index(typeid(service_adaptor::detail::request_input_source_marker)));
+        WiringPortRef replies = keyed_reply_output_source_node(
+            w, descriptor.output_schema, replies_path,
+            std::type_index(typeid(service_adaptor::detail::output_source_marker)));
+        w.register_service_rank_anchor(request_path, requests.peered_node());
+
+        std::array<WiringPortRef, 2> sources{in, requests};
+        std::array<WiringInputRef, 2> inputs{{
+            WiringInputRef{.source = sources[0]},
+            WiringInputRef{.source = sources[1], .rank_dependency = false},
+        }};
+        NodeBuilder builder = make_request_input_capture_node(
+            request_path, *descriptor.input_schema, request_id);
+        builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+            builder.type().schema()->input_schema,
+            std::span<const WiringPortRef>{sources.data(), sources.size()}));
+        WiringPortRef capture = w.add_node(
+            std::type_index(typeid(service_adaptor::detail::request_input_capture_marker)),
+            std::move(builder), std::span<const WiringInputRef>{inputs.data(), inputs.size()},
+            Value{request_id});
+        w.register_service_client_rank(request_path, "service adaptor", capture.peered_node(), false);
+        w.register_service_client_rank(replies_path, "service adaptor", replies.peered_node(), true);
+
+        WiringPortRef dict = replies;
+        dict.schema = TypeRegistry::instance().tsd(
+            scalar_descriptor<Int>::value_meta(), descriptor.output_schema);
+        WiringArg dict_arg;
+        dict_arg.kind = WiringArg::Kind::TimeSeries;
+        dict_arg.port = dict;
+        WiringArg id_arg;
+        id_arg.kind         = WiringArg::Kind::Scalar;
+        id_arg.scalar_value = Value{request_id};
+        id_arg.scalar_meta  = id_arg.scalar_value.schema();
+        std::array<WiringArg, 2> item_args{dict_arg, id_arg};
+        ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
+            "getitem_", std::span<const WiringArg>{item_args.data(), item_args.size()});
+        return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs).output;
+    }
+
+    void register_service_adaptor_impl(Wiring &w,
+                                       const RuntimeServiceDescriptor &descriptor,
+                                       std::string_view path,
+                                       const WiredFn &impl)
+    {
+        require_flavour(descriptor, ServiceFlavour::ServiceAdaptor, "service adaptor");
+        const std::string base = service_adaptor_base(descriptor, path);
+        w.register_built_service_path(base, "service adaptor");
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints{
+            WiringServiceImplementationEndpoint{base + "/from_graph", {}},
+            WiringServiceImplementationEndpoint{base + "/to_graph", {}},
+        };
+        auto scope = w.service_implementation_scope(
+            "service adaptor " + base, std::move(required_endpoints));
+        WiringPortRef requests = service_adaptor_from_graph(w, descriptor, path);
+        std::array<WiringPortRef, 1> impl_inputs{requests};
+        WiringPortRef replies = wire_impl(w, descriptor, impl, impl_inputs);
+        service_adaptor_to_graph(w, descriptor, path, replies);
         scope.complete();
     }
 }  // namespace hgraph

@@ -3006,6 +3006,7 @@ NB_MODULE(_hgraph, m)
                 case ServiceFlavour::Subscription: return "subscription";
                 case ServiceFlavour::RequestReply: return "request_reply";
                 case ServiceFlavour::Adaptor: return "adaptor";
+                case ServiceFlavour::ServiceAdaptor: return "service_adaptor";
             }
             return "unknown";
         })
@@ -3041,6 +3042,16 @@ NB_MODULE(_hgraph, m)
                   if (request.has_value()) { descriptor.input_schema = request->meta; }   // adaptor input
                   if (output.has_value()) { descriptor.output_schema = output->meta; }
               }
+              else if (flavour == "service_adaptor")
+              {
+                  if (!request.has_value() || !output.has_value())
+                  {
+                      throw nb::value_error("service adaptor requires request and output schemas");
+                  }
+                  descriptor.flavour      = ServiceFlavour::ServiceAdaptor;
+                  descriptor.input_schema = request->meta;
+                  descriptor.output_schema = output->meta;
+              }
               else { throw nb::value_error("unknown service flavour"); }
               return PyServiceDesc{&intern_service_descriptor(std::move(descriptor))};
           },
@@ -3063,6 +3074,7 @@ NB_MODULE(_hgraph, m)
             case ServiceFlavour::RequestReply:
                 return PyPort{request_reply_service_call(w.wiring_ref(), *desc.descriptor, path, ts.value().ref)};
             case ServiceFlavour::Adaptor:
+            case ServiceFlavour::ServiceAdaptor:
                 throw std::logic_error("service_client does not accept adaptor descriptors");
         }
         throw std::logic_error("unreachable");
@@ -3081,6 +3093,7 @@ NB_MODULE(_hgraph, m)
                 register_request_reply_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
                 return;
             case ServiceFlavour::Adaptor:
+            case ServiceFlavour::ServiceAdaptor:
                 throw std::logic_error("register_service_impl does not accept adaptor descriptors");
         }
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
@@ -3133,6 +3146,22 @@ NB_MODULE(_hgraph, m)
     m.def("register_adaptor_impl", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
                                       const PyWiredFn &impl) {
         register_adaptor_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
+    m.def("service_adaptor_client", [](PyWiring &w, const PyServiceDesc &desc,
+                                        const std::string &path, const PyPort &in) {
+        return PyPort{service_adaptor_client(w.wiring_ref(), *desc.descriptor, path, in.ref)};
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("in"));
+    m.def("service_adaptor_from_graph", [](PyWiring &w, const PyServiceDesc &desc,
+                                            const std::string &path) {
+        return PyPort{service_adaptor_from_graph(w.wiring_ref(), *desc.descriptor, path)};
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{});
+    m.def("service_adaptor_to_graph", [](PyWiring &w, const PyServiceDesc &desc,
+                                          const std::string &path, const PyPort &out) {
+        service_adaptor_to_graph(w.wiring_ref(), *desc.descriptor, path, out.ref);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("out"));
+    m.def("register_service_adaptor_impl", [](PyWiring &w, const PyServiceDesc &desc,
+                                               const std::string &path, const PyWiredFn &impl) {
+        register_service_adaptor_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
 
     m.def("push_context", [](PyWiring &w, const std::string &name, const PyPort &port) {
