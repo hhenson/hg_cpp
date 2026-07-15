@@ -283,6 +283,65 @@ namespace
             wire<testing::record>(w, wire<TryOutValue>(w, result), Str{"out"});
         }
     };
+
+    struct ErasedTryValueGraph
+    {
+        static constexpr auto name = "erased_try_value_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> x)
+        {
+            auto result = wire<stdlib::try_except>(w, fn<DoublerOrThrowG>(), x)
+                              .as<TryIntResult>();
+            return wire<TryOutValue>(w, result);
+        }
+    };
+
+    struct ErasedTryErrorGraph
+    {
+        static constexpr auto name = "erased_try_error_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Int>> x)
+        {
+            auto result = wire<stdlib::try_except>(w, fn<DoublerOrThrowG>(), x)
+                              .as<TryIntResult>();
+            return wire<TryExcMsg>(w, result);
+        }
+    };
+
+    struct ErasedTrySinkGraph
+    {
+        static constexpr auto name = "erased_try_sink_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Int>> x)
+        {
+            auto error = wire<stdlib::try_except>(w, fn<SinkOrThrowG>(), x)
+                             .as<TS<NodeError>>();
+            return wire<ErrorMsgOf>(w, error);
+        }
+    };
+
+    struct DirectCaptureValueGraph
+    {
+        static constexpr auto name = "direct_capture_value_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> x)
+        {
+            auto output = wire<ThrowOnNegative>(w, x);
+            (void)exception_time_series(output);
+            return output;
+        }
+    };
+
+    struct DirectCaptureErrorGraph
+    {
+        static constexpr auto name = "direct_capture_error_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Int>> x)
+        {
+            auto output = wire<ThrowOnNegative>(w, x);
+            return wire<ErrorMsgOf>(w, exception_time_series(output));
+        }
+    };
 }  // namespace
 
 TEST_CASE("NodeError: a value-layer bundle with the reference fields")
@@ -300,6 +359,7 @@ TEST_CASE("NodeError: a value-layer bundle with the reference fields")
     CHECK(bundle.at("signature_name").checked_as<Str>() == "my_node");
     CHECK(bundle.at("error_msg").checked_as<Str>() == "boom");
     CHECK(bundle.at("label").checked_as<Str>().empty());
+    CHECK_FALSE(bundle.at("additional_context").valid());
 }
 
 TEST_CASE("error handling: exception_time_series captures a node throw")
@@ -416,6 +476,21 @@ TEST_CASE("error handling: try_except over a sink sub-graph yields just the erro
     auto gs = ex.view().graph().global_state();
 
     CHECK_OUTPUT(get_recorded_values<Str>(gs, "err"), values<Str>(none, "sink negative"s));
+}
+
+TEST_CASE("error handling: registered try_except wires value graphs and sinks")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+
+    stdlib::register_standard_operators();
+
+    const auto input = values<Int>(5, -3, 7);
+    CHECK_OUTPUT(eval_node<ErasedTryValueGraph>(input), values<Int>(10, none, 14));
+    CHECK_OUTPUT(eval_node<ErasedTryErrorGraph>(input), values<Str>(none, "negative input"s, none));
+    CHECK_OUTPUT(eval_node<ErasedTrySinkGraph>(input), values<Str>(none, "sink negative"s, none));
+    CHECK_OUTPUT(eval_node<DirectCaptureValueGraph>(input), values<Int>(10, none, 14));
+    CHECK_OUTPUT(eval_node<DirectCaptureErrorGraph>(input), values<Str>(none, "negative input"s, none));
 }
 
 TEST_CASE("error handling: try_except propagates child graph pauses")

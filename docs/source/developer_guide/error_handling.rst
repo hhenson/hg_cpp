@@ -3,7 +3,7 @@ Error handling
 
 This page is the **authoritative design record** for runtime error handling:
 per-node exception capture, the ``NodeError`` value, ``exception_time_series``
-(the per-node extractor) and ``try_except_`` (wrapping a whole sub-graph). It
+(the per-node extractor) and ``try_except`` (wrapping a whole sub-graph). It
 mirrors the Python reference (``ext/main/hgraph/_wiring/_exception_handling.py``,
 ``_types/_error_type.py``) and records the deliberate C++ adaptations.
 
@@ -29,15 +29,18 @@ A node evaluation can throw. The framework's contract:
   error capture on the producing node and returns its error-output time series.
   For a TSD ``map_`` this is a sparse ``TSD[K, TS[NodeError]]`` with one
   retained error series per live mapped child.
-- ``try_except_(func, …)`` wraps a **whole sub-graph** in one node that runs the
+- ``try_except(func, …)`` wraps a **whole sub-graph** in one node that runs the
   child graph under try/catch and produces ``TSB[{exception, out}]`` — the
   ``out`` field forwards the wrapped graph's output, the ``exception`` field
   ticks a ``NodeError`` when the child raises.
 
 This matches Python: ``exception_time_series`` is the light per-node path and
-``try_except_`` the graph path (Python's ``_try_except_node`` short-circuits a
-single node through its error output, while ``try_except_`` over a graph builds a
-catching wrapper node).
+``try_except`` the graph path. C++ provides both the statically typed
+``try_except_<G>`` entry point and the erased ``wire<stdlib::try_except>``
+operator; Python's public ``try_except`` uses the same erased operator. Keyed
+``map_`` calls use their native per-child error output so errors retain keys;
+Python compute nodes likewise use their native scalar error output to avoid a
+nested-graph allocation.
 
 An exception that neither path catches — one that escapes the **root** graph —
 is annotated at the root evaluation boundary with the throwing node's identity
@@ -64,6 +67,7 @@ field                       type     content
 ``error_msg``               ``str``  ``exception.what()``
 ``stack_trace``             ``str``  best-effort (see adaptation below)
 ``activation_back_trace``   ``str``  best-effort (see adaptation below)
+``additional_context``      ``str``  optional context; unset by default
 ==========================  =======  ============================================
 
 It is a first-class scalar type (``scalar_descriptor<NodeError>``), so
@@ -131,8 +135,8 @@ node's single allocation and follows the same stable key/slot lifetime rather
 than maintaining a side table.
 
 
-``try_except_`` over a sub-graph
---------------------------------
+``try_except`` over a sub-graph
+-------------------------------
 
 ``try_except_<G>(w, args…)`` compiles ``G`` into a child graph (the same
 ``compile_subgraph`` path as ``nested_<G>``) and adds one **try/except node**
@@ -157,6 +161,26 @@ reusing the same storage and child-graph binding model").
 - **Interning.** Like ``nested_``: same ``G`` + equal inputs dedup; the child
   builder and its program-lifetime context are created on an intern miss.
 
+The erased C++ form accepts any ``WiredFn`` and resolves positional/keyword
+time-series arguments against that function before compiling the child:
+
+.. code-block:: cpp
+
+   auto result = wire<stdlib::try_except>(w, fn<RiskyGraph>(), x)
+                     .as<TryIntResult>();
+
+Python exposes the corresponding public result schemas and call:
+
+.. code-block:: python
+
+   @graph
+   def protected(x: TS[int]) -> TSB[TryExceptResult[TS[int]]]:
+       return try_except(risky_graph, x)
+
+``TryExceptTsdMapResult[K, O]`` describes the keyed ``map_`` form. Its
+``exception`` field is ``TSD[K, TS[NodeError]]`` and follows mapped-child
+lifetime.
+
 
 Files
 -----
@@ -169,6 +193,8 @@ Files
 - ``include/hgraph/runtime/try_except_node.{h}`` / ``src/…/try_except_node.cpp``
   — the try/except node on the nested substrate.
 - ``include/hgraph/types/subgraph_wiring.h`` — ``try_except_<G>`` wiring entry;
+  ``include/hgraph/lib/std/operators/higher_order.h`` and its implementation —
+  the erased ``WiredFn`` operator;
   ``exception_time_series`` lives beside the existing ``error_output(port)``
   helper in ``graph_wiring.h``.
 - Tests: ``tests/cpp/test_error_handling.cpp``.
@@ -177,8 +203,10 @@ Files
 Roadmap / deferrals
 -------------------
 
-Done: ``NodeError``, per-node capture + ``exception_time_series``,
-``try_except_`` over a sub-graph (value + sink), and keyed TSD ``map_`` capture.
+Done: public C++/Python ``NodeError`` and ``TryExcept*`` schemas, per-node
+capture + ``exception_time_series``, typed and erased ``try_except`` over a
+sub-graph (value + sink), public Python call syntax, and keyed TSD ``map_``
+capture.
 
 Deferred (recorded, not yet built):
 

@@ -1,6 +1,7 @@
 """hgraph-parity names: enums, markers and thin aliases the ported test
 suite imports. Real gaps raise at USE (never at import) with a "gap:"
 message so ported tests can skip precisely."""
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -198,6 +199,81 @@ class CompoundScalar:
         cls.__compound_abstract__ = bool(abstract)
         cls.__compound_discriminator__ = discriminator
         cls.__compound_options__ = dict(options)
+
+
+@dataclass(frozen=True)
+class NodeError(CompoundScalar, namespace=""):
+    """Structured error value emitted by native node and child-graph capture."""
+
+    signature_name: str
+    label: str
+    wiring_path: str
+    error_msg: str
+    stack_trace: str
+    activation_back_trace: str
+    additional_context: str = None
+
+    def __str__(self):
+        label = f" labelled {self.label}" if self.label else ""
+        path = f" at {self.wiring_path}" if self.wiring_path else ""
+        context = f" :: {self.additional_context}" if self.additional_context else ""
+        return (
+            f"{self.signature_name}{label}{path}{context}\n"
+            f"NodeError: {self.error_msg}\nStack trace:\n{self.stack_trace}\n"
+            f"Activation Back Trace:\n{self.activation_back_trace}"
+        )
+
+
+class TryExceptResult:
+    """Result schema for a protected value-producing graph."""
+
+    def __class_getitem__(cls, output_type):
+        from ._types import TS
+
+        schema = type("TryExceptResult", (), {})
+        schema.__annotations__ = {"exception": TS[NodeError], "out": output_type}
+        return schema
+
+
+class TryExceptTsdMapResult:
+    """Result schema for keyed ``map_`` error capture."""
+
+    def __class_getitem__(cls, parameters):
+        from ._types import TSD, TS
+
+        key_type, output_type = parameters
+        schema = type("TryExceptTsdMapResult", (), {})
+        schema.__annotations__ = {
+            "exception": TSD[key_type, TS[NodeError]],
+            "out": output_type,
+        }
+        return schema
+
+
+def try_except(
+    func,
+    *args,
+    __trace_back_depth__=1,
+    __capture_values__=False,
+    **kwargs,
+):
+    """Run one wired function as a protected native child graph.
+
+    ``map_`` uses its keyed native error output so each child retains an
+    independent ``NodeError`` until that key is erased.
+    """
+    from ._wiring import _PyNode, _as_wired, combine, map_, wire
+
+    if __trace_back_depth__ != 1 or __capture_values__:
+        raise NotImplementedError(
+            "try_except traceback depth and input-value capture are not implemented")
+    if func is map_:
+        output = map_(*args, **kwargs)
+        return combine(exception=exception_time_series(output), out=output)
+    if isinstance(func, _PyNode) and func.has_output:
+        output = func(*args, **kwargs)
+        return combine(exception=exception_time_series(output), out=output)
+    return wire("try_except", _as_wired(func), *args, **kwargs)
 
 
 class JSON(str):

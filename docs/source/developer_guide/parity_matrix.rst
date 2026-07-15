@@ -241,11 +241,11 @@ Python builder objects that deliberately do not exist in the C++-first model.
        compatibility contract.
    * - ``test_error_handling.py``
      - 10
-     - Native ``NodeError``, ``exception_time_series``, and ``try_except_``
+     - Native and public Python ``NodeError``, ``exception_time_series``,
+       ``TryExceptResult`` / ``TryExceptTsdMapResult``, and ``try_except``
        execution are covered. TSD ``map_`` now captures child errors as
        ``TSD[K, TS[NodeError]]`` with native and Python ``eval_node`` coverage.
-       **Required Python work:** public result schema aliases and call syntax,
-       plus capture/traceback configuration.
+       Traceback depth/value-capture configuration remains additive.
    * - ``test_lift.py``
      - 4
      - Basic lift and explicit output override are covered.  ``dedup_output``
@@ -527,9 +527,9 @@ Runtime
 -------
 
 Both evaluation modes (Simulation, RealTime) are at full parity — Python has
-no additional modes. Error handling is functional but shallower than Python:
-``__trace_back_depth__`` / ``__capture_values__`` and public ``TryExcept*``
-result/call conveniences are deferred; see :doc:`error_handling`.
+no additional modes. Error handling is functional but traceback capture is
+shallower than Python: ``__trace_back_depth__`` / ``__capture_values__`` are
+deferred; see :doc:`error_handling`.
 
 What blocks the bridge vs. what is additive
 -------------------------------------------

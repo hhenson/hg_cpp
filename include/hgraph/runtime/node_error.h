@@ -5,6 +5,7 @@
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/value/value.h>
 
+#include <optional>
 #include <string>
 
 namespace hgraph
@@ -40,6 +41,7 @@ namespace hgraph
         std::string error_msg{};
         std::string stack_trace{};
         std::string activation_back_trace{};
+        std::optional<std::string> additional_context{};
     };
 
     /** Build an owning ``NodeError`` bundle ``Value`` from ``fields``. */

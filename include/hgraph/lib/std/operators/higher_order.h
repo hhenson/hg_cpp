@@ -235,6 +235,21 @@ namespace hgraph::stdlib
     };
 
     /**
+     * ``try_except(func, *args, **kwargs)`` — compile ``func`` as one protected
+     * child graph. A value-producing function returns
+     * ``TSB[{exception: TS<NodeError>, out: O}]``; a sink returns the bare
+     * ``TS<NodeError>``. The output schema is derived from the compiled
+     * ``WiredFn`` by the default overload.
+     */
+    struct try_except : Operator<"try_except",
+                                 Scalar<"func", WiredFn>,
+                                 VarIn<"args", TsVar<"A">>,
+                                 VarKwIn<"kwargs">,
+                                 Out<TsVar<"O">>>
+    {
+    };
+
+    /**
      * ``map_`` — apply ``func`` element-wise over a multiplexed collection,
      * with one runtime child graph instance **per key or dynamic-list index**.
      * This is the current C++ subset of

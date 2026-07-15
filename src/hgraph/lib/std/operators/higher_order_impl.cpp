@@ -17,6 +17,7 @@ namespace hgraph::stdlib
         register_graph_overload<switch_, higher_order_impl_detail::switch_impl>();
         register_graph_overload<switch_, higher_order_impl_detail::switch_sink_impl>();
         register_graph_overload<dispatch_, higher_order_impl_detail::dispatch_impl>();
+        register_graph_overload<try_except, higher_order_impl_detail::try_except_impl>();
 
         register_graph_overload<map_, higher_order_impl_detail::map_impl_tsd>();
         register_graph_overload<map_, higher_order_impl_detail::map_sink_impl_tsd>();

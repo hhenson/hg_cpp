@@ -1324,6 +1324,160 @@ namespace hgraph::stdlib
             }
         };
 
+        struct try_except_node_tag
+        {
+        };
+
+        [[nodiscard]] inline const TSValueTypeMetaData *try_except_output_schema(
+            const TSValueTypeMetaData *child_output)
+        {
+            if (child_output == nullptr) { return node_error_ts_meta(); }
+            return TypeRegistry::instance().un_named_tsb(
+                {{"exception", node_error_ts_meta()}, {"out", child_output}});
+        }
+
+        [[nodiscard]] inline CompiledSubGraph compile_try_except_child(
+            const WiredFn &func,
+            std::span<const TSValueTypeMetaData *const> schemas)
+        {
+            if (!func.valid())
+            {
+                throw std::invalid_argument("try_except: 'func' must be a wirable function");
+            }
+            CompiledSubGraph compiled = func.compile(schemas);
+            if (compiled.output_binding.has_value() != (compiled.output_schema != nullptr))
+            {
+                throw std::invalid_argument(
+                    "try_except: the function output schema and nested output binding must agree");
+            }
+            return compiled;
+        }
+
+        [[nodiscard]] inline WiringPortRef wire_try_except(
+            Wiring &w,
+            const WiredFn &func,
+            std::vector<WiringPortRef> positional,
+            std::vector<std::pair<std::string, WiringPortRef>> named)
+        {
+            auto bound = bind_wired_fn_args<WiringPortRef>(
+                "try_except", func, {positional.data(), positional.size()},
+                {named.data(), named.size()}, {});
+
+            std::vector<const TSValueTypeMetaData *> schemas;
+            schemas.reserve(bound.ordered.size());
+            for (const WiringPortRef &port : bound.ordered) { schemas.push_back(port.schema); }
+
+            CompiledSubGraph compiled = compile_try_except_child(
+                func, {schemas.data(), schemas.size()});
+
+            std::vector<WiringPortRef> inputs = std::move(bound.ordered);
+            inputs.reserve(inputs.size() + compiled.captured_inputs.size());
+            for (WiringPortRef &captured : compiled.captured_inputs)
+            {
+                inputs.push_back(std::move(captured));
+            }
+            compiled.captured_inputs.clear();
+            if (compiled.input_schemas.size() != inputs.size())
+            {
+                throw std::logic_error(
+                    "try_except: compiled boundary schema count does not match the outer inputs");
+            }
+
+            const TSValueTypeMetaData *input_schema = nullptr;
+            if (!compiled.input_schemas.empty())
+            {
+                std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+                fields.reserve(compiled.input_schemas.size());
+                for (std::size_t index = 0; index < compiled.input_schemas.size(); ++index)
+                {
+                    fields.emplace_back(std::to_string(index), compiled.input_schemas[index]);
+                }
+                input_schema = TypeRegistry::instance().un_named_tsb(fields);
+            }
+
+            const bool has_output = compiled.output_schema != nullptr;
+            const TSValueTypeMetaData *output_schema = try_except_output_schema(compiled.output_schema);
+
+            WiringNodeSchema node_schema;
+            node_schema.input  = input_schema;
+            node_schema.output = output_schema;
+
+            return w.add_node(
+                std::type_index(typeid(try_except_node_tag)), node_schema,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()}, Value{func}, [&] {
+                    NodeTypeMetaData meta;
+                    meta.display_name  = "try_except";
+                    meta.input_schema  = input_schema;
+                    meta.output_schema = output_schema;
+
+                    SingleNestedGraphNodeSpec spec;
+                    spec.graph_builder  = std::move(compiled.graph_builder);
+                    spec.input_bindings = std::move(compiled.input_bindings);
+                    if (has_output)
+                    {
+                        spec.output_binding = std::move(compiled.output_binding);
+                        spec.output_binding->target_path = {1};
+                    }
+
+                    NodeBuilder builder = try_except_node(std::move(meta), std::move(spec));
+                    builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                        input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                    return builder;
+                });
+        }
+
+        [[nodiscard]] inline std::optional<const TSValueTypeMetaData *> probe_try_except_output(
+            OperatorCallContext context)
+        {
+            const WiredFn *func = context.scalar_as<WiredFn>("func");
+            if (func == nullptr || context.args.empty()) { return std::nullopt; }
+
+            std::vector<const TSValueTypeMetaData *> positional;
+            for (std::size_t index = 1; index < context.args.size(); ++index)
+            {
+                if (context.args[index].kind != WiringArg::Kind::TimeSeries) { return std::nullopt; }
+                positional.push_back(context.args[index].port.schema);
+            }
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> named;
+            for (const auto &[name, arg] : context.kwargs)
+            {
+                if (arg.kind != WiringArg::Kind::TimeSeries) { return std::nullopt; }
+                named.emplace_back(name, arg.port.schema);
+            }
+            auto bound = bind_wired_fn_args<const TSValueTypeMetaData *>(
+                "try_except", *func, {positional.data(), positional.size()},
+                {named.data(), named.size()}, {});
+            CompiledSubGraph compiled = compile_try_except_child(
+                *func, {bound.ordered.data(), bound.ordered.size()});
+            return try_except_output_schema(compiled.output_schema);
+        }
+
+        struct try_except_impl
+        {
+            static constexpr auto name = "try_except_impl";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (resolution.find_ts("__out__") != nullptr) { return; }
+                (void)fallback_on_exception(false, [&] {
+                    const auto output = probe_try_except_output(context);
+                    if (!output.has_value()) { return false; }
+                    bind_graph_output(resolution, *output, "O");
+                    return true;
+                });
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         VarIn<"args", TsVar<"A">> positional,
+                                         VarKwIn<"kwargs"> kwargs)
+            {
+                return wire_try_except(
+                    w, func.value(),
+                    std::vector<WiringPortRef>{positional.begin(), positional.end()},
+                    std::vector<std::pair<std::string, WiringPortRef>>{kwargs.begin(), kwargs.end()});
+            }
+        };
+
         struct DispatchSelectionPlan
         {
             static constexpr Int no_match  = Int{-1};

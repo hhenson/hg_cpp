@@ -24,6 +24,7 @@ namespace hgraph
             {"error_msg", str_meta},
             {"stack_trace", str_meta},
             {"activation_back_trace", str_meta},
+            {"additional_context", str_meta},
         };
         return registry.bundle("NodeError", fields);
     }
@@ -49,6 +50,10 @@ namespace hgraph
         set_field("error_msg", fields.error_msg);
         set_field("stack_trace", fields.stack_trace);
         set_field("activation_back_trace", fields.activation_back_trace);
+        if (fields.additional_context.has_value())
+        {
+            set_field("additional_context", *fields.additional_context);
+        }
         return builder.build();
     }
 }  // namespace hgraph

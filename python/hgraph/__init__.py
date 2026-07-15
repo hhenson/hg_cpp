@@ -14,8 +14,9 @@ from ._types import (TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, CONTEXT, RE
                      KEYABLE_SCALAR, TIME_SERIES_TYPE, TIME_SERIES_TYPE_1, TIME_SERIES_TYPE_2, OUT, SIZE,
                      DEFAULT, REF, K, V, SCHEMA, TS_SCHEMA,
                      SIGNAL, WINDOW_SIZE, WINDOW_SIZE_MIN, WindowSize, Array, ts_schema, ENUM)
-from ._compat import (CmpResult, DivideByZero, exception_time_series, OperatorWiringNodeClass, BoolResult,
-                      CompoundScalar, JSON, TimeSeriesReference,
+from ._compat import (CmpResult, DivideByZero, exception_time_series, try_except,
+                      TryExceptResult, TryExceptTsdMapResult, NodeError,
+                      OperatorWiringNodeClass, BoolResult, CompoundScalar, JSON, TimeSeriesReference,
                       NodeException, accumulate, average, center_of_mass_to_alpha, span_to_alpha,
                       to_json_builder, from_json_builder)
 from ._wiring import filter_by
@@ -87,7 +88,8 @@ def __dir__():
 
 __all__ = [
     "TS", "TSS", "TSD", "TSL", "TSB", "Size", "TimeSeriesSchema", "CONTEXT", "REQUIRED", "WiringError", "TimeSeries",
-    "WiringPort", "CmpResult", "DivideByZero", "exception_time_series", "OperatorWiringNodeClass", "graph", "run_graph", "eval_node", "wire", "map_", "reduce", "mesh_", "mesh_ref", "REMOVED", "feedback", "switch_", "passive", "compute_node", "sink_node", "generator", "STATE", "SCHEDULER", "CLOCK", "EvaluationEngineApi", "component", "record_replay_scope", "RecordReplayEnum", "comparison_summary", "push_queue", "EvaluationMode", "context",
+    "WiringPort", "CmpResult", "DivideByZero", "NodeError", "exception_time_series", "try_except",
+    "TryExceptResult", "TryExceptTsdMapResult", "OperatorWiringNodeClass", "graph", "run_graph", "eval_node", "wire", "map_", "reduce", "mesh_", "mesh_ref", "REMOVED", "feedback", "switch_", "passive", "compute_node", "sink_node", "generator", "STATE", "SCHEDULER", "CLOCK", "EvaluationEngineApi", "component", "record_replay_scope", "RecordReplayEnum", "comparison_summary", "push_queue", "EvaluationMode", "context",
     "MIN_ST", "MIN_TD", "IN_MEMORY", "DATA_FRAME",
     "GlobalContext", "GlobalState", "set_as_of", "set_table_schema_date_key", "set_table_schema_as_of_key",
     "set_record_replay_config", "frame_store_contains", "frame_store_read", "evaluate_const",
