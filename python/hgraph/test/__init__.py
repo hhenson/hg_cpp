@@ -1,5 +1,23 @@
 """hgraph.test - the test utilities (hgraph-compatible import path)."""
-from hgraph._runtime import eval_node
+from contextlib import contextmanager
+
+from .._wiring import eval_node
+
+
+@contextmanager
+def use_wiring(wiring):
+    """Install ``wiring`` as the active wiring context for the duration.
+
+    Test support: lets a test intercept ``hgraph.wire`` calls with a stub
+    (the sanctioned route — test code must not reach into ``hgraph._wiring``).
+    """
+    from .._wiring import _wiring_stack
+
+    _wiring_stack.append(wiring)
+    try:
+        yield wiring
+    finally:
+        _wiring_stack.pop()
 
 
 class EvaluationTrace:
@@ -14,4 +32,4 @@ class EvaluationTrace:
     def set_print_all_values(value: bool) -> None: ...
 
 
-__all__ = ["eval_node", "EvaluationTrace"]
+__all__ = ["eval_node", "EvaluationTrace", "use_wiring"]

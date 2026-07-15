@@ -5,9 +5,10 @@ wires the inputs as replay ports, applies ``fn`` (a pair port supports
 python probe node, runs, and asserts the sequence."""
 
 import _hgraph
+import _hgraph as _m
 
-from ._runtime import (WiringPort, _hgraph as _m, _infer_ts_type, _simplify_delta, _unwrap,
-                       _wiring_stack, compute_node)
+from ._wiring import (WiringPort, _infer_ts_type, _simplify_delta, _unwrap,
+                      _wiring_stack, compute_node)
 from ._types import TS
 
 __all__ = ("eval_", "arrow", "assert_")
@@ -96,7 +97,7 @@ class _EvalArrowInput:
                 ports.append(WiringPort(src))
 
             value = ports[0] if len(ports) == 1 else _Pair(*ports)
-            from ._runtime import _OperatorFunction
+            from ._wiring import _OperatorFunction
 
             for fn in chain.fns:
                 if isinstance(value, _Pair) and isinstance(fn, _OperatorFunction):

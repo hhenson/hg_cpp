@@ -120,7 +120,7 @@ def test_scalars_in_operators():
 
 
 def test_wire_does_not_retry_with_blanket_auto_const():
-    import hgraph._runtime as runtime
+    from hgraph.test import use_wiring
 
     class FakeWiring:
         def __init__(self):
@@ -131,21 +131,18 @@ def test_wire_does_not_retry_with_blanket_auto_const():
             raise RuntimeError("first failure")
 
     fake = FakeWiring()
-    runtime._wiring_stack.append(fake)
-    try:
+    with use_wiring(fake):
         try:
-            runtime.wire("needs_mixed_args", 1, False)
+            hg.wire("needs_mixed_args", 1, False)
             check(False, "expected WiringError")
         except hg.WiringError:
             pass
-    finally:
-        runtime._wiring_stack.pop()
 
     check(fake.calls == 1, f"wire retried {fake.calls} times")
 
 
 def test_wire_does_not_promote_positional_types_generically():
-    import hgraph._runtime as runtime
+    from hgraph.test import use_wiring
 
     seen = {}
 
@@ -156,11 +153,8 @@ def test_wire_does_not_promote_positional_types_generically():
             seen["output_type"] = output_type
             return None
 
-    runtime._wiring_stack.append(FakeWiring())
-    try:
-        runtime.wire("custom", TS[int])
-    finally:
-        runtime._wiring_stack.pop()
+    with use_wiring(FakeWiring()):
+        hg.wire("custom", TS[int])
 
     check(seen["name"] == "custom", f"unexpected operator: {seen}")
     check(len(seen["args"]) == 1, f"positional type was stripped: {seen}")

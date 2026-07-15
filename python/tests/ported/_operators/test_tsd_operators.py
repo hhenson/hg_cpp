@@ -56,7 +56,9 @@ from hgraph import (
     values_,
     if_then_else,
 )
-from hgraph._operators._stream import filter_by
+# deviation: upstream imports filter_by from hgraph._operators._stream; here the
+# root package exports it (private hgraph._* paths are internal-only).
+from hgraph import filter_by
 from hgraph.nodes import extract_tsd, flatten_tsd, keys_where_true, make_tsd, where_true
 from hgraph.test import eval_node
 

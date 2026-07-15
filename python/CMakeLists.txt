@@ -6,6 +6,11 @@ if(_hgraph_use_python_stable_abi)
 endif()
 nanobind_add_module(_hgraph ${_hgraph_nanobind_options}
     module.cpp
+    py_nodes.cpp
+    py_ports.cpp
+    py_state_services.cpp
+    py_type_system.cpp
+    py_wiring.cpp
     value_conversion.cpp
 )
 target_link_libraries(_hgraph PRIVATE hgraph_core hgraph::options)

@@ -369,12 +369,12 @@ class _TsExpr:
         per-element ports. Plain values lift to const at the field type."""
         import _hgraph as _m
 
-        from ._runtime import WiringPort, _unwrap, wire
+        from ._wiring import WiringPort, _unwrap, wire
 
         if kwargs and not ports and getattr(self.handle, "is_ts", False) and not getattr(self, "_json", False):
             import datetime as _dt
 
-            from ._runtime import wire as _wire
+            from ._wiring import wire as _wire
 
             _COMPONENTS = {
                 _m.ts(_value_type(_dt.date)): ("year", "month", "day"),
@@ -387,8 +387,8 @@ class _TsExpr:
                 # combine[TS[date/timedelta/datetime]](components...): plain
                 # values const-lift; absent numeric components fill with
                 # const 0 (hgraph parity).
-                from ._runtime import WiringPort as _WP
-                from ._runtime import _infer_ts_type
+                from ._wiring import WiringPort as _WP
+                from ._wiring import _infer_ts_type
 
                 call = dict(kwargs)
                 strict = call.pop("__strict__", True)
@@ -428,7 +428,7 @@ class _TsExpr:
             for name, value in call.items():
                 unwrapped = _unwrap(value)
                 if not isinstance(unwrapped, _m.Port):
-                    from ._runtime import _infer_ts_type
+                    from ._wiring import _infer_ts_type
 
                     tp = _infer_ts_type([value])
                     if tp is None:
@@ -449,7 +449,7 @@ class _TsExpr:
             for name, value in kwargs.items():
                 unwrapped = _unwrap(value)
                 if not isinstance(unwrapped, _m.Port):
-                    from ._runtime import _infer_ts_type
+                    from ._wiring import _infer_ts_type
 
                     tp = _infer_ts_type([value])
                     if isinstance(value, list):
@@ -469,7 +469,7 @@ class _TsExpr:
             for name, value in kwargs.items():
                 unwrapped = _unwrap(value)
                 if not isinstance(unwrapped, _m.Port):
-                    from ._runtime import _infer_ts_type
+                    from ._wiring import _infer_ts_type
 
                     tp = _infer_ts_type([value])
                     if tp is None:
@@ -667,7 +667,7 @@ class _TSDMeta(type):
     def from_ts(*args, **kwargs):
         """hgraph parity: combine[TSD](keys, *values) / TSD.from_ts(a=..., b=...)
         wires the combine_tsd operator family (static or ticking key sets)."""
-        from ._runtime import wire
+        from ._wiring import wire
 
         strict = kwargs.pop("__strict__", None)
         if kwargs and not args:
@@ -812,7 +812,7 @@ class _TSLMeta(type):
         import types
         import _hgraph as _m
 
-        from ._runtime import WiringPort, _unwrap, wire
+        from ._wiring import WiringPort, _unwrap, wire
 
         if len(ports) == 1 and isinstance(ports[0], (types.GeneratorType, list, tuple)):
             ports = tuple(ports[0])

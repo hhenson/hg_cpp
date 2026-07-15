@@ -18,23 +18,23 @@ from ._compat import (CmpResult, DivideByZero, exception_time_series, OperatorWi
                       CompoundScalar, JSON, TimeSeriesReference,
                       NodeException, accumulate, average, center_of_mass_to_alpha, span_to_alpha,
                       to_json_builder, from_json_builder)
-from ._runtime import filter_by
-from ._runtime import convert
-from ._runtime import collect
-from ._runtime import emit
-from ._runtime import cast_, downcast_ref
-from ._runtime import ParseError, IncorrectTypeBinding, RequirementsNotMetWiringError
-from ._runtime import evaluate_graph, GraphConfiguration, TSB_OUT, operator, dispatch, dispatch_
-from ._runtime import RecordReplayContext, set_record_replay_model, RECORDABLE_STATE, TS_OUT
+from ._wiring import filter_by
+from ._wiring import convert
+from ._wiring import collect
+from ._wiring import emit
+from ._wiring import cast_, downcast_ref
+from ._wiring import ParseError, IncorrectTypeBinding, RequirementsNotMetWiringError
+from ._wiring import evaluate_graph, GraphConfiguration, TSB_OUT, operator, dispatch, dispatch_
+from ._wiring import RecordReplayContext, set_record_replay_model, RECORDABLE_STATE, TS_OUT
 from .nodes import pass_through_node
-from ._runtime import pass_through, no_key
+from ._wiring import pass_through, no_key
 from ._signature import (WiringNodeType, WiringNodeSignature, extract_signature,
                          extract_kwargs)
-from ._runtime import _PyNode as PythonWiringNodeClass
-from ._runtime import _GraphFn as GraphWiringNodeClass
-from ._runtime import _Generator as PythonGeneratorWiringNodeClass
-from ._runtime import GlobalContext, GlobalState, set_record_replay_config, set_as_of, set_table_schema_date_key, set_table_schema_as_of_key, evaluate_const
-from ._runtime import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, mesh_, mesh_ref, REMOVED, feedback, switch_, passive, compute_node, sink_node, generator, lift, STATE, SCHEDULER, CLOCK, LOGGER, DebugContext, component, record_replay_scope, RecordReplayEnum, comparison_summary, push_queue, EvaluationMode, context, WiringError, reference_service, subscription_service, request_reply_service, register_service, service_impl, adaptor, adaptor_impl, service_adaptor, service_adaptor_impl, register_adaptor, from_graph, to_graph, impl_input, impl_output, get_service_inputs, set_service_output
+from ._wiring import _PyNode as PythonWiringNodeClass
+from ._wiring import _GraphFn as GraphWiringNodeClass
+from ._wiring import _Generator as PythonGeneratorWiringNodeClass
+from ._wiring import GlobalContext, GlobalState, set_record_replay_config, set_as_of, set_table_schema_date_key, set_table_schema_as_of_key, evaluate_const
+from ._wiring import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, mesh_, mesh_ref, REMOVED, feedback, switch_, passive, compute_node, sink_node, generator, lift, STATE, SCHEDULER, CLOCK, LOGGER, DebugContext, component, record_replay_scope, RecordReplayEnum, comparison_summary, push_queue, EvaluationMode, context, WiringError, reference_service, subscription_service, request_reply_service, register_service, service_impl, adaptor, adaptor_impl, service_adaptor, service_adaptor_impl, register_adaptor, from_graph, to_graph, impl_input, impl_output, get_service_inputs, set_service_output
 
 MIN_ST = _hgraph.MIN_ST
 MIN_TD = _hgraph.MIN_TD
@@ -47,13 +47,13 @@ frame_store_read = _hgraph.frame_store_read
 TimeSeries = _hgraph.TimeSeries
 _hgraph._set_removed_sentinel(REMOVED)
 _hgraph._set_requirements_error(RequirementsNotMetWiringError)
-from ._runtime import Removed as _Removed, _SetDelta
+from ._wiring import Removed as _Removed, _SetDelta
 _hgraph._set_removed_class(_Removed)
 _hgraph._set_set_delta_class(_SetDelta)
 _hgraph._set_cmp_result_enum(CmpResult)
 _hgraph._set_divide_by_zero_enum(DivideByZero)
 
-from ._runtime import _Combine as _CombineClass
+from ._wiring import _Combine as _CombineClass
 combine = _CombineClass()
 
 from ._types import Frame, TABLE, COMPOUND_SCALAR, compound_scalar
@@ -61,7 +61,7 @@ from ._table import (ToTableMode, TableSchema, make_table_schema, table_schema,
                      get_table_schema_date_key, get_table_schema_as_of_key)
 
 REMOVE = REMOVED           # hgraph's TSD key-removal sentinel
-from ._runtime import Removed
+from ._wiring import Removed
 
 _OPERATOR_NAMES = frozenset(_hgraph.operator_names())
 
@@ -103,6 +103,6 @@ __all__ = [
     "from_graph", "to_graph", "impl_input", "impl_output", "get_service_inputs", "set_service_output",
 ]
 
-from ._runtime import set_delta, compute_set_delta
+from ._wiring import set_delta, compute_set_delta
 from ._types import K_1
 default_path = ""   # hgraph's default service path sentinel

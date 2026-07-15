@@ -58,8 +58,8 @@ def _tp_key(tp):
 
 def _config_keys():
     # The bitemporal column names live on the C++ record_replay config
-    # (set via set_table_schema_date_key/_as_of_key in _runtime).
-    from ._runtime import GlobalState
+    # (set via set_table_schema_date_key/_as_of_key in _wiring).
+    from ._wiring import GlobalState
 
     if GlobalState.has_instance():
         return _hgraph._table_schema_keys(GlobalState.instance()._impl)

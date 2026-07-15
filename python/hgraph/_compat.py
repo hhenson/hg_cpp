@@ -23,14 +23,14 @@ class DivideByZero(Enum):
 def exception_time_series(ts):
     """Activate error capture on ``ts``'s producing node; returns the
     TS[NodeError] error output (the C++ error-capture machinery)."""
-    from ._runtime import WiringPort, _current_wiring, _unwrap
+    from ._wiring import WiringPort, _current_wiring, _unwrap
 
     return WiringPort(_current_wiring().exception_time_series(_unwrap(ts)))
 
 
 # The type of a module-level operator function (hgraph exposes the wiring
 # node class; ours is the generated operator_function).
-from ._runtime import operator_function as _operator_function
+from ._wiring import operator_function as _operator_function
 
 OperatorWiringNodeClass = type(_operator_function("add_"))
 

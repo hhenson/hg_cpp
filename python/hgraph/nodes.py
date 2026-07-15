@@ -1,5 +1,5 @@
 """hgraph.nodes - helper nodes (hgraph parity; python impls as upstream)."""
-from ._runtime import compute_node, graph, wire, REMOVED
+from ._wiring import compute_node, graph, wire, REMOVED
 from ._types import TS, TSD, TSS, K, K_1
 
 __all__ = ("make_tsd", "flatten_tsd", "extract_tsd", "keys_where_true", "where_true", "tsl_to_tsd")
@@ -50,7 +50,7 @@ class _KeySubscripted:
 def _keys_where_true_for(tp):
     @compute_node
     def keys_where_true(ts: TSD[tp, TS[bool]]) -> TSS[tp]:
-        from ._runtime import Removed
+        from ._wiring import Removed
 
         delta = set()
         for key in ts.removed_keys():
@@ -68,7 +68,7 @@ def _keys_where_true_for(tp):
 def _where_true_for(tp):
     @compute_node
     def where_true(ts: TSD[tp, TS[bool]]) -> TSD[tp, TS[bool]]:
-        from ._runtime import REMOVED
+        from ._wiring import REMOVED
 
         out = {}
         for key, value in ts.modified_items():
@@ -90,12 +90,12 @@ where_true = _KeySubscripted(_where_true_for)
 def tsl_to_tsd(tsl, keys: tuple = None):
     """upstream shape: tsl_to_tsd(tsl, keys) - convert a TSL to a TSD with
     the given keys (modified elements only, hgraph parity)."""
-    from ._runtime import wire
+    from ._wiring import wire
 
     return wire("combine_tsd", tuple(keys), *[tsl[i] for i in range(len(keys))], __strict__=False)
 
 
-from ._runtime import compute_node as _compute_node
+from ._wiring import compute_node as _compute_node
 from ._types import TIME_SERIES_TYPE as _TST
 
 

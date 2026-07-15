@@ -1,8 +1,10 @@
 from dataclasses import dataclass
 from typing import Generic, Optional, TypeVar
 
-from hgraph import CompoundScalar, TS, compute_node, graph
-from hgraph._compat import from_json_builder, to_json_builder
+from hgraph import CompoundScalar, TS, compute_node, from_json_builder, graph, to_json_builder
+# White-box: these tests assert on the interned C++ value-type metadata
+# (qualified names, generic specialisation identity), which has no public
+# introspection surface — the module under test is imported directly.
 from hgraph._types import _value_type
 from hgraph.test import eval_node
 

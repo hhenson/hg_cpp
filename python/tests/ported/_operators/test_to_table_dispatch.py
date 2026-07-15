@@ -11,19 +11,23 @@ from dataclasses import dataclass
 import pytest
 from frozendict import frozendict as fd
 
-from hgraph import TS, CompoundScalar, TimeSeriesSchema, TSB, compute_node, TIME_SERIES_TYPE, TABLE, DEFAULT, TSD
-from hgraph._compat import extract_table_schema_raw_type, PartialSchema
-from hgraph.test import eval_node
-
 # This file exercises upstream's `_impl` INTERNALS (the PartialSchema
 # builder-closure bundle and its raw-type extraction), not operator
 # behaviour. The C++ equivalent is the interned TsTableLayout/TableConverter
 # (design record *Record/replay, tables and const_fn*, step 6), whose
 # behaviour is covered by test_to_table.py (the same schema/partition-key
 # shapes assert there through the public table_schema/to_table surface).
-pytestmark = pytest.mark.skip(
-    reason="deviation: upstream _impl internals (PartialSchema dispatch); the C++ "
-           "equivalent is the interned TsTableLayout, covered by test_to_table.py")
+# The skip sits BEFORE the hgraph imports so the retained upstream code below
+# (which needs the internal PartialSchema shim) never executes — private
+# hgraph._* paths must not be imported by test code.
+pytest.skip(
+    "deviation: upstream _impl internals (PartialSchema dispatch); the C++ "
+    "equivalent is the interned TsTableLayout, covered by test_to_table.py",
+    allow_module_level=True)
+
+from hgraph import TS, CompoundScalar, TimeSeriesSchema, TSB, compute_node, TIME_SERIES_TYPE, TABLE, DEFAULT, TSD
+from hgraph._compat import extract_table_schema_raw_type, PartialSchema
+from hgraph.test import eval_node
 
 
 @compute_node(resolvers={TABLE: lambda m, schema: tuple[tuple[*schema.types], ...] if schema.partition_keys else tuple[*schema.types]})

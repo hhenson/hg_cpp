@@ -1,0 +1,479 @@
+/**
+ * State + services bindings: _GlobalState and record/replay configuration,
+ * services/adaptors/mesh/context wiring entry points, and the runtime view
+ * classes handed to python user nodes (OutputView, TimeSeries,
+ * RuntimeGlobalState, RecordableStateView, clock/scheduler), including the
+ * enum/sentinel slot setters.
+ */
+#include "py_runtime.h"
+#include "py_wiring.h"
+#include "py_bindings.h"
+
+namespace nb = nanobind;
+using namespace hgraph;
+using namespace hgraph::python_bridge;
+
+namespace hgraph::python_bridge
+{
+    void bind_state_and_services(nb::module_ &m)
+    {
+    nb::class_<GlobalState>(m, "_GlobalState")
+        .def(nb::init<>())
+        .def("__len__", [](GlobalState &self) { return self.view().size(); })
+        .def("__contains__", [](GlobalState &self, const std::string &key) { return self.view().contains(key); })
+        .def("__getitem__",
+             [](GlobalState &self, const std::string &key) -> nb::object {
+                 const GlobalStateView state = self.view();
+                 if (!state.contains(key)) { throw nb::key_error(key.c_str()); }
+                 return value_to_py(state.get(key));
+             })
+        .def("get",
+             [](GlobalState &self, const std::string &key, nb::object fallback) -> nb::object {
+                 const GlobalStateView state = self.view();
+                 return state.contains(key) ? value_to_py(state.get(key)) : fallback;
+             },
+             nb::arg("key"), nb::arg("default") = nb::none())
+        .def("_set_memory_recording_entry",
+             [](GlobalState &self, const std::string &key, std::size_t index,
+                DateTime when, nb::handle python_delta) {
+                 ValueView buffer = self.view().get(key);
+                 if (!buffer.valid()) { throw nb::key_error(key.c_str()); }
+                 const auto entries = buffer.as_list();
+                 if (index >= entries.size())
+                 {
+                     throw nb::index_error("recording entry index is out of range");
+                 }
+                 const auto current = entries.at(index).as_indexed_view();
+                 const auto *delta_schema = current.at(1).schema();
+                 nb::object canonical = nb::borrow(python_delta);
+                 if (delta_schema != nullptr &&
+                     delta_schema->value_kind() == ValueTypeKind::Bundle &&
+                     delta_schema->field_count == 2 &&
+                     std::string_view{delta_schema->fields[0].name} == "removed" &&
+                     std::string_view{delta_schema->fields[1].name} == "modified")
+                 {
+                     nb::set removed;
+                     nb::dict modified;
+                     for (auto [item_key, item_value] : nb::cast<nb::dict>(python_delta))
+                     {
+                         if (removed_sentinel_slot().is_valid() &&
+                             item_value.ptr() == removed_sentinel_slot().ptr())
+                         {
+                             removed.add(item_key);
+                         }
+                         else { modified[item_key] = item_value; }
+                     }
+                     nb::dict shaped;
+                     shaped["removed"]  = std::move(removed);
+                     shaped["modified"] = std::move(modified);
+                     canonical = std::move(shaped);
+                 }
+                 Value delta = py_to_value_as(canonical, delta_schema);
+                 Value replacement = testing::make_sparse_entry(
+                     delta_schema, when, delta);
+                 buffer.as_list().begin_mutation().set(index, replacement.view());
+             },
+             nb::arg("key"), nb::arg("index"), nb::arg("when"),
+             nb::arg("delta"))
+        .def("__setitem__",
+             [](GlobalState &self, const std::string &key, nb::handle value) {
+                 self.view().set(key, py_to_value(value));
+             })
+        .def("__delitem__",
+             [](GlobalState &self, const std::string &key) {
+                 if (!self.view().erase(key)) { throw nb::key_error(key.c_str()); }
+             })
+        .def("keys", [](GlobalState &self) {
+            nb::list result;
+            for (const ValueView key : self.view().as_value().view().as_map().keys())
+            {
+                result.append(value_to_py(key));
+            }
+            return result;
+        });
+
+    // Record/replay configuration is copied with the Python thread's seed.
+    m.def("_set_record_replay_config", [](GlobalState &state, const std::string &model) {
+        auto config = record_replay::config(state.view());
+        config.model = model;
+        record_replay::set_config(state.view(), std::move(config));
+    });
+    m.def("_set_as_of", [](GlobalState &state, nb::object value) {
+        auto config = record_replay::config(state.view());
+        config.as_of = value.is_none() ? std::optional<DateTime>{}
+                                        : std::optional<DateTime>{nb::cast<DateTime>(value)};
+        record_replay::set_config(state.view(), std::move(config));
+    }, nb::arg("state"), nb::arg("value").none());
+    m.def("_set_table_schema_date_key", [](GlobalState &state, const std::string &key) {
+        auto config = record_replay::config(state.view());
+        config.date_key = key;
+        record_replay::set_config(state.view(), std::move(config));
+    });
+    m.def("_set_table_schema_as_of_key", [](GlobalState &state, const std::string &key) {
+        auto config = record_replay::config(state.view());
+        config.as_of_key = key;
+        record_replay::set_config(state.view(), std::move(config));
+    });
+    m.def("_table_schema_keys", [](GlobalState &state) {
+        const auto config = record_replay::config(state.view());
+        return nb::make_tuple(config.date_key, config.as_of_key);
+    });
+    m.attr("MODE_NONE")          = static_cast<unsigned>(record_replay::Mode::None);
+    m.attr("MODE_RECORD")        = static_cast<unsigned>(record_replay::Mode::Record);
+    m.attr("MODE_REPLAY")        = static_cast<unsigned>(record_replay::Mode::Replay);
+    m.attr("MODE_COMPARE")       = static_cast<unsigned>(record_replay::Mode::Compare);
+    m.attr("MODE_REPLAY_OUTPUT") = static_cast<unsigned>(record_replay::Mode::ReplayOutput);
+    m.attr("MODE_RECOVER")       = static_cast<unsigned>(record_replay::Mode::Recover);
+    nb::class_<record_replay::scope>(m, "RecordReplayScope")
+        .def(nb::init<record_replay::Mode, std::string>(), nb::arg("mode"), nb::arg("recordable_id") = std::string{});
+    m.def("record_replay_scope", [](unsigned mode, const std::string &recordable_id) {
+        return new record_replay::scope{static_cast<record_replay::Mode>(mode), recordable_id};
+    }, nb::arg("mode"), nb::arg("recordable_id") = std::string{}, nb::rv_policy::take_ownership);
+    m.def("current_record_replay_mode", [] {
+        const auto &state = record_replay::current_scope();
+        return nb::make_tuple(static_cast<unsigned>(state.mode), state.recordable_id);
+    });
+    m.def("_comparison_summary", [](GlobalState &state, const std::string &fq_key) {
+        const auto summary = record_replay::comparison_summary(state.view(), fq_key);
+        return nb::make_tuple(summary.compared, summary.mismatches);
+    });
+    m.def("frame_store_contains", [](const std::string &key) { return record_replay::store_contains(key); });
+    m.def("frame_store_read", [](const std::string &key) { return frame_to_py(record_replay::store_read(key)); });
+
+    // Context publishing (same-wiring; the C++ design record's semantics).
+    // --- services (runtime identity; services.rst rulings 2026-07-05) ---
+    nb::class_<PyServiceDesc>(m, "ServiceDescriptor")
+        .def_prop_ro("flavour", [](const PyServiceDesc &self) {
+            switch (self.descriptor->flavour)
+            {
+                case ServiceFlavour::Reference: return "reference";
+                case ServiceFlavour::Subscription: return "subscription";
+                case ServiceFlavour::RequestReply: return "request_reply";
+                case ServiceFlavour::Adaptor: return "adaptor";
+                case ServiceFlavour::ServiceAdaptor: return "service_adaptor";
+            }
+            return "unknown";
+        })
+        .def_prop_ro("name", [](const PyServiceDesc &self) { return self.descriptor->name; });
+    // (TsType kind/size introspection for the python sequence protocol)
+    m.def("service_descriptor",
+          [](const std::string &name, const std::string &flavour, std::optional<PyTsType> output,
+             std::optional<PyTsType> key_ts, std::optional<PyTsType> value, std::optional<PyTsType> request,
+             std::optional<PyTsType> response, const std::string &default_path) {
+              RuntimeServiceDescriptor descriptor;
+              descriptor.name         = name;
+              descriptor.default_path = default_path;
+              if (flavour == "reference")
+              {
+                  descriptor.flavour       = ServiceFlavour::Reference;
+                  descriptor.output_schema = output.value().meta;
+              }
+              else if (flavour == "subscription")
+              {
+                  descriptor.flavour      = ServiceFlavour::Subscription;
+                  descriptor.key_type     = key_ts.value().meta->value_schema;
+                  descriptor.value_schema = value.value().meta;
+              }
+              else if (flavour == "request_reply")
+              {
+                  descriptor.flavour         = ServiceFlavour::RequestReply;
+                  descriptor.request_schema  = request.value().meta;
+                  descriptor.response_schema = response.value().meta;
+              }
+              else if (flavour == "adaptor")
+              {
+                  descriptor.flavour = ServiceFlavour::Adaptor;
+                  if (request.has_value()) { descriptor.input_schema = request->meta; }   // adaptor input
+                  if (output.has_value()) { descriptor.output_schema = output->meta; }
+              }
+              else if (flavour == "service_adaptor")
+              {
+                  if (!request.has_value() || !output.has_value())
+                  {
+                      throw nb::value_error("service adaptor requires request and output schemas");
+                  }
+                  descriptor.flavour      = ServiceFlavour::ServiceAdaptor;
+                  descriptor.input_schema = request->meta;
+                  descriptor.output_schema = output->meta;
+              }
+              else { throw nb::value_error("unknown service flavour"); }
+              return PyServiceDesc{&intern_service_descriptor(std::move(descriptor))};
+          },
+          nb::arg("name"), nb::arg("flavour"), nb::arg("output") = nb::none(), nb::arg("key_ts") = nb::none(),
+          nb::arg("value") = nb::none(), nb::arg("request") = nb::none(), nb::arg("response") = nb::none(),
+          nb::arg("default_path") = std::string{});
+    m.def("find_service", [](const std::string &name) -> nb::object {
+        const auto *descriptor = find_service_descriptor(name);
+        return descriptor != nullptr ? nb::cast(PyServiceDesc{descriptor}) : nb::none();
+    });
+    m.def("service_client", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                               std::optional<PyPort> ts) {
+        switch (desc.descriptor->flavour)
+        {
+            case ServiceFlavour::Reference:
+                return PyPort{reference_service_client(w.wiring_ref(), *desc.descriptor, path)};
+            case ServiceFlavour::Subscription:
+                return PyPort{subscription_service_subscribe(w.wiring_ref(), *desc.descriptor, path,
+                                                             ts.value().ref)};
+            case ServiceFlavour::RequestReply:
+                return PyPort{request_reply_service_call(w.wiring_ref(), *desc.descriptor, path, ts.value().ref)};
+            case ServiceFlavour::Adaptor:
+            case ServiceFlavour::ServiceAdaptor:
+                throw std::logic_error("service_client does not accept adaptor descriptors");
+        }
+        throw std::logic_error("unreachable");
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("ts") = nb::none());
+    m.def("register_service_impl", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                                      const PyWiredFn &impl) {
+        switch (desc.descriptor->flavour)
+        {
+            case ServiceFlavour::Reference:
+                register_reference_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+                return;
+            case ServiceFlavour::Subscription:
+                register_subscription_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+                return;
+            case ServiceFlavour::RequestReply:
+                register_request_reply_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+                return;
+            case ServiceFlavour::Adaptor:
+            case ServiceFlavour::ServiceAdaptor:
+                throw std::logic_error("register_service_impl does not accept adaptor descriptors");
+        }
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
+
+    // mesh_(func)[k] cross-instance access, called inside a mesh function.
+    m.def("mesh_ref", [](PyWiring &w, const PyPort &key, const std::string &name) {
+        const TSValueTypeMetaData *out_schema = OperatorRegistry::instance().resolve_mesh_scope(name);
+        if (out_schema == nullptr)
+        {
+            throw std::logic_error("mesh_ref used outside a mesh scope (no enclosing mesh is being wired)");
+        }
+        WiringPortRef placeholder =
+            wire_operator(w.wiring_ref(), "nothing", std::span<const WiringArg>{}, true, out_schema)
+                .output.erased();
+        return PyPort{stdlib::higher_order_impl_detail::mesh_ref_erased(w.wiring_ref(), key.ref, placeholder, name)};
+    }, nb::arg("w"), nb::arg("key"), nb::arg("name") = std::string{});
+
+    m.def("service_impl_input", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path) {
+        return PyPort{service_impl_input(w.wiring_ref(), *desc.descriptor, path)};
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{});
+    m.def("service_impl_output", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                                    const PyPort &out) {
+        service_impl_output(w.wiring_ref(), *desc.descriptor, path, out.ref);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("out"));
+    m.def("register_multi_service_impl", [](PyWiring &w, nb::list descs, const std::string &path,
+                                            const PyWiredFn &impl) {
+        std::vector<const RuntimeServiceDescriptor *> descriptors;
+        descriptors.reserve(nb::len(descs));
+        for (nb::handle desc : descs) { descriptors.push_back(nb::cast<PyServiceDesc &>(desc).descriptor); }
+        register_multi_service_impl(w.wiring_ref(),
+                                    std::span<const RuntimeServiceDescriptor *const>{descriptors.data(),
+                                                                                     descriptors.size()},
+                                    path, impl.fn);
+    }, nb::arg("w"), nb::arg("descs"), nb::arg("path") = std::string{}, nb::arg("impl"));
+
+    m.def("adaptor_client", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                               std::optional<PyPort> in) -> nb::object {
+        const WiringPortRef *in_ref = in.has_value() ? &in->ref : nullptr;
+        WiringPortRef        out    = adaptor_client(w.wiring_ref(), *desc.descriptor, path, in_ref);
+        if (out.schema == nullptr) { return nb::none(); }
+        return nb::cast(PyPort{std::move(out)});
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("in") = nb::none());
+    m.def("adaptor_from_graph", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path) {
+        return PyPort{adaptor_from_graph(w.wiring_ref(), *desc.descriptor, path)};
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{});
+    m.def("adaptor_to_graph", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                                 const PyPort &out) {
+        adaptor_to_graph(w.wiring_ref(), *desc.descriptor, path, out.ref);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("out"));
+    m.def("register_adaptor_impl", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                                      const PyWiredFn &impl) {
+        register_adaptor_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
+    m.def("service_adaptor_client", [](PyWiring &w, const PyServiceDesc &desc,
+                                        const std::string &path, const PyPort &in) {
+        return PyPort{service_adaptor_client(w.wiring_ref(), *desc.descriptor, path, in.ref)};
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("in"));
+    m.def("service_adaptor_from_graph", [](PyWiring &w, const PyServiceDesc &desc,
+                                            const std::string &path) {
+        return PyPort{service_adaptor_from_graph(w.wiring_ref(), *desc.descriptor, path)};
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{});
+    m.def("service_adaptor_to_graph", [](PyWiring &w, const PyServiceDesc &desc,
+                                          const std::string &path, const PyPort &out) {
+        service_adaptor_to_graph(w.wiring_ref(), *desc.descriptor, path, out.ref);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("out"));
+    m.def("register_service_adaptor_impl", [](PyWiring &w, const PyServiceDesc &desc,
+                                               const std::string &path, const PyWiredFn &impl) {
+        register_service_adaptor_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
+
+    m.def("push_context", [](PyWiring &w, const std::string &name, const PyPort &port) {
+        if (name.empty()) { throw nb::value_error("context requires a non-empty name"); }
+        graph_wiring_detail::push_context_source(w.wiring_ref(), name, port.ref);
+    });
+    m.def("pop_context", [] { graph_wiring_detail::pop_context_source(); });
+    m.def("get_context", [](PyWiring &w, const std::string &name) {
+        return PyPort{graph_wiring_detail::resolve_context_source(w.wiring_ref(), name)};
+    });
+    m.def("has_context", [](PyWiring &w, const std::string &name) {
+        return graph_wiring_detail::has_context_source(w.wiring_ref(), name);
+    });
+    m.attr("IN_MEMORY")  = std::string{record_replay::IN_MEMORY};
+    m.attr("DATA_FRAME") = std::string{record_replay::DATA_FRAME};
+    m.attr("MIN_ST")     = nb::cast(MIN_ST);
+    m.attr("MIN_TD")     = nb::cast(MIN_TD);
+
+    nb::class_<PyOutput>(m, "OutputView")
+        .def_prop_ro("valid", &PyOutput::valid)
+        .def_prop_rw("value", &PyOutput::value, &PyOutput::set_value,
+                     nb::for_setter(nb::arg("value").none()))
+        .def("get_or_create", &PyOutput::get_or_create)
+        .def("clear", &PyOutput::clear)
+        .def("removed_keys", &PyOutput::removed_keys)
+        .def("add", &PyOutput::add)
+        .def("remove", &PyOutput::remove)
+        .def("__getitem__", &PyOutput::child)
+        .def("__delitem__", &PyOutput::erase)
+        .def("__contains__", &PyOutput::contains)
+        .def("__len__", &PyOutput::size)
+        .def("__getattr__",
+             [](const PyOutput &self, const std::string &name) {
+                 return self.child(nb::str(name.c_str()));
+             });
+    nb::class_<PyRecordableState>(m, "RecordableStateView")
+        .def_prop_ro("valid", &PyRecordableState::valid)
+        .def_prop_ro("modified", &PyRecordableState::modified)
+        .def_prop_rw("value", &PyRecordableState::value,
+                     &PyRecordableState::set_value)
+        .def("__getitem__", &PyRecordableState::child)
+        .def("__getattr__",
+             [](const PyRecordableState &self, const std::string &name) {
+                 return self.child(nb::str(name.c_str()));
+             });
+    nb::class_<PyRuntimeGlobalState>(m, "RuntimeGlobalState")
+        .def("__len__", [](const PyRuntimeGlobalState &self) { return self.checked().size(); })
+        .def("__contains__", [](const PyRuntimeGlobalState &self, const std::string &key) {
+            return self.checked().contains(key);
+        })
+        .def("__getitem__", [](const PyRuntimeGlobalState &self, const std::string &key) -> nb::object {
+            const GlobalStateView state = self.checked();
+            if (!state.contains(key)) { throw nb::key_error(key.c_str()); }
+            return value_to_py(state.get(key));
+        })
+        .def("get", [](const PyRuntimeGlobalState &self, const std::string &key,
+                       nb::object fallback) -> nb::object {
+            const GlobalStateView state = self.checked();
+            return state.contains(key) ? value_to_py(state.get(key)) : fallback;
+        }, nb::arg("key"), nb::arg("default") = nb::none())
+        .def("__setitem__", [](const PyRuntimeGlobalState &self, const std::string &key, nb::handle value) {
+            self.checked().set(key, py_to_value(value));
+        })
+        .def("__delitem__", [](const PyRuntimeGlobalState &self, const std::string &key) {
+            if (!self.checked().erase(key)) { throw nb::key_error(key.c_str()); }
+        })
+        .def("keys", [](const PyRuntimeGlobalState &self) {
+            nb::list result;
+            for (const ValueView key : self.checked().as_value().view().as_map().keys())
+            {
+                result.append(value_to_py(key));
+            }
+            return result;
+        });
+    nb::class_<PyTimeSeries>(m, "TimeSeries")
+        .def_prop_ro("value", &PyTimeSeries::value)
+        .def_prop_ro("_kind", [](const PyTimeSeries &self) { return static_cast<int>(self.kind()); })
+        // hgraph's runtime activity control: a node may passivate/reactivate
+        // its own input subscription (the C++ In views expose the same).
+        .def("make_passive",
+             [](PyTimeSeries &self) {
+                 self.require_alive();
+                 self.view.make_passive();
+             })
+        .def("make_active",
+             [](PyTimeSeries &self) {
+                 self.require_alive();
+                 self.view.make_active();
+             })
+        .def_prop_ro("delta_value", &PyTimeSeries::delta_value)
+        .def_prop_ro("modified", &PyTimeSeries::modified)
+        .def_prop_ro("valid", &PyTimeSeries::valid)
+        .def_prop_ro("all_valid", &PyTimeSeries::all_valid)
+        // TSW eviction surface (hgraph's removed_value pair).
+        .def_prop_ro("has_removed_value",
+                     [](const PyTimeSeries &self) {
+                         const auto &view = self.checked();
+                         if (view.schema()->kind != TSTypeKind::TSW)
+                         {
+                             throw nb::attribute_error("has_removed_value");
+                         }
+                         return view.as_window().has_removed_value();
+                     })
+        .def_prop_ro("removed_value",
+                     [](const PyTimeSeries &self) {
+                         const auto &view = self.checked();
+                         if (view.schema()->kind != TSTypeKind::TSW)
+                         {
+                             throw nb::attribute_error("removed_value");
+                         }
+                         return value_to_py(view.as_window().removed_value());
+                     })
+        .def_prop_ro("last_modified_time", &PyTimeSeries::last_modified_time)
+        .def("added", &PyTimeSeries::added)
+        .def("removed", &PyTimeSeries::removed)
+        .def("keys", &PyTimeSeries::keys)
+        .def("modified_keys", &PyTimeSeries::modified_keys)
+        .def("modified_items", &PyTimeSeries::modified_items)
+        .def("modified_values", &PyTimeSeries::modified_values)
+        .def("values", &PyTimeSeries::values)
+        .def("removed_keys", &PyTimeSeries::removed_keys)
+        .def("__getitem__", &PyTimeSeries::child_at)
+        .def("__getattr__", [](nb::object self_obj, const std::string &name) -> nb::object {
+            auto &self = nb::cast<PyTimeSeries &>(self_obj);
+            if (self.kind() != TSTypeKind::TSB) { throw nb::attribute_error(name.c_str()); }
+            // hgraph's TSB.as_schema: typed field access (the same view).
+            if (name == "as_schema") { return self_obj; }
+            return nb::cast(self.child_at(nb::cast(name)));
+        })
+        .def("__contains__", &PyTimeSeries::contains)
+        .def("__len__", &PyTimeSeries::size)
+        .def("__str__", [](const PyTimeSeries &self) { return nb::str(self.value()); })
+        .def("__repr__", [](const PyTimeSeries &self) { return nb::str("TimeSeries({})").format(self.value()); });
+    m.def("_set_cmp_result_enum", [](nb::object enum_class) { cmp_result_enum_slot() = std::move(enum_class); });
+    m.def("_set_divide_by_zero_enum",
+          [](nb::object enum_class) { divide_by_zero_enum_slot() = std::move(enum_class); });
+    m.def("_set_removed_sentinel", [](nb::object sentinel) { PyTimeSeries::removed_slot() = std::move(sentinel); });
+    m.def("_set_removed_class", [](nb::object cls) { python_bridge::removed_class_slot() = std::move(cls); });
+    m.def("_set_set_delta_class", [](nb::object cls) { python_bridge::set_delta_class_slot() = std::move(cls); });
+    nb::class_<PyArrowStream>(m, "ArrowStream")
+        .def("__arrow_c_stream__",
+             [](const PyArrowStream &self, nb::handle) { return self.capsule(); },
+             nb::arg("requested_schema") = nb::none());
+    nb::class_<PySeriesArray>(m, "ArrowSeriesArray")
+        .def("__arrow_c_array__",
+             [](const PySeriesArray &self, nb::handle) { return self.arrow_c_array(); },
+             nb::arg("requested_schema") = nb::none());
+    install_arrow_conversion_hooks();   // bind Frame/Series conversion onto the type-erased ops
+    // Wiring-time scalar values as one list-of-Any (part of node identity).
+    m.def("any_list", [](nb::list values) {
+        auto &registry = TypeRegistry::instance();
+        const auto *schema  = registry.mutable_list(registry.any());
+        const auto type = ValuePlanFactory::instance().type_for(schema);
+        Value      result{type};
+        MutableListView list{result.begin_mutation()};
+        for (nb::handle item : values)
+        {
+            Value boxed_value{ValuePlanFactory::instance().type_for(registry.any())};
+            MutableAnyView{boxed_value.begin_mutation()}.set(py_to_value(item));
+            list.push_back(boxed_value.view());
+        }
+        return PyScalarValue{std::move(result)};
+    });
+
+    nb::class_<PyEvalClock>(m, "EvaluationClock")
+        .def_prop_ro("evaluation_time", [](const PyEvalClock &clock) { return clock.evaluation_time; });
+    nb::class_<PyScheduler>(m, "Scheduler")
+        .def("schedule", [](const PyScheduler &self, DateTime when) { self.scheduler.schedule(when); })
+        .def("schedule_delta", [](const PyScheduler &self, TimeDelta delta) { self.scheduler.schedule(delta); });
+    }
+}  // namespace hgraph::python_bridge
