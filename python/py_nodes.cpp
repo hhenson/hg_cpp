@@ -284,6 +284,41 @@ namespace
         TSOutputView      *recordable{nullptr};
     };
 
+    struct PyFastComputeCache
+    {
+        PyFastComputeCache(const PyNodeRecord *record_, PyCallShape shape_,
+                           TSInputView input_, ValueView scalars_, TSOutputHandle output_,
+                           GlobalStateView global_state_)
+            : record(record_), shape(std::move(shape_)), input(std::move(input_)),
+              scalars(std::move(scalars_)), output(std::move(output_)),
+              global_state(std::move(global_state_))
+        {
+        }
+
+        const PyNodeRecord *record{nullptr};
+        PyCallShape         shape{};
+        TSInputView         input{};
+        ValueView           scalars{};
+        TSOutputHandle      output{};
+        GlobalStateView     global_state{};
+        PyObject           *input_object{nullptr};
+        PyTimeSeries       *input_wrapper{nullptr};
+
+        [[nodiscard]] bool direct() const noexcept
+        {
+            return shape.kw_names.empty() && shape.layout.size() == 1 &&
+                   (shape.layout.front() == 't' || shape.layout.front() == 'u' ||
+                    shape.layout.front() == 'T' || shape.layout.front() == 'U');
+        }
+    };
+
+    struct PyFastComputeStateRef
+    {
+        PyFastComputeCache *cache{nullptr};
+        friend bool operator==(const PyFastComputeStateRef &,
+                               const PyFastComputeStateRef &) noexcept = default;
+    };
+
     [[nodiscard]] bool py_make_ts_arg(char kind, TSInputView child,
                                       const PyTsLease &lease, nb::object &result)
     {
@@ -302,6 +337,45 @@ namespace
                                             : TSDataStorageRef<>{};
         result = nb::cast(PyTimeSeries{
             std::move(child), lease, evaluation_storage});
+        return true;
+    }
+
+    [[nodiscard]] bool py_make_direct_ts_arg(PyFastComputeCache &cache, DateTime now,
+                                             const PyTsLease &lease, nb::object &result)
+    {
+        TSInputView child = cache.input.borrowed_ref(now);
+        const auto &evaluation_data = child.data_view();
+        const char kind = cache.shape.layout.front();
+        if (kind != 'u' && kind != 'U' &&
+            (!evaluation_data.valid() || !evaluation_data.has_current_value()))
+        {
+            return false;
+        }
+        const auto evaluation_storage = evaluation_data.valid()
+                                            ? evaluation_data.storage_ref()
+                                            : TSDataStorageRef<>{};
+        PyTimeSeries wrapped{std::move(child), lease, evaluation_storage};
+
+        // Repoint only the cache's sole reference. If Python retained the
+        // previous argument, leave that expired object untouched and replace
+        // the cache entry with a fresh wrapper.
+        if (cache.input_object != nullptr && Py_REFCNT(cache.input_object) == 1)
+        {
+            *cache.input_wrapper = std::move(wrapped);
+            result = nb::borrow<nb::object>(nb::handle(cache.input_object));
+            return true;
+        }
+
+        if (cache.input_object != nullptr)
+        {
+            nb::handle(cache.input_object).dec_ref();
+            cache.input_object = nullptr;
+            cache.input_wrapper = nullptr;
+        }
+        result = nb::cast(std::move(wrapped));
+        cache.input_object = result.ptr();
+        cache.input_wrapper = std::addressof(nb::cast<PyTimeSeries &>(result));
+        nb::handle(cache.input_object).inc_ref();
         return true;
     }
 
@@ -666,7 +740,15 @@ namespace
         static constexpr auto name = "__py_compute";
         static constexpr std::string_view implementation_label =
             "hgraph.python.compute.fast";
-        using signature_args = py_compute_node::signature_args;
+        using signature_args = std::tuple<
+            In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive>,
+            Scalar<"fn", PyNodeRef>, Scalar<"config", Str>,
+            Scalar<"scalars", ScalarVar<"SV">>, Scalar<"start_fn", PyNodeRef>,
+            Scalar<"start_enabled", Bool>, Scalar<"start_config", Str>,
+            Scalar<"start_scalars", ScalarVar<"SSV">>, Scalar<"stop_fn", PyNodeRef>,
+            Scalar<"stop_enabled", Bool>, Scalar<"stop_config", Str>,
+            Scalar<"stop_scalars", ScalarVar<"XSV">>, State<PyFastComputeStateRef>,
+            Out<TsVar<"O">>>;
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
@@ -674,60 +756,95 @@ namespace
         }
 
         static void start(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
-                          Scalar<"config", Str> config,
-                          SingleShotScheduler initial_sample)
+                          Scalar<"fn", PyNodeRef> fn, Scalar<"config", Str> config,
+                          Scalar<"scalars", ScalarVar<"SV">> scalars,
+                          State<PyFastComputeStateRef> state, SingleShotScheduler initial_sample,
+                          GlobalStateView global_state, Out<TsVar<"O">> out)
         {
-            const auto layout = parse_py_call_shape(config.value()).layout;
-            py_apply_input_activity(layout, args.base());
-            py_schedule_initial_reference_sample(layout, args.base(), initial_sample);
+            PyCallShape shape = parse_py_call_shape(config.value());
+            py_apply_input_activity(shape.layout, args.base());
+            py_schedule_initial_reference_sample(shape.layout, args.base(), initial_sample);
+
+            const bool direct = shape.kw_names.empty() && shape.layout.size() == 1 &&
+                                (shape.layout.front() == 't' || shape.layout.front() == 'u' ||
+                                 shape.layout.front() == 'T' || shape.layout.front() == 'U');
+            TSInputView cached_input = args.base().borrowed_ref();
+            if (direct)
+            {
+                auto bundle = cached_input.as_bundle();
+                cached_input = bundle[0];
+            }
+            auto cache = std::make_unique<PyFastComputeCache>(
+                fn.value().record, std::move(shape), std::move(cached_input), scalars.value(),
+                out.handle(), global_state);
+            state.set(PyFastComputeStateRef{cache.get()});
+            static_cast<void>(cache.release());
         }
 
-        static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
-                         Scalar<"fn", PyNodeRef> fn, Scalar<"config", Str> config,
-                         Scalar<"scalars", ScalarVar<"SV">> scalars,
-                         GlobalStateView global_state, Out<TsVar<"O">> out)
+        static void eval(State<PyFastComputeStateRef> state, DateTime now)
         {
-            const PyCallShape shape = parse_py_call_shape(config.value());
+            PyFastComputeCache *cache = state.get().cache;
+            if (cache == nullptr) { throw std::logic_error("fast python node has no runtime cache"); }
+
             nb::gil_scoped_acquire gil;
             auto lease = py_ts_lease_for_call();
             auto invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
             nb::object result;
-
-            const bool direct_ts_call = shape.kw_names.empty() && shape.layout.size() == 1 &&
-                                        (shape.layout.front() == 't' || shape.layout.front() == 'u' ||
-                                         shape.layout.front() == 'T' || shape.layout.front() == 'U');
-            if (direct_ts_call && py_has_active_runtime_global_state())
+            if (cache->direct())
             {
                 nb::object ts_obj;
-                auto bundle = args.base().as_bundle();
-                if (!py_make_ts_arg(shape.layout.front(), bundle[0], lease, ts_obj))
+                if (!py_make_direct_ts_arg(*cache, now, lease, ts_obj)) { return; }
+                if (py_has_active_runtime_global_state())
                 {
-                    return;
+                    result = cache->record->fn(ts_obj);
                 }
-                result = fn.value().record->fn(ts_obj);
+                else
+                {
+                    nb::list call_args;
+                    call_args.append(ts_obj);
+                    std::optional<nb::list> context_values;
+                    nb::object runtime_state =
+                        py_runtime_global_state_for_call(cache->global_state, lease.guard);
+                    result = py_call_with_contexts(cache->record->fn, call_args, context_values,
+                                                   runtime_state);
+                }
             }
             else
             {
+                TSInputView input = cache->input.borrowed_ref(now);
                 nb::list call_args;
-                if (!py_assemble_fast_args(shape.layout, args.base(), scalars.value(), lease, call_args))
+                if (!py_assemble_fast_args(cache->shape.layout, input, cache->scalars,
+                                           lease, call_args))
                 {
                     return;
                 }
-                auto call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
+                auto call_kwargs = py_peel_kwargs(call_args, cache->shape.kw_names);
                 std::optional<nb::list> context_values;
                 nb::object runtime_state =
-                    py_runtime_global_state_for_call(global_state, lease.guard);
-                result = py_call_with_contexts(fn.value().record->fn, call_args, context_values,
+                    py_runtime_global_state_for_call(cache->global_state, lease.guard);
+                result = py_call_with_contexts(cache->record->fn, call_args, context_values,
                                                runtime_state, std::move(call_kwargs));
             }
+
+            auto output_view = cache->output.view(now);
+            Out<TsVar<"O">> out{std::move(output_view), now};
             apply_py_result(result, out);
             invalid.release();
             lease.invalidate();
         }
 
         static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
-                         Scalar<"config", Str> config)
+                         Scalar<"config", Str> config, State<PyFastComputeStateRef> state)
         {
+            nb::gil_scoped_acquire gil;
+            std::unique_ptr<PyFastComputeCache> cache{state.get().cache};
+            state.set(PyFastComputeStateRef{});
+            if (cache != nullptr && cache->input_object != nullptr)
+            {
+                nb::handle(cache->input_object).dec_ref();
+                cache->input_object = nullptr;
+                cache->input_wrapper = nullptr;
+            }
             py_clear_input_activity(parse_py_call_shape(config.value()).layout, args.base());
         }
     };
@@ -1201,12 +1318,27 @@ struct std::hash<PyGenStateRef>
     }
 };
 
+template <>
+struct std::hash<PyFastComputeStateRef>
+{
+    [[nodiscard]] std::size_t operator()(const PyFastComputeStateRef &ref) const noexcept
+    {
+        return std::hash<const void *>{}(ref.cache);
+    }
+};
+
 namespace hgraph::static_schema_detail
 {
     template <>
     struct scalar_name<PyGenStateRef>
     {
         static constexpr std::string_view value{"py_gen_state"};
+    };
+
+    template <>
+    struct scalar_name<PyFastComputeStateRef>
+    {
+        static constexpr std::string_view value{"py_fast_compute_state"};
     };
 }  // namespace hgraph::static_schema_detail
 

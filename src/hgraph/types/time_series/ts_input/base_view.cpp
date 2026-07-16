@@ -220,13 +220,18 @@ namespace hgraph
 
     TSInputView TSInputView::borrowed_ref() const noexcept
     {
+        return borrowed_ref(evaluation_time_);
+    }
+
+    TSInputView TSInputView::borrowed_ref(DateTime evaluation_time) const noexcept
+    {
         auto cursor = data_.borrowed_ref();
         return TSInputView{input_,
                            std::move(cursor.value_data),
                            std::move(cursor.raw_data),
                            cursor.target_node,
                            scheduling_notifier_,
-                           evaluation_time_,
+                           evaluation_time,
                            InputDataCursor::Classification::Known};
     }
 

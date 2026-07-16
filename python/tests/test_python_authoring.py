@@ -65,6 +65,10 @@ def test_python_node_type_records_identify_bridge_implementations():
         return value.value + 1
 
     @hg.compute_node
+    def offset(value: TS[int], amount: int) -> TS[int]:
+        return value.value + amount
+
+    @hg.compute_node
     def remember(value: TS[int], state: hg.STATE = None) -> TS[int]:
         state.last = value.value
         return state.last
@@ -75,27 +79,36 @@ def test_python_node_type_records_identify_bridge_implementations():
 
     @graph
     def app(value: TS[int]) -> TS[int]:
-        computed = increment(value)
+        direct = increment(value)
+        computed = offset(direct, 1)
         stateful = remember(computed)
         generated = ticks()
-        observed["compute"] = computed._port.node_type_info
+        observed["single_compute"] = direct._port.node_type_info
+        observed["fast_compute"] = computed._port.node_type_info
         observed["full_compute"] = stateful._port.node_type_info
         observed["generator"] = generated._port.node_type_info
         return stateful + generated
 
-    check(eval_node(app, [2]) == [4], "python record-backed nodes execute")
-    check(observed["compute"]["implementation_label"] == "hgraph.python.compute.fast",
-          f"compute type record: {observed['compute']}")
+    check(eval_node(app, [2]) == [5], "python record-backed nodes execute")
+    check(observed["single_compute"]["implementation_label"] == "hgraph.python.compute.fast",
+          f"single compute type record: {observed['single_compute']}")
+    check(observed["fast_compute"]["implementation_label"] == "hgraph.python.compute.fast",
+          f"fast compute type record: {observed['fast_compute']}")
     check(observed["full_compute"]["implementation_label"] == "hgraph.python.compute",
           f"full compute type record: {observed['full_compute']}")
     check(observed["generator"]["implementation_label"] == "hgraph.python.generator",
           f"generator type record: {observed['generator']}")
-    check(observed["compute"]["semantic_label"] == "__py_compute", "compute semantic schema label")
+    check(observed["single_compute"]["semantic_label"] == "__py_compute",
+          "single compute semantic schema label")
+    check(observed["fast_compute"]["semantic_label"] == "__py_compute",
+          "fast compute semantic schema label")
     check(observed["full_compute"]["semantic_label"] == "__py_compute",
           "full compute semantic schema label")
     check(observed["generator"]["semantic_label"] == "__py_generator", "generator semantic schema label")
-    check(observed["compute"]["family"] == observed["generator"]["family"], "common Node family")
-    check(observed["compute"]["role"] == observed["generator"]["role"], "common Runtime role")
+    check(observed["single_compute"]["family"] == observed["generator"]["family"],
+          "common Node family")
+    check(observed["single_compute"]["role"] == observed["generator"]["role"],
+          "common Runtime role")
 
 
 def test_python_compute_consumes_and_produces_dynamic_tsl():

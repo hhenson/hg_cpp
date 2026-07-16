@@ -298,6 +298,7 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
 
     auto input_root = input.view(nullptr, t1);
     REQUIRE(input_root.evaluation_time() == t1);
+    REQUIRE(input_root.borrowed_ref(t2).evaluation_time() == t2);
     REQUIRE(input_root.type_ref().record() != nullptr);
     REQUIRE(input_root.type_ref());
     REQUIRE(std::string{input_root.type_ref().record()->implementation_name()} == "ts.fixed.input.composite");

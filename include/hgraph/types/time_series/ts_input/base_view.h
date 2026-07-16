@@ -48,6 +48,8 @@ namespace hgraph
 
         /** Explicitly recreate a transient cursor over the same input position. */
         [[nodiscard]] TSInputView borrowed_ref() const noexcept;
+        /** Recreate the same input position for a different evaluation cycle. */
+        [[nodiscard]] TSInputView borrowed_ref(DateTime evaluation_time) const noexcept;
 
         /** Evaluation time associated with delta/modified checks. */
         [[nodiscard]] DateTime evaluation_time() const noexcept;
