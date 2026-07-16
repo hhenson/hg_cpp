@@ -18,7 +18,11 @@ old python-object values) and TSD key types (int vs str keys).
 
 Scenario families: large graph construction, hot-loop ticking (feedback),
 dense / sparse TSD ticking, `map_` + `reduce` with key churn (items coming
-and going), and an inter-key dependency `mesh_` with a sliding key window.
+and going), an inter-key dependency `mesh_` with a sliding key window,
+reference / request-reply / subscription services, duplex adaptors, and
+multiplexed service adaptors. Service and adaptor families cover both native
+standard-operator implementations and implementations containing Python
+compute nodes.
 
 Terminal outputs use the implementation's native `null_sink`, keeping sink
 overhead out of the Python node boundary in every mode.

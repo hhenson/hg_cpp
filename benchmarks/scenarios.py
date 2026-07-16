@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 import hgraph as hg
 from hgraph import (
-    TS, TSD, CompoundScalar, compute_node, feedback, generator, graph, map_,
+    TS, TSD, TSS, CompoundScalar, compute_node, feedback, generator, graph, map_,
     mesh_, null_sink, reduce,
 )
 
@@ -58,6 +58,13 @@ def _float_pulse(cycles: int) -> TS[float]:
 @generator
 def _str_pulse(cycles: int) -> TS[str]:
     values = [f"payload-{i:06d}" for i in range(64)]
+    for i in range(cycles):
+        yield MIN_TD, values[i & 63]
+
+
+@generator
+def _symbol_pulse(cycles: int) -> TS[str]:
+    values = [f"symbol-{i:03d}" for i in range(64)]
     for i in range(cycles):
         yield MIN_TD, values[i & 63]
 
@@ -428,6 +435,237 @@ def mesh_std(scale: float):
     return g, cycles
 
 
+# ---------------------------------------------------------------------------
+# H/I. Services and adaptors
+# ---------------------------------------------------------------------------
+
+@hg.reference_service
+def _benchmark_reference(path: str = "benchmark") -> TS[int]: ...
+
+
+@hg.service_impl(interfaces=_benchmark_reference)
+def _benchmark_reference_std_impl(path: str, cycles: int) -> TS[int]:
+    return _int_pulse(cycles)
+
+
+@hg.service_impl(interfaces=_benchmark_reference)
+def _benchmark_reference_py_impl(path: str, cycles: int) -> TS[int]:
+    return _add_one_py(_int_pulse(cycles))
+
+
+def service_reference_std(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        hg.register_service("benchmark", _benchmark_reference_std_impl, cycles=cycles)
+        for _ in range(4):
+            null_sink(_benchmark_reference(path="benchmark"))
+
+    return g, cycles
+
+
+def service_reference_py(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        hg.register_service("benchmark", _benchmark_reference_py_impl, cycles=cycles)
+        for _ in range(4):
+            null_sink(_benchmark_reference(path="benchmark"))
+
+    return g, cycles
+
+
+@hg.request_reply_service
+def _benchmark_request_reply(request: TS[int], path: str = "benchmark") -> TS[int]: ...
+
+
+@hg.service_impl(interfaces=_benchmark_request_reply)
+def _benchmark_request_reply_std_impl(
+    request: TSD[int, TS[int]], path: str
+) -> TSD[int, TS[int]]:
+    return map_(_mapped_std, request)
+
+
+@hg.service_impl(interfaces=_benchmark_request_reply)
+def _benchmark_request_reply_py_impl(
+    request: TSD[int, TS[int]], path: str
+) -> TSD[int, TS[int]]:
+    return map_(_mapped_py, request)
+
+
+def service_request_reply_std(scale: float):
+    cycles = int(10_000 * scale)
+
+    @graph
+    def g():
+        source = _int_pulse(cycles)
+        hg.register_service("benchmark", _benchmark_request_reply_std_impl)
+        for _ in range(4):
+            null_sink(_benchmark_request_reply(source, path="benchmark"))
+
+    return g, cycles
+
+
+def service_request_reply_py(scale: float):
+    cycles = int(10_000 * scale)
+
+    @graph
+    def g():
+        source = _int_pulse(cycles)
+        hg.register_service("benchmark", _benchmark_request_reply_py_impl)
+        for _ in range(4):
+            null_sink(_benchmark_request_reply(source, path="benchmark"))
+
+    return g, cycles
+
+
+@hg.subscription_service
+def _benchmark_subscription(key: TS[str], path: str = "benchmark") -> TS[int]: ...
+
+
+@graph
+def _subscription_value_std(key: TS[str]) -> TS[int]:
+    return hg.const(1, tp=TS[int])
+
+
+@compute_node
+def _subscription_value_py(key: TS[str]) -> TS[int]:
+    return len(key.value)
+
+
+@hg.service_impl(interfaces=_benchmark_subscription)
+def _benchmark_subscription_std_impl(
+    key: TSS[str], path: str
+) -> TSD[str, TS[int]]:
+    return map_(_subscription_value_std, __keys__=key)
+
+
+@hg.service_impl(interfaces=_benchmark_subscription)
+def _benchmark_subscription_py_impl(
+    key: TSS[str], path: str
+) -> TSD[str, TS[int]]:
+    return map_(_subscription_value_py, __keys__=key)
+
+
+def service_subscription_std(scale: float):
+    cycles = int(10_000 * scale)
+
+    @graph
+    def g():
+        hg.register_service("benchmark", _benchmark_subscription_std_impl)
+        null_sink(_benchmark_subscription(_symbol_pulse(cycles), path="benchmark"))
+
+    return g, cycles
+
+
+def service_subscription_py(scale: float):
+    cycles = int(10_000 * scale)
+
+    @graph
+    def g():
+        hg.register_service("benchmark", _benchmark_subscription_py_impl)
+        null_sink(_benchmark_subscription(_symbol_pulse(cycles), path="benchmark"))
+
+    return g, cycles
+
+
+@hg.adaptor
+def _benchmark_adaptor(value: TS[int], path: str = "benchmark") -> TS[int]: ...
+
+
+# Upstream hgraph auto-wires a single adaptor interface into its implementation;
+# hg-cpp exposes the equivalent transport explicitly. Keep this API difference
+# outside the scenario definitions so all modes still measure the same graph.
+if hasattr(hg, "from_graph"):
+    @hg.adaptor_impl(interfaces=_benchmark_adaptor)
+    def _benchmark_adaptor_std_impl(path: str):
+        incoming = hg.from_graph(_benchmark_adaptor, path=path)
+        hg.to_graph(_benchmark_adaptor, incoming + 1, path=path)
+
+    @hg.adaptor_impl(interfaces=_benchmark_adaptor)
+    def _benchmark_adaptor_py_impl(path: str):
+        incoming = hg.from_graph(_benchmark_adaptor, path=path)
+        hg.to_graph(_benchmark_adaptor, _add_one_py(incoming), path=path)
+else:
+    @hg.adaptor_impl(interfaces=_benchmark_adaptor)
+    def _benchmark_adaptor_std_impl(value: TS[int], path: str) -> TS[int]:
+        return value + 1
+
+    @hg.adaptor_impl(interfaces=_benchmark_adaptor)
+    def _benchmark_adaptor_py_impl(value: TS[int], path: str) -> TS[int]:
+        return _add_one_py(value)
+
+
+def adaptor_std(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        hg.register_adaptor("benchmark", _benchmark_adaptor_std_impl)
+        null_sink(_benchmark_adaptor(_int_pulse(cycles), path="benchmark"))
+
+    return g, cycles
+
+
+def adaptor_py(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        hg.register_adaptor("benchmark", _benchmark_adaptor_py_impl)
+        null_sink(_benchmark_adaptor(_int_pulse(cycles), path="benchmark"))
+
+    return g, cycles
+
+
+@hg.service_adaptor
+def _benchmark_service_adaptor(
+    request: TS[int], path: str = "benchmark"
+) -> TS[int]: ...
+
+
+@hg.service_adaptor_impl(interfaces=_benchmark_service_adaptor)
+def _benchmark_service_adaptor_std_impl(
+    request: TSD[int, TS[int]], path: str
+) -> TSD[int, TS[int]]:
+    return map_(_mapped_std, request)
+
+
+@hg.service_adaptor_impl(interfaces=_benchmark_service_adaptor)
+def _benchmark_service_adaptor_py_impl(
+    request: TSD[int, TS[int]], path: str
+) -> TSD[int, TS[int]]:
+    return map_(_mapped_py, request)
+
+
+def service_adaptor_std(scale: float):
+    cycles = int(10_000 * scale)
+
+    @graph
+    def g():
+        source = _int_pulse(cycles)
+        hg.register_adaptor("benchmark", _benchmark_service_adaptor_std_impl)
+        for _ in range(4):
+            null_sink(_benchmark_service_adaptor(source, path="benchmark"))
+
+    return g, cycles
+
+
+def service_adaptor_py(scale: float):
+    cycles = int(10_000 * scale)
+
+    @graph
+    def g():
+        source = _int_pulse(cycles)
+        hg.register_adaptor("benchmark", _benchmark_service_adaptor_py_impl)
+        for _ in range(4):
+            null_sink(_benchmark_service_adaptor(source, path="benchmark"))
+
+    return g, cycles
+
+
 SCENARIOS = {
     "construct_std": construct_std,
     "construct_py": construct_py,
@@ -448,4 +686,14 @@ SCENARIOS = {
     "tsd_churn_std": tsd_churn_std,
     "tsd_churn_py": tsd_churn_py,
     "mesh_std": mesh_std,
+    "service_reference_std": service_reference_std,
+    "service_reference_py": service_reference_py,
+    "service_request_reply_std": service_request_reply_std,
+    "service_request_reply_py": service_request_reply_py,
+    "service_subscription_std": service_subscription_std,
+    "service_subscription_py": service_subscription_py,
+    "adaptor_std": adaptor_std,
+    "adaptor_py": adaptor_py,
+    "service_adaptor_std": service_adaptor_std,
+    "service_adaptor_py": service_adaptor_py,
 }
