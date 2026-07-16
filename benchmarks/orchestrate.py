@@ -18,23 +18,60 @@ benchmarks/results/.
 """
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import platform
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 BENCH_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BENCH_DIR.parent
 UPSTREAM_VENV = BENCH_DIR / f".venv-upstream-{sys.version_info.major}.{sys.version_info.minor}"
+HG_CPP_VENV = BENCH_DIR / f".venv-hg-cpp-{sys.version_info.major}.{sys.version_info.minor}"
 RESULTS_DIR = BENCH_DIR / "results"
 RUNNER = BENCH_DIR / "runner.py"
+VALIDATOR = BENCH_DIR / "validate.py"
+HG_CPP_FINGERPRINT_FILE = HG_CPP_VENV / ".source-fingerprint"
 
 MODES = ("upstream-py", "upstream-cpp", "hg-cpp")
 
 
 def upstream_python() -> Path:
     return UPSTREAM_VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def hg_cpp_python() -> Path:
+    return HG_CPP_VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def hg_cpp_source_fingerprint() -> str:
+    digest = hashlib.sha256()
+    roots = (
+        REPO_ROOT / "CMakeLists.txt",
+        REPO_ROOT / "pyproject.toml",
+        REPO_ROOT / "include",
+        REPO_ROOT / "src",
+        REPO_ROOT / "python" / "CMakeLists.txt",
+        REPO_ROOT / "python" / "hgraph",
+    )
+    files = []
+    for root in roots:
+        if root.is_file():
+            files.append(root)
+        elif root.is_dir():
+            files.extend(path for path in root.rglob("*") if path.is_file() and "__pycache__" not in path.parts)
+    files.extend((REPO_ROOT / "python").glob("*.cpp"))
+    files.extend((REPO_ROOT / "python").glob("*.h"))
+    for path in sorted(files):
+        digest.update(path.relative_to(REPO_ROOT).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    digest.update(f"python-{sys.version_info.major}.{sys.version_info.minor}".encode())
+    return digest.hexdigest()
 
 
 def ensure_upstream_venv() -> None:
@@ -48,10 +85,44 @@ def ensure_upstream_venv() -> None:
     )
 
 
+def ensure_hg_cpp_venv() -> str:
+    fingerprint = hg_cpp_source_fingerprint()
+    if (hg_cpp_python().exists() and HG_CPP_FINGERPRINT_FILE.exists() and
+            HG_CPP_FINGERPRINT_FILE.read_text().strip() == fingerprint):
+        return fingerprint
+
+    if not hg_cpp_python().exists():
+        print(f"[setup] creating hg-cpp benchmark venv at {HG_CPP_VENV}...")
+        subprocess.run(["uv", "venv", "--python", sys.executable, str(HG_CPP_VENV)], check=True)
+
+    print(f"[setup] building optimized hg-cpp wheel for source {fingerprint[:12]}...")
+    with tempfile.TemporaryDirectory(prefix="hg-cpp-benchmark-wheel-") as wheel_dir:
+        subprocess.run(
+            [
+                "uv", "build", "--wheel", "--python", sys.executable,
+                "--config-setting", "cmake.build-type=Release", "--out-dir", wheel_dir,
+                "--no-build-logs",
+            ],
+            check=True,
+            cwd=REPO_ROOT,
+        )
+        wheels = list(Path(wheel_dir).glob("*.whl"))
+        if len(wheels) != 1:
+            raise RuntimeError(f"expected one hg-cpp wheel, found {len(wheels)}")
+        subprocess.run(
+            ["uv", "pip", "install", "--python", str(hg_cpp_python()), "--reinstall", str(wheels[0])],
+            check=True,
+        )
+
+    HG_CPP_FINGERPRINT_FILE.write_text(fingerprint + "\n")
+    return fingerprint
+
+
 def mode_invocation(mode: str):
     """(python_executable, extra_env) for a mode."""
     if mode == "hg-cpp":
-        return sys.executable, {}
+        fingerprint = HG_CPP_FINGERPRINT_FILE.read_text().strip()
+        return str(hg_cpp_python()), {"HGRAPH_BENCHMARK_SOURCE_FINGERPRINT": fingerprint}
     env = {"HGRAPH_USE_CPP": "true"} if mode == "upstream-cpp" else {}
     return str(upstream_python()), env
 
@@ -77,6 +148,19 @@ def run_one(mode: str, scenario: str, scale: float, timeout: int):
         }
     except subprocess.TimeoutExpired:
         return {"scenario": scenario, "ok": False, "error": f"timeout after {timeout}s"}
+
+
+def validate_mode(mode: str) -> None:
+    exe, extra_env = mode_invocation(mode)
+    env = os.environ.copy()
+    env.pop("HGRAPH_USE_CPP", None)
+    env.update(extra_env)
+    proc = subprocess.run(
+        [exe, str(VALIDATOR)], capture_output=True, text=True, env=env, cwd=str(REPO_ROOT),
+    )
+    if proc.returncode != 0:
+        detail = (proc.stdout + "\n" + proc.stderr).strip()[-4000:]
+        raise RuntimeError(f"benchmark workload validation failed for {mode}:\n{detail}")
 
 
 def render(results: dict, scale: float) -> str:
@@ -135,13 +219,23 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=300,
                         help="per-scenario timeout, seconds")
     parser.add_argument("--setup-only", action="store_true")
+    parser.add_argument("--skip-validation", action="store_true",
+                        help="skip the cross-runtime workload correctness preflight")
     args = parser.parse_args()
 
     modes = args.mode or list(MODES)
     if any(m.startswith("upstream") for m in modes):
         ensure_upstream_venv()
+    if "hg-cpp" in modes:
+        ensure_hg_cpp_venv()
     if args.setup_only:
         return 0
+
+    if not args.skip_validation:
+        for mode in modes:
+            print(f"[validate] {mode} ...", end="", flush=True)
+            validate_mode(mode)
+            print(" ok")
 
     sys.path.insert(0, str(BENCH_DIR))
     import scenarios as sc

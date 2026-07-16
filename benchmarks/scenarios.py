@@ -69,6 +69,20 @@ def _symbol_pulse(cycles: int) -> TS[str]:
         yield MIN_TD, values[i & 63]
 
 
+@generator
+def _service_int_pulse(requests: int) -> TS[int]:
+    """Requests separated by the idle cycle required by service forwarding."""
+    for i in range(requests):
+        yield MIN_TD if i == 0 else 2 * MIN_TD, i
+
+
+@generator
+def _service_symbol_pulse(requests: int) -> TS[str]:
+    values = [f"symbol-{i:03d}" for i in range(64)]
+    for i in range(requests):
+        yield MIN_TD if i == 0 else 2 * MIN_TD, values[i & 63]
+
+
 @dataclass(frozen=True)
 class BenchCS(CompoundScalar):
     ident: int
@@ -144,16 +158,29 @@ def _chain_py(x, depth):
     return x
 
 
+def _wide_chain_std(x, width, depth):
+    branches = [_chain_std(x + branch, depth) for branch in range(width)]
+    total = branches[0]
+    for branch in branches[1:]:
+        total = total + branch
+    return total
+
+
+def _wide_chain_py(x, width, depth):
+    branches = [_chain_py(x + branch, depth) for branch in range(width)]
+    total = branches[0]
+    for branch in branches[1:]:
+        total = total + branch
+    return total
+
+
 def construct_std(scale: float):
     width, depth = max(2, int(30 * scale)), max(2, int(100 * scale))
 
     @graph
     def g():
         src = _int_pulse(1)
-        total = _chain_std(src, depth)
-        for _ in range(width - 1):
-            total = total + _chain_std(src, depth)
-        null_sink(total)
+        null_sink(_wide_chain_std(src, width, depth))
 
     return g, 1  # 1 cycle: measured time ~= wiring + build cost
 
@@ -164,10 +191,7 @@ def construct_py(scale: float):
     @graph
     def g():
         src = _int_pulse(1)
-        total = _chain_py(src, depth)
-        for _ in range(width - 1):
-            total = total + _chain_py(src, depth)
-        null_sink(total)
+        null_sink(_wide_chain_py(src, width, depth))
 
     return g, 1
 
@@ -496,11 +520,12 @@ def _benchmark_request_reply_py_impl(
 
 
 def service_request_reply_std(scale: float):
-    cycles = int(10_000 * scale)
+    requests = int(10_000 * scale)
+    cycles = requests * 2
 
     @graph
     def g():
-        source = _int_pulse(cycles)
+        source = _service_int_pulse(requests)
         hg.register_service("benchmark", _benchmark_request_reply_std_impl)
         for _ in range(4):
             null_sink(_benchmark_request_reply(source, path="benchmark"))
@@ -509,11 +534,12 @@ def service_request_reply_std(scale: float):
 
 
 def service_request_reply_py(scale: float):
-    cycles = int(10_000 * scale)
+    requests = int(10_000 * scale)
+    cycles = requests * 2
 
     @graph
     def g():
-        source = _int_pulse(cycles)
+        source = _service_int_pulse(requests)
         hg.register_service("benchmark", _benchmark_request_reply_py_impl)
         for _ in range(4):
             null_sink(_benchmark_request_reply(source, path="benchmark"))
@@ -550,23 +576,25 @@ def _benchmark_subscription_py_impl(
 
 
 def service_subscription_std(scale: float):
-    cycles = int(10_000 * scale)
+    requests = int(10_000 * scale)
+    cycles = requests * 2
 
     @graph
     def g():
         hg.register_service("benchmark", _benchmark_subscription_std_impl)
-        null_sink(_benchmark_subscription(_symbol_pulse(cycles), path="benchmark"))
+        null_sink(_benchmark_subscription(_service_symbol_pulse(requests), path="benchmark"))
 
     return g, cycles
 
 
 def service_subscription_py(scale: float):
-    cycles = int(10_000 * scale)
+    requests = int(10_000 * scale)
+    cycles = requests * 2
 
     @graph
     def g():
         hg.register_service("benchmark", _benchmark_subscription_py_impl)
-        null_sink(_benchmark_subscription(_symbol_pulse(cycles), path="benchmark"))
+        null_sink(_benchmark_subscription(_service_symbol_pulse(requests), path="benchmark"))
 
     return g, cycles
 
@@ -641,27 +669,29 @@ def _benchmark_service_adaptor_py_impl(
 
 
 def service_adaptor_std(scale: float):
-    cycles = int(10_000 * scale)
+    requests = int(10_000 * scale)
+    cycles = requests * 2
 
     @graph
     def g():
-        source = _int_pulse(cycles)
+        source = _service_int_pulse(requests)
         hg.register_adaptor("benchmark", _benchmark_service_adaptor_std_impl)
-        for _ in range(4):
-            null_sink(_benchmark_service_adaptor(source, path="benchmark"))
+        for client in range(4):
+            null_sink(_benchmark_service_adaptor(source + client, path="benchmark"))
 
     return g, cycles
 
 
 def service_adaptor_py(scale: float):
-    cycles = int(10_000 * scale)
+    requests = int(10_000 * scale)
+    cycles = requests * 2
 
     @graph
     def g():
-        source = _int_pulse(cycles)
+        source = _service_int_pulse(requests)
         hg.register_adaptor("benchmark", _benchmark_service_adaptor_py_impl)
-        for _ in range(4):
-            null_sink(_benchmark_service_adaptor(source, path="benchmark"))
+        for client in range(4):
+            null_sink(_benchmark_service_adaptor(source + client, path="benchmark"))
 
     return g, cycles
 

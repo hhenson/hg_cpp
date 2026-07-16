@@ -11,3 +11,4 @@
 
 .claude/
 benchmarks/.venv-upstream*/
+benchmarks/.venv-hg-cpp*/

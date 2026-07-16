@@ -50,9 +50,15 @@ def main() -> int:
         "scenario": args.scenario,
         "scale": args.scale,
         "use_cpp": os.environ.get("HGRAPH_USE_CPP", ""),
+        "source_fingerprint": os.environ.get("HGRAPH_BENCHMARK_SOURCE_FINGERPRINT", ""),
         "hgraph": _implementation_label(),
         "python": ".".join(map(str, sys.version_info[:3])),
     }
+    try:
+        import _hgraph
+        result["native_module"] = _hgraph.__file__
+    except ImportError:
+        result["native_module"] = ""
     try:
         import hgraph as hg
 
