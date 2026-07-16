@@ -576,21 +576,6 @@ namespace hgraph::service
             return next.fetch_add(1, std::memory_order_relaxed) + 1;
         }
 
-        [[nodiscard]] inline const ValueTypeMetaData *request_input_state_schema(
-            const TSValueTypeMetaData &request_schema)
-        {
-            if (request_schema.delta_value_schema == nullptr)
-            {
-                throw std::invalid_argument("request/reply service request schema must have a delta schema");
-            }
-
-            auto       &registry          = TypeRegistry::instance();
-            const auto *request_id_schema = registry.register_scalar<Int>("int");
-            const auto *removed_schema    = registry.mutable_set(request_id_schema);
-            const auto *modified_schema   = registry.mutable_map(request_id_schema, request_schema.delta_value_schema);
-            return registry.un_named_bundle({{"removed", removed_schema}, {"modified", modified_schema}});
-        }
-
         [[nodiscard]] inline Value path_key_value(const std::string &full_path)
         {
             // Used only by Wiring's intern key; service source nodes do not carry path scalars at runtime.
@@ -736,7 +721,6 @@ namespace hgraph::service
 
             WiringNodeSchema schema;
             schema.output = out_meta;
-            schema.state  = request_input_state_schema(*request_meta);
             Value path_key = path_key_value(full_path);
 
             WiringPortRef port = w.add_node(
@@ -1589,7 +1573,6 @@ namespace hgraph::service_adaptor
 
             WiringNodeSchema schema;
             schema.output = out_meta;
-            schema.state  = service::detail::request_input_state_schema(*input_meta);
             Value path_key = path_key_value(full_path);
 
             WiringPortRef port = w.add_node(

@@ -2,17 +2,16 @@
 
 #include <hgraph/runtime/graph.h>
 #include <hgraph/types/metadata/type_registry.h>
-#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/time_series/ts_delta.h>
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
 #include <hgraph/types/time_series/ts_input/base_view.h>
 #include <hgraph/types/time_series/ts_output/base_view.h>
 #include <hgraph/types/time_series/ts_output/dict_view.h>
 #include <hgraph/types/time_series/ts_output/set_view.h>
-#include <hgraph/types/value/value_builder.h>
 
 #include <ankerl/unordered_dense.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <memory>
@@ -28,6 +27,7 @@ namespace hgraph
     {
         constexpr std::string_view subscription_key_source_storage_field{"subscription_key_source"};
         constexpr std::string_view subscription_key_capture_storage_field{"subscription_key_capture"};
+        constexpr std::string_view request_input_source_storage_field{"request_input_source"};
         constexpr std::string_view request_input_capture_storage_field{"request_input_capture"};
 
         struct ValueKeyHash
@@ -71,8 +71,10 @@ namespace hgraph
 
         struct SubscriptionKeyCaptureStorage
         {
-            Value previous_key{};
-            bool  has_previous{false};
+            Value       previous_key{};
+            NodePtr     source{};
+            TSInputView input{};
+            bool        has_previous{false};
         };
 
         struct SubscriptionKeyCaptureContext
@@ -84,11 +86,26 @@ namespace hgraph
         struct RequestInputSourceContext
         {
             std::string path{};
+            std::size_t storage_offset{0};
+        };
+
+        struct RequestInputChange
+        {
+            Int   request_id{0};
+            Value delta{};
+            bool  remove{false};
+        };
+
+        struct RequestInputSourceStorage
+        {
+            std::vector<RequestInputChange> pending{};
         };
 
         struct RequestInputCaptureStorage
         {
-            bool live{false};
+            NodePtr     source{};
+            TSInputView input{};
+            bool        live{false};
         };
 
         struct RequestInputCaptureContext
@@ -161,14 +178,25 @@ namespace hgraph
             return *contexts;
         }
 
-        [[nodiscard]] const RequestInputSourceContext &register_request_input_source_context(std::string path)
+        [[nodiscard]] const RequestInputSourceContext &register_request_input_source_context(
+            std::string path,
+            std::size_t storage_offset)
         {
             auto context = std::make_unique<RequestInputSourceContext>(RequestInputSourceContext{
-                .path = std::move(path),
+                .path           = std::move(path),
+                .storage_offset = storage_offset,
             });
             const auto *result = context.get();
             request_input_source_contexts().push_back(std::move(context));
             return *result;
+        }
+
+        [[nodiscard]] RequestInputSourceStorage &source_storage_of(
+            const NodeView &view,
+            const RequestInputSourceContext &context)
+        {
+            return *MemoryUtils::cast<RequestInputSourceStorage>(
+                MemoryUtils::advance(view.data(), context.storage_offset));
         }
 
         [[nodiscard]] std::vector<std::unique_ptr<RequestInputCaptureContext>> &
@@ -225,7 +253,8 @@ namespace hgraph
             void enqueue(Value key, bool add, DateTime schedule_time) const
             {
                 if (!key.has_value()) { return; }
-                source_storage_of(view_, *context_).pending.push_back(SubscriptionKeyChange{
+                auto &pending = source_storage_of(view_, *context_).pending;
+                pending.push_back(SubscriptionKeyChange{
                     .key = std::move(key),
                     .add = add,
                 });
@@ -268,38 +297,58 @@ namespace hgraph
                 }
                 return RequestInputSourceView{
                     std::move(view),
+                    static_cast<const RequestInputSourceContext *>(context),
                 };
             }
 
             void set(Int request_id, Value delta, DateTime schedule_time) const
             {
-                Value request_id_value{request_id};
-                auto  state    = view_.state().as_bundle().begin_mutation();
-                auto  removed  = state.field("removed").as_mutable_set();
-                auto  modified = state.field("modified").as_mutable_map();
-
-                static_cast<void>(removed.remove(request_id_value.view()));
-                modified.set_item(request_id_value.view(), delta.view());
+                auto &pending = source_storage_of(view_, *context_).pending;
+                const auto existing = std::ranges::find(
+                    pending, request_id, &RequestInputChange::request_id);
+                if (existing != pending.end())
+                {
+                    existing->delta  = std::move(delta);
+                    existing->remove = false;
+                }
+                else
+                {
+                    pending.push_back(RequestInputChange{
+                        .request_id = request_id,
+                        .delta      = std::move(delta),
+                        .remove     = false,
+                    });
+                }
                 schedule(schedule_time);
             }
 
             void remove(Int request_id, DateTime schedule_time) const
             {
-                Value request_id_value{request_id};
-                auto  state    = view_.state().as_bundle().begin_mutation();
-                auto  removed  = state.field("removed").as_mutable_set();
-                auto  modified = state.field("modified").as_mutable_map();
-
-                static_cast<void>(modified.remove(request_id_value.view()));
-                static_cast<void>(removed.add(request_id_value.view()));
+                auto &pending = source_storage_of(view_, *context_).pending;
+                const auto existing = std::ranges::find(
+                    pending, request_id, &RequestInputChange::request_id);
+                if (existing != pending.end())
+                {
+                    existing->delta  = Value{};
+                    existing->remove = true;
+                }
+                else
+                {
+                    pending.push_back(RequestInputChange{
+                        .request_id = request_id,
+                        .delta      = Value{},
+                        .remove     = true,
+                    });
+                }
                 schedule(schedule_time);
             }
 
             [[nodiscard]] std::size_t node_index() const noexcept { return view_.node_index(); }
 
           private:
-            explicit RequestInputSourceView(NodeView view) noexcept
-                : view_(std::move(view))
+            RequestInputSourceView(NodeView view, const RequestInputSourceContext *context) noexcept
+                : view_(std::move(view)),
+                  context_(context)
             {
             }
 
@@ -313,16 +362,21 @@ namespace hgraph
                 graph->schedule_node(view_.node_index(), schedule_time);
             }
 
-            NodeView view_{};
+            NodeView                         view_{};
+            const RequestInputSourceContext *context_{nullptr};
         };
 
-        [[nodiscard]] SubscriptionKeySourceView recover_source_view(
+        void initialize_subscription_capture(
             const NodeView &capture,
-            DateTime evaluation_time)
+            DateTime evaluation_time,
+            SubscriptionKeyCaptureStorage &storage)
         {
+            if (storage.source && storage.input.schema() != nullptr) { return; }
+
             auto input         = capture.input(evaluation_time);
             auto bundle        = input.as_bundle();
-            auto subscriptions = bundle.at("subscriptions");
+            storage.input      = bundle.at(0);
+            auto subscriptions = bundle.at(1);
             if (!subscriptions.bound())
             {
                 throw std::logic_error("subscription key capture requires a bound subscriptions source");
@@ -333,16 +387,20 @@ namespace hgraph
             {
                 throw std::logic_error("subscription key capture is not bound to a subscription key source");
             }
-            return source.as<SubscriptionKeySourceView>();
+            storage.source = source.pointer();
         }
 
-        [[nodiscard]] RequestInputSourceView recover_request_source_view(
+        void initialize_request_capture(
             const NodeView &capture,
-            DateTime evaluation_time)
+            DateTime evaluation_time,
+            RequestInputCaptureStorage &storage)
         {
+            if (storage.source && storage.input.schema() != nullptr) { return; }
+
             auto input    = capture.input(evaluation_time);
             auto bundle   = input.as_bundle();
-            auto requests = bundle.at("requests");
+            storage.input = bundle.at(0);
+            auto requests = bundle.at(1);
             if (!requests.bound())
             {
                 throw std::logic_error("request input capture requires a bound requests source");
@@ -353,7 +411,7 @@ namespace hgraph
             {
                 throw std::logic_error("request input capture is not bound to a request input source");
             }
-            return source.as<RequestInputSourceView>();
+            storage.source = source.pointer();
         }
 
         /**
@@ -402,87 +460,27 @@ namespace hgraph
             storage.pending.clear();
         }
 
-        [[nodiscard]] ValueTypeRef value_binding_for(const ValueTypeMetaData *schema, const char *context)
+        void apply_pending_request_input_changes(
+            RequestInputSourceStorage &storage,
+            const TSOutputView &output,
+            DateTime evaluation_time)
         {
-            if (schema == nullptr)
+            auto dict     = output.as_dict();
+            auto mutation = dict.begin_mutation(evaluation_time);
+            for (RequestInputChange &change : storage.pending)
             {
-                throw std::logic_error(std::string{context} + ": value schema is null");
+                Value request_id{change.request_id};
+                if (change.remove)
+                {
+                    static_cast<void>(mutation.erase(request_id.view()));
+                    continue;
+                }
+
+                auto child = mutation.at(request_id.view());
+                apply_delta(TSOutputView{output.output(), child, evaluation_time}, change.delta.view());
             }
-            const auto binding = ValuePlanFactory::instance().type_for(schema);
-            if (!binding)
-            {
-                throw std::logic_error(std::string{context} + ": value schema has no binding");
-            }
-            return binding;
-        }
-
-        [[nodiscard]] const ValueTypeMetaData *request_input_state_schema(const TSValueTypeMetaData &request_schema)
-        {
-            if (request_schema.delta_value_schema == nullptr)
-            {
-                throw std::invalid_argument("request input source requires a request delta schema");
-            }
-
-            auto       &registry          = TypeRegistry::instance();
-            const auto *request_id_schema = registry.register_scalar<Int>("int");
-            const auto *removed_schema    = registry.mutable_set(request_id_schema);
-            const auto *modified_schema   = registry.mutable_map(request_id_schema, request_schema.delta_value_schema);
-            return registry.un_named_bundle({{"removed", removed_schema}, {"modified", modified_schema}});
-        }
-
-        [[nodiscard]] bool request_input_state_empty(const ValueView &state)
-        {
-            auto bundle = state.as_bundle();
-            return bundle.field("removed").as_set().empty() &&
-                   bundle.field("modified").as_map().empty();
-        }
-
-        void clear_request_input_state(const ValueView &state)
-        {
-            auto bundle = state.as_bundle().begin_mutation();
-            bundle.field("removed").as_mutable_set().clear();
-            bundle.field("modified").as_mutable_map().clear();
-        }
-
-        [[nodiscard]] Value request_input_delta_from_state(const TSValueTypeMetaData &output_schema,
-                                                           const ValueView &state)
-        {
-            if (output_schema.delta_value_schema == nullptr ||
-                output_schema.delta_value_schema->value_kind() != ValueTypeKind::Bundle ||
-                output_schema.delta_value_schema->field_count != 2)
-            {
-                throw std::logic_error("request input source output has no TSD delta schema");
-            }
-
-            const auto state_bundle = state.as_bundle();
-            const auto removed_state  = state_bundle.field("removed").as_set();
-            const auto modified_state = state_bundle.field("modified").as_map();
-
-            const ValueTypeMetaData *delta_schema    = output_schema.delta_value_schema;
-            const ValueTypeMetaData *removed_schema  = delta_schema->fields[0].type;
-            const ValueTypeMetaData *modified_schema = delta_schema->fields[1].type;
-            if (removed_schema == nullptr || modified_schema == nullptr)
-            {
-                throw std::logic_error("request input source output delta schema is incomplete");
-            }
-
-            const auto &key_binding      = value_binding_for(removed_schema->element_type, "request input delta");
-            const auto &request_binding  = value_binding_for(modified_schema->element_type, "request input delta");
-            const auto &bundle_binding   = value_binding_for(delta_schema, "request input delta");
-
-            SetBuilder removed{key_binding};
-            for (const auto &key : removed_state.values()) { static_cast<void>(removed.insert_copy(key.data())); }
-
-            MapBuilder modified{key_binding, request_binding};
-            for (const auto &[request_id, request_delta] : modified_state.items())
-            {
-                modified.set_item_copy(request_id.data(), request_delta.data());
-            }
-
-            BundleBuilder bundle{bundle_binding};
-            bundle.set("removed", removed.build());
-            bundle.set("modified", modified.build());
-            return bundle.build();
+            mutation.touch();
+            storage.pending.clear();
         }
 
         bool subscription_key_source_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
@@ -505,12 +503,12 @@ namespace hgraph
         {
             if (!view.started()) { return true; }
 
-            if (request_input_state_empty(view.state())) { return true; }
+            const auto &context = *static_cast<const RequestInputSourceContext *>(
+                view.type().ops_ref().extended_view_context);
+            auto &storage = source_storage_of(view, context);
+            if (storage.pending.empty()) { return true; }
 
-            auto  output = view.output(evaluation_time);
-            Value delta  = request_input_delta_from_state(*output.schema(), view.state());
-            apply_delta(output, delta.view());
-            clear_request_input_state(view.state());
+            apply_pending_request_input_changes(storage, view.output(evaluation_time), evaluation_time);
             return true;
         }
 
@@ -531,7 +529,9 @@ namespace hgraph
 
         void request_input_source_stop(const NodeView &view, DateTime evaluation_time)
         {
-            clear_request_input_state(view.state());
+            const auto *context = static_cast<const RequestInputSourceContext *>(
+                view.type().ops_ref().extended_view_context);
+            source_storage_of(view, *context).pending.clear();
 
             auto output   = view.output(evaluation_time);
             auto dict     = output.as_dict();
@@ -568,29 +568,25 @@ namespace hgraph
             DateTime evaluation_time,
             bool start_phase)
         {
-            auto input  = view.input(evaluation_time);
-            auto bundle = input.as_bundle();
-            auto key    = bundle.at("key");
-            auto source = recover_source_view(view, evaluation_time);
+            auto &storage = capture_storage_of(view, context);
+            initialize_subscription_capture(view, evaluation_time, storage);
+            auto key    = storage.input.borrowed_ref(evaluation_time);
+            auto source = NodeView{storage.source}.as<SubscriptionKeySourceView>();
             const DateTime schedule_time = request_stub_forward_time(evaluation_time, start_phase);
-            record_subscription_key(source, capture_storage_of(view, context), key, schedule_time);
+            record_subscription_key(source, storage, key, schedule_time);
         }
 
         void capture_request_input(
             const RequestInputCaptureContext &context,
             const NodeView &view,
             DateTime evaluation_time,
-            bool start_phase,
-            bool force)
+            bool start_phase)
         {
-            auto input   = view.input(evaluation_time);
-            auto bundle  = input.as_bundle();
-            auto request = bundle.at("request");
-            auto source  = recover_request_source_view(view, evaluation_time);
             auto &storage = capture_storage_of(view, context);
+            initialize_request_capture(view, evaluation_time, storage);
+            auto request = storage.input.borrowed_ref(evaluation_time);
+            auto source  = NodeView{storage.source}.as<RequestInputSourceView>();
             const DateTime schedule_time = request_stub_forward_time(evaluation_time, start_phase);
-
-            if (!force && !request.modified()) { return; }
 
             if (request.valid())
             {
@@ -606,17 +602,43 @@ namespace hgraph
             }
         }
 
+        bool subscription_key_capture_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.started()) { return true; }
+            const auto *context = static_cast<const SubscriptionKeyCaptureContext *>(
+                view.type().ops_ref().extended_view_context);
+            capture_subscription_key(*context, view, evaluation_time, false);
+            return true;
+        }
+
+        bool request_input_capture_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.started()) { return true; }
+            const auto *context = static_cast<const RequestInputCaptureContext *>(
+                view.type().ops_ref().extended_view_context);
+            capture_request_input(*context, view, evaluation_time, false);
+            return true;
+        }
+
         void subscription_key_capture_stop(const NodeView &view, DateTime evaluation_time)
         {
             const auto *context = static_cast<const SubscriptionKeyCaptureContext *>(
                 view.type().ops_ref().extended_view_context);
             auto &storage = capture_storage_of(view, *context);
-            if (!storage.has_previous) { return; }
+            if (!storage.has_previous)
+            {
+                storage.source = NodePtr{};
+                storage.input  = TSInputView{};
+                return;
+            }
 
-            auto source = recover_source_view(view, evaluation_time);
+            initialize_subscription_capture(view, evaluation_time, storage);
+            auto source = NodeView{storage.source}.as<SubscriptionKeySourceView>();
             source.enqueue(std::move(storage.previous_key), false, evaluation_time + MIN_TD);
             storage.previous_key = Value{};
             storage.has_previous = false;
+            storage.source       = NodePtr{};
+            storage.input        = TSInputView{};
         }
 
         void request_input_capture_stop(const NodeView &view, DateTime evaluation_time)
@@ -624,11 +646,19 @@ namespace hgraph
             const auto *context = static_cast<const RequestInputCaptureContext *>(
                 view.type().ops_ref().extended_view_context);
             auto &storage = capture_storage_of(view, *context);
-            if (!storage.live) { return; }
+            if (!storage.live)
+            {
+                storage.source = NodePtr{};
+                storage.input  = TSInputView{};
+                return;
+            }
 
-            auto source = recover_request_source_view(view, evaluation_time);
+            initialize_request_capture(view, evaluation_time, storage);
+            auto source = NodeView{storage.source}.as<RequestInputSourceView>();
             source.remove(context->request_id, evaluation_time + MIN_TD);
-            storage.live = false;
+            storage.live   = false;
+            storage.source = NodePtr{};
+            storage.input  = TSInputView{};
         }
 
         [[nodiscard]] std::string subscription_key_path(std::string path)
@@ -705,10 +735,8 @@ namespace hgraph
         descriptor.callbacks.start = [context](const NodeView &view, DateTime evaluation_time) {
             capture_subscription_key(*context, view, evaluation_time, true);
         };
-        descriptor.callbacks.evaluate = [context](const NodeView &view, DateTime evaluation_time) {
-            capture_subscription_key(*context, view, evaluation_time, false);
-        };
         descriptor.callbacks.stop             = &subscription_key_capture_stop;
+        descriptor.ops.evaluate_impl          = &subscription_key_capture_evaluate_impl;
         descriptor.ops.extended_view_context  = context;
 
         NodeBuilder builder = NodeBuilder::from_descriptor(std::move(descriptor));
@@ -727,12 +755,16 @@ namespace hgraph
         NodeTypeDescriptor descriptor;
         descriptor.schema.display_name  = "request_input_source";
         descriptor.schema.output_schema = output_schema;
-        descriptor.schema.state_schema  = request_input_state_schema(request_schema);
         descriptor.schema.node_kind     = NodeKind::PullSource;
 
-        descriptor.storage_plan = &node_storage_plan_for(descriptor.schema);
+        const std::array fields{NodeStorageField{
+            .name = request_input_source_storage_field,
+            .plan = &MemoryUtils::plan_for<RequestInputSourceStorage>(),
+        }};
+        descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
-        const auto *context = &register_request_input_source_context(path);
+        const auto *context = &register_request_input_source_context(
+            path, descriptor.storage_plan->component(request_input_source_storage_field).offset);
 
         descriptor.callbacks.stop            = &request_input_source_stop;
         descriptor.ops.evaluate_impl         = &request_input_source_evaluate_impl;
@@ -775,12 +807,10 @@ namespace hgraph
             path, request_id, descriptor.storage_plan->component(request_input_capture_storage_field).offset);
 
         descriptor.callbacks.start = [context](const NodeView &view, DateTime evaluation_time) {
-            capture_request_input(*context, view, evaluation_time, true, true);
-        };
-        descriptor.callbacks.evaluate = [context](const NodeView &view, DateTime evaluation_time) {
-            capture_request_input(*context, view, evaluation_time, false, false);
+            capture_request_input(*context, view, evaluation_time, true);
         };
         descriptor.callbacks.stop            = &request_input_capture_stop;
+        descriptor.ops.evaluate_impl         = &request_input_capture_evaluate_impl;
         descriptor.ops.extended_view_context = context;
 
         NodeBuilder builder = NodeBuilder::from_descriptor(std::move(descriptor));

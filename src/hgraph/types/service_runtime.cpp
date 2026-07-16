@@ -325,7 +325,6 @@ namespace hgraph
                 scalar_descriptor<Int>::value_meta(), request_schema);
             WiringNodeSchema schema;
             schema.output = dict_meta;
-            schema.state  = service::detail::request_input_state_schema(*request_schema);
             return w.add_node(
                 role, schema, std::span<const WiringPortRef>{},
                 service::detail::path_key_value(request_path),

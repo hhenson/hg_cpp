@@ -213,6 +213,26 @@ def test_benchmark_dense_map_reduce_processes_every_key_and_cycle():
     ) == expected
 
 
+def test_benchmark_dense_map_invokes_every_key_on_every_cycle():
+    seen = []
+
+    @compute_node
+    def observe(value: TS[int]) -> TS[int]:
+        seen.append(value.value)
+        return value.value
+
+    @graph
+    def mapped(tsd: TSD[int, TS[int]]) -> TS[int]:
+        return reduce(hg.add_, hg.map_(observe, tsd), 0)
+
+    assert eval_node(
+        _source_graph(lambda: mapped(bench._tsd_dense_pulse(3, 4))),
+        [True],
+        __end_time__=hg.MIN_ST + 5 * hg.MIN_TD,
+    ) == [0, 6, 10, 14]
+    assert Counter(seen) == Counter({0: 1, 1: 2, 2: 3, 3: 3, 4: 2, 5: 1})
+
+
 def test_benchmark_sparse_map_reduce_processes_sparse_updates():
     assert eval_node(
         _source_graph(lambda: bench._map_reduce_std(bench._tsd_sparse_pulse(4, 8, 2))),
@@ -227,6 +247,26 @@ def test_benchmark_churn_map_reduce_processes_adds_and_removes():
         [True],
         __end_time__=hg.MIN_ST + 6 * hg.MIN_TD,
     ) == [0, 20, 22, 24, 26]
+
+
+def test_benchmark_churn_map_invokes_initial_and_new_children():
+    seen = []
+
+    @compute_node
+    def observe(value: TS[int]) -> TS[int]:
+        seen.append(value.value)
+        return value.value
+
+    @graph
+    def mapped(tsd: TSD[int, TS[int]]) -> TS[int]:
+        return reduce(hg.add_, hg.map_(observe, tsd), 0)
+
+    assert eval_node(
+        _source_graph(lambda: mapped(bench._tsd_churn_pulse(4, 4, 1))),
+        [True],
+        __end_time__=hg.MIN_ST + 6 * hg.MIN_TD,
+    ) == [0, 6, 7, 8, 9]
+    assert Counter(seen) == Counter({0: 1, 1: 2, 2: 2, 3: 2})
 
 
 def test_benchmark_mesh_processes_dependencies_and_key_churn():

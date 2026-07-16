@@ -41,6 +41,17 @@ namespace
         using response_schema = TS<Int>;
     };
 
+    using PairRequest = TSB<"PairRequest",
+                            Field<"left", TS<Int>>,
+                            Field<"right", TS<Int>>>;
+
+    struct SumPairService
+    {
+        static constexpr std::string_view name{"sum_pair"};
+        using request_schema  = PairRequest;
+        using response_schema = TS<Int>;
+    };
+
     struct BaseValueService
     {
         static constexpr std::string_view name{"base_value"};
@@ -280,6 +291,33 @@ namespace
                 }
 
                 Value response{request.value() + Int{10}};
+                mutation.set(request_id, response.view());
+            }
+        }
+    };
+
+    struct SumPairImplNode
+    {
+        static constexpr auto name = "sum_pair_impl_node";
+
+        static void eval(In<"requests", TSD<Int, PairRequest>, InputValidity::Unchecked> requests,
+                         Out<TSD<Int, TS<Int>>> out)
+        {
+            if (!requests.modified()) { return; }
+
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            for (const auto &[request_id, request] : requests.removed_items())
+            {
+                (void)request;
+                static_cast<void>(mutation.erase(request_id));
+            }
+            for (const auto &[request_id, request] : requests.modified_items())
+            {
+                auto left  = request.field<"left">();
+                auto right = request.field<"right">();
+                if (!left.valid() || !right.valid()) { continue; }
+
+                Value response{left.value() + right.value()};
                 mutation.set(request_id, response.view());
             }
         }
@@ -670,6 +708,18 @@ namespace
         }
     };
 
+    struct SumPairClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "sum_pair_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> left, Port<TS<Int>> right)
+        {
+            service::register_request_reply_service<SumPairService, SumPairImplNode>(w);
+            auto request = stdlib::to_tsb<PairRequest>(w, left, right);
+            return wire<SumPairService>(w, request);
+        }
+    };
+
     struct MissingServiceImplementationGraph
     {
         [[maybe_unused]] static constexpr auto name = "missing_service_implementation_graph";
@@ -957,6 +1007,15 @@ TEST_CASE("service wiring: request/reply source emits cumulative client requests
 
     CHECK_OUTPUT(eval_node<AddOneTwoClientGraph>(values<Int>(1), values<Int>(10)),
                  values<Int>(none, 13));
+}
+
+TEST_CASE("service wiring: request/reply transports recursive bundle deltas")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<SumPairClientGraph>(values<Int>(1, none, 2),
+                                               values<Int>(10, none, none)),
+                 values<Int>(none, 11, none, 12));
 }
 
 TEST_CASE("service wiring: validates missing implementations and illegal stubs")

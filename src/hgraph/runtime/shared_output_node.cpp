@@ -6,9 +6,11 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
 #include <hgraph/types/time_series/ts_input/base_view.h>
+#include <hgraph/types/time_series/ts_input/target_link.h>
 #include <hgraph/types/time_series/ts_output/base_view.h>
 #include <hgraph/types/time_series_reference.h>
 
+#include <array>
 #include <deque>
 #include <stdexcept>
 #include <utility>
@@ -18,17 +20,29 @@ namespace hgraph
 {
     namespace
     {
+        constexpr std::string_view shared_output_capture_storage_field{"shared_output_capture"};
+
+        struct SharedOutputCaptureStorage
+        {
+            NodePtr        source{};
+            TSOutputHandle target{};
+            TSInputView    input{};
+            bool           target_known{false};
+        };
+
         struct SharedOutputConfig
         {
             std::string                 key{};
             const TSValueTypeMetaData  *target_schema{nullptr};
+            std::size_t                  storage_offset{0};
             bool                        strict{true};
         };
 
         [[nodiscard]] const SharedOutputConfig &register_shared_output_config(
             std::string key,
             const TSValueTypeMetaData &target_schema,
-            bool strict)
+            bool strict,
+            std::size_t storage_offset = 0)
         {
             if (key.empty()) { throw std::invalid_argument("shared output key must not be empty"); }
             // Node callback tables are interned, so builder config storage must
@@ -37,6 +51,7 @@ namespace hgraph
             configs->push_back(SharedOutputConfig{
                 .key = std::move(key),
                 .target_schema = &target_schema,
+                .storage_offset = storage_offset,
                 .strict = strict,
             });
             return configs->back();
@@ -62,26 +77,80 @@ namespace hgraph
             return reference;
         }
 
+        [[nodiscard]] SharedOutputCaptureStorage &capture_storage_of(
+            const NodeView &view,
+            const SharedOutputConfig &config)
+        {
+            return *MemoryUtils::cast<SharedOutputCaptureStorage>(
+                MemoryUtils::advance(view.data(), config.storage_offset));
+        }
+
+        [[nodiscard]] bool input_target_unchanged(
+            const TSInputView &input,
+            SharedOutputCaptureStorage &storage)
+        {
+            if (!storage.target_known || !storage.target.bound() || !input.is_bindable()) { return false; }
+
+            auto target_view = input.bound_output();
+            const auto *target_schema = target_view.schema();
+            if (target_schema == nullptr || target_schema->kind == TSTypeKind::REF) { return false; }
+
+            auto target = target_view.handle();
+            if (detail::target_link_storage(target.data_view()) != nullptr) { return false; }
+            return storage.target.same_as(target);
+        }
+
+        void remember_input_target(const TSInputView &input, SharedOutputCaptureStorage &storage)
+        {
+            if (!input.is_bindable())
+            {
+                storage.target.reset();
+                storage.target_known = false;
+                return;
+            }
+
+            storage.target = input.bound_output().handle();
+            storage.target_known = true;
+        }
+
+        void initialize_shared_output_capture(
+            const NodeView &view,
+            DateTime evaluation_time,
+            SharedOutputCaptureStorage &storage)
+        {
+            if (storage.source && storage.input.schema() != nullptr) { return; }
+
+            auto input       = view.input(evaluation_time);
+            auto bundle      = input.as_bundle();
+            storage.input    = bundle.at(0);
+            auto source_input = bundle.at(1);
+
+            NodeView source = source_input.bound_output().owner_node();
+            if (!source.valid())
+            {
+                throw std::logic_error("shared output capture could not recover the shared output source node");
+            }
+            if (!source.has_state())
+            {
+                throw std::logic_error("shared output capture target node has no reference state");
+            }
+            storage.source = source.pointer();
+        }
+
         void capture_shared_output_reference(
             const SharedOutputConfig &config,
             const NodeView &view,
             DateTime evaluation_time,
             bool start_phase)
         {
-            auto input = view.input(evaluation_time);
-            auto bundle = input.as_bundle();
-            auto reference = normalize_shared_output_reference(config, TimeSeriesReference{bundle[0]});
+            auto &storage = capture_storage_of(view, config);
+            initialize_shared_output_capture(view, evaluation_time, storage);
+            auto target = storage.input.borrowed_ref(evaluation_time);
+            if (!start_phase && input_target_unchanged(target, storage)) { return; }
 
-            TSOutputView source_output = bundle[1].bound_output();
-            NodeView     source_node   = source_output.owner_node();
-            if (!source_node.valid())
-            {
-                throw std::logic_error("shared output capture could not recover the shared output source node");
-            }
-            if (!source_node.has_state())
-            {
-                throw std::logic_error("shared output capture target node has no reference state");
-            }
+            auto reference = normalize_shared_output_reference(config, TimeSeriesReference{target});
+            remember_input_target(target, storage);
+            NodeView source_node{storage.source};
 
             const auto  state = source_node.state();
             const auto &previous = state.checked_as<TimeSeriesReference>();
@@ -108,6 +177,26 @@ namespace hgraph
                    "shared output capture must rank before its paired source (validated at wiring)");
             static_cast<void>(start_phase);
             graph->schedule_node(source_node.node_index(), evaluation_time);
+        }
+
+        bool shared_output_capture_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.started()) { return true; }
+            const auto *config = static_cast<const SharedOutputConfig *>(
+                view.type().ops_ref().extended_view_context);
+            capture_shared_output_reference(*config, view, evaluation_time, false);
+            return true;
+        }
+
+        void shared_output_capture_stop(const NodeView &view, DateTime)
+        {
+            const auto *config = static_cast<const SharedOutputConfig *>(
+                view.type().ops_ref().extended_view_context);
+            auto &storage = capture_storage_of(view, *config);
+            storage.source = NodePtr{};
+            storage.target.reset();
+            storage.input = TSInputView{};
+            storage.target_known = false;
         }
     }  // namespace
 
@@ -161,29 +250,37 @@ namespace hgraph
 
     NodeBuilder make_shared_output_capture_node(std::string path, const TSValueTypeMetaData &target_schema)
     {
-        const auto *config = &register_shared_output_config(output_key(path), target_schema, true);
         auto       &registry  = TypeRegistry::instance();
         const auto *ref_schema = registry.ref(&target_schema);
 
-        NodeTypeMetaData schema;
-        schema.display_name      = "shared_output_capture";
-        schema.input_schema      = registry.un_named_tsb({
+        NodeTypeDescriptor descriptor;
+        descriptor.schema.display_name = "shared_output_capture";
+        descriptor.schema.input_schema = registry.un_named_tsb({
             {"ts", &target_schema},
             {"shared_output", ref_schema},
         });
-        schema.node_kind         = NodeKind::Sink;
-        schema.active_inputs     = std::vector<std::size_t>{0};
-        schema.valid_inputs      = std::vector<std::size_t>{};
+        descriptor.schema.node_kind     = NodeKind::Sink;
+        descriptor.schema.active_inputs = std::vector<std::size_t>{0};
+        descriptor.schema.valid_inputs  = std::vector<std::size_t>{};
 
-        NodeCallbacks callbacks;
-        callbacks.start = [config](const NodeView &view, DateTime evaluation_time) {
+        const std::array fields{NodeStorageField{
+            .name = shared_output_capture_storage_field,
+            .plan = &MemoryUtils::plan_for<SharedOutputCaptureStorage>(),
+        }};
+        descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
+
+        const auto *config = &register_shared_output_config(
+            output_key(path), target_schema, true,
+            descriptor.storage_plan->component(shared_output_capture_storage_field).offset);
+
+        descriptor.callbacks.start = [config](const NodeView &view, DateTime evaluation_time) {
             capture_shared_output_reference(*config, view, evaluation_time, true);
         };
-        callbacks.evaluate = [config](const NodeView &view, DateTime evaluation_time) {
-            capture_shared_output_reference(*config, view, evaluation_time, false);
-        };
+        descriptor.callbacks.stop            = &shared_output_capture_stop;
+        descriptor.ops.evaluate_impl         = &shared_output_capture_evaluate_impl;
+        descriptor.ops.extended_view_context = config;
 
-        NodeBuilder builder = NodeBuilder::native(std::move(schema), std::move(callbacks));
+        NodeBuilder builder = NodeBuilder::from_descriptor(std::move(descriptor));
         builder.label(std::string{"shared_output_capture:"} + config->key);
         return builder;
     }
