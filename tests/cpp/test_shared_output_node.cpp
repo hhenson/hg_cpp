@@ -183,6 +183,9 @@ TEST_CASE("shared output capture does not republish the same reference on target
 
     view.start(t1);
     view.evaluate(t1);
+    auto capture_input = view.node_at(2).input(t1);
+    auto capture_bundle = capture_input.as_bundle();
+    CHECK_FALSE(capture_bundle.at(0).active());
     REQUIRE(view.node_at(1).output(t1).modified());
     CHECK(view.node_at(1).output(t1).value().checked_as<TimeSeriesReference>() ==
           TimeSeriesReference{view.node_at(0).output(t1)});

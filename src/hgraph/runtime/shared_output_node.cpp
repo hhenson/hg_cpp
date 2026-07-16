@@ -85,19 +85,26 @@ namespace hgraph
                 MemoryUtils::advance(view.data(), config.storage_offset));
         }
 
-        [[nodiscard]] bool input_target_unchanged(
-            const TSInputView &input,
-            SharedOutputCaptureStorage &storage)
+        [[nodiscard]] bool input_target_is_stable(const TSInputView &input)
         {
-            if (!storage.target_known || !storage.target.bound() || !input.is_bindable()) { return false; }
+            if (!input.is_bindable() || !input.bound()) { return false; }
 
             auto target_view = input.bound_output();
             const auto *target_schema = target_view.schema();
             if (target_schema == nullptr || target_schema->kind == TSTypeKind::REF) { return false; }
 
-            auto target = target_view.handle();
-            if (detail::target_link_storage(target.data_view()) != nullptr) { return false; }
-            return storage.target.same_as(target);
+            return detail::target_link_storage(target_view.data_view()) == nullptr;
+        }
+
+        [[nodiscard]] bool input_target_unchanged(
+            const TSInputView &input,
+            SharedOutputCaptureStorage &storage)
+        {
+            if (!storage.target_known || !storage.target.bound() || !input_target_is_stable(input))
+            {
+                return false;
+            }
+            return storage.target.same_as(input.bound_output().handle());
         }
 
         void remember_input_target(const TSInputView &input, SharedOutputCaptureStorage &storage)
@@ -150,6 +157,15 @@ namespace hgraph
 
             auto reference = normalize_shared_output_reference(config, TimeSeriesReference{target});
             remember_input_target(target, storage);
+            // Capture nodes begin active because a plain TS can still be backed
+            // by a retargetable link (for example, a chained adaptor). Once the
+            // runtime proves that the bound endpoint itself is stable, value
+            // ticks can flow directly through the published reference and this
+            // relay no longer needs to observe them.
+            if (input_target_is_stable(target) && storage.input.active())
+            {
+                storage.input.make_passive();
+            }
             NodeView source_node{storage.source};
 
             const auto  state = source_node.state();
