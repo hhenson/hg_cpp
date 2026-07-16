@@ -64,6 +64,11 @@ def test_python_node_type_records_identify_bridge_implementations():
     def increment(value: TS[int]) -> TS[int]:
         return value.value + 1
 
+    @hg.compute_node
+    def remember(value: TS[int], state: hg.STATE = None) -> TS[int]:
+        state.last = value.value
+        return state.last
+
     @hg.generator
     def ticks() -> TS[int]:
         yield hg.MIN_ST, 1
@@ -71,17 +76,23 @@ def test_python_node_type_records_identify_bridge_implementations():
     @graph
     def app(value: TS[int]) -> TS[int]:
         computed = increment(value)
+        stateful = remember(computed)
         generated = ticks()
         observed["compute"] = computed._port.node_type_info
+        observed["full_compute"] = stateful._port.node_type_info
         observed["generator"] = generated._port.node_type_info
-        return computed + generated
+        return stateful + generated
 
     check(eval_node(app, [2]) == [4], "python record-backed nodes execute")
-    check(observed["compute"]["implementation_label"] == "hgraph.python.compute",
+    check(observed["compute"]["implementation_label"] == "hgraph.python.compute.fast",
           f"compute type record: {observed['compute']}")
+    check(observed["full_compute"]["implementation_label"] == "hgraph.python.compute",
+          f"full compute type record: {observed['full_compute']}")
     check(observed["generator"]["implementation_label"] == "hgraph.python.generator",
           f"generator type record: {observed['generator']}")
     check(observed["compute"]["semantic_label"] == "__py_compute", "compute semantic schema label")
+    check(observed["full_compute"]["semantic_label"] == "__py_compute",
+          "full compute semantic schema label")
     check(observed["generator"]["semantic_label"] == "__py_generator", "generator semantic schema label")
     check(observed["compute"]["family"] == observed["generator"]["family"], "common Node family")
     check(observed["compute"]["role"] == observed["generator"]["role"], "common Runtime role")

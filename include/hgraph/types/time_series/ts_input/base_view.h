@@ -144,10 +144,17 @@ namespace hgraph
 
         struct InputDataCursor
         {
+            enum class Classification
+            {
+                Detect,
+                Known,
+            };
+
             InputDataCursor() noexcept = default;
             InputDataCursor(TSDataView value_data,
                             TSDataView raw_data,
-                            detail::TSInputTargetActiveNode *target_node) noexcept;
+                            detail::TSInputTargetActiveNode *target_node,
+                            Classification classification = Classification::Detect) noexcept;
 
             InputDataCursor(const InputDataCursor &) = delete;
             InputDataCursor &operator=(const InputDataCursor &) = delete;
@@ -189,7 +196,9 @@ namespace hgraph
                     TSDataView                      raw_data,
                     detail::TSInputTargetActiveNode *target_node,
                     Notifiable                     *scheduling_notifier,
-                    DateTime                   evaluation_time) noexcept;
+                    DateTime                         evaluation_time,
+                    InputDataCursor::Classification classification =
+                        InputDataCursor::Classification::Detect) noexcept;
 
         [[nodiscard]] bool is_target_position() const noexcept;
         [[nodiscard]] bool inherited_sampled_transition() const noexcept;

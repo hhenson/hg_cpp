@@ -23,18 +23,23 @@ namespace hgraph
 
     TSInputView::InputDataCursor::InputDataCursor(TSDataView value_data_,
                                                   TSDataView raw_data_,
-                                                  detail::TSInputTargetActiveNode *target_node_) noexcept
+                                                  detail::TSInputTargetActiveNode *target_node_,
+                                                  Classification classification) noexcept
         : value_data(std::move(value_data_)),
           raw_data(raw_data_.valid() ? std::move(raw_data_) : value_data.borrowed_ref()),
           target_node(target_node_ != nullptr
                           ? target_node_
-                          : (detail::is_target_link_view(raw_data) ? target_root_marker() : nullptr))
+                          : (classification == Classification::Detect &&
+                                     detail::is_target_link_view(raw_data)
+                                 ? target_root_marker()
+                                 : nullptr))
     {
     }
 
     TSInputView::InputDataCursor TSInputView::InputDataCursor::borrowed_ref() const noexcept
     {
-        return InputDataCursor{value_data.borrowed_ref(), raw_data.borrowed_ref(), target_node};
+        return InputDataCursor{value_data.borrowed_ref(), raw_data.borrowed_ref(), target_node,
+                               Classification::Known};
     }
 
     bool TSInputView::InputDataCursor::has_storage() const noexcept
@@ -140,7 +145,8 @@ namespace hgraph
                                                                             std::size_t index) const
     {
         auto *child_node = detail::target_link_child_node(raw_data, target_path_node(), index);
-        return InputDataCursor{std::move(child), raw_data.borrowed_ref(), child_node};
+        return InputDataCursor{std::move(child), raw_data.borrowed_ref(), child_node,
+                               Classification::Known};
     }
 
     void TSInputView::InputDataCursor::bind_target(const TSOutputView &output)
@@ -203,9 +209,10 @@ namespace hgraph
                              TSDataView               raw_data,
                              detail::TSInputTargetActiveNode *target_node,
                              Notifiable              *scheduling_notifier,
-                             DateTime            evaluation_time) noexcept
+                             DateTime            evaluation_time,
+                             InputDataCursor::Classification classification) noexcept
         : input_(input),
-          data_(std::move(value_data), std::move(raw_data), target_node),
+          data_(std::move(value_data), std::move(raw_data), target_node, classification),
           scheduling_notifier_(scheduling_notifier),
           evaluation_time_(evaluation_time)
     {
@@ -219,7 +226,8 @@ namespace hgraph
                            std::move(cursor.raw_data),
                            cursor.target_node,
                            scheduling_notifier_,
-                           evaluation_time_};
+                           evaluation_time_,
+                           InputDataCursor::Classification::Known};
     }
 
     namespace detail
@@ -600,7 +608,7 @@ namespace hgraph
     {
         auto cursor = data_.target_child(std::move(child), index);
         return TSInputView{input_, std::move(cursor.value_data), std::move(cursor.raw_data), cursor.target_node,
-                           scheduling_notifier_, evaluation_time_};
+                           scheduling_notifier_, evaluation_time_, InputDataCursor::Classification::Known};
     }
 
     TSInputView TSInputView::child_from_input(std::size_t index) const
@@ -620,8 +628,9 @@ namespace hgraph
                                                    std::size_t index) const noexcept
     {
         static_cast<void>(index);
-        return TSInputView{input_, std::move(projection.visible), std::move(projection.target_link), nullptr,
-                           scheduling_notifier_, evaluation_time_};
+        auto *target_node = projection.target_link.valid() ? target_root_marker() : nullptr;
+        return TSInputView{input_, std::move(projection.visible), std::move(projection.target_link), target_node,
+                           scheduling_notifier_, evaluation_time_, InputDataCursor::Classification::Known};
     }
 
 }  // namespace hgraph

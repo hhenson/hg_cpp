@@ -284,6 +284,27 @@ namespace
         TSOutputView      *recordable{nullptr};
     };
 
+    [[nodiscard]] bool py_make_ts_arg(char kind, TSInputView child,
+                                      const PyTsLease &lease, nb::object &result)
+    {
+        const auto &evaluation_data = child.data_view();
+        // 'u'/'U' = UNCHECKED (hgraph's valid=(...) opt-out): the
+        // python fn sees the view and guards itself.
+        if (kind != 'u' && kind != 'U' &&
+            (!evaluation_data.valid() || !evaluation_data.has_current_value()))
+        {
+            return false;
+        }
+        // The LAZY C++ TimeSeries view: nothing converts unless the python
+        // code touches it. The lease expires after the callback.
+        const auto evaluation_storage = evaluation_data.valid()
+                                            ? evaluation_data.storage_ref()
+                                            : TSDataStorageRef<>{};
+        result = nb::cast(PyTimeSeries{
+            std::move(child), lease, evaluation_storage});
+        return true;
+    }
+
     /** Assemble the python call args per the layout; false = a ts arg is not yet valid. */
     [[nodiscard]] bool py_assemble_args(std::string_view layout, const TSInputView &args, const ValueView &scalars,
                                         PyInvocationState state, NodeScheduler scheduler, DateTime now,
@@ -308,22 +329,8 @@ namespace
                 case 'U':
                 case 'P': {
                     auto child = bundle[ts_index++];
-                    const auto &evaluation_data = child.data_view();
-                    // 'u'/'U' = UNCHECKED (hgraph's valid=(...) opt-out): the
-                    // python fn sees the view and guards itself.
-                    if (kind != 'u' && kind != 'U' &&
-                        (!evaluation_data.valid() || !evaluation_data.has_current_value()))
-                    {
-                        return false;
-                    }
-                    // The LAZY C++ TimeSeries view: nothing converts unless
-                    // the python code touches it. Guard-invalidated after
-                    // the call (a view must not outlive its evaluation).
-                    const auto evaluation_storage = evaluation_data.valid()
-                                                        ? evaluation_data.storage_ref()
-                                                        : TSDataStorageRef<>{};
-                    nb::object ts_obj = nb::cast(PyTimeSeries{
-                        std::move(child), lease, evaluation_storage});
+                    nb::object ts_obj;
+                    if (!py_make_ts_arg(kind, std::move(child), lease, ts_obj)) { return false; }
                     call_args.append(ts_obj);
                     if (kind == 'C' || kind == 'P')
                     {
@@ -371,6 +378,66 @@ namespace
                 case 'g': call_args.append(runtime_global_state); break;
                 case 'n': call_args.append(nb::cast(PyNode{node.pointer(), scheduler, lease})); break;
                 default: throw std::logic_error("python node: unknown layout marker");
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool py_fast_compute_eligible(OperatorCallContext context)
+    {
+        const auto *config = context.scalar_as<Str>("config");
+        const auto *start_enabled = context.scalar_as<Bool>("start_enabled");
+        const auto *stop_enabled = context.scalar_as<Bool>("stop_enabled");
+        if (config == nullptr || start_enabled == nullptr || stop_enabled == nullptr ||
+            *start_enabled || *stop_enabled)
+        {
+            return false;
+        }
+        for (const char kind : parse_py_call_shape(*config).layout)
+        {
+            switch (kind)
+            {
+                case 't':
+                case 'u':
+                case 'T':
+                case 'U':
+                case 's': break;
+                default: return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool py_assemble_fast_args(std::string_view layout, const TSInputView &args,
+                                             const ValueView &scalars, const PyTsLease &lease,
+                                             nb::list &call_args)
+    {
+        auto bundle = args.as_bundle();
+        std::size_t ts_index = 0;
+        std::size_t scalar_index = 0;
+        auto scalar_list = scalars.valid() ? std::optional{scalars.as_list()} : std::nullopt;
+        for (const char kind : layout)
+        {
+            switch (kind)
+            {
+                case 't':
+                case 'u':
+                case 'T':
+                case 'U': {
+                    nb::object ts_obj;
+                    if (!py_make_ts_arg(kind, bundle[ts_index++], lease, ts_obj)) { return false; }
+                    call_args.append(ts_obj);
+                    break;
+                }
+                case 's': {
+                    if (!scalar_list.has_value())
+                    {
+                        throw std::logic_error("fast python node: missing scalars value");
+                    }
+                    call_args.append(value_to_py((*scalar_list)[scalar_index++].as_any().get()));
+                    break;
+                }
+                default: throw std::logic_error("fast python node: unsupported layout marker");
             }
         }
         return true;
@@ -523,6 +590,11 @@ namespace
             Scalar<"stop_scalars", ScalarVar<"XSV">>, State<PyStateRef>, NodeScheduler,
             DateTime, GlobalStateView, EngineControlView, NodeView, Out<TsVar<"O">>>;
 
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return !py_fast_compute_eligible(context);
+        }
+
         static void start(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
                           Scalar<"config", Str> eval_config,
                           Scalar<"start_fn", PyNodeRef> fn, Scalar<"start_enabled", Bool> enabled,
@@ -586,6 +658,77 @@ namespace
                               global_state, engine, node);
             release.release();
             py_release_state(state);
+        }
+    };
+
+    struct py_fast_compute_node
+    {
+        static constexpr auto name = "__py_compute";
+        static constexpr std::string_view implementation_label =
+            "hgraph.python.compute.fast";
+        using signature_args = py_compute_node::signature_args;
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return py_fast_compute_eligible(context);
+        }
+
+        static void start(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
+                          Scalar<"config", Str> config,
+                          SingleShotScheduler initial_sample)
+        {
+            const auto layout = parse_py_call_shape(config.value()).layout;
+            py_apply_input_activity(layout, args.base());
+            py_schedule_initial_reference_sample(layout, args.base(), initial_sample);
+        }
+
+        static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
+                         Scalar<"fn", PyNodeRef> fn, Scalar<"config", Str> config,
+                         Scalar<"scalars", ScalarVar<"SV">> scalars,
+                         GlobalStateView global_state, Out<TsVar<"O">> out)
+        {
+            const PyCallShape shape = parse_py_call_shape(config.value());
+            nb::gil_scoped_acquire gil;
+            auto lease = py_ts_lease_for_call();
+            auto invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
+            nb::object result;
+
+            const bool direct_ts_call = shape.kw_names.empty() && shape.layout.size() == 1 &&
+                                        (shape.layout.front() == 't' || shape.layout.front() == 'u' ||
+                                         shape.layout.front() == 'T' || shape.layout.front() == 'U');
+            if (direct_ts_call && py_has_active_runtime_global_state())
+            {
+                nb::object ts_obj;
+                auto bundle = args.base().as_bundle();
+                if (!py_make_ts_arg(shape.layout.front(), bundle[0], lease, ts_obj))
+                {
+                    return;
+                }
+                result = fn.value().record->fn(ts_obj);
+            }
+            else
+            {
+                nb::list call_args;
+                if (!py_assemble_fast_args(shape.layout, args.base(), scalars.value(), lease, call_args))
+                {
+                    return;
+                }
+                auto call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
+                std::optional<nb::list> context_values;
+                nb::object runtime_state =
+                    py_runtime_global_state_for_call(global_state, lease.guard);
+                result = py_call_with_contexts(fn.value().record->fn, call_args, context_values,
+                                               runtime_state, std::move(call_kwargs));
+            }
+            apply_py_result(result, out);
+            invalid.release();
+            lease.invalidate();
+        }
+
+        static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
+                         Scalar<"config", Str> config)
+        {
+            py_clear_input_activity(parse_py_call_shape(config.value()).layout, args.base());
         }
     };
 
@@ -1075,6 +1218,7 @@ namespace hgraph::python_bridge
     {
         (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar
         register_overload<op_materialize, materialize_node>();
+        register_overload<op_py_compute, py_fast_compute_node>();
         register_overload<op_py_compute, py_compute_node>();
         register_overload<op_py_compute_recordable, py_compute_recordable_node>();
         register_overload<op_py_sink, py_sink_node>();
