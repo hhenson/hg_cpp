@@ -486,8 +486,9 @@ namespace hgraph::python_bridge
 
     struct PyTimeSeries
     {
-        TSInputView view;
-        PyTsLease   lease;
+        TSInputView       view;
+        PyTsLease         lease;
+        TSDataStorageRef<> evaluation_data{};
 
         /** Throws when the view outlived its node's evaluation. */
         void require_alive() const
@@ -506,8 +507,15 @@ namespace hgraph::python_bridge
         [[nodiscard]] nb::object value() const
         {
             const auto &v = checked();
-            if (!v.valid()) { return nb::none(); }   // hgraph: invalid reads as None
-            if (v.schema() != nullptr && v.schema()->kind == TSTypeKind::TSL)
+            TSDataView data = evaluation_data.has_value()
+                                  ? TSDataView{evaluation_data}
+                                  : v.data_view().borrowed_ref();
+            if (!data.valid() || !data.has_current_value())
+            {
+                return nb::none();   // hgraph: invalid reads as None
+            }
+            const auto *schema = v.schema();
+            if (schema != nullptr && schema->kind == TSTypeKind::TSL)
             {
                 // hgraph parity: a TSL's value is a tuple of child values
                 // (invalid children read as None).
@@ -520,15 +528,15 @@ namespace hgraph::python_bridge
                 }
                 return nb::tuple(out);
             }
-            if (v.schema() != nullptr && v.schema()->kind == TSTypeKind::REF)
+            if (schema != nullptr && schema->kind == TSTypeKind::REF)
             {
                 // A REF input's value is the REFERENCE - TSInputView::
                 // reference() reads the to-REF alternative's populated value
                 // (peered at the true upstream output).
                 return nb::cast(python_bridge::PyOpaqueRef{Value{v.reference()}, v.evaluation_time()});
             }
-            nb::object result = value_to_py(v.value());
-            if (v.schema() != nullptr && v.schema()->kind == TSTypeKind::TS && PySet_CheckExact(result.ptr()))
+            nb::object result = data.value_to_python();
+            if (schema != nullptr && schema->kind == TSTypeKind::TS && PySet_CheckExact(result.ptr()))
             {
                 // hgraph parity: a scalar set is a FROZENSET (TSS values stay
                 // mutable sets) - returning it to a TSS output means replace.

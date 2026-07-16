@@ -287,7 +287,7 @@ namespace
     /** Assemble the python call args per the layout; false = a ts arg is not yet valid. */
     [[nodiscard]] bool py_assemble_args(std::string_view layout, const TSInputView &args, const ValueView &scalars,
                                         PyInvocationState state, NodeScheduler scheduler, DateTime now,
-                                        nb::list &call_args, nb::list &context_values,
+                                        nb::list &call_args, std::optional<nb::list> &context_values,
                                         const PyTsLease &lease,
                                         const nb::object &runtime_global_state, EngineControlView engine,
                                         const NodeView &node,
@@ -308,20 +308,30 @@ namespace
                 case 'U':
                 case 'P': {
                     auto child = bundle[ts_index++];
+                    const auto &evaluation_data = child.data_view();
                     // 'u'/'U' = UNCHECKED (hgraph's valid=(...) opt-out): the
                     // python fn sees the view and guards itself.
-                    if (kind != 'u' && kind != 'U' && !child.valid()) { return false; }
+                    if (kind != 'u' && kind != 'U' &&
+                        (!evaluation_data.valid() || !evaluation_data.has_current_value()))
+                    {
+                        return false;
+                    }
                     // The LAZY C++ TimeSeries view: nothing converts unless
                     // the python code touches it. Guard-invalidated after
                     // the call (a view must not outlive its evaluation).
-                    nb::object ts_obj = nb::cast(PyTimeSeries{std::move(child), lease});
+                    const auto evaluation_storage = evaluation_data.valid()
+                                                        ? evaluation_data.storage_ref()
+                                                        : TSDataStorageRef<>{};
+                    nb::object ts_obj = nb::cast(PyTimeSeries{
+                        std::move(child), lease, evaluation_storage});
                     call_args.append(ts_obj);
                     if (kind == 'C' || kind == 'P')
                     {
                         // A context input is ALSO entered (python
                         // context-manager protocol) around the call - the
                         // value converts here because entering needs it.
-                        context_values.append(nb::cast<PyTimeSeries &>(ts_obj).value());
+                        if (!context_values.has_value()) { context_values.emplace(); }
+                        context_values->append(nb::cast<PyTimeSeries &>(ts_obj).value());
                     }
                     break;
                 }
@@ -433,12 +443,12 @@ namespace
 
     /** Enter context-manager values (hgraph's context semantics), call, exit in reverse. */
     [[nodiscard]] nb::object py_call_with_contexts(const nb::object &fn, nb::list &call_args,
-                                                   nb::list &context_values,
+                                                   const std::optional<nb::list> &context_values,
                                                    const nb::object &runtime_global_state,
                                                    std::optional<nb::dict> call_kwargs = std::nullopt)
     {
         const bool publish_runtime_state = !py_has_active_runtime_global_state();
-        if (!publish_runtime_state && nb::len(context_values) == 0)
+        if (!publish_runtime_state && !context_values.has_value())
         {
             return py_invoke(fn, call_args, call_kwargs);
         }
@@ -449,7 +459,7 @@ namespace
             runtime.attr("_push_runtime_global_state")(runtime_global_state);
         }
         std::vector<nb::object> entered;
-        entered.reserve(nb::len(context_values));
+        entered.reserve(context_values.has_value() ? nb::len(*context_values) : 0);
         auto unwind = UnwindCleanupGuard([&] {
             for (auto it = entered.rbegin(); it != entered.rend(); ++it)
             {
@@ -457,13 +467,16 @@ namespace
             }
             if (publish_runtime_state) { runtime.attr("_pop_runtime_global_state")(); }
         });
-        for (nb::handle value : context_values)
+        if (context_values.has_value())
         {
-            if (nb::hasattr(value, "__enter__"))
+            for (nb::handle value : *context_values)
             {
-                nb::object holder = nb::borrow(value);
-                holder.attr("__enter__")();
-                entered.push_back(std::move(holder));
+                if (nb::hasattr(value, "__enter__"))
+                {
+                    nb::object holder = nb::borrow(value);
+                    holder.attr("__enter__")();
+                    entered.push_back(std::move(holder));
+                }
             }
         }
         nb::object result = py_invoke(fn, call_args, call_kwargs);
@@ -485,7 +498,7 @@ namespace
         if (!enabled) { return; }
         nb::gil_scoped_acquire gil;
         nb::list call_args;
-        nb::list context_values;
+        std::optional<nb::list> context_values;
         auto lease = py_ts_lease_for_call();
         auto invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
         nb::object runtime_state = py_runtime_global_state_for_call(global_state, lease.guard);
@@ -535,7 +548,7 @@ namespace
             const PyCallShape shape = parse_py_call_shape(config.value());
             nb::gil_scoped_acquire gil;
             nb::list call_args;
-            nb::list context_values;
+            std::optional<nb::list> context_values;
             auto     lease   = py_ts_lease_for_call();
             auto     invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
             const auto &out_view = static_cast<const TSOutputView &>(out);
@@ -625,7 +638,7 @@ namespace
             const PyCallShape shape = parse_py_call_shape(config.value());
             nb::gil_scoped_acquire gil;
             nb::list call_args;
-            nb::list context_values;
+            std::optional<nb::list> context_values;
             auto lease = py_ts_lease_for_call();
             auto invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
             const auto &out_view = static_cast<const TSOutputView &>(out);
@@ -696,7 +709,7 @@ namespace
             const PyCallShape shape = parse_py_call_shape(config.value());
             nb::gil_scoped_acquire gil;
             nb::list call_args;
-            nb::list context_values;
+            std::optional<nb::list> context_values;
             auto     lease   = py_ts_lease_for_call();
             auto     invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
             nb::object runtime_state =

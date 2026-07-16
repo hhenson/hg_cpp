@@ -10,6 +10,15 @@
 
 namespace hgraph
 {
+    namespace
+    {
+        [[nodiscard]] detail::TSInputTargetActiveNode *target_root_marker() noexcept
+        {
+            static detail::TSInputTargetActiveNode marker{};
+            return &marker;
+        }
+    }
+
     TSInputView::TSInputView() noexcept = default;
 
     TSInputView::InputDataCursor::InputDataCursor(TSDataView value_data_,
@@ -17,7 +26,9 @@ namespace hgraph
                                                   detail::TSInputTargetActiveNode *target_node_) noexcept
         : value_data(std::move(value_data_)),
           raw_data(raw_data_.valid() ? std::move(raw_data_) : value_data.borrowed_ref()),
-          target_node(target_node_)
+          target_node(target_node_ != nullptr
+                          ? target_node_
+                          : (detail::is_target_link_view(raw_data) ? target_root_marker() : nullptr))
     {
     }
 
@@ -33,7 +44,17 @@ namespace hgraph
 
     bool TSInputView::InputDataCursor::is_target_position() const noexcept
     {
-        return detail::is_target_link_view(raw_data);
+        return target_node != nullptr;
+    }
+
+    bool TSInputView::InputDataCursor::is_target_root() const noexcept
+    {
+        return target_node == target_root_marker();
+    }
+
+    detail::TSInputTargetActiveNode *TSInputView::InputDataCursor::target_path_node() const noexcept
+    {
+        return is_target_root() ? nullptr : target_node;
     }
 
     bool TSInputView::InputDataCursor::target_bound() const noexcept
@@ -55,12 +76,12 @@ namespace hgraph
     const TSValueTypeMetaData *TSInputView::InputDataCursor::target_path_schema() const noexcept
     {
         if (!is_target_position()) { return nullptr; }
-        return detail::target_path_schema(raw_data, target_node);
+        return detail::target_path_schema(raw_data, target_path_node());
     }
 
     const TSDataView &TSInputView::InputDataCursor::resolved_value_data() const noexcept
     {
-        if (is_target_position()) { value_data = detail::target_link_resolve(raw_data, target_node); }
+        if (is_target_position()) { value_data = detail::target_link_resolve(raw_data, target_path_node()); }
         return value_data;
     }
 
@@ -78,10 +99,10 @@ namespace hgraph
             // BLEND the link's own tracking (the sampled-runtime contract): a
             // from-REF retarget records on the LINK - the position is modified
             // even though the (already-valid) target did not tick. Applies
-            // only to positions with their OWN storage (target_node == null);
+            // only to positions with their OWN storage (the target root);
             // descents within a root link tree share the root's tracking,
             // which must not leak into per-child modified state.
-            if (target_node == nullptr)
+            if (is_target_root())
             {
                 return std::max(raw_data.last_modified_time(), data.last_modified_time());
             }
@@ -97,7 +118,7 @@ namespace hgraph
         if (is_target_position())
         {
             if (!data.valid()) { return raw_data.modified(evaluation_time); }
-            if (target_node == nullptr && raw_data.modified(evaluation_time)) { return true; }   // rebind (sampled)
+            if (is_target_root() && raw_data.modified(evaluation_time)) { return true; }   // rebind (sampled)
             const auto *link = detail::target_link_storage(raw_data);
             if (link != nullptr && link->sampled_structural_transition() &&
                 link->structural_transition_time() == evaluation_time)
@@ -118,25 +139,25 @@ namespace hgraph
     TSInputView::InputDataCursor TSInputView::InputDataCursor::target_child(TSDataView child,
                                                                             std::size_t index) const
     {
-        auto *child_node = detail::target_link_child_node(raw_data, target_node, index);
+        auto *child_node = detail::target_link_child_node(raw_data, target_path_node(), index);
         return InputDataCursor{std::move(child), raw_data.borrowed_ref(), child_node};
     }
 
     void TSInputView::InputDataCursor::bind_target(const TSOutputView &output)
     {
         detail::bind_target_link(raw_data, output);
-        value_data = detail::target_link_resolve(raw_data, target_node);
+        value_data = detail::target_link_resolve(raw_data, target_path_node());
     }
 
     void TSInputView::InputDataCursor::bind_target_sampled(const TSOutputView &output,
                                                             DateTime modified_time)
     {
-        if (target_node != nullptr)
+        if (!is_target_root())
         {
             throw std::logic_error("Sampled TSInput binding requires a target-link root");
         }
         detail::bind_target_link_sampled(raw_data, output, modified_time);
-        value_data = detail::target_link_resolve(raw_data, target_node);
+        value_data = detail::target_link_resolve(raw_data, target_path_node());
     }
 
     void TSInputView::InputDataCursor::unbind_target()
@@ -151,7 +172,7 @@ namespace hgraph
         if (is_target_position())
         {
             detail::make_target_link_active(raw_data,
-                                            target_node,
+                                            target_path_node(),
                                             value_live() ? value_data.borrowed_ref() : TSDataView{},
                                             scheduling_notifier);
         }
@@ -165,7 +186,7 @@ namespace hgraph
     {
         if (is_target_position())
         {
-            detail::make_target_link_passive(raw_data, target_node);
+            detail::make_target_link_passive(raw_data, target_path_node());
             return;
         }
         if (input != nullptr && value_data.valid()) { input->make_passive(value_data.path_from_root()); }
@@ -173,7 +194,7 @@ namespace hgraph
 
     bool TSInputView::InputDataCursor::active(const TSInput *input) const
     {
-        if (is_target_position()) { return detail::target_link_active(raw_data, target_node); }
+        if (is_target_position()) { return detail::target_link_active(raw_data, target_path_node()); }
         return input != nullptr && value_data.valid() && input->active(value_data.path_from_root());
     }
 
@@ -291,7 +312,7 @@ namespace hgraph
         const auto *schema = detail::target_link_schema(data_.raw_data);
         const auto *link = detail::target_link_storage(data_.raw_data);
         if (schema == nullptr || link == nullptr) { return {}; }
-        return link->target_output_at_path(*schema, data_.target_node).view(evaluation_time_);
+        return link->target_output_at_path(*schema, data_.target_path_node()).view(evaluation_time_);
     }
 
     bool TSInputView::valid() const
@@ -373,7 +394,7 @@ namespace hgraph
                 throw std::logic_error("TSInputView::reference requires target-link storage");
             }
 
-            auto target = link->target_output_at_path(*target_schema, data_.target_node);
+            auto target = link->target_output_at_path(*target_schema, data_.target_path_node());
             if (!target.bound()) { return TimeSeriesReference::empty(view_schema); }
             // A target landing on a from-ref ALTERNATIVE position stays a
             // reference TO that position while the alternative is BOUND (the
@@ -528,7 +549,7 @@ namespace hgraph
 
     bool TSInputView::inherited_sampled_transition() const noexcept
     {
-        if (!data_.is_target_position() || data_.target_node == nullptr || evaluation_time_ == MIN_DT)
+        if (!data_.is_target_position() || data_.is_target_root() || evaluation_time_ == MIN_DT)
         {
             return false;
         }
@@ -547,7 +568,7 @@ namespace hgraph
         // Collection target-link ops carry sampled add/remove semantics. Keep
         // that wrapper for its transition cycle; ordinary reads take the
         // resolved-source fast path and descendants resolve through the path.
-        if (data_.is_target_position() && data_.target_node == nullptr)
+        if (data_.is_target_root())
         {
             const auto *link = detail::target_link_storage(data_.raw_data);
             if (link != nullptr && link->structural_transition_time() == evaluation_time_)

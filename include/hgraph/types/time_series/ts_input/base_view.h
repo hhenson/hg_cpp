@@ -158,6 +158,8 @@ namespace hgraph
 
             [[nodiscard]] bool has_storage() const noexcept;
             [[nodiscard]] bool is_target_position() const noexcept;
+            [[nodiscard]] bool is_target_root() const noexcept;
+            [[nodiscard]] detail::TSInputTargetActiveNode *target_path_node() const noexcept;
             [[nodiscard]] bool target_bound() const noexcept;
             [[nodiscard]] TSRoleTypeRef storage_type() const noexcept;
             [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
@@ -177,6 +179,8 @@ namespace hgraph
 
             mutable TSDataView value_data{};
             TSDataView         raw_data{};
+            // A TU-local sentinel denotes a target-link root; real pointers
+            // denote descendant path nodes. Null denotes non-target storage.
             detail::TSInputTargetActiveNode *target_node{nullptr};
         };
 
