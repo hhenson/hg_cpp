@@ -15,6 +15,14 @@ nanobind_add_module(_hgraph ${_hgraph_nanobind_options}
 )
 target_link_libraries(_hgraph PRIVATE hgraph_core hgraph::options)
 hgraph_enable_private_pch(_hgraph)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # GCC at -O3 (NOMINSIZE) trips -Wmaybe-uninitialized false positives on
+    # nanobind's argument-caster storage (tuple<make_caster<Args>...> in
+    # nb_func.h) — e.g. the std::optional<PyTsType> arg of tsl_port. The reads
+    # are has_value()-guarded; suppress on the bindings target only, GCC only —
+    # hgraph_core keeps the warning.
+    target_compile_options(_hgraph PRIVATE -Wno-maybe-uninitialized)
+endif()
 
 if(HGRAPH_USE_PYARROW_ARROW AND HGRAPH_PYARROW_LIBRARY_DIR)
     if(APPLE)
