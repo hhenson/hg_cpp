@@ -325,7 +325,7 @@ namespace hgraph
         const auto *schema = detail::target_link_schema(data_.raw_data);
         const auto *link = detail::target_link_storage(data_.raw_data);
         if (schema == nullptr || link == nullptr) { return {}; }
-        return link->target_output_at_path(*schema, data_.target_path_node()).view(evaluation_time_);
+        return link->resolved_target_at_path(*schema, data_.target_path_node()).view(evaluation_time_);
     }
 
     bool TSInputView::valid() const
@@ -407,7 +407,7 @@ namespace hgraph
                 throw std::logic_error("TSInputView::reference requires target-link storage");
             }
 
-            auto target = link->target_output_at_path(*target_schema, data_.target_path_node());
+            auto target = link->resolved_target_at_path(*target_schema, data_.target_path_node());
             if (!target.bound()) { return TimeSeriesReference::empty(view_schema); }
             // A target landing on a from-ref ALTERNATIVE position stays a
             // reference TO that position while the alternative is BOUND (the

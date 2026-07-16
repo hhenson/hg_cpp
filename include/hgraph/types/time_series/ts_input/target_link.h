@@ -89,6 +89,9 @@ namespace hgraph::detail
         [[nodiscard]] bool active(const TSInputTargetActiveNode *node) const noexcept;
         [[nodiscard]] TSOutputHandle target_output_at_path(const TSValueTypeMetaData &schema,
                                                            const TSInputTargetActiveNode *node) const;
+        [[nodiscard]] TSOutputHandle resolved_target_at_path(
+            const TSValueTypeMetaData &schema,
+            const TSInputTargetActiveNode *node) const;
         void resubscribe_active_target(const TSValueTypeMetaData &schema);
         void unsubscribe_active_target() noexcept;
         void add_slot_observer(SlotObserver *observer);

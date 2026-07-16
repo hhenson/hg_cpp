@@ -685,6 +685,18 @@ namespace hgraph::detail
         return TSOutputHandle{target_output().output(), current};
     }
 
+    TSOutputHandle TSInputTargetLinkStorage::resolved_target_at_path(
+        const TSValueTypeMetaData &schema,
+        const TSInputTargetActiveNode *node) const
+    {
+        const auto *active_node = node != nullptr ? node : state_.active_root();
+        if (active_node != nullptr && active_node->locally_active && active_node->observed.bound())
+        {
+            return active_node->observed;
+        }
+        return target_output_at_path(schema, node);
+    }
+
     void TSInputTargetLinkStorage::resubscribe_active_target(const TSValueTypeMetaData &schema)
     {
         if (state_.active_root() == nullptr) { return; }
@@ -752,7 +764,7 @@ namespace hgraph::detail
         const auto *link = target_link_storage(view);
         if (schema == nullptr || link == nullptr || !link->bound()) { return {}; }
         return fallback_on_exception(TSDataView{}, [&] {
-            return link->target_output_at_path(*schema, node).data_view();
+            return link->resolved_target_at_path(*schema, node).data_view();
         });
     }
 

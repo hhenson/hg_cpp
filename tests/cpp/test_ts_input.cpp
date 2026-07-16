@@ -710,6 +710,8 @@ TEST_CASE("TSInput data views step through target links and rebinds")
     REQUIRE(cached_child.schema() == ts_int);
     REQUIRE(cached_child.data_view().schema() == ts_int);
     REQUIRE(cached_child.value().checked_as<std::int32_t>() == 20);
+    cached_child.make_active();
+    REQUIRE(cached_child.active());
 
     auto root_data = root_view.data_view().borrowed_ref();
     auto root_data_bundle = root_data.as_bundle();
@@ -727,6 +729,7 @@ TEST_CASE("TSInput data views step through target links and rebinds")
     REQUIRE(cached_child.schema() == ts_int);
     REQUIRE(cached_child.data_view().schema() == ts_int);
     REQUIRE(cached_child.value().checked_as<std::int32_t>() == 200);
+    cached_child.make_passive();
 
     auto rebound_root_view = input.view(nullptr, t2);
     auto rebound_root_data = rebound_root_view.data_view().borrowed_ref();
