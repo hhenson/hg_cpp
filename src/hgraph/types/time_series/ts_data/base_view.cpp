@@ -14,61 +14,6 @@
 
 namespace hgraph
 {
-    TSDataView::TSDataView(TSRoleTypeRef type, const void *data) noexcept
-        : storage_(type, data)
-    {
-    }
-
-    TSDataView::TSDataView(TSRoleTypeRef type, void *data) noexcept
-        : storage_(type, data)
-    {
-    }
-
-    TSDataView::TSDataView(TSDataStorageRef<> storage) noexcept
-        : storage_(storage)
-    {
-    }
-
-    TSDataView TSDataView::borrowed_ref() const noexcept
-    {
-        return TSDataView{storage_};
-    }
-
-    TSDataStorageRef<> TSDataView::storage_ref() const noexcept
-    {
-        return storage_;
-    }
-
-    bool TSDataView::valid() const noexcept
-    {
-        return storage_.has_value();
-    }
-
-    TSDataView::operator bool() const noexcept
-    {
-        return valid();
-    }
-
-    TSRoleTypeRef TSDataView::storage_type() const noexcept
-    {
-        return storage_.storage_type();
-    }
-
-    TSRoleTypeRef TSDataView::type_ref() const noexcept
-    {
-        return storage_.type_ref();
-    }
-
-    const TSValueTypeMetaData *TSDataView::schema() const noexcept
-    {
-        return storage_.schema();
-    }
-
-    const void *TSDataView::data() const noexcept
-    {
-        return storage_.data();
-    }
-
     const TSParentLink &TSDataView::parent_link() const
     {
         return tracking().parent;

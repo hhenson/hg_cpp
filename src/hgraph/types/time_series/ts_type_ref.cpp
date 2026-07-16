@@ -114,11 +114,6 @@ namespace hgraph
         catch (...) { return false; }
     }
 
-    const TSValueTypeMetaData *TSRoleTypeRef::schema() const noexcept
-    {
-        return record_ != nullptr ? reinterpret_cast<const TSValueTypeMetaData *>(record_->schema) : nullptr;
-    }
-
     const MemoryUtils::StoragePlan &TSRoleTypeRef::checked_plan() const
     {
         if (plan() == nullptr) throw std::logic_error("TSRoleTypeRef is unbound");

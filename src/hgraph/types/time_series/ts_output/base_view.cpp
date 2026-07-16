@@ -11,31 +11,11 @@
 
 namespace hgraph
 {
-    TSOutputHandle::TSOutputHandle() noexcept = default;
-
-    TSOutputHandle::TSOutputHandle(const TSOutput *output, const TSDataView &data) noexcept
-        : output_(output),
-          data_(data.storage_ref())
-    {
-    }
-
     TSOutputHandle::TSOutputHandle(const TSOutputView &view) noexcept
         : output_(view.output()),
           data_(view.data_view().storage_ref())
     {
     }
-
-    const TSOutput *TSOutputHandle::output() const noexcept
-    {
-        return output_;
-    }
-
-    TSDataView TSOutputHandle::data_view() const noexcept
-    {
-        return TSDataView{data_};
-    }
-
-    TSRoleTypeRef TSOutputHandle::storage_type() const noexcept { return data_.storage_type(); }
 
     TSOutputTypeRef TSOutputHandle::type_ref() const
     {
@@ -43,77 +23,9 @@ namespace hgraph
         return type ? TSOutputTypeRef::checked(type) : TSOutputTypeRef{};
     }
 
-    const TSValueTypeMetaData *TSOutputHandle::schema() const noexcept
-    {
-        return data_.schema();
-    }
-
-    bool TSOutputHandle::bound() const noexcept
-    {
-        return output_ != nullptr && data_.has_value();
-    }
-
-    bool TSOutputHandle::same_as(const TSOutputHandle &other) const noexcept
-    {
-        return output_ == other.output_ && data_.storage_type() == other.data_.storage_type() &&
-               data_.data() == other.data_.data();
-    }
-
     TSOutputView TSOutputHandle::view(DateTime evaluation_time) const noexcept
     {
         return TSOutputView{*this, evaluation_time};
-    }
-
-    void TSOutputHandle::reset() noexcept
-    {
-        output_ = nullptr;
-        data_.reset();
-    }
-
-    TSOutputView::TSOutputView() noexcept = default;
-
-    TSOutputView::TSOutputView(const TSOutput *output, const TSDataView &data, DateTime evaluation_time) noexcept
-        : output_(output),
-          data_(data.borrowed_ref()),
-          evaluation_time_(evaluation_time)
-    {
-    }
-
-    TSOutputView::TSOutputView(TSOutputHandle handle, DateTime evaluation_time) noexcept
-        : output_(handle.output()),
-          data_(handle.data_view()),
-          evaluation_time_(evaluation_time)
-    {
-    }
-
-    TSOutputView TSOutputView::borrowed_ref() const noexcept
-    {
-        return TSOutputView{output_, data_.borrowed_ref(), evaluation_time_};
-    }
-
-    const TSOutput *TSOutputView::output() const noexcept
-    {
-        return output_;
-    }
-
-    TSOutputHandle TSOutputView::handle() const noexcept
-    {
-        return TSOutputHandle{output_, data_.borrowed_ref()};
-    }
-
-    const TSDataView &TSOutputView::data_view() const noexcept
-    {
-        return data_;
-    }
-
-    TSDataView &TSOutputView::data_view() noexcept
-    {
-        return data_;
-    }
-
-    DateTime TSOutputView::evaluation_time() const noexcept
-    {
-        return evaluation_time_;
     }
 
     NodeView TSOutputView::owner_node() const
@@ -133,22 +45,10 @@ namespace hgraph
         return owner.node_owned() ? owner.port() : TSEndpointOwnerPort::Output;
     }
 
-    TSRoleTypeRef TSOutputView::storage_type() const noexcept { return data_.storage_type(); }
-
     TSOutputTypeRef TSOutputView::type_ref() const
     {
         const auto type = data_.type_ref();
         return type ? TSOutputTypeRef::checked(type) : TSOutputTypeRef{};
-    }
-
-    const TSValueTypeMetaData *TSOutputView::schema() const noexcept
-    {
-        return data_.schema();
-    }
-
-    bool TSOutputView::bound() const noexcept
-    {
-        return output_ != nullptr && data_.valid();
     }
 
     ValueView TSOutputView::value() const

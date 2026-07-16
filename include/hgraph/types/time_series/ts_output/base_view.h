@@ -30,26 +30,37 @@ namespace hgraph
     class TSOutputHandle
     {
       public:
-        TSOutputHandle() noexcept;
-        TSOutputHandle(const TSOutput *output, const TSDataView &data) noexcept;
+        TSOutputHandle() noexcept = default;
+        TSOutputHandle(const TSOutput *output, const TSDataView &data) noexcept
+            : output_(output), data_(data.storage_ref())
+        {
+        }
         explicit TSOutputHandle(const TSOutputView &view) noexcept;
 
         /** Owning output and underlying TSData view. */
-        [[nodiscard]] const TSOutput *output() const noexcept;
-        [[nodiscard]] TSDataView data_view() const noexcept;
+        [[nodiscard]] const TSOutput *output() const noexcept { return output_; }
+        [[nodiscard]] TSDataView data_view() const noexcept { return TSDataView{data_}; }
 
         /** Binding and schema for the borrowed TSData. */
-        [[nodiscard]] TSRoleTypeRef storage_type() const noexcept;
+        [[nodiscard]] TSRoleTypeRef storage_type() const noexcept { return data_.storage_type(); }
         [[nodiscard]] TSOutputTypeRef type_ref() const;
-        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
+        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return data_.schema(); }
 
         /** True when both output identity and TSData cursor are present. */
-        [[nodiscard]] bool bound() const noexcept;
-        [[nodiscard]] bool same_as(const TSOutputHandle &other) const noexcept;
+        [[nodiscard]] bool bound() const noexcept { return output_ != nullptr && data_.has_value(); }
+        [[nodiscard]] bool same_as(const TSOutputHandle &other) const noexcept
+        {
+            return output_ == other.output_ && data_.storage_type() == other.data_.storage_type() &&
+                   data_.data() == other.data_.data();
+        }
 
         /** Recreate a read-only output view for ``evaluation_time``. */
         [[nodiscard]] TSOutputView view(DateTime evaluation_time) const noexcept;
-        void reset() noexcept;
+        void reset() noexcept
+        {
+            output_ = nullptr;
+            data_.reset();
+        }
 
       private:
         const TSOutput *output_{nullptr};
@@ -65,9 +76,15 @@ namespace hgraph
     class TSOutputView
     {
       public:
-        TSOutputView() noexcept;
-        TSOutputView(const TSOutput *output, const TSDataView &data, DateTime evaluation_time) noexcept;
-        TSOutputView(TSOutputHandle handle, DateTime evaluation_time) noexcept;
+        TSOutputView() noexcept = default;
+        TSOutputView(const TSOutput *output, const TSDataView &data, DateTime evaluation_time) noexcept
+            : output_(output), data_(data.borrowed_ref()), evaluation_time_(evaluation_time)
+        {
+        }
+        TSOutputView(TSOutputHandle handle, DateTime evaluation_time) noexcept
+            : output_(handle.output()), data_(handle.data_view()), evaluation_time_(evaluation_time)
+        {
+        }
 
         TSOutputView(const TSOutputView &) = delete;
         TSOutputView &operator=(const TSOutputView &) = delete;
@@ -75,16 +92,22 @@ namespace hgraph
         TSOutputView &operator=(TSOutputView &&) noexcept = default;
 
         /** Explicitly recreate a transient cursor over the same output position. */
-        [[nodiscard]] TSOutputView borrowed_ref() const noexcept;
+        [[nodiscard]] TSOutputView borrowed_ref() const noexcept
+        {
+            return TSOutputView{output_, data_.borrowed_ref(), evaluation_time_};
+        }
 
         /** Owning output and underlying TSData view. */
-        [[nodiscard]] const TSOutput *output() const noexcept;
-        [[nodiscard]] TSOutputHandle handle() const noexcept;
-        [[nodiscard]] const TSDataView &data_view() const noexcept;
-        [[nodiscard]] TSDataView &data_view() noexcept;
+        [[nodiscard]] const TSOutput *output() const noexcept { return output_; }
+        [[nodiscard]] TSOutputHandle handle() const noexcept
+        {
+            return TSOutputHandle{output_, data_};
+        }
+        [[nodiscard]] const TSDataView &data_view() const noexcept { return data_; }
+        [[nodiscard]] TSDataView &data_view() noexcept { return data_; }
 
         /** Evaluation time associated with delta/modified checks. */
-        [[nodiscard]] DateTime evaluation_time() const noexcept;
+        [[nodiscard]] DateTime evaluation_time() const noexcept { return evaluation_time_; }
 
         /** Node owner for this output endpoint, if it is graph-attached. */
         [[nodiscard]] NodeView owner_node() const;
@@ -92,16 +115,16 @@ namespace hgraph
         [[nodiscard]] TSEndpointOwnerPort owner_port() const noexcept;
 
         /** Binding and schema for the borrowed TSData. */
-        [[nodiscard]] TSRoleTypeRef storage_type() const noexcept;
+        [[nodiscard]] TSRoleTypeRef storage_type() const noexcept { return data_.storage_type(); }
         [[nodiscard]] TSOutputTypeRef type_ref() const;
-        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
+        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return data_.schema(); }
 
         /** Current and delta value projections. */
         [[nodiscard]] ValueView value() const;
         [[nodiscard]] ValueView delta_value() const;
 
         /** Modification and validity status. */
-        [[nodiscard]] bool bound() const noexcept;
+        [[nodiscard]] bool bound() const noexcept { return output_ != nullptr && data_.valid(); }
         [[nodiscard]] DateTime last_modified_time() const;
         [[nodiscard]] bool modified() const;
         [[nodiscard]] bool valid() const;

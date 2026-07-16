@@ -28,7 +28,12 @@ namespace hgraph
         [[nodiscard]] constexpr bool bound() const noexcept { return record_ != nullptr; }
         [[nodiscard]] bool valid() const noexcept;
         [[nodiscard]] constexpr explicit operator bool() const noexcept { return bound(); }
-        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
+        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept
+        {
+            return record_ != nullptr
+                       ? reinterpret_cast<const TSValueTypeMetaData *>(record_->schema)
+                       : nullptr;
+        }
         [[nodiscard]] constexpr const MemoryUtils::StoragePlan *plan() const noexcept
         {
             return record_ != nullptr ? record_->plan : nullptr;

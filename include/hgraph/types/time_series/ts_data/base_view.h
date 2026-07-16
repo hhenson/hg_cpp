@@ -134,9 +134,9 @@ namespace hgraph
       public:
         constexpr TSDataView() noexcept = default;
 
-        TSDataView(TSRoleTypeRef type, void *data) noexcept;
-        TSDataView(TSRoleTypeRef type, const void *data) noexcept;
-        explicit TSDataView(TSDataStorageRef<> storage) noexcept;
+        TSDataView(TSRoleTypeRef type, void *data) noexcept : storage_(type, data) {}
+        TSDataView(TSRoleTypeRef type, const void *data) noexcept : storage_(type, data) {}
+        explicit TSDataView(TSDataStorageRef<> storage) noexcept : storage_(storage) {}
 
         TSDataView(const TSDataView &) = delete;
         TSDataView &operator=(const TSDataView &) = delete;
@@ -144,24 +144,24 @@ namespace hgraph
         TSDataView &operator=(TSDataView &&) noexcept = default;
 
         /** Explicitly recreate a transient cursor over the same TSData storage. */
-        [[nodiscard]] TSDataView borrowed_ref() const noexcept;
+        [[nodiscard]] TSDataView borrowed_ref() const noexcept { return TSDataView{storage_}; }
 
         /** Copyable borrowed storage identity used by handles and owner links. */
-        [[nodiscard]] TSDataStorageRef<> storage_ref() const noexcept;
+        [[nodiscard]] TSDataStorageRef<> storage_ref() const noexcept { return storage_; }
 
         /** True when the view has both a binding and a live TSData memory pointer. */
-        [[nodiscard]] bool valid() const noexcept;
-        explicit operator bool() const noexcept;
+        [[nodiscard]] bool valid() const noexcept { return storage_.has_value(); }
+        explicit operator bool() const noexcept { return valid(); }
 
         /** Canonical type record that describes this TSData memory region. */
-        [[nodiscard]] TSRoleTypeRef storage_type() const noexcept;
-        [[nodiscard]] TSRoleTypeRef type_ref() const noexcept;
+        [[nodiscard]] TSRoleTypeRef storage_type() const noexcept { return storage_.storage_type(); }
+        [[nodiscard]] TSRoleTypeRef type_ref() const noexcept { return storage_.type_ref(); }
 
         /** Time-series schema associated with the binding, or null when unbound. */
-        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
+        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return storage_.schema(); }
 
         /** Borrowed pointer to the underlying TSData memory. */
-        [[nodiscard]] const void *data() const noexcept;
+        [[nodiscard]] const void *data() const noexcept { return storage_.data(); }
 
         /** Parent link stored in this TSData node's tracking region. */
         [[nodiscard]] const TSParentLink &parent_link() const;
