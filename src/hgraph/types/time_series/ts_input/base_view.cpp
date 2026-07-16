@@ -180,11 +180,36 @@ namespace hgraph
             detail::make_target_link_active(raw_data,
                                             target_path_node(),
                                             value_live() ? value_data.borrowed_ref() : TSDataView{},
+                                            detail::TSInputObservationKind::Value,
                                             scheduling_notifier);
         }
         else if (input != nullptr && value_data.valid())
         {
             input->make_active(value_data.path_from_root(), value_data.borrowed_ref(), scheduling_notifier);
+        }
+    }
+
+    void TSInputView::InputDataCursor::make_structural_active(
+        TSInput *input, Notifiable *scheduling_notifier) const
+    {
+        const auto *value_schema = schema();
+        const auto &ops = detail::input_endpoint_ops_for(value_schema);
+        if (ops.structural_observation == nullptr)
+        {
+            throw std::invalid_argument("Structural input activity is not supported for this time-series shape");
+        }
+
+        TSDataView observed{};
+        if (value_live()) { observed = ops.structural_observation(value_data); }
+        if (is_target_position())
+        {
+            detail::make_target_link_active(raw_data, target_path_node(), observed,
+                                            detail::TSInputObservationKind::Structural,
+                                            scheduling_notifier);
+        }
+        else if (input != nullptr && observed.valid())
+        {
+            input->make_active(value_data.path_from_root(), std::move(observed), scheduling_notifier);
         }
     }
 
@@ -240,6 +265,11 @@ namespace hgraph
         void TSInputViewOps::make_active(TSInputView &view) const
         {
             view.data_.make_active(view.input_, view.scheduling_notifier_);
+        }
+
+        void TSInputViewOps::make_structural_active(TSInputView &view) const
+        {
+            view.data_.make_structural_active(view.input_, view.scheduling_notifier_);
         }
 
         void TSInputViewOps::make_passive(TSInputView &view) const
@@ -485,6 +515,11 @@ namespace hgraph
         detail::input_view_ops().make_active(*this);
     }
 
+    void TSInputView::make_structural_active()
+    {
+        detail::input_view_ops().make_structural_active(*this);
+    }
+
     void TSInputView::make_passive()
     {
         detail::input_view_ops().make_passive(*this);
@@ -562,10 +597,12 @@ namespace hgraph
 
     bool TSInputView::inherited_sampled_transition() const noexcept
     {
-        if (!data_.is_target_position() || data_.is_target_root() || evaluation_time_ == MIN_DT)
-        {
-            return false;
-        }
+        return !data_.is_target_root() && sampled_structural_transition();
+    }
+
+    bool TSInputView::sampled_structural_transition() const noexcept
+    {
+        if (!data_.is_target_position() || evaluation_time_ == MIN_DT) { return false; }
         const auto *link = detail::target_link_storage(data_.raw_data);
         return link != nullptr && link->sampled_structural_transition() &&
                link->structural_transition_time() == evaluation_time_;

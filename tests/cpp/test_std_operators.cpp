@@ -603,6 +603,52 @@ namespace
         }
     };
 
+    struct StructuralTsdActivityProbe
+    {
+        static constexpr auto name = "structural_tsd_activity_probe";
+
+        static void start(State<Int> invocations) { invocations.set(Int{0}); }
+
+        static void eval(In<"ts", IntTsd, InputActivity::Structural, InputValidity::Unchecked>,
+                         State<Int> invocations, Out<TS<Int>> out)
+        {
+            const Int next = invocations.get() + 1;
+            invocations.set(next);
+            out.set(next);
+        }
+    };
+
+    struct StructuralTsdActivityGraph
+    {
+        static constexpr auto name = "structural_tsd_activity_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<IntTsd> ts)
+        {
+            return wire<StructuralTsdActivityProbe>(w, ts);
+        }
+    };
+
+    struct ForwardTsdReference
+    {
+        static constexpr auto name = "forward_tsd_reference";
+
+        static void eval(In<"ts", IntTsd> ts, Out<REF<IntTsd>> out)
+        {
+            out.set(ts.base().reference());
+        }
+    };
+
+    struct StructuralLinkedTsdActivityGraph
+    {
+        static constexpr auto name = "structural_linked_tsd_activity_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<IntTsd> ts)
+        {
+            auto linked = wire<ForwardTsdReference>(w, ts).as<IntTsd>();
+            return wire<StructuralTsdActivityProbe>(w, linked);
+        }
+    };
+
 }  // namespace
 
 TEST_CASE("std operators: add_ selects the int implementation for TS<Int> operands")
@@ -1224,6 +1270,19 @@ TEST_CASE("std operators: collection container operators support TSS TSD and fix
                                    list_delta<TS<Int>>({-1, 0, 1})),
                      values<Int>(2, 1))),
                  values<Int>(1, 0, -1, 2));
+}
+
+TEST_CASE("static input activity: TSD structural subscriptions ignore child value ticks")
+{
+    const auto input = values<Value>(dict_delta<Int, TS<Int>>({{1, 10}}),
+                                     dict_delta<Int, TS<Int>>({{1, 11}}),
+                                     dict_delta<Int, TS<Int>>({{2, 20}}),
+                                     dict_delta<Int, TS<Int>>({{1, 12}}),
+                                     dict_delta<Int, TS<Int>>({}, {2}));
+    const auto expected = values<Int>(1, none, 2, none, 3);
+
+    CHECK_OUTPUT(eval_node<StructuralTsdActivityGraph>(input), expected);
+    CHECK_OUTPUT(eval_node<StructuralLinkedTsdActivityGraph>(input), expected);
 }
 
 TEST_CASE("std operators: TSB container access projects structural and peered fields")

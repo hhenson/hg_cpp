@@ -27,6 +27,8 @@ namespace hgraph
         [[nodiscard]] bool slot_added(std::size_t slot) const;
         [[nodiscard]] bool slot_removed(std::size_t slot) const;
         [[nodiscard]] bool slot_modified(std::size_t slot) const;
+        /** True when membership changed, including a sampled target rebind. */
+        [[nodiscard]] bool structure_modified() const;
         [[nodiscard]] ValueView key_at_slot(std::size_t slot) const;
         [[nodiscard]] TSInputView at_slot(std::size_t slot) const;
         [[nodiscard]] bool contains(const ValueView &key) const;

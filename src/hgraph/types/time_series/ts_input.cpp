@@ -237,6 +237,16 @@ namespace hgraph
             return dict.at_slot(slot);
         }
 
+        [[nodiscard]] TSDataView tss_structural_observation(const TSDataView &source)
+        {
+            return source.borrowed_ref();
+        }
+
+        [[nodiscard]] TSDataView tsd_structural_observation(const TSDataView &source)
+        {
+            return source.as_dict().key_set().base();
+        }
+
         [[nodiscard]] TimeSeriesReference input_leaf_reference(const TSInputView &view)
         {
             return TimeSeriesReference::empty(view.schema());
@@ -301,6 +311,7 @@ namespace hgraph
             .key_at = &no_endpoint_key_at,
             .find_key = &no_endpoint_find_key,
             .child_schema = &no_endpoint_child_schema,
+            .structural_observation = &tss_structural_observation,
             .reference = &input_leaf_reference,
         };
 
@@ -311,6 +322,7 @@ namespace hgraph
             .find_key = &no_endpoint_find_key,
             .child_schema = &tsd_endpoint_child_schema,
             .target_child = &tsd_target_child_at,
+            .structural_observation = &tsd_structural_observation,
             .reference = &input_leaf_reference,
         };
 

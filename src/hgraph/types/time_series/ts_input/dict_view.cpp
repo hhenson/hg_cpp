@@ -88,6 +88,15 @@ namespace hgraph
     {
         return view_.inherited_sampled_transition() ? slot_live(slot) : data_view().slot_modified(slot);
     }
+
+    bool TSDInputView::structure_modified() const
+    {
+        if (view_.sampled_structural_transition()) { return true; }
+        const auto &resolved = view_.data_view();
+        return resolved.valid() &&
+               resolved.as_dict().key_set().modified(view_.evaluation_time());
+    }
+
     ValueView TSDInputView::key_at_slot(std::size_t slot) const { return data_view().key_at_slot(slot); }
 
     TSInputView TSDInputView::at_slot(std::size_t slot) const

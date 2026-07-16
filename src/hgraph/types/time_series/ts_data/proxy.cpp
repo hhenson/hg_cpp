@@ -200,10 +200,10 @@ namespace hgraph
                     .kind                      = TSTypeKind::TSS,
                     .allows_mutation           = false,
                     .layout_impl               = &ts_layout,
-                    .tracking_impl             = &tracking,
-                    .mutable_tracking_impl     = &mutable_tracking,
-                    .has_current_value_impl    = &has_current_value,
-                    .all_valid_impl            = &all_valid,
+                    .tracking_impl             = &key_set_tracking,
+                    .mutable_tracking_impl     = &mutable_key_set_tracking,
+                    .has_current_value_impl    = &key_set_has_current_value,
+                    .all_valid_impl            = &key_set_has_current_value,
                     .value_memory_impl         = &value_memory,
                     .mutable_value_memory_impl = &mutable_value_memory,
                     .delta_memory_impl         = &delta_memory,
@@ -237,6 +237,10 @@ namespace hgraph
                 TSDataOps &dict_base = dict_ops;
                 dict_base.kind = TSTypeKind::TSD;
                 dict_base.context = this;
+                dict_base.tracking_impl = &tracking;
+                dict_base.mutable_tracking_impl = &mutable_tracking;
+                dict_base.has_current_value_impl = &has_current_value;
+                dict_base.all_valid_impl = &all_valid;
                 dict_base.ownership_ops = &ownership_ops();
                 dict_base.empty_delta_impl = &ts_data_detail::empty_delta_tsd;
                 dict_base.capture_delta_impl = &ts_data_detail::capture_delta_tsd;
@@ -562,10 +566,27 @@ namespace hgraph
                 return &proxy_storage(memory).tracking();
             }
 
+            [[nodiscard]] static const TSDataTracking *key_set_tracking(const void *,
+                                                                         const void *memory) noexcept
+            {
+                return &proxy_storage(memory).key_set_tracking();
+            }
+
+            [[nodiscard]] static TSDataTracking *mutable_key_set_tracking(const void *, void *memory) noexcept
+            {
+                return &proxy_storage(memory).key_set_tracking();
+            }
+
             [[nodiscard]] static bool has_current_value(const void *, const void *memory) noexcept
             {
                 const auto &proxy = proxy_storage(memory);
                 return proxy.source_available() && proxy.tracking().last_modified_time != MIN_DT;
+            }
+
+            [[nodiscard]] static bool key_set_has_current_value(const void *, const void *memory) noexcept
+            {
+                const auto &proxy = proxy_storage(memory);
+                return proxy.source_available() && proxy.key_set_tracking().last_modified_time != MIN_DT;
             }
 
             [[nodiscard]] static bool all_valid(const void *context, const void *memory) noexcept
@@ -1423,6 +1444,7 @@ namespace hgraph
 
     void TSDProxy::on_slot_inserted(std::size_t slot)
     {
+        structure_pending_ = true;
         if (has_child(slot))
         {
             const auto state = slot < built_times_.size() ? built_times_[slot] : MIN_DT;
@@ -1443,6 +1465,7 @@ namespace hgraph
 
     void TSDProxy::on_slot_removed(std::size_t slot)
     {
+        structure_pending_ = true;
         if (has_child(slot))
         {
             detail::stop_owned_ts_data_tree(TSDataView{element_type_, values_.value_memory(slot)});
@@ -1526,6 +1549,11 @@ namespace hgraph
         }
 
         if (touched) { mark_modified(modified_time); }
+        if (structure_pending_)
+        {
+            mark_structure_modified(modified_time);
+            structure_pending_ = false;
+        }
     }
 
     TSDataView TSDProxy::source_view() const noexcept
@@ -1553,6 +1581,16 @@ namespace hgraph
     const TSDataTracking &TSDProxy::tracking() const noexcept
     {
         return tracking_;
+    }
+
+    TSDataTracking &TSDProxy::key_set_tracking() noexcept
+    {
+        return key_set_tracking_;
+    }
+
+    const TSDataTracking &TSDProxy::key_set_tracking() const noexcept
+    {
+        return key_set_tracking_;
     }
 
     bool TSDProxy::has_child(std::size_t slot) const noexcept
@@ -1643,6 +1681,7 @@ namespace hgraph
             detail::invalidate_owned_ts_data_tree(TSDataView{element_type_, values_.value_memory(slot)});
         }
         tracking_.observers.invalidate(&tracking_);
+        key_set_tracking_.observers.invalidate(&key_set_tracking_);
         static_cast<void>(fallback_on_exception(false, [&] {
             slot_observers_.notify_clear();
             return true;
@@ -1650,6 +1689,7 @@ namespace hgraph
         values_.destroy_all();
         std::ranges::fill(built_times_, MIN_DT);
         updated_window_ = MIN_DT;
+        structure_pending_ = false;
     }
 
     void TSDProxy::sync_from_source(DateTime modified_time, bool force_modified)
@@ -1664,6 +1704,8 @@ namespace hgraph
         if (built_times_.size() < dict.slot_capacity()) { built_times_.resize(dict.slot_capacity(), MIN_DT); }
 
         bool changed = force_modified;
+        bool structure_changed = dict.key_set().base().has_current_value() &&
+                                 key_set_tracking_.last_modified_time == MIN_DT;
         const auto limit = std::max(dict.slot_capacity(), values_.slot_capacity());
         for (std::size_t slot = 0; slot < limit; ++slot)
         {
@@ -1672,6 +1714,7 @@ namespace hgraph
                 if (!has_child(slot))
                 {
                     construct_child_at_slot(slot);
+                    structure_changed = true;
                     if (slot >= built_times_.size()) { built_times_.resize(slot + 1, MIN_DT); }
                     built_times_[slot] = MAX_DT;
                 }
@@ -1699,10 +1742,13 @@ namespace hgraph
                 slot_observers_.notify_erase(slot);
                 values_.destroy_at(slot);
                 changed = true;
+                structure_changed = true;
             }
         }
 
         if (changed) { mark_modified(modified_time); }
+        if (structure_changed) { mark_structure_modified(modified_time); }
+        structure_pending_ = false;
     }
 
     void TSDProxy::construct_child_at_slot(std::size_t slot)
@@ -1858,6 +1904,11 @@ namespace hgraph
     void TSDProxy::mark_modified(DateTime modified_time)
     {
         if (tracking_.record_modified(modified_time)) { tracking_.parent.notify_child_modified(modified_time); }
+    }
+
+    void TSDProxy::mark_structure_modified(DateTime modified_time)
+    {
+        static_cast<void>(key_set_tracking_.record_modified(modified_time));
     }
 
     void TSDProxy::record_child_modified(std::size_t slot, DateTime modified_time)

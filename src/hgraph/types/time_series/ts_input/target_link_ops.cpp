@@ -79,6 +79,20 @@ namespace hgraph::detail
             return &target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory)->tracking;
         }
 
+        [[nodiscard]] const TSDataTracking *target_link_key_set_tracking(const void *context,
+                                                                         const void *memory)
+        {
+            return &target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory)
+                        ->key_set_tracking();
+        }
+
+        [[nodiscard]] TSDataTracking *target_link_mutable_key_set_tracking(const void *context,
+                                                                           void *memory)
+        {
+            return &target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory)
+                        ->mutable_key_set_tracking();
+        }
+
         [[nodiscard]] bool target_link_has_current_value(const void *context, const void *memory)
         {
             const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
@@ -1237,6 +1251,8 @@ namespace hgraph::detail
             context->key_set_ops = TSSDataOps{};
             TSDataOps key_set_base_ops = target_link_base_ops(*context);
             key_set_base_ops.kind = TSTypeKind::TSS;
+            key_set_base_ops.tracking_impl = &target_link_key_set_tracking;
+            key_set_base_ops.mutable_tracking_impl = &target_link_mutable_key_set_tracking;
             key_set_base_ops.clear_collection_impl = &ts_data_detail::clear_tss_collection;
             static_cast<TSDataOps &>(context->key_set_ops) = key_set_base_ops;
             configure_target_link_set_ops(context->key_set_ops, &target_link_dict_insert_key,

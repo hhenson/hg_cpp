@@ -792,7 +792,8 @@ namespace hgraph::stdlib
                    time_series_schema_as<AnyTSD>(context.args[0]) != nullptr;
         }
 
-        static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+        static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>,
+                            InputActivity::Structural, InputValidity::Unchecked> ts,
                          In<"key", TS<ScalarVar<"K">>> key, Out<REF<TsVar<"V">>> out)
         {
             const auto *schema = TypeRegistry::instance().dereference(ts.base().schema());

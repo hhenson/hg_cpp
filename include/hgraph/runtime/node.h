@@ -84,6 +84,8 @@ namespace hgraph
         // nullopt means "use the runtime default"; an engaged empty vector is
         // an explicit empty selector set.
         std::optional<std::vector<std::size_t>> active_inputs{};
+        // Inputs subscribed to collection membership rather than child-value ticks.
+        std::vector<std::size_t>                structural_inputs{};
         std::optional<std::vector<std::size_t>> valid_inputs{};
         std::vector<std::size_t>                all_valid_inputs{};
 

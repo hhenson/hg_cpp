@@ -467,7 +467,8 @@ namespace hgraph
             auto        input  = view.input(evaluation_time);
             if (schema == nullptr || schema->kind != TSTypeKind::TSB)
             {
-                input.make_active();
+                if (!view.schema()->structural_inputs.empty()) { input.make_structural_active(); }
+                else { input.make_active(); }
                 return;
             }
 
@@ -483,6 +484,14 @@ namespace hgraph
             {
                 if (slot >= schema->field_count()) { throw std::out_of_range("Node active input selector is out of range"); }
                 bundle[slot].make_active();
+            }
+            for (const std::size_t slot : view.schema()->structural_inputs)
+            {
+                if (slot >= schema->field_count())
+                {
+                    throw std::out_of_range("Node structural input selector is out of range");
+                }
+                bundle[slot].make_structural_active();
             }
         }
 
@@ -509,6 +518,14 @@ namespace hgraph
             for (const std::size_t slot : *slots)
             {
                 if (slot >= schema->field_count()) { throw std::out_of_range("Node active input selector is out of range"); }
+                bundle[slot].make_passive();
+            }
+            for (const std::size_t slot : view.schema()->structural_inputs)
+            {
+                if (slot >= schema->field_count())
+                {
+                    throw std::out_of_range("Node structural input selector is out of range");
+                }
                 bundle[slot].make_passive();
             }
         }
@@ -1527,13 +1544,14 @@ namespace hgraph
             active.resize(input_count);
             for (std::size_t slot = 0; slot < input_count; ++slot) { active[slot] = slot; }
         }
-        const bool had_active = !active.empty();
+        const bool had_scheduled_input = !active.empty() || !schema.structural_inputs.empty();
         for (const std::size_t slot : slots)
         {
             if (slot >= input_count) { throw std::out_of_range("passive input slot is out of range"); }
             std::erase(active, slot);
+            std::erase(schema.structural_inputs, slot);
         }
-        if (had_active && active.empty())
+        if (had_scheduled_input && active.empty() && schema.structural_inputs.empty())
         {
             throw std::invalid_argument(
                 "passive would deactivate every input of the node — it could never evaluate");

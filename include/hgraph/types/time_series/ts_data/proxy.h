@@ -102,6 +102,8 @@ namespace hgraph
 
         [[nodiscard]] TSDataTracking &tracking() noexcept;
         [[nodiscard]] const TSDataTracking &tracking() const noexcept;
+        [[nodiscard]] TSDataTracking &key_set_tracking() noexcept;
+        [[nodiscard]] const TSDataTracking &key_set_tracking() const noexcept;
         [[nodiscard]] bool has_child(std::size_t slot) const noexcept;
         [[nodiscard]] bool child_updated(std::size_t slot) const noexcept;
         [[nodiscard]] const void *child_at_slot(std::size_t slot) const;
@@ -152,6 +154,7 @@ namespace hgraph
         void refresh_child_at_slot(std::size_t slot, DateTime modified_time);
         void stamp_built(std::size_t slot, DateTime modified_time);
         void mark_modified(DateTime modified_time);
+        void mark_structure_modified(DateTime modified_time);
         [[nodiscard]] bool has_constructed_children() const noexcept;
 
         TSRoleTypeRef              self_type_{};
@@ -164,9 +167,11 @@ namespace hgraph
         std::vector<DateTime>         built_times_{};
         DateTime                      updated_window_{MIN_DT};   // lazy delta-window roll
         TSDProxyChildRefresh          child_refresh_{TSDProxyChildRefresh::StructureOnly};
-        TSDataTracking                tracking_{};
-        SlotObserverList              slot_observers_{};
         bool                          subscribed_{false};
+        bool                          structure_pending_{false};
+        TSDataTracking                tracking_{};
+        TSDataTracking                key_set_tracking_{};
+        SlotObserverList              slot_observers_{};
     };
 
     /** Return the proxy role type for ``schema`` and ``element_type``. */

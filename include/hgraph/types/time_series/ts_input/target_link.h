@@ -6,11 +6,18 @@
 #include <hgraph/types/utils/slot_observer.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
 
 namespace hgraph::detail
 {
+    enum class TSInputObservationKind : std::uint8_t
+    {
+        Value,
+        Structural,
+    };
+
     struct TSInputTargetLinkState;
     struct TSInputTargetLinkStorage;
 
@@ -19,6 +26,7 @@ namespace hgraph::detail
         TSInputTargetActiveNode *parent{nullptr};
         std::size_t              slot{0};
         bool locally_active{false};
+        TSInputObservationKind observation_kind{TSInputObservationKind::Value};
         TSOutputHandle observed{};
         std::unordered_map<std::size_t, std::unique_ptr<TSInputTargetActiveNode>> children{};
 
@@ -82,9 +90,14 @@ namespace hgraph::detail
         void unbind_noexcept() noexcept;
         void source_invalidated(const TSDataTracking *source) noexcept;
         void record_target_modified(DateTime modified_time);
+        [[nodiscard]] const TSDataTracking &key_set_tracking() const;
+        [[nodiscard]] TSDataTracking &mutable_key_set_tracking();
+        void record_key_set_modified(DateTime modified_time);
+        void key_set_source_invalidated(const TSDataTracking *source) noexcept;
         [[nodiscard]] TSInputTargetActiveNode &root_node();
         [[nodiscard]] TSInputTargetActiveNode &child_node(TSInputTargetActiveNode *parent, std::size_t slot);
-        void make_active(TSInputTargetActiveNode *node, const TSDataView &observed, Notifiable *target_notifier);
+        void make_active(TSInputTargetActiveNode *node, const TSDataView &observed,
+                         TSInputObservationKind observation_kind, Notifiable *target_notifier);
         void make_passive(TSInputTargetActiveNode *node);
         [[nodiscard]] bool active(const TSInputTargetActiveNode *node) const noexcept;
         [[nodiscard]] TSOutputHandle target_output_at_path(const TSValueTypeMetaData &schema,
@@ -109,7 +122,7 @@ namespace hgraph::detail
         TSInputTargetLinkState state_;
         SlotObserverList slot_observers_{};
         bool slot_observers_subscribed_{false};
-        std::unique_ptr<StructuralTransition> structural_transition_{};
+        mutable std::unique_ptr<StructuralTransition> structural_transition_{};
 
       private:
         void bind_impl(const TSValueTypeMetaData &schema, const TSOutputView &output,
@@ -118,6 +131,9 @@ namespace hgraph::detail
         void subscribe_slot_observers();
         void unsubscribe_slot_observers();
         void unsubscribe_slot_observers_noexcept() noexcept;
+        void subscribe_key_set_tracking();
+        void unsubscribe_key_set_tracking() noexcept;
+        [[nodiscard]] StructuralTransition &ensure_structural_state() const;
     };
 
     [[nodiscard]] const TSInputTargetLinkStorage *target_link_storage(const TSDataView &view) noexcept;
@@ -140,6 +156,7 @@ namespace hgraph::detail
     void make_target_link_active(const TSDataView &view,
                                  TSInputTargetActiveNode *node,
                                  const TSDataView &observed,
+                                 TSInputObservationKind observation_kind,
                                  Notifiable *target_notifier);
     void make_target_link_passive(const TSDataView &view, TSInputTargetActiveNode *node);
     [[nodiscard]] bool target_link_active(const TSDataView &view,

@@ -63,10 +63,13 @@ namespace
         static void eval(In<"lhs", TS<Int>> lhs,
                          In<"rhs", TS<Int>, InputActivity::Passive, InputValidity::Unchecked> rhs,
                          In<"strict", TSL<TS<Int>, 2>, InputValidity::AllValid> strict,
+                         In<"keys", TSD<Int, TS<Int>>, InputActivity::Structural,
+                            InputValidity::Unchecked> keys,
                          Out<TS<Int>> out)
         {
             (void)rhs;
             (void)strict;
+            (void)keys;
             out.set(lhs.value());
         }
     };
@@ -328,6 +331,7 @@ TEST_CASE("static node: input policy flags are reflected into node metadata")
     REQUIRE(view.schema()->active_inputs.has_value());
     REQUIRE(view.schema()->valid_inputs.has_value());
     CHECK(*view.schema()->active_inputs == std::vector<std::size_t>{0, 2});
+    CHECK(view.schema()->structural_inputs == std::vector<std::size_t>{3});
     CHECK(*view.schema()->valid_inputs == std::vector<std::size_t>{0});
     CHECK(view.schema()->all_valid_inputs == std::vector<std::size_t>{2});
 }

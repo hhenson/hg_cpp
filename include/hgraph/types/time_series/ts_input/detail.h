@@ -38,6 +38,7 @@ namespace hgraph::detail
     struct TSInputViewOps
     {
         void make_active(TSInputView &view) const;
+        void make_structural_active(TSInputView &view) const;
         void make_passive(TSInputView &view) const;
         [[nodiscard]] bool active(const TSInputView &view) const;
     };
@@ -52,6 +53,7 @@ namespace hgraph::detail
         using child_schema_fn = const TSValueTypeMetaData *(*)(const TSValueTypeMetaData *schema,
                                                                std::size_t                index) noexcept;
         using target_child_fn = TSDataView (*)(const TSDataView &parent, std::size_t index);
+        using structural_observation_fn = TSDataView (*)(const TSDataView &source);
         /** Convert a non-peered input projection of this shape to a reference token. */
         using reference_fn = TimeSeriesReference (*)(const TSInputView &view);
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -71,6 +73,7 @@ namespace hgraph::detail
         find_key_fn      find_key{nullptr};
         child_schema_fn  child_schema{nullptr};
         target_child_fn  target_child{nullptr};
+        structural_observation_fn structural_observation{nullptr};
         reference_fn     reference{nullptr};
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         to_python_fn       to_python{nullptr};

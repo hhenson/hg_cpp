@@ -450,6 +450,8 @@ namespace hgraph
     {
         Active,
         Passive,
+        /** Wake on collection membership changes, not nested value ticks. */
+        Structural,
     };
 
     enum class InputValidity
@@ -2188,6 +2190,29 @@ namespace hgraph
         }
 
         template <typename E>
+        static void collect_structural_input_slot(std::vector<std::size_t> &slots,
+                                                  std::size_t &input_index)
+        {
+            if constexpr (static_node_detail::is_input_selector<E>::value)
+            {
+                if constexpr (E::activity == InputActivity::Structural) { slots.push_back(input_index); }
+                ++input_index;
+            }
+        }
+
+        template <std::size_t... I>
+        static std::vector<std::size_t> collect_structural_input_slots(std::index_sequence<I...>)
+        {
+            std::vector<std::size_t> slots;
+            slots.reserve(input_count());
+            std::size_t input_index = 0;
+            (collect_structural_input_slot<
+                 static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>(slots, input_index),
+             ...);
+            return slots;
+        }
+
+        template <typename E>
         static void collect_valid_input_slot(std::vector<std::size_t> &slots, std::size_t &input_index)
         {
             if constexpr (static_node_detail::is_input_selector<E>::value)
@@ -2345,6 +2370,11 @@ namespace hgraph
             {
                 return std::nullopt;
             }
+        }
+
+        [[nodiscard]] static std::vector<std::size_t> structural_inputs()
+        {
+            return collect_structural_input_slots(indices{});
         }
 
         [[nodiscard]] static std::optional<std::vector<std::size_t>> valid_inputs()
@@ -2641,6 +2671,7 @@ namespace hgraph
             schema.uses_evaluation_clock = signature::uses_evaluation_clock();
             schema.schedule_on_start     = signature::schedule_on_start();
             schema.active_inputs         = signature::active_inputs();
+            schema.structural_inputs     = signature::structural_inputs();
             schema.valid_inputs          = signature::valid_inputs();
             schema.all_valid_inputs      = signature::all_valid_inputs();
             return schema;

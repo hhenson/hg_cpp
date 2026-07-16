@@ -468,7 +468,8 @@ namespace hgraph
 
         [[nodiscard]] bool dict_structure_modified(const TSInputView &input, DateTime evaluation_time)
         {
-            return input.as_dict().data_view().key_set().modified(evaluation_time);
+            static_cast<void>(evaluation_time);
+            return input.as_dict().structure_modified();
         }
 
         [[nodiscard]] bool list_structure_modified(const TSInputView &input, DateTime)

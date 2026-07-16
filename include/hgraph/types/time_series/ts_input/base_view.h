@@ -108,6 +108,8 @@ namespace hgraph
         void unbind_output();
 
         void make_active();
+        /** Subscribe this input to structural changes rather than child value ticks. */
+        void make_structural_active();
         void make_passive();
         [[nodiscard]] bool active() const;
 
@@ -183,6 +185,7 @@ namespace hgraph
             void bind_target_sampled(const TSOutputView &output, DateTime modified_time);
             void unbind_target();
             void make_active(TSInput *input, Notifiable *scheduling_notifier) const;
+            void make_structural_active(TSInput *input, Notifiable *scheduling_notifier) const;
             void make_passive(TSInput *input) const;
             [[nodiscard]] bool active(const TSInput *input) const;
 
@@ -204,6 +207,7 @@ namespace hgraph
 
         [[nodiscard]] bool is_target_position() const noexcept;
         [[nodiscard]] bool inherited_sampled_transition() const noexcept;
+        [[nodiscard]] bool sampled_structural_transition() const noexcept;
         [[nodiscard]] const TSValueTypeMetaData *target_path_schema() const noexcept;
         [[nodiscard]] TSDataView input_data_view() const noexcept;
         [[nodiscard]] TSDataView resolve_target_data_view() const noexcept;
