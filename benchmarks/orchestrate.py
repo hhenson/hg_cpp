@@ -12,8 +12,9 @@ Usage (from the repo root, inside the repo's env):
   uv run python benchmarks/orchestrate.py --scenario tick_std --mode hg-cpp
   uv run python benchmarks/orchestrate.py --setup-only    # just build venvs
 
-The upstream venv is created once at benchmarks/.venv-upstream (delete it to
-force a refresh). Results land in benchmarks/results/.
+The upstream venv is created once per Python major/minor version at
+benchmarks/.venv-upstream-X.Y (delete it to force a refresh). Results land in
+benchmarks/results/.
 """
 import argparse
 import datetime as dt
@@ -25,7 +26,7 @@ import sys
 from pathlib import Path
 
 BENCH_DIR = Path(__file__).resolve().parent
-UPSTREAM_VENV = BENCH_DIR / ".venv-upstream"
+UPSTREAM_VENV = BENCH_DIR / f".venv-upstream-{sys.version_info.major}.{sys.version_info.minor}"
 RESULTS_DIR = BENCH_DIR / "results"
 RUNNER = BENCH_DIR / "runner.py"
 
@@ -40,7 +41,7 @@ def ensure_upstream_venv() -> None:
     if upstream_python().exists():
         return
     print(f"[setup] creating upstream venv at {UPSTREAM_VENV} (pip install hgraph)...")
-    subprocess.run(["uv", "venv", str(UPSTREAM_VENV)], check=True)
+    subprocess.run(["uv", "venv", "--python", sys.executable, str(UPSTREAM_VENV)], check=True)
     subprocess.run(
         ["uv", "pip", "install", "--python", str(upstream_python()), "hgraph"],
         check=True,

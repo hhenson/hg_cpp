@@ -534,30 +534,42 @@ namespace hgraph
                 const auto *bundle_info = !state->schema->name().empty()
                                               ? python_bundle_info(state->schema)
                                               : nullptr;
-                nb::dict result;
+                if (bundle_info == nullptr)
+                {
+                    nb::dict result;
+                    for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
+                    {
+                        const char *name = state->schema->fields[index].name;
+                        if (name == nullptr || *name == '\0') { continue; }
+                        if (!composite_field_set(state, memory, index)) { continue; }
+                        const auto &ops = state->child_bindings[index].ops_ref();
+                        const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
+                        result[nb::str{name}] = ops.to_python(child);
+                    }
+                    return result;
+                }
+
+                // This is reconstruction of an already-valid canonical
+                // value, not user construction. Avoid re-running a dataclass
+                // __init__/__post_init__ on every TS.value read.
+                nb::object result = nb::steal(bundle_info->allocator(
+                    reinterpret_cast<PyTypeObject *>(bundle_info->type.ptr()), 0));
+                if (!result.is_valid()) { nb::raise_python_error(); }
                 for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
                 {
                     const char *name = state->schema->fields[index].name;
                     if (name == nullptr || *name == '\0') { continue; }
-                    nb::object fallback_key;
-                    nb::handle key;
-                    if (bundle_info != nullptr) { key = bundle_info->field_names[index]; }
-                    else
-                    {
-                        fallback_key = nb::str{name};
-                        key = fallback_key;
-                    }
+                    nb::handle key = bundle_info->field_names[index];
                     const bool set = composite_field_set(state, memory, index);
-                    if (!set)
+                    nb::object value = set
+                                           ? state->child_bindings[index].ops_ref().to_python(
+                                                 static_cast<const std::byte *>(memory) + state->offsets[index])
+                                           : nb::none();
+                    if (PyObject_GenericSetAttr(result.ptr(), key.ptr(), value.ptr()) != 0)
                     {
-                        if (bundle_info != nullptr) { result[key] = nb::none(); }
-                        continue;   // plain dicts OMIT unset fields
+                        nb::raise_python_error();
                     }
-                    const auto &ops = state->child_bindings[index].ops_ref();
-                    const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
-                    result[key] = ops.to_python(child);
                 }
-                if (bundle_info != nullptr) { return bundle_info->type(**result); }
                 return result;
             }
 
@@ -635,7 +647,10 @@ namespace hgraph
             const auto *bundle_info = !state->schema->name().empty()
                                           ? python_bundle_info(state->schema)
                                           : nullptr;
-            if (nb::isinstance<nb::dict>(object))
+            const bool exact_bundle_class =
+                bundle_info != nullptr &&
+                Py_TYPE(object.ptr()) == reinterpret_cast<PyTypeObject *>(bundle_info->type.ptr());
+            if (!exact_bundle_class && nb::isinstance<nb::dict>(object))
             {
                 nb::dict map = nb::cast<nb::dict>(object);
                 composite_mark_all(state, memory, false);
@@ -668,7 +683,7 @@ namespace hgraph
                 return;
             }
 
-            if (is_python_sequence(source))
+            if (!exact_bundle_class && is_python_sequence(source))
             {
                 fill_composite_from_sequence(state, memory, source, "Bundle value");
                 return;
@@ -692,7 +707,12 @@ namespace hgraph
                     fallback_key = nb::str{name};
                     key = fallback_key;
                 }
-                PyObject *raw_value = PyObject_GetAttr(object.ptr(), key.ptr());
+                // Exact registered data objects do not need a user-defined
+                // __getattribute__ dispatch for their declared fields. Keep
+                // the general protocol for accepted proxy/attribute objects.
+                PyObject *raw_value = exact_bundle_class
+                                          ? PyObject_GenericGetAttr(object.ptr(), key.ptr())
+                                          : PyObject_GetAttr(object.ptr(), key.ptr());
                 if (raw_value == nullptr)
                 {
                     if (PyErr_ExceptionMatches(PyExc_AttributeError))

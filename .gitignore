@@ -10,4 +10,4 @@
 /REVIEW.md
 
 .claude/
-benchmarks/.venv-upstream/
+benchmarks/.venv-upstream*/

@@ -285,6 +285,12 @@ namespace hgraph::python_bridge
     m.def("register_bundle_class", [](PyValueType type, nb::object cls) {
         auto &info = bundle_class_info_registry()[type.meta];
         info.type = cls;
+        info.allocator = reinterpret_cast<PyBundleClassInfo::Allocator>(
+            PyType_GetSlot(reinterpret_cast<PyTypeObject *>(cls.ptr()), Py_tp_alloc));
+        if (info.allocator == nullptr)
+        {
+            throw nb::type_error("CompoundScalar class has no allocation slot");
+        }
         info.field_names.clear();
         info.field_names.reserve(type.meta->field_count);
         for (std::size_t index = 0; index < type.meta->field_count; ++index)

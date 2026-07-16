@@ -86,7 +86,10 @@ namespace hgraph::python_bridge
 
     struct NB_EXPORT_SHARED PyBundleClassInfo
     {
+        using Allocator = PyObject *(*)(PyTypeObject *, Py_ssize_t);
+
         nb::object           type{};
+        Allocator            allocator{nullptr};
         std::vector<nb::str> field_names{};
     };
 

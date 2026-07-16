@@ -32,9 +32,11 @@ uv run python benchmarks/orchestrate.py --scale 0.1     # quick pass
 uv run python benchmarks/orchestrate.py --scenario tick_std --mode hg-cpp
 ```
 
-The first run creates `benchmarks/.venv-upstream` (pip-installs `hgraph`);
-delete that directory to refresh the upstream version. Results (markdown
-matrix + raw JSON) are written to `benchmarks/results/`.
+The first run for each active Python version creates
+`benchmarks/.venv-upstream-X.Y` (pip-installs `hgraph`). This keeps all three
+modes on the same interpreter version. Delete that directory to refresh the
+upstream version. Results (markdown matrix + raw JSON) are written to
+`benchmarks/results/`.
 
 Each (scenario, mode) runs in a fresh subprocess: crashes and timeouts show
 as `FAIL` cells with the captured error, never as a lost matrix. Default

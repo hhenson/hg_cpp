@@ -232,3 +232,44 @@ def test_self_recursive_compound_scalar_allocates_children_on_demand():
     )
 
     assert result == [2, -1]
+
+
+def test_compound_scalar_readback_reconstructs_frozen_slotted_value_without_init():
+    initialized = []
+
+    @dataclass(frozen=True, slots=True, kw_only=True)
+    class Value(CompoundScalar, namespace="tests.reconstruction"):
+        number: int
+        label: str
+
+        def __post_init__(self):
+            initialized.append((self.number, self.label))
+
+    @compute_node
+    def inspect(value: TS[Value]) -> TS[bool]:
+        current = value.value
+        return isinstance(current, Value) and current.number == 7 and current.label == "seven"
+
+    source = Value(number=7, label="seven")
+    assert eval_node(inspect, [source]) == [True]
+    assert initialized == [(7, "seven")]
+
+
+def test_compound_scalar_output_still_accepts_attribute_proxy():
+    @dataclass
+    class Value(CompoundScalar, namespace="tests.attribute_proxy"):
+        number: int
+        label: str
+
+    class Proxy:
+        def __init__(self, number, label):
+            self._values = {"number": number, "label": label}
+
+        def __getattr__(self, name):
+            return self._values[name]
+
+    @compute_node
+    def build(value: TS[int]) -> TS[Value]:
+        return Proxy(value.value, str(value.value))
+
+    assert eval_node(build, [3]) == [Value(3, "3")]
