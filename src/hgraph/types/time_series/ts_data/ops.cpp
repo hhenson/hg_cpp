@@ -232,6 +232,16 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("key slot lookup");
     }
 
+    std::size_t missing_next_modified_slot(const void *, const void *, std::size_t)
+    {
+        missing_ts_data_op("next modified slot");
+    }
+
+    std::size_t missing_next_delta_slot(const void *, const void *, std::size_t)
+    {
+        missing_ts_data_op("next structural delta slot");
+    }
+
     Range<ValueView> missing_value_range(const void *, const void *)
     {
         missing_ts_data_op("value range");

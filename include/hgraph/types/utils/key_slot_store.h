@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -132,6 +133,8 @@ namespace hgraph
             size_t slot{npos};
             /** True when this call introduced (or resurrected) the key; false when the live key was already present. */
             bool   inserted{false};
+            /** True only when this call constructed a new physical key slot. */
+            bool   constructed{false};
         };
 
         /**
@@ -182,7 +185,9 @@ namespace hgraph
               observers(std::move(other.observers)), m_size(std::exchange(other.m_size, 0)),
               m_pending_erase_count(std::exchange(other.m_pending_erase_count, 0)),
               m_key_plan(std::exchange(other.m_key_plan, nullptr)), m_ops(other.m_ops),
-              m_free_slots(std::move(other.m_free_slots)), m_index_owner(std::move(other.m_index_owner)),
+              m_free_slots(std::move(other.m_free_slots)),
+              m_pending_erase_slots(std::move(other.m_pending_erase_slots)),
+              m_index_owner(std::move(other.m_index_owner)),
               m_index(std::move(other.m_index)) {
             if (m_index_owner != nullptr) { m_index_owner->store = this; }
             other.constructed.clear();
@@ -203,6 +208,7 @@ namespace hgraph
                 m_key_plan            = std::exchange(other.m_key_plan, nullptr);
                 m_ops                 = other.m_ops;
                 m_free_slots          = std::move(other.m_free_slots);
+                m_pending_erase_slots = std::move(other.m_pending_erase_slots);
                 m_index_owner         = std::move(other.m_index_owner);
                 m_index               = std::move(other.m_index);
                 if (m_index_owner != nullptr) { m_index_owner->store = this; }
@@ -228,6 +234,11 @@ namespace hgraph
         [[nodiscard]] const MemoryUtils::AllocatorOps &allocator() const noexcept { return key_storage.allocator(); }
         /** True when at least one slot is awaiting physical erase. */
         [[nodiscard]] bool                             has_pending_erase() const noexcept { return m_pending_erase_count != 0; }
+        /** Slots logically removed in the current batch. Stale resurrected entries may be present. */
+        [[nodiscard]] std::span<const size_t> pending_erase_slots() const noexcept
+        {
+            return m_pending_erase_slots;
+        }
 
         /**
          * Return whether slot memory still contains a constructed key object.
@@ -376,13 +387,14 @@ namespace hgraph
             if (key == nullptr) { throw std::invalid_argument("KeySlotStore insert requires a non-null key"); }
 
             if (const size_t existing = find_stored_slot(static_cast<const void *>(key)); existing != npos) {
-                if (slot_live(existing)) { return {.slot = existing, .inserted = false}; }
+                if (slot_live(existing)) { return {.slot = existing, .inserted = false, .constructed = false}; }
 
                 live.set(existing);
                 --m_pending_erase_count;
+                if (m_pending_erase_count == 0) { m_pending_erase_slots.clear(); }
                 ++m_size;
                 observers.notify_insert(existing);
-                return {.slot = existing, .inserted = true};
+                return {.slot = existing, .inserted = true, .constructed = false};
             }
 
             if (m_free_slots.empty()) { reserve_to(std::max<size_t>(m_size + 1, std::max<size_t>(8, slot_capacity() * 2))); }
@@ -399,7 +411,7 @@ namespace hgraph
             ++m_size;
             m_index->insert(slot);
             observers.notify_insert(slot);
-            return {.slot = slot, .inserted = true};
+            return {.slot = slot, .inserted = true, .constructed = true};
         }
 
         /**
@@ -413,13 +425,14 @@ namespace hgraph
             if (key == nullptr) { throw std::invalid_argument("KeySlotStore move insert requires a non-null key"); }
 
             if (const size_t existing = find_stored_slot(static_cast<const void *>(key)); existing != npos) {
-                if (slot_live(existing)) { return {.slot = existing, .inserted = false}; }
+                if (slot_live(existing)) { return {.slot = existing, .inserted = false, .constructed = false}; }
 
                 live.set(existing);
                 --m_pending_erase_count;
+                if (m_pending_erase_count == 0) { m_pending_erase_slots.clear(); }
                 ++m_size;
                 observers.notify_insert(existing);
-                return {.slot = existing, .inserted = true};
+                return {.slot = existing, .inserted = true, .constructed = false};
             }
 
             if (!m_key_plan->can_move_construct()) {
@@ -439,7 +452,7 @@ namespace hgraph
             ++m_size;
             m_index->insert(slot);
             observers.notify_insert(slot);
-            return {.slot = slot, .inserted = true};
+            return {.slot = slot, .inserted = true, .constructed = true};
         }
 
         /** Typed overload of ``insert`` that asserts the bound plan matches ``T``. */
@@ -471,6 +484,7 @@ namespace hgraph
 
             observers.notify_remove(slot);
             live.reset(slot);
+            m_pending_erase_slots.push_back(slot);
             ++m_pending_erase_count;
             --m_size;
             return true;
@@ -485,7 +499,7 @@ namespace hgraph
         void erase_pending() noexcept {
             if (m_key_plan == nullptr || m_pending_erase_count == 0) { return; }
 
-            for (size_t slot = 0; slot < slot_capacity(); ++slot) {
+            for (const size_t slot : m_pending_erase_slots) {
                 if (!slot_pending_erase(slot)) { continue; }
 
                 observers.notify_erase(slot);
@@ -496,6 +510,7 @@ namespace hgraph
             }
 
             m_pending_erase_count = 0;
+            m_pending_erase_slots.clear();
         }
 
         /** Notify ``on_clear`` and destroy every constructed key. Capacity is preserved. */
@@ -533,14 +548,19 @@ namespace hgraph
 
             [[nodiscard]] const KeySlotStore *store() const noexcept { return owner != nullptr ? owner->store : nullptr; }
 
+            [[nodiscard]] static size_t mix(size_t hash) noexcept
+            {
+                return ankerl::unordered_dense::hash<size_t>{}(hash);
+            }
+
             [[nodiscard]] size_t operator()(size_t slot) const {
                 const KeySlotStore *s = store();
-                return s != nullptr ? s->hash_at_slot(slot) : 0U;
+                return s != nullptr ? mix(s->hash_at_slot(slot)) : 0U;
             }
 
             [[nodiscard]] size_t operator()(const void *key) const {
                 const KeySlotStore *s = store();
-                return s != nullptr ? s->m_ops.hash_key(key) : 0U;
+                return s != nullptr ? mix(s->m_ops.hash_key(key)) : 0U;
             }
         };
 
@@ -624,6 +644,7 @@ namespace hgraph
 
             m_size                = 0;
             m_pending_erase_count = 0;
+            m_pending_erase_slots.clear();
             constructed.reset();
             live.reset();
             m_free_slots.clear();
@@ -635,6 +656,7 @@ namespace hgraph
         const MemoryUtils::StoragePlan *m_key_plan{nullptr};
         KeySlotStoreOps                 m_ops{};
         std::vector<size_t>             m_free_slots{};
+        std::vector<size_t>             m_pending_erase_slots{};
         std::unique_ptr<IndexBackPtr>   m_index_owner{};
         std::unique_ptr<IndexSet>       m_index{};
     };

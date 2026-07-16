@@ -60,6 +60,8 @@ namespace hgraph
         [[nodiscard]] const void *missing_key_at_slot(const void *, const void *, std::size_t);
         [[nodiscard]] bool missing_contains_key(const void *, const void *, const ValueView &);
         [[nodiscard]] std::size_t missing_find_key_slot(const void *, const void *, const ValueView &);
+        [[nodiscard]] std::size_t missing_next_delta_slot(const void *, const void *, std::size_t);
+        [[nodiscard]] std::size_t missing_next_modified_slot(const void *, const void *, std::size_t);
         [[nodiscard]] Range<ValueView> missing_value_range(const void *, const void *);
         [[nodiscard]] KeyValueRange<ValueView, TSDataView> missing_ts_data_kv_range(const void *, const void *);
         [[nodiscard]] Range<TSDataView> missing_ts_data_range(const void *, const void *);
@@ -204,6 +206,13 @@ namespace hgraph
                                 std::size_t slot) = &ts_data_detail::missing_slot_predicate;
         bool (*slot_removed_impl)(const void *context, const void *memory,
                                   std::size_t slot) = &ts_data_detail::missing_slot_predicate;
+        /** Return the first added/removed slot after ``previous``; ``TS_DATA_NO_CHILD_ID`` starts iteration. */
+        std::size_t (*next_added_slot_impl)(const void *context, const void *memory,
+                                            std::size_t previous) =
+            &ts_data_detail::missing_next_delta_slot;
+        std::size_t (*next_removed_slot_impl)(const void *context, const void *memory,
+                                              std::size_t previous) =
+            &ts_data_detail::missing_next_delta_slot;
         const void *(*key_at_slot_impl)(const void *context, const void *memory,
                                         std::size_t slot) = &ts_data_detail::missing_key_at_slot;
         bool (*contains_impl)(const void *context, const void *memory,
@@ -247,6 +256,10 @@ namespace hgraph
                                           std::size_t slot) = &ts_data_detail::missing_child_at_slot;
         bool (*slot_modified_impl)(const void *context, const void *memory,
                                    std::size_t slot) = &ts_data_detail::missing_slot_predicate;
+        /** Return the first modified slot after ``previous``; ``TS_DATA_NO_CHILD_ID`` starts iteration. */
+        std::size_t (*next_modified_slot_impl)(const void *context, const void *memory,
+                                               std::size_t previous) =
+            &ts_data_detail::missing_next_modified_slot;
         Range<TSDataView> (*make_ts_values_range_impl)(const void *context,
                                                        const void *memory) = &ts_data_detail::missing_ts_data_range;
         Range<ValueView> (*make_valid_keys_range_impl)(const void *context,

@@ -175,10 +175,63 @@ namespace hgraph
             }
         }
 
+        template <typename F, std::size_t... I>
+        [[nodiscard]] Value eval_bound_values_impl(ValueTypeRef output_binding,
+                                                   std::span<const ValueView> args,
+                                                   std::index_sequence<I...>)
+        {
+            using R = result_t<F>;
+            using tuple = arg_tuple_t<F>;
+            if (args.size() != sizeof...(I))
+            {
+                throw std::invalid_argument("lifted function argument count does not match the kernel arity");
+            }
+            R result = invoke<F>(args[I].template checked_as<tuple_arg_t<tuple, I>>()...);
+            return Value{output_binding, &result};
+        }
+
         template <typename F>
         [[nodiscard]] Value eval_values(std::span<const ValueView> args)
         {
             return eval_values_impl<F>(args, std::make_index_sequence<arity_v<F>>{});
+        }
+
+        template <typename F>
+        [[nodiscard]] Value eval_bound_values(ValueTypeRef output_binding,
+                                              std::span<const ValueView> args)
+        {
+            return eval_bound_values_impl<F>(output_binding, args,
+                                             std::make_index_sequence<arity_v<F>>{});
+        }
+
+        template <typename F, std::size_t... I>
+        void eval_into_impl(TSDataMutationView &destination, std::span<const ValueView> args,
+                            std::index_sequence<I...>)
+        {
+            using R = result_t<F>;
+            using tuple = arg_tuple_t<F>;
+            if (args.size() != sizeof...(I))
+            {
+                throw std::invalid_argument("lifted function argument count does not match the kernel arity");
+            }
+            R result = invoke<F>(args[I].template checked_as<tuple_arg_t<tuple, I>>()...);
+            const ValueView source{destination.value().binding(),
+                                   static_cast<const void *>(&result)};
+            static_cast<void>(destination.copy_value_from(source));
+        }
+
+        template <typename F>
+        void eval_into(TSDataMutationView &destination, std::span<const ValueView> args)
+        {
+            eval_into_impl<F>(destination, args,
+                              std::make_index_sequence<arity_v<F>>{});
+        }
+
+        template <typename F, std::size_t... I>
+        [[nodiscard]] result_t<F> eval_input_values(TSBInputView &input, std::index_sequence<I...>)
+        {
+            using tuple = arg_tuple_t<F>;
+            return invoke<F>(input.at(I).value().template checked_as<tuple_arg_t<tuple, I>>()...);
         }
 
         template <typename F, std::size_t... I>
@@ -329,6 +382,8 @@ namespace hgraph
                 .output_schema_fn  = &output_schema<F>,
                 .param_names_fn    = &param_names<F>,
                 .eval_values_fn    = &eval_values<F>,
+                .eval_bound_values_fn = &eval_bound_values<F>,
+                .eval_into_fn      = &eval_into<F>,
                 .identity_value_fn = identity_value_thunk<F, Identity>(),
                 .associative       = associative<F>(),
                 .commutative       = commutative<F>(),
@@ -339,26 +394,15 @@ namespace hgraph
         template <typename F, auto Identity>
         void evaluate_lifted_node(const NodeView &view, DateTime evaluation_time)
         {
-            const LiftedKernel &k = kernel<F, Identity>();
-
             auto root_input = view.input(evaluation_time);
             auto input      = root_input.as_bundle();
-            auto output = view.output(evaluation_time);
+            auto output     = view.output(evaluation_time);
 
-            std::vector<ValueView> values;
-            values.reserve(k.arity);
-            for (std::size_t i = 0; i < k.arity; ++i)
-            {
-                auto child = input.at(i);
-                values.emplace_back(child.value());
-            }
-
-            Value result = k.eval(std::span<const ValueView>{values.data(), values.size()});
-            auto  mutation = output.begin_mutation(evaluation_time);
-            if (!mutation.move_value_from(std::move(result)))
-            {
-                throw std::logic_error("lifted node failed to move the result into its output");
-            }
+            result_t<F> result = eval_input_values<F>(input, std::make_index_sequence<arity_v<F>>{});
+            auto mutation = output.begin_mutation(evaluation_time);
+            auto destination = mutation.value();
+            const ValueView source{destination.binding(), static_cast<const void *>(&result)};
+            static_cast<void>(mutation.copy_value_from(source));
         }
 
         template <typename F, auto Identity>

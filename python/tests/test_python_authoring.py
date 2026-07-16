@@ -477,6 +477,18 @@ def test_collection_views_and_deltas_cross_both_directions():
     out = eval_node(app, [{"a": 1}, {"b": 2}, {"a": 4}])
     check(out == [{"a": 12}, {"b": 13}, {"a": 15}], f"collection deltas: {out}")
 
+    @hg.compute_node
+    def emit_delta(step: TS[int]) -> TSD[str, TS[int]]:
+        if step.value == 1:
+            return {"a": 1, "b": 2}
+        if step.value == 2:
+            return {"a": hg.REMOVE}
+        return {"b": step.value}
+
+    out = eval_node(emit_delta, [1, 2, 3])
+    check(out == [{"a": 1, "b": 2}, {"a": hg.REMOVE}, {"b": 3}],
+          f"Python TSD output deltas: {out}")
+
 
 def test_sink_only_graph_returns_none():
     seen = []

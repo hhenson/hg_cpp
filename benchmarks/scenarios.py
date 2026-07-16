@@ -299,6 +299,39 @@ def tsd_dense_std(scale: float):
     return g, cycles
 
 
+def tsd_dense_source_std(scale: float):
+    """Dense diagnostic: Python generator and native sink only."""
+    cycles, keys = int(1_000 * scale), max(4, int(200 * scale))
+
+    @graph
+    def g():
+        null_sink(_tsd_dense_pulse(cycles, keys))
+
+    return g, cycles
+
+
+def tsd_dense_map_std(scale: float):
+    """Dense diagnostic: source plus the native nested map graph."""
+    cycles, keys = int(1_000 * scale), max(4, int(200 * scale))
+
+    @graph
+    def g():
+        null_sink(map_(_mapped_std, _tsd_dense_pulse(cycles, keys)))
+
+    return g, cycles
+
+
+def tsd_dense_reduce_std(scale: float):
+    """Dense diagnostic: source plus the native reduce tree."""
+    cycles, keys = int(1_000 * scale), max(4, int(200 * scale))
+
+    @graph
+    def g():
+        null_sink(reduce(hg.add_, _tsd_dense_pulse(cycles, keys), 0))
+
+    return g, cycles
+
+
 def tsd_dense_py(scale: float):
     cycles, keys = int(1_000 * scale), max(4, int(200 * scale))
 
@@ -406,6 +439,9 @@ SCENARIOS = {
     "type_cs_std": type_cs_std,
     "type_cs_py": type_cs_py,
     "tsd_dense_std": tsd_dense_std,
+    "tsd_dense_source_std": tsd_dense_source_std,
+    "tsd_dense_map_std": tsd_dense_map_std,
+    "tsd_dense_reduce_std": tsd_dense_reduce_std,
     "tsd_dense_py": tsd_dense_py,
     "tsd_dense_strkeys_std": tsd_dense_strkeys_std,
     "tsd_sparse_std": tsd_sparse_std,

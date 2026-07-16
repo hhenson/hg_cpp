@@ -397,6 +397,7 @@ namespace hgraph
     {
         std::size_t slot{TS_DATA_NO_CHILD_ID};
         bool        changed{false};
+        bool        constructed{false};
     };
 
     struct TSWDataLayout : TSDataLayout

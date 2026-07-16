@@ -2309,8 +2309,10 @@ namespace hgraph
             const auto &child = context->children[index];
             if (child.target_link)
             {
-                TSDataView link{child.input_type, input_element_storage_memory(context, parent.data(), index),
-                                parent, index};
+                // Owned input storage attaches the complete parent tree when
+                // it is constructed or moved. Projection is a read-only hot
+                // path and must not rebind the same tracking link per access.
+                TSDataView link{child.input_type, input_element_storage_memory(context, parent.data(), index)};
                 const auto *storage = ::hgraph::target_storage(link);
                 if (storage != nullptr && storage->bound())
                 {
@@ -2321,7 +2323,7 @@ namespace hgraph
             }
 
             return TSInputChildProjection{
-                TSDataView{child.input_type, input_element_storage_memory(context, parent.data(), index), parent, index}, {}};
+                TSDataView{child.input_type, input_element_storage_memory(context, parent.data(), index)}, {}};
         }
 
         void TSInputSchedulingNotifier::notify(DateTime modified_time)

@@ -253,6 +253,16 @@ namespace
         }
     };
 
+    struct BenchmarkMapper
+    {
+        static constexpr auto name = "type_erasure_perf_benchmark_mapper";
+        static hgraph::Port<hgraph::TS<hgraph::Int>> compose(hgraph::Wiring &, hgraph::Port<hgraph::TS<hgraph::Int>> ts)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return ((ts + hgraph::Int{1}) * hgraph::Int{2}).template as<hgraph::TS<hgraph::Int>>();
+        }
+    };
+
     struct Negator
     {
         static constexpr auto name = "type_erasure_perf_negator";
@@ -260,6 +270,76 @@ namespace
         {
             using namespace hgraph::stdlib::syntax;
             return (ts * hgraph::Int{-1}).template as<hgraph::TS<hgraph::Int>>();
+        }
+    };
+
+    struct SparseTsdSource
+    {
+        static constexpr auto name              = "type_erasure_perf_sparse_tsd_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(hgraph::Scalar<"keys", hgraph::Int> keys,
+                         hgraph::Scalar<"per_cycle", hgraph::Int> per_cycle,
+                         hgraph::State<hgraph::Int> cycle,
+                         hgraph::Out<hgraph::TSD<hgraph::Int, hgraph::TS<hgraph::Int>>> out)
+        {
+            const hgraph::Int current = cycle.get();
+            if (current == 0)
+            {
+                for (hgraph::Int key = 0; key < keys.value(); ++key) { out.set(key, hgraph::Int{0}); }
+            }
+            else
+            {
+                const hgraph::Int base = current * per_cycle.value() % keys.value();
+                for (hgraph::Int offset = 0; offset < per_cycle.value(); ++offset)
+                {
+                    out.set((base + offset) % keys.value(), current);
+                }
+            }
+            cycle.set(current + 1);
+        }
+    };
+
+    struct DenseTsdSource
+    {
+        static constexpr auto name              = "type_erasure_perf_dense_tsd_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(hgraph::Scalar<"keys", hgraph::Int> keys,
+                         hgraph::State<hgraph::Int> cycle,
+                         hgraph::Out<hgraph::TSD<hgraph::Int, hgraph::TS<hgraph::Int>>> out)
+        {
+            const hgraph::Int current = cycle.get();
+            for (hgraph::Int key = 0; key < keys.value(); ++key) { out.set(key, current + key); }
+            cycle.set(current + 1);
+        }
+    };
+
+    struct ChurnTsdSource
+    {
+        static constexpr auto name              = "type_erasure_perf_churn_tsd_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(hgraph::Scalar<"live", hgraph::Int> live,
+                         hgraph::Scalar<"per_cycle", hgraph::Int> per_cycle,
+                         hgraph::State<hgraph::Int> cycle,
+                         hgraph::Out<hgraph::TSD<hgraph::Int, hgraph::TS<hgraph::Int>>> out)
+        {
+            const hgraph::Int current = cycle.get();
+            if (current == 0)
+            {
+                for (hgraph::Int key = 0; key < live.value(); ++key) { out.set(key, key); }
+            }
+            else
+            {
+                const hgraph::Int base = (current - 1) * per_cycle.value();
+                for (hgraph::Int offset = 0; offset < per_cycle.value(); ++offset)
+                {
+                    static_cast<void>(out.erase(base + offset));
+                    out.set(live.value() + base + offset, current);
+                }
+            }
+            cycle.set(current + 1);
         }
     };
 }  // namespace
@@ -758,6 +838,110 @@ int main()
             }
         });
     nested_graph.stop();
+
+    const auto run_native_tsd_graph = [&](std::string_view name, GraphBuilder builder,
+                                          std::size_t iterations) {
+        MockGraphExecutor executor{builder, MIN_ST, MAX_ET};
+        auto graph = executor.view().graph();
+        graph.start(MIN_ST);
+        executor.set_evaluation_time(MIN_ST);
+        if (!graph.evaluate(MIN_ST))
+        {
+            throw std::runtime_error(std::string{name} + " setup paused");
+        }
+
+        std::uint64_t cycle = 0;
+        run_benchmark(
+            name, iterations, samples, warmup,
+            [&] {
+                const DateTime evaluation_time =
+                    MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(++cycle)};
+                executor.set_evaluation_time(evaluation_time);
+                graph.schedule_node(0, evaluation_time);
+                if (!graph.evaluate(evaluation_time))
+                {
+                    throw std::runtime_error(std::string{name} + " paused");
+                }
+                return std::uint64_t{1};
+            },
+            [name](std::uint64_t value) {
+                if (value != 1) { throw std::runtime_error(std::string{name} + " checksum failed"); }
+            });
+        graph.stop();
+    };
+
+    {
+        Wiring wiring;
+        auto source = wire<SparseTsdSource>(wiring, Int{2000}, Int{5});
+        static_cast<void>(wire<stdlib::null_sink>(wiring, source));
+        run_native_tsd_graph("native_sparse_tsd_source_cycle", std::move(wiring).finish(), 20000);
+    }
+    {
+        Wiring wiring;
+        auto source = wire<SparseTsdSource>(wiring, Int{2000}, Int{5});
+        auto mapped = wire<stdlib::map_>(wiring, fn<BenchmarkMapper>(), source);
+        static_cast<void>(wire<stdlib::null_sink>(wiring, mapped));
+        run_native_tsd_graph("native_sparse_tsd_map_cycle", std::move(wiring).finish(), 20000);
+    }
+    {
+        Wiring wiring;
+        auto source = wire<SparseTsdSource>(wiring, Int{2000}, Int{5});
+        auto reduced = wire<stdlib::reduce_>(wiring, fn<stdlib::add_>(), source);
+        static_cast<void>(wire<stdlib::null_sink>(wiring, reduced));
+        run_native_tsd_graph("native_sparse_tsd_reduce_cycle", std::move(wiring).finish(), 20000);
+    }
+    {
+        Wiring wiring;
+        auto source = wire<SparseTsdSource>(wiring, Int{2000}, Int{5});
+        auto mapped = wire<stdlib::map_>(wiring, fn<BenchmarkMapper>(), source);
+        auto reduced = wire<stdlib::reduce_>(wiring, fn<stdlib::add_>(), mapped);
+        static_cast<void>(wire<stdlib::null_sink>(wiring, reduced));
+        run_native_tsd_graph("native_sparse_tsd_map_reduce_cycle", std::move(wiring).finish(), 20000);
+    }
+
+    const auto add_native_tsd_variants = [&](std::string_view prefix, auto wire_source) {
+        {
+            Wiring wiring;
+            auto source = wire_source(wiring);
+            static_cast<void>(wire<stdlib::null_sink>(wiring, source));
+            run_native_tsd_graph(std::string{prefix} + "_source_cycle", std::move(wiring).finish(), 2000);
+        }
+        {
+            Wiring wiring;
+            auto source = wire_source(wiring);
+            auto mapped = wire<stdlib::map_>(wiring, fn<BenchmarkMapper>(), source);
+            static_cast<void>(wire<stdlib::null_sink>(wiring, mapped));
+            run_native_tsd_graph(std::string{prefix} + "_map_cycle", std::move(wiring).finish(), 2000);
+        }
+        {
+            Wiring wiring;
+            auto source = wire_source(wiring);
+            auto reduced = wire<stdlib::reduce_>(wiring, fn<stdlib::add_>(), source);
+            static_cast<void>(wire<stdlib::null_sink>(wiring, reduced));
+            run_native_tsd_graph(std::string{prefix} + "_reduce_cycle", std::move(wiring).finish(), 2000);
+        }
+        {
+            Wiring wiring;
+            auto source = wire_source(wiring);
+            auto mapped = wire<stdlib::map_>(wiring, fn<BenchmarkMapper>(), source);
+            auto reduced = wire<stdlib::reduce_>(wiring, fn<stdlib::add_>(), mapped);
+            static_cast<void>(wire<stdlib::null_sink>(wiring, reduced));
+            run_native_tsd_graph(std::string{prefix} + "_map_reduce_cycle", std::move(wiring).finish(), 2000);
+        }
+    };
+
+    add_native_tsd_variants("native_dense_tsd", [](Wiring &wiring) {
+        return wire<DenseTsdSource>(wiring, Int{200});
+    });
+    add_native_tsd_variants("native_dense_400_tsd", [](Wiring &wiring) {
+        return wire<DenseTsdSource>(wiring, Int{400});
+    });
+    add_native_tsd_variants("native_dense_1000_tsd", [](Wiring &wiring) {
+        return wire<DenseTsdSource>(wiring, Int{1000});
+    });
+    add_native_tsd_variants("native_churn_tsd", [](Wiring &wiring) {
+        return wire<ChurnTsdSource>(wiring, Int{200}, Int{5});
+    });
 
     const std::vector<std::optional<Str>> switch_keys{Str{"a"}, Str{"b"}, Str{"a"}, Str{"b"}};
     const std::vector<std::optional<Int>> switch_inputs{Int{3}, Int{4}, Int{5}, Int{6}};

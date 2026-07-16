@@ -644,7 +644,10 @@ namespace hgraph
 
         explicit In(TSInputView view) noexcept : TSSInputView(std::move(view)) {}
 
-        [[nodiscard]] bool contains(const TValue &key) const { return TSSInputView::contains(Value{key}.view()); }
+        [[nodiscard]] bool contains(const TValue &key) const
+        {
+            return TSSInputView::contains(ValueView{data_view().layout().key_binding, &key});
+        }
 
         /** This cycle's added / removed / current elements as typed vectors. */
         [[nodiscard]] std::vector<TValue> values() const { return collect(TSSInputView::values()); }
@@ -735,8 +738,14 @@ namespace hgraph
 
         explicit In(TSInputView view) noexcept : TSDInputView(std::move(view)) {}
 
-        [[nodiscard]] bool contains(const TKey &key) const { return TSDInputView::contains(Value{key}.view()); }
-        [[nodiscard]] std::size_t find_slot(const TKey &key) const { return TSDInputView::find_slot(Value{key}.view()); }
+        [[nodiscard]] bool contains(const TKey &key) const
+        {
+            return TSDInputView::contains(ValueView{data_view().layout().key_binding, &key});
+        }
+        [[nodiscard]] std::size_t find_slot(const TKey &key) const
+        {
+            return TSDInputView::find_slot(ValueView{data_view().layout().key_binding, &key});
+        }
 
         [[nodiscard]] In<"", TValueSchema> at_slot(std::size_t slot) const
         {
@@ -745,7 +754,8 @@ namespace hgraph
 
         [[nodiscard]] In<"", TValueSchema> at(const TKey &key) const
         {
-            return In<"", TValueSchema>{TSDInputView::at(Value{key}.view())};
+            return In<"", TValueSchema>{
+                TSDInputView::at(ValueView{data_view().layout().key_binding, &key})};
         }
         [[nodiscard]] In<"", TValueSchema> operator[](const TKey &key) const { return at(key); }
 
@@ -960,22 +970,18 @@ namespace hgraph
         template <typename U>
         void set(U &&value) const
         {
-            Value wrapped{std::forward<U>(value)};
-            auto  mutation = TSOutputView::begin_mutation(evaluation_time());
-            if (!mutation.move_value_from(std::move(wrapped)))
-            {
-                throw std::logic_error("Out<TS<T>>::set failed to move the value into the output");
-            }
+            TValue resolved{std::forward<U>(value)};
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
+            auto destination = mutation.value();
+            const ValueView source{destination.binding(), static_cast<const void *>(&resolved)};
+            static_cast<void>(mutation.copy_value_from(source));
         }
 
         /** Type-erased set: copy a value (matching the output schema) and tick it. */
         void apply(const ValueView &value) const
         {
             auto mutation = TSOutputView::begin_mutation(evaluation_time());
-            if (!mutation.copy_value_from(value))
-            {
-                throw std::logic_error("Out<TS<T>>::apply failed to copy the value into the output");
-            }
+            static_cast<void>(mutation.copy_value_from(value));
         }
         // modified() / valid() / evaluation_time() inherited from TSOutputView.
     };
@@ -1110,11 +1116,16 @@ namespace hgraph
         Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSSOutputView(std::move(view)) {}
 
         /** Add ``key`` to the set; returns whether the set delta changed. */
-        bool add(const TValue &key) const { return TSSOutputView::begin_mutation(evaluation_time()).add(Value{key}.view()); }
+        bool add(const TValue &key) const
+        {
+            auto mutation = TSSOutputView::begin_mutation(evaluation_time());
+            return mutation.add(ValueView{mutation.layout().key_binding, &key});
+        }
         /** Remove ``key`` from the set; returns whether the set delta changed. */
         bool remove(const TValue &key) const
         {
-            return TSSOutputView::begin_mutation(evaluation_time()).remove(Value{key}.view());
+            auto mutation = TSSOutputView::begin_mutation(evaluation_time());
+            return mutation.remove(ValueView{mutation.layout().key_binding, &key});
         }
         /** Remove all elements. */
         void clear() const { TSSOutputView::begin_mutation(evaluation_time()).clear(); }
@@ -1174,8 +1185,14 @@ namespace hgraph
 
         Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSDOutputView(std::move(view)) {}
 
-        [[nodiscard]] bool contains(const TKey &key) const { return TSDOutputView::contains(Value{key}.view()); }
-        [[nodiscard]] std::size_t find_slot(const TKey &key) const { return TSDOutputView::find_slot(Value{key}.view()); }
+        [[nodiscard]] bool contains(const TKey &key) const
+        {
+            return TSDOutputView::contains(ValueView{data_view().layout().key_binding, &key});
+        }
+        [[nodiscard]] std::size_t find_slot(const TKey &key) const
+        {
+            return TSDOutputView::find_slot(ValueView{data_view().layout().key_binding, &key});
+        }
 
         [[nodiscard]] Out<TValueSchema> at_slot(std::size_t slot) const
         {
@@ -1185,7 +1202,7 @@ namespace hgraph
         [[nodiscard]] Out<TValueSchema> at(const TKey &key) const
         {
             auto mutation = TSDOutputView::begin_mutation(evaluation_time());
-            auto child    = mutation.at(Value{key}.view());
+            auto child    = mutation.at(ValueView{mutation.layout().key_binding, &key});
             return Out<TValueSchema>{TSOutputView{base().output(), child, evaluation_time()}, evaluation_time()};
         }
         [[nodiscard]] Out<TValueSchema> operator[](const TKey &key) const { return at(key); }
@@ -1201,7 +1218,8 @@ namespace hgraph
         /** Remove ``key`` if it is live; same-cycle additions are cancelled by the slot protocol. */
         [[nodiscard]] bool erase(const TKey &key) const
         {
-            return TSDOutputView::begin_mutation(evaluation_time()).erase(Value{key}.view());
+            auto mutation = TSDOutputView::begin_mutation(evaluation_time());
+            return mutation.erase(ValueView{mutation.layout().key_binding, &key});
         }
 
         /** Remove every live entry while retaining slots until normal end-of-cycle cleanup. */

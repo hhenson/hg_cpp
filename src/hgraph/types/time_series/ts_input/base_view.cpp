@@ -586,30 +586,12 @@ namespace hgraph
     {
         auto parent = data_.value_data.borrowed_ref();
         auto projection = detail::input_child_projection(parent, index);
-        if (projection.target_link.valid())
-        {
-            projection.target_link = TSDataView{projection.target_link.storage_type(), projection.target_link.data(),
-                                                parent, index};
-        }
-        else if (projection.visible.valid())
-        {
-            projection.visible = TSDataView{projection.visible.storage_type(), projection.visible.data(), parent, index};
-        }
         return child_from_projection(std::move(projection), index);
     }
 
     TSInputView TSInputView::child_from_resolved_input(const TSDataView &parent, std::size_t index) const
     {
         auto projection = detail::input_child_projection(parent, index);
-        if (projection.target_link.valid())
-        {
-            projection.target_link = TSDataView{projection.target_link.storage_type(), projection.target_link.data(),
-                                                parent, index};
-        }
-        else if (projection.visible.valid())
-        {
-            projection.visible = TSDataView{projection.visible.storage_type(), projection.visible.data(), parent, index};
-        }
         return child_from_projection(std::move(projection), index);
     }
 

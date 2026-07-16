@@ -96,6 +96,14 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 return slot < removed_.size() && removed_.test(slot);
             }
+            [[nodiscard]] std::size_t next_added_slot(std::size_t previous) const noexcept
+            {
+                return next_delta_slot(added_, previous);
+            }
+            [[nodiscard]] std::size_t next_removed_slot(std::size_t previous) const noexcept
+            {
+                return next_delta_slot(removed_, previous);
+            }
             [[nodiscard]] const void *key_at_slot(std::size_t slot) const { return keys_[slot]; }
             [[nodiscard]] std::size_t find_slot(const ValueView &key) const
             {
@@ -133,7 +141,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 if (slot_removed(result.slot)) { removed_.reset(result.slot); }
                 else { added_.set(result.slot); }
-                return mutation_result(result.slot);
+                return mutation_result(result.slot, result.constructed);
             }
 
             [[nodiscard]] SlotTSDataMutationResult insert_key_move(const ValueView &key, DateTime modified_time)
@@ -147,7 +155,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 if (slot_removed(result.slot)) { removed_.reset(result.slot); }
                 else { added_.set(result.slot); }
-                return mutation_result(result.slot);
+                return mutation_result(result.slot, result.constructed);
             }
 
             [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, DateTime modified_time)
@@ -200,6 +208,15 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
           protected:
+            [[nodiscard]] static std::size_t next_delta_slot(const sul::dynamic_bitset<> &slots,
+                                                             std::size_t previous) noexcept
+            {
+                const std::size_t slot = previous == TS_DATA_NO_CHILD_ID
+                                             ? slots.find_first()
+                                             : slots.find_next(previous);
+                return slot == sul::dynamic_bitset<>::npos ? TS_DATA_NO_CHILD_ID : slot;
+            }
+
             void validate_key(const ValueView &key) const
             {
                 if (!key.has_value()) { throw std::invalid_argument("slot TSData requires a live key"); }
@@ -240,13 +257,15 @@ namespace hgraph::ts_data_plan_factory_detail
             void ensure_delta_capacity()
             {
                 const auto capacity = keys_.slot_capacity();
+                if (added_.size() == capacity) { return; }
                 added_.resize(capacity);
                 removed_.resize(capacity);
             }
 
-            [[nodiscard]] SlotTSDataMutationResult mutation_result(std::size_t slot) const noexcept
+            [[nodiscard]] SlotTSDataMutationResult mutation_result(std::size_t slot,
+                                                                    bool constructed = false) const noexcept
             {
-                return {.slot = slot, .changed = true};
+                return {.slot = slot, .changed = true, .constructed = constructed};
             }
 
             ValueTypeRef key_binding_{nullptr};
@@ -302,9 +321,21 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 return slot < removed_.size() && removed_.test(slot);
             }
+            [[nodiscard]] std::size_t next_added_slot(std::size_t previous) const noexcept
+            {
+                return next_delta_slot(added_, previous);
+            }
+            [[nodiscard]] std::size_t next_removed_slot(std::size_t previous) const noexcept
+            {
+                return next_delta_slot(removed_, previous);
+            }
             [[nodiscard]] bool slot_modified(std::size_t slot) const noexcept
             {
                 return slot < modified_.size() && modified_.test(slot);
+            }
+            [[nodiscard]] std::size_t next_modified_slot(std::size_t previous) const noexcept
+            {
+                return next_delta_slot(modified_, previous);
             }
             [[nodiscard]] bool slot_value_published(std::size_t slot) const noexcept
             {
@@ -369,7 +400,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     added_.set(result.slot);
                 }
                 (void)key_set_tracking_.record_modified(modified_time);
-                return mutation_result(result.slot);
+                return mutation_result(result.slot, result.constructed);
             }
 
             [[nodiscard]] SlotTSDataMutationResult insert_key_move(const ValueView &key, DateTime modified_time)
@@ -392,7 +423,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     added_.set(result.slot);
                 }
                 (void)key_set_tracking_.record_modified(modified_time);
-                return mutation_result(result.slot);
+                return mutation_result(result.slot, result.constructed);
             }
 
             [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, DateTime modified_time)
@@ -489,6 +520,15 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
           private:
+            [[nodiscard]] static std::size_t next_delta_slot(const sul::dynamic_bitset<> &slots,
+                                                             std::size_t previous) noexcept
+            {
+                const std::size_t slot = previous == TS_DATA_NO_CHILD_ID
+                                             ? slots.find_first()
+                                             : slots.find_next(previous);
+                return slot == sul::dynamic_bitset<>::npos ? TS_DATA_NO_CHILD_ID : slot;
+            }
+
             void validate_key(const ValueView &key) const
             {
                 if (!key.has_value()) { throw std::invalid_argument("TSD TSData requires a live key"); }
@@ -520,7 +560,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     return;
                 }
 
-                for (std::size_t slot = 0; slot < keys_.slot_capacity(); ++slot)
+                for (const std::size_t slot : keys_.pending_erase_slots())
                 {
                     if (!keys_.slot_pending_erase(slot)) { continue; }
                     detail::invalidate_owned_ts_data_tree(
@@ -535,15 +575,17 @@ namespace hgraph::ts_data_plan_factory_detail
             void ensure_delta_capacity()
             {
                 const auto capacity = keys_.slot_capacity();
+                if (added_.size() == capacity) { return; }
                 added_.resize(capacity);
                 removed_.resize(capacity);
                 modified_.resize(capacity);
                 value_published_.resize(capacity);
             }
 
-            [[nodiscard]] SlotTSDataMutationResult mutation_result(std::size_t slot) const noexcept
+            [[nodiscard]] SlotTSDataMutationResult mutation_result(std::size_t slot,
+                                                                    bool constructed = false) const noexcept
             {
-                return {.slot = slot, .changed = true};
+                return {.slot = slot, .changed = true, .constructed = constructed};
             }
 
             ValueTypeRef key_binding_{nullptr};
@@ -952,6 +994,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 set_ops.slot_live_impl                 = &tss_slot_live;
                 set_ops.slot_added_impl                = &tss_slot_added;
                 set_ops.slot_removed_impl              = &tss_slot_removed;
+                set_ops.next_added_slot_impl           = &tss_next_added_slot;
+                set_ops.next_removed_slot_impl         = &tss_next_removed_slot;
                 set_ops.key_at_slot_impl               = &tss_key_at_slot;
                 set_ops.contains_impl                  = &tss_contains;
                 set_ops.find_slot_impl                 = &tss_find_slot;
@@ -1378,6 +1422,18 @@ namespace hgraph::ts_data_plan_factory_detail
                 return storage<Storage>(memory).slot_removed(slot);
             }
 
+            [[nodiscard]] static std::size_t tss_next_added_slot(const void *, const void *memory,
+                                                                 std::size_t previous)
+            {
+                return storage<Storage>(memory).next_added_slot(previous);
+            }
+
+            [[nodiscard]] static std::size_t tss_next_removed_slot(const void *, const void *memory,
+                                                                   std::size_t previous)
+            {
+                return storage<Storage>(memory).next_removed_slot(previous);
+            }
+
             [[nodiscard]] static const void *tss_key_at_slot(const void *, const void *memory, std::size_t slot)
             {
                 return storage<Storage>(memory).key_at_slot(slot);
@@ -1400,9 +1456,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 auto &store = storage<Storage>(memory);
                 if constexpr (std::is_same_v<Storage, TSDSlotStorage>)
                 {
-                    const bool existing = store.keys().find_stored_slot(key.data()) != KeySlotStore::npos;
                     const auto result = store.insert_key(key, modified_time);
-                    if (result.changed && !existing)
+                    if (result.constructed)
                     {
                         const auto *state = ctx(context);
                         TSDataView child{store.element_type(), store.child_memory_for_write(result.slot)};
@@ -1421,9 +1476,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 auto &store = storage<Storage>(memory);
                 if constexpr (std::is_same_v<Storage, TSDSlotStorage>)
                 {
-                    const bool existing = store.keys().find_stored_slot(key.data()) != KeySlotStore::npos;
                     const auto result = store.insert_key_move(key, modified_time);
-                    if (result.changed && !existing)
+                    if (result.constructed)
                     {
                         const auto *state = ctx(context);
                         TSDataView child{store.element_type(), store.child_memory_for_write(result.slot)};
@@ -1889,6 +1943,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 dict_ops.child_at_slot_impl = &tsd_child_at_slot;
                 dict_ops.slot_modified_impl = &tsd_slot_modified;
+                dict_ops.next_modified_slot_impl = &tsd_next_modified_slot;
                 dict_ops.make_ts_values_range_impl = &tsd_ts_values_range;
                 dict_ops.make_valid_keys_range_impl = &tsd_valid_keys_range;
                 dict_ops.make_valid_ts_values_range_impl = &tsd_valid_ts_values_range;
@@ -2379,6 +2434,12 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static bool tsd_slot_modified(const void *, const void *memory, std::size_t slot)
             {
                 return storage<TSDSlotStorage>(memory).slot_modified(slot);
+            }
+
+            [[nodiscard]] static std::size_t tsd_next_modified_slot(const void *, const void *memory,
+                                                                    std::size_t previous)
+            {
+                return storage<TSDSlotStorage>(memory).next_modified_slot(previous);
             }
 
             [[nodiscard]] static bool live_slot_predicate(const void *, const void *memory, std::size_t slot)

@@ -119,6 +119,18 @@ namespace hgraph
         return ops.slot_removed_impl(ops.context, storage_.data(), slot);
     }
 
+    std::size_t TSSDataView::next_added_slot(std::size_t previous) const
+    {
+        const auto &ops = set_ops();
+        return ops.next_added_slot_impl(ops.context, storage_.data(), previous);
+    }
+
+    std::size_t TSSDataView::next_removed_slot(std::size_t previous) const
+    {
+        const auto &ops = set_ops();
+        return ops.next_removed_slot_impl(ops.context, storage_.data(), previous);
+    }
+
     ValueView TSSDataView::at_slot(std::size_t slot) const
     {
         if (!slot_occupied(slot)) { throw std::out_of_range("TSSDataView::at_slot: slot is not occupied"); }

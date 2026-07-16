@@ -109,10 +109,28 @@ namespace hgraph
         return ops.slot_removed_impl(ops.context, storage_.data(), slot);
     }
 
+    std::size_t TSDDataView::next_added_slot(std::size_t previous) const
+    {
+        const auto &ops = dict_ops();
+        return ops.next_added_slot_impl(ops.context, storage_.data(), previous);
+    }
+
+    std::size_t TSDDataView::next_removed_slot(std::size_t previous) const
+    {
+        const auto &ops = dict_ops();
+        return ops.next_removed_slot_impl(ops.context, storage_.data(), previous);
+    }
+
     bool TSDDataView::slot_modified(std::size_t slot) const
     {
         const auto &ops = dict_ops();
         return ops.slot_modified_impl(ops.context, storage_.data(), slot);
+    }
+
+    std::size_t TSDDataView::next_modified_slot(std::size_t previous) const
+    {
+        const auto &ops = dict_ops();
+        return ops.next_modified_slot_impl(ops.context, storage_.data(), previous);
     }
 
     ValueView TSDDataView::key_at_slot(std::size_t slot) const

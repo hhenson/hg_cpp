@@ -8,6 +8,8 @@
 
 namespace hgraph
 {
+    struct LiftedKernel;
+
     struct HGRAPH_EXPORT ReduceNodeSpec
     {
         /**
@@ -15,6 +17,12 @@ namespace hgraph
          * the boundary arg ordinal (0 = lhs, 1 = rhs).
          */
         SingleNestedGraphNodeSpec child{};
+        /**
+         * Optional scalar-kernel capability resolved at wiring time. The
+         * generic child graph remains available as the correctness fallback;
+         * compatible native associative reducers can bypass its scheduler.
+         */
+        const LiftedKernel *lifted_kernel{nullptr};
     };
 
     /** Typed extension view exposed by ``reduce_node`` (runtime inspection surface). */

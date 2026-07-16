@@ -453,6 +453,39 @@ namespace hgraph::detail
 
         [[nodiscard]] bool target_link_previous_slot_removed(const void *context,
                                                              const void *memory,
+                                                             std::size_t slot);
+
+        template <bool Added>
+        [[nodiscard]] std::size_t target_link_set_next_delta_slot(const void *context,
+                                                                  const void *memory,
+                                                                  std::size_t previous)
+        {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
+            const auto *link = target_link_for(context, memory);
+            auto target = target_link_target_view(context, memory);
+            if (state->slot_access == nullptr) { return TS_DATA_NO_CHILD_ID; }
+
+            const auto previous_view = target_link_previous_view(context, memory);
+            const bool use_previous = !Added && link != nullptr && link->structural_transition_active() &&
+                                      previous_view.valid();
+            const auto &surface = use_previous ? previous_view : target;
+            if (!surface.valid()) { return TS_DATA_NO_CHILD_ID; }
+
+            const std::size_t capacity = state->slot_access->slot_capacity(surface);
+            for (std::size_t slot = previous == TS_DATA_NO_CHILD_ID ? 0 : previous + 1;
+                 slot < capacity; ++slot)
+            {
+                const bool selected = Added ? target_link_set_slot_added(context, memory, slot)
+                                            : (use_previous
+                                                   ? target_link_previous_slot_removed(context, memory, slot)
+                                                   : target_link_set_slot_removed(context, memory, slot));
+                if (selected) { return slot; }
+            }
+            return TS_DATA_NO_CHILD_ID;
+        }
+
+        [[nodiscard]] bool target_link_previous_slot_removed(const void *context,
+                                                             const void *memory,
                                                              std::size_t slot)
         {
             if (!target_link_previous_slot_was_published(context, memory, slot)) { return false; }
@@ -654,6 +687,28 @@ namespace hgraph::detail
                 return target.as_dict().slot_live(slot);
             }
             return target.valid() && target.as_dict().slot_modified(slot);
+        }
+
+        [[nodiscard]] std::size_t target_link_dict_next_modified_slot(const void *context,
+                                                                      const void *memory,
+                                                                      std::size_t previous)
+        {
+            auto target = target_link_target_view(context, memory);
+            if (!target.valid()) { return TS_DATA_NO_CHILD_ID; }
+
+            auto dict = target.as_dict();
+            const auto *link = target_link_for(context, memory);
+            if (link == nullptr || !link->sampled_structural_transition())
+            {
+                return dict.next_modified_slot(previous);
+            }
+
+            for (std::size_t slot = previous == TS_DATA_NO_CHILD_ID ? 0 : previous + 1;
+                 slot < dict.slot_capacity(); ++slot)
+            {
+                if (dict.slot_live(slot)) { return slot; }
+            }
+            return TS_DATA_NO_CHILD_ID;
         }
 
         [[nodiscard]] const void *target_link_dict_child_at_slot(const void *context,
@@ -1083,6 +1138,8 @@ namespace hgraph::detail
             ops.slot_live_impl                 = &target_link_set_slot_live;
             ops.slot_added_impl                = &target_link_set_slot_added;
             ops.slot_removed_impl              = &target_link_set_slot_removed;
+            ops.next_added_slot_impl           = &target_link_set_next_delta_slot<true>;
+            ops.next_removed_slot_impl         = &target_link_set_next_delta_slot<false>;
             ops.key_at_slot_impl               = &target_link_set_key_at_slot;
             ops.contains_impl                  = &target_link_set_contains;
             ops.find_slot_impl                 = &target_link_set_find_slot;
@@ -1163,6 +1220,7 @@ namespace hgraph::detail
             context->dict_ops.child_binding_at_slot_impl = &target_link_dict_child_binding_at_slot;
             context->dict_ops.child_at_slot_impl = &target_link_dict_child_at_slot;
             context->dict_ops.slot_modified_impl = &target_link_dict_slot_modified;
+            context->dict_ops.next_modified_slot_impl = &target_link_dict_next_modified_slot;
             context->dict_ops.make_ts_values_range_impl = &target_link_dict_values_range;
             context->dict_ops.make_valid_keys_range_impl = &target_link_dict_valid_keys_range;
             context->dict_ops.make_valid_ts_values_range_impl = &target_link_dict_valid_values_range;

@@ -220,6 +220,8 @@ namespace hgraph
                 key_set_ts_ops.slot_live_impl                 = &slot_live;
                 key_set_ts_ops.slot_added_impl                = &slot_added;
                 key_set_ts_ops.slot_removed_impl              = &slot_removed;
+                key_set_ts_ops.next_added_slot_impl           = &next_added_slot;
+                key_set_ts_ops.next_removed_slot_impl         = &next_removed_slot;
                 key_set_ts_ops.key_at_slot_impl               = &key_at_slot;
                 key_set_ts_ops.contains_impl                  = &set_contains;
                 key_set_ts_ops.find_slot_impl                 = &find_slot;
@@ -242,6 +244,7 @@ namespace hgraph
                 dict_base.apply_delta_impl = &ts_data_detail::apply_delta_tsd;
                 dict_ops.child_at_slot_impl = &tsd_child_at_slot;
                 dict_ops.slot_modified_impl = &slot_modified;
+                dict_ops.next_modified_slot_impl = &next_modified_slot;
                 dict_ops.make_ts_values_range_impl = &ts_value_range<TSDProxyMapSurface::Live>;
                 dict_ops.make_valid_keys_range_impl = &set_range<TSDProxySetSurface::Live>;
                 dict_ops.make_valid_ts_values_range_impl = &ts_value_range<TSDProxyMapSurface::Live>;
@@ -652,6 +655,20 @@ namespace hgraph
                        child_tracking->last_modified_time == store.tracking().last_modified_time;
             }
 
+            [[nodiscard]] static std::size_t next_modified_slot(const void *context,
+                                                                const void *memory,
+                                                                std::size_t previous)
+            {
+                if (!source_available(memory)) { return TS_DATA_NO_CHILD_ID; }
+                const std::size_t capacity = source_dict(memory).slot_capacity();
+                for (std::size_t slot = previous == TS_DATA_NO_CHILD_ID ? 0 : previous + 1;
+                     slot < capacity; ++slot)
+                {
+                    if (slot_modified(context, memory, slot)) { return slot; }
+                }
+                return TS_DATA_NO_CHILD_ID;
+            }
+
             [[nodiscard]] static const void *tsd_child_at_slot(const void *, const void *memory, std::size_t slot)
             {
                 return proxy_storage(memory).child_at_slot(slot);
@@ -675,6 +692,20 @@ namespace hgraph
             [[nodiscard]] static bool slot_removed(const void *, const void *memory, std::size_t slot)
             {
                 return source_available(memory) && source_dict(memory).slot_removed(slot);
+            }
+
+            [[nodiscard]] static std::size_t next_added_slot(const void *, const void *memory,
+                                                             std::size_t previous)
+            {
+                return source_available(memory) ? source_dict(memory).next_added_slot(previous)
+                                                : TS_DATA_NO_CHILD_ID;
+            }
+
+            [[nodiscard]] static std::size_t next_removed_slot(const void *, const void *memory,
+                                                               std::size_t previous)
+            {
+                return source_available(memory) ? source_dict(memory).next_removed_slot(previous)
+                                                : TS_DATA_NO_CHILD_ID;
             }
 
             [[nodiscard]] static std::size_t slot_capacity(const void *, const void *memory)

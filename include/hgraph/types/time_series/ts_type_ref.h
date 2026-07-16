@@ -127,20 +127,20 @@ namespace hgraph
 
         [[nodiscard]] TypedPtr<TypeFamily::TimeSeries, Role> typed_null() const
         {
-            return TypedPtr<TypeFamily::TimeSeries, Role>::checked(
-                record_ != nullptr ? AnyPtr::typed_null(*record_) : AnyPtr{});
+            using Pointer = TypedPtr<TypeFamily::TimeSeries, Role>;
+            return Pointer{AnyPtr{record_, nullptr, AccessMode::ReadOnly}, typename Pointer::UncheckedTag{}};
         }
         [[nodiscard]] TypedPtr<TypeFamily::TimeSeries, Role> read_only(const void *data) const
         {
-            return TypedPtr<TypeFamily::TimeSeries, Role>::checked(
-                record_ != nullptr ? AnyPtr::read_only(*record_, data) : AnyPtr{});
+            using Pointer = TypedPtr<TypeFamily::TimeSeries, Role>;
+            return Pointer{AnyPtr{record_, data, AccessMode::ReadOnly}, typename Pointer::UncheckedTag{}};
         }
         [[nodiscard]] TypedPtr<TypeFamily::TimeSeries, Role> writable(void *data) const
         {
             if (record_ != nullptr && !has_capability(capabilities(), TypeCapabilities::Mutable))
                 throw std::logic_error("time-series role is not mutable");
-            return TypedPtr<TypeFamily::TimeSeries, Role>::checked(
-                record_ != nullptr ? AnyPtr::writable(*record_, data) : AnyPtr{});
+            using Pointer = TypedPtr<TypeFamily::TimeSeries, Role>;
+            return Pointer{AnyPtr{record_, data, AccessMode::Writable}, typename Pointer::UncheckedTag{}};
         }
 
         [[nodiscard]] friend constexpr bool operator==(BasicTSTypeRef, BasicTSTypeRef) noexcept = default;

@@ -19,9 +19,13 @@
 
 namespace hgraph
 {
+    class TSDataMutationView;
+
     struct LiftedKernel
     {
         using EvalValuesThunk = Value (*)(std::span<const ValueView>);
+        using EvalBoundValuesThunk = Value (*)(ValueTypeRef, std::span<const ValueView>);
+        using EvalIntoThunk = void (*)(TSDataMutationView &, std::span<const ValueView>);
 
         const char *name{nullptr};
         const std::type_info *identity{nullptr};
@@ -31,6 +35,8 @@ namespace hgraph
         const TSValueTypeMetaData *(*output_schema_fn)() = nullptr;
         std::span<const std::string_view> (*param_names_fn)() = nullptr;
         EvalValuesThunk eval_values_fn{nullptr};
+        EvalBoundValuesThunk eval_bound_values_fn{nullptr};
+        EvalIntoThunk eval_into_fn{nullptr};
         Value (*identity_value_fn)() = nullptr;
 
         bool associative{false};
@@ -71,6 +77,18 @@ namespace hgraph
         {
             if (eval_values_fn == nullptr) { throw std::logic_error("LiftedKernel has no eval thunk"); }
             return eval_values_fn(args);
+        }
+
+        [[nodiscard]] Value eval(ValueTypeRef output_binding, std::span<const ValueView> args) const
+        {
+            if (eval_bound_values_fn != nullptr) { return eval_bound_values_fn(output_binding, args); }
+            return eval(args);
+        }
+
+        void eval_into(TSDataMutationView &destination, std::span<const ValueView> args) const
+        {
+            if (eval_into_fn == nullptr) { throw std::logic_error("LiftedKernel has no in-place eval thunk"); }
+            eval_into_fn(destination, args);
         }
     };
 

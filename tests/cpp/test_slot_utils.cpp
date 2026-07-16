@@ -601,6 +601,37 @@ TEST_CASE("key slot store tracks pending removals until explicit erase", "[v2 sl
     CHECK(observer.events == std::vector<std::string>{"capacity:0->4", "insert:0", "insert:1", "remove:1", "erase:1"});
 }
 
+TEST_CASE("key slot store mixes type-erased identity hashes", "[v2 slot utils][hash]")
+{
+    std::size_t equality_probes = 0;
+    const KeySlotStoreOps ops{
+        .hash = [](const void *key, const void *) -> std::size_t {
+            return static_cast<std::size_t>(*MemoryUtils::cast<const std::int64_t>(key));
+        },
+        .equal = [](const void *lhs, const void *rhs, const void *context) -> bool {
+            ++*static_cast<std::size_t *>(const_cast<void *>(context));
+            return *MemoryUtils::cast<const std::int64_t>(lhs) ==
+                   *MemoryUtils::cast<const std::int64_t>(rhs);
+        },
+        .context = &equality_probes,
+    };
+    KeySlotStore store(MemoryUtils::plan_for<std::int64_t>(), ops);
+
+    constexpr std::int64_t key_count = 1024;
+    store.reserve_to(static_cast<std::size_t>(key_count));
+    for (std::int64_t key = 0; key < key_count; ++key)
+    {
+        REQUIRE(store.insert(key).inserted);
+    }
+
+    equality_probes = 0;
+    for (std::int64_t key = 0; key < key_count; ++key)
+    {
+        REQUIRE(store.find_slot(key) != KeySlotStore::npos);
+    }
+    REQUIRE(equality_probes < static_cast<std::size_t>(key_count * 4));
+}
+
 TEST_CASE("key slot store resurrects removed keys before erase and reuses slots after explicit erase", "[v2 slot utils]") {
     KeySlotStore store(MemoryUtils::plan_for<std::int32_t>(), key_slot_store_ops_for<std::int32_t>());
 

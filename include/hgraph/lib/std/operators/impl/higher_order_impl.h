@@ -539,6 +539,13 @@ namespace hgraph::stdlib
             spec.child.graph_builder  = std::move(combiner_graph.graph_builder);
             spec.child.input_bindings = std::move(combiner_graph.input_bindings);
             spec.child.output_binding = combiner_graph.output_binding;
+            spec.lifted_kernel = resolve_lifted_kernel_for_schemas(
+                combiner, std::span<const TSValueTypeMetaData *const>{schemas.data(), schemas.size()}, element);
+            if (spec.lifted_kernel != nullptr &&
+                (spec.lifted_kernel->arity != 2 || !spec.lifted_kernel->associative))
+            {
+                spec.lifted_kernel = nullptr;
+            }
 
             const auto *input_schema =
                 TypeRegistry::instance().un_named_tsb({{"ts", ts.schema}, {"zero", zero.schema}});

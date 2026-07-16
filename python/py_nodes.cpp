@@ -61,6 +61,57 @@ namespace hgraph::python_bridge
             spec["removed"] = current.attr("difference")(result);
             shaped = spec;
         }
+
+        if (erased.schema()->kind == TSTypeKind::TSD &&
+            erased.schema()->element_ts() != nullptr &&
+            erased.schema()->element_ts()->kind == TSTypeKind::TS &&
+            nb::isinstance<nb::dict>(shaped))
+        {
+            const auto *key_meta = erased.schema()->key_type();
+            const auto *child = erased.schema()->element_ts();
+            auto python_delta = nb::cast<nb::dict>(shaped);
+            auto mutation = erased.as_dict().begin_mutation(erased.evaluation_time());
+            if (mutation.empty()) { mutation.reserve(nb::len(python_delta)); }
+
+            const bool fixed_atomic =
+                key_meta->value_kind() == ValueTypeKind::Atomic &&
+                child->value_schema->value_kind() == ValueTypeKind::Atomic;
+            if (fixed_atomic)
+            {
+                Value key_value{ValuePlanFactory::instance().type_for(key_meta)};
+                Value child_delta{ValuePlanFactory::instance().type_for(child->value_schema)};
+                for (auto [key, item] : python_delta)
+                {
+                    key_value.view().assign_from_python(key);
+                    const bool remove =
+                        item.is_none() ||
+                        (removed_sentinel_slot().is_valid() && item.is(removed_sentinel_slot()));
+                    if (remove)
+                    {
+                        static_cast<void>(mutation.erase(key_value.view()));
+                        continue;
+                    }
+                    child_delta.view().assign_from_python(item);
+                    mutation.set(key_value.view(), child_delta.view());
+                }
+                return;
+            }
+
+            for (auto [key, item] : python_delta)
+            {
+                Value key_value = py_to_value_as(key, key_meta);
+                const bool remove =
+                    item.is_none() ||
+                    (removed_sentinel_slot().is_valid() && item.is(removed_sentinel_slot()));
+                if (remove) { static_cast<void>(mutation.erase(key_value.view())); }
+                else
+                {
+                    Value child_delta = py_to_value_as(item, child->value_schema);
+                    mutation.set(key_value.view(), child_delta.view());
+                }
+            }
+            return;
+        }
         Value delta = py_to_delta(shaped, erased.schema());
         if (tss && has_value)
         {

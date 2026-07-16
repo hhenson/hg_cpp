@@ -18,6 +18,7 @@ namespace hgraph
     class GraphTypeRef;
     class ExecutorTypeRef;
     class ClockTypeRef;
+    template <TypeRole Role> class BasicTSTypeRef;
     enum class AccessMode : std::uintptr_t
     {
         ReadOnly = 0,
@@ -102,6 +103,7 @@ namespace hgraph
         friend class GraphTypeRef;
         friend class ExecutorTypeRef;
         friend class ClockTypeRef;
+        template <TypeRole Role> friend class BasicTSTypeRef;
         friend struct detail::TypePointerLayoutAccess;
 
         constexpr AnyPtr(const TypeRecord *record, const void *data, AccessMode access) noexcept
@@ -176,24 +178,54 @@ namespace hgraph
         [[nodiscard]] constexpr AccessMode access_mode() const noexcept { return value_.access_mode(); }
         [[nodiscard]] bool well_formed() const noexcept { return value_.well_formed(); }
         [[nodiscard]] constexpr bool is_unbound() const noexcept { return value_.is_unbound(); }
-        [[nodiscard]] bool bound() const noexcept { return value_.bound(); }
-        [[nodiscard]] bool is_typed_null() const noexcept { return value_.is_typed_null(); }
-        [[nodiscard]] bool has_value() const noexcept { return value_.has_value(); }
-        [[nodiscard]] bool valid() const noexcept { return value_.valid(); }
-        [[nodiscard]] explicit operator bool() const noexcept { return value_.valid(); }
+        [[nodiscard]] constexpr bool bound() const noexcept { return record() != nullptr; }
+        [[nodiscard]] constexpr bool is_typed_null() const noexcept
+        {
+            return record() != nullptr && data() == nullptr && read_only_access();
+        }
+        [[nodiscard]] constexpr bool has_value() const noexcept { return record() != nullptr && data() != nullptr; }
+        [[nodiscard]] constexpr bool valid() const noexcept { return has_value(); }
+        [[nodiscard]] constexpr explicit operator bool() const noexcept { return valid(); }
 
-        [[nodiscard]] const SchemaHeader *schema() const noexcept { return value_.schema(); }
-        [[nodiscard]] const MemoryUtils::StoragePlan *plan() const noexcept { return value_.plan(); }
-        [[nodiscard]] const void *ops() const noexcept { return value_.ops(); }
-        [[nodiscard]] const DebugDescriptor *debug() const noexcept { return value_.debug(); }
-        [[nodiscard]] TypeClassification classification() const noexcept { return value_.classification(); }
-        [[nodiscard]] TypeFamily family() const noexcept { return value_.family(); }
-        [[nodiscard]] TypeRole role() const noexcept { return value_.role(); }
-        [[nodiscard]] TypeKind kind() const noexcept { return value_.kind(); }
-        [[nodiscard]] TypeCapabilities capabilities() const noexcept { return value_.capabilities(); }
-        [[nodiscard]] std::string_view semantic_name() const noexcept { return value_.semantic_name(); }
-        [[nodiscard]] std::string_view implementation_name() const noexcept { return value_.implementation_name(); }
-        [[nodiscard]] std::string_view effective_name() const noexcept { return value_.effective_name(); }
+        [[nodiscard]] constexpr const SchemaHeader *schema() const noexcept
+        {
+            return record() != nullptr ? record()->schema : nullptr;
+        }
+        [[nodiscard]] constexpr const MemoryUtils::StoragePlan *plan() const noexcept
+        {
+            return record() != nullptr ? record()->plan : nullptr;
+        }
+        [[nodiscard]] constexpr const void *ops() const noexcept
+        {
+            return record() != nullptr ? record()->ops : nullptr;
+        }
+        [[nodiscard]] constexpr const DebugDescriptor *debug() const noexcept
+        {
+            return record() != nullptr ? record()->debug : nullptr;
+        }
+        [[nodiscard]] constexpr TypeClassification classification() const noexcept
+        {
+            return record() != nullptr ? record()->classification() : TypeClassification{};
+        }
+        [[nodiscard]] constexpr TypeFamily family() const noexcept { return classification().family; }
+        [[nodiscard]] constexpr TypeRole role() const noexcept { return classification().role; }
+        [[nodiscard]] constexpr TypeKind kind() const noexcept { return classification().kind; }
+        [[nodiscard]] constexpr TypeCapabilities capabilities() const noexcept
+        {
+            return record() != nullptr ? record()->capabilities : TypeCapabilities::None;
+        }
+        [[nodiscard]] std::string_view semantic_name() const noexcept
+        {
+            return record() != nullptr ? record()->semantic_name() : std::string_view{};
+        }
+        [[nodiscard]] std::string_view implementation_name() const noexcept
+        {
+            return record() != nullptr ? record()->implementation_name() : std::string_view{};
+        }
+        [[nodiscard]] std::string_view effective_name() const noexcept
+        {
+            return record() != nullptr ? record()->effective_name() : std::string_view{};
+        }
 
         [[nodiscard]] constexpr bool read_only_access() const noexcept { return value_.read_only_access(); }
         [[nodiscard]] constexpr bool writable_access() const noexcept { return value_.writable_access(); }
@@ -225,6 +257,7 @@ namespace hgraph
         friend class GraphTypeRef;
         friend class ExecutorTypeRef;
         friend class ClockTypeRef;
+        template <TypeRole OtherRole> friend class BasicTSTypeRef;
 
         struct UncheckedTag
         {

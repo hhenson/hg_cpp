@@ -380,18 +380,38 @@ namespace hgraph
         void release_alternative_subscriptions(const GraphRuntimeContext &context, void *memory,
                                                DateTime release_time) noexcept
         {
-            constexpr GraphEdgeSourceKind kinds[] = {GraphEdgeSourceKind::Output, GraphEdgeSourceKind::ErrorOutput,
-                                                     GraphEdgeSourceKind::RecordableState};
             for (std::size_t index = 0; index < context.layout.node_count; ++index)
             {
-                for (const GraphEdgeSourceKind kind : kinds)
+                auto node = graph_node_view(context, memory, index);
+                const auto release = [&](TSOutputView view) {
+                    if (view.output() != nullptr)
+                    {
+                        view.output()->release_alternative_subscriptions(release_time);
+                    }
+                };
+
+                // These are optional node surfaces, not exceptional conditions.
+                // Probe their explicit capabilities before constructing a view;
+                // throwing once per absent surface made nested graph stop
+                // disproportionately expensive under keyed churn.
+                if (node.has_output())
                 {
                     static_cast<void>(fallback_on_exception(false, [&] {
-                        auto view = edge_source_root(graph_node_view(context, memory, index), MIN_DT, kind);
-                        if (view.output() != nullptr)
-                        {
-                            view.output()->release_alternative_subscriptions(release_time);
-                        }
+                        release(node.output(MIN_DT));
+                        return true;
+                    }));
+                }
+                if (node.has_error_output())
+                {
+                    static_cast<void>(fallback_on_exception(false, [&] {
+                        release(node.error_output(MIN_DT));
+                        return true;
+                    }));
+                }
+                if (node.has_recordable_state())
+                {
+                    static_cast<void>(fallback_on_exception(false, [&] {
+                        release(node.recordable_state(MIN_DT));
                         return true;
                     }));
                 }

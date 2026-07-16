@@ -49,6 +49,9 @@ namespace hgraph
         [[nodiscard]] bool slot_live(std::size_t slot) const;
         [[nodiscard]] bool slot_added(std::size_t slot) const;
         [[nodiscard]] bool slot_removed(std::size_t slot) const;
+        /** Sparse traversal of structural delta slots; pass ``TS_DATA_NO_CHILD_ID`` for the first slot. */
+        [[nodiscard]] std::size_t next_added_slot(std::size_t previous = TS_DATA_NO_CHILD_ID) const;
+        [[nodiscard]] std::size_t next_removed_slot(std::size_t previous = TS_DATA_NO_CHILD_ID) const;
 
         /** Key stored at ``slot``; throws if the slot is not occupied. */
         [[nodiscard]] ValueView at_slot(std::size_t slot) const;
