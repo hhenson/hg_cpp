@@ -768,6 +768,26 @@ TEST_CASE("merge over TSDs is per-key (map_ with a lifted variadic operator)")
                                dict_delta<Str, TS<Int>>({{"a"s, 9}})));   // leftmost MODIFIED wins
 }
 
+TEST_CASE("merge over TSDs falls back when the leading source removes a surviving key")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::merge, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}}),
+                                   none,
+                                   dict_delta<Int, TS<Int>>({}, {1}),
+                                   none),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 5}, {3, 6}}),
+                                   dict_delta<Int, TS<Int>>({{3, 8}, {2, 4}}),
+                                   none,
+                                   dict_delta<Int, TS<Int>>({}, {1})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}, {3, 6}}),
+                               dict_delta<Int, TS<Int>>({{2, 4}, {3, 8}}),
+                               dict_delta<Int, TS<Int>>({{1, 5}}),
+                               dict_delta<Int, TS<Int>>({}, {1})));
+}
+
 TEST_CASE("variadic WiredFn compilation does not copy an active global-state seed")
 {
     using namespace hgraph;

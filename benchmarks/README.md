@@ -20,6 +20,9 @@ Scenario families: large graph construction, hot-loop ticking (feedback),
 dense / sparse TSD ticking, `map_` + `reduce` with key churn (items coming
 and going), and an inter-key dependency `mesh_` with a sliding key window.
 
+Terminal outputs use the implementation's native `null_sink`, keeping sink
+overhead out of the Python node boundary in every mode.
+
 ## Running
 
 ```sh

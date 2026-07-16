@@ -72,6 +72,12 @@ namespace hgraph
             bool                        observing_keys{false};
             bool primed{false};
 
+            // Rebinding is required for a wholesale source repoint, or for a
+            // specific key whose membership changed in a multiplexed input.
+            // Retain this cycle state across a paused child evaluation.
+            bool               refresh_all_bindings{false};
+            std::vector<Value> membership_changed_keys{};
+
             // Pause/resume cursor: the entry slot a child paused on, or ``npos`` when not
             // mid-pause. On resume the per-key reconciliation (setup) is skipped and the
             // child loop continues from this slot; reset to ``npos`` on completion.
@@ -410,17 +416,29 @@ namespace hgraph
                 update_source_handles(root_input.borrowed_ref(), storage, spec.multiplexed_inputs, keys_index);
             bool bindings_need_refresh = source_status.any_repointed;
 
-            // Multiplexed-dict membership changes re-bind surviving entries
-            // (an element may appear or vanish in one dict while the key stays
-            // live); the LIFECYCLE itself is driven solely by the __keys__
-            // input below.
-            bool any_modified = false;
+            // Value ticks keep their stable element endpoint and must not
+            // rebind every child. Only structural membership changes need a
+            // per-key refresh (for example, one input of a multi-TSD map loses
+            // a key while the union key set keeps that child alive).
+            storage.membership_changed_keys.clear();
             for (const std::size_t mux_index : spec.multiplexed_inputs)
             {
-                auto mux_input = root_input.indexed_child_at(mux_index);
-                if (mux_input.bound() && mux_input.modified()) { any_modified = true; }
+                const TSOutputHandle &source = storage.outer_sources[mux_index];
+                if (!source.bound()) { continue; }
+
+                auto source_data = source.data_view();
+                auto dict = source_data.as_dict();
+                if (!dict.key_set().modified(evaluation_time)) { continue; }
+
+                for (const ValueView &key : dict.added_keys())
+                {
+                    storage.membership_changed_keys.emplace_back(key);
+                }
+                for (const ValueView &key : dict.removed_keys())
+                {
+                    storage.membership_changed_keys.emplace_back(key);
+                }
             }
-            if (any_modified) { bindings_need_refresh = true; }
 
             // Explicit ``__keys__``: the TSS alone drives the lifecycle —
             // children exist exactly for its members. The multiplexed dicts
@@ -499,6 +517,17 @@ namespace hgraph
             return bindings_need_refresh;
         }
 
+        [[nodiscard]] bool map_entry_membership_changed(
+            const MapNodeStorage &storage,
+            const ValueView &key)
+        {
+            for (const Value &changed_key : storage.membership_changed_keys)
+            {
+                if (changed_key.equals(key)) { return true; }
+            }
+            return false;
+        }
+
         void write_map_error(const NodeView &view, const NodeView &failed_node,
                              const ValueView &key, DateTime evaluation_time,
                              std::string error_msg)
@@ -532,8 +561,11 @@ namespace hgraph
             const auto &spec     = context.spec;
 
             const bool resuming = storage.resume_slot != MapNodeStorage::npos;
-            const bool bindings_need_refresh =
-                resuming ? false : map_reconcile_keys(view, context, storage, evaluation_time);
+            if (!resuming)
+            {
+                storage.refresh_all_bindings =
+                    map_reconcile_keys(view, context, storage, evaluation_time);
+            }
             const bool captures_errors = view.has_error_output() && view.schema() != nullptr &&
                                          view.schema()->captures_errors;
 
@@ -551,7 +583,8 @@ namespace hgraph
                 // schedule enqueued before the stop) lingers this cycle —
                 // stopped children never evaluate.
                 if (!child.started()) { continue; }
-                if (bindings_need_refresh)
+                if (storage.refresh_all_bindings ||
+                    map_entry_membership_changed(storage, entry->key.view()))
                 {
                     const TSOutputView key_source = entry->key_source.bound()
                                                         ? entry->key_source.view(evaluation_time)
@@ -595,6 +628,8 @@ namespace hgraph
                 }
             }
             storage.resume_slot = MapNodeStorage::npos;  // completed the cycle
+            storage.refresh_all_bindings = false;
+            storage.membership_changed_keys.clear();
             return true;
         }
 
@@ -612,6 +647,8 @@ namespace hgraph
             if (output_mutation) { output_mutation->clear(); }
             storage.unsubscribe_keys_noexcept();
             storage.primed = false;
+            storage.refresh_all_bindings = false;
+            storage.membership_changed_keys.clear();
         }
 
         void validate_map_node_spec(const NodeTypeMetaData &meta, const MapNodeSpec &spec)

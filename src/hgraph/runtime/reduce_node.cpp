@@ -130,6 +130,9 @@ namespace hgraph
 
             bool primed{false};
             bool published{false};
+            bool source_handles_initialised{false};
+            TSOutputHandle collection_source{};
+            TSOutputHandle zero_source{};
 
             // Pause/resume cursor: the combiner position a child paused on (+1 so 0 is a
             // clean "not mid-pause" sentinel), or 0 when not resuming. On resume the
@@ -141,6 +144,7 @@ namespace hgraph
         struct ReduceCollectionOps
         {
             bool (*reconcile)(ReduceNodeStorage &storage, TSInputView &input);
+            bool (*structure_modified)(const TSInputView &input, DateTime evaluation_time);
             TSOutputView (*leaf_output)(TSOutputView source, std::size_t leaf, const Value &key);
         };
 
@@ -371,6 +375,16 @@ namespace hgraph
             return reconcile_leaf_state(storage, input.as_list());
         }
 
+        [[nodiscard]] bool dict_structure_modified(const TSInputView &input, DateTime evaluation_time)
+        {
+            return input.as_dict().data_view().key_set().modified(evaluation_time);
+        }
+
+        [[nodiscard]] bool list_structure_modified(const TSInputView &input, DateTime)
+        {
+            return input.modified();
+        }
+
         [[nodiscard]] TSOutputView dict_leaf_output(TSOutputView source, std::size_t,
                                                     const Value &key)
         {
@@ -390,13 +404,30 @@ namespace hgraph
         {
             static const ReduceCollectionOps dict_ops{
                 .reconcile = &reconcile_dict_collection,
+                .structure_modified = &dict_structure_modified,
                 .leaf_output = &dict_leaf_output,
             };
             static const ReduceCollectionOps list_ops{
                 .reconcile = &reconcile_list_collection,
+                .structure_modified = &list_structure_modified,
                 .leaf_output = &list_leaf_output,
             };
             return schema.kind == TSTypeKind::TSD ? dict_ops : list_ops;
+        }
+
+        [[nodiscard]] TSOutputHandle effective_output_handle(TSOutputView source)
+        {
+            if (!source.bound()) { return {}; }
+
+            TSOutputHandle current = source.handle();
+            while (source.forwarding())
+            {
+                TSOutputHandle target = source.forwarding_target();
+                if (!target.bound() || target.same_as(current)) { break; }
+                current = target;
+                source = target.view(source.evaluation_time());
+            }
+            return current;
         }
 
         /**
@@ -568,15 +599,25 @@ namespace hgraph
         {
             auto root_input = view.input(evaluation_time);
             auto collection_input = root_input.indexed_child_at(0);
+            auto zero_input = root_input.indexed_child_at(1);
+
+            TSOutputHandle collection_source = effective_output_handle(collection_input.bound_output());
+            TSOutputHandle zero_source = effective_output_handle(zero_input.bound_output());
+            const bool collection_repointed = storage.source_handles_initialised &&
+                                              !collection_source.same_as(storage.collection_source);
+            const bool zero_repointed = storage.source_handles_initialised &&
+                                        !zero_source.same_as(storage.zero_source);
+            storage.collection_source = collection_source;
+            storage.zero_source = zero_source;
+            storage.source_handles_initialised = true;
 
             bool structural = false;
-            bool refresh_bindings = false;
             if (collection_input.valid())
             {
-                if (collection_input.modified() || !storage.primed)
+                if (!storage.primed || collection_repointed ||
+                    context.collection_ops->structure_modified(collection_input, evaluation_time))
                 {
                     structural = context.collection_ops->reconcile(storage, collection_input) || structural;
-                    refresh_bindings = true;
                     storage.primed  = true;
                 }
             }
@@ -584,11 +625,10 @@ namespace hgraph
             {
                 clear_leaf_state(storage);
                 structural = true;
-                refresh_bindings = true;
                 storage.primed = false;
             }
 
-            if (structural || refresh_bindings || !storage.published)
+            if (structural || collection_repointed || zero_repointed || !storage.published)
             {
                 rebuild_structure(view, context, storage, evaluation_time);
             }
@@ -615,20 +655,28 @@ namespace hgraph
                 reduce_reconcile(view, context, storage, evaluation_time);
             }
 
-            // Evaluate combiners deepest-first (descending heap index): a leaf tick notifies
-            // its combiner directly; that combiner's output tick notifies its parent (lower
-            // index, processed later), so the cascade settles in one pass. Evaluation is
-            // unconditional (an idle child evaluate is a cheap scan). On resume, continue
-            // from the saved position downward (positions above it already ran this cycle).
+            // Evaluate due combiners deepest-first (descending heap index): a leaf tick
+            // schedules its combiner directly; that combiner's output tick schedules its
+            // parent (lower index, processed later), so the cascade settles in one pass.
+            // On resume, continue from the paused position downward (positions above it
+            // already ran this cycle). Unevaluated children pull future schedules up to
+            // this reduce node.
             const std::size_t start = resuming ? storage.resume_position_plus_one : storage.combiners.size();
             for (std::size_t position = start; position-- > 0;)
             {
                 const auto &entry = storage.combiners[position];
                 if (entry == nullptr || !entry->graph.has_value()) { continue; }
-                if (!entry->graph.view().evaluate(evaluation_time))
+                auto       child       = entry->graph.view();
+                const bool resume_this = resuming && position + 1 == storage.resume_position_plus_one;
+                if ((child.next_scheduled_time() <= evaluation_time || resume_this) &&
+                    !child.evaluate(evaluation_time))
                 {
                     storage.resume_position_plus_one = position + 1;  // resume from this position
                     return false;
+                }
+                if (const DateTime next = child.next_scheduled_time(); next != MAX_DT && next > evaluation_time)
+                {
+                    view.graph().schedule_node(view.node_index(), next);
                 }
             }
             storage.resume_position_plus_one = 0;  // completed the cycle

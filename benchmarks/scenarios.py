@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import hgraph as hg
 from hgraph import (
     TS, TSD, CompoundScalar, compute_node, feedback, generator, graph, map_,
-    mesh_, reduce, sink_node,
+    mesh_, null_sink, reduce,
 )
 
 MIN_TD = hg.MIN_TD
@@ -36,30 +36,6 @@ MIN_TD = hg.MIN_TD
 # TSD key removal sentinel: both export REMOVE today; keep the lookup soft so
 # the bench degrades with a clear message rather than an import error.
 REMOVE = getattr(hg, "REMOVE")
-
-if hasattr(hg, "null_sink"):
-    _null_sink = hg.null_sink
-else:                       # upstream has no null_sink operator
-    @sink_node
-    def _null_sink(ts: TS[object]):
-        pass
-
-
-@sink_node
-def _consume_int(ts: TS[int]):
-    """Terminal sink. A python sink is used in EVERY mode/scenario so the
-    sink cost is a constant across the comparison (upstream prunes graphs
-    without sinks, so a sink is unavoidable)."""
-
-
-@sink_node
-def _consume_float(ts: TS[float]):
-    pass
-
-
-@sink_node
-def _consume_str(ts: TS[str]):
-    pass
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +146,7 @@ def construct_std(scale: float):
         total = _chain_std(src, depth)
         for _ in range(width - 1):
             total = total + _chain_std(src, depth)
-        _consume_int(total)
+        null_sink(total)
 
     return g, 1  # 1 cycle: measured time ~= wiring + build cost
 
@@ -184,7 +160,7 @@ def construct_py(scale: float):
         total = _chain_py(src, depth)
         for _ in range(width - 1):
             total = total + _chain_py(src, depth)
-        _consume_int(total)
+        null_sink(total)
 
     return g, 1
 
@@ -201,7 +177,7 @@ def tick_std(scale: float):
         fb = feedback(TS[int], 0)
         nxt = fb() + 1
         fb(nxt)
-        _consume_int(nxt)
+        null_sink(nxt)
 
     return g, cycles
 
@@ -215,7 +191,7 @@ def tick_py(scale: float):
         x = src
         for _ in range(5):
             x = _add_one_py(x)
-        _consume_int(x)
+        null_sink(x)
 
     return g, cycles
 
@@ -230,7 +206,7 @@ def type_int_std(scale: float):
     @graph
     def g():
         x = _int_pulse(cycles)
-        _consume_int(((x + 1) * 3) - x)
+        null_sink(((x + 1) * 3) - x)
 
     return g, cycles
 
@@ -241,7 +217,7 @@ def type_float_std(scale: float):
     @graph
     def g():
         x = _float_pulse(cycles)
-        _consume_float(((x + 1.5) * 1.000001) - x)
+        null_sink(((x + 1.5) * 1.000001) - x)
 
     return g, cycles
 
@@ -252,7 +228,7 @@ def type_str_std(scale: float):
     @graph
     def g():
         x = _str_pulse(cycles)
-        _consume_str((x + "-suffix") + (x + "!"))
+        null_sink((x + "-suffix") + (x + "!"))
 
     return g, cycles
 
@@ -264,7 +240,7 @@ def type_cs_std(scale: float):
     @graph
     def g():
         x = _cs_pulse(cycles)
-        _consume_float(x.price + x.ident)
+        null_sink(x.price + x.ident)
 
     return g, cycles
 
@@ -284,7 +260,7 @@ def type_cs_py(scale: float):
     def g():
         x = _cs_pulse(cycles)
         x = _cs_work_py(_cs_work_py(x))
-        _consume_float(x.price)
+        null_sink(x.price)
 
     return g, cycles
 
@@ -318,7 +294,7 @@ def tsd_dense_std(scale: float):
 
     @graph
     def g():
-        _consume_int(_map_reduce_std(_tsd_dense_pulse(cycles, keys)))
+        null_sink(_map_reduce_std(_tsd_dense_pulse(cycles, keys)))
 
     return g, cycles
 
@@ -328,7 +304,7 @@ def tsd_dense_py(scale: float):
 
     @graph
     def g():
-        _consume_int(_map_reduce_py(_tsd_dense_pulse(cycles, keys)))
+        null_sink(_map_reduce_py(_tsd_dense_pulse(cycles, keys)))
 
     return g, cycles
 
@@ -340,7 +316,7 @@ def tsd_dense_strkeys_std(scale: float):
     @graph
     def g():
         mapped = map_(_mapped_std, _tsd_dense_pulse_strkeys(cycles, keys))
-        _consume_int(reduce(hg.add_, mapped, 0))
+        null_sink(reduce(hg.add_, mapped, 0))
 
     return g, cycles
 
@@ -350,7 +326,7 @@ def tsd_sparse_std(scale: float):
 
     @graph
     def g():
-        _consume_int(_map_reduce_std(_tsd_sparse_pulse(cycles, keys, 5)))
+        null_sink(_map_reduce_std(_tsd_sparse_pulse(cycles, keys, 5)))
 
     return g, cycles
 
@@ -360,7 +336,7 @@ def tsd_churn_std(scale: float):
 
     @graph
     def g():
-        _consume_int(_map_reduce_std(_tsd_churn_pulse(cycles, live, churn)))
+        null_sink(_map_reduce_std(_tsd_churn_pulse(cycles, live, churn)))
 
     return g, cycles
 
@@ -370,7 +346,7 @@ def tsd_churn_py(scale: float):
 
     @graph
     def g():
-        _consume_int(_map_reduce_py(_tsd_churn_pulse(cycles, live, churn)))
+        null_sink(_map_reduce_py(_tsd_churn_pulse(cycles, live, churn)))
 
     return g, cycles
 
@@ -414,7 +390,7 @@ def mesh_std(scale: float):
     def g():
         src = _tsd_churn_pulse(cycles, live, churn)
         meshed = mesh_(_mesh_cell, src)
-        _consume_int(reduce(hg.add_, meshed, 0))
+        null_sink(reduce(hg.add_, meshed, 0))
 
     return g, cycles
 
