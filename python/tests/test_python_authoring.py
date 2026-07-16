@@ -434,10 +434,12 @@ def test_zero_argument_lifecycle_callbacks():
 
 def test_runtime_global_state_and_graph_seed_injection():
     state = hg.GlobalState(offset=5)
+    runtime_states = []
 
     @hg.compute_node
     def apply_offset(value: TS[int], global_state: hg.GlobalState = None) -> TS[int]:
         check(global_state is hg.GlobalState.instance(), "runtime state identity")
+        runtime_states.append(global_state)
         global_state["calls"] = global_state.get("calls", 0) + 1
         return value.value + global_state["offset"]
 
@@ -449,6 +451,9 @@ def test_runtime_global_state_and_graph_seed_injection():
     with hg.GlobalContext(state):
         check(eval_node(app, [1, 2]) == [6, 7], "runtime global state")
     check(state["calls"] == 2, "runtime state copied back")
+    check(runtime_states[0] is runtime_states[1], "runtime state is stable for the run")
+    expect_raises(RuntimeError, lambda: runtime_states[0].get("calls"),
+                  "outside its graph execution")
 
 
 def test_wiring_failure_releases_global_context():

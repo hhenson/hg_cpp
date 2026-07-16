@@ -21,6 +21,14 @@ namespace hgraph::python_bridge
     {
         if (result.is_none()) { return; }
         const auto &erased = static_cast<const TSOutputView &>(out);
+        if (erased.schema() != nullptr && erased.schema()->kind == TSTypeKind::TS &&
+            erased.data_view().ops().from_python_impl !=
+                &ts_data_detail::missing_from_python)
+        {
+            static_cast<void>(
+                erased.begin_mutation(erased.evaluation_time()).from_python(result));
+            return;
+        }
         if (erased.schema() != nullptr && erased.schema()->kind == TSTypeKind::REF)
         {
             // REF outputs carry OPAQUE reference values (Howard's ruling):
@@ -392,8 +400,8 @@ namespace
         params after ``*args`` fill BY NAME). */
     [[nodiscard]] nb::dict py_peel_kwargs(nb::list &call_args, std::span<const std::string_view> kw_names)
     {
+        if (kw_names.empty()) { return {}; }
         nb::dict kwargs;
-        if (kw_names.empty()) { return kwargs; }
         const std::size_t total = nb::len(call_args);
         if (total < kw_names.size()) { throw std::logic_error("python node: call shape shorter than its kw names"); }
         const std::size_t first = total - kw_names.size();
@@ -413,8 +421,13 @@ namespace
                                                    const nb::object &runtime_global_state,
                                                    nb::dict call_kwargs = {})
     {
-        nb::object runtime = nb::module_::import_("hgraph._wiring._state");
-        runtime.attr("_push_runtime_global_state")(runtime_global_state);
+        const bool publish_runtime_state = !py_has_active_runtime_global_state();
+        nb::object runtime;
+        if (publish_runtime_state)
+        {
+            runtime = nb::module_::import_("hgraph._wiring._state");
+            runtime.attr("_push_runtime_global_state")(runtime_global_state);
+        }
         std::vector<nb::object> entered;
         entered.reserve(nb::len(context_values));
         auto unwind = UnwindCleanupGuard([&] {
@@ -422,7 +435,7 @@ namespace
             {
                 (*it).attr("__exit__")(nb::none(), nb::none(), nb::none());
             }
-            runtime.attr("_pop_runtime_global_state")();
+            if (publish_runtime_state) { runtime.attr("_pop_runtime_global_state")(); }
         });
         for (nb::handle value : context_values)
         {
@@ -433,14 +446,24 @@ namespace
                 entered.push_back(std::move(holder));
             }
         }
-        nb::object result = fn(*nb::tuple(call_args), **call_kwargs);
+        nb::object result;
+        if (call_kwargs.is_valid()) { result = fn(*nb::tuple(call_args), **call_kwargs); }
+        else
+        {
+            switch (nb::len(call_args))
+            {
+                case 0: result = fn(); break;
+                case 1: result = fn(call_args[0]); break;
+                default: result = fn(*nb::tuple(call_args)); break;
+            }
+        }
         while (!entered.empty())
         {
             nb::object holder = std::move(entered.back());
             entered.pop_back();
             holder.attr("__exit__")(nb::none(), nb::none(), nb::none());
         }
-        runtime.attr("_pop_runtime_global_state")();
+        if (publish_runtime_state) { runtime.attr("_pop_runtime_global_state")(); }
         unwind.release();
         return result;
     }
@@ -455,7 +478,7 @@ namespace
         nb::list context_values;
         auto guard = std::make_shared<PyTsGuard>();
         auto invalid = UnwindCleanupGuard([&] { guard->alive = false; });
-        nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
+        nb::object runtime_state = py_runtime_global_state_for_call(global_state, guard);
         py_assemble_lifecycle_args(config, scalars, state, scheduler, runtime_state, engine, guard, node,
                                    call_args);
         (void)py_call_with_contexts(fn.record->fn, call_args, context_values, runtime_state);
@@ -511,7 +534,7 @@ namespace
             auto     guard   = std::make_shared<PyTsGuard>();
             auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
             const auto &out_view = static_cast<const TSOutputView &>(out);
-            nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
+            nb::object runtime_state = py_runtime_global_state_for_call(global_state, guard);
             if (!py_assemble_args(shape.layout, args.base(), scalars.value(),
                                   PyInvocationState{.local = &state}, scheduler, now, call_args,
                                   context_values, guard, runtime_state, engine, node, &out_view))
@@ -609,8 +632,7 @@ namespace
             const auto &out_view = static_cast<const TSOutputView &>(out);
             TSOutputView state_view =
                 static_cast<const TSOutputView &>(state).borrowed_ref();
-            nb::object runtime_state = nb::cast(
-                PyRuntimeGlobalState{global_state, guard});
+            nb::object runtime_state = py_runtime_global_state_for_call(global_state, guard);
             if (!py_assemble_args(
                     shape.layout, args.base(), scalars.value(),
                     PyInvocationState{.recordable = &state_view}, scheduler, now,
@@ -682,7 +704,7 @@ namespace
             nb::list context_values;
             auto     guard   = std::make_shared<PyTsGuard>();
             auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
-            nb::object runtime_state = nb::cast(PyRuntimeGlobalState{global_state, guard});
+            nb::object runtime_state = py_runtime_global_state_for_call(global_state, guard);
             if (!py_assemble_args(shape.layout, args.base(), scalars.value(),
                                   PyInvocationState{.local = &state}, scheduler, now, call_args,
                                   context_values, guard, runtime_state, engine, node))

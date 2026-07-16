@@ -2,8 +2,9 @@
  * Runtime view structs handed to Python user nodes during evaluation:
  * the lazy TimeSeries/Output views, per-node python STATE, scheduler and
  * clock views, recordable state, and the guarded GlobalState view. See
- * docs/source/developer_guide/python_bridge.rst (GIL boundaries; the views
- * are call-scoped via PyTsGuard - python must not retain them).
+ * docs/source/developer_guide/python_bridge.rst (GIL boundaries; transient
+ * node/time-series views are call-scoped, while RuntimeGlobalState is scoped
+ * to the complete graph execution).
  */
 #ifndef HGRAPH_PYTHON_PY_RUNTIME_H
 #define HGRAPH_PYTHON_PY_RUNTIME_H
@@ -93,11 +94,35 @@ namespace hgraph::python_bridge
         {
             if (guard == nullptr || !guard->alive)
             {
-                throw std::logic_error("a GlobalState view was accessed outside its node's evaluation");
+                throw std::logic_error("a GlobalState view was accessed outside its graph execution");
             }
             return state;
         }
     };
+
+    /**
+     * The Python projection of GlobalState is run-scoped, matching the native
+     * GlobalState lifetime. PyWiring installs the exact Python object here
+     * before releasing the GIL; user-node calls borrow it instead of creating
+     * and publishing a new wrapper on every evaluation.
+     */
+    inline thread_local PyObject *py_active_runtime_global_state{nullptr};
+
+    [[nodiscard]] inline bool py_has_active_runtime_global_state() noexcept
+    {
+        return py_active_runtime_global_state != nullptr;
+    }
+
+    [[nodiscard]] inline nb::object
+    py_runtime_global_state_for_call(GlobalStateView state,
+                                     const std::shared_ptr<PyTsGuard> &fallback_guard)
+    {
+        if (py_active_runtime_global_state != nullptr)
+        {
+            return nb::borrow(nb::handle(py_active_runtime_global_state));
+        }
+        return nb::cast(PyRuntimeGlobalState{state, fallback_guard});
+    }
 
     /** Call-scoped Python projection over the native engine-control view. */
     struct PyEvaluationEngineApi

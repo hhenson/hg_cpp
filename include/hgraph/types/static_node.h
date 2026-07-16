@@ -1442,16 +1442,23 @@ namespace hgraph
         static constexpr auto field_name = Name;
 
         /** Supplied directly (graph ``compose`` parameter / wiring-time value). */
-        explicit Scalar(TValue value) : value_(std::move(value)) {}
+        explicit Scalar(TValue value) : owned_(std::move(value)) {}
 
-        /** Read from the node's compound scalar configuration (node ``eval`` path). */
-        explicit Scalar(const ValueView &view) : value_(view.template checked_as<TValue>()) {}
+        /** Borrow from the immutable node scalar storage (node hook path). */
+        explicit Scalar(const ValueView &view)
+            : borrowed_(std::addressof(view.template checked_as<TValue>()))
+        {
+        }
 
         /** The configured value of this scalar input. */
-        [[nodiscard]] const value_type &value() const noexcept { return value_; }
+        [[nodiscard]] const value_type &value() const noexcept
+        {
+            return borrowed_ != nullptr ? *borrowed_ : *owned_;
+        }
 
       private:
-        TValue value_;
+        std::optional<TValue> owned_{};
+        const TValue        *borrowed_{nullptr};
     };
 
     /**
@@ -1467,14 +1474,18 @@ namespace hgraph
         using schema                     = ScalarVar<VarName, TConstraints...>;
         static constexpr auto field_name = Name;
 
-        /** Read from the node's compound scalar configuration (node ``eval`` path). */
-        explicit Scalar(const ValueView &view) : value_(view) {}
+        /** Borrow from the immutable node scalar storage (node hook path). */
+        explicit Scalar(const ValueView &view) noexcept
+            : type_(view.type()), data_(view.data())
+        {
+        }
 
         /** The configured value, type-erased. */
-        [[nodiscard]] ValueView value() const noexcept { return value_.view(); }
+        [[nodiscard]] ValueView value() const noexcept { return ValueView{type_, data_}; }
 
       private:
-        Value value_;
+        ValueTypeRef type_{};
+        const void  *data_{nullptr};
     };
 
     // The ``GlobalStateView`` injectable selector is the runtime view type from
@@ -1688,6 +1699,64 @@ namespace hgraph
             using args_tuple  = std::tuple<A...>;
         };
 
+        template <typename Wanted, typename CanonicalArgs, std::size_t ArgIndex = 0,
+                  std::size_t Slot = 0>
+        consteval std::size_t canonical_input_slot()
+        {
+            if constexpr (ArgIndex == std::tuple_size_v<CanonicalArgs>)
+            {
+                static_assert(always_false_v<Wanted>,
+                              "Static node hook input is absent from the eval signature");
+                return 0;
+            }
+            else
+            {
+                using current = selector_of<std::tuple_element_t<ArgIndex, CanonicalArgs>>;
+                if constexpr (is_input_selector<current>::value)
+                {
+                    if constexpr (same_input_name<Wanted, current>::value) { return Slot; }
+                    else
+                    {
+                        return canonical_input_slot<Wanted, CanonicalArgs, ArgIndex + 1,
+                                                    Slot + 1>();
+                    }
+                }
+                else
+                {
+                    return canonical_input_slot<Wanted, CanonicalArgs, ArgIndex + 1, Slot>();
+                }
+            }
+        }
+
+        template <typename Wanted, typename CanonicalArgs, std::size_t ArgIndex = 0,
+                  std::size_t Slot = 0>
+        consteval std::size_t canonical_scalar_slot()
+        {
+            if constexpr (ArgIndex == std::tuple_size_v<CanonicalArgs>)
+            {
+                static_assert(always_false_v<Wanted>,
+                              "Static node hook scalar is absent from the eval signature");
+                return 0;
+            }
+            else
+            {
+                using current = selector_of<std::tuple_element_t<ArgIndex, CanonicalArgs>>;
+                if constexpr (is_scalar_selector<current>::value)
+                {
+                    if constexpr (same_scalar_name<Wanted, current>::value) { return Slot; }
+                    else
+                    {
+                        return canonical_scalar_slot<Wanted, CanonicalArgs, ArgIndex + 1,
+                                                     Slot + 1>();
+                    }
+                }
+                else
+                {
+                    return canonical_scalar_slot<Wanted, CanonicalArgs, ArgIndex + 1, Slot>();
+                }
+            }
+        }
+
         // ---- arg providers: build a selector from NodeView + evaluation time ----
         template <typename T>
         struct arg_provider
@@ -1698,11 +1767,13 @@ namespace hgraph
         template <fixed_string N, typename V, auto... P>
         struct arg_provider<In<N, V, P...>>
         {
-            static In<N, V, P...> get(const NodeView &view, DateTime evaluation_time)
+            template <std::size_t Slot>
+            static In<N, V, P...> get_indexed(const NodeView &view,
+                                              DateTime evaluation_time)
             {
                 TSInputView root   = view.input(evaluation_time);
                 auto        bundle = root.as_bundle();
-                return In<N, V, P...>{bundle.field(N.sv())};
+                return In<N, V, P...>{bundle[Slot]};
             }
         };
 
@@ -1745,9 +1816,11 @@ namespace hgraph
         template <fixed_string N, typename V>
         struct arg_provider<Scalar<N, V>>
         {
-            static Scalar<N, V> get(const NodeView &view, DateTime)
+            template <std::size_t Slot>
+            static Scalar<N, V> get_indexed(const NodeView &view, DateTime)
             {
-                return Scalar<N, V>{view.scalars().as_bundle().field(N.sv())};
+                auto bundle = view.scalars().as_bundle();
+                return Scalar<N, V>{bundle[Slot]};
             }
         };
 
@@ -1829,24 +1902,48 @@ namespace hgraph
             }
         };
 
+        template <typename Selector, typename CanonicalArgs>
+        decltype(auto) provide_arg(const NodeView &view, DateTime evaluation_time)
+        {
+            if constexpr (is_input_selector<Selector>::value)
+            {
+                constexpr std::size_t slot = canonical_input_slot<Selector, CanonicalArgs>();
+                return arg_provider<Selector>::template get_indexed<slot>(view,
+                                                                          evaluation_time);
+            }
+            else if constexpr (is_scalar_selector<Selector>::value)
+            {
+                constexpr std::size_t slot = canonical_scalar_slot<Selector, CanonicalArgs>();
+                return arg_provider<Selector>::template get_indexed<slot>(view,
+                                                                           evaluation_time);
+            }
+            else
+            {
+                return arg_provider<Selector>::get(view, evaluation_time);
+            }
+        }
+
         // ---- invoke a static hook by injecting each parameter by type ----
-        template <auto Fn, std::size_t... I>
+        template <auto Fn, typename CanonicalArgs, std::size_t... I>
         void invoke_impl(const NodeView &view, DateTime evaluation_time, std::index_sequence<I...>)
         {
             (void)view;
             (void)evaluation_time;
             using args = typename fn_traits<decltype(Fn)>::args_tuple;
-            Fn(arg_provider<selector_of<std::tuple_element_t<I, args>>>::get(view, evaluation_time)...);
+            Fn(provide_arg<selector_of<std::tuple_element_t<I, args>>, CanonicalArgs>(
+                view, evaluation_time)...);
         }
 
-        template <auto Fn>
+        template <auto Fn,
+                  typename CanonicalArgs = typename fn_traits<decltype(Fn)>::args_tuple>
         void invoke(const NodeView &view, DateTime evaluation_time)
         {
             using traits = fn_traits<decltype(Fn)>;
             static_assert(std::is_same_v<typename traits::return_type, void>,
                           "Static node hooks must return void");
-            invoke_impl<Fn>(view, evaluation_time,
-                            std::make_index_sequence<std::tuple_size_v<typename traits::args_tuple>>{});
+            invoke_impl<Fn, CanonicalArgs>(
+                view, evaluation_time,
+                std::make_index_sequence<std::tuple_size_v<typename traits::args_tuple>>{});
         }
 
         // ---- hook / trait detection ----
@@ -2533,20 +2630,22 @@ namespace hgraph
         template <typename TImplementation>
         [[nodiscard]] NodeCallbacks static_node_callbacks()
         {
+            using eval_args =
+                typename fn_traits<decltype(&TImplementation::eval)>::args_tuple;
             NodeCallbacks callbacks;
             callbacks.evaluate = [](const NodeView &view, DateTime evaluation_time) {
-                invoke<&TImplementation::eval>(view, evaluation_time);
+                invoke<&TImplementation::eval, eval_args>(view, evaluation_time);
             };
             if constexpr (has_start<TImplementation>)
             {
                 callbacks.start = [](const NodeView &view, DateTime evaluation_time) {
-                    invoke<&TImplementation::start>(view, evaluation_time);
+                    invoke<&TImplementation::start, eval_args>(view, evaluation_time);
                 };
             }
             if constexpr (has_stop<TImplementation>)
             {
                 callbacks.stop = [](const NodeView &view, DateTime evaluation_time) {
-                    invoke<&TImplementation::stop>(view, evaluation_time);
+                    invoke<&TImplementation::stop, eval_args>(view, evaluation_time);
                 };
             }
             return callbacks;

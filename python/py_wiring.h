@@ -7,7 +7,7 @@
 #ifndef HGRAPH_PYTHON_PY_WIRING_H
 #define HGRAPH_PYTHON_PY_WIRING_H
 
-#include "py_carriers.h"
+#include "py_runtime.h"
 
 namespace hgraph::python_bridge
 {
@@ -176,12 +176,29 @@ namespace hgraph::python_bridge
                 .end_time(end_time.value_or(MAX_ET))
                 .mode(realtime ? GraphExecutorMode::RealTime : GraphExecutorMode::Simulation);
             auto run = std::make_unique<PyRun>(PyRun{eb.make_executor()});
+
+            if (py_has_active_runtime_global_state())
+            {
+                throw std::logic_error("a runtime GlobalState is already active on this thread");
+            }
+            auto guard = std::make_shared<PyTsGuard>();
+            nb::object runtime_state = nb::cast(PyRuntimeGlobalState{
+                run->executor.view().graph().global_state(), guard});
+            nb::object runtime = nb::module_::import_("hgraph._wiring._state");
+            runtime.attr("_push_runtime_global_state")(runtime_state);
+            py_active_runtime_global_state = runtime_state.ptr();
+            auto clear_runtime_state = UnwindCleanupGuard([&] {
+                py_active_runtime_global_state = nullptr;
+                guard->alive = false;
+                runtime.attr("_pop_runtime_global_state")();
+            });
             {
                 // Ruling: the GIL is released the instant we enter the run
                 // loop; python user nodes re-acquire it per call.
                 nb::gil_scoped_release release;
                 run->executor.view().run();
             }
+            clear_runtime_state.complete();
             if (python_state != nullptr)
             {
                 python_state->view().copy_from(run->executor.view().graph().global_state());
