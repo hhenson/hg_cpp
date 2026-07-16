@@ -82,7 +82,32 @@ namespace hgraph::python_bridge
     /** Call-scope lifetime guard: python must not use a view after its eval. */
     struct PyTsGuard
     {
-        bool alive{true};
+        bool          alive{true};
+        std::uint64_t generation{0};
+    };
+
+    struct PyTsLease
+    {
+        std::shared_ptr<PyTsGuard> guard{};
+        std::uint64_t              generation{0};
+        bool                       owns_guard_lifetime{false};
+
+        [[nodiscard]] bool alive() const noexcept
+        {
+            return guard != nullptr && guard->alive && guard->generation == generation;
+        }
+
+        void require_alive(const char *message) const
+        {
+            if (!alive()) { throw std::logic_error(message); }
+        }
+
+        void invalidate() const noexcept
+        {
+            if (guard == nullptr) { return; }
+            if (guard->generation == generation) { ++guard->generation; }
+            if (owns_guard_lifetime) { guard->alive = false; }
+        }
     };
 
     struct PyRuntimeGlobalState
@@ -108,9 +133,34 @@ namespace hgraph::python_bridge
      */
     inline thread_local PyObject *py_active_runtime_global_state{nullptr};
 
+    [[nodiscard]] inline std::shared_ptr<PyTsGuard> &py_active_runtime_guard()
+    {
+        static thread_local std::shared_ptr<PyTsGuard> guard{};
+        return guard;
+    }
+
     [[nodiscard]] inline bool py_has_active_runtime_global_state() noexcept
     {
         return py_active_runtime_global_state != nullptr;
+    }
+
+    [[nodiscard]] inline PyTsLease py_ts_lease_for_call()
+    {
+        auto &active_guard = py_active_runtime_guard();
+        if (active_guard != nullptr)
+        {
+            return PyTsLease{
+                .guard = active_guard,
+                .generation = ++active_guard->generation,
+                .owns_guard_lifetime = false,
+            };
+        }
+        auto guard = std::make_shared<PyTsGuard>();
+        return PyTsLease{
+            .guard = guard,
+            .generation = ++guard->generation,
+            .owns_guard_lifetime = true,
+        };
     }
 
     [[nodiscard]] inline nb::object
@@ -127,16 +177,13 @@ namespace hgraph::python_bridge
     /** Call-scoped Python projection over the native engine-control view. */
     struct PyEvaluationEngineApi
     {
-        EngineControlView           engine;
-        std::shared_ptr<PyTsGuard> guard;
+        EngineControlView engine;
+        PyTsLease         lease;
 
         [[nodiscard]] EngineControlView checked() const
         {
-            if (guard == nullptr || !guard->alive)
-            {
-                throw std::logic_error(
-                    "an EvaluationEngineApi view was accessed outside its node's evaluation");
-            }
+            lease.require_alive(
+                "an EvaluationEngineApi view was accessed outside its node's evaluation");
             if (!engine.valid())
             {
                 throw std::logic_error("the active graph has no evaluation engine");
@@ -148,16 +195,13 @@ namespace hgraph::python_bridge
     /** Callback-scoped Python projection over the current native node. */
     struct PyNode
     {
-        NodePtr                    node;
-        NodeScheduler              scheduler;
-        std::shared_ptr<PyTsGuard> guard;
+        NodePtr       node;
+        NodeScheduler scheduler;
+        PyTsLease     lease;
 
         [[nodiscard]] NodeView checked() const
         {
-            if (guard == nullptr || !guard->alive)
-            {
-                throw std::logic_error("a Node view was accessed outside its node's evaluation");
-            }
+            lease.require_alive("a Node view was accessed outside its node's evaluation");
             if (!node.has_value()) { throw std::logic_error("the active node is unavailable"); }
             return NodeView{node};
         }
@@ -203,16 +247,13 @@ namespace hgraph::python_bridge
         beyond the evaluation that produced it. */
     struct PyOutput
     {
-        TSOutputHandle             handle;
-        DateTime                   now{};
-        std::shared_ptr<PyTsGuard> guard;
+        TSOutputHandle handle;
+        DateTime       now{};
+        PyTsLease      lease;
 
         [[nodiscard]] TSOutputView checked() const
         {
-            if (guard == nullptr || !guard->alive)
-            {
-                throw std::logic_error("an output view was accessed outside its node's evaluation");
-            }
+            lease.require_alive("an output view was accessed outside its node's evaluation");
             return handle.view(now);
         }
 
@@ -269,18 +310,18 @@ namespace hgraph::python_bridge
                     {
                         throw nb::key_error("output key not found");
                     }
-                    return PyOutput{dict.at(key_value.view()).handle(), now, guard};
+                    return PyOutput{dict.at(key_value.view()).handle(), now, lease};
                 }
                 case TSTypeKind::TSL: {
                     auto list = view.as_list();
-                    return PyOutput{list.at(nb::cast<std::size_t>(key)).handle(), now, guard};
+                    return PyOutput{list.at(nb::cast<std::size_t>(key)).handle(), now, lease};
                 }
                 case TSTypeKind::TSB: {
                     auto bundle = view.as_bundle();
                     TSOutputView result = nb::isinstance<nb::str>(key)
                                               ? bundle.field(nb::cast<std::string>(key))
                                               : bundle.at(nb::cast<std::size_t>(key));
-                    return PyOutput{result.handle(), now, guard};
+                    return PyOutput{result.handle(), now, lease};
                 }
                 default: throw nb::type_error("this output kind has no children");
             }
@@ -296,7 +337,7 @@ namespace hgraph::python_bridge
             Value key_value = py_to_value_as(key, view.schema()->key_type());
             auto  mutation  = view.as_dict().begin_mutation(now);
             auto  child     = mutation.at(key_value.view());
-            return PyOutput{TSOutputHandle{view.output(), child}, now, guard};
+            return PyOutput{TSOutputHandle{view.output(), child}, now, lease};
         }
 
         void erase(nb::handle key) const
@@ -385,17 +426,14 @@ namespace hgraph::python_bridge
     /** Mutable, call-scoped view over a node's C++ recordable-state output. */
     struct PyRecordableState
     {
-        TSOutputHandle             handle;
-        DateTime                   now{};
-        std::shared_ptr<PyTsGuard> guard;
+        TSOutputHandle handle;
+        DateTime       now{};
+        PyTsLease      lease;
 
         [[nodiscard]] TSOutputView checked() const
         {
-            if (guard == nullptr || !guard->alive)
-            {
-                throw std::logic_error(
-                    "a recordable-state view was accessed outside its node's evaluation");
-            }
+            lease.require_alive(
+                "a recordable-state view was accessed outside its node's evaluation");
             return handle.view(now);
         }
 
@@ -432,12 +470,12 @@ namespace hgraph::python_bridge
                     TSOutputView child = nb::isinstance<nb::str>(key)
                                              ? bundle.field(nb::cast<std::string>(key))
                                              : bundle.at(nb::cast<std::size_t>(key));
-                    return PyRecordableState{child.handle(), now, guard};
+                    return PyRecordableState{child.handle(), now, lease};
                 }
                 case TSTypeKind::TSL: {
                     auto list = view.as_list();
                     TSOutputView child = list.at(nb::cast<std::size_t>(key));
-                    return PyRecordableState{child.handle(), now, guard};
+                    return PyRecordableState{child.handle(), now, lease};
                 }
                 default:
                     throw nb::type_error(
@@ -448,16 +486,13 @@ namespace hgraph::python_bridge
 
     struct PyTimeSeries
     {
-        TSInputView                view;
-        std::shared_ptr<PyTsGuard> guard;
+        TSInputView view;
+        PyTsLease   lease;
 
         /** Throws when the view outlived its node's evaluation. */
         void require_alive() const
         {
-            if (guard == nullptr || !guard->alive)
-            {
-                throw std::logic_error("a TimeSeries view was accessed outside its node's evaluation");
-            }
+            lease.require_alive("a TimeSeries view was accessed outside its node's evaluation");
         }
 
         [[nodiscard]] const TSInputView &checked() const
@@ -540,19 +575,19 @@ namespace hgraph::python_bridge
             {
                 case TSTypeKind::TSD: {
                     Value key_value = py_to_value_as(key, ts.schema()->key_type());
-                    return PyTimeSeries{ts.as_dict().at(key_value.view()), guard};
+                    return PyTimeSeries{ts.as_dict().at(key_value.view()), lease};
                 }
                 case TSTypeKind::TSL: {
                     auto list = ts.as_list();
-                    return PyTimeSeries{list[nb::cast<std::size_t>(key)], guard};
+                    return PyTimeSeries{list[nb::cast<std::size_t>(key)], lease};
                 }
                 case TSTypeKind::TSB: {
                     auto bundle = ts.as_bundle();
                     if (nb::isinstance<nb::str>(key))
                     {
-                        return PyTimeSeries{bundle.field(nb::cast<std::string>(key)), guard};
+                        return PyTimeSeries{bundle.field(nb::cast<std::string>(key)), lease};
                     }
-                    return PyTimeSeries{bundle[nb::cast<std::size_t>(key)], guard};
+                    return PyTimeSeries{bundle[nb::cast<std::size_t>(key)], lease};
                 }
                 default: throw nb::type_error("this time-series kind has no children");
             }
@@ -593,7 +628,7 @@ namespace hgraph::python_bridge
             auto dict = checked().as_dict();
             for (auto &&[key, child] : dict.modified_items())
             {
-                result.append(nb::make_tuple(value_to_py(key), PyTimeSeries{std::move(child), guard}));
+                result.append(nb::make_tuple(value_to_py(key), PyTimeSeries{std::move(child), lease}));
             }
             return result;
         }
@@ -605,7 +640,7 @@ namespace hgraph::python_bridge
             for (auto &&[key, child] : dict.modified_items())
             {
                 static_cast<void>(key);
-                result.append(PyTimeSeries{std::move(child), guard});
+                result.append(PyTimeSeries{std::move(child), lease});
             }
             return result;
         }
@@ -621,7 +656,7 @@ namespace hgraph::python_bridge
                     auto dict = ts.as_dict();
                     for (const ValueView &key : dict.keys())
                     {
-                        result.append(nb::cast(PyTimeSeries{dict.at(key), guard}));
+                        result.append(nb::cast(PyTimeSeries{dict.at(key), lease}));
                     }
                     return result;
                 }
@@ -629,7 +664,7 @@ namespace hgraph::python_bridge
                     auto bundle = ts.as_bundle();
                     for (std::size_t index = 0; index < bundle.size(); ++index)
                     {
-                        result.append(nb::cast(PyTimeSeries{bundle[index], guard}));
+                        result.append(nb::cast(PyTimeSeries{bundle[index], lease}));
                     }
                     return result;
                 }
@@ -637,7 +672,7 @@ namespace hgraph::python_bridge
                     auto list = ts.as_list();
                     for (std::size_t index = 0; index < list.size(); ++index)
                     {
-                        result.append(nb::cast(PyTimeSeries{list[index], guard}));
+                        result.append(nb::cast(PyTimeSeries{list[index], lease}));
                     }
                     return result;
                 }

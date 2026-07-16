@@ -288,7 +288,7 @@ namespace
     [[nodiscard]] bool py_assemble_args(std::string_view layout, const TSInputView &args, const ValueView &scalars,
                                         PyInvocationState state, NodeScheduler scheduler, DateTime now,
                                         nb::list &call_args, nb::list &context_values,
-                                        const std::shared_ptr<PyTsGuard> &guard,
+                                        const PyTsLease &lease,
                                         const nb::object &runtime_global_state, EngineControlView engine,
                                         const NodeView &node,
                                         const TSOutputView *output = nullptr)   // borrowed for the call only
@@ -314,7 +314,7 @@ namespace
                     // The LAZY C++ TimeSeries view: nothing converts unless
                     // the python code touches it. Guard-invalidated after
                     // the call (a view must not outlive its evaluation).
-                    nb::object ts_obj = nb::cast(PyTimeSeries{std::move(child), guard});
+                    nb::object ts_obj = nb::cast(PyTimeSeries{std::move(child), lease});
                     call_args.append(ts_obj);
                     if (kind == 'C' || kind == 'P')
                     {
@@ -345,21 +345,21 @@ namespace
                             "python node: RECORDABLE_STATE is unavailable on this node");
                     }
                     call_args.append(nb::cast(PyRecordableState{
-                        state.recordable->handle(), now, guard}));
+                        state.recordable->handle(), now, lease}));
                     break;
                 case 'o': {
                     if (output == nullptr)
                     {
                         throw std::logic_error("_output injection requires a compute node");
                     }
-                    call_args.append(nb::cast(PyOutput{output->handle(), now, guard}));
+                    call_args.append(nb::cast(PyOutput{output->handle(), now, lease}));
                     break;
                 }
                 case 'c': call_args.append(nb::cast(PyEvalClock{engine.evaluation_clock()})); break;
                 case 'd': call_args.append(nb::cast(PyScheduler{scheduler})); break;
-                case 'e': call_args.append(nb::cast(PyEvaluationEngineApi{engine, guard})); break;
+                case 'e': call_args.append(nb::cast(PyEvaluationEngineApi{engine, lease})); break;
                 case 'g': call_args.append(runtime_global_state); break;
-                case 'n': call_args.append(nb::cast(PyNode{node.pointer(), scheduler, guard})); break;
+                case 'n': call_args.append(nb::cast(PyNode{node.pointer(), scheduler, lease})); break;
                 default: throw std::logic_error("python node: unknown layout marker");
             }
         }
@@ -369,7 +369,7 @@ namespace
     void py_assemble_lifecycle_args(std::string_view layout, const ValueView &scalars,
                                     State<PyStateRef> &state, NodeScheduler scheduler,
                                     const nb::object &runtime_global_state, EngineControlView engine,
-                                    const std::shared_ptr<PyTsGuard> &guard, const NodeView &node,
+                                    const PyTsLease &lease, const NodeView &node,
                                     nb::list &call_args)
     {
         std::size_t scalar_index = 0;
@@ -388,9 +388,9 @@ namespace
                 case 'S': call_args.append(py_state_namespace(state)); break;
                 case 'c': call_args.append(nb::cast(PyEvalClock{engine.evaluation_clock()})); break;
                 case 'd': call_args.append(nb::cast(PyScheduler{scheduler})); break;
-                case 'e': call_args.append(nb::cast(PyEvaluationEngineApi{engine, guard})); break;
+                case 'e': call_args.append(nb::cast(PyEvaluationEngineApi{engine, lease})); break;
                 case 'g': call_args.append(runtime_global_state); break;
-                case 'n': call_args.append(nb::cast(PyNode{node.pointer(), scheduler, guard})); break;
+                case 'n': call_args.append(nb::cast(PyNode{node.pointer(), scheduler, lease})); break;
                 default: throw std::logic_error("python lifecycle callback: unsupported layout marker");
             }
         }
@@ -398,9 +398,10 @@ namespace
 
     /** Peel the trailing keyword-called entries off ``call_args`` (python
         params after ``*args`` fill BY NAME). */
-    [[nodiscard]] nb::dict py_peel_kwargs(nb::list &call_args, std::span<const std::string_view> kw_names)
+    [[nodiscard]] std::optional<nb::dict>
+    py_peel_kwargs(nb::list &call_args, std::span<const std::string_view> kw_names)
     {
-        if (kw_names.empty()) { return {}; }
+        if (kw_names.empty()) { return std::nullopt; }
         nb::dict kwargs;
         const std::size_t total = nb::len(call_args);
         if (total < kw_names.size()) { throw std::logic_error("python node: call shape shorter than its kw names"); }
@@ -415,13 +416,32 @@ namespace
         return kwargs;
     }
 
+    [[nodiscard]] nb::object py_invoke(const nb::object &fn, const nb::list &call_args,
+                                       const std::optional<nb::dict> &call_kwargs)
+    {
+        if (call_kwargs.has_value())
+        {
+            return fn(*nb::tuple(call_args), **call_kwargs.value());
+        }
+        switch (nb::len(call_args))
+        {
+            case 0: return fn();
+            case 1: return fn(call_args[0]);
+            default: return fn(*nb::tuple(call_args));
+        }
+    }
+
     /** Enter context-manager values (hgraph's context semantics), call, exit in reverse. */
     [[nodiscard]] nb::object py_call_with_contexts(const nb::object &fn, nb::list &call_args,
                                                    nb::list &context_values,
                                                    const nb::object &runtime_global_state,
-                                                   nb::dict call_kwargs = {})
+                                                   std::optional<nb::dict> call_kwargs = std::nullopt)
     {
         const bool publish_runtime_state = !py_has_active_runtime_global_state();
+        if (!publish_runtime_state && nb::len(context_values) == 0)
+        {
+            return py_invoke(fn, call_args, call_kwargs);
+        }
         nb::object runtime;
         if (publish_runtime_state)
         {
@@ -446,17 +466,7 @@ namespace
                 entered.push_back(std::move(holder));
             }
         }
-        nb::object result;
-        if (call_kwargs.is_valid()) { result = fn(*nb::tuple(call_args), **call_kwargs); }
-        else
-        {
-            switch (nb::len(call_args))
-            {
-                case 0: result = fn(); break;
-                case 1: result = fn(call_args[0]); break;
-                default: result = fn(*nb::tuple(call_args)); break;
-            }
-        }
+        nb::object result = py_invoke(fn, call_args, call_kwargs);
         while (!entered.empty())
         {
             nb::object holder = std::move(entered.back());
@@ -476,20 +486,29 @@ namespace
         nb::gil_scoped_acquire gil;
         nb::list call_args;
         nb::list context_values;
-        auto guard = std::make_shared<PyTsGuard>();
-        auto invalid = UnwindCleanupGuard([&] { guard->alive = false; });
-        nb::object runtime_state = py_runtime_global_state_for_call(global_state, guard);
-        py_assemble_lifecycle_args(config, scalars, state, scheduler, runtime_state, engine, guard, node,
+        auto lease = py_ts_lease_for_call();
+        auto invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
+        nb::object runtime_state = py_runtime_global_state_for_call(global_state, lease.guard);
+        py_assemble_lifecycle_args(config, scalars, state, scheduler, runtime_state, engine, lease, node,
                                    call_args);
         (void)py_call_with_contexts(fn.record->fn, call_args, context_values, runtime_state);
         invalid.release();
-        guard->alive = false;
+        lease.invalidate();
     }
 
     struct py_compute_node
     {
         static constexpr auto name = "__py_compute";
         static constexpr std::string_view implementation_label = "hgraph.python.compute";
+        using signature_args = std::tuple<
+            In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive>,
+            Scalar<"fn", PyNodeRef>, Scalar<"config", Str>,
+            Scalar<"scalars", ScalarVar<"SV">>, Scalar<"start_fn", PyNodeRef>,
+            Scalar<"start_enabled", Bool>, Scalar<"start_config", Str>,
+            Scalar<"start_scalars", ScalarVar<"SSV">>, Scalar<"stop_fn", PyNodeRef>,
+            Scalar<"stop_enabled", Bool>, Scalar<"stop_config", Str>,
+            Scalar<"stop_scalars", ScalarVar<"XSV">>, State<PyStateRef>, NodeScheduler,
+            DateTime, GlobalStateView, EngineControlView, NodeView, Out<TsVar<"O">>>;
 
         static void start(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
                           Scalar<"config", Str> eval_config,
@@ -509,45 +528,32 @@ namespace
         static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
                          Scalar<"fn", PyNodeRef> fn,
                          Scalar<"config", Str> config, Scalar<"scalars", ScalarVar<"SV">> scalars,
-                         Scalar<"start_fn", PyNodeRef> start_fn, Scalar<"start_enabled", Bool> start_enabled,
-                         Scalar<"start_config", Str> start_config,
-                         Scalar<"start_scalars", ScalarVar<"SSV">> start_scalars,
-                         Scalar<"stop_fn", PyNodeRef> stop_fn, Scalar<"stop_enabled", Bool> stop_enabled,
-                         Scalar<"stop_config", Str> stop_config,
-                         Scalar<"stop_scalars", ScalarVar<"XSV">> stop_scalars,
                          State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
                          GlobalStateView global_state, EngineControlView engine, NodeView node,
                          Out<TsVar<"O">> out)
         {
-            static_cast<void>(start_fn);
-            static_cast<void>(start_enabled);
-            static_cast<void>(start_config);
-            static_cast<void>(start_scalars);
-            static_cast<void>(stop_fn);
-            static_cast<void>(stop_enabled);
-            static_cast<void>(stop_config);
-            static_cast<void>(stop_scalars);
             const PyCallShape shape = parse_py_call_shape(config.value());
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
-            auto     guard   = std::make_shared<PyTsGuard>();
-            auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
+            auto     lease   = py_ts_lease_for_call();
+            auto     invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
             const auto &out_view = static_cast<const TSOutputView &>(out);
-            nb::object runtime_state = py_runtime_global_state_for_call(global_state, guard);
+            nb::object runtime_state =
+                py_runtime_global_state_for_call(global_state, lease.guard);
             if (!py_assemble_args(shape.layout, args.base(), scalars.value(),
                                   PyInvocationState{.local = &state}, scheduler, now, call_args,
-                                  context_values, guard, runtime_state, engine, node, &out_view))
+                                  context_values, lease, runtime_state, engine, node, &out_view))
             {
                 return;
             }
-            nb::dict call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
+            auto call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
             apply_py_result(
                 py_call_with_contexts(fn.value().record->fn, call_args, context_values, runtime_state,
                                       std::move(call_kwargs)),
                 out);
             invalid.release();
-            guard->alive = false;
+            lease.invalidate();
         }
 
         static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
@@ -575,6 +581,17 @@ namespace
         static constexpr auto name = "__py_compute_recordable";
         static constexpr std::string_view implementation_label =
             "hgraph.python.compute_recordable";
+        using signature_args = std::tuple<
+            In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive>,
+            Scalar<"fn", PyNodeRef>, Scalar<"config", Str>,
+            Scalar<"scalars", ScalarVar<"SV">>,
+            Scalar<"recordable_state_schema", PyTsMetaRef>, Scalar<"start_fn", PyNodeRef>,
+            Scalar<"start_enabled", Bool>, Scalar<"start_config", Str>,
+            Scalar<"start_scalars", ScalarVar<"SSV">>, Scalar<"stop_fn", PyNodeRef>,
+            Scalar<"stop_enabled", Bool>, Scalar<"stop_config", Str>,
+            Scalar<"stop_scalars", ScalarVar<"XSV">>, RecordableState<TsVar<"RS">>,
+            NodeScheduler, DateTime, GlobalStateView, EngineControlView, NodeView,
+            Out<TsVar<"O">>>;
 
         static void resolve_default_types(ResolutionMap &resolution,
                                           OperatorCallContext context)
@@ -601,53 +618,36 @@ namespace
             In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
             Scalar<"fn", PyNodeRef> fn, Scalar<"config", Str> config,
             Scalar<"scalars", ScalarVar<"SV">> scalars,
-            Scalar<"recordable_state_schema", PyTsMetaRef> recordable_state_schema,
-            Scalar<"start_fn", PyNodeRef> start_fn,
-            Scalar<"start_enabled", Bool> start_enabled,
-            Scalar<"start_config", Str> start_config,
-            Scalar<"start_scalars", ScalarVar<"SSV">> start_scalars,
-            Scalar<"stop_fn", PyNodeRef> stop_fn,
-            Scalar<"stop_enabled", Bool> stop_enabled,
-            Scalar<"stop_config", Str> stop_config,
-            Scalar<"stop_scalars", ScalarVar<"XSV">> stop_scalars,
             RecordableState<TsVar<"RS">> state, NodeScheduler scheduler,
             DateTime now, GlobalStateView global_state, EngineControlView engine, NodeView node,
             Out<TsVar<"O">> out)
         {
-            static_cast<void>(recordable_state_schema);
-            static_cast<void>(start_fn);
-            static_cast<void>(start_enabled);
-            static_cast<void>(start_config);
-            static_cast<void>(start_scalars);
-            static_cast<void>(stop_fn);
-            static_cast<void>(stop_enabled);
-            static_cast<void>(stop_config);
-            static_cast<void>(stop_scalars);
             const PyCallShape shape = parse_py_call_shape(config.value());
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
-            auto guard = std::make_shared<PyTsGuard>();
-            auto invalid = UnwindCleanupGuard([&] { guard->alive = false; });
+            auto lease = py_ts_lease_for_call();
+            auto invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
             const auto &out_view = static_cast<const TSOutputView &>(out);
             TSOutputView state_view =
                 static_cast<const TSOutputView &>(state).borrowed_ref();
-            nb::object runtime_state = py_runtime_global_state_for_call(global_state, guard);
+            nb::object runtime_state =
+                py_runtime_global_state_for_call(global_state, lease.guard);
             if (!py_assemble_args(
                     shape.layout, args.base(), scalars.value(),
                     PyInvocationState{.recordable = &state_view}, scheduler, now,
-                    call_args, context_values, guard, runtime_state, engine, node, &out_view))
+                    call_args, context_values, lease, runtime_state, engine, node, &out_view))
             {
                 return;
             }
-            nb::dict call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
+            auto call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
             apply_py_result(
                 py_call_with_contexts(fn.value().record->fn, call_args,
                                       context_values, runtime_state,
                                       std::move(call_kwargs)),
                 out);
             invalid.release();
-            guard->alive = false;
+            lease.invalidate();
         }
 
         static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
@@ -662,6 +662,15 @@ namespace
     {
         static constexpr auto name = "__py_sink";
         static constexpr std::string_view implementation_label = "hgraph.python.sink";
+        using signature_args = std::tuple<
+            In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive>,
+            Scalar<"fn", PyNodeRef>, Scalar<"config", Str>,
+            Scalar<"scalars", ScalarVar<"SV">>, Scalar<"start_fn", PyNodeRef>,
+            Scalar<"start_enabled", Bool>, Scalar<"start_config", Str>,
+            Scalar<"start_scalars", ScalarVar<"SSV">>, Scalar<"stop_fn", PyNodeRef>,
+            Scalar<"stop_enabled", Bool>, Scalar<"stop_config", Str>,
+            Scalar<"stop_scalars", ScalarVar<"XSV">>, State<PyStateRef>, NodeScheduler,
+            DateTime, GlobalStateView, EngineControlView, NodeView>;
 
         static void start(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
                           Scalar<"config", Str> eval_config,
@@ -681,41 +690,28 @@ namespace
         static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,
                          Scalar<"fn", PyNodeRef> fn,
                          Scalar<"config", Str> config, Scalar<"scalars", ScalarVar<"SV">> scalars,
-                         Scalar<"start_fn", PyNodeRef> start_fn, Scalar<"start_enabled", Bool> start_enabled,
-                         Scalar<"start_config", Str> start_config,
-                         Scalar<"start_scalars", ScalarVar<"SSV">> start_scalars,
-                         Scalar<"stop_fn", PyNodeRef> stop_fn, Scalar<"stop_enabled", Bool> stop_enabled,
-                         Scalar<"stop_config", Str> stop_config,
-                         Scalar<"stop_scalars", ScalarVar<"XSV">> stop_scalars,
                          State<PyStateRef> state, NodeScheduler scheduler, DateTime now,
                          GlobalStateView global_state, EngineControlView engine, NodeView node)
         {
-            static_cast<void>(start_fn);
-            static_cast<void>(start_enabled);
-            static_cast<void>(start_config);
-            static_cast<void>(start_scalars);
-            static_cast<void>(stop_fn);
-            static_cast<void>(stop_enabled);
-            static_cast<void>(stop_config);
-            static_cast<void>(stop_scalars);
             const PyCallShape shape = parse_py_call_shape(config.value());
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
-            auto     guard   = std::make_shared<PyTsGuard>();
-            auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
-            nb::object runtime_state = py_runtime_global_state_for_call(global_state, guard);
+            auto     lease   = py_ts_lease_for_call();
+            auto     invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
+            nb::object runtime_state =
+                py_runtime_global_state_for_call(global_state, lease.guard);
             if (!py_assemble_args(shape.layout, args.base(), scalars.value(),
                                   PyInvocationState{.local = &state}, scheduler, now, call_args,
-                                  context_values, guard, runtime_state, engine, node))
+                                  context_values, lease, runtime_state, engine, node))
             {
                 return;
             }
-            nb::dict call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
+            auto call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
             (void)py_call_with_contexts(fn.value().record->fn, call_args, context_values, runtime_state,
                                         std::move(call_kwargs));
             invalid.release();
-            guard->alive = false;
+            lease.invalidate();
         }
 
         static void stop(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive> args,

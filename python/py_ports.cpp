@@ -283,7 +283,17 @@ namespace hgraph::python_bridge
         bundle_class_registry()[nb::str(name.c_str())] = std::move(cls);
     });
     m.def("register_bundle_class", [](PyValueType type, nb::object cls) {
-        bundle_class_registry()[nb::int_(reinterpret_cast<std::uintptr_t>(type.meta))] = std::move(cls);
+        auto &info = bundle_class_info_registry()[type.meta];
+        info.type = cls;
+        info.field_names.clear();
+        info.field_names.reserve(type.meta->field_count);
+        for (std::size_t index = 0; index < type.meta->field_count; ++index)
+        {
+            const auto &field = type.meta->fields[index];
+            info.field_names.emplace_back(field.name != nullptr ? field.name : "");
+        }
+        bundle_class_registry()[nb::int_(reinterpret_cast<std::uintptr_t>(type.meta))] =
+            std::move(cls);
     });
 
     m.def("tsl_element", [](const PyPort &port, std::size_t index) {

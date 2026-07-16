@@ -694,9 +694,16 @@ def test_time_series_view_lifetime_guard():
     # A view is only usable during its node's evaluation: storing it and
     # touching it later raises rather than dangling.
     stashed = []
+    cross_evaluation_errors = []
 
     @hg.compute_node
     def stash(x: TS[int]) -> TS[int]:
+        if stashed:
+            try:
+                _ = stashed[-1].value
+                cross_evaluation_errors.append("view became live again")
+            except RuntimeError as exc:
+                cross_evaluation_errors.append(str(exc))
         stashed.append(x)
         return x.value
 
@@ -704,12 +711,16 @@ def test_time_series_view_lifetime_guard():
     def g(x: TS[int]) -> TS[int]:
         return stash(x)
 
-    eval_node(g, [1])
-    try:
-        _ = stashed[0].value
-        check(False, "expected a lifetime error")
-    except RuntimeError as e:
-        check("outside its node's evaluation" in str(e), f"unexpected error: {e}")
+    eval_node(g, [1, 2])
+    check(len(cross_evaluation_errors) == 1, "cross-evaluation lifetime check")
+    check("outside its node's evaluation" in cross_evaluation_errors[0],
+          f"unexpected cross-evaluation error: {cross_evaluation_errors[0]}")
+    for view in stashed:
+        try:
+            _ = view.value
+            check(False, "expected a lifetime error")
+        except RuntimeError as e:
+            check("outside its node's evaluation" in str(e), f"unexpected error: {e}")
 
 
 def test_services_from_python():

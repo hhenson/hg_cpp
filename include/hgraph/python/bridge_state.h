@@ -5,6 +5,9 @@
 
 #include <nanobind/nanobind.h>
 
+#include <unordered_map>
+#include <vector>
+
 /**
  * Shared python-bridge STATE consulted by type-erased conversion impls
  * (the ops tables' to_python / from_python) and by the module itself.
@@ -78,6 +81,23 @@ namespace hgraph::python_bridge
     [[nodiscard]] inline nb::dict &bundle_class_registry()
     {
         static auto *registry = new nb::dict();
+        return *registry;
+    }
+
+    struct NB_EXPORT_SHARED PyBundleClassInfo
+    {
+        nb::object           type{};
+        std::vector<nb::str> field_names{};
+    };
+
+    /** Schema-addressed companion to ``bundle_class_registry`` for hot value
+        conversion. It retains interned field-name objects so conversion does
+        not recreate and hash every field name on every node evaluation. */
+    [[nodiscard]] inline std::unordered_map<const void *, PyBundleClassInfo> &
+    bundle_class_info_registry()
+    {
+        static auto *registry =
+            new std::unordered_map<const void *, PyBundleClassInfo>();
         return *registry;
     }
 }  // namespace hgraph::python_bridge

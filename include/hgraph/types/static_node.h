@@ -1951,6 +1951,18 @@ namespace hgraph
         template <typename T> concept has_stop      = requires { &T::stop; };
         template <typename T> concept has_name      = requires { T::name; };
         template <typename T> concept has_implementation_label = requires { T::implementation_label; };
+        template <typename T, typename = void>
+        struct signature_args_of
+        {
+            using type = typename fn_traits<decltype(&T::eval)>::args_tuple;
+        };
+
+        template <typename T>
+        struct signature_args_of<T, std::void_t<typename T::signature_args>>
+        {
+            using type = typename T::signature_args;
+        };
+
         // Optional ``static constexpr bool schedule_on_start`` attribute: when true
         // the framework schedules the node for the start cycle (see node.cpp).
         template <typename T> concept has_schedule_on_start = requires { T::schedule_on_start; };
@@ -1963,13 +1975,20 @@ namespace hgraph
     /**
      * Compile-time reflection of a static node implementation. Derives the
      * runtime node contract (input/output/state schema, node kind, input
-     * endpoint annotation) from the parameter list of ``TImplementation::eval``.
+     * endpoint annotation) from ``TImplementation::signature_args`` when
+     * supplied, otherwise from the parameter list of ``TImplementation::eval``.
+     * An explicit signature lets lifecycle-only fields remain part of the
+     * node schema without injecting them into the hot evaluation callback.
      */
     template <typename TImplementation>
     struct StaticNodeSignature
     {
+      public:
+        using canonical_args =
+            typename static_node_detail::signature_args_of<TImplementation>::type;
+
       private:
-        using eval_args = typename static_node_detail::fn_traits<decltype(&TImplementation::eval)>::args_tuple;
+        using eval_args = canonical_args;
 
         static constexpr std::size_t arg_count = std::tuple_size_v<eval_args>;
         using indices                          = std::make_index_sequence<arg_count>;
@@ -2630,22 +2649,22 @@ namespace hgraph
         template <typename TImplementation>
         [[nodiscard]] NodeCallbacks static_node_callbacks()
         {
-            using eval_args =
-                typename fn_traits<decltype(&TImplementation::eval)>::args_tuple;
+            using signature_args =
+                typename StaticNodeSignature<TImplementation>::canonical_args;
             NodeCallbacks callbacks;
             callbacks.evaluate = [](const NodeView &view, DateTime evaluation_time) {
-                invoke<&TImplementation::eval, eval_args>(view, evaluation_time);
+                invoke<&TImplementation::eval, signature_args>(view, evaluation_time);
             };
             if constexpr (has_start<TImplementation>)
             {
                 callbacks.start = [](const NodeView &view, DateTime evaluation_time) {
-                    invoke<&TImplementation::start, eval_args>(view, evaluation_time);
+                    invoke<&TImplementation::start, signature_args>(view, evaluation_time);
                 };
             }
             if constexpr (has_stop<TImplementation>)
             {
                 callbacks.stop = [](const NodeView &view, DateTime evaluation_time) {
-                    invoke<&TImplementation::stop, eval_args>(view, evaluation_time);
+                    invoke<&TImplementation::stop, signature_args>(view, evaluation_time);
                 };
             }
             return callbacks;

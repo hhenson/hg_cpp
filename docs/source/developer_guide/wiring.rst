@@ -73,9 +73,11 @@ and the implementation type must be empty/stateless.
 Signature extraction
 ---------------------
 
-``StaticNodeSignature<TImplementation>`` reflects the ``eval`` (and
-``start`` / ``stop``) parameter lists at compile time and derives the runtime
-node contract:
+``StaticNodeSignature<TImplementation>`` reflects the ``eval`` parameter list at
+compile time and derives the runtime node contract. When an implementation
+declares ``using signature_args = std::tuple<...>``, that tuple is the canonical
+contract instead; this lets ``eval`` omit selectors that are used only by
+``start`` / ``stop`` without removing them from the node schema:
 
 - **input schema** — the ``In<>`` parameters become the fields of a non-peered
   input ``TSB`` (in argument order, by their ``Name``), including collection,
@@ -112,9 +114,11 @@ the existing** ``NodeBuilder::native(...)``. It assembles exactly the triple
                             ->  NodeBuilder::native(...)
 
 The ``NodeCallbacks`` thunks are stateless lambdas that call
-``static_node_detail::invoke<&T::eval>(view, evaluation_time)``. ``invoke``
-walks the hook's parameter types and, for each, asks an ``arg_provider`` to
-build the selector from the type-erased ``NodeView``:
+``static_node_detail::invoke<&T::eval, CanonicalArgs>(view, evaluation_time)``.
+``invoke`` walks the hook's parameter types and, for each, asks an
+``arg_provider`` to build the selector from the type-erased ``NodeView``.
+Named input/scalar slots are located in ``CanonicalArgs`` rather than assumed to
+match a hook-local ordinal:
 
 - ``In<Name, S>`` ← ``view.input(t).as_bundle().field(Name)`` projected to the
   matching typed input view (``TS`` / ``TSS`` / ``TSD`` / ``TSL`` / ``TSW`` /

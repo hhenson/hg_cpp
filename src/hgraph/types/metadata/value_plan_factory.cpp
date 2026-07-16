@@ -513,6 +513,14 @@ namespace hgraph
             binding.ops_ref().from_python(binding, memory, source);
         }
 
+        [[nodiscard]] const python_bridge::PyBundleClassInfo *
+        python_bundle_info(const ValueTypeMetaData *schema)
+        {
+            const auto &registry = python_bridge::bundle_class_info_registry();
+            const auto  found    = registry.find(schema);
+            return found != registry.end() ? &found->second : nullptr;
+        }
+
         [[nodiscard]] nb::object composite_value_to_python(const void *context, const void *memory)
         {
             if (memory == nullptr) { throw std::runtime_error("composite to_python requires live value memory"); }
@@ -523,29 +531,33 @@ namespace hgraph
             {
                 // A NAMED bundle with a registered python class rebuilds the
                 // class (CompoundScalar read-back; UNSET fields -> None).
-                nb::object bundle_class;
-                if (!state->schema->name().empty())
-                {
-                    nb::dict &classes = python_bridge::bundle_class_registry();
-                    nb::int_  key{reinterpret_cast<std::uintptr_t>(state->schema)};
-                    if (classes.contains(key)) { bundle_class = classes[key]; }
-                }
+                const auto *bundle_info = !state->schema->name().empty()
+                                              ? python_bundle_info(state->schema)
+                                              : nullptr;
                 nb::dict result;
                 for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
                 {
                     const char *name = state->schema->fields[index].name;
                     if (name == nullptr || *name == '\0') { continue; }
+                    nb::object fallback_key;
+                    nb::handle key;
+                    if (bundle_info != nullptr) { key = bundle_info->field_names[index]; }
+                    else
+                    {
+                        fallback_key = nb::str{name};
+                        key = fallback_key;
+                    }
                     const bool set = composite_field_set(state, memory, index);
                     if (!set)
                     {
-                        if (bundle_class.is_valid()) { result[nb::str{name}] = nb::none(); }
+                        if (bundle_info != nullptr) { result[key] = nb::none(); }
                         continue;   // plain dicts OMIT unset fields
                     }
                     const auto &ops = state->child_bindings[index].ops_ref();
                     const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
-                    result[nb::str{name}] = ops.to_python(child);
+                    result[key] = ops.to_python(child);
                 }
-                if (bundle_class.is_valid()) { return bundle_class(**result); }
+                if (bundle_info != nullptr) { return bundle_info->type(**result); }
                 return result;
             }
 
@@ -620,6 +632,9 @@ namespace hgraph
             }
 
             nb::object object = nb::borrow<nb::object>(source);
+            const auto *bundle_info = !state->schema->name().empty()
+                                          ? python_bundle_info(state->schema)
+                                          : nullptr;
             if (nb::isinstance<nb::dict>(object))
             {
                 nb::dict map = nb::cast<nb::dict>(object);
@@ -631,7 +646,14 @@ namespace hgraph
                     {
                         throw std::invalid_argument("Bundle value has an unnamed field and cannot be loaded from dict");
                     }
-                    nb::str key{name};
+                    nb::object fallback_key;
+                    nb::handle key;
+                    if (bundle_info != nullptr) { key = bundle_info->field_names[index]; }
+                    else
+                    {
+                        fallback_key = nb::str{name};
+                        key = fallback_key;
+                    }
                     // PARTIAL dicts mark exactly the provided keys (field
                     // validity, core_concepts.rst) - absent = UNSET.
                     if (!map.contains(key)) { continue; }
@@ -662,8 +684,25 @@ namespace hgraph
                 {
                     throw std::invalid_argument("Bundle value has an unnamed field and cannot be loaded from attributes");
                 }
-                if (!nb::hasattr(object, name)) { continue; }
-                nb::object value = nb::getattr(object, name);
+                nb::object fallback_key;
+                nb::handle key;
+                if (bundle_info != nullptr) { key = bundle_info->field_names[index]; }
+                else
+                {
+                    fallback_key = nb::str{name};
+                    key = fallback_key;
+                }
+                PyObject *raw_value = PyObject_GetAttr(object.ptr(), key.ptr());
+                if (raw_value == nullptr)
+                {
+                    if (PyErr_ExceptionMatches(PyExc_AttributeError))
+                    {
+                        PyErr_Clear();
+                        continue;
+                    }
+                    nb::raise_python_error();
+                }
+                nb::object value = nb::steal(raw_value);
                 if (value.is_none()) { continue; }
                 auto *child = static_cast<std::byte *>(memory) + state->offsets[index];
                 assign_child_from_python(state->child_bindings[index], child, value, "Bundle value");

@@ -99,10 +99,11 @@ its output last.
    // goes last. The input order (lhs, rhs) is the argument schema.
    static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out);
 
-``start`` and ``stop`` are **not** the argument schema. Each lists only the
-parameters it needs — matched **by name** (the ``In<>`` name, or the selector for
-state and services) and validated by type — so a hook can request just the state,
-or just a service, in any order.
+By default, ``eval`` defines the complete argument schema. ``start`` and ``stop``
+are **not** the argument schema: each lists only the parameters it needs, matched
+**by name** (the ``In<>`` / ``Scalar<>`` name, or the selector for state and
+services) and validated by type. See `Lifecycle: start / eval / stop`_ for the
+explicit-signature form where ``eval`` may also request a subset.
 
 All hooks (``eval`` / ``start`` / ``stop``) return ``void``.
 
@@ -343,6 +344,43 @@ teardown.
    @with_lifecycle.stop
    def _stop(_state: STATE):
        ...  # flush / release
+
+Normally ``eval`` declares the complete node schema. For a node with
+configuration used only by ``start`` or ``stop``, an optional
+``signature_args`` tuple can declare that canonical schema explicitly. Every
+hook then requests only the selectors it uses; named input and scalar selectors
+are located in the canonical tuple, so their wiring order remains stable:
+
+.. code-block:: cpp
+
+   struct LifecycleConfigured
+   {
+       using signature_args = std::tuple<
+           Scalar<"value", Int>, Scalar<"flush_limit", Int>,
+           State<Int>, Out<TS<Int>>>;
+
+       static void start(Scalar<"flush_limit", Int> limit, State<Int> state)
+       {
+           state.set(limit.value());
+       }
+
+       // flush_limit is not constructed on the hot evaluation path.
+       static void eval(Scalar<"value", Int> value, State<Int> state,
+                        Out<TS<Int>> out)
+       {
+           out.set(value.value() + state.get());
+       }
+
+       static void stop(Scalar<"flush_limit", Int> limit, State<Int> state)
+       {
+           /* flush using limit */ (void)limit; (void)state;
+       }
+   };
+
+Use this form only when the complete schema cannot be expressed efficiently by
+``eval`` itself. ``signature_args`` is authoritative for node-kind inference,
+input/scalar order, output, state, and injected runtime components; each hook's
+parameters must be a valid subset of it.
 
 
 Time-series type vocabulary

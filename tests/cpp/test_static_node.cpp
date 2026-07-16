@@ -5,6 +5,8 @@
 // to the current type-erased runtime (see docs: Wiring, Schemas > Static Schema).
 
 #include <hgraph/runtime/runtime.h>
+#include <hgraph/lib/testing/check_output.h>
+#include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/registry_reset.h>
@@ -18,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 namespace
@@ -195,6 +198,30 @@ namespace
         static void eval(In<"in", TS<Int>> in, Scalar<"delta", Int> delta, Out<TS<Int>> out)
         {
             out.set(in.value() + delta.value());
+        }
+    };
+
+    struct LifecycleConfiguredSource
+    {
+        static constexpr auto name = "lifecycle_configured_source";
+        static constexpr bool schedule_on_start = true;
+        inline static Int     stopped_value{-1};
+        using signature_args =
+            std::tuple<Scalar<"value", Int>, Scalar<"lifecycle", Int>, State<Int>, Out<TS<Int>>>;
+
+        static void start(Scalar<"lifecycle", Int> lifecycle, State<Int> state)
+        {
+            state.set(lifecycle.value());
+        }
+
+        static void eval(Scalar<"value", Int> value, State<Int> state, Out<TS<Int>> out)
+        {
+            out.set(value.value() + state.get());
+        }
+
+        static void stop(Scalar<"lifecycle", Int> lifecycle, State<Int> state)
+        {
+            stopped_value = state.get() + lifecycle.value();
         }
     };
 
@@ -484,6 +511,24 @@ TEST_CASE("static node: Scalar<> coexists with a time-series input")
     // Compute node: Compute kind (In present), one TS input field, scalar excluded.
     REQUIRE(graph.node_at(1).node_kind() == NodeKind::Compute);
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{46});   // 41 + 5
+}
+
+TEST_CASE("static node: explicit signature keeps lifecycle-only selectors out of eval")
+{
+    using namespace hgraph;
+
+    NodeBuilder builder;
+    builder.implementation<LifecycleConfiguredSource>();
+    REQUIRE(builder.type().schema()->scalar_schema != nullptr);
+    REQUIRE(builder.type().schema()->scalar_schema->field_count == 2);
+    CHECK(std::string{builder.type().schema()->scalar_schema->fields[0].name} == "value");
+    CHECK(std::string{builder.type().schema()->scalar_schema->fields[1].name} == "lifecycle");
+
+    LifecycleConfiguredSource::stopped_value = Int{-1};
+    CHECK_OUTPUT(testing::eval_node<LifecycleConfiguredSource>(
+                     arg<"value">(Int{7}), arg<"lifecycle">(Int{5})),
+                 {Int{12}});
+    CHECK(LifecycleConfiguredSource::stopped_value == Int{10});
 }
 
 TEST_CASE("static node: State<Int> is constructed and mutated across evaluations")

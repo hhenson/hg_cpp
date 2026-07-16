@@ -133,6 +133,7 @@ NB_MODULE(_hgraph, m)
     m.def("reset_registries", [] {
         python_bridge::enum_class_registry().clear();   // meta pointers are re-interned
         python_bridge::bundle_class_registry().clear();
+        python_bridge::bundle_class_info_registry().clear();
         reset_all_registries();
         ++python_registry_generation;
         stdlib::register_standard_operators();

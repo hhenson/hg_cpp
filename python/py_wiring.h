@@ -187,8 +187,10 @@ namespace hgraph::python_bridge
             nb::object runtime = nb::module_::import_("hgraph._wiring._state");
             runtime.attr("_push_runtime_global_state")(runtime_state);
             py_active_runtime_global_state = runtime_state.ptr();
+            py_active_runtime_guard() = guard;
             auto clear_runtime_state = UnwindCleanupGuard([&] {
                 py_active_runtime_global_state = nullptr;
+                py_active_runtime_guard().reset();
                 guard->alive = false;
                 runtime.attr("_pop_runtime_global_state")();
             });
