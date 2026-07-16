@@ -1483,15 +1483,24 @@ namespace hgraph
         if (error_schema == nullptr) { throw std::invalid_argument("with_error_capture requires an error schema"); }
 
         const NodeOps &node_ops = type_.ops_ref();
-        // Error capture reuses the standard runtime evaluate (which wraps the
-        // user callback in try/catch). A custom-ops node (nested/map/switch)
-        // runs its own evaluate and is not supported through this path.
-        if (node_ops.evaluate_impl != &evaluate_impl || node_ops.context == nullptr)
+        if (node_ops.context == nullptr)
         {
             throw std::invalid_argument(
                 "with_error_capture: error capture is only supported on native nodes");
         }
         const auto &origin = *static_cast<const NodeRuntimeContext *>(node_ops.context);
+        // A specialised native evaluator may retain a callback specifically
+        // for derived error-capture types. Custom lifecycle nodes
+        // (nested/map/switch) cannot be converted to the standard evaluator.
+        const bool uses_standard_evaluator = node_ops.evaluate_impl == &evaluate_impl;
+        const bool has_capture_fallback = node_ops.start_impl == &start_impl &&
+                                          node_ops.stop_impl == &stop_impl &&
+                                          static_cast<bool>(origin.callbacks.evaluate);
+        if (!uses_standard_evaluator && !has_capture_fallback)
+        {
+            throw std::invalid_argument(
+                "with_error_capture: error capture is only supported on native nodes");
+        }
 
         NodeTypeMetaData schema = *type_.schema();
         schema.error_output_schema = error_schema;
@@ -1522,10 +1531,12 @@ namespace hgraph
         if (slots.empty()) { return *this; }
 
         const NodeOps &node_ops = type_.ops_ref();
-        // Same constraint as error capture: the rebind reuses the native
-        // runtime context; custom-ops nodes (nested/map/switch) manage their
-        // own activation.
-        if (node_ops.evaluate_impl != &evaluate_impl || node_ops.context == nullptr)
+        // Nodes using the standard start/stop operations share the native
+        // input-activation protocol even when they provide a specialised
+        // evaluator. Custom lifecycle nodes (nested/map/switch) manage their
+        // own activation and cannot be rebound this way.
+        if (node_ops.start_impl != &start_impl || node_ops.stop_impl != &stop_impl ||
+            node_ops.context == nullptr)
         {
             throw std::invalid_argument("passive inputs are only supported on native nodes");
         }
@@ -1560,7 +1571,7 @@ namespace hgraph
 
         const auto &plan = node_storage_plan_for(schema);
         const auto type =
-            node_runtime_registry().make_type(std::move(schema), origin.callbacks, plan, NodeOps{},
+            node_runtime_registry().make_type(std::move(schema), origin.callbacks, plan, node_ops,
                                               type_.record()->implementation_name());
 
         NodeBuilder result{type, input_endpoint_};

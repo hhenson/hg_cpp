@@ -391,11 +391,20 @@ namespace hgraph
             return value;
         }
 
-        template <typename F, auto Identity>
-        void evaluate_lifted_node(const NodeView &view, DateTime evaluation_time)
+        template <typename F, std::size_t... I>
+        [[nodiscard]] bool lifted_inputs_valid(TSBInputView &input, std::index_sequence<I...>)
         {
+            return (input.at(I).valid() && ...);
+        }
+
+        template <typename F, auto Identity>
+        bool evaluate_lifted_node(const void *, const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.started()) { return true; }
+
             auto root_input = view.input(evaluation_time);
             auto input      = root_input.as_bundle();
+            if (!lifted_inputs_valid<F>(input, std::make_index_sequence<arity_v<F>>{})) { return true; }
             auto output     = view.output(evaluation_time);
 
             result_t<F> result = eval_input_values<F>(input, std::make_index_sequence<arity_v<F>>{});
@@ -403,6 +412,13 @@ namespace hgraph
             auto destination = mutation.value();
             const ValueView source{destination.binding(), static_cast<const void *>(&result)};
             static_cast<void>(mutation.copy_value_from(source));
+            return true;
+        }
+
+        template <typename F, auto Identity>
+        void evaluate_lifted_node_callback(const NodeView &view, DateTime evaluation_time)
+        {
+            static_cast<void>(evaluate_lifted_node<F, Identity>(nullptr, view, evaluation_time));
         }
 
         template <typename F, auto Identity>
@@ -441,10 +457,12 @@ namespace hgraph
             schema.output_schema    = out_schema;
             schema.node_kind        = NodeKind::Compute;
 
-            NodeCallbacks callbacks;
-            callbacks.evaluate = &evaluate_lifted_node<F, Identity>;
+            NodeTypeDescriptor descriptor;
+            descriptor.schema             = std::move(schema);
+            descriptor.callbacks.evaluate = &evaluate_lifted_node_callback<F, Identity>;
+            descriptor.ops.evaluate_impl  = &evaluate_lifted_node<F, Identity>;
 
-            NodeBuilder builder = NodeBuilder::native(std::move(schema), std::move(callbacks));
+            NodeBuilder builder = NodeBuilder::from_descriptor(std::move(descriptor));
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
 

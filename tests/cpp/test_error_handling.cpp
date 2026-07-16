@@ -391,6 +391,17 @@ namespace
         }
     };
 
+    struct LiftedCaptureErrorGraph
+    {
+        static constexpr auto name = "lifted_capture_error_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            auto output = wire<stdlib::div_>(w, lhs, rhs);
+            return wire<ErrorMsgOf>(w, exception_time_series(output));
+        }
+    };
+
     struct DirectCaptureTraceGraph
     {
         static constexpr auto name = "direct_capture_trace_graph";
@@ -586,6 +597,8 @@ TEST_CASE("error handling: registered try_except wires value graphs and sinks")
     CHECK_OUTPUT(eval_node<ErasedTrySinkGraph>(input), values<Str>(none, "sink negative"s, none));
     CHECK_OUTPUT(eval_node<DirectCaptureValueGraph>(input), values<Int>(10, none, 14));
     CHECK_OUTPUT(eval_node<DirectCaptureErrorGraph>(input), values<Str>(none, "negative input"s, none));
+    CHECK_OUTPUT(eval_node<LiftedCaptureErrorGraph>(values<Int>(4, 4), values<Int>(2, 0)),
+                 values<Str>(none, "div_: division by zero"s));
 }
 
 TEST_CASE("error handling: capture options include the failed node and input values")
