@@ -704,7 +704,8 @@ acceptance gate.
 
 ``mesh_(func, *args, **kwargs)`` has the same external call shape and
 output model as ``map_`` over ``TSD`` inputs, but child instances may read
-other instances' outputs by key from inside ``func`` via
+other instances' outputs by key from inside ``func`` via Python's
+``mesh_(func)[key]`` / ``get_mesh(func)[key]`` or C++
 ``mesh_ref<OUT>(w, key)``. A mesh therefore owns one requested child graph
 per live ``__keys__`` key, plus any on-demand child graph created because
 another instance requested it.
@@ -724,7 +725,8 @@ another instance requested it.
   A separate observer on the external ``__keys__`` source pre-reserves capacity;
   source replacement performs a full membership reconciliation so shared keys
   survive even when the replacement uses a different slot layout.
-- **Cross-instance reads are runtime forwarding nodes.** ``mesh_ref`` wires a
+- **Cross-instance reads are runtime forwarding nodes.** The Python
+  ``MeshWiringPort.__getitem__`` and C++ ``mesh_ref`` wire a
   ``mesh_subscribe`` node in the child graph. At evaluation time it resolves
   the enclosing mesh, registers ``requester -> dependency``, binds its hidden
   value input to ``self[dependency]`` for future scheduling, and forwards the
@@ -741,10 +743,11 @@ another instance requested it.
   dependents. Retargeting or removing a requester retracts its old dependency
   edge and removes now-unreferenced on-demand instances in the same mesh
   evaluation.
-- **Mesh key-set access is forwarding too.** ``mesh_keys_ref<K>(w[, name])``
+- **Mesh key-set access is forwarding too.** Using a Python
+  ``MeshWiringPort`` as a collection or C++ ``mesh_keys_ref<K>(w[, name])``
   wires a ``mesh_key_set`` node that forwards the enclosing mesh output's
   ``TSD`` key-set projection. Named meshes use the same wiring-time mesh
-  scope as ``mesh_ref``.
+  scope as sibling lookup.
 - **Limitations match the current kernel.** ``mesh_`` is a TSD runtime
   operator; dynamic-TSL meshes are not implemented. The output restrictions
   mirror ``map_`` because the mesh output is an owned TSD whose elements are

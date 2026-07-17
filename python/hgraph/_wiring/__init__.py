@@ -47,7 +47,7 @@ from ._compose import (
     DebugContext, Feedback, _Collect, _Combine, _Convert, _Emit, _TsExprFor,
     _bind_switch_scalar_args, _combine_compound_scalars, _merge_cs, _resolve_requested_target,
     _type_pattern_for_target, cast_, collect, combine, convert, downcast_ref, emit, feedback,
-    filter_by, map_, mesh_, mesh_ref, no_key, pass_through, passive, reduce, switch_
+    MeshWiringPort, filter_by, get_mesh, map_, mesh_, no_key, pass_through, passive, reduce, switch_
 )
 from ._services import (
     _AdaptorStub, _FLAVOUR_TS_ARITY, _ServiceAdaptorStub, _ServiceImpl, _ServiceInputs,
@@ -90,7 +90,7 @@ __all__ = [
     "compute_node", "compute_set_delta", "context", "convert", "dispatch", "dispatch_",
     "downcast_ref", "emit", "eval_node", "evaluate_const", "evaluate_graph", "feedback",
     "filter_by", "from_graph", "generator", "get_service_inputs", "graph", "impl_input",
-    "impl_output", "lift", "map_", "mesh_", "mesh_ref", "no_key", "operator",
+    "impl_output", "lift", "map_", "mesh_", "MeshWiringPort", "get_mesh", "no_key", "operator",
     "operator_function", "pass_through", "passive", "push_queue", "record_replay_scope",
     "reduce", "reference_service", "register_adaptor", "register_service",
     "request_reply_service", "run_graph", "service_adaptor", "service_adaptor_impl",

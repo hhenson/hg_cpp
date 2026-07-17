@@ -441,9 +441,10 @@ Recorded divergences / gaps (the morning-summary list):
   services. ``@service_adaptor`` / ``@service_adaptor_impl`` extend that
   surface with the native per-client keyed request/reply exchange; one TS
   request and one TS response are supported, with bundles carrying multi-field
-  protocols. ``mesh_(func, ...)`` + ``mesh_ref(key[, name])`` take the func's
-  element type from the python fn's return annotation (records carry their
-  annotated output schema).
+  protocols. ``mesh_(func, ...)`` constructs the mesh; inside its function,
+  ``mesh_(func)[key]`` or ``get_mesh(func)[key]`` performs sibling lookup via
+  a lazy ``MeshWiringPort``. The func's element type comes from the Python
+  function's return annotation (records carry their annotated output schema).
 - **TimeSeries view objects** (Howard's rulings: proper C++ objects, all
   kinds, strictly lazy): user nodes receive a C++-bound ``TimeSeries``
   view over the LIVE input — nothing converts unless accessed.

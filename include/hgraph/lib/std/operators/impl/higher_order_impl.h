@@ -1024,8 +1024,32 @@ namespace hgraph::stdlib
             return schema;
         }
 
+        [[nodiscard]] inline bool switch_branch_requires_preserved_terminal(
+            const SingleNestedGraphNodeSpec &spec)
+        {
+            if (!spec.output_binding.has_value() ||
+                spec.output_binding->kind != NestedGraphOutputBinding::Kind::ChildOutput)
+            {
+                throw std::logic_error("switch_: every branch must terminate at a child output");
+            }
+
+            const NestedGraphEndpoint &source = spec.output_binding->source;
+            if (!source.path.empty()) { return true; }
+
+            const NodeBuilder &terminal = spec.graph_builder.nodes().at(source.node);
+            const TSEndpointSchema &terminal_override = terminal.output_endpoint();
+            const NodeTypeMetaData *terminal_meta = terminal.type().schema();
+            const TSEndpointSchema &terminal_declared =
+                terminal_meta != nullptr ? terminal_meta->output_endpoint_schema : terminal_override;
+            const TSEndpointSchema &terminal_endpoint =
+                !terminal_override.empty() ? terminal_override : terminal_declared;
+            return !terminal_endpoint.empty() &&
+                   (terminal_endpoint.is_peered() || terminal_endpoint.is_non_peered());
+        }
+
         inline void configure_switch_branch_output(SingleNestedGraphNodeSpec &spec,
-                                                   const TSValueTypeMetaData *switch_output_schema)
+                                                    const TSValueTypeMetaData *switch_output_schema,
+                                                    bool preserve_terminal)
         {
             if (!spec.output_binding.has_value() ||
                 spec.output_binding->kind != NestedGraphOutputBinding::Kind::ChildOutput)
@@ -1038,6 +1062,8 @@ namespace hgraph::stdlib
             const NodeTypeMetaData *terminal_meta = terminal.type().schema();
             const auto *terminal_schema = terminal_meta != nullptr ? terminal_meta->output_schema : nullptr;
             const auto *branch_output_schema = switch_branch_output_schema_at(terminal_schema, source.path);
+
+            if (preserve_terminal) { return; }
 
             // When a VALUE branch participates in a REF-shaped switch, its
             // terminal must own the value inside the branch's A/B graph slot.
@@ -1332,13 +1358,26 @@ namespace hgraph::stdlib
             }
             if (output_required)
             {
+                const auto requires_preserved_terminal = [](const SingleNestedGraphNodeSpec &branch) {
+                    return switch_branch_requires_preserved_terminal(branch);
+                };
+                spec.output_forwards_to_child_terminal =
+                    std::any_of(spec.branches.begin(), spec.branches.end(),
+                                [&](const SwitchBranch &branch) {
+                                    return requires_preserved_terminal(branch.spec);
+                                }) ||
+                    (spec.default_branch.has_value() &&
+                     requires_preserved_terminal(*spec.default_branch));
                 for (SwitchBranch &branch : spec.branches)
                 {
-                    configure_switch_branch_output(branch.spec, output_schema);
+                    configure_switch_branch_output(
+                        branch.spec, output_schema, spec.output_forwards_to_child_terminal);
                 }
                 if (spec.default_branch.has_value())
                 {
-                    configure_switch_branch_output(*spec.default_branch, output_schema);
+                    configure_switch_branch_output(
+                        *spec.default_branch, output_schema,
+                        spec.output_forwards_to_child_terminal);
                 }
             }
 
@@ -2112,13 +2151,23 @@ namespace hgraph::stdlib
                     ts, positional_count,
                     {named_slots.data(), named_slots.size()}, output_schema);
             }
+            spec.output_forwards_to_child_terminal =
+                std::any_of(spec.branches.begin(), spec.branches.end(),
+                            [](const SwitchBranch &branch) {
+                                return switch_branch_requires_preserved_terminal(branch.spec);
+                            }) ||
+                (spec.default_branch.has_value() &&
+                 switch_branch_requires_preserved_terminal(*spec.default_branch));
             for (SwitchBranch &branch : spec.branches)
             {
-                configure_switch_branch_output(branch.spec, output_schema);
+                configure_switch_branch_output(
+                    branch.spec, output_schema, spec.output_forwards_to_child_terminal);
             }
             if (spec.default_branch.has_value())
             {
-                configure_switch_branch_output(*spec.default_branch, output_schema);
+                configure_switch_branch_output(
+                    *spec.default_branch, output_schema,
+                    spec.output_forwards_to_child_terminal);
             }
             return add_compiled_switch(
                 w, std::move(key), std::move(ts), std::move(spec), output_schema,
@@ -2675,9 +2724,18 @@ namespace hgraph::stdlib
                     "mesh_: 'func' must have a statically-known output type (an operator with a "
                     "type-var output cannot be a mesh function)");
             }
-            const MapArgClassification classified =
-                classify_map_args({ts_schemas.data(), ts_schemas.size()},
-                                  {arg_tags.data(), arg_tags.size()});
+            const ValueTypeMetaData *explicit_key_meta = nullptr;
+            if (keys.has_value())
+            {
+                const auto *keys_schema = time_series_schema_as<AnyTSS>(keys->schema);
+                if (keys_schema != nullptr && keys_schema->value_schema != nullptr)
+                {
+                    explicit_key_meta = keys_schema->value_schema->element_type;
+                }
+            }
+            const MapArgClassification classified = classify_map_args(
+                {ts_schemas.data(), ts_schemas.size()}, {arg_tags.data(), arg_tags.size()},
+                explicit_key_meta);
 
             const TSValueTypeMetaData *output_schema = nullptr;
             MapNodeSpec                map_spec;
@@ -2687,7 +2745,8 @@ namespace hgraph::stdlib
                     element_schema, classified.key_meta, std::string{mesh_name});
                 auto pop = make_scope_exit([] noexcept { OperatorRegistry::instance().pop_mesh_scope(); });
                 map_spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
-                                             {arg_tags.data(), arg_tags.size()}, output_schema, &captured);
+                                             {arg_tags.data(), arg_tags.size()}, output_schema, &captured,
+                                             explicit_key_meta);
             }
 
             for (WiringPortRef &outer : captured)
@@ -3098,7 +3157,8 @@ namespace hgraph::stdlib
             {
                 const MapArgClassification classified =
                     classify_map_args({ordered->schemas.data(), ordered->schemas.size()},
-                                      {ordered->arg_tags.data(), ordered->arg_tags.size()});
+                                      {ordered->arg_tags.data(), ordered->arg_tags.size()},
+                                      keys_kwarg_element(context));
                 const auto *output_schema = TypeRegistry::instance().tsd(classified.key_meta, element);
                 bind_graph_output(resolution, output_schema, "O");
             }
@@ -3115,7 +3175,9 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
                 const auto *collection = first_map_collection(context);
-                return time_series_schema_as<AnyTSD>(collection) != nullptr;
+                return collection != nullptr
+                           ? time_series_schema_as<AnyTSD>(collection) != nullptr
+                           : keys_kwarg_element(context) != nullptr;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)

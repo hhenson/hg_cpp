@@ -490,7 +490,12 @@ Wiring and node-authoring surface
        folds, and ordered contiguous-integer TSD/tuple reduction with a live
        seed. Arbitrary graph/node and sink functions map over grow-only dynamic
        TSLs through stable in-place child slots; compatible lifted scalar
-       kernels retain their single-node fast path.
+       kernels retain their single-node fast path. Python mesh self-reference
+       follows the reference API: ``mesh_(func)[key]``, ``mesh_("name")[key]``,
+       and ``get_mesh(func_or_name)`` return a lazy ``MeshWiringPort``;
+       ``mesh_ref`` remains a C++ implementation primitive rather than a
+       public Python function. Explicit ``__keys__`` also supports key-only
+       mesh functions.
    * - ``dispatch_``
      - Full for Bundle values
      - Native ``dispatch_cases`` / ``dispatch_case`` wiring builds a closed

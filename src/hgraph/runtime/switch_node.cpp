@@ -117,7 +117,8 @@ namespace hgraph
             }
         }
 
-        void bind_branch_output(const NodeView &view, const SingleNestedGraphNodeSpec &spec, const GraphView &child,
+        void bind_branch_output(const NodeView &view, const SwitchNodeContext &context,
+                                const SingleNestedGraphNodeSpec &spec, const GraphView &child,
                                 DateTime evaluation_time)
         {
             if (!spec.output_binding.has_value()) { return; }
@@ -149,16 +150,44 @@ namespace hgraph
                 return;
             }
 
+            if (context.spec.output_forwards_to_child_terminal)
+            {
+                if (!switch_output.forwarding())
+                {
+                    throw std::logic_error(
+                        "switch_ output must be forwarding when preserving a branch terminal");
+                }
+                // Keep the stable terminal in the chain rather than flattening
+                // its current forwarding target. Dynamic terminals such as
+                // mesh_subscribe may re-point while the branch evaluates.
+                if (!switch_output.forwarding_target().same_as(branch_terminal.handle()))
+                {
+                    switch_output.bind_forwarding_target(branch_terminal);
+                }
+                return;
+            }
+
             bind_forwarding_output_to_source(branch_terminal, switch_output);
         }
 
-        void clear_branch_output(const NodeView &view, const SingleNestedGraphNodeSpec &spec,
+        void clear_branch_output(const NodeView &view, const SwitchNodeContext &context,
+                                 const SingleNestedGraphNodeSpec &spec,
                                  DateTime evaluation_time)
         {
             if (!spec.output_binding.has_value()) { return; }
 
             const NestedGraphOutputBinding &binding = *spec.output_binding;
             if (binding.kind != NestedGraphOutputBinding::Kind::ChildOutput) { return; }
+
+            if (context.spec.output_forwards_to_child_terminal)
+            {
+                auto output = walk_ts_path(view.output(evaluation_time), binding.target_path);
+                if (output.forwarding() && output.forwarding_bound())
+                {
+                    output.clear_forwarding_target();
+                }
+                return;
+            }
 
             auto switch_view = view.as<SwitchNodeView>();
             auto &storage = *MemoryUtils::cast<SwitchNodeStorage>(switch_view.internal_storage());
@@ -197,11 +226,15 @@ namespace hgraph
             return nullptr;
         }
 
-        void switch_teardown(const NodeView &view, SwitchNodeStorage &storage, DateTime evaluation_time)
+        void switch_teardown(const NodeView &view, const SwitchNodeContext &context,
+                             SwitchNodeStorage &storage, DateTime evaluation_time)
         {
             GraphValue *active = storage.active_graph();
             if (active == nullptr || !active->has_value()) { return; }
-            if (storage.active_spec != nullptr) { clear_branch_output(view, *storage.active_spec, evaluation_time); }
+            if (storage.active_spec != nullptr)
+            {
+                clear_branch_output(view, context, *storage.active_spec, evaluation_time);
+            }
             active->view().stop();
             reset_switch_output(view, evaluation_time);
             storage.previous_slot = storage.active_slot;
@@ -237,12 +270,12 @@ namespace hgraph
             bind_branch_inputs(view, spec, next, evaluation_time, true);
             construction_rollback.release();
 
-            switch_teardown(view, storage, evaluation_time);
+            switch_teardown(view, context, storage, evaluation_time);
             storage.active_slot = next_slot;
             storage.active_key  = std::move(key);
             storage.active_spec = &spec;
 
-            bind_branch_output(view, spec, next, evaluation_time);
+            bind_branch_output(view, context, spec, next, evaluation_time);
             // Selecting a branch samples the current boundary values once.
             // This is an explicit switch_ lifecycle operation: activating an
             // input only subscribes it and must never synthesize scheduling or
@@ -292,7 +325,7 @@ namespace hgraph
                 // its cached next scheduled time back to this node before returning.
                 const SingleNestedGraphNodeSpec &spec = *storage.active_spec;
                 bind_branch_inputs(view, spec, active->view(), evaluation_time);
-                bind_branch_output(view, spec, active->view(), evaluation_time);
+                bind_branch_output(view, context, spec, active->view(), evaluation_time);
                 return active->view().evaluate(evaluation_time);
             }
             return true;
@@ -306,8 +339,9 @@ namespace hgraph
         void switch_node_stop(const NodeView &view, DateTime evaluation_time)
         {
             auto  switch_view = view.as<SwitchNodeView>();
+            const auto &context = *static_cast<const SwitchNodeContext *>(switch_view.internal_context());
             auto &storage     = *MemoryUtils::cast<SwitchNodeStorage>(switch_view.internal_storage());
-            switch_teardown(view, storage, evaluation_time);
+            switch_teardown(view, context, storage, evaluation_time);
         }
     }  // namespace
 
@@ -391,7 +425,9 @@ namespace hgraph
         meta.node_kind = NodeKind::Nested;
         if (meta.output_schema != nullptr)
         {
-            meta.output_endpoint_schema = TSEndpointSchema::owned(meta.output_schema);
+            meta.output_endpoint_schema = spec.output_forwards_to_child_terminal
+                                              ? TSEndpointSchema::peered(meta.output_schema)
+                                              : TSEndpointSchema::owned(meta.output_schema);
         }
 
         NodeTypeDescriptor descriptor;

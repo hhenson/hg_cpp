@@ -157,6 +157,15 @@ scalar varargs lifting, mutually recursive CompoundScalar registration,
 ``RESET`` and recorder compatibility APIs, and generic websocket adaptor
 registration over the native concrete implementations.
 
+The mesh Python-surface follow-on passed fresh macOS arm64/AppleClang 21 and
+Ubuntu 24.04 x86_64/GCC 13.3 Release gates with warnings as errors:
+1095/1095 native tests passed on each platform. Fresh ``cp312-abi3`` wheels
+installed under Python 3.14.6 produced 1229 passed, 19 skipped, and 6
+deselected on each platform. Python self-reference now matches ``ext/main``
+through ``mesh_(func)[key]`` / ``get_mesh(func_or_name)`` and a lazy
+``MeshWiringPort``; native key-only meshes driven by explicit ``__keys__``
+close the associated call-shape gap.
+
 These are execution results, not collection-only inventory.
 
 Replacement Readiness

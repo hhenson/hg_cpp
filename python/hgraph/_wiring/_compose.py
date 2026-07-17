@@ -15,17 +15,66 @@ def map_(func, *args, **kwargs):
     return wire("map_", _as_wired(func), *args, **kwargs)
 
 
-def mesh_(func, *args, **kwargs):
-    """hgraph's mesh_: map_ over a TSD whose per-key instances may read each
-    other's outputs via ``mesh_ref(key)`` inside the mesh function, creating
-    instances on demand and evaluating in dependency order."""
+def _mesh_name(fn_or_name):
+    if isinstance(fn_or_name, str):
+        return fn_or_name
+    name = getattr(fn_or_name, "__name__", None)
+    if not name:
+        raise TypeError("get_mesh expects a mesh name or a named wiring function")
+    return name
+
+
+class MeshWiringPort(WiringPort):
+    """A reference to the enclosing mesh, matching ext/main's Python API.
+
+    Indexing wires a sibling subscription. Treating the object as a normal
+    time-series port lazily materializes the mesh key-set forwarding node.
+    """
+
+    __slots__ = ("_mesh_name", "_key_set_port")
+
+    def __init__(self, name):
+        self._mesh_name = name
+        self._key_set_port = None
+
+    @property
+    def _port(self):
+        if self._key_set_port is None:
+            self._key_set_port = _hgraph.mesh_key_set_ref(
+                _current_wiring(), self._mesh_name)
+        return self._key_set_port
+
+    @property
+    def key_set(self):
+        return WiringPort(self._port)
+
+    def __getitem__(self, item):
+        return WiringPort(_hgraph.mesh_ref(
+            _current_wiring(), _unwrap(item), self._mesh_name))
+
+
+def get_mesh(fn_or_name):
+    """Return the named enclosing mesh, or ``None`` outside its wiring scope."""
+    name = _mesh_name(fn_or_name)
+    return MeshWiringPort(name) if _hgraph.mesh_scope_exists(name) else None
+
+
+def mesh_(func, *args, __name__=None, __keys__=None, __key_arg__=None, **kwargs):
+    """Map a graph over a TSD, or reference the enclosing mesh with no inputs.
+
+    ``mesh_(func, inputs...)`` constructs a mesh. Inside its function,
+    ``mesh_(func)[key]`` (or ``get_mesh(func)[key]``) reads a sibling output.
+    """
+    if not args and not kwargs and __keys__ is None:
+        return get_mesh(__name__ or func)
+
+    kwargs = dict(kwargs)
+    kwargs["__name__"] = __name__ or _mesh_name(func)
+    if __keys__ is not None:
+        kwargs["__keys__"] = __keys__
+    if __key_arg__ is not None:
+        kwargs["__key_arg__"] = __key_arg__
     return wire("mesh_", _as_wired(func), *args, **kwargs)
-
-
-def mesh_ref(key, name=""):
-    """Cross-instance access inside a mesh function: the sibling instance's
-    output for ``key`` (pausing until that sibling has produced it)."""
-    return WiringPort(_hgraph.mesh_ref(_current_wiring(), _unwrap(key), name))
 
 
 def reduce(func, ts, zero=None, is_associative=True, **kwargs):
@@ -316,6 +365,20 @@ def _resolve_requested_target(op_name, target, inputs, keys=None):
     return _TsExpr(handle, "inferred")
 
 
+# Adaptor-provided convert targets (e.g. Frame - hgraph.adaptors.data_frame):
+# each handler is tried with (target, inputs, kwargs) BEFORE registry
+# resolution and returns a WiringPort to claim the call or None to decline.
+# This mirrors upstream, where the frame converters register only when the
+# adaptor module is imported; target kinds the registry cannot pattern-match
+# (frame-of-schema has no generic pattern) resolve here at wiring instead.
+_convert_target_handlers = []
+
+
+def register_convert_target_handler(handler):
+    if handler not in _convert_target_handlers:
+        _convert_target_handlers.append(handler)
+
+
 class _Convert:
     """hgraph's convert: ``convert[TO](ts)`` or ``convert(ts, to)``. The
     target may be GENERIC (bare TSD/TSS/TSB, unparameterized TS[Tuple] /
@@ -349,6 +412,11 @@ class _Convert:
 
         if target is None:
             raise WiringError("convert requires a target type")
+
+        for handler in _convert_target_handlers:
+            port = handler(target, inputs, kwargs)
+            if port is not None:
+                return port
 
         if not isinstance(target, _TsExpr):
             target = _resolve_requested_target("convert", target, inputs, keys=kwargs.get("keys"))

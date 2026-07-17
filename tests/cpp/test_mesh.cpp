@@ -58,6 +58,12 @@ namespace
         static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts) { return ts; }
     };
 
+    struct KeyIdentityG
+    {
+        static constexpr auto name = "mesh_key_identity_g";
+        static Port<TS<Int>> compose(Wiring &, NamedPort<"key", TS<Int>> key) { return key; }
+    };
+
     struct CounterNode
     {
         static constexpr auto name = "mesh_tick_counter";
@@ -157,6 +163,40 @@ namespace
                        stdlib::switch_cases({{Value{Str{"double"}}, fn<SwitchDoubleG>()},
                                              {Value{Str{"negate"}}, fn<SwitchNegateG>()}}),
                        value)
+                .as<TS<Int>>();
+        }
+    };
+
+    struct MeshSwitchZeroG
+    {
+        static constexpr auto name = "mesh_switch_zero_g";
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>>)
+        {
+            return wire<stdlib::const_, TS<Int>>(w, Int{10});
+        }
+    };
+
+    struct MeshSwitchRefG
+    {
+        static constexpr auto name = "mesh_switch_ref_g";
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>>)
+        {
+            auto zero = wire<stdlib::const_, TS<Int>>(w, Int{0});
+            return stdlib::mesh_ref<TS<Int>>(w, zero);
+        }
+    };
+
+    struct SwitchWithMeshRefG
+    {
+        static constexpr auto name = "switch_with_mesh_ref_g";
+        static Port<TS<Int>> compose(Wiring &w, NamedPort<"key", TS<Int>> key)
+        {
+            return wire<stdlib::switch_>(
+                       w, key,
+                       stdlib::switch_cases(
+                           {{Value{Int{0}}, fn<MeshSwitchZeroG>()}},
+                           fn<MeshSwitchRefG>()),
+                       key)
                 .as<TS<Int>>();
         }
     };
@@ -448,6 +488,33 @@ TEST_CASE("mesh_: named key-set access forwards the mesh output key set")
                      values<Value>(dict_delta<Str, TS<Str>>({{"a"s, "b"s}, {"b"s, "x"s}})),
                      arg<"__name__">(Str{"named_mesh"}))),
                  values<Value>(dict_delta<Str, TS<Bool>>({{"a"s, true}, {"b"s, false}})));
+}
+
+TEST_CASE("mesh_: explicit keys can drive a key-only function")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSS<Int>>(
+                     fn<KeyIdentityG>(),
+                     arg<"__keys__">(values<Value>(set_delta<Int>({1, 2}, {}),
+                                                   set_delta<Int>({3}, {1}))))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}}),
+                               dict_delta<Int, TS<Int>>({{3, 3}}, {1})));
+}
+
+TEST_CASE("mesh_: mesh_ref inside a switch branch preserves the dynamic terminal")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // Requested key 1 selects the mesh-ref branch, which creates key 0 on
+    // demand. The switch must preserve mesh_ref's forwarding endpoint while
+    // the mesh pauses key 1, evaluates key 0, and resumes the branch.
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSS<Int>>(
+                     fn<SwitchWithMeshRefG>(),
+                     arg<"__keys__">(values<Value>(set_delta<Int>({1}, {}))))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{0, 10}, {1, 10}})));
 }
 
 TEST_CASE("mesh_: cross-instance access settles a dependency chain in one cycle")

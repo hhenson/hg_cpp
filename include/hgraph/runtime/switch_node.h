@@ -29,6 +29,12 @@ namespace hgraph
         std::vector<SwitchBranch>                branches{};
         std::optional<SingleNestedGraphNodeSpec> default_branch{};
         bool                                     reload_on_ticked{false};
+        /**
+         * Preserve branch terminals that own forwarding or structural endpoint
+         * topology. The switch output then forwards to the active terminal
+         * instead of re-homing that terminal onto switch-owned storage.
+         */
+        bool output_forwards_to_child_terminal{false};
     };
 
     /**
@@ -68,10 +74,12 @@ namespace hgraph
      * tick with ``reload_on_ticked``) the inactive slot is reused for the new
      * branch and the old active child is stopped. That stopped child remains in
      * the previous slot until the following switch, when its destructor runs
-     * before the slot is reused. The switch node owns one fixed output. Normal
-     * branches write into it directly; a VALUE branch under a REF-shaped switch
-     * owns its output in its graph slot and the switch publishes a reference to
-     * that terminal.
+     * before the slot is reused. The switch node normally owns one fixed output
+     * and branches write into it directly. If a branch terminal already owns a
+     * forwarding or structural endpoint, the switch preserves that topology and
+     * its output forwards to the active terminal instead. A VALUE branch under a
+     * REF-shaped switch owns its output in its graph slot and the switch publishes
+     * a reference to that terminal.
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder switch_node(NodeTypeMetaData meta, SwitchNodeSpec spec);
 }  // namespace hgraph

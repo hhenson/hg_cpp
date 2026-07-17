@@ -800,11 +800,11 @@ def test_services_from_python():
 
 
 def test_mesh_from_python():
-    # mesh_: per-key instances read each other via mesh_ref, created on
+    # mesh_: per-key instances read each other via mesh_(fn)[key], created on
     # demand and evaluated in dependency order (the C++ ChainFn topology).
     @graph
     def dep(key: TS[int], link: TS[int]) -> TS[int]:
-        return key + hg.default(hg.mesh_ref(link), hg.const(0, tp=TS[int]))
+        return key + hg.default(hg.mesh_(dep)[link], hg.const(0, tp=TS[int]))
 
     @graph
     def chain(links: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
@@ -839,6 +839,52 @@ def test_mesh_from_python():
         check(False, "expected a decoration error")
     except TypeError as e:
         check("@graph" in str(e), f"unexpected: {e}")
+
+
+def test_mesh_python_reference_surface():
+    @graph
+    def has_previous(key: TS[int]) -> TS[bool]:
+        mesh = hg.mesh_("numbers")
+        assert isinstance(mesh, hg.MeshWiringPort)
+        assert mesh is not None
+        return hg.contains_(mesh, key - 1)
+
+    @graph
+    def contains_previous(keys: hg.TSS[int]) -> TSD[int, TS[bool]]:
+        return hg.mesh_(has_previous, __keys__=keys, __name__="numbers")
+
+    assert eval_node(contains_previous, [{1}, {2}, {4}, {3}]) == [
+        {1: False}, {2: True}, {4: False}, {3: True, 4: True}
+    ]
+
+    @graph
+    def has_previous_by_function(key: TS[int]) -> TS[bool]:
+        mesh = hg.get_mesh(has_previous_by_function)
+        assert isinstance(mesh, hg.MeshWiringPort)
+        return hg.contains_(mesh, key - 1)
+
+    @graph
+    def contains_previous_by_function(keys: hg.TSS[int]) -> TSD[int, TS[bool]]:
+        return hg.mesh_(has_previous_by_function, __keys__=keys)
+
+    assert eval_node(contains_previous_by_function, [{1}, {2}]) == [
+        {1: False}, {2: True}
+    ]
+
+    @graph
+    def value_from_zero(key: TS[int]) -> TS[int]:
+        return hg.switch_(key, {
+            0: lambda _: hg.const(10),
+            hg.DEFAULT: lambda _: hg.mesh_("constant-key")[0],
+        }, key)
+
+    @graph
+    def lookup_constant_key(keys: hg.TSS[int]) -> TSD[int, TS[int]]:
+        return hg.mesh_(value_from_zero, __keys__=keys, __name__="constant-key")
+
+    assert eval_node(lookup_constant_key, [{1}])[0][1] == 10
+    assert hg.get_mesh(has_previous) is None
+    assert not hasattr(hg, "mesh_ref")
 
 
 def test_adaptor_from_python():

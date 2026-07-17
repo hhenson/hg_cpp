@@ -41,7 +41,8 @@ per-key inputs and writes ``output[key]``.
 Cross-instance access and on-demand creation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Inside ``func`` (or any graph wired within the mesh's scope) a mesh reference
+Inside ``func`` (or any graph wired within the mesh's scope),
+``mesh_(func)[k]`` or ``get_mesh(func)[k]`` in Python
 (``mesh_ref<OUT>(w, k)`` in C++) reads the result of the instance for key ``k``:
 
 - if an instance for ``k`` already exists, the reference reads its output;
@@ -53,10 +54,12 @@ Inside ``func`` (or any graph wired within the mesh's scope) a mesh reference
 ``k`` is an ordinary ``TS[K]`` value computed at runtime (dynamic keys); a single
 requester may reference different keys over time.
 
-An instance may also inspect the enclosing mesh's live output key set with
-``mesh_keys_ref<K>(w[, name])``. This is a forwarding reference to the mesh
-``TSD`` output's ``key_set()`` projection, not a copied set value, so ordinary
-operators such as ``contains_`` and ``len_`` observe the mesh key set directly.
+An instance may also inspect the enclosing mesh's live output key set through
+the Python ``MeshWiringPort`` returned by ``mesh_(func)`` / ``get_mesh(func)``
+or with ``mesh_keys_ref<K>(w[, name])`` in C++. This is a forwarding reference
+to the mesh ``TSD`` output's ``key_set()`` projection, not a copied set value,
+so ordinary operators such as ``contains_`` and ``len_`` observe the mesh key
+set directly.
 
 Same-cycle settlement
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -108,8 +111,10 @@ mesh and its sub-graphs are wired and popped afterwards).
 A consumer in the same graph as the mesh references it directly; a deeper
 consumer references it through the scoped context.
 
-Nested meshes may be named with ``arg<"__name__">(Str{"name"})``. ``mesh_ref``
-and ``mesh_keys_ref`` accept the same optional name and resolve the innermost
+Nested meshes may be named with Python's ``__name__`` argument or C++
+``arg<"__name__">(Str{"name"})``. Python resolves them with
+``mesh_("name")`` / ``get_mesh("name")``; C++ ``mesh_ref`` and
+``mesh_keys_ref`` take the same optional name. Both resolve the innermost
 matching mesh scope, which disambiguates nested meshes without changing runtime
 graph structure.
 

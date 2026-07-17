@@ -256,18 +256,61 @@ namespace hgraph::python_bridge
         }
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
 
-    // mesh_(func)[k] cross-instance access, called inside a mesh function.
-    m.def("mesh_ref", [](PyWiring &w, const PyPort &key, const std::string &name) {
+    m.def("mesh_scope_exists", [](const std::string &name) {
+        return OperatorRegistry::instance().resolve_mesh_scope(name) != nullptr;
+    }, nb::arg("name") = std::string{});
+
+    // Internal primitives behind Python's MeshWiringPort. The public Python
+    // surface is mesh_(func)[key] / get_mesh(func), matching ext/main.
+    m.def("mesh_ref", [](PyWiring &w, nb::handle key, const std::string &name) {
         const TSValueTypeMetaData *out_schema = OperatorRegistry::instance().resolve_mesh_scope(name);
         if (out_schema == nullptr)
         {
-            throw std::logic_error("mesh_ref used outside a mesh scope (no enclosing mesh is being wired)");
+            throw std::logic_error("mesh_(func)[key] used outside a mesh scope (no enclosing mesh is being wired)");
         }
+        const ValueTypeMetaData *key_type = OperatorRegistry::instance().resolve_mesh_key_scope(name);
+        if (key_type == nullptr) { throw std::logic_error("mesh scope has no resolved key type"); }
+
+        WiringPortRef key_ref;
+        if (nb::isinstance<PyPort>(key))
+        {
+            key_ref = nb::cast<const PyPort &>(key).ref;
+            if (TypeRegistry::instance().dereference(key_ref.schema) != TypeRegistry::instance().ts(key_type))
+            {
+                throw std::invalid_argument("mesh lookup key type does not match the enclosing mesh key type");
+            }
+        }
+        else
+        {
+            WiringArg arg;
+            arg.kind         = WiringArg::Kind::Scalar;
+            arg.scalar_value = py_to_value_as(key, key_type);
+            arg.scalar_meta  = key_type;
+            const std::array<WiringArg, 1> args{std::move(arg)};
+            key_ref = wire_operator(w.wiring_ref(), "const", args, true,
+                                    TypeRegistry::instance().ts(key_type)).output.erased();
+        }
+
         WiringPortRef placeholder =
             wire_operator(w.wiring_ref(), "nothing", std::span<const WiringArg>{}, true, out_schema)
                 .output.erased();
-        return PyPort{stdlib::higher_order_impl_detail::mesh_ref_erased(w.wiring_ref(), key.ref, placeholder, name)};
+        return PyPort{stdlib::higher_order_impl_detail::mesh_ref_erased(
+            w.wiring_ref(), key_ref, placeholder, name)};
     }, nb::arg("w"), nb::arg("key"), nb::arg("name") = std::string{});
+
+    m.def("mesh_key_set_ref", [](PyWiring &w, const std::string &name) {
+        const ValueTypeMetaData *key_type = OperatorRegistry::instance().resolve_mesh_key_scope(name);
+        if (key_type == nullptr)
+        {
+            throw std::logic_error("get_mesh used outside a mesh scope (no enclosing mesh is being wired)");
+        }
+        const TSValueTypeMetaData *key_set_schema = TypeRegistry::instance().tss(key_type);
+        WiringPortRef placeholder =
+            wire_operator(w.wiring_ref(), "nothing", std::span<const WiringArg>{}, true, key_set_schema)
+                .output.erased();
+        return PyPort{stdlib::higher_order_impl_detail::mesh_key_set_ref_erased(
+            w.wiring_ref(), placeholder, key_type, name)};
+    }, nb::arg("w"), nb::arg("name") = std::string{});
 
     m.def("service_impl_input", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path) {
         return PyPort{service_impl_input(w.wiring_ref(), *desc.descriptor, path)};
