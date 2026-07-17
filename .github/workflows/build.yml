@@ -280,7 +280,8 @@ jobs:
           assert len(wheels) == 1, wheels
           subprocess.check_call([
               sys.executable, "-m", "pip", "install", "--upgrade",
-              str(wheels[0]), "pytest>=8", "frozendict>=2.4", "trove-classifiers",
+              str(wheels[0]), "pytest>=8", "frozendict>=2.4", "tornado>=6.5",
+              "trove-classifiers",
           ])
       - name: Confirm installed distribution
         run: python -c "import importlib.metadata as m; import _hgraph; print(m.version('hg_cpp'), _hgraph.__file__)"
