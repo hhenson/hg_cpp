@@ -42,15 +42,14 @@ dependencies = [
 [project.optional-dependencies]
 python = [
     "nanobind>=2.12",
+    "frozendict>=2.4",
 ]
 test = [
-    "frozendict>=2.4",
     "pytest>=8",
     "tornado>=6.5",
     "trove-classifiers",
 ]
 web = [
-    "frozendict>=2.4",
     "tornado>=6.5",
 ]
 docs = [

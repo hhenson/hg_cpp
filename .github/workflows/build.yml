@@ -265,11 +265,15 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: python -m pip install --upgrade uv
       - uses: actions/download-artifact@v7
         with:
           name: distribution-wheel-${{ matrix.os }}
           path: dist
-      - name: Install wheel and test dependencies
+      - name: Sync test dependencies
+        run: uv sync --frozen --all-extras --all-groups --no-install-project --python ${{ matrix.python-version }}
+      - name: Install wheel
         shell: python
         run: |
           from pathlib import Path
@@ -278,15 +282,16 @@ jobs:
 
           wheels = list(Path("dist").glob("*.whl"))
           assert len(wheels) == 1, wheels
+          venv_python = Path(".venv") / (
+              "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+          )
           subprocess.check_call([
-              sys.executable, "-m", "pip", "install", "--upgrade",
-              str(wheels[0]), "pytest>=8", "frozendict>=2.4", "tornado>=6.5",
-              "trove-classifiers",
+              "uv", "pip", "install", "--python", str(venv_python), str(wheels[0]),
           ])
       - name: Confirm installed distribution
-        run: python -c "import importlib.metadata as m; import _hgraph; print(m.version('hg_cpp'), _hgraph.__file__)"
+        run: uv run --no-sync python -c "import importlib.metadata as m; import _hgraph; print(m.version('hg_cpp'), _hgraph.__file__)"
       - name: Run Python compatibility suite
-        run: python -m pytest python/tests -q -m "not wip"
+        run: uv run --no-sync python -m pytest python/tests -q -m "not wip"
 
   native-cpp:
     name: Native C++ / ${{ matrix.os }}
