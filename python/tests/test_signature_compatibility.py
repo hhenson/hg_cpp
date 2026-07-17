@@ -1,0 +1,249 @@
+import inspect
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import TypeVar
+
+import pytest
+
+import hgraph as hg
+
+
+def _parameters(callable_):
+    return tuple(inspect.signature(callable_).parameters)
+
+
+def test_shared_callable_signatures_match_python_authoring_surface():
+    assert _parameters(hg.GraphConfiguration) == (
+        "run_mode", "start_time", "end_time", "trace", "profile",
+        "life_cycle_observers", "trace_wiring", "wiring_observers",
+        "graph_logger", "trace_back_depth", "capture_values",
+        "default_log_level", "logger_formatter", "cleanup_on_error",
+    )
+    assert _parameters(hg.compute_node) == (
+        "fn", "node_impl", "active", "valid", "all_valid", "overloads",
+        "resolvers", "requires", "label", "deprecated",
+    )
+    assert _parameters(hg.sink_node) == _parameters(hg.compute_node)
+    assert _parameters(hg.graph) == (
+        "fn", "overloads", "resolvers", "requires", "label", "deprecated",
+    )
+    assert _parameters(hg.generator) == _parameters(hg.graph)
+    assert _parameters(hg.component) == (
+        "fn", "recordable_id", "resolvers", "label", "deprecated",
+    )
+    assert _parameters(hg.push_queue) == (
+        "tp", "overloads", "resolvers", "requires", "label", "deprecated",
+        "conflate",
+    )
+    assert _parameters(hg.feedback) == ("tp_or_wp", "default")
+    assert tuple(inspect.signature(hg.dispatch_).parameters)[:2] == (
+        "overloaded", "args")
+    assert {"__trace__", "__trace_wiring__", "__observers__"} <= set(
+        inspect.signature(hg.eval_node).parameters)
+    for decorator in (
+            hg.reference_service, hg.subscription_service,
+            hg.request_reply_service, hg.adaptor, hg.service_adaptor):
+        assert _parameters(decorator) == ("fn", "resolvers")
+    assert _parameters(hg.register_service)[:3] == (
+        "path", "implementation", "resolution_dict")
+    assert _parameters(hg.register_adaptor)[:3] == (
+        "path", "implementation", "resolution_dict")
+
+
+def test_compute_node_all_valid_uses_native_structural_validity():
+    @hg.compute_node(all_valid=("tsl",))
+    def all_children(tsl: hg.TSL[hg.TS[int], hg.Size[2]]) -> hg.TS[bool]:
+        return True
+
+    assert hg.eval_node(all_children, [{0: 1}, {1: 2}]) == [None, True]
+
+
+def test_graph_configuration_honours_run_mode_and_logger():
+    observed = []
+
+    @hg.compute_node
+    def inspect_run(
+            ts: hg.TS[int],
+            engine: hg.EvaluationEngineApi = None,
+            logger: hg.LOGGER = None) -> hg.TS[str]:
+        observed.append(logger)
+        return engine.evaluation_mode
+
+    @hg.graph
+    def app() -> hg.TS[str]:
+        return inspect_run(hg.const(1))
+
+    logger = logging.getLogger("hgraph.signature-compatibility")
+    start_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    end_time = start_time + timedelta(seconds=0.25)
+    result = hg.evaluate_graph(
+        app,
+        hg.GraphConfiguration(
+            run_mode=hg.EvaluationMode.REAL_TIME,
+            start_time=start_time,
+            end_time=end_time,
+            graph_logger=logger,
+            default_log_level=logging.WARNING,
+        ),
+    )
+
+    assert [value for _, value in result] == [hg.EvaluationMode.REAL_TIME]
+    assert observed == [logger]
+    assert logger.level == logging.WARNING
+
+
+def test_graph_configuration_rejects_unimplemented_options_explicitly():
+    @hg.graph
+    def app() -> hg.TS[int]:
+        return hg.const(1)
+
+    with pytest.raises(NotImplementedError, match="trace, profile"):
+        hg.evaluate_graph(app, hg.GraphConfiguration(trace=True, profile=True))
+    with pytest.raises(TypeError):
+        hg.GraphConfiguration(unknown_option=True)
+
+
+def test_graph_generator_and_component_resolvers():
+    @hg.graph(resolvers={hg.SIZE: lambda mapping, width: width})
+    def resolved_graph(
+            width: int,
+            size: type[hg.SIZE] = hg.AUTO_RESOLVE) -> hg.TS[int]:
+        return hg.const(size.SIZE)
+
+    @hg.generator(resolvers={hg.SCALAR: lambda mapping, scalar_type: scalar_type})
+    def resolved_source(scalar_type: type) -> hg.TS[hg.SCALAR]:
+        yield hg.MIN_ST, 7
+
+    @hg.component(resolvers={hg.SIZE: lambda mapping, width: width})
+    def resolved_component(
+            ts: hg.TS[int],
+            width: int,
+            size: type[hg.SIZE] = hg.AUTO_RESOLVE) -> hg.TS[int]:
+        return ts + hg.const(size.SIZE)
+
+    @hg.graph
+    def source_graph() -> hg.TS[int]:
+        return resolved_source(int)
+
+    assert hg.eval_node(resolved_graph, width=3) == [3]
+    assert hg.eval_node(source_graph) == [7]
+    assert hg.eval_node(resolved_component, [1, 2], width=3) == [4, 5]
+
+
+def test_deprecated_node_warns_at_wiring_and_node_impl_is_explicitly_rejected():
+    @hg.compute_node(deprecated="use replacement")
+    def old_node(ts: hg.TS[int]) -> hg.TS[int]:
+        return ts.value
+
+    with pytest.warns(DeprecationWarning, match="use replacement"):
+        assert hg.eval_node(old_node, [1]) == [1]
+
+    with pytest.raises(NotImplementedError, match="legacy Python-runtime"):
+        hg.compute_node(None, object())
+
+
+def test_service_resolvers_and_registration_resolution_dict():
+    request_type = TypeVar("request_type", int, str)
+    response_type = TypeVar("response_type", int, float)
+
+    @hg.request_reply_service(resolvers={response_type: lambda mapping: int})
+    def resolved_service(
+            request: hg.TS[request_type]) -> hg.TS[response_type]: ...
+
+    concrete_service = resolved_service[
+        request_type:int, response_type:int]
+
+    @hg.service_impl(interfaces=concrete_service)
+    def resolved_impl(
+            requests: hg.TSD[int, hg.TS[int]]) -> hg.TSD[int, hg.TS[int]]:
+        return requests
+
+    payload = TypeVar("payload", int, str)
+
+    @hg.request_reply_service
+    def registered_service(request: hg.TS[payload]) -> hg.TS[payload]: ...
+
+    @hg.service_impl(interfaces=registered_service)
+    def registered_impl(
+            requests: hg.TSD[int, hg.TS[payload]],
+    ) -> hg.TSD[int, hg.TS[payload]]:
+        return requests
+
+    @hg.service_adaptor
+    def registered_adaptor(request: hg.TS[payload]) -> hg.TS[payload]: ...
+
+    @hg.service_adaptor_impl(interfaces=registered_adaptor)
+    def registered_adaptor_impl(
+            requests: hg.TSD[int, hg.TS[payload]],
+    ) -> hg.TSD[int, hg.TS[payload]]:
+        return requests
+
+    @hg.graph
+    def resolved_app(value: hg.TS[int]) -> hg.TS[int]:
+        hg.register_service("resolved", resolved_impl)
+        return resolved_service(value, path="resolved")
+
+    @hg.graph
+    def registered_app(value: hg.TS[int]) -> hg.TS[int]:
+        hg.register_service(
+            "registered", registered_impl, resolution_dict={payload: int})
+        return registered_service[payload:int](value, path="registered")
+
+    @hg.graph
+    def registered_adaptor_app(value: hg.TS[int]) -> hg.TS[int]:
+        hg.register_adaptor(
+            "registered-adaptor",
+            registered_adaptor_impl,
+            resolution_dict={payload: int},
+        )
+        return registered_adaptor[payload:int](
+            value, path="registered-adaptor")
+
+    end_time = hg.MIN_ST + 4 * hg.MIN_TD
+    assert hg.eval_node(resolved_app, [1], __end_time__=end_time) == [None, 1]
+    assert hg.eval_node(registered_app, [2], __end_time__=end_time) == [None, 2]
+    assert hg.eval_node(
+        registered_adaptor_app, [3], __end_time__=end_time) == [None, 3]
+
+
+def test_push_queue_options_feedback_keyword_and_eval_node_trace_defaults():
+    @hg.operator
+    def queued_value(scalar_type: type) -> hg.TS[hg.SCALAR]: ...
+
+    @hg.push_queue(
+        hg.TS[hg.SCALAR],
+        overloads=queued_value,
+        resolvers={hg.SCALAR: lambda mapping, scalar_type: scalar_type},
+        requires=lambda mapping, scalar_type: scalar_type is int,
+        label="typed queue",
+    )
+    def source(sender, scalar_type: type):
+        sender(5)
+
+    @hg.graph
+    def queue_graph() -> hg.TS[int]:
+        return queued_value(int)
+
+    @hg.graph
+    def delayed(ts: hg.TS[int]) -> hg.TS[int]:
+        return hg.feedback(tp_or_wp=ts, default=None)()
+
+    start_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    end_time = start_time + timedelta(seconds=0.25)
+    queued = hg.run_graph(
+        queue_graph,
+        run_mode=hg.EvaluationMode.REAL_TIME,
+        start_time=start_time,
+        end_time=end_time,
+    )
+    assert [value for _, value in queued] == [5]
+    assert hg.eval_node(
+        delayed,
+        [1, None],
+        __trace__=False,
+        __trace_wiring__=False,
+        __observers__=[],
+        __end_time__=hg.MIN_ST + 3 * hg.MIN_TD,
+    ) == [None, 1]
+    with pytest.raises(NotImplementedError, match="__trace__"):
+        hg.eval_node(delayed, [1], __trace__=True)

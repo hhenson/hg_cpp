@@ -243,9 +243,11 @@ namespace
             {
                 case 't':
                 case 'u':
+                case 'a':
                 case 'C': bundle[ts_index++].make_active(); break;
                 case 'T':
                 case 'U':
+                case 'A':
                 case 'P': bundle[ts_index++].make_passive(); break;
                 default: break;
             }
@@ -271,6 +273,7 @@ namespace
             {
                 case 't':
                 case 'u':
+                case 'a':
                 case 'C': {
                     auto child = bundle[ts_index++];
                     if (child.valid() && TypeRegistry::contains_ref(child.schema()))
@@ -282,6 +285,7 @@ namespace
                 }
                 case 'T':
                 case 'U':
+                case 'A':
                 case 'P': ++ts_index; break;
                 default: break;
             }
@@ -301,9 +305,11 @@ namespace
             {
                 case 't':
                 case 'u':
+                case 'a':
                 case 'C':
                 case 'T':
                 case 'U':
+                case 'A':
                 case 'P': bundle[ts_index++].make_passive(); break;
                 default: break;
             }
@@ -341,7 +347,8 @@ namespace
         {
             return shape.kw_names.empty() && shape.layout.size() == 1 &&
                    (shape.layout.front() == 't' || shape.layout.front() == 'u' ||
-                    shape.layout.front() == 'T' || shape.layout.front() == 'U');
+                    shape.layout.front() == 'T' || shape.layout.front() == 'U' ||
+                    shape.layout.front() == 'a' || shape.layout.front() == 'A');
         }
     };
 
@@ -363,6 +370,7 @@ namespace
         {
             return false;
         }
+        if ((kind == 'a' || kind == 'A') && !evaluation_data.all_valid()) { return false; }
         // The LAZY C++ TimeSeries view: nothing converts unless the python
         // code touches it. The lease expires after the callback.
         const auto evaluation_storage = evaluation_data.valid()
@@ -384,6 +392,7 @@ namespace
         {
             return false;
         }
+        if ((kind == 'a' || kind == 'A') && !evaluation_data.all_valid()) { return false; }
         const auto evaluation_storage = evaluation_data.valid()
                                             ? evaluation_data.storage_ref()
                                             : TSDataStorageRef<>{};
@@ -431,9 +440,11 @@ namespace
             {
                 case 't':
                 case 'u':
+                case 'a':
                 case 'C':
                 case 'T':
                 case 'U':
+                case 'A':
                 case 'P': {
                     auto child = bundle[ts_index++];
                     nb::object ts_obj;
@@ -508,6 +519,8 @@ namespace
                 case 'u':
                 case 'T':
                 case 'U':
+                case 'a':
+                case 'A':
                 case 's': break;
                 default: return false;
             }
@@ -530,7 +543,9 @@ namespace
                 case 't':
                 case 'u':
                 case 'T':
-                case 'U': {
+                case 'U':
+                case 'a':
+                case 'A': {
                     nb::object ts_obj;
                     if (!py_make_ts_arg(kind, bundle[ts_index++], lease, ts_obj)) { return false; }
                     call_args.append(ts_obj);
@@ -800,7 +815,8 @@ namespace
 
             const bool direct = shape.kw_names.empty() && shape.layout.size() == 1 &&
                                 (shape.layout.front() == 't' || shape.layout.front() == 'u' ||
-                                 shape.layout.front() == 'T' || shape.layout.front() == 'U');
+                                 shape.layout.front() == 'T' || shape.layout.front() == 'U' ||
+                                 shape.layout.front() == 'a' || shape.layout.front() == 'A');
             TSInputView cached_input = args.base().borrowed_ref();
             if (direct)
             {

@@ -10,6 +10,7 @@ from ._sentinels import REMOVE, Removed, _SetDelta
 
 _global_state_local = threading.local()
 _GLOBAL_MISSING = object()
+_GRAPH_LOGGER_KEY = "__hgraph_graph_logger__"
 
 
 def _friendly_recording_delta(delta):

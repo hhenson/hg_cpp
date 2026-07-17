@@ -74,6 +74,17 @@ namespace
         }
     };
 
+    struct AllValidProbe
+    {
+        static constexpr auto name = "all_valid_probe";
+
+        static void eval(In<"values", TSL<TS<Int>, 2>, InputValidity::AllValid>,
+                         Out<TS<Bool>> out)
+        {
+            out.set(true);
+        }
+    };
+
     struct ActiveRelay
     {
         static constexpr auto name = "active_relay";
@@ -334,6 +345,17 @@ TEST_CASE("static node: input policy flags are reflected into node metadata")
     CHECK(view.schema()->structural_inputs == std::vector<std::size_t>{3});
     CHECK(*view.schema()->valid_inputs == std::vector<std::size_t>{0});
     CHECK(view.schema()->all_valid_inputs == std::vector<std::size_t>{2});
+}
+
+TEST_CASE("static node: all-valid inputs guard evaluation through public eval_node")
+{
+    using namespace hgraph;
+
+    const std::vector<std::optional<Value>> input{
+        list_delta<TS<Int>>({{0, 1}}),
+        list_delta<TS<Int>>({{1, 2}}),
+    };
+    CHECK_OUTPUT(testing::eval_node<AllValidProbe>(input), {std::nullopt, Bool{true}});
 }
 
 TEST_CASE("static node: set_delta construction survives value registry resets")

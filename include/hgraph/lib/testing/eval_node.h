@@ -153,8 +153,8 @@ namespace hgraph::testing
             using type = void;
         };
 
-        template <typename NodeT, fixed_string Name, typename Schema, typename... Rest>
-        struct first_input_element_impl<NodeT, In<Name, Schema>, Rest...>
+        template <typename NodeT, fixed_string Name, typename Schema, auto... Policies, typename... Rest>
+        struct first_input_element_impl<NodeT, In<Name, Schema, Policies...>, Rest...>
         {
             using type = typename ts_harness<Schema>::element;
         };

@@ -1,6 +1,7 @@
 """_PyNode: Python user-node wiring (signature binding + call
 normalisation), @compute_node/@sink_node, lift, @generator, push_queue."""
 import inspect
+import warnings
 
 import _hgraph
 
@@ -13,6 +14,14 @@ from ._markers import (LOGGER, STATE, _INJECTABLE_MARKERS, _MISSING,
                        _RecordableStateExpr, _annotation_ts_kind,
                        _is_object_vt, _tsw_kind, _unbounded_tuple_kind)
 from ._operator import _register_overload, _run_requires
+from ._state import GlobalState, _GRAPH_LOGGER_KEY
+
+
+def _warn_deprecated(name, deprecated):
+    if not deprecated:
+        return
+    message = deprecated if isinstance(deprecated, str) else f"'{name}' is deprecated"
+    warnings.warn(message, DeprecationWarning, stacklevel=3)
 
 class _PyNode:
     """@compute_node / @sink_node: a Python function as a runtime node. The
@@ -23,8 +32,8 @@ class _PyNode:
     compute node's return value ticks its output (None = no tick). It must
     have no side effects beyond its output."""
 
-    def __init__(self, fn, has_output, active=None, valid=None, resolvers=None,
-                 node_type=None):
+    def __init__(self, fn, has_output, active=None, valid=None, all_valid=None,
+                 resolvers=None, node_type=None, label=None, deprecated=False):
         self._wiring_signature = inspect.signature(fn)
         var_params = [p for p in self._wiring_signature.parameters.values()
                       if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
@@ -55,12 +64,17 @@ class _PyNode:
         # (m, **scalars) evaluated once the call's scalars are known.
         self._active_fn = active if callable(active) else None
         self._valid_fn = valid if callable(valid) else None
+        self._all_valid_fn = all_valid if callable(all_valid) else None
         self._active = None if callable(active) else self._policy_names("active", active)
         self._valid = None if callable(valid) else self._policy_names("valid", valid)
+        self._all_valid = (
+            None if callable(all_valid) else self._policy_names("all_valid", all_valid))
         self._resolvers = dict(resolvers) if resolvers else None
         self._requires = None
         self._pins = {}
         self._node_type = node_type
+        self._label = label
+        self._deprecated = deprecated
         self._start_fn = None
         self._stop_fn = None
         self.__name__ = fn.__name__
@@ -81,13 +95,21 @@ class _PyNode:
             # time-series parameters too - they resolve from the wired ports.
             if isinstance(param.annotation, (_TsExpr, _ContextExpr, _GenericTsExpr, _TypeVarSentinel))
         }
-        for policy, names in (("active", self._active), ("valid", self._valid)):
+        self._ts_names = ts_names
+        for policy, names in (("active", self._active), ("valid", self._valid),
+                              ("all_valid", self._all_valid)):
             if names is None:
                 continue
             unknown = names - ts_names
             if unknown:
                 rendered = ", ".join(sorted(unknown))
                 raise TypeError(f"{self.__name__}: {policy}= contains non-time-series input(s): {rendered}")
+        if self._valid is not None and self._all_valid is not None:
+            overlap = self._valid & self._all_valid
+            if overlap:
+                rendered = ", ".join(sorted(overlap))
+                raise TypeError(
+                    f"{self.__name__}: valid= and all_valid= overlap: {rendered}")
         # Injectable parameters MUST default to None (hgraph convention):
         # the default guarantees user code in a graph never supplies them.
         for param in self._params:
@@ -338,6 +360,7 @@ class _PyNode:
     def __call__(self, *args, **kwargs):
         from .._types import _pattern_of
 
+        _warn_deprecated(self.__name__, self._deprecated)
         kwargs.pop("__recordable_id__", None)
         ref = _hgraph.node_ref(self.fn)
         layout, ports, scalars, reference_shapes = [], [], [], []
@@ -362,12 +385,41 @@ class _PyNode:
                 value = param.default
             if value is not _MISSING and not isinstance(value, WiringPort):
                 scalar_values[param.name] = value
+        # Resolve concrete input patterns before evaluating resolver-backed
+        # active/valid policies. Upstream policy callables receive the final
+        # resolution map, not an empty pre-binding scope.
+        for param in self._params:
+            value = bound.arguments.get(param.name, _MISSING)
+            if isinstance(value, WiringPort) and isinstance(
+                    param.annotation, (_TsExpr, _GenericTsExpr, _TypeVarSentinel)):
+                self._check_binding(scope, param, value)
+        if self._resolvers:
+            self._apply_resolvers(scope, scalar_values)
         active_policy = self._active
         valid_policy = self._valid
+        all_valid_policy = self._all_valid
         if self._active_fn is not None:
             active_policy = self._eval_policy("active", self._active_fn, scope, scalar_values)
         if self._valid_fn is not None:
             valid_policy = self._eval_policy("valid", self._valid_fn, scope, scalar_values)
+        if self._all_valid_fn is not None:
+            all_valid_policy = self._eval_policy(
+                "all_valid", self._all_valid_fn, scope, scalar_values)
+        for policy, names in (("active", active_policy), ("valid", valid_policy),
+                              ("all_valid", all_valid_policy)):
+            if names is None:
+                continue
+            unknown = names - self._ts_names
+            if unknown:
+                rendered = ", ".join(sorted(unknown))
+                raise TypeError(
+                    f"{self.__name__}: {policy}= contains non-time-series input(s): {rendered}")
+        if valid_policy is not None and all_valid_policy is not None:
+            overlap = valid_policy & all_valid_policy
+            if overlap:
+                rendered = ", ".join(sorted(overlap))
+                raise TypeError(
+                    f"{self.__name__}: valid= and all_valid= overlap: {rendered}")
         # Var-args parity (upstream model): the *args group packs into ONE
         # TSL (or structural TSB when so annotated), **kwargs into ONE named
         # TSB (or TSD); the rewritten fn receives every parameter BY NAME.
@@ -387,6 +439,8 @@ class _PyNode:
             return wire("const", entry)
 
         def _group_layout(param):
+            if all_valid_policy is not None and param.name in all_valid_policy:
+                return "a" if active_policy is None or param.name in active_policy else "A"
             required = valid_policy is None or param.name in valid_policy
             is_active = active_policy is None or param.name in active_policy
             return {(True, True): "t", (True, False): "u",
@@ -442,7 +496,8 @@ class _PyNode:
                     raise TypeError(f"{self.__name__}: injectable '{param.name}' cannot be supplied")
                 import logging
 
-                logger = logging.getLogger("hgraph")
+                logger = GlobalState.instance().get(
+                    _GRAPH_LOGGER_KEY, logging.getLogger("hgraph"))
                 layout.append("s")   # process-wide logger: a plain object scalar
                 _note(param.name)
                 scalars.append(logger)
@@ -496,6 +551,18 @@ class _PyNode:
                     value = wire("const", value, output_type=param.annotation)
             if isinstance(value, WiringPort):
                 self._check_binding(scope, param, value)
+                if all_valid_policy is not None and param.name in all_valid_policy:
+                    layout.append(
+                        "a" if active_policy is None or param.name in active_policy else "A")
+                    _note(param.name)
+                    ports.append(_unwrap(value))
+                    requested = self._requested_input_shape(
+                        scope, param.annotation, value)
+                    reference_shapes.append(
+                        requested
+                        if requested is not None and _hgraph.ref_target(requested) != requested
+                        else False)
+                    continue
                 required = valid_policy is None or param.name in valid_policy
                 is_active = active_policy is None or param.name in active_policy
                 layout.append({(True, True): "t", (True, False): "u",
@@ -521,8 +588,6 @@ class _PyNode:
             if verdict is not True:
                 reason = verdict if isinstance(verdict, str) else "requirements not met"
                 raise RequirementsNotMetWiringError(f"{self.__name__}: {reason}")
-        if self._resolvers:
-            self._apply_resolvers(scope, scalar_values)
         packed = WiringPort(_hgraph.bundle_port(ports, reference_shapes))
         config = "".join(layout)
         kw_names = [n for n, named in zip(layout_names, layout_by_name) if named]
@@ -573,8 +638,18 @@ class _PyNode:
         return wire("__py_sink", packed, **node_kwargs)
 
 
-def _make_py_node(fn, *, has_output, active, valid, resolvers, overloads, requires):
-    node = _PyNode(fn, has_output=has_output, active=active, valid=valid, resolvers=resolvers)
+def _make_py_node(fn, *, has_output, active, valid, all_valid, resolvers,
+                  overloads, requires, label, deprecated):
+    node = _PyNode(
+        fn,
+        has_output=has_output,
+        active=active,
+        valid=valid,
+        all_valid=all_valid,
+        resolvers=resolvers,
+        label=label,
+        deprecated=deprecated,
+    )
     if overloads is not None:
         _register_overload(overloads, node, requires)
     elif requires is not None:
@@ -584,32 +659,52 @@ def _make_py_node(fn, *, has_output, active, valid, resolvers, overloads, requir
     return node
 
 
-def compute_node(fn=None, *, active=None, valid=None, resolvers=None, overloads=None,
-                 requires=None, label=None):
+def compute_node(fn=None, /, node_impl=None, active=None, valid=None, all_valid=None,
+                 overloads=None, resolvers=None, requires=None, label=None,
+                 deprecated=False):
     """Python runtime compute node.
 
     ``active`` names the inputs that drive invocation; ``valid`` names the
-    inputs required to be valid (either accepts a wiring-time callable
-    ``(m, **scalars)``). ``resolvers`` maps type variables to wiring-time
-    resolver callables. ``overloads=`` registers this node as a candidate
-    of an @operator (or built-in operator) family; ``requires=`` guards its
-    selection. ``label`` is accepted for hgraph parity (diagnostics)."""
-    del label   # parity only: node naming rides the function identity
+    inputs required to be valid; and ``all_valid`` requires every child of a
+    selected structured input to be valid. Each policy accepts a wiring-time
+    callable ``(m, **scalars)``. ``resolvers`` maps type variables to
+    wiring-time resolver callables. ``overloads=`` registers this node as a
+    candidate of an @operator family; ``requires=`` guards its selection.
+
+    ``node_impl`` selects an implementation class from the retired Python
+    runtime and is intentionally unavailable in the C++-first runtime.
+    """
+    if node_impl is not None:
+        raise NotImplementedError(
+            "compute_node(node_impl=...) is a legacy Python-runtime extension; "
+            "implement the callable directly or provide a native C++ node")
     if fn is None:
-        return lambda f: _make_py_node(f, has_output=True, active=active, valid=valid,
-                                       resolvers=resolvers, overloads=overloads, requires=requires)
-    return _make_py_node(fn, has_output=True, active=active, valid=valid,
-                         resolvers=resolvers, overloads=overloads, requires=requires)
+        return lambda f: _make_py_node(
+            f, has_output=True, active=active, valid=valid, all_valid=all_valid,
+            resolvers=resolvers, overloads=overloads, requires=requires,
+            label=label, deprecated=deprecated)
+    return _make_py_node(
+        fn, has_output=True, active=active, valid=valid, all_valid=all_valid,
+        resolvers=resolvers, overloads=overloads, requires=requires,
+        label=label, deprecated=deprecated)
 
 
-def sink_node(fn=None, *, active=None, valid=None, resolvers=None, overloads=None,
-              requires=None, label=None):
-    del label
+def sink_node(fn=None, /, node_impl=None, active=None, valid=None, all_valid=None,
+              overloads=None, resolvers=None, requires=None, label=None,
+              deprecated=False):
+    if node_impl is not None:
+        raise NotImplementedError(
+            "sink_node(node_impl=...) is a legacy Python-runtime extension; "
+            "implement the callable directly or provide a native C++ node")
     if fn is None:
-        return lambda f: _make_py_node(f, has_output=False, active=active, valid=valid,
-                                       resolvers=resolvers, overloads=overloads, requires=requires)
-    return _make_py_node(fn, has_output=False, active=active, valid=valid,
-                         resolvers=resolvers, overloads=overloads, requires=requires)
+        return lambda f: _make_py_node(
+            f, has_output=False, active=active, valid=valid, all_valid=all_valid,
+            resolvers=resolvers, overloads=overloads, requires=requires,
+            label=label, deprecated=deprecated)
+    return _make_py_node(
+        fn, has_output=False, active=active, valid=valid, all_valid=all_valid,
+        resolvers=resolvers, overloads=overloads, requires=requires,
+        label=label, deprecated=deprecated)
 
 def lift(fn, inputs=None, output=None, active=None, valid=None, all_valid=None,
          dedup_output=False, defaults=None):
@@ -652,7 +747,9 @@ def lift(fn, inputs=None, output=None, active=None, valid=None, all_valid=None,
     _lifted.__annotations__ = annotations
     _lifted.__signature__ = sig.replace(parameters=parameters,
                                         return_annotation=annotations["return"])
-    node = _PyNode(_lifted, has_output=True, active=active, valid=valid)
+    node = _PyNode(
+        _lifted, has_output=True, active=active, valid=valid,
+        all_valid=all_valid)
     if not dedup_output:
         return node
 
@@ -676,10 +773,15 @@ class _Generator:
     pairs; each pair is emitted at its ABSOLUTE time. Wiring-time arguments
     are captured per call (each call is a distinct source node)."""
 
-    def __init__(self, fn):
+    def __init__(self, fn, *, resolvers=None, requires=None, label=None,
+                 deprecated=False):
         self.fn = fn
         self.__name__ = fn.__name__
         self._out_tp = inspect.signature(fn).return_annotation
+        self._resolvers = dict(resolvers) if resolvers else None
+        self._requires = requires
+        self._label = label
+        self._deprecated = deprecated
 
     @property
     def signature(self):
@@ -688,20 +790,46 @@ class _Generator:
         return extract_signature(self.fn, WiringNodeType.PULL_SOURCE_NODE)
 
     def __call__(self, *args, **kwargs):
-        if not isinstance(self._out_tp, _TsExpr):
+        _warn_deprecated(self.__name__, self._deprecated)
+        bound_call = inspect.signature(self.fn).bind(*args, **kwargs)
+        bound_call.apply_defaults()
+        scalar_values = dict(bound_call.arguments)
+        scope = _hgraph.ResolutionScope()
+        if self._resolvers:
+            for name, resolver in self._resolvers.items():
+                params = list(inspect.signature(resolver).parameters)
+                call = {key: scalar_values.get(key) for key in params[1:]}
+                _PyNode._bind_resolved(
+                    scope, _type_var_name(name), resolver(scope.bindings, **call))
+        if self._requires is not None:
+            verdict = _run_requires(self._requires, scope.bindings, scalar_values)
+            if verdict is not True:
+                reason = verdict if isinstance(verdict, str) else "requirements not met"
+                raise RequirementsNotMetWiringError(f"{self.__name__}: {reason}")
+        out_tp = self._out_tp
+        if isinstance(out_tp, (_GenericTsExpr, _TypeVarSentinel)):
+            from .._types import _pattern_of
+
+            resolved = scope.resolve_ts(_pattern_of(out_tp))
+            if resolved is not None:
+                out_tp = _TsExpr(resolved, f"resolved[{out_tp!r}]")
+        if not isinstance(out_tp, _TsExpr):
             raise TypeError(f"@generator '{self.__name__}' needs a TS[...] return annotation")
-        fn, call_args, call_kwargs = self.fn, args, kwargs
+        fn, call_args, call_kwargs = self.fn, bound_call.args, bound_call.kwargs
 
         def bound():
             return fn(*call_args, **call_kwargs)
 
         ref = _hgraph.node_ref(bound)
-        return wire("__py_generator", fn=ref, output_type=self._out_tp)
+        return wire("__py_generator", fn=ref, output_type=out_tp)
 
 
-def generator(fn=None, *, overloads=None, requires=None):
+def generator(fn=None, overloads=None, resolvers=None, requires=None, label=None,
+              deprecated=False):
     def _make(f):
-        wrapped = _Generator(f)
+        wrapped = _Generator(
+            f, resolvers=resolvers, requires=requires, label=label,
+            deprecated=deprecated)
         if overloads is not None:
             _register_overload(overloads, wrapped, requires)
         return wrapped
@@ -716,25 +844,75 @@ class _PushQueue:
     (plus any wiring-time scalars as kwargs) once the real-time graph is
     running. sender(value) is thread-safe from any Python thread."""
 
-    def __init__(self, fn, tp, conflate):
+    def __init__(self, fn, tp, conflate, *, resolvers=None, requires=None,
+                 label=None, deprecated=False):
         self.fn = fn
         self.tp = tp
         self.conflate = conflate
         self.__name__ = fn.__name__
+        signature = inspect.signature(fn)
+        parameters = list(signature.parameters.values())
+        if not parameters:
+            raise TypeError(f"@push_queue '{self.__name__}' requires a sender parameter")
+        self._signature = signature.replace(
+            parameters=parameters[1:], return_annotation=tp)
+        self._wiring_signature = self._signature
+        self.__signature__ = self._signature
+        self._resolvers = dict(resolvers) if resolvers else None
+        self._requires = requires
+        self._label = label
+        self._deprecated = deprecated
 
-    def __call__(self, **scalars):
+    @property
+    def signature(self):
+        from .._signature import WiringNodeType, extract_signature
+
+        return extract_signature(self, WiringNodeType.PUSH_SOURCE_NODE)
+
+    def __call__(self, *args, **kwargs):
+        _warn_deprecated(self.__name__, self._deprecated)
+        bound_call = self._signature.bind(*args, **kwargs)
+        bound_call.apply_defaults()
+        scalar_values = dict(bound_call.arguments)
+        scope = _hgraph.ResolutionScope()
+        if self._resolvers:
+            for name, resolver in self._resolvers.items():
+                params = list(inspect.signature(resolver).parameters)
+                call = {key: scalar_values.get(key) for key in params[1:]}
+                _PyNode._bind_resolved(
+                    scope, _type_var_name(name), resolver(scope.bindings, **call))
+        if self._requires is not None:
+            verdict = _run_requires(self._requires, scope.bindings, scalar_values)
+            if verdict is not True:
+                reason = verdict if isinstance(verdict, str) else "requirements not met"
+                raise RequirementsNotMetWiringError(f"{self.__name__}: {reason}")
+        out_tp = self.tp
+        if isinstance(out_tp, (_GenericTsExpr, _TypeVarSentinel)):
+            from .._types import _pattern_of
+
+            resolved = scope.resolve_ts(_pattern_of(out_tp))
+            if resolved is not None:
+                out_tp = _TsExpr(resolved, f"resolved[{out_tp!r}]")
+        if not isinstance(out_tp, _TsExpr):
+            raise TypeError(f"@push_queue '{self.__name__}' needs a resolved TS[...] output type")
         w = _current_wiring()
         fn = self.fn
 
         def on_start(sender):
-            fn(sender.send, **scalars)
+            fn(sender.send, *bound_call.args, **bound_call.kwargs)
 
-        port, _sender = w.push_source(_unwrap(self.tp), self.conflate, on_start)
+        port, _sender = w.push_source(_unwrap(out_tp), self.conflate, on_start)
         return WiringPort(port)
 
 
-def push_queue(tp, conflate=False):
+def push_queue(tp, overloads=None, resolvers=None, requires=None, label=None,
+               deprecated=False, *, conflate=False):
     def decorator(fn):
-        return _PushQueue(fn, tp, conflate)
+        wrapped = _PushQueue(
+            fn, tp, conflate, resolvers=resolvers, requires=requires,
+            label=label, deprecated=deprecated)
+        if overloads is not None:
+            _register_overload(overloads, wrapped, requires)
+        return wrapped
 
     return decorator

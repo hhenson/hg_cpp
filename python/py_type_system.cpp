@@ -588,7 +588,7 @@ namespace hgraph::python_bridge
     m.def(
         "register_python_overload",
         [](const std::string &name, nb::list params, nb::object output, nb::object wire_fn,
-           nb::object requires_fn, bool variadic, bool has_kwargs,
+           nb::object resolver_fn, nb::object requires_fn, bool variadic, bool has_kwargs,
            std::optional<std::size_t> positional_params) {
             OperatorImpl impl;
             impl.name       = name;
@@ -644,6 +644,28 @@ namespace hgraph::python_bridge
                 if (impl.has_output) { out += " -> " + ts_pattern_to_string(impl.output); }
                 return out;
             }();
+            if (!resolver_fn.is_none())
+            {
+                impl.default_resolver = [resolver_fn](ResolutionMap &map,
+                                                      OperatorCallContext context) {
+                    nb::gil_scoped_acquire gil;
+                    PyResolutionScope      scope;
+                    scope.map = map;
+                    nb::dict scalars;
+                    for (std::size_t i = 0; i < context.args.size() && i < context.params.size(); ++i)
+                    {
+                        if (context.params[i].kind == ParamPattern::Kind::Scalar &&
+                            context.args[i].kind == WiringArg::Kind::Scalar &&
+                            context.args[i].scalar_value.has_value())
+                        {
+                            scalars[nb::str(context.params[i].name.c_str())] =
+                                value_to_py(context.args[i].scalar_value.view());
+                        }
+                    }
+                    nb::object resolved = resolver_fn(nb::cast(scope), scalars);
+                    map = nb::cast<PyResolutionScope &>(resolved).map;
+                };
+            }
             if (!requires_fn.is_none())
             {
                 impl.requires_predicate = [requires_fn](const ResolutionMap &map,
@@ -697,7 +719,8 @@ namespace hgraph::python_bridge
             OperatorRegistry::instance().register_overload(std::move(impl));
         },
         nb::arg("name"), nb::arg("params"), nb::arg("output").none(), nb::arg("wire_fn"),
-        nb::arg("requires_fn").none() = nb::none(), nb::arg("variadic") = false,
+        nb::arg("resolver_fn").none() = nb::none(), nb::arg("requires_fn").none() = nb::none(),
+        nb::arg("variadic") = false,
         nb::arg("has_kwargs") = false, nb::arg("positional_params") = nb::none());
     }
 }  // namespace hgraph::python_bridge

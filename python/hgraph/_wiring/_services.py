@@ -9,6 +9,7 @@ from .._types import (_GenericTsExpr, _TsExpr, _TypeVarSentinel,
                       _value_type)
 from ._core import WiringError, WiringPort, _current_wiring, _unwrap
 from ._graph import _wrap_graph_fn
+from ._node import _PyNode, _warn_deprecated
 
 
 _TS_ANNOTATIONS = (_TsExpr, _GenericTsExpr)
@@ -23,10 +24,27 @@ def _resolved_service_path(stub, path):
     return resolver(path) if resolver is not None else path
 
 
-def _specialization(item, owner):
+def _apply_service_resolvers(resolution, resolvers):
+    for sentinel, resolver in (resolvers or {}).items():
+        name = _type_var_name(sentinel)
+        if name in resolution.bindings:
+            continue
+        resolved = resolver(resolution.bindings)
+        _PyNode._bind_resolved(resolution, name, resolved)
+    return resolution
+
+
+def _specialization_label(resolution):
+    segments = []
+    for name, value in resolution.bindings.items():
+        label = value.name if isinstance(value, _hgraph.ValueType) else repr(value)
+        segments.append(f"{name}={label}")
+    return ",".join(sorted(segments))
+
+
+def _specialization(item, owner, resolvers=None):
     items = item if isinstance(item, tuple) else (item,)
     resolution = _hgraph.ResolutionScope()
-    segments = []
     for binding in items:
         if not isinstance(binding, slice) or binding.step is not None:
             raise TypeError(
@@ -42,32 +60,25 @@ def _specialization(item, owner):
                 allowed = ", ".join(getattr(value, "__name__", repr(value)) for value in constraints)
                 raise TypeError(f"{name} must be one of {allowed}, got {meta.name}")
             resolution.bind_scalar(name, meta)
-            label = meta.name
         else:
             meta = concrete.handle if isinstance(concrete, _TsExpr) else concrete
             resolution.bind_ts(name, meta)
-            label = repr(meta)
-        segments.append(f"{name}={label}")
-    return resolution, ",".join(sorted(segments))
+    _apply_service_resolvers(resolution, resolvers)
+    return resolution, _specialization_label(resolution)
 
 
-def _inferred_specialization(fn, request_annotation, request):
+def _inferred_specialization(fn, request_annotation, request, resolvers=None):
     resolution = _hgraph.ResolutionScope()
     actual = _unwrap(request).ts_type
     if not resolution.match(_pattern_of(request_annotation), actual):
         raise TypeError(
             f"generic adaptor '{fn.__name__}' request does not match its type pattern")
-    segments = []
-    for name, value in resolution.bindings.items():
-        if isinstance(value, _hgraph.ValueType):
-            label = value.name
-        else:
-            label = repr(value)
-        segments.append(f"{name}={label}")
-    if not segments:
+    _apply_service_resolvers(resolution, resolvers)
+    specialization = _specialization_label(resolution)
+    if not specialization:
         raise TypeError(
             f"generic adaptor '{fn.__name__}' could not infer its type specialization")
-    return resolution, ",".join(sorted(segments))
+    return resolution, specialization
 
 
 def _resolve_annotation(annotation, resolution):
@@ -108,11 +119,14 @@ class _ServiceStub:
     """A service interface stub (hgraph's service decorators): calling it
     wires a CLIENT; register_service registers an implementation."""
 
-    def __init__(self, fn, flavour, *, resolution=None, specialization=""):
+    def __init__(self, fn, flavour, *, resolution=None, specialization="",
+                 resolvers=None, deprecated=False):
         self.fn = fn
         self.__name__ = fn.__name__
         self.flavour = flavour
         self._specialization = specialization
+        self._resolvers = dict(resolvers) if resolvers else None
+        self._deprecated = deprecated
         sig = inspect.signature(fn)
         params = [p for p in sig.parameters.values() if _is_ts_annotation(p.annotation)]
         self._request_annotation = params[0].annotation if params else None
@@ -155,9 +169,12 @@ class _ServiceStub:
         if self.descriptor is not None and not self._specialization:
             raise TypeError(f"service '{self.__name__}' is not generic")
 
-        resolution, specialization = _specialization(item, f"service '{self.__name__}'")
+        resolution, specialization = _specialization(
+            item, f"service '{self.__name__}'", self._resolvers)
         result = _ServiceStub(
-            self.fn, self.flavour, resolution=resolution, specialization=specialization)
+            self.fn, self.flavour, resolution=resolution,
+            specialization=specialization, resolvers=self._resolvers,
+            deprecated=self._deprecated)
         if result.descriptor is None:
             raise TypeError(
                 f"service '{self.__name__}' specialization leaves an unresolved time-series type")
@@ -177,12 +194,26 @@ class _ServiceStub:
         return path if path.endswith(suffix) else f"{path}{suffix}"
 
     def __call__(self, ts=None, *, path=""):
+        _warn_deprecated(self.__name__, self._deprecated)
         if isinstance(ts, str):
             # hgraph's reference-service call shape: the interface takes
             # ``path`` as its (only) positional parameter.
             path, ts = ts, None
+        stub = self
+        if self.descriptor is None:
+            if ts is not None and self._request_annotation is not None:
+                resolution, specialization = _inferred_specialization(
+                    self.fn, self._request_annotation, ts, self._resolvers)
+            else:
+                resolution = _apply_service_resolvers(
+                    _hgraph.ResolutionScope(), self._resolvers)
+                specialization = _specialization_label(resolution)
+            stub = _ServiceStub(
+                self.fn, self.flavour, resolution=resolution,
+                specialization=specialization, resolvers=self._resolvers,
+                deprecated=self._deprecated)
         w = _current_wiring()
-        port = _hgraph.service_client(w, self._require_descriptor(), self._resolved_path(path),
+        port = _hgraph.service_client(w, stub._require_descriptor(), stub._resolved_path(path),
                                       None if ts is None else _unwrap(ts))
         return WiringPort(port)
 
@@ -195,22 +226,28 @@ class _ServiceStub:
         impl_output(self, out, path)
 
 
-def reference_service(fn):
+def reference_service(fn=None, resolvers=None):
     """The service interface stub for a reference service: the return
     annotation is the shared output type; calling the stub wires a client."""
-    return _ServiceStub(fn, "reference")
+    if fn is None:
+        return lambda f: _ServiceStub(f, "reference", resolvers=resolvers)
+    return _ServiceStub(fn, "reference", resolvers=resolvers)
 
 
-def subscription_service(fn):
+def subscription_service(fn=None, resolvers=None):
     """Subscription-service stub: first TS param = the subscription key,
     return annotation = the per-key value; call with the key time-series."""
-    return _ServiceStub(fn, "subscription")
+    if fn is None:
+        return lambda f: _ServiceStub(f, "subscription", resolvers=resolvers)
+    return _ServiceStub(fn, "subscription", resolvers=resolvers)
 
 
-def request_reply_service(fn):
+def request_reply_service(fn=None, resolvers=None):
     """Request/reply stub: first TS param = the request, return annotation
     = the response; call with the request time-series."""
-    return _ServiceStub(fn, "request_reply")
+    if fn is None:
+        return lambda f: _ServiceStub(f, "request_reply", resolvers=resolvers)
+    return _ServiceStub(fn, "request_reply", resolvers=resolvers)
 
 
 class _AdaptorStub:
@@ -218,11 +255,13 @@ class _AdaptorStub:
     graph-side input (optional), the return annotation the graph-side output
     (optional). Calling the stub wires a CLIENT."""
 
-    def __init__(self, fn, *, resolution=None, specialization=""):
+    def __init__(self, fn, *, resolution=None, specialization="",
+                 resolvers=None):
         self.fn = fn
         self.__name__ = fn.__name__
         self.flavour = "adaptor"
         self._specialization = specialization
+        self._resolvers = dict(resolvers) if resolvers else None
         sig = inspect.signature(fn)
         params = [p for p in sig.parameters.values() if _is_ts_annotation(p.annotation)]
         self._request_annotation = params[0].annotation if params else None
@@ -254,9 +293,11 @@ class _AdaptorStub:
     def __getitem__(self, item):
         if self.descriptor is not None and not self._specialization:
             raise TypeError(f"adaptor '{self.__name__}' is not generic")
-        resolution, specialization = _specialization(item, f"adaptor '{self.__name__}'")
+        resolution, specialization = _specialization(
+            item, f"adaptor '{self.__name__}'", self._resolvers)
         result = _AdaptorStub(
-            self.fn, resolution=resolution, specialization=specialization)
+            self.fn, resolution=resolution, specialization=specialization,
+            resolvers=self._resolvers)
         if result.descriptor is None:
             raise TypeError(
                 f"adaptor '{self.__name__}' specialization leaves an unresolved time-series type")
@@ -276,19 +317,25 @@ class _AdaptorStub:
     def __call__(self, ts=None, *, path=""):
         stub = self
         if self.descriptor is None:
-            if ts is None or self._request_annotation is None:
-                self._require_descriptor()
-            resolution, specialization = _inferred_specialization(
-                self.fn, self._request_annotation, ts)
+            if ts is not None and self._request_annotation is not None:
+                resolution, specialization = _inferred_specialization(
+                    self.fn, self._request_annotation, ts, self._resolvers)
+            else:
+                resolution = _apply_service_resolvers(
+                    _hgraph.ResolutionScope(), self._resolvers)
+                specialization = _specialization_label(resolution)
             stub = _AdaptorStub(
-                self.fn, resolution=resolution, specialization=specialization)
+                self.fn, resolution=resolution, specialization=specialization,
+                resolvers=self._resolvers)
         port = _hgraph.adaptor_client(_current_wiring(), stub._require_descriptor(), stub._resolved_path(path),
                                       None if ts is None else _unwrap(ts))
         return None if port is None else WiringPort(port)
 
 
-def adaptor(fn):
-    return _AdaptorStub(fn)
+def adaptor(fn=None, resolvers=None):
+    if fn is None:
+        return lambda f: _AdaptorStub(f, resolvers=resolvers)
+    return _AdaptorStub(fn, resolvers=resolvers)
 
 
 class _ServiceAdaptorStub:
@@ -296,11 +343,13 @@ class _ServiceAdaptorStub:
     ``TSD[int, request]`` for the implementation and demultiplexed from its
     ``TSD[int, response]`` result by the native runtime."""
 
-    def __init__(self, fn, *, resolution=None, specialization=""):
+    def __init__(self, fn, *, resolution=None, specialization="",
+                 resolvers=None):
         self.fn = fn
         self.__name__ = fn.__name__
         self.flavour = "service_adaptor"
         self._specialization = specialization
+        self._resolvers = dict(resolvers) if resolvers else None
         sig = inspect.signature(fn)
         params = [p for p in sig.parameters.values() if _is_ts_annotation(p.annotation)]
         if len(params) != 1:
@@ -330,9 +379,10 @@ class _ServiceAdaptorStub:
         if self.descriptor is not None and not self._specialization:
             raise TypeError(f"service adaptor '{self.__name__}' is not generic")
         resolution, specialization = _specialization(
-            item, f"service adaptor '{self.__name__}'")
+            item, f"service adaptor '{self.__name__}'", self._resolvers)
         result = _ServiceAdaptorStub(
-            self.fn, resolution=resolution, specialization=specialization)
+            self.fn, resolution=resolution, specialization=specialization,
+            resolvers=self._resolvers)
         if result.descriptor is None:
             raise TypeError(
                 f"service adaptor '{self.__name__}' specialization leaves an unresolved time-series type")
@@ -370,9 +420,10 @@ class _ServiceAdaptorStub:
         stub = self
         if self.descriptor is None:
             resolution, specialization = _inferred_specialization(
-                self.fn, self._request_annotation, request)
+                self.fn, self._request_annotation, request, self._resolvers)
             stub = _ServiceAdaptorStub(
-                self.fn, resolution=resolution, specialization=specialization)
+                self.fn, resolution=resolution, specialization=specialization,
+                resolvers=self._resolvers)
         return WiringPort(_hgraph.service_adaptor_client(
             _current_wiring(), stub._require_descriptor(), stub._resolved_path(path), _unwrap(request)))
 
@@ -390,8 +441,10 @@ class _AdaptorImplGroup:
         impl_output(self, out, self._resolved_path(path))
 
 
-def service_adaptor(fn):
-    return _ServiceAdaptorStub(fn)
+def service_adaptor(fn=None, resolvers=None):
+    if fn is None:
+        return lambda f: _ServiceAdaptorStub(f, resolvers=resolvers)
+    return _ServiceAdaptorStub(fn, resolvers=resolvers)
 
 
 def from_graph(stub, path=""):
@@ -415,14 +468,17 @@ def to_graph(stub, out, path=""):
     _hgraph.adaptor_to_graph(_current_wiring(), descriptor, path, out=_unwrap(out))
 
 
-def register_adaptor(path, implementation, **kwargs):
+def register_adaptor(path, implementation, resolution_dict=None, **kwargs):
     """Bind an adaptor or service-adaptor implementation to ``path``."""
     if isinstance(implementation, _AdaptorImplGroup):
         for concrete in implementation.implementations:
-            register_adaptor(path, concrete, **kwargs)
+            register_adaptor(
+                path, concrete, resolution_dict=resolution_dict, **kwargs)
         return
     if not isinstance(implementation, _ServiceImpl):
         raise WiringError("register_adaptor requires an @adaptor_impl-decorated implementation")
+    implementation = _resolve_registered_implementation(
+        implementation, resolution_dict, "register_adaptor")
     flavours = {stub.flavour for stub in implementation.interfaces}
     if not flavours <= {"adaptor", "service_adaptor"}:
         raise WiringError("register_adaptor requires adaptor interfaces")
@@ -452,20 +508,28 @@ def register_adaptor(path, implementation, **kwargs):
             _current_wiring(), stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
 
 
-def adaptor_impl(fn=None, *, interfaces=None):
+def adaptor_impl(fn=None, *, interfaces=None, resolvers=None,
+                 deprecated=False):
     """@adaptor_impl: declares the adaptor interfaces an implementation
     supports; the impl takes no wired inputs - it calls from_graph/to_graph."""
     if fn is None:
-        return lambda f: _ServiceImpl(f, interfaces)
-    return _ServiceImpl(fn, interfaces)
+        return lambda f: _ServiceImpl(
+            f, interfaces, resolvers=resolvers, deprecated=deprecated)
+    return _ServiceImpl(
+        fn, interfaces, resolvers=resolvers, deprecated=deprecated)
 
 
-def service_adaptor_impl(fn=None, *, interfaces=None):
+def service_adaptor_impl(fn=None, *, interfaces=None, resolvers=None,
+                         label=None, deprecated=False):
     """Implementation of a service adaptor. A single-interface implementation
     consumes and returns dictionaries keyed by the native client id."""
     if fn is None:
-        return lambda f: _ServiceImpl(f, interfaces)
-    return _ServiceImpl(fn, interfaces)
+        return lambda f: _ServiceImpl(
+            f, interfaces, resolvers=resolvers, label=label,
+            deprecated=deprecated)
+    return _ServiceImpl(
+        fn, interfaces, resolvers=resolvers, label=label,
+        deprecated=deprecated)
 
 
 _FLAVOUR_TS_ARITY = {
@@ -482,9 +546,13 @@ class _ServiceImpl:
     supports - validated at decoration (signature shape per flavour) and
     used at registration (hgraph parity)."""
 
-    def __init__(self, fn, interfaces):
+    def __init__(self, fn, interfaces, *, resolvers=None, label=None,
+                 deprecated=False):
         self.fn = fn
         self.__name__ = fn.__name__
+        self.resolvers = dict(resolvers) if resolvers else None
+        self.label = label
+        self.deprecated = deprecated
         if interfaces is None:
             raise TypeError(f"@service_impl '{self.__name__}' requires interfaces=")
         if not isinstance(interfaces, (tuple, list)):
@@ -529,19 +597,20 @@ class _ServiceImpl:
             return resolved
         if not isinstance(stub, (_ServiceStub, _AdaptorStub, _ServiceAdaptorStub)):
             raise TypeError(f"@service_impl interfaces must be service stubs, got {stub!r}")
-        if hasattr(stub, "_require_descriptor"):
-            stub._require_descriptor()
         return stub
 
 
-def service_impl(fn=None, *, interfaces=None):
+def service_impl(fn=None, *, interfaces=None, resolvers=None,
+                 deprecated=False):
     """hgraph's @service_impl: declares (and validates) the interfaces an
     implementation supports; register with ``register_service(path, impl)``.
     Interfaces may be stubs or the NAMES of C++-defined interfaces (the
     ruled direction: Python impls for C++ stubs)."""
     if fn is None:
-        return lambda f: _ServiceImpl(f, interfaces)
-    return _ServiceImpl(fn, interfaces)
+        return lambda f: _ServiceImpl(
+            f, interfaces, resolvers=resolvers, deprecated=deprecated)
+    return _ServiceImpl(
+        fn, interfaces, resolvers=resolvers, deprecated=deprecated)
 
 
 class _ServiceInputs:
@@ -608,7 +677,43 @@ def _bind_registered_impl(implementation, path, config):
         ],
         return_annotation=signature.return_annotation,
     )
+    if implementation.resolvers or implementation.deprecated or implementation.label:
+        from ._graph import _GraphFn
+
+        return _GraphFn(
+            bound,
+            resolvers=implementation.resolvers,
+            label=implementation.label,
+            deprecated=implementation.deprecated,
+        )
     return bound
+
+
+def _resolve_registered_implementation(implementation, resolution_dict, operation):
+    """Apply an upstream ``resolution_dict`` to unresolved interface stubs.
+
+    The result is a shallow call-local implementation token. The decorated
+    object remains reusable for other concrete specializations.
+    """
+    unresolved = [
+        stub for stub in implementation.interfaces
+        if getattr(stub, "descriptor", None) is None
+    ]
+    if not unresolved:
+        return implementation
+    if not resolution_dict:
+        names = ", ".join(stub.__name__ for stub in unresolved)
+        raise WiringError(
+            f"{operation} requires resolution_dict for generic interface(s): {names}")
+    entries = tuple(slice(key, value) for key, value in resolution_dict.items())
+    import copy
+
+    resolved = copy.copy(implementation)
+    resolved.interfaces = tuple(
+        stub[entries] if getattr(stub, "descriptor", None) is None else stub
+        for stub in implementation.interfaces
+    )
+    return resolved
 
 
 def get_service_inputs(path, stub):
@@ -637,13 +742,15 @@ def impl_output(stub, out, path=""):
         _current_wiring(), descriptor, _resolved_service_path(stub, path), out=_unwrap(out))
 
 
-def register_service(path, implementation, **kwargs):
+def register_service(path, implementation, resolution_dict=None, **kwargs):
     """Bind ``implementation`` (an @service_impl) to ``path`` (hgraph's
     signature: path first). A SINGLE-interface impl wires with its input
     supplied and output captured automatically; a MULTI-interface impl
     takes no wired inputs and uses impl_input/impl_output per interface."""
     if not isinstance(implementation, _ServiceImpl):
         raise WiringError("register_service requires an @service_impl-decorated implementation")
+    implementation = _resolve_registered_implementation(
+        implementation, resolution_dict, "register_service")
     if len(implementation.interfaces) > 1:
         resolved_paths = {
             _resolved_service_path(stub, path) for stub in implementation.interfaces

@@ -85,14 +85,14 @@ def no_key(ts):
     return WiringPort(_hgraph.no_key_tag(_unwrap(ts)))
 
 
-def feedback(tp, initial=None):
+def feedback(tp_or_wp, default=None):
     w = _current_wiring()
-    if isinstance(tp, WiringPort):
-        port = tp
-        result = Feedback(w, w.feedback(_unwrap(port).ts_type, initial))
+    if isinstance(tp_or_wp, WiringPort):
+        port = tp_or_wp
+        result = Feedback(w, w.feedback(_unwrap(port).ts_type, default))
         result(port)
         return result
-    return Feedback(w, w.feedback(_unwrap(tp), initial))
+    return Feedback(w, w.feedback(_unwrap(tp_or_wp), default))
 
 
 def combine(*args, __output_type__=None, **kwargs):

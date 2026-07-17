@@ -106,6 +106,31 @@ def _requires_bridge(user_requires):
     return _check
 
 
+def _resolvers_bridge(user_resolvers):
+    """Run Python decorator resolvers during C++ overload selection.
+
+    Output-only type variables must be resolved before the registry can select
+    a candidate, so waiting for the wire trampoline is too late.
+    """
+    if not user_resolvers:
+        return None
+
+    def _resolve(scope, scalars):
+        from ._node import _PyNode
+
+        scalar_values = dict(scalars)
+        for sentinel, resolver in user_resolvers.items():
+            names = list(inspect.signature(resolver).parameters)[1:]
+            resolved = resolver(
+                scope.bindings,
+                **{name: scalar_values.get(name) for name in names},
+            )
+            _PyNode._bind_resolved(scope, _type_var_name(sentinel), resolved)
+        return scope
+
+    return _resolve
+
+
 def _overload_wire_trampoline(impl):
     """The C++ wire closure calls this with the borrowed Wiring and the
     NORMALISED call (ports/scalars in declared order, defaults
@@ -270,10 +295,11 @@ def _register_overload(target, impl, requires=None):
     from itertools import product
 
     wire_fn = _overload_wire_trampoline(impl)
+    resolver_fn = _resolvers_bridge(getattr(impl, "_resolvers", None))
     requires_fn = _requires_bridge(requires)
     for params in product(*param_options):
         _hgraph.register_python_overload(
-            name, list(params), output, wire_fn, requires_fn,
+            name, list(params), output, wire_fn, resolver_fn, requires_fn,
             variadic, has_kwargs, positional)
 
 
@@ -425,12 +451,13 @@ def _dispatch_branch(op, impl, root_signature, branch_signature, scalar_argument
     return _GraphFn(invoke)
 
 
-def dispatch_(op, *args, __on__=None, **kwargs):
+def dispatch_(overloaded, *args, __on__=None, **kwargs):
     """Dispatch to the overload matching the RUNTIME types of the dispatch
     arguments: key utility + enumerated switch_ (the recorded design)."""
     from ._compose import switch_
     from ._graph import _as_wired
 
+    op = overloaded
     if not isinstance(op, _Operator):
         raise WiringError(f"dispatch_ needs an @operator/@dispatch target, got {op!r}")
     if not op._overloads:

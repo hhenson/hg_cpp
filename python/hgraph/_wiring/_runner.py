@@ -1,6 +1,7 @@
 """Graph execution entry points: run_graph/evaluate_graph and the
 eval_node test harness."""
 import inspect
+import logging
 
 import _hgraph
 
@@ -11,23 +12,81 @@ from ._core import (WiringPort, _OperatorFunction, _unwrap, _wiring_stack,
 from ._graph import _GraphFn
 from ._node import _PyNode
 from ._sentinels import _simplify_delta
-from ._state import GlobalState
+from ._state import GlobalState, _GRAPH_LOGGER_KEY
+
+class EvaluationMode:
+    SIMULATION = "simulation"
+    REAL_TIME = "real_time"
+
 
 class GraphConfiguration:
-    """hgraph's run configuration (start/end times + observers). Only the
-    fields the C++ executor consumes are carried."""
+    """Configuration for one native graph execution.
 
-    def __init__(self, start_time=None, end_time=None, life_cycle_observers=(), **_ignored):
+    The public shape matches Python hgraph. Options which do not yet have a
+    native implementation are retained and rejected when the configuration is
+    used; they are never silently ignored.
+    """
+
+    def __init__(
+            self,
+            run_mode=EvaluationMode.SIMULATION,
+            start_time=None,
+            end_time=None,
+            trace=False,
+            profile=False,
+            life_cycle_observers=(),
+            trace_wiring=False,
+            wiring_observers=(),
+            graph_logger=None,
+            trace_back_depth=1,
+            capture_values=False,
+            default_log_level=logging.DEBUG,
+            logger_formatter=None,
+            cleanup_on_error=True):
+        self.run_mode = run_mode
         self.start_time = start_time
         self.end_time = end_time
+        self.trace = trace
+        self.profile = profile
         self.life_cycle_observers = tuple(life_cycle_observers)
+        self.trace_wiring = trace_wiring
+        self.wiring_observers = tuple(wiring_observers)
+        self.graph_logger = graph_logger or logging.getLogger("hgraph")
+        self.trace_back_depth = trace_back_depth
+        self.capture_values = capture_values
+        self.default_log_level = default_log_level
+        self.logger_formatter = logger_formatter
+        self.cleanup_on_error = cleanup_on_error
+
+    def _validate(self):
+        if self.run_mode not in (EvaluationMode.SIMULATION, EvaluationMode.REAL_TIME):
+            raise ValueError(
+                "GraphConfiguration.run_mode must be EvaluationMode.SIMULATION or "
+                "EvaluationMode.REAL_TIME")
+        unsupported = []
+        for name in ("trace", "profile", "trace_wiring", "capture_values"):
+            if getattr(self, name):
+                unsupported.append(name)
+        for name in ("life_cycle_observers", "wiring_observers"):
+            if getattr(self, name):
+                unsupported.append(name)
+        if self.trace_back_depth != 1:
+            unsupported.append("trace_back_depth")
+        if self.logger_formatter is not None:
+            unsupported.append("logger_formatter")
+        if not self.cleanup_on_error:
+            unsupported.append("cleanup_on_error=False")
+        if unsupported:
+            rendered = ", ".join(unsupported)
+            raise NotImplementedError(
+                f"the C++ graph runner does not yet support: {rendered}")
+        if not hasattr(self.graph_logger, "setLevel"):
+            raise TypeError("GraphConfiguration.graph_logger must be a logging.Logger-like object")
 
 
 def evaluate_graph(fn, config=None, *args, **kwargs):
-    """hgraph's evaluate_graph: run ``fn`` under a GraphConfiguration
-    (a thin shim over run_graph)."""
-    config = config or GraphConfiguration()
-    return run_graph(fn, *args, start_time=config.start_time, end_time=config.end_time, **kwargs)
+    """Run ``fn`` under a :class:`GraphConfiguration`."""
+    return _evaluate_graph(fn, config or GraphConfiguration(), args, kwargs)
 
 def _times_for(values, start_time):
     return [
@@ -37,32 +96,79 @@ def _times_for(values, start_time):
     ]
 
 
-class EvaluationMode:
-    SIMULATION = "simulation"
-    REAL_TIME = "real_time"
+def _times_for_sparse(values):
+    return [
+        (_hgraph.MIN_ST + offset * _hgraph.MIN_TD, value)
+        for offset, value in values
+    ]
 
-def run_graph(graph_fn, *args, start_time=None, end_time=None,
-              run_mode=EvaluationMode.SIMULATION, **kwargs):
+
+def run_graph(
+        graph_fn,
+        *args,
+        run_mode=EvaluationMode.SIMULATION,
+        start_time=None,
+        end_time=None,
+        print_progress=True,
+        life_cycle_observers=None,
+        __trace__=False,
+        __profile__=False,
+        __trace_wiring__=False,
+        __logger__=None,
+        __trace_back_depth__=1,
+        __capture_values__=False,
+        **kwargs):
     """Wire and evaluate ``graph_fn`` in simulation. Returns hgraph's
     evaluate_graph shape - [(time, value), ...] of the graph output ticks -
     or None for sink graphs. ``end_time`` bounds the run (REQUIRED for
     self-perpetuating graphs, e.g. bound feedback loops). NOTE
     (divergence): the simulation clock is cycle-aligned from MIN_ST in
     MIN_TD steps."""
-    w = _hgraph.Wiring(GlobalState.instance()._impl)
+    del print_progress  # progress rendering is a presentation concern
+    config = GraphConfiguration(
+        run_mode=run_mode,
+        start_time=start_time,
+        end_time=end_time,
+        trace=__trace__,
+        profile=__profile__,
+        life_cycle_observers=life_cycle_observers or (),
+        trace_wiring=__trace_wiring__,
+        graph_logger=__logger__,
+        trace_back_depth=__trace_back_depth__,
+        capture_values=__capture_values__,
+    )
+    return _evaluate_graph(graph_fn, config, args, kwargs)
+
+
+def _evaluate_graph(graph_fn, config, args, kwargs):
+    config._validate()
+    state = GlobalState.instance()
+    missing = object()
+    previous_logger = state.get(_GRAPH_LOGGER_KEY, missing)
+    state[_GRAPH_LOGGER_KEY] = config.graph_logger
+    config.graph_logger.setLevel(config.default_log_level)
+    w = _hgraph.Wiring(state._impl)
     _wiring_stack.append(w)
     try:
         out = graph_fn(*args, **kwargs)
         if out is not None:
-            w.wire("__harness_record", (_unwrap(out).dereferenced, "__run_graph__"), {})
-        run = w.run(start_time=start_time, end_time=end_time,
-                    realtime=run_mode == EvaluationMode.REAL_TIME)
+            w.wire(
+                "__harness_record",
+                (_unwrap(out).dereferenced, "__run_graph__"),
+                {"sparse": True},
+            )
+        run = w.run(start_time=config.start_time, end_time=config.end_time,
+                    realtime=config.run_mode == EvaluationMode.REAL_TIME)
     finally:
         w._release_seed_context()
         _wiring_stack.pop()
+        if previous_logger is missing:
+            state.pop(_GRAPH_LOGGER_KEY, None)
+        else:
+            state[_GRAPH_LOGGER_KEY] = previous_logger
     if out is None:
         return None
-    return _times_for(run.recorded("__run_graph__"), start_time or _hgraph.MIN_ST)
+    return _times_for_sparse(run.recorded("__run_graph__", sparse=True))
 
 
 def _infer_ts_type(series):
@@ -93,6 +199,7 @@ def _infer_ts_type(series):
 
 
 def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
+              __trace__=False, __trace_wiring__=False, __observers__=None,
               __start_time__=None, __end_time__=None, __scalars__=None,
               __elide__=False, **kwargs):
     """Drive a @graph/composition ``fn`` with vectors of per-cycle values
@@ -102,6 +209,17 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     scheduled. ``__end_time__`` (Python-hgraph parity) bounds a run
     explicitly; a test that cannot quiesce (e.g. a bound feedback loop
     until per-edge passive support lands) must set it and say why."""
+    unsupported = []
+    if __trace__:
+        unsupported.append("__trace__")
+    if __trace_wiring__:
+        unsupported.append("__trace_wiring__")
+    if __observers__:
+        unsupported.append("__observers__")
+    if unsupported:
+        raise NotImplementedError(
+            "the C++ eval_node harness does not yet support: " +
+            ", ".join(unsupported))
     try:
         fn_sig = inspect.signature(fn.fn if isinstance(fn, _GraphFn) else fn)
         params = list(fn_sig.parameters.values())
@@ -168,6 +286,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             for k, value in named_series.items():
                 extended[by_name[k]] = value
             return eval_node(fn, *extended, output_type=output_type, resolution_dict=resolution_dict,
+                             __trace__=__trace__, __trace_wiring__=__trace_wiring__,
+                             __observers__=__observers__,
                              __start_time__=__start_time__, __end_time__=__end_time__,
                              __scalars__=__scalars__, __elide__=__elide__, **kwargs)
         named_series = {}
@@ -183,6 +303,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             if index is not None and index < len(extended) and extended[index] is None:
                 extended[index] = kwargs.pop(k)
         return eval_node(fn, *extended, output_type=output_type, resolution_dict=resolution_dict,
+                         __trace__=__trace__, __trace_wiring__=__trace_wiring__,
+                         __observers__=__observers__,
                          __start_time__=__start_time__, __end_time__=__end_time__,
                          __scalars__=__scalars__, __elide__=__elide__, **kwargs)
     w = _hgraph.Wiring(GlobalState.instance()._impl)

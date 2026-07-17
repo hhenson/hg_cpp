@@ -9,8 +9,8 @@ from .._types import (_ContextExpr, _GenericTsExpr, _TsExpr,
 from ._core import (ParseError, WiringError, WiringPort, _current_wiring,
                     _unwrap, _wiring_stack, wire)
 from ._markers import _INJECTABLE_MARKERS
-from ._node import _PyNode
-from ._operator import _register_overload
+from ._node import _PyNode, _warn_deprecated
+from ._operator import _register_overload, _run_requires
 from ._state import GlobalState
 
 def _wrap_graph_fn(gfn):
@@ -34,7 +34,18 @@ def _wrap_graph_fn(gfn):
     def wrapper(borrowed_wiring, ports):
         _wiring_stack.append(borrowed_wiring)
         try:
-            out = user_fn(*(WiringPort(p) for p in ports))
+            wrapped_ports = [WiringPort(port) for port in ports]
+            if isinstance(gfn, _GraphFn):
+                call_args = []
+                call_kwargs = {}
+                for parameter, port in zip(sig.parameters.values(), wrapped_ports):
+                    if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+                        call_kwargs[parameter.name] = port
+                    else:
+                        call_args.append(port)
+                out = gfn(*call_args, **call_kwargs)
+            else:
+                out = user_fn(*wrapped_ports)
             if out is None:
                 return None
             if not isinstance(out, WiringPort):
@@ -100,7 +111,7 @@ class _ResolvedSize:
         return f"Size[{self.SIZE}]"
 
 
-def _graph_auto_resolve(signature, arguments):
+def _graph_auto_resolve(signature, arguments, resolvers=None, requires=None):
     """Fill ``x: type[SENTINEL] = AUTO_RESOLVE`` graph parameters: match
     every time-series parameter's TYPE PATTERN against its wired port in a
     C++ resolution scope, then read each sentinel's binding from it."""
@@ -117,6 +128,22 @@ def _graph_auto_resolve(signature, arguments):
                 scope.match(_pattern_of(param.annotation), _unwrap(value).ts_type)
             except (RuntimeError, ValueError, TypeError):
                 pass   # inconsistent bindings surface at the consuming node
+
+    scalar_values = {
+        name: value for name, value in arguments.items()
+        if not isinstance(value, WiringPort)
+    }
+    if resolvers:
+        for sentinel, resolver in resolvers.items():
+            params = list(inspect.signature(resolver).parameters)
+            call = {name: scalar_values.get(name) for name in params[1:]}
+            _PyNode._bind_resolved(
+                scope, _type_var_name(sentinel), resolver(scope.bindings, **call))
+    if requires is not None:
+        verdict = _run_requires(requires, scope.bindings, scalar_values)
+        if verdict is not True:
+            reason = verdict if isinstance(verdict, str) else "requirements not met"
+            raise WiringError(f"graph requirements not met: {reason}")
 
     resolved = {}
     for name, param in signature.parameters.items():
@@ -152,11 +179,14 @@ def _graph_auto_resolve(signature, arguments):
 class _Component:
     """Python signature adapter for the C++ component wiring primitive."""
 
-    def __init__(self, fn, recordable_id=None):
-        self.fn = fn
+    def __init__(self, fn, recordable_id=None, *, resolvers=None, label=None,
+                 deprecated=False):
+        self.fn = getattr(fn, "fn", fn)
         self.__name__ = fn.__name__
         self.recordable_id = recordable_id or fn.__name__
-        self._signature = inspect.signature(fn)
+        self._graph = _GraphFn(
+            self.fn, resolvers=resolvers, label=label, deprecated=deprecated)
+        self._signature = inspect.signature(self.fn)
         self._params = list(self._signature.parameters.values())
         # eval_node/introspection must see the USER signature, not __call__'s.
         self.__signature__ = self._signature
@@ -181,7 +211,7 @@ class _Component:
         def compose(wrapped_ports):
             for key, port in zip(input_names, wrapped_ports):
                 call_args[key] = WiringPort(port)
-            out = self.fn(**call_args)
+            out = self._graph(**call_args)
             return None if out is None else _unwrap(out)
 
         out = _hgraph.component(
@@ -189,21 +219,31 @@ class _Component:
         return None if out is None else WiringPort(out)
 
 
-def component(fn=None, *, recordable_id=None):
+def component(fn=None, *, recordable_id=None, resolvers=None, label=None,
+              deprecated=False):
     if fn is None:
-        return lambda f: _Component(f, recordable_id)
-    return _Component(fn)
+        return lambda f: _Component(
+            f, recordable_id, resolvers=resolvers, label=label,
+            deprecated=deprecated)
+    return _Component(
+        fn, recordable_id, resolvers=resolvers, label=label,
+        deprecated=deprecated)
 
 class _GraphFn:
     """The @graph decorator: a plain composition function. Inside an active
     wiring it inlines (a call is just a call); run_graph/eval_node make it a
     top level."""
 
-    def __init__(self, fn):
+    def __init__(self, fn, *, resolvers=None, requires=None, label=None,
+                 deprecated=False):
         self.fn = fn
         self._signature = inspect.signature(fn)
         self.__name__ = fn.__name__
         self.__doc__ = fn.__doc__
+        self._resolvers = dict(resolvers) if resolvers else None
+        self._requires = requires
+        self._label = label
+        self._deprecated = deprecated
         out = self._signature.return_annotation
         if isinstance(out, type):
             from .._types import TimeSeriesSchema
@@ -261,11 +301,13 @@ class _GraphFn:
         return wrapper
 
     def __call__(self, *args, **kwargs):
+        _warn_deprecated(self.__name__, self._deprecated)
         bound = self._signature.bind_partial(*args, **kwargs)
         for param in self._signature.parameters.values():
             if param.annotation is GlobalState and param.name not in bound.arguments:
                 bound.arguments[param.name] = GlobalState.instance()
-        bound.arguments.update(_graph_auto_resolve(self._signature, bound.arguments))
+        bound.arguments.update(_graph_auto_resolve(
+            self._signature, bound.arguments, self._resolvers, self._requires))
         result = self.fn(*bound.args, **bound.kwargs)
         if isinstance(result, dict) and result and all(isinstance(v, WiringPort) for v in result.values()):
             # hgraph parity: a dict literal of ports returned from a @graph
@@ -281,9 +323,12 @@ class _GraphFn:
         return result
 
 
-def graph(fn=None, *, overloads=None, requires=None):
+def graph(fn=None, overloads=None, resolvers=None, requires=None, label=None,
+          deprecated=False):
     def _make(f):
-        wrapped = _GraphFn(f)
+        wrapped = _GraphFn(
+            f, resolvers=resolvers, requires=requires, label=label,
+            deprecated=deprecated)
         if overloads is not None:
             _register_overload(overloads, wrapped, requires)
         return wrapped

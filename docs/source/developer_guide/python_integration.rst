@@ -283,8 +283,10 @@ Recorded divergences / gaps (the morning-summary list):
 - ``passive(port)`` landed (both languages): the feedback idiom is
   ``a + passive(fb())``, and such loops quiesce naturally. ACTIVE feedback
   consumption still needs an explicit end time.
-- ``run_graph`` output times are cycle-aligned from the start time in
-  ``MIN_TD`` steps (the simulation clock convention).
+- ``run_graph`` records graph outputs sparsely and reports their absolute
+  engine timestamps. This is required for real-time graphs, whose wall-clock
+  timestamps cannot be represented as a dense array starting at ``MIN_ST``.
+  Simulation remains cycle-aligned in ``MIN_TD`` steps.
 - ``@component`` + the record/replay modes are surfaced (all through the
   ``hgraph`` package — ``_hgraph`` is internal and never user-imported):
   ``record_replay_scope(RecordReplayEnum.RECORD | ...)`` is the context
@@ -309,8 +311,11 @@ Recorded divergences / gaps (the morning-summary list):
   values on TS params auto-lift to ``const`` (numeric scalars are
   PYTHONIC-strict: strings never coerce; a const of the DELTA shape
   applies as the initial tick). ``AUTO_RESOLVE`` materialises resolved
-  typevars/SIZE; ``valid=``/``active=`` accept wiring-time callables;
-  ``resolvers={...}`` binds typevars from scalars. TSS returns follow
+  typevars/SIZE; ``valid=``/``active=``/``all_valid=`` accept name sets or
+  wiring-time callables. ``all_valid`` is enforced by the native input view's
+  recursive ``all_valid()`` operation, including TSL/TSB/TSD children.
+  ``resolvers={...}`` binds typevars from scalars on compute, sink, graph,
+  generator, component, service, adaptor, and push-queue declarations. TSS returns follow
   upstream exactly: an exact ``frozenset`` REPLACES the whole set, a
   ``set_delta``/``Removed``-marked set applies as a delta, and a net
   no-change on a valid output does NOT tick (``contains_`` re-publishes
@@ -346,11 +351,24 @@ Recorded divergences / gaps (the morning-summary list):
 - **Real-time + push sources** are surfaced with hgraph's shapes:
   ``run_graph(..., run_mode=EvaluationMode.REAL_TIME)`` runs the
   wall-clock executor (the GIL is released for the whole run), and
-  ``@push_queue(tp, conflate=False)`` wraps a function that IS the node's
+  ``@push_queue(tp, overloads=None, resolvers=None, requires=None, label=None,
+  deprecated=False, conflate=False)`` wraps a function that IS the node's
   start lifecycle hook — called with the thread-safe sender callable
   (plus wiring-time scalars) once the graph runs; values convert
   schema-directed on the sending thread and cross the sanctioned C++
   boundary. Wiring the decorated function returns its port.
+- ``GraphConfiguration`` exposes the upstream option names. ``run_mode``,
+  start/end time, logger selection, and default logger level are honoured.
+  Evaluation tracing/profiling, wiring tracing/observers, Python lifecycle
+  observers, custom logger formatters, non-default traceback capture, and
+  retaining a failed graph with ``cleanup_on_error=False`` are not implemented;
+  selecting one raises ``NotImplementedError`` before wiring. The same rule
+  applies to non-default ``eval_node`` trace/observer controls. No execution
+  option is accepted and silently discarded.
+- The decorator ``node_impl=`` parameter is present for signature compatibility
+  but deliberately rejects non-``None`` values. It selects an implementation
+  class from the retired Python runtime; Python authors must provide the node
+  callable directly and native implementations must use the C++ node API.
 - **Stable Python ABI**: Wheels target the CPython 3.12 stable ABI
   (``cp312-abi3``), so one wheel per platform supports CPython 3.12 and
   later. Stable bridge builds require CMake 3.26 or newer for
@@ -395,7 +413,9 @@ Recorded divergences / gaps (the morning-summary list):
   ``@service_impl(interfaces=...)``-decorated (hgraph's shape — the
   declared interfaces validate the impl's signature per flavour at
   decoration and drive ``register_service(path, impl)``, path first;
-  undecorated impls are refused); interfaces may be stubs or the NAMES of
+  undecorated impls are refused). Generic interfaces may carry decorator
+  resolvers and unresolved implementations can be specialized at registration
+  with ``resolution_dict=``; interfaces may be stubs or the NAMES of
   C++-defined interfaces (the ruled direction). MULTI-INTERFACE
   implementations work per the C++ ``register_services`` shape: the impl
   takes no wired inputs and uses ``impl_input(stub, path)`` /
@@ -414,7 +434,7 @@ Recorded divergences / gaps (the morning-summary list):
   (proven in ``test_service_runtime.cpp``). **Adaptors and mesh** are surfaced too:
   ``@adaptor`` stubs (first TS param = graph-side input, return = output,
   both optional), ``@adaptor_impl(interfaces=...)`` +
-  ``register_adaptor(path, impl)`` with impl-side ``from_graph``/
+  ``register_adaptor(path, impl, resolution_dict=...)`` with impl-side ``from_graph``/
   ``to_graph`` — the four adaptor markers de-templated to roles like the
   services. ``@service_adaptor`` / ``@service_adaptor_impl`` extend that
   surface with the native per-client keyed request/reply exchange; one TS
