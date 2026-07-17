@@ -47,7 +47,7 @@ def test_publish_table_applies_tsd_add_modify_and_remove_deltas_with_eval_node()
             [
                 {1: _Row("a", 1)},
                 {1: _Row("b", 2), 2: _Row("c", 3)},
-                {1: hg.REMOVED},
+                {1: hg.REMOVE},
             ],
         ) is None
 

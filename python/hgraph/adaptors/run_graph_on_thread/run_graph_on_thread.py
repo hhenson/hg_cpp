@@ -8,7 +8,7 @@ from datetime import date, datetime, time
 
 from hgraph import (
     OUT,
-    REMOVED,
+    REMOVE,
     TIME_SERIES_TYPE,
     CompoundScalar,
     EvaluationMode,
@@ -201,7 +201,7 @@ class _ResponseState:
             if request_id not in self.published:
                 return
             self.published.remove(request_id)
-            value = {request_id: REMOVED}
+            value = {request_id: REMOVE}
             if self.sender is None:
                 self.pending.append(value)
                 return

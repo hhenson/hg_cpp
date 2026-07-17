@@ -71,18 +71,22 @@ TEST_CASE("ts_schemas: TSD<K, V>.value_schema is Map<K, V.value_schema>, delta i
     REQUIRE(tsd->value_schema->key_type == str_meta);
     REQUIRE(tsd->value_schema->element_type == int_meta);
 
-    // delta_value_schema = Bundle{removed: Set<string>, modified: Map<string, int>}
-    // (modified carries both new and updated entries — see schema design doc)
+    // delta_value_schema = Bundle{removed: Set<string>, modified: Map<string, int>,
+    //                             removed_strict: Set<string>}
+    // (modified carries both new and updated entries; removed_strict carries
+    // user-authored REMOVE keys — absent-key removal raises at apply)
     REQUIRE(tsd->delta_value_schema != nullptr);
     REQUIRE(tsd->delta_value_schema->value_kind() == ValueTypeKind::Bundle);
-    REQUIRE(tsd->delta_value_schema->field_count == 2);
+    REQUIRE(tsd->delta_value_schema->field_count == 3);
     REQUIRE(std::string(tsd->delta_value_schema->fields[0].name) == "removed");
     REQUIRE(std::string(tsd->delta_value_schema->fields[1].name) == "modified");
+    REQUIRE(std::string(tsd->delta_value_schema->fields[2].name) == "removed_strict");
 
     const auto *expected_delta_map = registry.map(str_meta, ts_int->delta_value_schema);
     const auto *expected_removed   = registry.set(str_meta);
     REQUIRE(tsd->delta_value_schema->fields[0].type == expected_removed);
     REQUIRE(tsd->delta_value_schema->fields[1].type == expected_delta_map);
+    REQUIRE(tsd->delta_value_schema->fields[2].type == expected_removed);
 }
 
 TEST_CASE("ts_schemas: TSL<T>.value_schema is List<T.value>, delta is Map<int, T.delta>")
@@ -262,11 +266,11 @@ TEST_CASE("ts_schemas: nested compositions resolve recursively")
     const auto *expected_value = registry.map(str_meta, registry.list(double_meta, 4));
     REQUIRE(tsd->value_schema == expected_value);
 
-    // tsd.delta_value_schema = Bundle{removed, modified} where the
-    // modified-map values are Map<int, double> (TSL's delta).
+    // tsd.delta_value_schema = Bundle{removed, modified, removed_strict} where
+    // the modified-map values are Map<int, double> (TSL's delta).
     REQUIRE(tsd->delta_value_schema != nullptr);
     REQUIRE(tsd->delta_value_schema->value_kind() == ValueTypeKind::Bundle);
-    REQUIRE(tsd->delta_value_schema->field_count == 2);
+    REQUIRE(tsd->delta_value_schema->field_count == 3);
 
     const auto *int_meta               = registry.value_type("int");
     const auto *expected_inner_delta   = registry.map(int_meta, double_meta);  // tsl's delta

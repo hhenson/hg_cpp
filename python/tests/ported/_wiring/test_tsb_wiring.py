@@ -251,7 +251,6 @@ def test_tsb_integer_index():
     assert eval_node(g, [{"p1": 1, "p2": "a"}, {"p1": 2}]) == [1, 2]
 
 
-@pytest.mark.skip(reason="gap: hgraph.arrow combinator library")
 def test_tsb_ref_index():
 
     @graph
@@ -259,7 +258,6 @@ def test_tsb_ref_index():
         first, second = tsb
         return first
 
-    pytest.importorskip("hgraph.arrow", reason="gap: hgraph.arrow combinator library")
     from hgraph.arrow import eval_, if_then, c, assert_
 
     eval_(True, "") | if_then(c(1) / c("a")) >> g >> assert_(1)

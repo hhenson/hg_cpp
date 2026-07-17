@@ -1,5 +1,5 @@
 """hgraph.nodes - helper nodes (hgraph parity; python impls as upstream)."""
-from ._wiring import compute_node, graph, wire, REMOVED
+from ._wiring import compute_node, graph, wire, REMOVE_IF_EXISTS
 from ._types import TS, TSD, TSS, K, K_1
 
 __all__ = ("make_tsd", "flatten_tsd", "extract_tsd", "keys_where_true", "where_true", "tsl_to_tsd")
@@ -8,7 +8,7 @@ __all__ = ("make_tsd", "flatten_tsd", "extract_tsd", "keys_where_true", "where_t
 @compute_node(valid=("key", "value"))
 def make_tsd(key: TS[object], value: TS[object], remove_key: TS[bool] = None) -> TSD[object, TS[object]]:
     if remove_key.valid and remove_key.modified and remove_key.value:
-        return {key.value: REMOVED}
+        return {key.value: REMOVE_IF_EXISTS}
     return {key.value: value.value}
 
 
@@ -68,16 +68,16 @@ def _keys_where_true_for(tp):
 def _where_true_for(tp):
     @compute_node
     def where_true(ts: TSD[tp, TS[bool]]) -> TSD[tp, TS[bool]]:
-        from ._wiring import REMOVED
+        from ._wiring import REMOVE_IF_EXISTS
 
         out = {}
         for key, value in ts.modified_items():
             if value.value:
                 out[key] = value.value
             else:
-                out[key] = REMOVED
+                out[key] = REMOVE_IF_EXISTS
         for key in ts.removed_keys():
-            out[key] = REMOVED
+            out[key] = REMOVE_IF_EXISTS
         return out
 
     return where_true

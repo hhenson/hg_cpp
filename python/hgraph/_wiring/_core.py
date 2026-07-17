@@ -65,13 +65,17 @@ def wire(name, *args, __output_type__=None, **kwargs):
 
 class _OperatorFunction:
     def __rshift__(self, other):
-        # arrow-chain sugar: (eval_ | op >> assert_) - defer to the arrow
-        # module's chain so operators compose in pipelines.
-        from ..arrow import _Assert, _Chain
+        # arrow-chain sugar: (eval_ | op >> assert_) - uplift into the arrow
+        # module's combinator so operators compose in pipelines.
+        from ..arrow import arrow
 
-        if isinstance(other, _Assert):
-            return _Chain([self], other)
-        return _Chain([self]) >> other
+        return arrow(self) >> other
+
+    def __lshift__(self, other):
+        # arrow bind sugar: op << const_(x)  ==  i / const_(x) >> op
+        from ..arrow import arrow
+
+        return arrow(self) << other
 
     """A Python callable wiring the named registered operator. Supports
     hgraph's SUBSCRIPT form ``op[TYPE](...)`` - the type becomes the
@@ -209,17 +213,36 @@ WiringPort.__getitem__ = _port_getitem
 WiringPort.__hash__ = object.__hash__  # __eq__ wires a node; identity hashing stands
 
 
+def _port_bundle_field_names(self):
+    """The TSB field names of a port (looking through REF), else None."""
+    ts_type = self._port.ts_type
+    if ts_type.is_tsb:
+        return _hgraph.tsb_field_names(ts_type)
+    try:
+        deref = self._port.dereferenced
+        if deref is not None and deref.ts_type.is_tsb:
+            return _hgraph.tsb_field_names(deref.ts_type)
+    except Exception:
+        pass
+    return None
+
+
 def _port_len(self):
     ts_type = self._port.ts_type
     if ts_type.is_fixed_tsl:
         return ts_type.fixed_size
-    raise TypeError("len() is only defined for fixed-size TSL ports")
+    if (names := _port_bundle_field_names(self)) is not None:
+        return len(names)
+    raise TypeError("len() is only defined for fixed-size TSL and TSB ports")
 
 
 def _port_iter(self):
-    # The sequence protocol for fixed TSLs (`*tsl` unpacking, hgraph
-    # parity). Without __len__/__iter__, python's fallback iteration via
-    # __getitem__ would wire getitem_ nodes FOREVER.
+    # The sequence protocol for fixed TSLs and TSBs (`*tsl` / `a, b = tsb`
+    # unpacking, hgraph parity; REF[TSB] iterates the referenced fields).
+    # Without __len__/__iter__, python's fallback iteration via __getitem__
+    # would wire getitem_ nodes FOREVER.
+    if (names := _port_bundle_field_names(self)) is not None:
+        return (getattr(self, name) for name in names)
     return (self[i] for i in range(len(self)))
 
 

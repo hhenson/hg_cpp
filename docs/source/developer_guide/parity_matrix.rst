@@ -286,8 +286,11 @@ model.
      - Fixed TSL, dynamic TSD, ordered non-associative folds, nested
        composition, removals, retargeting, and teardown are covered.  Dynamic
        TSL associative/ordered folds and dynamic-TSD pass-through-combiner
-       outputs are also covered; ``REMOVE_IF_EXISTS`` can be a compatibility
-       alias of ``REMOVE``.
+       outputs are also covered; ``REMOVE_IF_EXISTS`` is exported as a
+       compatibility alias of ``REMOVE`` (2026-07-17; silent-removal
+       deviation recorded in :doc:`roadmap`), and ``REMOVE`` is the canonical
+       sentinel name (the former ``REMOVED`` spelling is gone).  ``MAX_DT`` /
+       ``MAX_ET`` are exported at the package root.
    * - ``test_service.py``
      - 19
      - **Public subset landed.** ``NUMBER``/``NUMBER_2`` lower to constrained

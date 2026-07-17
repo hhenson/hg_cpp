@@ -1,4 +1,5 @@
 #include <hgraph/types/time_series/ts_data/proxy.h>
+#include <hgraph/types/time_series/ts_data/empty_delta_fields.h>
 
 #include "ownership.h"
 
@@ -125,6 +126,11 @@ namespace hgraph
             ValueTypeRef added_set_binding{nullptr};
             ValueTypeRef removed_set_binding{nullptr};
             ValueTypeRef modified_map_binding{nullptr};
+            // The projected delta's third field: user-authored strict removals
+            // never originate from a live TSD, so the projection exposes the
+            // interned always-empty set (NON-OWNING: cleared before the type
+            // records at reset — see empty_delta_fields.h).
+            const Value *empty_strict_set{nullptr};
 
             TSDProxyContext(const TSValueTypeMetaData &schema_, TSRoleTypeRef element_type_, TypeRole role_)
                 : schema(&schema_),
@@ -276,9 +282,10 @@ namespace hgraph
                 layout.value_binding = intern_value_type(*schema->value_schema, *plan, value_map_ops);
 
                 if (schema->delta_value_schema->value_kind() != ValueTypeKind::Bundle ||
-                    schema->delta_value_schema->field_count != 2)
+                    schema->delta_value_schema->field_count != 3)
                 {
-                    throw std::logic_error("TSDProxy delta schema must be Bundle{removed, modified}");
+                    throw std::logic_error(
+                        "TSDProxy delta schema must be Bundle{removed, modified, removed_strict}");
                 }
                 removed_set_binding = intern_value_type(*schema->delta_value_schema->fields[0].type,
                                                                 *plan,
@@ -286,6 +293,7 @@ namespace hgraph
                 modified_map_binding = intern_value_type(*schema->delta_value_schema->fields[1].type,
                                                                  *plan,
                                                                  modified_map_ops);
+                empty_strict_set = ts_data_detail::interned_empty_set(schema->key_type());
                 added_set_binding = intern_value_type(*set_schema, *plan, added_set_value_ops);
                 layout.delta_binding = intern_value_type(*schema->delta_value_schema, *plan, delta_bundle_ops);
 
@@ -389,25 +397,29 @@ namespace hgraph
                                                const void *memory)
             {
                 if (binding.schema() == nullptr || binding.schema()->value_kind() != ValueTypeKind::Bundle ||
-                    binding.schema()->field_count != 2)
+                    binding.schema()->field_count != 3)
                 {
-                    throw std::logic_error("TSDProxy delta copy requires canonical Bundle{removed, modified}");
+                    throw std::logic_error(
+                        "TSDProxy delta copy requires canonical Bundle{removed, modified, removed_strict}");
                 }
 
                 const auto &plan = binding.checked_plan();
-                if (!plan.is_composite() || plan.component_count() < 2)
+                if (!plan.is_composite() || plan.component_count() < 3)
                 {
-                    throw std::logic_error("TSDProxy delta copy requires a two-field structured plan");
+                    throw std::logic_error("TSDProxy delta copy requires a three-field structured plan");
                 }
 
                 auto removed  = Value{ValueView{delta_element_binding(context, memory, 0),
                                                 delta_element_at(context, memory, 0)}};
                 auto modified = Value{ValueView{delta_element_binding(context, memory, 1),
                                                 delta_element_at(context, memory, 1)}};
+                auto removed_strict = Value{ValueView{delta_element_binding(context, memory, 2),
+                                                      delta_element_at(context, memory, 2)}};
 
                 BundleBuilder builder{binding};
                 builder.set(0, removed.view());
                 builder.set(1, modified.view());
+                builder.set(2, removed_strict.view());
                 Value bundle = builder.build();
                 plan.copy_assign(dst, bundle.view().data());
             }
@@ -1206,12 +1218,14 @@ namespace hgraph
 
             [[nodiscard]] static std::size_t delta_size(const void *, const void *) noexcept
             {
-                return 2;
+                return 3;
             }
 
-            [[nodiscard]] static const void *delta_element_at(const void *, const void *memory, std::size_t index)
+            [[nodiscard]] static const void *delta_element_at(const void *context, const void *memory,
+                                                              std::size_t index)
             {
                 if (index == 0 || index == 1) { return memory; }
+                if (index == 2) { return ctx(context)->empty_strict_set->view().data(); }
                 throw std::out_of_range("TSDProxy delta element index out of range");
             }
 
@@ -1221,6 +1235,7 @@ namespace hgraph
             {
                 if (index == 0) { return ctx(context)->removed_set_binding; }
                 if (index == 1) { return ctx(context)->modified_map_binding; }
+                if (index == 2) { return ctx(context)->empty_strict_set->binding(); }
                 return nullptr;
             }
 
@@ -1229,7 +1244,7 @@ namespace hgraph
                 return Range<ValueView>{
                     .context   = context,
                     .memory    = memory,
-                    .limit     = 2,
+                    .limit     = 3,
                     .predicate = nullptr,
                     .projector = &delta_projector,
                 };
@@ -1246,8 +1261,10 @@ namespace hgraph
             [[nodiscard]] static std::size_t delta_hash(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                return combine_hash(state->removed_set_binding.ops_ref().hash(memory),
-                                    state->modified_map_binding.ops_ref().hash(memory));
+                return combine_hash(combine_hash(state->removed_set_binding.ops_ref().hash(memory),
+                                                 state->modified_map_binding.ops_ref().hash(memory)),
+                                    state->empty_strict_set->binding().ops_ref().hash(
+                                        state->empty_strict_set->view().data()));
             }
 
             [[nodiscard]] static bool delta_equals(const void *context, const void *lhs, const void *rhs) noexcept
@@ -1279,9 +1296,11 @@ namespace hgraph
             [[nodiscard]] static std::string delta_to_string(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                return fmt::format("{{removed: {}, modified: {}}}",
+                return fmt::format("{{removed: {}, modified: {}, removed_strict: {}}}",
                                    state->removed_set_binding.ops_ref().to_string(memory),
-                                   state->modified_map_binding.ops_ref().to_string(memory));
+                                   state->modified_map_binding.ops_ref().to_string(memory),
+                                   state->empty_strict_set->binding().ops_ref().to_string(
+                                       state->empty_strict_set->view().data()));
             }
         };
 

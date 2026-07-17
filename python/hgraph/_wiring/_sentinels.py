@@ -1,12 +1,13 @@
 """Delta sentinels shared across the wiring layer.
 
-``REMOVED``/``Removed``/``_SetDelta`` are identity-critical: they are handed
+``REMOVE``/``Removed``/``_SetDelta`` are identity-critical: they are handed
 to the C++ bridge at package import (``_hgraph._set_removed_sentinel`` and
 friends) so class identity — not equality — shapes TSS/TSD delta application.
 Define them here once; every other module re-exports."""
 
 class _Removed:
-    """hgraph's REMOVE marker: a removed TSD key in test output."""
+    """hgraph's REMOVE marker: a TSD key removal (input) / removed key
+    (test read-back)."""
 
     _instance = None
 
@@ -16,10 +17,28 @@ class _Removed:
         return cls._instance
 
     def __repr__(self):
-        return "REMOVED"
+        return "REMOVE"
 
 
-REMOVED = _Removed()
+REMOVE = _Removed()
+
+
+class _RemovedIfExists:
+    """hgraph's REMOVE_IF_EXISTS marker: a lenient TSD key removal — unlike
+    ``REMOVE``, an absent key is silently ignored at delta application."""
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self):
+        return "REMOVE_IF_EXISTS"
+
+
+REMOVE_IF_EXISTS = _RemovedIfExists()
 
 
 class Removed:
@@ -43,12 +62,13 @@ class Removed:
 
 def _simplify_delta(value):
     """Map canonical delta bundles back to hgraph's friendly test shapes:
-    TSD {removed, modified} -> {key: value, removed_key: REMOVED};
+    TSD {removed, modified} -> {key: value, removed_key: REMOVE};
     TSS {added, removed} -> SetDelta."""
     if isinstance(value, dict):
-        if set(value.keys()) == {"removed", "modified"}:
+        if set(value.keys()) in ({"removed", "modified"}, {"removed", "modified", "removed_strict"}):
             out = {k: _simplify_delta(v) for k, v in value["modified"].items()}
-            out.update({k: REMOVED for k in value["removed"]})
+            out.update({k: REMOVE for k in value["removed"]})
+            out.update({k: REMOVE for k in value.get("removed_strict", ())})
             return out
         if set(value.keys()) == {"added", "removed"}:
             # hgraph's TSS delta shape: one set - added items plain,

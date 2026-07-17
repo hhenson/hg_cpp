@@ -37,6 +37,14 @@ namespace hgraph::python_bridge
         return *slot;
     }
 
+    /** hgraph's REMOVE_IF_EXISTS sentinel (lenient TSD key removal; REMOVE
+        is strict — absent key raises at delta application). */
+    [[nodiscard]] inline nb::object &remove_if_exists_sentinel_slot()
+    {
+        static auto *slot = new nb::object{};
+        return *slot;
+    }
+
     /** hgraph's Removed(item) marker class (TSS delta shaping). */
     [[nodiscard]] inline nb::object &removed_class_slot()
     {

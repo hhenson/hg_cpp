@@ -92,11 +92,27 @@ namespace hgraph::python_bridge
                 for (auto [key, item] : python_delta)
                 {
                     key_value.view().assign_from_python(key);
-                    const bool remove =
+                    const bool strict_remove =
+                        removed_sentinel_slot().is_valid() && item.is(removed_sentinel_slot());
+                    const bool lenient_remove =
                         item.is_none() ||
-                        (removed_sentinel_slot().is_valid() && item.is(removed_sentinel_slot()));
-                    if (remove)
+                        (remove_if_exists_sentinel_slot().is_valid() &&
+                         item.is(remove_if_exists_sentinel_slot()));
+                    if (strict_remove || lenient_remove)
                     {
+                        // Membership is pre-checked: an ineffective erase would
+                        // touch-validate the output (the replay empty-tick rule),
+                        // but a skipped REMOVE_IF_EXISTS must not tick (hgraph
+                        // parity), and a strict REMOVE must raise.
+                        if (!mutation.view().contains(key_value.view()))
+                        {
+                            if (strict_remove)
+                            {
+                                throw std::runtime_error(
+                                    "REMOVE: key not present in TSD (use REMOVE_IF_EXISTS to remove-if-present)");
+                            }
+                            continue;
+                        }
                         static_cast<void>(mutation.erase(key_value.view()));
                         continue;
                     }
@@ -109,10 +125,26 @@ namespace hgraph::python_bridge
             for (auto [key, item] : python_delta)
             {
                 Value key_value = py_to_value_as(key, key_meta);
-                const bool remove =
+                const bool strict_remove =
+                    removed_sentinel_slot().is_valid() && item.is(removed_sentinel_slot());
+                const bool lenient_remove =
                     item.is_none() ||
-                    (removed_sentinel_slot().is_valid() && item.is(removed_sentinel_slot()));
-                if (remove) { static_cast<void>(mutation.erase(key_value.view())); }
+                    (remove_if_exists_sentinel_slot().is_valid() &&
+                     item.is(remove_if_exists_sentinel_slot()));
+                if (strict_remove || lenient_remove)
+                {
+                    // See above: pre-check membership so a skipped lenient
+                    // removal produces no tick and a strict one raises.
+                    if (!mutation.view().contains(key_value.view()))
+                    {
+                        if (strict_remove)
+                        {
+                            throw std::runtime_error(
+                                "REMOVE: key not present in TSD (use REMOVE_IF_EXISTS to remove-if-present)");
+                        }
+                    }
+                    else { static_cast<void>(mutation.erase(key_value.view())); }
+                }
                 else
                 {
                     Value child_delta = py_to_value_as(item, child->value_schema);

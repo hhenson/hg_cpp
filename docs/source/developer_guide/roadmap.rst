@@ -464,9 +464,12 @@ layout. ``dedup_builder`` and ``collect_builder`` are upstream Python
 implementation-injection hooks; the native overload registry is their C++-first
 equivalent and no parallel Python builder layer should be added.
 
-**Remaining inventory:** optional arrow-combinator convenience functions that
-do not yet have a C++ operator. The ``hgraph.stream`` status model, including
-TSD/TSL status and message reduction, is complete.
+**Remaining inventory:** none of note — the arrow-combinator library is
+ported (``hgraph/arrow/`` mirrors the upstream package over the public wiring
+surface; upstream's own arrow tests pass, with two recorded deviations:
+stop-hook exceptions surface as ``NodeException`` rather than the original
+type, and sink-less nodes are not pruned at wiring). The ``hgraph.stream``
+status model, including TSD/TSL status and message reduction, is complete.
 
 **Accepted deviation:** upstream ``apply`` evaluates a dynamic ``TS[Callable]``.
 There is no native scalar schema or statically resolvable invocation ABI for
@@ -506,6 +509,13 @@ Accepted Deviations
 
 The following are intentional unless separately re-opened:
 
+- The harness ``None``-removal convention for TSD inputs applies leniently
+  (``REMOVE``/``REMOVE_IF_EXISTS`` honour upstream semantics exactly:
+  ``REMOVE`` raises when the key is absent at delta application,
+  ``REMOVE_IF_EXISTS`` does not; the canonical TSD delta carries strict
+  removals in a dedicated ``removed_strict`` field that only user-authored
+  Python dicts populate — captured/replicated deltas stay lenient).  TSS
+  element removals are lenient in upstream and here alike.
 - Python ``REF`` is an opaque value and does not expose ``.output``.
 - ``None`` in CompoundScalar/Bundle construction means an unset field.
 - TSB deltas are canonically dense; sparse-bundle delta parity is not required.
@@ -547,7 +557,8 @@ inventory did not silently classify them as accepted:
 - frame-to-TSD key type is not inferred from a selected frame column;
 - ``convert`` from ``TS[object]`` dispatches on the wiring-time schema;
 - the engine's naive-datetime contract versus upstream time-zone-aware cases;
-- the upstream arrow-combinator library.
+- the ``cmp`` custom-comparator parameter on upstream's tuple-scalar ``sub_``
+  overload (surfaced by the arrow port; previously masked by the arrow shim).
 
 Implementation Standards
 ------------------------

@@ -6,7 +6,7 @@ import threading
 
 import _hgraph
 
-from ._sentinels import REMOVED, Removed, _SetDelta
+from ._sentinels import REMOVE, Removed, _SetDelta
 
 _global_state_local = threading.local()
 _GLOBAL_MISSING = object()
@@ -15,7 +15,7 @@ _GLOBAL_MISSING = object()
 def _friendly_recording_delta(delta):
     if isinstance(delta, dict) and set(delta) == {"removed", "modified"}:
         compact = dict(delta["modified"])
-        compact.update((key, REMOVED) for key in delta["removed"])
+        compact.update((key, REMOVE) for key in delta["removed"])
         return compact
     if isinstance(delta, dict) and set(delta) == {"added", "removed"}:
         return _SetDelta(

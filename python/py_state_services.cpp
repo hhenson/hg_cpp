@@ -48,24 +48,32 @@ namespace hgraph::python_bridge
                  nb::object canonical = nb::borrow(python_delta);
                  if (delta_schema != nullptr &&
                      delta_schema->value_kind() == ValueTypeKind::Bundle &&
-                     delta_schema->field_count == 2 &&
+                     delta_schema->field_count == 3 &&
                      std::string_view{delta_schema->fields[0].name} == "removed" &&
-                     std::string_view{delta_schema->fields[1].name} == "modified")
+                     std::string_view{delta_schema->fields[1].name} == "modified" &&
+                     std::string_view{delta_schema->fields[2].name} == "removed_strict")
                  {
                      nb::set removed;
+                     nb::set removed_strict;
                      nb::dict modified;
                      for (auto [item_key, item_value] : nb::cast<nb::dict>(python_delta))
                      {
                          if (removed_sentinel_slot().is_valid() &&
                              item_value.ptr() == removed_sentinel_slot().ptr())
                          {
+                             removed_strict.add(item_key);
+                         }
+                         else if (remove_if_exists_sentinel_slot().is_valid() &&
+                                  item_value.ptr() == remove_if_exists_sentinel_slot().ptr())
+                         {
                              removed.add(item_key);
                          }
                          else { modified[item_key] = item_value; }
                      }
                      nb::dict shaped;
-                     shaped["removed"]  = std::move(removed);
-                     shaped["modified"] = std::move(modified);
+                     shaped["removed"]        = std::move(removed);
+                     shaped["modified"]       = std::move(modified);
+                     shaped["removed_strict"] = std::move(removed_strict);
                      canonical = std::move(shaped);
                  }
                  Value delta = py_to_value_as(canonical, delta_schema);
@@ -325,6 +333,8 @@ namespace hgraph::python_bridge
     m.attr("DATA_FRAME") = std::string{record_replay::DATA_FRAME};
     m.attr("MIN_ST")     = nb::cast(MIN_ST);
     m.attr("MIN_TD")     = nb::cast(MIN_TD);
+    m.attr("MAX_DT")     = nb::cast(MAX_DT);
+    m.attr("MAX_ET")     = nb::cast(MAX_ET);
 
     nb::class_<PyOutput>(m, "OutputView")
         .def_prop_ro("valid", &PyOutput::valid)
@@ -450,6 +460,8 @@ namespace hgraph::python_bridge
     m.def("_set_divide_by_zero_enum",
           [](nb::object enum_class) { divide_by_zero_enum_slot() = std::move(enum_class); });
     m.def("_set_removed_sentinel", [](nb::object sentinel) { PyTimeSeries::removed_slot() = std::move(sentinel); });
+    m.def("_set_remove_if_exists_sentinel",
+          [](nb::object sentinel) { remove_if_exists_sentinel_slot() = std::move(sentinel); });
     m.def("_set_removed_class", [](nb::object cls) { python_bridge::removed_class_slot() = std::move(cls); });
     m.def("_set_set_delta_class", [](nb::object cls) { python_bridge::set_delta_class_slot() = std::move(cls); });
     m.def("_set_delta_shaper", [](nb::object fn) { python_bridge::delta_shaper_slot() = std::move(fn); });

@@ -1605,8 +1605,14 @@ namespace hgraph
                     const ValueTypeMetaData *value_delta = value_ts->delta_value_schema;
                     const ValueTypeMetaData *delta_map   = map(key, value_delta);
                     const ValueTypeMetaData *removed_set = set(key);
-                    meta.delta_value_schema =
-                        un_named_bundle({{"removed", removed_set}, {"modified", delta_map}});
+                    // "removed" applies leniently (internal replication: capture,
+                    // conflation, replay). "removed_strict" carries USER-authored
+                    // REMOVE keys, which must raise when absent (hgraph's
+                    // REMOVE vs REMOVE_IF_EXISTS contract); only the Python
+                    // dict conversion populates it.
+                    meta.delta_value_schema = un_named_bundle(
+                        {{"removed", removed_set}, {"modified", delta_map},
+                         {"removed_strict", removed_set}});
                 }
                 break;
             }

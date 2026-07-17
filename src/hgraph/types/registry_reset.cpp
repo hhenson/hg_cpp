@@ -1,6 +1,7 @@
 #include <hgraph/types/value/json_codec.h>
 #include <hgraph/types/value/table_codec.h>
 #include <hgraph/types/registry_reset.h>
+#include <hgraph/types/time_series/ts_data/empty_delta_fields.h>
 
 #include <hgraph/runtime/executor.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
@@ -37,6 +38,7 @@ namespace hgraph
 
         OperatorRegistry::instance().reset();
         clear_json_converters();   // interns by meta/binding pointer — must precede the lenders below
+        ts_data_detail::clear_interned_empty_sets();   // OWNS Values — must precede the record clears
         clear_table_converters();  // same rule (also captures record_replay config keys)
         // Records borrow plan/ops contexts from the endpoint and TSData
         // factories. Their cached handles are trivial and are not dereferenced

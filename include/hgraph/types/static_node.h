@@ -225,7 +225,8 @@ namespace hgraph
 
         template <typename K, typename V>
         [[nodiscard]] inline Value build_dict_delta(const std::map<K, delta_input_t<V>> &modified,
-                                                    const std::vector<K>                &removed)
+                                                    const std::vector<K>                &removed,
+                                                    const std::vector<K>                &removed_strict = {})
         {
             const auto *key_meta = scalar_descriptor<K>::value_meta();
             const auto key_binding = ValuePlanFactory::instance().type_for(key_meta);
@@ -236,12 +237,15 @@ namespace hgraph
             const auto *removed_schema = registry.set(key_meta);
             const auto *modified_schema = registry.map(key_meta, delta_value_schema<V>());
             const auto *bundle_schema =
-                registry.un_named_bundle({{"removed", removed_schema}, {"modified", modified_schema}});
+                registry.un_named_bundle({{"removed", removed_schema}, {"modified", modified_schema},
+                                          {"removed_strict", removed_schema}});
             const auto bundle_binding = ValuePlanFactory::instance().type_for(bundle_schema);
             if (bundle_binding == nullptr) { throw std::logic_error("dict_delta: unresolved bundle binding"); }
 
             SetBuilder removed_set{key_binding};
             for (const auto &key : removed) { (void)removed_set.insert_copy(std::addressof(key)); }
+            SetBuilder removed_strict_set{key_binding};
+            for (const auto &key : removed_strict) { (void)removed_strict_set.insert_copy(std::addressof(key)); }
 
             MapBuilder modified_map{key_binding, val_binding};
             for (const auto &[key, input] : modified)
@@ -259,6 +263,7 @@ namespace hgraph
             BundleBuilder bundle{bundle_binding};
             bundle.set("removed", removed_set.build());
             bundle.set("modified", modified_map.build());
+            bundle.set("removed_strict", removed_strict_set.build());
             return bundle.build();
         }
 

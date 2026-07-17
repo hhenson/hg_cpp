@@ -201,7 +201,7 @@ def test_tsd_key_removal():
         return hg.map_("add_", d, d)
 
     out = eval_node(keys, [{"a": 1, "b": 2}, {"a": None}])
-    check(out == [{"a": 2, "b": 4}, {"a": hg.REMOVED}], f"removal: {out}")
+    check(out == [{"a": 2, "b": 4}, {"a": hg.REMOVE}], f"removal: {out}")
 
 
 def test_tss_deltas():

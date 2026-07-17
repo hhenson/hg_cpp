@@ -1,6 +1,6 @@
 import threading
 
-from hgraph import REMOVED
+from hgraph import REMOVE
 
 
 class KeyedAsyncState:
@@ -48,7 +48,7 @@ class KeyedAsyncState:
             if key not in self.published:
                 return False
             self.published.remove(key)
-            delta = {key: REMOVED}
+            delta = {key: REMOVE}
             if self.sender is None:
                 self.pending.append(delta)
                 return True

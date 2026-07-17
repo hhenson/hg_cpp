@@ -470,14 +470,22 @@ namespace hgraph::python_bridge
                 const auto *key_meta = ts->key_type();
                 const auto *child    = ts->element_ts();
                 SetBuilder  removed{delta_binding(key_meta)};
+                SetBuilder  removed_strict{delta_binding(key_meta)};
                 MapBuilder  modified{delta_binding(key_meta), delta_binding(child->delta_value_schema)};
                 for (auto [key, item] : nb::cast<nb::dict>(object))
                 {
                     Value key_value = py_to_value_as(key, key_meta);
-                    const bool remove =
+                    // hgraph's removal contract: REMOVE raises when the key is
+                    // absent at application; REMOVE_IF_EXISTS and the harness
+                    // None convention are lenient.
+                    const bool strict_remove =
+                        removed_sentinel_slot().is_valid() && item.is(removed_sentinel_slot());
+                    const bool lenient_remove =
                         item.is_none() ||
-                        (removed_sentinel_slot().is_valid() && item.is(removed_sentinel_slot()));
-                    if (remove) { (void)removed.insert_copy(key_value.view().data()); }
+                        (remove_if_exists_sentinel_slot().is_valid() &&
+                         item.is(remove_if_exists_sentinel_slot()));
+                    if (strict_remove) { (void)removed_strict.insert_copy(key_value.view().data()); }
+                    else if (lenient_remove) { (void)removed.insert_copy(key_value.view().data()); }
                     else
                     {
                         Value child_delta = py_to_delta(item, child);
@@ -487,6 +495,7 @@ namespace hgraph::python_bridge
                 BundleBuilder bundle{delta_binding(ts->delta_value_schema)};
                 bundle.set("removed", removed.build());
                 bundle.set("modified", modified.build());
+                bundle.set("removed_strict", removed_strict.build());
                 return bundle.build();
             }
             case TSTypeKind::TSL: {

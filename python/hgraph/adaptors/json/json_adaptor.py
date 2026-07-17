@@ -8,7 +8,7 @@ import pyarrow.json as pa_json
 
 from hgraph import (
     Frame,
-    REMOVED,
+    REMOVE,
     TS,
     TSB,
     TSD,
@@ -174,7 +174,7 @@ def json_adaptor_impl(
                 with state.lock:
                     sender = state.sender
                 if sender is not None:
-                    sender({request_id: REMOVED})
+                    sender({request_id: REMOVE})
         for request_id, file_name in files.modified_items():
             generation = state.begin(request_id)
             executor.value.submit(load, request_id, generation, file_name.value)

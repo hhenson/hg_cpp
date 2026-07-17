@@ -36,18 +36,21 @@ from ._wiring import _PyNode as PythonWiringNodeClass
 from ._wiring import _GraphFn as GraphWiringNodeClass
 from ._wiring import _Generator as PythonGeneratorWiringNodeClass
 from ._wiring import GlobalContext, GlobalState, set_record_replay_config, set_as_of, set_table_schema_date_key, set_table_schema_as_of_key, evaluate_const
-from ._wiring import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, mesh_, mesh_ref, REMOVED, feedback, switch_, passive, compute_node, sink_node, generator, lift, STATE, SCHEDULER, CLOCK, EvaluationEngineApi, LOGGER, NODE, Node, DebugContext, component, record_replay_scope, RecordReplayEnum, comparison_summary, push_queue, EvaluationMode, context, WiringError, reference_service, subscription_service, request_reply_service, register_service, service_impl, adaptor, adaptor_impl, service_adaptor, service_adaptor_impl, register_adaptor, from_graph, to_graph, impl_input, impl_output, get_service_inputs, set_service_output
+from ._wiring import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, mesh_, mesh_ref, REMOVE, REMOVE_IF_EXISTS, feedback, switch_, passive, compute_node, sink_node, generator, lift, STATE, SCHEDULER, CLOCK, EvaluationEngineApi, LOGGER, NODE, Node, DebugContext, component, record_replay_scope, RecordReplayEnum, comparison_summary, push_queue, EvaluationMode, context, WiringError, reference_service, subscription_service, request_reply_service, register_service, service_impl, adaptor, adaptor_impl, service_adaptor, service_adaptor_impl, register_adaptor, from_graph, to_graph, impl_input, impl_output, get_service_inputs, set_service_output
 
 MIN_ST = _hgraph.MIN_ST
 MIN_TD = _hgraph.MIN_TD
 MIN_DT = MIN_ST - MIN_TD   # the engine epoch (hgraph's minimum datetime)
+MAX_DT = _hgraph.MAX_DT
+MAX_ET = _hgraph.MAX_ET    # the maximum end time (last processable instant)
 IN_MEMORY = _hgraph.IN_MEMORY
 DATA_FRAME = _hgraph.DATA_FRAME
 frame_store_contains = _hgraph.frame_store_contains
 frame_store_read = _hgraph.frame_store_read
 
 TimeSeries = _hgraph.TimeSeries
-_hgraph._set_removed_sentinel(REMOVED)
+_hgraph._set_removed_sentinel(REMOVE)
+_hgraph._set_remove_if_exists_sentinel(REMOVE_IF_EXISTS)
 _hgraph._set_requirements_error(RequirementsNotMetWiringError)
 from ._wiring import Removed as _Removed, _SetDelta, _simplify_delta
 _hgraph._set_removed_class(_Removed)
@@ -64,7 +67,6 @@ from ._table import (ToTableMode, TableSchema, make_table_schema, table_schema,
                      table_shape, table_shape_from_schema, shape_of_table_type,
                      get_table_schema_date_key, get_table_schema_as_of_key)
 
-REMOVE = REMOVED           # hgraph's TSD key-removal sentinel
 from ._wiring import Removed
 
 _OPERATOR_NAMES = frozenset(_hgraph.operator_names())
@@ -94,8 +96,8 @@ __all__ = [
     "TS", "TSS", "TSD", "TSL", "TSB", "Size", "TimeSeriesSchema", "CONTEXT", "REQUIRED", "WiringError", "TimeSeries",
     "NUMBER", "NUMBER_2",
     "WiringPort", "CmpResult", "DivideByZero", "NodeError", "exception_time_series", "try_except",
-    "TryExceptResult", "TryExceptTsdMapResult", "OperatorWiringNodeClass", "graph", "run_graph", "eval_node", "wire", "map_", "reduce", "mesh_", "mesh_ref", "REMOVED", "feedback", "switch_", "passive", "compute_node", "sink_node", "generator", "STATE", "SCHEDULER", "CLOCK", "EvaluationEngineApi", "NODE", "Node", "component", "record_replay_scope", "RecordReplayEnum", "comparison_summary", "push_queue", "EvaluationMode", "context",
-    "MIN_ST", "MIN_TD", "IN_MEMORY", "DATA_FRAME",
+    "TryExceptResult", "TryExceptTsdMapResult", "OperatorWiringNodeClass", "graph", "run_graph", "eval_node", "wire", "map_", "reduce", "mesh_", "mesh_ref", "REMOVE", "REMOVE_IF_EXISTS", "feedback", "switch_", "passive", "compute_node", "sink_node", "generator", "STATE", "SCHEDULER", "CLOCK", "EvaluationEngineApi", "NODE", "Node", "component", "record_replay_scope", "RecordReplayEnum", "comparison_summary", "push_queue", "EvaluationMode", "context",
+    "MIN_ST", "MIN_TD", "MIN_DT", "MAX_DT", "MAX_ET", "IN_MEMORY", "DATA_FRAME",
     "GlobalContext", "GlobalState", "set_as_of", "set_table_schema_date_key", "set_table_schema_as_of_key",
     "set_record_replay_config", "frame_store_contains", "frame_store_read", "evaluate_const",
     "Frame", "TABLE", "COMPOUND_SCALAR", "ToTableMode", "TableSchema", "make_table_schema", "table_schema",

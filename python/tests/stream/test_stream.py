@@ -64,10 +64,10 @@ def test_reduce_stream_statuses_and_messages_use_current_tsd_state():
         _reduce_status_dict,
         [
             {1: StreamStatus.OK, 2: StreamStatus.ERROR},
-            {2: hg.REMOVED},
+            {2: hg.REMOVE},
         ],
     ) == [StreamStatus.ERROR, StreamStatus.OK]
     assert eval_node(
         _reduce_message_dict,
-        [{1: "failed a", 2: "failed b"}, {1: hg.REMOVED}],
+        [{1: "failed a", 2: "failed b"}, {1: hg.REMOVE}],
     ) == ["failed a; failed b", "failed b"]

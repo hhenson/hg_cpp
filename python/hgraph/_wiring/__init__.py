@@ -6,7 +6,7 @@ symbol fails loudly at import time. ``_wiring_stack`` is re-exported by
 from-import aliasing — it stays the SAME list object as
 ``hgraph._wiring._core._wiring_stack``; nothing may rebind it."""
 from ._sentinels import (
-    REMOVED, Removed, _Removed, _SetDelta, _simplify_delta, compute_set_delta, set_delta
+    REMOVE, REMOVE_IF_EXISTS, Removed, _Removed, _SetDelta, _simplify_delta, compute_set_delta, set_delta
 )
 from ._state import (
     GlobalContext, GlobalState, RecordReplayContext, RecordReplayEnum, _GLOBAL_MISSING,
@@ -62,7 +62,7 @@ from ._runner import (
 __all__ = [
     "CLOCK", "DebugContext", "EvaluationEngineApi", "EvaluationMode", "Feedback", "GlobalContext", "GlobalState",
     "GraphConfiguration", "IncorrectTypeBinding", "LOGGER", "NODE", "Node", "ParseError", "RECORDABLE_STATE",
-    "REMOVED", "RecordReplayContext", "RecordReplayEnum", "Removed",
+    "REMOVE", "REMOVE_IF_EXISTS", "RecordReplayContext", "RecordReplayEnum", "Removed",
     "RequirementsNotMetWiringError", "SCHEDULER", "STATE", "TSB_OUT", "TS_OUT", "WiringError",
     "WiringPort", "_AdaptorStub", "_BindingsMap", "_Collect", "_Combine", "_Component",
     "_Convert", "_DISPATCH_KEYS_NODE", "_DISPATCH_KEY_NODE", "_DUNDERS", "_Dispatch", "_Emit",
