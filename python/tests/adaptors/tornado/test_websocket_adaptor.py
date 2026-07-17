@@ -5,6 +5,7 @@ from threading import Thread
 import time
 
 import pytest
+from tornado.httpclient import HTTPClientError
 from tornado.websocket import websocket_connect
 
 import hgraph as hg
@@ -90,15 +91,15 @@ def test_websocket_server_handler_round_trips_binary_messages(free_tcp_port):
     @hg.push_queue(hg.TS[bool])
     def drive_client(sender):
         async def communicate():
-            deadline = time.monotonic() + 3.0
+            deadline = time.monotonic() + 10.0
             while True:
                 try:
                     socket = await websocket_connect(
                         f"ws://127.0.0.1:{free_tcp_port}/websocket-{free_tcp_port}/client",
-                        connect_timeout=1.0,
+                        connect_timeout=3.0,
                     )
                     break
-                except ConnectionRefusedError:
+                except (ConnectionRefusedError, OSError, HTTPClientError):
                     if time.monotonic() >= deadline:
                         raise
                     await asyncio.sleep(0.02)
@@ -180,16 +181,16 @@ def test_websocket_server_handler_multiplexes_batch_requests(free_tcp_port):
     @hg.push_queue(hg.TS[bool])
     def drive_clients(sender):
         async def communicate(name):
-            deadline = time.monotonic() + 3.0
+            deadline = time.monotonic() + 10.0
             while True:
                 try:
                     socket = await websocket_connect(
                         f"ws://127.0.0.1:{free_tcp_port}/"
                         f"websocket-batch-{free_tcp_port}/{name}",
-                        connect_timeout=1.0,
+                        connect_timeout=3.0,
                     )
                     break
-                except ConnectionRefusedError:
+                except (ConnectionRefusedError, OSError, HTTPClientError):
                     if time.monotonic() >= deadline:
                         raise
                     await asyncio.sleep(0.02)

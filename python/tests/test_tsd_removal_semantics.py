@@ -103,3 +103,22 @@ def test_tss_dict_input_is_rejected_loudly():
         return hg.len_(s)
 
     assert eval_node(sized, [{}, {1, 2}]) == [0, 2]
+
+
+def test_no_change_means_no_tick():
+    """Ruling 2026-07-17 (accepted deviation, roadmap): derived-value
+    operators do not re-tick unchanged results — len_ over a TSS whose delta
+    nets to no length change produces NO tick (upstream re-ticks the equal
+    value). Explicit writes are unaffected and tick as upstream."""
+    @graph
+    def sized(s: TSS[int]) -> TS[int]:
+        return hg.len_(s)
+
+    assert eval_node(
+        sized, [{1, 2, 3}, set_delta(added={4}, removed={1}, tp=int)]) == [3, None]
+
+    @compute_node
+    def const3(ts: TS[int]) -> TS[int]:
+        return 3
+
+    assert eval_node(const3, [1, 2]) == [3, 3]   # explicit writes always tick

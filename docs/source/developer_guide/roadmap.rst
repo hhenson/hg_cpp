@@ -516,6 +516,13 @@ The following are intentional unless separately re-opened:
   removals in a dedicated ``removed_strict`` field that only user-authored
   Python dicts populate — captured/replicated deltas stay lenient).  TSS
   element removals are lenient in upstream and here alike.
+- **No-change means no tick** (ruling 2026-07-17): operators that derive a
+  value from a collection do not re-tick when the recomputed value is
+  unchanged — e.g. ``len_`` over a TSS whose delta nets to no length change
+  produces no tick, where upstream re-ticks the equal value. Likewise a
+  TSS/TSD delta that nets to no change does not tick. Explicit writes are
+  unaffected and match upstream exactly: a python node returning the same
+  scalar each evaluation ticks each time, as do repeated TSD entry writes.
 - Python ``REF`` is an opaque value and does not expose ``.output``.
 - ``None`` in CompoundScalar/Bundle construction means an unset field.
 - TSB deltas are canonically dense; sparse-bundle delta parity is not required.

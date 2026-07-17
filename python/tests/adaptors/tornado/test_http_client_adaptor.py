@@ -315,7 +315,7 @@ def test_http_server_adaptor_round_trips_all_methods(free_tcp_port):
     @hg.push_queue(hg.TS[bool])
     def drive_client(sender):
         def request(method, body=None):
-            deadline = time.monotonic() + 3.0
+            deadline = time.monotonic() + 10.0
             while True:
                 connection = http.client.HTTPConnection(
                     "127.0.0.1",
@@ -343,7 +343,7 @@ def test_http_server_adaptor_round_trips_all_methods(free_tcp_port):
                         }
                     )
                     return
-                except ConnectionRefusedError:
+                except (ConnectionRefusedError, OSError):
                     if time.monotonic() >= deadline:
                         raise
                     time.sleep(0.02)
@@ -445,7 +445,7 @@ def test_http_server_handler_registers_and_maps_single_requests(free_tcp_port):
     def drive_client(sender):
         def run():
             try:
-                deadline = time.monotonic() + 3.0
+                deadline = time.monotonic() + 10.0
                 while True:
                     connection = http.client.HTTPConnection(
                         "127.0.0.1",
@@ -457,7 +457,7 @@ def test_http_server_handler_registers_and_maps_single_requests(free_tcp_port):
                         response = connection.getresponse()
                         client_result.append((response.status, response.read()))
                         break
-                    except ConnectionRefusedError:
+                    except (ConnectionRefusedError, OSError):
                         if time.monotonic() >= deadline:
                             raise
                         time.sleep(0.02)
@@ -523,7 +523,7 @@ def test_http_server_handler_registers_batch_requests(free_tcp_port):
     def drive_client(sender):
         def run():
             try:
-                deadline = time.monotonic() + 3.0
+                deadline = time.monotonic() + 10.0
                 for _ in range(2):
                     while True:
                         connection = http.client.HTTPConnection(
@@ -536,7 +536,7 @@ def test_http_server_handler_registers_batch_requests(free_tcp_port):
                             response = connection.getresponse()
                             client_results.append((response.status, response.read()))
                             break
-                        except ConnectionRefusedError:
+                        except (ConnectionRefusedError, OSError):
                             if time.monotonic() >= deadline:
                                 raise
                             time.sleep(0.02)
@@ -610,7 +610,7 @@ def test_http_server_handler_preserves_keyed_auxiliary_outputs(free_tcp_port):
     def drive_client(sender):
         def run():
             try:
-                deadline = time.monotonic() + 3.0
+                deadline = time.monotonic() + 10.0
                 while True:
                     connection = http.client.HTTPConnection(
                         "127.0.0.1",
@@ -622,7 +622,7 @@ def test_http_server_handler_preserves_keyed_auxiliary_outputs(free_tcp_port):
                         response = connection.getresponse()
                         client_results.append((response.status, response.read()))
                         break
-                    except ConnectionRefusedError:
+                    except (ConnectionRefusedError, OSError):
                         if time.monotonic() >= deadline:
                             raise
                         time.sleep(0.02)

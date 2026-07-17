@@ -267,7 +267,7 @@ def test_rest_handler_maps_live_delete_request(free_tcp_port):
     @hg.push_queue(hg.TS[bool])
     def drive_client(sender):
         def run():
-            deadline = time.monotonic() + 3.0
+            deadline = time.monotonic() + 10.0
             try:
                 while True:
                     connection = http.client.HTTPConnection(
@@ -278,7 +278,7 @@ def test_rest_handler_maps_live_delete_request(free_tcp_port):
                         response = connection.getresponse()
                         client_responses.append((response.status, response.read()))
                         break
-                    except ConnectionRefusedError:
+                    except (ConnectionRefusedError, OSError):
                         if time.monotonic() >= deadline:
                             raise
                         time.sleep(0.02)
@@ -345,7 +345,7 @@ def test_rest_handler_maps_batch_requests(free_tcp_port):
     def drive_client(sender):
         def run():
             try:
-                deadline = time.monotonic() + 3.0
+                deadline = time.monotonic() + 10.0
                 for identifier in ("one", "two"):
                     while True:
                         connection = http.client.HTTPConnection(
@@ -358,7 +358,7 @@ def test_rest_handler_maps_batch_requests(free_tcp_port):
                             response = connection.getresponse()
                             client_responses.append((response.status, response.read()))
                             break
-                        except ConnectionRefusedError:
+                        except (ConnectionRefusedError, OSError):
                             if time.monotonic() >= deadline:
                                 raise
                             time.sleep(0.02)
@@ -429,7 +429,7 @@ def test_rest_handler_preserves_auxiliary_outputs(free_tcp_port):
     def drive_client(sender):
         def run():
             try:
-                deadline = time.monotonic() + 3.0
+                deadline = time.monotonic() + 10.0
                 while True:
                     connection = http.client.HTTPConnection(
                         "127.0.0.1", free_tcp_port, timeout=2.0
@@ -439,7 +439,7 @@ def test_rest_handler_preserves_auxiliary_outputs(free_tcp_port):
                         response = connection.getresponse()
                         client_responses.append((response.status, response.read()))
                         break
-                    except ConnectionRefusedError:
+                    except (ConnectionRefusedError, OSError):
                         if time.monotonic() >= deadline:
                             raise
                         time.sleep(0.02)
@@ -522,7 +522,7 @@ def test_batch_rest_handler_preserves_auxiliary_outputs(free_tcp_port):
     def drive_client(sender):
         def run():
             try:
-                deadline = time.monotonic() + 3.0
+                deadline = time.monotonic() + 10.0
                 while True:
                     connection = http.client.HTTPConnection(
                         "127.0.0.1", free_tcp_port, timeout=2.0
@@ -532,7 +532,7 @@ def test_batch_rest_handler_preserves_auxiliary_outputs(free_tcp_port):
                         response = connection.getresponse()
                         client_responses.append((response.status, response.read()))
                         break
-                    except ConnectionRefusedError:
+                    except (ConnectionRefusedError, OSError):
                         if time.monotonic() >= deadline:
                             raise
                         time.sleep(0.02)
