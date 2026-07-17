@@ -14,9 +14,11 @@ _GRAPH_LOGGER_KEY = "__hgraph_graph_logger__"
 
 
 def _friendly_recording_delta(delta):
-    if isinstance(delta, dict) and set(delta) == {"removed", "modified"}:
+    if isinstance(delta, dict) and set(delta) in (
+            {"removed", "modified"}, {"removed", "modified", "removed_strict"}):
         compact = dict(delta["modified"])
         compact.update((key, REMOVE) for key in delta["removed"])
+        compact.update((key, REMOVE) for key in delta.get("removed_strict", ()))
         return compact
     if isinstance(delta, dict) and set(delta) == {"added", "removed"}:
         return _SetDelta(
