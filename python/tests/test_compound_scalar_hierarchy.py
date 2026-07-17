@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Generic, Optional, TypeVar
 
-from hgraph import CompoundScalar, TS, compute_node, from_json_builder, graph, to_json_builder
+from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, compute_node, from_json_builder, graph, to_json_builder
 # White-box: these tests assert on the interned C++ value-type metadata
 # (qualified names, generic specialisation identity), which has no public
 # introspection surface — the module under test is imported directly.
@@ -166,6 +166,58 @@ def test_polymorphic_bundle_field_uses_the_graph_realization():
         contains_derived,
         [Envelope(item=Derived(value=1, label="one"))],
     ) == [True]
+
+
+def test_tsb_output_field_uses_the_graph_realization():
+    @dataclass
+    class Result(CompoundScalar, namespace="tests.tsb_output", abstract=True):
+        value: int
+
+    @dataclass
+    class DetailedResult(Result):
+        detail: str
+
+    class HandlerOutput(TimeSeriesSchema):
+        response: TS[Result]
+        audit: TS[str]
+
+    @compute_node
+    def handler(value: TS[int]) -> TSB[HandlerOutput]:
+        return {
+            "response": DetailedResult(value=value.value, detail="accepted"),
+            "audit": f"value={value.value}",
+        }
+
+    assert eval_node(handler, [7]) == [{
+        "response": DetailedResult(value=7, detail="accepted"),
+        "audit": "value=7",
+    }]
+
+
+def test_tsb_output_keyed_field_uses_the_graph_realization():
+    @dataclass
+    class Result(CompoundScalar, namespace="tests.tsb_keyed_output", abstract=True):
+        value: int
+
+    @dataclass
+    class DetailedResult(Result):
+        detail: str
+
+    class HandlerOutput(TimeSeriesSchema):
+        response: TSD[int, TS[Result]]
+        audit: TS[str]
+
+    @compute_node
+    def handler(value: TS[int]) -> TSB[HandlerOutput]:
+        return {
+            "response": {1: DetailedResult(value=value.value, detail="accepted")},
+            "audit": f"value={value.value}",
+        }
+
+    assert eval_node(handler, [7]) == [{
+        "response": {1: DetailedResult(value=7, detail="accepted")},
+        "audit": "value=7",
+    }]
 
 
 def test_compact_container_elements_use_the_graph_realization():

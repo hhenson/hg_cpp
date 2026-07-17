@@ -242,6 +242,8 @@ namespace
     };
 
     using ContainerAccessBundle = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Str>>>;
+    using HandlerOutputBundle =
+        UnNamedTSB<Field<"response", TS<Int>>, Field<"audit", TS<Str>>>;
     using NumericTsbBundle      = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Float>>>;
     using FloatTsbBundle        = UnNamedTSB<Field<"a", TS<Float>>, Field<"b", TS<Float>>>;
     using IntTsbBundle          = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Int>>>;
@@ -372,6 +374,16 @@ namespace
             auto b_by_attr  = wire<stdlib::getattr_>(w, bundle, Str{"b"}).as<TS<Str>>();
             auto b_len      = wire<stdlib::len_>(w, b_by_attr).as<TS<Int>>();
             return wire<stdlib::add_>(w, a_by_index, b_len).as<TS<Int>>();
+        }
+    };
+
+    struct KeyedHandlerResponseProjectionGraph
+    {
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w,
+                                               Port<TSD<Int, HandlerOutputBundle>> responses)
+        {
+            return wire<stdlib::getattr_>(w, responses, Str{"response"})
+                .as<TSD<Int, TS<Int>>>();
         }
     };
 
@@ -1295,6 +1307,24 @@ TEST_CASE("std operators: TSB container access projects structural and peered fi
     CHECK_OUTPUT(eval_node<PeeredTsbContainerAccessGraph>(values<Int>(2, 20),
                                                           values<Str>(Str{"abc"}, Str{"z"})),
                  values<Int>(5, 21));
+}
+
+TEST_CASE("std operators: keyed bundle projection exposes the response field")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        eval_node<KeyedHandlerResponseProjectionGraph>(
+            values<Value>(
+                dict_delta<Int, HandlerOutputBundle>(
+                    {{1, tsb_delta<HandlerOutputBundle>(Int{10}, Str{"first"})},
+                     {2, tsb_delta<HandlerOutputBundle>(Int{20}, Str{"second"})}}),
+                dict_delta<Int, HandlerOutputBundle>(
+                    {{1, tsb_delta<HandlerOutputBundle>(Int{11}, std::nullopt)}}),
+                dict_delta<Int, HandlerOutputBundle>({}, {2}))),
+        values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}}),
+                      dict_delta<Int, TS<Int>>({{1, 11}}),
+                      dict_delta<Int, TS<Int>>({}, {2})));
 }
 
 TEST_CASE("std operators: active reference topology receives one explicit startup sample")

@@ -6,6 +6,7 @@ import logging
 import threading
 from dataclasses import dataclass
 
+import _hgraph
 import tornado.iostream
 from frozendict import frozendict
 
@@ -24,10 +25,36 @@ from hgraph import (
     sink_node,
     to_graph,
 )
+from hgraph._types import _TsExpr
 
 from ._tornado_web import BaseHandler, TornadoWeb
 
 logger = logging.getLogger(__name__)
+
+
+def _ts_expr(handle) -> _TsExpr:
+    return _TsExpr(handle, repr(handle))
+
+
+def _bundle_field_types(annotation) -> dict[str, _TsExpr] | None:
+    if not isinstance(annotation, _TsExpr) or not annotation.handle.is_tsb:
+        return None
+    return {
+        name: _ts_expr(field_type)
+        for name, field_type in _hgraph.ts_field_types(annotation.handle)
+    }
+
+
+def _keyed_bundle_field_types(annotation) -> dict[str, _TsExpr] | None:
+    if not isinstance(annotation, _TsExpr) or not annotation.handle.is_tsd:
+        return None
+    element_type = _hgraph.tsd_element_ts(annotation.handle)
+    if not element_type.is_tsb:
+        return None
+    return {
+        name: _ts_expr(field_type)
+        for name, field_type in _hgraph.ts_field_types(element_type)
+    }
 
 
 @dataclass(frozen=True)
@@ -250,10 +277,24 @@ class _HttpServerHandler:
             )
 
         expected_output = TS[HttpResponse] if self._single else TSD[int, TS[HttpResponse]]
-        if signature.return_annotation != expected_output:
+        output = signature.return_annotation
+        self._auxiliary_output = False
+        if output != expected_output:
+            fields = _bundle_field_types(output)
+            if fields is not None and fields.get("response") == expected_output:
+                self._auxiliary_output = True
+            elif not self._single:
+                fields = _keyed_bundle_field_types(output)
+                if fields is not None and fields.get("response") == TS[HttpResponse]:
+                    self._auxiliary_output = True
+                else:
+                    fields = None
+            else:
+                fields = None
+        if output != expected_output and not self._auxiliary_output:
             raise TypeError(
-                f"HTTP handler output must be {expected_output!r}; "
-                "TSB auxiliary outputs are not yet supported"
+                f"HTTP handler output must be {expected_output!r}, a TSB with a "
+                f"'response' field of that type, or a keyed TSD of response bundles"
             )
 
         parameters = tuple(
@@ -262,7 +303,7 @@ class _HttpServerHandler:
             if name != "request"
         )
         self.__signature__ = signature.replace(parameters=parameters)
-        self.auto_wire = all(
+        self.auto_wire = not self._auxiliary_output and all(
             parameter.default is not inspect.Parameter.empty
             for parameter in parameters
         )
@@ -277,7 +318,7 @@ class _HttpServerHandler:
             responses = map_(self._fn, requests, *bound.args, **bound.kwargs)
         else:
             responses = self._fn(request=requests, **bound.arguments)
-        response_feedback(responses)
+        response_feedback(responses.response if self._auxiliary_output else responses)
         return responses
 
 
@@ -289,7 +330,11 @@ def http_server_handler(fn=None, *, url: str):
 
     A handler accepts either one ``TS[HttpRequest]`` and returns one
     ``TS[HttpResponse]``, or accepts and returns the corresponding keyed
-    ``TSD`` forms. Handlers without additional required inputs are wired by
+    ``TSD`` forms. The output may instead be a ``TSB`` with a field named
+    ``response`` of the primary response type; keyed batch handlers may also
+    return a ``TSD`` of those bundles. Auxiliary-output handlers are wired
+    explicitly so their full output remains observable. Response-only handlers
+    without additional required inputs are wired by
     :func:`register_http_server_adaptor`.
     """
     if fn is None:

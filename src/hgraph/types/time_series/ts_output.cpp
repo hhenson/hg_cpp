@@ -172,7 +172,8 @@ namespace hgraph
     {
         if (schema == nullptr) { throw std::invalid_argument("TSOutput requires a time-series schema"); }
         if (const auto *snapshot = active_type_realization();
-            snapshot != nullptr && schema->kind == TSTypeKind::TS && schema->value_schema != nullptr)
+            snapshot != nullptr && schema->value_schema != nullptr &&
+            (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::TSB))
         {
             const auto realized = snapshot->type_for(schema->value_schema);
             if (realized != ValuePlanFactory::instance().type_for(schema->value_schema))

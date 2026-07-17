@@ -67,7 +67,7 @@ namespace hgraph
         [[nodiscard]] TSDataTypeRef data_type_for(const TSValueTypeMetaData *schema);
         /** Canonical output role record. */
         [[nodiscard]] TSOutputTypeRef output_type_for(const TSValueTypeMetaData *schema);
-        /** Output role using an explicitly realized value binding. */
+        /** Atomic or fixed-TSB output role using an explicitly realized value binding. */
         [[nodiscard]] TSOutputTypeRef output_type_for(const TSValueTypeMetaData *schema,
                                                       ValueTypeRef value_binding);
         /** TSD output role using an explicitly realized child TS binding. */

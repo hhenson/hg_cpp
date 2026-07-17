@@ -244,6 +244,7 @@ namespace hgraph::python_bridge
     m.def("vt_element", [](PyValueType v) { return PyValueType{v.meta->element_type}; });
     m.def("vt_key", [](PyValueType v) { return PyValueType{v.meta->key_type}; });
     m.def("tsd_key_vt", [](PyTsType t) { return PyValueType{t.meta->key_type()}; });
+    m.def("tsd_element_ts", [](PyTsType t) { return PyTsType{t.meta->element_ts()}; });
     m.def("tsb_value_vt", [](PyTsType t) { return PyValueType{t.meta->value_schema}; });
     m.def("tsl_element_ts", [](PyTsType t) { return PyTsType{t.meta->element_ts()}; });
     m.def("tss", [](PyValueType v) { return PyTsType{TypeRegistry::instance().tss(v.meta)}; });

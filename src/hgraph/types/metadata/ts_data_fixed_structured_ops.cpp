@@ -1,5 +1,6 @@
 #include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
 
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/specialized_views.h>
@@ -48,6 +49,8 @@ namespace hgraph::ts_data_plan_factory_detail
         ValueTypeRef ordinal_key_binding{nullptr};
         ValueTypeRef delta_map_value_binding{nullptr};
         ValueTypeRef delta_key_set_binding{nullptr};
+        ValueTypeRef value_owning_binding{nullptr};
+        ValueTypeRef delta_owning_binding{nullptr};
         std::vector<TSRoleTypeRef>       element_types{};
         std::vector<std::size_t>       element_data_offsets{};
         std::vector<std::int64_t>       ordinal_keys{};
@@ -137,14 +140,19 @@ namespace hgraph::ts_data_plan_factory_detail
                 throw std::logic_error("TSDataPlanFactory: fixed TSData schemas are not populated");
             }
 
-            const auto canonical_value_binding = ValuePlanFactory::instance().type_for(value_schema);
-            if (canonical_value_binding == nullptr)
+            const auto canonical_value = ValuePlanFactory::instance().type_for(value_schema);
+            const auto canonical_delta = ValuePlanFactory::instance().type_for(delta_schema);
+            const auto *snapshot       = active_type_realization();
+            value_owning_binding = snapshot != nullptr ? snapshot->type_for(value_schema) : canonical_value;
+            delta_owning_binding = snapshot != nullptr ? snapshot->type_for(delta_schema) : canonical_delta;
+            if (canonical_value == nullptr || canonical_delta == nullptr || value_owning_binding == nullptr ||
+                delta_owning_binding == nullptr)
             {
-                throw std::logic_error("TSDataPlanFactory: fixed TSData value binding is not resolved");
+                throw std::logic_error("TSDataPlanFactory: fixed TSData owning bindings are not resolved");
             }
             active_layout().value_binding =
                 projected_value_surface ? intern_value_type(*value_schema, *plan, value_indexed_ops)
-                                        : canonical_value_binding;
+                                        : value_owning_binding;
 
             if (schema->kind == TSTypeKind::TSB)
             {
@@ -310,7 +318,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 &fixed_value_make_range,
                 nullptr,
             };
-            value_indexed_ops.owning_type_impl      = &canonical_value_binding;
+            value_indexed_ops.owning_type_impl      = &fixed_owning_binding;
             value_indexed_ops.copy_construct_view_impl = &fixed_value_copy_construct_view;
             value_indexed_ops.copy_assign_view_impl    = &fixed_value_copy_assign_view;
 
@@ -329,7 +337,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 &fixed_delta_bundle_make_range,
                 nullptr,
             };
-            delta_bundle_ops.owning_type_impl      = &canonical_value_binding;
+            delta_bundle_ops.owning_type_impl      = &fixed_owning_binding;
             delta_bundle_ops.copy_construct_view_impl = &fixed_delta_bundle_copy_construct_view;
             delta_bundle_ops.copy_assign_view_impl    = &fixed_delta_bundle_copy_assign_view;
 
@@ -356,7 +364,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 &fixed_delta_map_make_kv_range,
                 &fixed_delta_map_key_set,
             };
-            delta_map_ops.owning_type_impl      = &canonical_value_binding;
+            delta_map_ops.owning_type_impl      = &fixed_owning_binding;
             delta_map_ops.copy_construct_view_impl = &fixed_delta_map_copy_construct_view;
             delta_map_ops.copy_assign_view_impl    = &fixed_delta_map_copy_assign_view;
 
@@ -376,7 +384,7 @@ namespace hgraph::ts_data_plan_factory_detail
                  nullptr},
                 &fixed_delta_map_contains,
             };
-            delta_key_set_ops.owning_type_impl      = &canonical_value_binding;
+            delta_key_set_ops.owning_type_impl      = &fixed_owning_binding;
             delta_key_set_ops.copy_construct_view_impl = &fixed_delta_key_set_copy_construct_view;
             delta_key_set_ops.copy_assign_view_impl    = &fixed_delta_key_set_copy_assign_view;
         }
@@ -554,12 +562,19 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         [[nodiscard]] static ValueTypeRef
-        canonical_value_binding(const void *, ValueTypeRef view_binding)
+        fixed_owning_binding(const void *context, ValueTypeRef view_binding)
         {
-            const auto binding = ValuePlanFactory::instance().type_for(view_binding.schema());
+            const auto *state = ctx(context);
+            ValueTypeRef binding;
+            if (view_binding.schema() == state->schema->value_schema) { binding = state->value_owning_binding; }
+            else if (view_binding.schema() == state->schema->delta_value_schema)
+            {
+                binding = state->delta_owning_binding;
+            }
+            else { binding = ValuePlanFactory::instance().type_for(view_binding.schema()); }
             if (binding == nullptr)
             {
-                throw std::logic_error("fixed TSData value surface has no canonical owning binding");
+                throw std::logic_error("fixed TSData value surface has no owning binding");
             }
             return binding;
         }

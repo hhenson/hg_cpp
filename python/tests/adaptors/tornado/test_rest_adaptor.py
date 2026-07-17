@@ -401,6 +401,184 @@ def test_rest_handler_maps_batch_requests(free_tcp_port):
     assert not any(key.startswith("http_server_adaptor://") for key in state.keys())
 
 
+def test_rest_handler_preserves_auxiliary_outputs(free_tcp_port):
+    route = f"/rest-aux-{free_tcp_port}"
+    client_responses = []
+    client_errors = []
+    captured_audits = []
+
+    class HandlerOutput(hg.TimeSeriesSchema):
+        response: hg.TS[RestResponse]
+        audit: hg.TS[str]
+
+    @rest_handler(url=route, data_type=MyCS)
+    @hg.compute_node
+    def handler(
+        request: hg.TS[RestRequest],
+    ) -> hg.TSB[HandlerOutput]:
+        value = request.value
+        return {
+            "response": RestDeleteResponse(
+                status=RestResultEnum.NOT_FOUND,
+                reason=f"missing:{value.id}",
+            ),
+            "audit": f"{type(value).__name__}:{value.id}",
+        }
+
+    @hg.push_queue(hg.TS[bool])
+    def drive_client(sender):
+        def run():
+            try:
+                deadline = time.monotonic() + 3.0
+                while True:
+                    connection = http.client.HTTPConnection(
+                        "127.0.0.1", free_tcp_port, timeout=2.0
+                    )
+                    try:
+                        connection.request("DELETE", f"{route}/abc")
+                        response = connection.getresponse()
+                        client_responses.append((response.status, response.read()))
+                        break
+                    except ConnectionRefusedError:
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(0.02)
+                    finally:
+                        connection.close()
+            except BaseException as error:
+                client_errors.append(error)
+            finally:
+                sender(True)
+
+        Thread(target=run, name="hgraph-rest-aux-handler-test", daemon=True).start()
+
+    @hg.sink_node
+    def capture(audit: hg.TSD[int, hg.TS[str]]) -> None:
+        captured_audits.extend(
+            value.value for _, value in audit.modified_items()
+        )
+
+    @hg.sink_node
+    def stop_when_done(
+        done: hg.TS[bool],
+        _engine: hg.EvaluationEngineApi = None,
+    ) -> None:
+        _engine.request_engine_stop()
+
+    @hg.graph
+    def application() -> None:
+        done = drive_client()
+        register_http_server_adaptor(free_tcp_port)
+        outputs = handler()
+        capture(outputs.audit)
+        stop_when_done(done)
+
+    state = hg.GlobalState()
+    with hg.GlobalContext(state):
+        hg.run_graph(
+            application,
+            end_time=datetime.now(timezone.utc).replace(tzinfo=None)
+            + timedelta(seconds=5),
+            run_mode=hg.EvaluationMode.REAL_TIME,
+        )
+
+    assert client_errors == []
+    assert client_responses == [(404, b'{ "reason": "missing:abc" }')]
+    assert captured_audits == ["RestDeleteRequest:abc"]
+    assert not any(key.startswith("http_server_adaptor://") for key in state.keys())
+
+
+def test_batch_rest_handler_preserves_auxiliary_outputs(free_tcp_port):
+    route = f"/rest-batch-aux-{free_tcp_port}"
+    client_responses = []
+    client_errors = []
+    captured_audits = []
+
+    class HandlerOutput(hg.TimeSeriesSchema):
+        response: hg.TSD[int, hg.TS[RestResponse]]
+        audit: hg.TS[str]
+
+    @rest_handler(url=route, data_type=MyCS)
+    @hg.compute_node
+    def handler(
+        request: hg.TSD[int, hg.TS[RestRequest]],
+    ) -> hg.TSB[HandlerOutput]:
+        modified = tuple(request.modified_items())
+        return {
+            "response": {
+                request_id: RestDeleteResponse(
+                    status=RestResultEnum.NOT_FOUND,
+                    reason=f"missing:{request_value.value.id}",
+                )
+                for request_id, request_value in modified
+            },
+            "audit": ",".join(
+                f"{type(request_value.value).__name__}:{request_value.value.id}"
+                for _, request_value in modified
+            ),
+        }
+
+    @hg.push_queue(hg.TS[bool])
+    def drive_client(sender):
+        def run():
+            try:
+                deadline = time.monotonic() + 3.0
+                while True:
+                    connection = http.client.HTTPConnection(
+                        "127.0.0.1", free_tcp_port, timeout=2.0
+                    )
+                    try:
+                        connection.request("DELETE", f"{route}/abc")
+                        response = connection.getresponse()
+                        client_responses.append((response.status, response.read()))
+                        break
+                    except ConnectionRefusedError:
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(0.02)
+                    finally:
+                        connection.close()
+            except BaseException as error:
+                client_errors.append(error)
+            finally:
+                sender(True)
+
+        Thread(target=run, name="hgraph-rest-batch-aux-handler-test", daemon=True).start()
+
+    @hg.sink_node
+    def capture(audit: hg.TS[str]) -> None:
+        captured_audits.append(audit.value)
+
+    @hg.sink_node
+    def stop_when_done(
+        done: hg.TS[bool],
+        _engine: hg.EvaluationEngineApi = None,
+    ) -> None:
+        _engine.request_engine_stop()
+
+    @hg.graph
+    def application() -> None:
+        done = drive_client()
+        register_http_server_adaptor(free_tcp_port)
+        outputs = handler()
+        capture(outputs.audit)
+        stop_when_done(done)
+
+    state = hg.GlobalState()
+    with hg.GlobalContext(state):
+        hg.run_graph(
+            application,
+            end_time=datetime.now(timezone.utc).replace(tzinfo=None)
+            + timedelta(seconds=5),
+            run_mode=hg.EvaluationMode.REAL_TIME,
+        )
+
+    assert client_errors == []
+    assert client_responses == [(404, b'{ "reason": "missing:abc" }')]
+    assert captured_audits == ["RestDeleteRequest:abc"]
+    assert not any(key.startswith("http_server_adaptor://") for key in state.keys())
+
+
 def test_rest_client_helpers_round_trip_against_rest_handler(free_tcp_port):
     route = f"/rest-client-{free_tcp_port}"
     base_url = f"http://127.0.0.1:{free_tcp_port}{route}"

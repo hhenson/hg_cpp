@@ -576,3 +576,96 @@ def test_http_server_handler_registers_batch_requests(free_tcp_port):
     assert len(received) == 2
     assert all(isinstance(value, HttpGetRequest) for value in received)
     assert f"http_server_adaptor://{free_tcp_port}/{route}/queue" not in state
+
+
+def test_http_server_handler_preserves_keyed_auxiliary_outputs(free_tcp_port):
+    route = f"/batch-aux-handler-{free_tcp_port}"
+    client_results = []
+    client_errors = []
+    captured_audits = []
+
+    class HandlerOutput(hg.TimeSeriesSchema):
+        response: hg.TS[HttpResponse]
+        audit: hg.TS[str]
+
+    output_type = hg.TSD[int, hg.TSB[HandlerOutput]]
+
+    @http_server_handler(url=route)
+    @hg.compute_node
+    def handler(
+        request: hg.TSD[int, hg.TS[HttpRequest]],
+    ) -> output_type:
+        return {
+            request_id: {
+                "response": HttpResponse(
+                    status_code=202,
+                    body=f"handled:{request_value.value.url}".encode(),
+                ),
+                "audit": type(request_value.value).__name__,
+            }
+            for request_id, request_value in request.modified_items()
+        }
+
+    @hg.push_queue(hg.TS[bool])
+    def drive_client(sender):
+        def run():
+            try:
+                deadline = time.monotonic() + 3.0
+                while True:
+                    connection = http.client.HTTPConnection(
+                        "127.0.0.1",
+                        free_tcp_port,
+                        timeout=2.0,
+                    )
+                    try:
+                        connection.request("GET", route)
+                        response = connection.getresponse()
+                        client_results.append((response.status, response.read()))
+                        break
+                    except ConnectionRefusedError:
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(0.02)
+                    finally:
+                        connection.close()
+            except BaseException as error:
+                client_errors.append(error)
+            finally:
+                sender(True)
+
+        Thread(target=run, name="hgraph-http-aux-handler-test", daemon=True).start()
+
+    @hg.sink_node
+    def capture(audit: hg.TSD[int, hg.TS[str]]) -> None:
+        captured_audits.extend(
+            value.value for _, value in audit.modified_items()
+        )
+
+    @hg.sink_node
+    def stop_when_done(
+        done: hg.TS[bool],
+        _engine: hg.EvaluationEngineApi = None,
+    ) -> None:
+        _engine.request_engine_stop()
+
+    @hg.graph
+    def server_graph() -> None:
+        done = drive_client()
+        register_http_server_adaptor(free_tcp_port)
+        outputs = handler()
+        capture(outputs.audit)
+        stop_when_done(done)
+
+    state = hg.GlobalState()
+    with hg.GlobalContext(state):
+        hg.run_graph(
+            server_graph,
+            end_time=datetime.now(timezone.utc).replace(tzinfo=None)
+            + timedelta(seconds=5),
+            run_mode=hg.EvaluationMode.REAL_TIME,
+        )
+
+    assert client_errors == []
+    assert client_results == [(202, f"handled:{route}".encode())]
+    assert captured_audits == ["HttpGetRequest"]
+    assert f"http_server_adaptor://{free_tcp_port}/{route}/queue" not in state

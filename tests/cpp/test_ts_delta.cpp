@@ -268,6 +268,50 @@ TEST_CASE("TSD output slots use the graph's closed Bundle realization")
     REQUIRE(captured_request.as_bundle()["body"].checked_as<Str>() == "payload");
 }
 
+TEST_CASE("TSB output fields use the graph's closed Bundle realization")
+{
+    auto       &registry = TypeRegistry::instance();
+    const auto *integer  = registry.register_scalar<Int>("int");
+    const auto *text     = registry.register_scalar<Str>("str");
+    const auto *base = registry.bundle("tests.tsb.realization", "Response", {{"id", integer}}, {}, true);
+    const auto *leaf = registry.bundle(
+        "tests.tsb.realization", "DeleteResponse", {{"id", integer}, {"reason", text}}, {base});
+    const auto *base_ts = registry.ts(base);
+    const auto *keyed   = registry.tsd(integer, base_ts);
+    const auto *bundle  = registry.tsb(
+        "TSBRealizedResponseFields", {{"response", base_ts}, {"responses", keyed}});
+
+    const auto snapshot = TypeRealizationSnapshot::capture(registry);
+    TypeRealizationScope scope{snapshot.get()};
+    TSOutput             output{*bundle};
+
+    Value response{ValuePlanFactory::instance().type_for(leaf)};
+    auto  response_fields = response.as_bundle().begin_mutation();
+    response_fields["id"].set(Int{7});
+    response_fields["reason"].set(Str{"deleted"});
+
+    auto output_view   = output.view(MIN_ST);
+    auto output_bundle = output_view.as_bundle();
+    {
+        auto mutation = output_bundle.field("response").begin_mutation(MIN_ST);
+        REQUIRE(mutation.copy_value_from(response.view()));
+    }
+    Value key{Int{1}};
+    auto  responses = output_bundle.field("responses");
+    auto  response_dict = responses.as_dict();
+    {
+        auto mutation = response_dict.begin_mutation(MIN_ST);
+        mutation.set(key.view(), response.view());
+    }
+
+    const auto stored = output_bundle.field("response").value().concrete();
+    REQUIRE(stored.schema() == leaf);
+    REQUIRE(stored.as_bundle()["reason"].checked_as<Str>() == "deleted");
+    const auto keyed_stored = response_dict.at(key.view()).value().concrete();
+    REQUIRE(keyed_stored.schema() == leaf);
+    REQUIRE(keyed_stored.as_bundle()["reason"].checked_as<Str>() == "deleted");
+}
+
 TEST_CASE("ts_delta: capture/apply round-trip a TSB sparse field delta")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");

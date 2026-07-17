@@ -21,7 +21,8 @@ namespace hgraph::python_bridge
     {
         if (result.is_none()) { return; }
         const auto &erased = static_cast<const TSOutputView &>(out);
-        if (erased.schema() != nullptr && erased.schema()->kind == TSTypeKind::TS &&
+        if (erased.schema() != nullptr &&
+            (erased.schema()->kind == TSTypeKind::TS || erased.schema()->kind == TSTypeKind::TSB) &&
             erased.data_view().ops().from_python_impl !=
                 &ts_data_detail::missing_from_python)
         {

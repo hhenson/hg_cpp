@@ -1,6 +1,7 @@
 #include <hgraph/types/time_series/ts_delta.h>
 
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
@@ -25,7 +26,9 @@ namespace hgraph
     {
         [[nodiscard]] ValueTypeRef binding_for(const ValueTypeMetaData *meta, const char *fn)
         {
-            const auto binding = ValuePlanFactory::instance().type_for(meta);
+            const auto *snapshot = active_type_realization();
+            const auto binding = snapshot != nullptr ? snapshot->type_for(meta)
+                                                     : ValuePlanFactory::instance().type_for(meta);
             if (!binding) { throw std::logic_error(fmt::format("{}: unresolved value binding", fn)); }
             return binding;
         }

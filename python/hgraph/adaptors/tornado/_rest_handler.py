@@ -13,6 +13,7 @@ from hgraph import (
     OUT,
     CompoundScalar,
     TS,
+    TSB,
     TSD,
     combine,
     compute_node,
@@ -24,6 +25,7 @@ from hgraph import (
     map_,
     nothing,
     operator,
+    ts_schema,
     to_json_builder,
     with_signature,
 )
@@ -35,6 +37,7 @@ from .http_server_adaptor import (
     HttpPutRequest,
     HttpRequest,
     HttpResponse,
+    _bundle_field_types,
     http_server_handler,
 )
 
@@ -174,11 +177,34 @@ def rest_handler(fn=None, *, url: str, data_type: type[CompoundScalar]):
             "REST handler request must be TS[RestRequest] or "
             "TSD[int, TS[RestRequest]]"
         )
-    if signature.return_annotation != expected_output:
+    output = signature.return_annotation
+    output_fields = _bundle_field_types(output)
+    auxiliary_output = (
+        output_fields is not None
+        and output_fields.get("response") == expected_output
+    )
+    if output != expected_output and not auxiliary_output:
         raise TypeError(
-            f"REST handler output must be {expected_output!r}; "
-            "TSB auxiliary outputs are not yet supported"
+            f"REST handler output must be {expected_output!r} or a TSB with a "
+            f"'response' field of that type"
         )
+
+    if auxiliary_output:
+        http_output_fields = dict(output_fields)
+        http_output_fields["response"] = (
+            TS[HttpResponse] if single else TSD[int, TS[HttpResponse]]
+        )
+        final_output_type = TSB[ts_schema(**http_output_fields)]
+    else:
+        final_output_type = TS[HttpResponse] if single else TSD[int, TS[HttpResponse]]
+
+    def with_http_response(responses, http_response):
+        if not auxiliary_output:
+            return http_response
+        return final_output_type.from_ts(**{
+            name: http_response if name == "response" else getattr(responses, name)
+            for name in output_fields
+        })
 
     # Make every concrete generic leaf visible before the graph's closed
     # RestRequest/RestResponse unions are frozen at wiring completion.
@@ -204,25 +230,29 @@ def rest_handler(fn=None, *, url: str, data_type: type[CompoundScalar]):
     route = f"{url}/?(.*)"
 
     if single:
-        def rest_handler_graph(request: TS[HttpRequest], **kwargs) -> TS[HttpResponse]:
+        def rest_handler_graph(request: TS[HttpRequest], **kwargs):
             rest_request = convert[TS[RestRequest]](
                 request,
                 value_type=data_type,
             )
-            response = fn(request=rest_request, **kwargs)
-            return convert[TS[HttpResponse]](response)
+            responses = fn(request=rest_request, **kwargs)
+            response = responses.response if auxiliary_output else responses
+            return with_http_response(
+                responses,
+                convert[TS[HttpResponse]](response),
+            )
 
         with_signature(
             rest_handler_graph,
             kwargs=parameters,
             defaults=defaults,
-            return_annotation=TS[HttpResponse],
+            return_annotation=final_output_type,
         )
     else:
         def rest_handler_graph(
             request: TSD[int, TS[HttpRequest]],
             **kwargs,
-        ) -> TSD[int, TS[HttpResponse]]:
+        ):
             rest_requests = map_(
                 lambda value: convert[TS[RestRequest]](
                     value,
@@ -231,13 +261,17 @@ def rest_handler(fn=None, *, url: str, data_type: type[CompoundScalar]):
                 request,
             )
             responses = fn(request=rest_requests, **kwargs)
-            return map_(_convert_rest_response_to_http, responses)
+            response = responses.response if auxiliary_output else responses
+            return with_http_response(
+                responses,
+                map_(_convert_rest_response_to_http, response),
+            )
 
         with_signature(
             rest_handler_graph,
             kwargs=parameters,
             defaults=defaults,
-            return_annotation=TSD[int, TS[HttpResponse]],
+            return_annotation=final_output_type,
         )
 
     return http_server_handler(graph(rest_handler_graph), url=route)

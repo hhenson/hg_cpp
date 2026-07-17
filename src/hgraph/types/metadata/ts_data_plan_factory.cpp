@@ -338,11 +338,13 @@ namespace hgraph
         {
             throw std::invalid_argument("realized output_type_for requires a migrated TS schema");
         }
-        if (!plan_detail::is_compact_atomic_ts_data(*schema) || !value_binding ||
-            value_binding.schema() != schema->value_schema)
+        const bool scalar = plan_detail::is_compact_atomic_ts_data(*schema);
+        const bool fixed = schema->kind == TSTypeKind::TSB &&
+                           plan_detail::is_fixed_structured_ts_data(*schema);
+        if ((!scalar && !fixed) || !value_binding || value_binding.schema() != schema->value_schema)
         {
             throw std::invalid_argument(
-                "realized output_type_for requires an atomic TS and a binding for its declared value schema");
+                "realized output_type_for requires an atomic or fixed TS and a binding for its declared value schema");
         }
 
         const RealizedOutputKey key{schema, value_binding};
@@ -358,15 +360,30 @@ namespace hgraph
         auto builder = MemoryUtils::named_tuple();
         builder.reserve(2);
         builder.add_field("value", value_binding.checked_plan());
-        builder.add_field("tracking", MemoryUtils::plan_for<TSDataTracking>());
+        if (scalar) { builder.add_field("tracking", MemoryUtils::plan_for<TSDataTracking>()); }
+        else
+        {
+            builder.add_field("aux", plan_detail::ts_data_aux_plan(*schema, TypeRole::Output));
+        }
         const auto &plan = builder.build();
         const auto &value = plan.component("value");
-        const auto &tracking = plan.component("tracking");
-        const auto &ops = plan_detail::atomic_ts_data_ops(
-            schema->kind, value_binding, value_binding, plan, value.offset, tracking.offset);
-        const auto type = checked_ts_role_type(
-            intern_ts_type(*schema, TypeRole::Output, plan, ops, "ts.output.realized"),
-            std::integral_constant<TypeRole, TypeRole::Output>{});
+
+        TSOutputTypeRef type;
+        if (scalar)
+        {
+            const auto &tracking = plan.component("tracking");
+            const auto &ops = plan_detail::atomic_ts_data_ops(
+                schema->kind, value_binding, value_binding, plan, value.offset, tracking.offset);
+            type = checked_ts_role_type(
+                intern_ts_type(*schema, TypeRole::Output, plan, ops, "ts.output.realized"),
+                std::integral_constant<TypeRole, TypeRole::Output>{});
+        }
+        else
+        {
+            const auto &aux = plan.component("aux");
+            type = TSOutputTypeRef::checked(plan_detail::embedded_ts_storage_type(
+                *schema, TypeRole::Output, plan, value.offset, aux.offset, true));
+        }
 
         std::lock_guard lock(mutex_);
         return realized_output_type_cache_.try_emplace(key, type).first->second;
