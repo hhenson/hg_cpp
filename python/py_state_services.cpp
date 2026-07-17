@@ -450,7 +450,16 @@ namespace hgraph::python_bridge
             if (self.kind() != TSTypeKind::TSB) { throw nb::attribute_error(name.c_str()); }
             // hgraph's TSB.as_schema: typed field access (the same view).
             if (name == "as_schema") { return self_obj; }
-            return nb::cast(self.child_at(nb::cast(name)));
+            try
+            {
+                return nb::cast(self.child_at(nb::cast(name)));
+            }
+            catch (const std::out_of_range &)
+            {
+                // hgraph parity: an absent bundle field is an ATTRIBUTE error
+                // (the same exception a TSL attribute probe raises).
+                throw nb::attribute_error(name.c_str());
+            }
         })
         .def("__contains__", &PyTimeSeries::contains)
         .def("__len__", &PyTimeSeries::size)

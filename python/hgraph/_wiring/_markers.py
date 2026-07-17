@@ -31,6 +31,7 @@ class LOGGER:
 
 
 EvaluationEngineApi = _hgraph.EvaluationEngineApi
+EvaluationClock = _hgraph.EvaluationClock   # hgraph's clock annotation (same injectable as CLOCK)
 Node = _hgraph.Node
 NODE = Node
 
@@ -38,6 +39,7 @@ NODE = Node
 _INJECTABLE_MARKERS = {
     STATE: "S",
     CLOCK: "c",
+    EvaluationClock: "c",
     SCHEDULER: "d",
     EvaluationEngineApi: "e",
     GlobalState: "g",
@@ -116,6 +118,19 @@ class _TsOutMarker:
 
 
 TS_OUT = _TsOutMarker()
+
+
+class _TswOutMarker:
+    """TSW_OUT[...]: output-typed window annotation - represented by the
+    matching TSW[...] input shape (hgraph compat)."""
+
+    def __getitem__(self, item):
+        from .._types import TSW
+
+        return TSW[item]
+
+
+TSW_OUT = _TswOutMarker()
 
 class TSB_OUT:
     """_output annotation sugar (TSB_OUT[Schema]); injection keys on the

@@ -13,6 +13,33 @@ _GLOBAL_MISSING = object()
 _GRAPH_LOGGER_KEY = "__hgraph_graph_logger__"
 
 
+def utc_now():
+    """Return the current UTC time as a naive datetime (hgraph parity:
+    naive tzinfo-free datetimes throughout)."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def get_recorded_value(key="out", recordable_id=None):
+    """hgraph's in-memory recording accessor.
+
+    With a ``recordable_id`` this returns the timestamped recording
+    ``[(engine_time, value), ...]`` under the ``:memory:<id>.<key>`` scheme
+    (upstream parity). Without one it first tries upstream's default id
+    (``nodes.record``) and then falls back to the plain ``key`` — NB the
+    plain-key form is this runtime's cycle-aligned harness recording (bare
+    values, no timestamps); record with ``recordable_id=`` for the
+    timestamped shape."""
+    state = GlobalState.instance()
+    if recordable_id is not None:
+        return state[f":memory:{recordable_id}.{key}"]
+    default_key = f":memory:nodes.record.{key}"
+    if default_key in state:
+        return state[default_key]
+    return state[key]
+
+
 def _friendly_recording_delta(delta):
     if isinstance(delta, dict) and set(delta) in (
             {"removed", "modified"}, {"removed", "modified", "removed_strict"}):

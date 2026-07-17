@@ -13,10 +13,11 @@ from ._state import (
     _MemoryRecording, _RecordReplayModes, _friendly_recording_delta, _global_state_local,
     _pop_runtime_global_state, _push_runtime_global_state, comparison_summary, evaluate_const,
     record_replay_scope, set_as_of, set_record_replay_config, set_record_replay_model,
-    set_table_schema_as_of_key, set_table_schema_date_key
+    set_table_schema_as_of_key, set_table_schema_date_key, get_recorded_value, utc_now
 )
 from ._markers import (
-    CLOCK, EvaluationEngineApi, LOGGER, NODE, Node, RECORDABLE_STATE, SCHEDULER, STATE, TSB_OUT, TS_OUT, _INJECTABLE_MARKERS,
+    CLOCK, EvaluationClock, EvaluationEngineApi, LOGGER, NODE, Node, RECORDABLE_STATE,
+    SCHEDULER, STATE, TSB_OUT, TSW_OUT, TS_OUT, _INJECTABLE_MARKERS,
     _MISSING, _RecordableStateExpr, _RecordableStateMarker, _TSW_KIND, _TsOutMarker,
     _UNBOUNDED_TUPLE_KIND, _annotation_ts_kind, _is_object_vt, _tsw_kind, _unbounded_tuple_kind
 )
@@ -49,18 +50,19 @@ from ._compose import (
 )
 from ._services import (
     _AdaptorStub, _FLAVOUR_TS_ARITY, _ServiceAdaptorStub, _ServiceImpl, _ServiceInputs,
-    _ServiceStub, _bind_registered_impl, adaptor, adaptor_impl, context, from_graph,
+    _ServiceStub, _bind_registered_impl, adaptor, adaptor_impl, context, from_graph, get_context,
     get_service_inputs, impl_input, impl_output, reference_service, register_adaptor,
     register_service, request_reply_service, service_adaptor, service_adaptor_impl,
     service_impl, set_service_output, subscription_service, to_graph
 )
+from ._callable_shape import callable_shape_key, equal_lambdas
 from ._runner import (
     EvaluationMode, GraphConfiguration, _infer_ts_type, _times_for, eval_node, evaluate_graph,
     run_graph
 )
 
 __all__ = [
-    "CLOCK", "DebugContext", "EvaluationEngineApi", "EvaluationMode", "Feedback", "GlobalContext", "GlobalState",
+    "CLOCK", "EvaluationClock", "callable_shape_key", "equal_lambdas", "get_context", "get_recorded_value", "utc_now", "TSW_OUT", "DebugContext", "EvaluationEngineApi", "EvaluationMode", "Feedback", "GlobalContext", "GlobalState",
     "GraphConfiguration", "IncorrectTypeBinding", "LOGGER", "NODE", "Node", "ParseError", "RECORDABLE_STATE",
     "REMOVE", "REMOVE_IF_EXISTS", "RecordReplayContext", "RecordReplayEnum", "Removed",
     "RequirementsNotMetWiringError", "SCHEDULER", "STATE", "TSB_OUT", "TS_OUT", "WiringError",

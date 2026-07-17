@@ -287,10 +287,14 @@ model.
        composition, removals, retargeting, and teardown are covered.  Dynamic
        TSL associative/ordered folds and dynamic-TSD pass-through-combiner
        outputs are also covered; ``REMOVE_IF_EXISTS`` is exported as a
-       compatibility alias of ``REMOVE`` (2026-07-17; silent-removal
-       deviation recorded in :doc:`roadmap`), and ``REMOVE`` is the canonical
-       sentinel name (the former ``REMOVED`` spelling is gone).  ``MAX_DT`` /
-       ``MAX_ET`` are exported at the package root.
+       distinct sentinel with upstream-exact strictness (``REMOVE`` raises on
+       absent keys; 2026-07-17), and ``REMOVE`` is the canonical sentinel name
+       (the former ``REMOVED`` spelling is gone).  ``MAX_DT`` / ``MAX_ET``,
+       ``utc_now``, ``EvaluationClock`` (usable as the clock-injectable
+       annotation), ``get_recorded_value``, ``get_context``, ``TSW_OUT``,
+       ``equal_lambdas`` and ``is_feature_enabled`` are exported at the
+       package root (2026-07-17 export batch); the stale ``_KNOWN_GAPS``
+       machinery is removed (every entry had a live implementation).
    * - ``test_service.py``
      - 19
      - **Public subset landed.** ``NUMBER``/``NUMBER_2`` lower to constrained

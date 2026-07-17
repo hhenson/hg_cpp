@@ -39,19 +39,6 @@ from ._wiring import operator_function as _operator_function
 OperatorWiringNodeClass = type(_operator_function("add_"))
 
 
-# Known GAPS: declared-only C++ operators and unbridged surface. Importable
-# (the ported suite imports them at module load); raise at USE with a
-# "gap:" message so tests skip precisely.
-_KNOWN_GAPS = (
-    "json_encode", "json_decode",
-    "to_window", "window", "batch", "filter_by",
-    "convert", "collect", "emit",
-    "collapse_keys", "flip_keys", "uncollapse_keys", "values_",
-    "assert_", "print_", "setattr_",
-    "evaluation_time_in_range", "round_",
-)
-
-
 class PartialSchema:
     """Upstream's per-type to_table builder bundle (an _impl internal). The
     C++ equivalent is the interned TS-table layout (TableConverter /
@@ -67,14 +54,6 @@ def extract_table_schema_raw_type(tp):
     raise NotImplementedError(
         "gap: extract_table_schema_raw_type is an upstream _impl internal "
         "(use table_schema(tp) - the C++ layout introspection)")
-
-
-def _gap(name):
-    def _raise(*args, **kwargs):
-        raise NotImplementedError(f"gap: '{name}' is not implemented yet")
-
-    _raise.__name__ = name
-    return _raise
 
 
 # Node evaluation errors surface as RuntimeError through the C++ bridge;

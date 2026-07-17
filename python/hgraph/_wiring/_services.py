@@ -115,6 +115,29 @@ class context:
         return _hgraph.has_context(_current_wiring(), name)
 
 
+class _GetContext:
+    """hgraph's ``get_context`` free function: ``get_context[TS[str]]("name")``
+    or ``get_context("name")``. The subscript documents the expected type -
+    this runtime's contexts are name-based (recorded deviation), so the
+    published port carries its own type and the subscript is not needed for
+    resolution."""
+
+    def __getitem__(self, tp):
+        return self
+
+    def __call__(self, name, tp_=None, required=False):
+        if not context.has(name):
+            if required:
+                from ._core import WiringError
+
+                raise WiringError(f"Context variable for {name} is required but not found")
+            return None
+        return context.get(name)
+
+
+get_context = _GetContext()
+
+
 class _ServiceStub:
     """A service interface stub (hgraph's service decorators): calling it
     wires a CLIENT; register_service registers an implementation."""
