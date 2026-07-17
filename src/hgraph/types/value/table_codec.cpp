@@ -116,11 +116,22 @@ namespace hgraph
 
         Value read_str(const Column &, const arrow::Array &array, std::int64_t row)
         {
+            // polars-built tables carry large_utf8 (64-bit offsets); reading
+            // one through StringArray misreads the offset buffer.
+            if (array.type_id() == arrow::Type::LARGE_STRING)
+            {
+                return Value{Str{static_cast<const arrow::LargeStringArray &>(array).GetView(row)}};
+            }
             return Value{Str{static_cast<const arrow::StringArray &>(array).GetView(row)}};
         }
 
         Value read_bytes(const Column &, const arrow::Array &array, std::int64_t row)
         {
+            if (array.type_id() == arrow::Type::LARGE_BINARY)
+            {
+                return Value{
+                    Bytes{std::string{static_cast<const arrow::LargeBinaryArray &>(array).GetView(row)}}};
+            }
             return Value{Bytes{std::string{static_cast<const arrow::BinaryArray &>(array).GetView(row)}}};
         }
 

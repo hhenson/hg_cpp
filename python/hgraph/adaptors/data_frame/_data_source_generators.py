@@ -337,16 +337,12 @@ def tsd_k_tsd_from_data_source(
         packed_rows.append({dt_col: when, "value": dict(nested)})
     from hgraph import generator
 
+    # yield the nested dict as a TSD DELTA (additive per tick — absent keys
+    # keep their state, matching upstream's pivot semantics); routing through
+    # convert would state-sync and emit REMOVEs for absent keys.
     @generator
-    def source() -> TS[dict[key_type, dict[pivot_type, value_type]]]:
+    def source() -> TSD[key_type, TSD[pivot_type, TS[value_type]]]:
         for row in packed_rows:
             yield row[dt_col] + offset, row["value"]
 
-    raw = source()
-    outer = convert[TSD[key_type, TS[dict[pivot_type, value_type]]]](raw)
-
-    @graph
-    def expand(value: TS[dict[pivot_type, value_type]]) -> TSD[pivot_type, TS[value_type]]:
-        return convert[TSD[pivot_type, TS[value_type]]](value)
-
-    return map_(expand, outer)
+    return source()

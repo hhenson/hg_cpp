@@ -360,13 +360,15 @@ Recorded divergences / gaps (the morning-summary list):
   schema-directed on the sending thread and cross the sanctioned C++
   boundary. Wiring the decorated function returns its port.
 - ``GraphConfiguration`` exposes the upstream option names. ``run_mode``,
-  start/end time, logger selection, and default logger level are honoured.
-  Evaluation tracing/profiling, wiring tracing/observers, Python lifecycle
-  observers, custom logger formatters, non-default traceback capture, and
-  retaining a failed graph with ``cleanup_on_error=False`` are not implemented;
-  selecting one raises ``NotImplementedError`` before wiring. The same rule
-  applies to non-default ``eval_node`` trace/observer controls. No execution
-  option is accepted and silently discarded.
+  start/end time, logger selection, default logger level, and evaluation
+  tracing are honoured. ``trace=True`` or the upstream trace-options dictionary
+  installs the native ``EvaluationTrace`` on the executor; ``eval_node`` and
+  ``run_graph`` route ``__trace__`` through the same path. Profiling, wiring
+  tracing/observers, arbitrary Python lifecycle observers, custom logger
+  formatters, non-default traceback capture, and retaining a failed graph with
+  ``cleanup_on_error=False`` are not implemented; selecting one raises
+  ``NotImplementedError`` before wiring. No execution option is accepted and
+  silently discarded.
 - The decorator ``node_impl=`` parameter is present for signature compatibility
   but deliberately rejects non-``None`` values. It selects an implementation
   class from the retired Python runtime; Python authors must provide the node

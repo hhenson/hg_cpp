@@ -63,8 +63,9 @@ class GraphConfiguration:
             raise ValueError(
                 "GraphConfiguration.run_mode must be EvaluationMode.SIMULATION or "
                 "EvaluationMode.REAL_TIME")
+        _make_evaluation_trace(self.trace)
         unsupported = []
-        for name in ("trace", "profile", "trace_wiring", "capture_values"):
+        for name in ("profile", "trace_wiring", "capture_values"):
             if getattr(self, name):
                 unsupported.append(name)
         for name in ("life_cycle_observers", "wiring_observers"):
@@ -82,6 +83,19 @@ class GraphConfiguration:
                 f"the C++ graph runner does not yet support: {rendered}")
         if not hasattr(self.graph_logger, "setLevel"):
             raise TypeError("GraphConfiguration.graph_logger must be a logging.Logger-like object")
+
+
+def _make_evaluation_trace(trace):
+    """Adapt the Python ``bool | dict`` trace option to the native observer."""
+    if not trace:
+        return None
+    if isinstance(trace, _hgraph.EvaluationTrace):
+        return trace
+    if trace is True:
+        return _hgraph.EvaluationTrace()
+    if type(trace) is dict:
+        return _hgraph.EvaluationTrace(**trace)
+    raise TypeError("trace must be a bool, dict, or EvaluationTrace")
 
 
 def evaluate_graph(fn, config=None, *args, **kwargs):
@@ -142,6 +156,7 @@ def run_graph(
 
 def _evaluate_graph(graph_fn, config, args, kwargs):
     config._validate()
+    trace = _make_evaluation_trace(config.trace)
     state = GlobalState.instance()
     missing = object()
     previous_logger = state.get(_GRAPH_LOGGER_KEY, missing)
@@ -158,7 +173,8 @@ def _evaluate_graph(graph_fn, config, args, kwargs):
                 {"sparse": True},
             )
         run = w.run(start_time=config.start_time, end_time=config.end_time,
-                    realtime=config.run_mode == EvaluationMode.REAL_TIME)
+                    realtime=config.run_mode == EvaluationMode.REAL_TIME,
+                    trace=trace)
     finally:
         w._release_seed_context()
         _wiring_stack.pop()
@@ -210,8 +226,6 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     explicitly; a test that cannot quiesce (e.g. a bound feedback loop
     until per-edge passive support lands) must set it and say why."""
     unsupported = []
-    if __trace__:
-        unsupported.append("__trace__")
     if __trace_wiring__:
         unsupported.append("__trace_wiring__")
     if __observers__:
@@ -307,6 +321,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                          __observers__=__observers__,
                          __start_time__=__start_time__, __end_time__=__end_time__,
                          __scalars__=__scalars__, __elide__=__elide__, **kwargs)
+    trace = _make_evaluation_trace(__trace__)
     w = _hgraph.Wiring(GlobalState.instance()._impl)
     _wiring_stack.append(w)
     try:
@@ -389,11 +404,19 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             # OPERATOR functions have no python signature: named list kwargs
             # are input series wired as keyword ports.
             named_ports = {}
+            hints = getattr(fn, "_ts_hint", None) or []
+            if not isinstance(hints, list):
+                hints = [hints]
+            hints = [h for h in hints if isinstance(h, _TsExpr)]
             for k in [k for k, v in kwargs.items() if isinstance(v, (list, tuple))]:
                 series = kwargs.pop(k)
                 annotation = None
                 if resolution_dict and k in resolution_dict and isinstance(resolution_dict[k], _TsExpr):
                     annotation = resolution_dict[k]   # the dict types NAMED series too
+                if annotation is None and hints:
+                    # op[TYPE, ...] subscript hints type named series in
+                    # order, exactly as they type positional inputs.
+                    annotation = hints.pop(0)
                 if annotation is None:
                     annotation = _infer_ts_type(series)
                 if annotation is None:
@@ -406,6 +429,11 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                 inputs = (*inputs, series)   # count toward the run length
             kwargs.update(named_ports)
         scalars.update(kwargs)   # hgraph parity: extra kwargs flow to the node
+        # Python-readable mirror of the run start (the C++ run bounds have no
+        # wiring-time getter): start-time-aware wiring — the DATA_FRAME
+        # replay overloads' upstream `_api.start_time` filter — reads this.
+        GlobalState.instance()["__start_time__"] = (
+            __start_time__ if __start_time__ is not None else _hgraph.MIN_ST)
         out = fn(*ports, **scalars)
         # Replay values convert AFTER wiring: hgraph surfaces wiring errors
         # before data-conversion errors, and tests pin that order.
@@ -414,7 +442,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         length = max((len(series) for i, series in enumerate(inputs)
                       if isinstance(series, (list, tuple)) and i not in scalar_positions), default=0)
         if out is None:
-            run = w.run(start_time=__start_time__, end_time=__end_time__)
+            run = w.run(start_time=__start_time__, end_time=__end_time__, trace=trace)
             return None
         # hgraph parity: a REF graph output records its DEREFERENCED values.
         # A TSB with REF fields records a STRUCTURAL bundle of per-field
@@ -435,7 +463,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                 [_hgraph.tsl_element(raw, i).dereferenced for i in range(raw.ts_type.fixed_size)]
             )
         w.wire("__harness_record", (record_port, "eval_node::out"), record_kwargs)
-        run = w.run(start_time=__start_time__, end_time=__end_time__)
+        run = w.run(start_time=__start_time__, end_time=__end_time__, trace=trace)
     finally:
         w._release_seed_context()
         _wiring_stack.pop()
@@ -444,6 +472,10 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         # recording was made SPARSE, so this is just the list).
         return [_simplify_delta(v) for _, v in run.recorded("eval_node::out", sparse=True)]
     recorded = [None if v is None else _simplify_delta(v) for v in run.recorded("eval_node::out")]
+    if __start_time__ is not None and __start_time__ > _hgraph.MIN_ST:
+        # hgraph parity: the result list is aligned to the RUN START (index 0
+        # = the first evaluation cycle); run.recorded indexes from MIN_ST.
+        recorded = recorded[int((__start_time__ - _hgraph.MIN_ST) / _hgraph.MIN_TD):]
     recorded += [None] * (length - len(recorded))
     if not any(v is not None for v in recorded):
         return None   # hgraph parity: a never-ticking output reports None

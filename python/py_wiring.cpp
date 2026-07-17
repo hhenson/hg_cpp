@@ -269,6 +269,16 @@ namespace hgraph::python_bridge
     nb::class_<PyRun>(m, "Run").def("recorded", &PyRun::recorded, nb::arg("key"), nb::arg("sparse") = false);
     m.def("operator_names", [] { return OperatorRegistry::instance().registered_names(); });
 
+    nb::class_<EvaluationTrace>(m, "EvaluationTrace")
+        .def(nb::init<std::optional<std::string>, bool, bool, bool, bool, bool>(),
+             nb::arg("filter").none() = nb::none(), nb::arg("start") = true,
+             nb::arg("eval") = true, nb::arg("stop") = true,
+             nb::arg("node") = true, nb::arg("graph") = true)
+        .def_static("set_print_all_values", &EvaluationTrace::set_print_all_values,
+                    nb::arg("value"))
+        .def_static("set_use_logger", &EvaluationTrace::set_use_logger,
+                    nb::arg("value"));
+
     nb::class_<PyWiredFn>(m, "WiredFn")
         .def_prop_ro("arity", [](const PyWiredFn &self) { return self.fn.arity; })
         .def_prop_ro("variadic", [](const PyWiredFn &self) { return self.fn.variadic; })
@@ -402,7 +412,7 @@ namespace hgraph::python_bridge
         .def("feedback_bind", &PyWiring::feedback_bind, nb::arg("feedback"), nb::arg("port"))
         .def("_release_seed_context", &PyWiring::release_seed_context)
         .def("run", &PyWiring::run, nb::arg("start_time") = nb::none(), nb::arg("end_time") = nb::none(),
-             nb::arg("realtime") = false)
+             nb::arg("realtime") = false, nb::arg("trace").none() = nb::none())
         .def("push_source", &PyWiring::push_source, nb::arg("ts_type"), nb::arg("conflate") = false,
              nb::arg("on_start") = nb::none());
 

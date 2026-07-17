@@ -8,6 +8,7 @@ optional producer only: values are converted to Arrow at the boundary.
 from ._data_frame_source import *
 from ._data_source_generators import *
 from ._data_frame_record_replay import *
+from ._to_frame_converters import register_to_frame_converters  # noqa: F401 — import registers the frame convert targets
 
 
 def group_by(ts, keys):

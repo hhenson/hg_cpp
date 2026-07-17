@@ -142,6 +142,7 @@ hgraph_add_test_objects(hgraph_runtime_test_objects
     test_lifecycle_observers.cpp
     test_context_node.cpp
     test_endpoint_owner.cpp
+    test_evaluation_trace.cpp
     test_feedback.cpp
     test_global_state.cpp
     test_graph_introspection.cpp

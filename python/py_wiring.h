@@ -17,6 +17,9 @@ namespace hgraph::python_bridge
 
     struct PyRun
     {
+        // Declared before the executor so destruction tears the executor down
+        // while its registered observer is still alive.
+        std::unique_ptr<EvaluationTrace> trace{};
         GraphExecutorValue executor;
 
         /** Recorded read-back. DENSE (default): per-cycle values, None = no
@@ -171,7 +174,7 @@ namespace hgraph::python_bridge
         }
 
         [[nodiscard]] std::unique_ptr<PyRun> run(std::optional<DateTime> start_time, std::optional<DateTime> end_time,
-                                                 bool realtime)
+                                                 bool realtime, const EvaluationTrace *trace)
         {
             ensure_open();
             if (owned == nullptr) { throw std::logic_error("a borrowed Wiring cannot be run"); }
@@ -183,7 +186,9 @@ namespace hgraph::python_bridge
                 .start_time(start_time.value_or(MIN_ST))
                 .end_time(end_time.value_or(MAX_ET))
                 .mode(realtime ? GraphExecutorMode::RealTime : GraphExecutorMode::Simulation);
-            auto run = std::make_unique<PyRun>(PyRun{eb.make_executor()});
+            auto owned_trace = trace != nullptr ? std::make_unique<EvaluationTrace>(*trace) : nullptr;
+            if (owned_trace != nullptr) { eb.add_lifecycle_observer(owned_trace.get()); }
+            auto run = std::make_unique<PyRun>(PyRun{std::move(owned_trace), eb.make_executor()});
 
             if (py_has_active_runtime_global_state())
             {

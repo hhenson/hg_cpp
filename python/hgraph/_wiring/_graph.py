@@ -111,7 +111,8 @@ class _ResolvedSize:
         return f"Size[{self.SIZE}]"
 
 
-def _graph_auto_resolve(signature, arguments, resolvers=None, requires=None):
+def _graph_auto_resolve(signature, arguments, resolvers=None, requires=None,
+                        seed_bindings=None):
     """Fill ``x: type[SENTINEL] = AUTO_RESOLVE`` graph parameters: match
     every time-series parameter's TYPE PATTERN against its wired port in a
     C++ resolution scope, then read each sentinel's binding from it."""
@@ -120,6 +121,11 @@ def _graph_auto_resolve(signature, arguments, resolvers=None, requires=None):
     from .._types import _TsExpr, _GenericTsExpr, _TypeVarSentinel, _pattern_of
 
     scope = _hgraph.ResolutionScope()
+    for name, resolved in (seed_bindings or {}).items():
+        try:
+            _PyNode._bind_resolved(scope, name, resolved)
+        except (RuntimeError, ValueError, TypeError):
+            pass   # a binding kind the scope cannot seed is simply unavailable
     for name, param in signature.parameters.items():
         value = arguments.get(name)
         if isinstance(value, WiringPort) and isinstance(
@@ -306,6 +312,18 @@ class _GraphFn:
                                                        return_annotation=return_annotation)
         return wrapper
 
+    def _with_resolution(self, bindings):
+        """Return a call-local graph seeded with the overload registry's
+        resolved type variables (the _PyNode contract): AUTO_RESOLVE
+        parameters whose sentinel is fixed only by the requested output —
+        e.g. ``replay[TS[int]]`` — read the dispatch bindings instead of
+        starting a second, incomplete resolution pass."""
+        import copy
+
+        resolved = copy.copy(self)
+        resolved._seed_bindings = dict(bindings)
+        return resolved
+
     def __call__(self, *args, **kwargs):
         _warn_deprecated(self.__name__, self._deprecated)
         bound = self._signature.bind_partial(*args, **kwargs)
@@ -313,7 +331,8 @@ class _GraphFn:
             if param.annotation is GlobalState and param.name not in bound.arguments:
                 bound.arguments[param.name] = GlobalState.instance()
         bound.arguments.update(_graph_auto_resolve(
-            self._signature, bound.arguments, self._resolvers, self._requires))
+            self._signature, bound.arguments, self._resolvers, self._requires,
+            getattr(self, "_seed_bindings", None)))
         result = self.fn(*bound.args, **bound.kwargs)
         if isinstance(result, dict) and result and all(isinstance(v, WiringPort) for v in result.values()):
             # hgraph parity: a dict literal of ports returned from a @graph

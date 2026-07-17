@@ -219,10 +219,16 @@ def _pop_runtime_global_state():
 
 def set_record_replay_config(model):
     _hgraph._set_record_replay_config(GlobalState.instance()._impl, model)
+    # python-readable mirror (model-gated python overloads read it in their
+    # requires= predicates; the C++ config has no python getter)
+    GlobalState.instance()["__record_replay_model__"] = model
 
 
 def set_as_of(value):
     _hgraph._set_as_of(GlobalState.instance()._impl, value)
+    # python-readable mirror (the data-frame record/replay model reads it
+    # at wiring/replay time; the C++ config has no python getter)
+    GlobalState.instance()["__as_of__"] = value
 
 
 def set_table_schema_date_key(key):

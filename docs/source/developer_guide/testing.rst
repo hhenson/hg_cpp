@@ -96,6 +96,33 @@ is the only activation gate.
 substrate rather than defining duplicate test nodes; a bespoke node in a test
 file should exist only to exercise a shape the toolkit cannot express.
 
+Evaluation tracing
+------------------
+
+``hgraph/runtime/evaluation_trace.h`` provides the native
+``EvaluationTrace`` lifecycle observer. Attach it before executor construction
+so it observes the root and every nested graph through the executor's shared
+observer list:
+
+.. code-block:: cpp
+
+   EvaluationTrace trace{EvaluationTraceOptions{.start = false, .stop = false}};
+   GraphExecutorBuilder builder;
+   builder.graph_builder(std::move(graph)).add_lifecycle_observer(&trace);
+   auto executor = builder.make_executor();
+   executor.view().run();
+
+The observer must outlive the executor run. It renders graph lifecycle events,
+node ``[IN]``/``[OUT]`` values, future schedules, and nested graph paths. A
+substring ``filter`` can restrict the trace to matching graph or node paths;
+an optional native output callback supports embedding and deterministic tests.
+
+The Python ``GraphConfiguration(trace=...)``, ``run_graph(__trace__=...)``, and
+``eval_node(__trace__=...)`` forms construct this same C++ observer. ``True``
+uses defaults; a dictionary accepts ``filter``, ``start``, ``eval``, ``stop``,
+``node``, and ``graph``. ``hgraph.test.EvaluationTrace`` is the bound native
+class, including ``set_print_all_values`` and ``set_use_logger``.
+
 Python Compatibility Tests
 --------------------------
 

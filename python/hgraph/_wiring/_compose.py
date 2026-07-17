@@ -413,18 +413,26 @@ class _Convert:
         if target is None:
             raise WiringError("convert requires a target type")
 
-        for handler in _convert_target_handlers:
-            port = handler(target, inputs, kwargs)
-            if port is not None:
-                return port
+        def _registry_convert(resolved_target):
+            if not isinstance(resolved_target, _TsExpr):
+                resolved_target = _resolve_requested_target(
+                    "convert", resolved_target, inputs, keys=kwargs.get("keys"))
+            if (len(inputs) == 1 and isinstance(inputs[0], WiringPort)
+                    and _unwrap(inputs[0]).ts_type == resolved_target.handle):
+                return inputs[0]   # convert to the SAME type is a no-op (hgraph: j is i)
+            return wire("convert", *inputs, output_type=resolved_target, **kwargs)
 
-        if not isinstance(target, _TsExpr):
-            target = _resolve_requested_target("convert", target, inputs, keys=kwargs.get("keys"))
-
-        if (len(inputs) == 1 and isinstance(inputs[0], WiringPort)
-                and _unwrap(inputs[0]).ts_type == target.handle):
-            return inputs[0]   # convert to the SAME type is a no-op (hgraph: j is i)
-        return wire("convert", *inputs, output_type=target, **kwargs)
+        # Registered target handlers are a FALLBACK for target shapes the C++
+        # registry has no pattern for (frame-of-schema targets); registry
+        # resolution stays the primary path.
+        try:
+            return _registry_convert(target)
+        except (WiringError, TypeError, ValueError, RuntimeError) as registry_error:
+            for handler in _convert_target_handlers:
+                port = handler(target, inputs, kwargs)
+                if port is not None:
+                    return port
+            raise registry_error
 
 convert = _Convert()
 

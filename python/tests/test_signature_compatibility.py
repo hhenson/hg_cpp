@@ -97,7 +97,7 @@ def test_graph_configuration_rejects_unimplemented_options_explicitly():
     def app() -> hg.TS[int]:
         return hg.const(1)
 
-    with pytest.raises(NotImplementedError, match="trace, profile"):
+    with pytest.raises(NotImplementedError, match="profile"):
         hg.evaluate_graph(app, hg.GraphConfiguration(trace=True, profile=True))
     with pytest.raises(TypeError):
         hg.GraphConfiguration(unknown_option=True)
@@ -206,7 +206,7 @@ def test_service_resolvers_and_registration_resolution_dict():
         registered_adaptor_app, [3], __end_time__=end_time) == [None, 3]
 
 
-def test_push_queue_options_feedback_keyword_and_eval_node_trace_defaults():
+def test_push_queue_options_feedback_keyword_and_eval_node_trace_defaults(capfd):
     @hg.operator
     def queued_value(scalar_type: type) -> hg.TS[hg.SCALAR]: ...
 
@@ -245,5 +245,46 @@ def test_push_queue_options_feedback_keyword_and_eval_node_trace_defaults():
         __observers__=[],
         __end_time__=hg.MIN_ST + 3 * hg.MIN_TD,
     ) == [None, 1]
-    with pytest.raises(NotImplementedError, match="__trace__"):
-        hg.eval_node(delayed, [1], __trace__=True)
+    from hgraph.test import EvaluationTrace
+
+    EvaluationTrace.set_use_logger(False)
+    try:
+        assert hg.eval_node(
+            delayed,
+            [1, None],
+            __trace__={"start": False, "stop": False},
+            __end_time__=hg.MIN_ST + 3 * hg.MIN_TD,
+        ) == [None, 1]
+    finally:
+        EvaluationTrace.set_use_logger(True)
+
+    trace = capfd.readouterr().out
+    assert "Eval Start" in trace
+    assert "[IN]" in trace
+    assert "[OUT]" in trace
+    assert "Eval Done" in trace
+    assert "Starting Graph" not in trace
+
+
+def test_graph_configuration_trace_uses_native_observer(capfd):
+    from hgraph.test import EvaluationTrace
+
+    @hg.graph
+    def app() -> hg.TS[int]:
+        return hg.const(7)
+
+    EvaluationTrace.set_use_logger(False)
+    try:
+        result = hg.evaluate_graph(
+            app,
+            hg.GraphConfiguration(trace={"start": False, "stop": False}),
+        )
+    finally:
+        EvaluationTrace.set_use_logger(True)
+
+    assert [value for _, value in result] == [7]
+    trace = capfd.readouterr().out
+    assert "Eval Start" in trace
+    assert " *->* 7 [OUT]" in trace
+    assert "Eval Done" in trace
+    assert "Starting Graph" not in trace

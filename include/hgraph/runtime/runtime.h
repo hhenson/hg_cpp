@@ -2,6 +2,7 @@
 #define HGRAPH_RUNTIME_RUNTIME_H
 
 #include <hgraph/runtime/evaluation_clock.h>
+#include <hgraph/runtime/evaluation_trace.h>
 #include <hgraph/runtime/lifecycle_observer.h>
 #include <hgraph/runtime/node.h>
 #include <hgraph/runtime/graph.h>

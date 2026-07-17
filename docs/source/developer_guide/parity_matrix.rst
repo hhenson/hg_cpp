@@ -457,7 +457,16 @@ Types and scalars
        transformation. Arrow is a **formal dependency**; the table is a
        first-class type behind the ``Frame`` marker (schema-less legal;
        input schema = minimum columns; output schema = exact). Full design:
-       :doc:`record_replay_table`.
+       :doc:`record_replay_table`. **Scope ruling (2026-07-17): polars is
+       boundary-only** — polars frames convert on ingest via
+       ``__arrow_c_stream__``; frame reads yield ``pyarrow.Table`` and
+       consumers use ``pl.from_arrow``. The to-frame ``convert`` family, the
+       DATA_FRAME record/replay model (``recordable_id`` +
+       ``set_data_frame_overrides``), and the data-source generators execute
+       Arrow-native; the upstream data-frame tier's residue is exactly the
+       polars-native assertion boundary (ported copies in
+       ``python/tests/ported/adaptors/data_frame`` are green) plus the
+       recorded ``join``-operator gap.
    * - Generics (``TypeVar``, ``AUTO_RESOLVE``, ``Type[...]``)
      - Re-architected
      - ``TsVar``/``ScalarVar``/``SizeVar`` + wiring ``ResolutionMap`` +
@@ -557,8 +566,10 @@ Wiring and node-authoring surface
        Python ``NODE`` exposes a callback-scoped projection over the same
        native node, including nested node/graph identity and notification.
    * - Lifecycle observers, evaluation trace/profiling
-     - Native lifecycle observers; trace/profiling missing
-     - Evaluation trace/profiling remains additive work.
+     - Native lifecycle observers and evaluation trace; profiling missing
+     - ``EvaluationTrace`` is a public C++ observer and backs Python
+       ``GraphConfiguration(trace=...)`` / ``__trace__``. Profiling remains
+       additive work.
    * - Graph recovery (start-from-state)
      - Missing
      - Note: restart of a stopped instance is out of contract by design;

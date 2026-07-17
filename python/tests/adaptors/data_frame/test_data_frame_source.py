@@ -3,7 +3,7 @@ from datetime import date, datetime
 import pyarrow as pa
 from frozendict import frozendict
 
-from hgraph import MIN_ST, MIN_TD, REMOVE, eval_node
+from hgraph import MIN_ST, MIN_TD, eval_node
 from hgraph.adaptors.data_frame import (
     ArrowDataFrameSource,
     DataConnectionStore,
@@ -150,11 +150,15 @@ class _Pivot(ArrowDataFrameSource):
         )
 
 
-def test_nested_dictionary_source_uses_native_conversion_and_map():
+def test_nested_dictionary_source_emits_additive_deltas():
+    # upstream parity: each tick is an ADDITIVE TSD delta — keys absent from
+    # a tick keep their prior state (no REMOVE). The old convert/map_
+    # pipeline state-synced and emitted removes; the source now yields the
+    # nested dicts as deltas directly.
     with DataStore():
         assert eval_node(tsd_k_tsd_from_data_source, _Pivot, "dt", "key", "pivot") == [
             frozendict(a=frozendict({1: 10, 2: 20})),
-            frozendict(b=frozendict({1: 30}), a=REMOVE),
+            frozendict(b=frozendict({1: 30})),
         ]
 
 

@@ -560,7 +560,18 @@ The following are intentional unless separately re-opened:
 - CompoundScalar is a C++ Bundle closed union, not an independent Python object
   runtime.  Its diagnostic string representation may therefore differ.
 - Arrow is the table/frame substrate.  Polars interop is through Arrow rather
-  than a Polars runtime dependency.
+  than a Polars runtime dependency.  (Ruling 2026-07-17.)  Polars is supported
+  at the boundary only: producing a ``Frame`` accepts anything exposing
+  ``__arrow_c_stream__`` (a polars ``DataFrame`` converts on ingest);
+  consuming a ``Frame`` yields ``pyarrow.Table`` and callers convert with
+  ``pl.from_arrow``.  Upstream tests asserting polars-native values against
+  frame reads (pyarrow scalars do not compare equal to python scalars, and
+  arrow schema iteration yields ``Field`` objects, not names) are ported with
+  that boundary conversion; the conversions themselves are exercised
+  unchanged.  The ``convert``-to-frame operator family and the DATA_FRAME
+  record/replay model are Arrow-native
+  (``hgraph.adaptors.data_frame._to_frame_converters`` /
+  ``_data_frame_record_replay``).
 - C++ contexts are name-based.  The Python bridge preserves the compatible
   type/name authoring syntax by lowering it onto that model.
 - Arbitrary Python object-class dispatch is a bridge adaptation; native
