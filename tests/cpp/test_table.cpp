@@ -52,6 +52,33 @@ TEST_CASE("table codec: an atomic value round-trips through a bitemporal single-
     CHECK(back.view().checked_as<Int>() == Int{42});
 }
 
+TEST_CASE("table codec: bytes and variadic tuples are Arrow leaf values")
+{
+    auto &registry = TypeRegistry::instance();
+
+    const auto &bytes_converter = table_converter(scalar_descriptor<Bytes>::value_meta());
+    const Bytes bytes_value{std::string{"a\0b", 3}};
+    const Value bytes{bytes_value};
+    const Frame bytes_frame = single_row_frame(bytes_converter, MIN_ST, MIN_ST, bytes.view());
+    CHECK(read_row(bytes_converter, bytes_frame, 0).view().checked_as<Bytes>() == bytes_value);
+
+    const auto *int_meta   = scalar_descriptor<Int>::value_meta();
+    const auto *tuple_meta = registry.list(int_meta, 0, true);
+    const auto  int_binding = ValuePlanFactory::instance().type_for(int_meta);
+    ListBuilder tuple_builder{int_binding};
+    tuple_builder.push_back(Int{1});
+    tuple_builder.push_back(Int{4});
+    ListStorage tuple_storage = tuple_builder.build_storage();
+    const Value tuple{compact_list_type(int_binding, *tuple_meta), &tuple_storage};
+
+    const auto &tuple_converter = table_converter(tuple_meta);
+    const Frame tuple_frame = single_row_frame(tuple_converter, MIN_ST, MIN_ST, tuple.view());
+    const Value tuple_back = read_row(tuple_converter, tuple_frame, 0);
+    REQUIRE(tuple_back.view().as_list().size() == 2);
+    CHECK(tuple_back.view().as_list().at(0).checked_as<Int>() == Int{1});
+    CHECK(tuple_back.view().as_list().at(1).checked_as<Int>() == Int{4});
+}
+
 TEST_CASE("table codec: a depth-1 bundle flattens to named columns and round-trips")
 {
     auto &registry = TypeRegistry::instance();

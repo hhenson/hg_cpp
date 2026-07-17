@@ -66,6 +66,12 @@ namespace hgraph
             check(static_cast<arrow::StringBuilder &>(builder).Append(leaf.checked_as<Str>()), "append str");
         }
 
+        void append_bytes(const Column &, const ValueView &leaf, arrow::ArrayBuilder &builder)
+        {
+            check(static_cast<arrow::BinaryBuilder &>(builder).Append(leaf.checked_as<Bytes>().data),
+                  "append bytes");
+        }
+
         void append_date(const Column &, const ValueView &leaf, arrow::ArrayBuilder &builder)
         {
             const auto days =
@@ -113,6 +119,11 @@ namespace hgraph
             return Value{Str{static_cast<const arrow::StringArray &>(array).GetView(row)}};
         }
 
+        Value read_bytes(const Column &, const arrow::Array &array, std::int64_t row)
+        {
+            return Value{Bytes{std::string{static_cast<const arrow::BinaryArray &>(array).GetView(row)}}};
+        }
+
         Value read_date(const Column &, const arrow::Array &array, std::int64_t row)
         {
             const auto days = static_cast<const arrow::Date32Array &>(array).Value(row);
@@ -142,6 +153,9 @@ namespace hgraph
             Column::ReadFn                   read;
         };
 
+        void append_sequence(const Column &, const ValueView &, arrow::ArrayBuilder &);
+        Value read_sequence(const Column &, const arrow::Array &, std::int64_t);
+
         [[nodiscard]] LeafOps leaf_ops_for(const ValueTypeMetaData *meta)
         {
             if (meta == scalar_descriptor<Bool>::value_meta())
@@ -154,6 +168,10 @@ namespace hgraph
                 return {arrow::float64(), &append_float, &read_float};
             }
             if (meta == scalar_descriptor<Str>::value_meta()) { return {arrow::utf8(), &append_str, &read_str}; }
+            if (meta == scalar_descriptor<Bytes>::value_meta())
+            {
+                return {arrow::binary(), &append_bytes, &read_bytes};
+            }
             if (meta == scalar_descriptor<Date>::value_meta())
             {
                 return {arrow::date32(), &append_date, &read_date};
@@ -170,9 +188,66 @@ namespace hgraph
             {
                 return {arrow::time64(arrow::TimeUnit::MICRO), &append_time, &read_time};
             }
+            if ((meta->value_kind() == ValueTypeKind::List ||
+                 (meta->value_kind() == ValueTypeKind::Tuple && meta->has(ValueTypeFlags::VariadicTuple))) &&
+                meta->element_type != nullptr)
+            {
+                return {arrow::list(leaf_ops_for(meta->element_type).type), &append_sequence, &read_sequence};
+            }
             throw std::logic_error(fmt::format("table codec: unsupported leaf scalar '{}'",
                                                meta != nullptr && !meta->name().empty() ? meta->name()
                                                                                       : std::string_view{"?"}));
+        }
+
+        void append_sequence(const Column &column, const ValueView &leaf, arrow::ArrayBuilder &builder)
+        {
+            auto &list_builder = static_cast<arrow::ListBuilder &>(builder);
+            check(list_builder.Append(), "append sequence");
+            auto       &value_builder = *list_builder.value_builder();
+            const auto *element_meta  = column.leaf_meta->element_type;
+            const auto  element_ops   = leaf_ops_for(element_meta);
+            const Column element_column{.leaf_meta = element_meta, .type = element_ops.type};
+
+            const auto append_values = [&](const auto &sequence) {
+                for (const ValueView value : sequence.values())
+                {
+                    if (value.has_value()) { element_ops.append(element_column, value, value_builder); }
+                    else { append_null(value_builder); }
+                }
+            };
+            if (leaf.schema()->value_kind() == ValueTypeKind::Tuple) { append_values(leaf.as_tuple()); }
+            else { append_values(leaf.as_list()); }
+        }
+
+        Value read_sequence(const Column &column, const arrow::Array &array, std::int64_t row)
+        {
+            const auto &list         = static_cast<const arrow::ListArray &>(array);
+            const auto *sequence_meta = column.leaf_meta;
+            const auto *element_meta  = sequence_meta->element_type;
+            const auto  element_binding = ValuePlanFactory::instance().type_for(element_meta);
+            if (element_binding == nullptr)
+            {
+                throw std::logic_error("table codec: sequence element has no value binding");
+            }
+
+            const auto  element_ops = leaf_ops_for(element_meta);
+            const Column element_column{.leaf_meta = element_meta, .type = element_ops.type};
+            const auto  &values = *list.values();
+            const auto   begin  = list.value_offset(row);
+            const auto   end    = begin + list.value_length(row);
+            ListBuilder builder{element_binding};
+            for (std::int64_t index = begin; index < end; ++index)
+            {
+                if (values.IsNull(index))
+                {
+                    builder.push_back_unset();
+                    continue;
+                }
+                Value value = element_ops.read(element_column, values, index);
+                builder.push_back_copy(value.view().data());
+            }
+            ListStorage storage = builder.build_storage();
+            return Value{compact_list_type(element_binding, *sequence_meta), &storage};
         }
 
         // ---------------------------------------------------------------
@@ -228,6 +303,13 @@ namespace hgraph
             switch (meta->value_kind())
             {
                 case ValueTypeKind::Atomic: add_leaf("value", meta, {}); break;
+                case ValueTypeKind::List:
+                    if (!meta->has(ValueTypeFlags::VariadicTuple))
+                    {
+                        throw std::logic_error("table codec: only variadic tuple list leaves are supported");
+                    }
+                    add_leaf("value", meta, {});
+                    break;
                 case ValueTypeKind::Bundle: {
                     for (std::size_t i = 0; i < meta->field_count; ++i)
                     {
@@ -525,7 +607,7 @@ namespace hgraph
             return chunked->chunk(0);
         };
 
-        if (converter.meta->value_kind() == ValueTypeKind::Atomic)
+        if (converter.meta->value_kind() != ValueTypeKind::Bundle)
         {
             const auto &column = converter.columns.front();
             auto array = column_array(column.name);

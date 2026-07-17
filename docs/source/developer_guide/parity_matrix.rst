@@ -495,12 +495,14 @@ Wiring and node-authoring surface
      - Full
      - Path-aware, multi-interface impls, template descriptors.
    * - ``@adaptor`` / service adaptors
-     - Full (core)
+     - Full (core and supported families)
      - Source/sink/duplex and per-client keyed service-adaptor exchange are
        available from C++ and Python.  Python service-adaptor interfaces have
        one time-series request and one time-series response; bundles carry
-       multi-field protocols.  Scheduler-owned external subscription/request
-       flows and concrete adaptor families remain.
+       multi-field protocols. Tornado HTTP/WebSocket/REST, catalogue, JSON,
+       SQL, Delta Lake, Kafka, Perspective, dataframe, executor, and threaded
+       graph families use that boundary. See :doc:`roadmap` for the explicit
+       advanced-feature restrictions.
    * - Contexts
      - Full (wiring and compiled children)
      - Named/default/required compatibility plus native context capture across

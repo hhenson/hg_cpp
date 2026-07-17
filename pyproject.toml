@@ -35,6 +35,7 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 dependencies = [
+    "frozendict>=2.4",
     "numpy>=2.0",
     "pyarrow>=24,<25",
 ]
@@ -42,7 +43,6 @@ dependencies = [
 [project.optional-dependencies]
 python = [
     "nanobind>=2.12",
-    "frozendict>=2.4",
 ]
 test = [
     "pytest>=8",
@@ -51,6 +51,26 @@ test = [
 ]
 web = [
     "tornado>=6.5",
+]
+sql = [
+    "duckdb>=1.4",
+    "sqlalchemy>=2.0",
+]
+snowflake = [
+    "adbc-driver-snowflake>=1.8",
+]
+kafka = [
+    "kafka-python>=2.2",
+]
+delta = [
+    "deltalake>=1.0",
+]
+perspective = [
+    "perspective-python>=3.8",
+    "tornado>=6.5",
+]
+dataframe = [
+    "polars>=1.32",
 ]
 docs = [
     "sphinx>=7.4",

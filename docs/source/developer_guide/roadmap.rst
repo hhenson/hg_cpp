@@ -395,12 +395,54 @@ Platform authentication providers remain lazy optional dependencies, as in
 upstream: they are imported only when a server issues the corresponding
 authentication challenge.
 
-**Remaining external-resource work:** subscription-adaptor flows not already
-covered by the service-adaptor exchange, scheduler integration for external
-events, and concrete adaptor families such as catalogue, messaging, or
-database adaptors.  The Tornado slice above now provides concrete lifecycle
-coverage.  Build further families from the common C++ boundary model when
-demanded by a real integration.
+**Completed: external adaptor families (2026-07-17).**  The dependency-light
+dataclass, executor, threaded-graph, stream status, dataframe source, and
+dataframe record-store compatibility modules are present.  Catalogue
+publish/subscribe, JSON, SQL, Delta Lake, Kafka, and Perspective now execute
+over the native keyed service/adaptor or native time-series boundary.  Arrow
+``Table`` is the dataframe interchange value; Polars is accepted only as an
+optional producer and is converted at the boundary.
+
+Resource configuration belongs to the seeded/result ``GlobalState``:
+catalogues, environments, SQL connection stores, Delta backends, Kafka
+producer/consumer state, Perspective managers, executors, and dataframe
+storage do not use unrelated module globals. Worker threads receive resolved
+connection/environment targets and never attempt to discover graph state from
+their own thread.  Request generation and published-key tracking suppress
+stale replies and ensure a request that never published cannot emit a remove.
+
+Optional clients are declared as ``sql``, ``snowflake``, ``kafka``, ``delta``,
+``perspective``, and ``dataframe`` extras. Imports stay lazy. An application
+may inject a DB-API connection, ``DeltaBackend``, Kafka producer/consumer
+factory, or Perspective client, which also keeps transport tests deterministic.
+
+The following deliberate restrictions replace advanced Python-first code:
+
+- Kafka historical replay is rejected explicitly; normal publish/subscribe,
+  structured messages, headers, lifecycle flush, and consumer cleanup work.
+- SQL's batch adaptor preserves query/result behaviour but does not coalesce
+  requests in Python. Normal read/write/execute and catalogue routing work.
+- Delta scheduled maintenance and a second Python batching buffer are omitted;
+  TSD history publication consumes the native per-cycle table delta directly.
+- Perspective read-only and editable tables, typed edit feedback, and the
+  Perspective websocket endpoint work. Empty-row creation and multi-client
+  reduction must be expressed as a native TSD before publication.
+- The dataframe record/replay names delegate to the C++ record/replay
+  operators. Arrow memory/file storage remains a client utility; the old
+  Polars-owned pluggable runtime store is not restored.
+
+This completed slice passed clean macOS arm64/AppleClang 21 and Ubuntu 24.04
+x86_64/GCC 13.3 Release gates with warnings as errors: 1089/1089 native tests
+passed on each platform.  A macOS ``cp312-abi3`` wheel built with ``-O3`` and
+installed under Python 3.14.6 produced 1145 passed, 18 skipped, and 6
+deselected.  The Ubuntu Python 3.14.6 bridge produced the same result under
+AddressSanitizer with no sanitizer report.  Focused tests also exercise the
+real Delta Lake and Perspective clients; Kafka and external databases remain
+covered through injected deterministic clients rather than requiring live
+infrastructure.
+
+Remaining external work is integration-specific authentication, deployment,
+or scheduling policy, not a missing graph/adaptor boundary.
 
 Priority 3: Catalogue and Operations
 ------------------------------------
@@ -422,10 +464,9 @@ layout. ``dedup_builder`` and ``collect_builder`` are upstream Python
 implementation-injection hooks; the native overload registry is their C++-first
 equivalent and no parallel Python builder layer should be added.
 
-**Remaining inventory:**
-
-- larger optional libraries such as the ``hgraph.stream`` status model and the
-  arrow-combinator package.
+**Remaining inventory:** optional arrow-combinator convenience functions that
+do not yet have a C++ operator. The ``hgraph.stream`` status model, including
+TSD/TSL status and message reduction, is complete.
 
 **Accepted deviation:** upstream ``apply`` evaluates a dynamic ``TS[Callable]``.
 There is no native scalar schema or statically resolvable invocation ABI for
@@ -443,14 +484,16 @@ application demonstrates that one is required for migration.
 Priority 4: Boundary Products
 -----------------------------
 
-The common runtime model should precede concrete products.
+The common runtime model and the supported external adaptor families have
+landed.  Further boundary work should now be driven by a concrete application's
+operational requirements.
 
 **Remaining:**
 
 - durable/pluggable record and replay stores beyond the default in-memory
   stores and current Arrow frame backend;
-- data-catalogue publish/subscribe;
-- concrete external adaptor families and their operational lifecycle; and
+- integration-specific authentication, deployment, and scheduling policies
+  beyond the lifecycle hooks exposed by the current adaptors; and
 - broader JSON/table/Arrow scalar and serialization forms only where a real
   data path requires them.
 

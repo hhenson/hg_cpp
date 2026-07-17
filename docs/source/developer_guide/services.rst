@@ -638,11 +638,17 @@ shared outputs, the context source/capture primitive, the user-facing
 **context wiring API** (``context::scope<"name">`` / ``Context<"name", S>`` /
 ``context::get`` — see *Contexts* above), and wall-clock alarms.
 
+The Python external-resource families are also implemented over this common
+boundary: Tornado HTTP/WebSocket/REST, catalogue, JSON, SQL, Delta Lake, Kafka,
+and Perspective. Their Python code owns third-party transport objects; request
+multiplexing, typed time-series values, deltas, graph scheduling, and execution
+remain native. Optional dependencies are lazy and injectable for testing.
+
 Deferred (see :doc:`roadmap` Priority 1):
 
 - ``Context<>`` on registered operator implementations;
-- **request/reply and subscription adaptor flows**, integration of adaptor
-  external events with the scheduler/real-time executor, lifecycle ownership
-  for external resources, and concrete adaptor families (kafka/sql/…);
+- application-specific authentication, retry, and deployment policy for
+  external resources;
 - ``@component`` and the recordable-id/traits ecosystem it depends on;
-- external adaptor families and any broader Python protocols they require.
+- the advanced compatibility restrictions recorded in :doc:`roadmap`, such as
+  Kafka history replay and Perspective multi-client reduction.
