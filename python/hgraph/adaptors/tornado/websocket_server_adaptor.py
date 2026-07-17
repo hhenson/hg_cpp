@@ -411,6 +411,23 @@ def register_websocket_server_adaptor(port: int) -> None:
             handler()
 
 
+class _WebSocketServerAdaptorImplementation:
+    """Materialize every typed route behind the generic adaptor registration."""
+
+    def _register_adaptor(self, path, *, resolution_dict=None, port=80):
+        if resolution_dict:
+            raise TypeError(
+                "websocket_server_adaptor_impl resolves message types from its handlers"
+            )
+        register_websocket_server_adaptor(port)
+
+
+websocket_server_adaptor_impl = _WebSocketServerAdaptorImplementation()
+# The upstream helper and implementation are two registration entry points
+# for the same generic path-routed graph.
+websocket_server_adaptor_helper = websocket_server_adaptor_impl
+
+
 __all__ = (
     "STR_OR_BYTES",
     "WebSocketAdaptorManager",
@@ -421,5 +438,7 @@ __all__ = (
     "WebSocketServerRequest",
     "register_websocket_server_adaptor",
     "websocket_server_adaptor",
+    "websocket_server_adaptor_helper",
+    "websocket_server_adaptor_impl",
     "websocket_server_handler",
 )

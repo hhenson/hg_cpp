@@ -256,6 +256,14 @@ namespace hgraph
             wire{};
     };
 
+    struct OperatorCallableShape
+    {
+        std::vector<std::string> parameter_names{};
+        std::size_t              arity{0};
+        bool                     variadic{false};
+        bool                     has_output{false};
+    };
+
     /**
      * The outcome of overload selection: the winning candidate, its resolved
      * type variables, and the **normalised** call — arguments in declared
@@ -327,6 +335,11 @@ namespace hgraph
             output operators - a bare subscript type is then an INPUT
             constraint (``to_json[tp]``). Unknown names return true. */
         [[nodiscard]] bool output_is_selective(std::string_view name) const;
+
+        /** Common time-series callable shape for higher-order erasure.
+            Returns nullopt when overloads disagree or require scalar
+            configuration that a WiredFn cannot carry. */
+        [[nodiscard]] std::optional<OperatorCallableShape> callable_shape(std::string_view name) const;
 
         [[nodiscard]] Value evaluate_const(std::string_view name,
                                            std::span<const WiringArg> args,
@@ -1510,12 +1523,23 @@ namespace hgraph
                     tail.ports.reserve(args.size() - tail_start);
                     for (std::size_t i = tail_start; i < args.size(); ++i)
                     {
-                        if (args[i].kind != WiringArg::Kind::TimeSeries)
+                        if (args[i].kind == WiringArg::Kind::TimeSeries)
                         {
-                            throw std::invalid_argument(
-                                "operator variadic arguments must be time-series ports");
+                            tail.ports.push_back(args[i].port);
+                            continue;
                         }
-                        tail.ports.push_back(args[i].port);
+                        using tail_schema = typename V::schema_type;
+                        const TSValueTypeMetaData *target = nullptr;
+                        if constexpr (schema_descriptor<tail_schema>::is_concrete())
+                        {
+                            target = schema_descriptor<tail_schema>::ts_meta();
+                        }
+                        else if (args[i].scalar_value.schema() != nullptr)
+                        {
+                            target = TypeRegistry::instance().ts(args[i].scalar_value.schema());
+                        }
+                        tail.ports.push_back(
+                            operator_dispatch_detail::wire_scalar_const(w, args[i], target));
                     }
                     return invoke_kwonly_then_kwargs(std::move(tail));
                 }

@@ -286,14 +286,9 @@ namespace hgraph::python_bridge
     nb::object value_to_py(const ValueView &view)
     {
         if (!view.valid()) { return nb::none(); }
-        // Frame/Series -> pyarrow dispatch through the type-erased ops (the
-        // python_conversion_traits hooks installed at module init); no
-        // kind-switch here (the type-erasure rule - conversion lives with the
-        // ops).
-        if (view.schema()->name() == "TimeSeriesReference")
-        {
-            return nb::cast(PyOpaqueRef{Value{view}, MIN_DT});   // opaque per the REF ruling
-        }
+        // Python conversion dispatches through the type-erased ops. Types
+        // requiring module-owned wrappers install python_conversion_traits
+        // hooks during module initialization.
         return view.binding().ops_ref().to_python(view.data());
     }
 
@@ -360,9 +355,8 @@ namespace hgraph::python_bridge
 
     Value py_to_value_as(nb::handle object, const ValueTypeMetaData *meta)
     {
-        // Frame/Series -> arrow go through the BINDING's from_python (the
-        // type-erased python_conversion_traits hooks); no kind-switch.
-        if (nb::isinstance<PyOpaqueRef>(object)) { return Value{nb::cast<PyOpaqueRef &>(object).value.view()}; }
+        // Conversion goes through the binding's from_python operation; no
+        // schema-kind switch is needed at this boundary.
         std::shared_ptr<const TypeRealizationSnapshot> conversion_snapshot;
         const auto *snapshot = active_type_realization();
         if (snapshot == nullptr && meta != nullptr &&
@@ -388,7 +382,7 @@ namespace hgraph::python_bridge
         return result;
     }
 
-    void install_arrow_conversion_hooks()
+    void install_value_conversion_hooks()
     {
         python_conversion_traits<Frame>::to_python_hook   = &frame_to_py;
         python_conversion_traits<Frame>::from_python_hook = [](nb::handle o) {
@@ -397,6 +391,16 @@ namespace hgraph::python_bridge
         python_conversion_traits<Series>::to_python_hook   = &series_to_py;
         python_conversion_traits<Series>::from_python_hook = [](nb::handle o) {
             return py_arrow_to_series(o).view().checked_as<Series>();
+        };
+        python_conversion_traits<TimeSeriesReference>::to_python_hook = [](const TimeSeriesReference &value) {
+            return nb::cast(PyOpaqueRef{Value{value}, MIN_DT});
+        };
+        python_conversion_traits<TimeSeriesReference>::from_python_hook = [](nb::handle source) {
+            if (!nb::isinstance<PyOpaqueRef>(source))
+            {
+                throw nb::type_error("expected a TimeSeriesReference value");
+            }
+            return nb::cast<PyOpaqueRef &>(source).value.view().checked_as<TimeSeriesReference>();
         };
     }
 

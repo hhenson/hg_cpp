@@ -41,7 +41,8 @@ The important corrections to the previous roadmap are:
   the registered Python class.  They are not a bridge blocker.
 - Closed CompoundScalar hierarchies have landed as C++ Bundle unions, including
   namespace-qualified identity, graph-realization closure, dispatch, largest-
-  leaf planned storage, and owner-backed recursive fields.
+  leaf planned storage, owner-backed recursive fields, and atomic registration
+  of mutually recursive schema components.
 - ``@component`` and all record/replay modes, including Recover seeding and
   Compare, have landed in both languages.  General process checkpointing is a
   different feature and is not required to preserve this compatibility
@@ -145,6 +146,16 @@ Python 3.14.6 produced 1047 passed, 18 skipped, and 6 deselected on each
 platform. The macOS wheel also passed strict ``abi3audit``. Linux Debug/ASan
 passed the same 1073 native tests and complete Python suite with no sanitizer
 report.
+
+The P1 authoring-compatibility follow-on passed fresh macOS arm64/AppleClang 21
+and Ubuntu 24.04 x86_64/GCC 13.3 Release gates with warnings as errors:
+1093/1093 native tests passed on each platform. Fresh ``cp312-abi3`` wheels
+installed under Python 3.14 produced 1228 passed, 19 skipped, and 6 deselected
+on each platform. This increment adds opaque ``REF`` conversion and sampled
+rebind deltas, graph-boundary service call shapes, wired-function dispatch and
+scalar varargs lifting, mutually recursive CompoundScalar registration,
+``RESET`` and recorder compatibility APIs, and generic websocket adaptor
+registration over the native concrete implementations.
 
 These are execution results, not collection-only inventory.
 
@@ -316,7 +327,13 @@ results, accepted restrictions, and upstream revision are saved in
 - **Landed:** ``SetDelta`` recording shape, safe opaque-REF metadata,
   mutable-output status/delta/clear/invalidation conveniences, and the two
   recorded TSW view differences (valid from the first value and
-  ``removed_value is None`` before eviction).
+  ``removed_value is None`` before eviction); and
+- **Landed:** top-level REF replay and Python REF value conversion, generic
+  service auto-resolution, positional and multi-argument service calls,
+  reply-less request/reply, late-subscription sampling, variadic scalar
+  const-lifting, runtime higher-order erasure of ordinary registered operators,
+  mutually recursive CompoundScalars, ``RecordReplayEnum.RESET`` and recorder
+  state helpers, and generic WebSocket implementation registration.
 
 **Accepted from this audit:** old ``GraphBuilder``/``WiringNodeInstance`` and
 peering/binding introspection are private; ``const_fn`` remains replaced by
@@ -375,13 +392,18 @@ contract is TSD-only and :doc:`mesh` records the same accepted restriction.
 Dynamic TSL mapping and reduction remain fully supported independently.
 
 **Remaining boundary mode:** push sources inside nested graphs if a concrete
-adaptor requires them.
+adaptor requires them. Service clients inside compiled ``map_``/``mesh_``
+children also need an explicit parent-service endpoint import; graph-boundary
+service clients and implementations are otherwise complete.
 
 **Completed: Tornado web adaptors (2026-07-17).**  The upstream Python HTTP,
 WebSocket, and REST adaptor family has been ported onto the C++ service/adaptor
 runtime.  The Python layer owns Tornado transport objects; graph wiring,
 closed-union request values, keyed multiplexing, deltas, scheduling, and
-execution remain C++ runtime responsibilities.  Focused macOS evidence is 42
+execution remain C++ runtime responsibilities. The public generic
+``websocket_server_adaptor_impl`` registration materializes the concrete
+``str`` and ``bytes`` routes, rather than acting as an import-only alias.
+Focused macOS evidence is 42
 passing tests covering all four HTTP methods, single and batch handlers,
 ``str`` and ``bytes`` WebSockets, the native service-adaptor client path, REST
 request/response conversion through ``eval_node``, all five REST client

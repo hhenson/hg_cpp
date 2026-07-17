@@ -279,6 +279,52 @@ namespace hgraph::python_bridge
        nb::arg("parents") = nb::list(), nb::arg("abstract") = false,
        nb::arg("discriminator") = "__type__", nb::arg("generic_arguments") = nb::list());
 
+    m.def("recursive_bundles_vt", [](nb::list definitions) {
+        std::vector<RecursiveBundleDefinition> native;
+        native.reserve(nb::len(definitions));
+        for (nb::handle item : definitions)
+        {
+            nb::tuple definition = nb::cast<nb::tuple>(item);
+            RecursiveBundleDefinition entry;
+            entry.bundle_namespace = nb::cast<std::string>(definition[0]);
+            entry.local_name = nb::cast<std::string>(definition[1]);
+            for (nb::handle field_item : nb::cast<nb::list>(definition[2]))
+            {
+                nb::tuple field = nb::cast<nb::tuple>(field_item);
+                RecursiveBundleFieldDefinition native_field;
+                native_field.name = nb::cast<std::string>(field[0]);
+                if (nb::isinstance<PyValueType>(field[1]))
+                {
+                    native_field.type = nb::cast<PyValueType &>(field[1]).meta;
+                }
+                else
+                {
+                    native_field.owned_target = nb::cast<std::size_t>(field[1]);
+                }
+                entry.fields.push_back(std::move(native_field));
+            }
+            for (nb::handle parent : nb::cast<nb::list>(definition[3]))
+            {
+                entry.parents.push_back(nb::cast<PyValueType &>(parent).meta);
+            }
+            entry.is_abstract = nb::cast<bool>(definition[4]);
+            entry.discriminator = nb::cast<std::string>(definition[5]);
+            for (nb::handle argument : nb::cast<nb::list>(definition[6]))
+            {
+                entry.generic_arguments.push_back(
+                    nb::cast<PyValueType &>(argument).meta);
+            }
+            native.push_back(std::move(entry));
+        }
+        nb::list result;
+        for (const ValueTypeMetaData *meta :
+             TypeRegistry::instance().recursive_bundles(native))
+        {
+            result.append(nb::cast(PyValueType{meta}));
+        }
+        return result;
+    }, nb::arg("definitions"));
+
     m.def("register_bundle_class", [](const std::string &name, nb::object cls) {
         bundle_class_registry()[nb::str(name.c_str())] = std::move(cls);
     });

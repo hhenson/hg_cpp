@@ -37,7 +37,7 @@ namespace hgraph::python_bridge
             // Value is rebuilt from the raw TimeSeriesReference (the same
             // construction the C++ runtime uses) so its binding matches the
             // output plan regardless of which side produced the reference.
-            Value raw = py_to_value(result);
+            Value raw = py_to_value_as(result, erased.schema()->value_schema);
             TimeSeriesReference reference = raw.view().checked_as<TimeSeriesReference>();
             // SAME-REFERENCE dedup (the recurring rule): a re-evaluation
             // returning the unchanged reference must not re-tick consumers -

@@ -123,6 +123,41 @@ namespace
             return wire<stdlib::add_>(w, lhs_reply, rhs_reply).as<TS<Int>>();
         }
     };
+
+    struct RuntimeReplylessImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "runtime_replyless_impl";
+
+        static void compose(Wiring &w, Port<TSD<Int, TS<Int>>> requests)
+        {
+            static_cast<void>(wire<stdlib::null_sink>(w, requests));
+        }
+    };
+
+    struct ErasedReplylessServiceGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "erased_replyless_service_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            auto &registry = TypeRegistry::instance();
+            RuntimeServiceDescriptor descriptor;
+            descriptor.name = "runtime_replyless_service";
+            descriptor.flavour = ServiceFlavour::RequestReply;
+            descriptor.request_schema = registry.ts(scalar_descriptor<Int>::value_meta());
+            const auto *interned = &intern_service_descriptor(std::move(descriptor));
+
+            register_request_reply_service_impl(
+                w, *interned, "events", fn<RuntimeReplylessImpl>());
+            const WiringPortRef reply = request_reply_service_call(
+                w, *interned, "events", request.erased());
+            if (reply.schema != nullptr)
+            {
+                throw std::logic_error("a reply-less service returned a client port");
+            }
+            return request;
+        }
+    };
 }  // namespace
 
 TEST_CASE("service runtime: an erased registration serves a template client")
@@ -181,4 +216,11 @@ TEST_CASE("service runtime: erased service-adaptor registration serves typed cli
     CHECK_OUTPUT(eval_node<ErasedServiceAdaptorRegisterTemplateClients>(
                      values<Int>(1, none, 2), values<Int>(10, none, 20)),
                  values<Int>(none, 11, none, 22));
+}
+
+TEST_CASE("service runtime: erased reply-less requests have no client output")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<ErasedReplylessServiceGraph>(values<Int>(1, none, 2)),
+                 values<Int>(1, none, 2));
 }

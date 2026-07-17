@@ -36,7 +36,7 @@ from ._signature import (WiringNodeType, WiringNodeSignature, extract_signature,
 from ._wiring import _PyNode as PythonWiringNodeClass
 from ._wiring import _GraphFn as GraphWiringNodeClass
 from ._wiring import _Generator as PythonGeneratorWiringNodeClass
-from ._wiring import GlobalContext, GlobalState, set_record_replay_config, set_as_of, set_table_schema_date_key, set_table_schema_as_of_key, evaluate_const, utc_now, get_recorded_value, EvaluationClock, TSW_OUT, get_context, equal_lambdas, callable_shape_key
+from ._wiring import GlobalContext, GlobalState, set_record_replay_config, set_as_of, set_table_schema_date_key, set_table_schema_as_of_key, evaluate_const, utc_now, get_recorded_value, get_recorder_api, get_recording_label, set_recorder_api, set_recording_label, EvaluationClock, TSW_OUT, get_context, equal_lambdas, callable_shape_key
 from ._wiring import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, mesh_, mesh_ref, REMOVE, REMOVE_IF_EXISTS, feedback, switch_, passive, compute_node, sink_node, generator, lift, STATE, SCHEDULER, CLOCK, EvaluationEngineApi, LOGGER, NODE, Node, DebugContext, component, record_replay_scope, RecordReplayEnum, comparison_summary, push_queue, EvaluationMode, context, WiringError, reference_service, subscription_service, request_reply_service, register_service, service_impl, adaptor, adaptor_impl, service_adaptor, service_adaptor_impl, register_adaptor, from_graph, to_graph, impl_input, impl_output, get_service_inputs, set_service_output
 
 MIN_ST = _hgraph.MIN_ST
@@ -96,7 +96,7 @@ __all__ = [
     "WiringPort", "CmpResult", "DivideByZero", "NodeError", "exception_time_series", "try_except",
     "TryExceptResult", "TryExceptTsdMapResult", "OperatorWiringNodeClass", "graph", "run_graph", "eval_node", "wire", "map_", "reduce", "mesh_", "mesh_ref", "REMOVE", "REMOVE_IF_EXISTS", "feedback", "switch_", "passive", "compute_node", "sink_node", "generator", "STATE", "SCHEDULER", "CLOCK", "EvaluationEngineApi", "NODE", "Node", "component", "record_replay_scope", "RecordReplayEnum", "comparison_summary", "push_queue", "EvaluationMode", "context",
     "MIN_ST", "MIN_TD", "MIN_DT", "MAX_DT", "MAX_ET", "IN_MEMORY", "DATA_FRAME",
-    "utc_now", "get_recorded_value", "EvaluationClock", "TSW_OUT", "get_context", "equal_lambdas", "is_feature_enabled",
+    "utc_now", "get_recorded_value", "get_recorder_api", "get_recording_label", "set_recorder_api", "set_recording_label", "EvaluationClock", "TSW_OUT", "get_context", "equal_lambdas", "is_feature_enabled",
     "GlobalContext", "GlobalState", "set_as_of", "set_table_schema_date_key", "set_table_schema_as_of_key",
     "set_record_replay_config", "frame_store_contains", "frame_store_read", "evaluate_const",
     "Frame", "TABLE", "COMPOUND_SCALAR", "ToTableMode", "TableSchema", "make_table_schema", "table_schema",

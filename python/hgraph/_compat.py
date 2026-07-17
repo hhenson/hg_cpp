@@ -147,6 +147,9 @@ class BoolResult:
         return schema
 
 
+_COMPOUND_SCALAR_CLASSES = []
+
+
 class CompoundScalar:
     """Base class for nominal Bundle values.
 
@@ -179,6 +182,7 @@ class CompoundScalar:
         cls.__compound_abstract__ = bool(abstract)
         cls.__compound_discriminator__ = discriminator
         cls.__compound_options__ = dict(options)
+        _COMPOUND_SCALAR_CLASSES.append(cls)
 
 
 @dataclass(frozen=True)

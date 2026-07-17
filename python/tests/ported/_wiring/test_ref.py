@@ -20,6 +20,7 @@ from hgraph import (
     switch_,
     contains_,
     TimeSeriesReference,
+    pass_through_node,
 )
 from hgraph.test import eval_node
 
@@ -35,6 +36,81 @@ def create_ref(ts: REF[TIME_SERIES_TYPE]) -> REF[TIME_SERIES_TYPE]:
 
 def test_ref():
     assert eval_node(create_ref[TIME_SERIES_TYPE : TS[int]], ts=[1, 2]) == [1, 2]
+
+
+@compute_node
+def concrete_int_ref(ts: REF[TS[int]]) -> REF[TS[int]]:
+    return ts.value
+
+
+@compute_node
+def concrete_str_ref(ts: REF[TS[str]]) -> REF[TS[str]]:
+    return ts.value
+
+
+@compute_node
+def concrete_float_ref(ts: REF[TS[float]]) -> REF[TS[float]]:
+    return ts.value
+
+
+@compute_node
+def concrete_set_ref(ts: REF[TSS[int]]) -> REF[TSS[int]]:
+    return ts.value
+
+
+@compute_node
+def concrete_dict_ref(ts: REF[TSD[int, TS[int]]]) -> REF[TSD[int, TS[int]]]:
+    return ts.value
+
+
+def test_eval_node_seeds_concrete_scalar_ref_inputs():
+    assert eval_node(concrete_int_ref, ts=[1, 2, 3]) == [1, 2, 3]
+    assert eval_node(concrete_str_ref, ts=["a", "b", "c"]) == ["a", "b", "c"]
+    assert eval_node(concrete_float_ref, ts=[1.0, 2.5, 3.7]) == [1.0, 2.5, 3.7]
+
+
+def test_eval_node_seeds_concrete_collection_ref_inputs():
+    set_result = eval_node(concrete_set_ref, ts=[{1, 2}, {3}, {Removed(1), 4}])
+    assert set_result[0].added == frozenset({1, 2})
+    assert set_result[1].added == {3}
+    assert set_result[2].added == {4}
+    assert 1 in set_result[2].removed
+
+    assert eval_node(
+        concrete_dict_ref,
+        ts=[{1: 10, 2: 20}, {3: 30}, {1: REMOVE, 4: 40}],
+    ) == [{1: 10, 2: 20}, {3: 30}, {1: REMOVE, 4: 40}]
+
+
+def test_eval_node_seeds_concrete_ref_with_sparse_ticks():
+    assert eval_node(concrete_int_ref, ts=[1, None, 3, None]) == [1, None, 3, None]
+
+
+@compute_node
+def ref_delta_matches_value(ref: REF[TS[int]]) -> REF[TS[int]]:
+    return ref.value if ref.delta_value == ref.value else None
+
+
+@graph
+def ref_delta_graph(ts: TS[int]) -> REF[TS[int]]:
+    return ref_delta_matches_value(ts)
+
+
+def test_ref_delta_value_is_the_reference_token():
+    assert eval_node(ref_delta_graph, [10, 20, 30]) == [10, 20, 30]
+
+
+@graph
+def pass_through_late_tsd_item(ts: TSD[str, TS[str]], key: TS[str]) -> TS[str]:
+    return pass_through_node(ts[key])
+
+
+def test_python_node_delta_samples_existing_value_on_ref_rebind():
+    assert eval_node(
+        pass_through_late_tsd_item,
+        [{"topic": "value"}, None, None],
+        [None, None, "topic"],
+    ) == [None, None, "value"]
 
 
 @compute_node

@@ -548,7 +548,21 @@ namespace hgraph::python_bridge
         [[nodiscard]] nb::object delta_value() const
         {
             const auto &ts = checked();
-            nb::object delta = ts.data_view().delta_value_to_python(ts.evaluation_time());
+            if (ts.schema() != nullptr && ts.schema()->kind == TSTypeKind::REF)
+            {
+                // REF is a time-series of reference TOKENS. Its input storage
+                // is a link to the referenced output, so the generic data
+                // delta would expose the referenced value instead. Present the
+                // same token as value(), matching REF's whole-value delta.
+                return nb::cast(
+                    python_bridge::PyOpaqueRef{Value{ts.reference()}, ts.evaluation_time()});
+            }
+            // Use the input view rather than reading the bound target's raw
+            // data. The input view accounts for a sampled REF rebind: when an
+            // already-valid target is bound this cycle, its current value is
+            // the input delta even though the target itself last ticked in an
+            // earlier cycle.
+            nb::object delta = value_to_py(ts.delta_value());
             nb::object &shape = delta_shaper_slot();
             return shape.is_valid() ? shape(delta) : delta;
         }

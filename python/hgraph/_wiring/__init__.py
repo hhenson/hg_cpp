@@ -13,7 +13,8 @@ from ._state import (
     _MemoryRecording, _RecordReplayModes, _friendly_recording_delta, _global_state_local,
     _pop_runtime_global_state, _push_runtime_global_state, comparison_summary, evaluate_const,
     record_replay_scope, set_as_of, set_record_replay_config, set_record_replay_model,
-    set_table_schema_as_of_key, set_table_schema_date_key, get_recorded_value, utc_now
+    set_table_schema_as_of_key, set_table_schema_date_key, get_recorded_value,
+    get_recorder_api, get_recording_label, set_recorder_api, set_recording_label, utc_now
 )
 from ._markers import (
     CLOCK, EvaluationClock, EvaluationEngineApi, LOGGER, NODE, Node, RECORDABLE_STATE,
@@ -62,7 +63,7 @@ from ._runner import (
 )
 
 __all__ = [
-    "CLOCK", "EvaluationClock", "callable_shape_key", "equal_lambdas", "get_context", "get_recorded_value", "utc_now", "TSW_OUT", "DebugContext", "EvaluationEngineApi", "EvaluationMode", "Feedback", "GlobalContext", "GlobalState",
+    "CLOCK", "EvaluationClock", "callable_shape_key", "equal_lambdas", "get_context", "get_recorded_value", "get_recorder_api", "get_recording_label", "set_recorder_api", "set_recording_label", "utc_now", "TSW_OUT", "DebugContext", "EvaluationEngineApi", "EvaluationMode", "Feedback", "GlobalContext", "GlobalState",
     "GraphConfiguration", "IncorrectTypeBinding", "LOGGER", "NODE", "Node", "ParseError", "RECORDABLE_STATE",
     "REMOVE", "REMOVE_IF_EXISTS", "RecordReplayContext", "RecordReplayEnum", "Removed",
     "RequirementsNotMetWiringError", "SCHEDULER", "STATE", "TSB_OUT", "TS_OUT", "WiringError",

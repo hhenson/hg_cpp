@@ -33,6 +33,8 @@ from .websocket_server_adaptor import (
     WebSocketServerRequest,
     register_websocket_server_adaptor,
     websocket_server_adaptor,
+    websocket_server_adaptor_helper,
+    websocket_server_adaptor_impl,
     websocket_server_handler,
 )
 from .websocket_client_adaptor import (
@@ -111,6 +113,8 @@ __all__ = (
     "WebSocketServerRequest",
     "register_websocket_server_adaptor",
     "websocket_server_adaptor",
+    "websocket_server_adaptor_helper",
+    "websocket_server_adaptor_impl",
     "websocket_server_handler",
     "websocket_client_adaptor",
     "websocket_client_adaptor_impl",

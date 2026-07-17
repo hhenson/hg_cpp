@@ -297,13 +297,19 @@ model.
        machinery is removed (every entry had a live implementation).
    * - ``test_service.py``
      - 19
-     - **Public subset landed.** ``NUMBER``/``NUMBER_2`` lower to constrained
-       native scalar variables, and explicit ``Int``/``Float`` reference and
-       request/reply specializations execute through Python ``eval_node``.
-       Matching public C++ tests cover constrained generic services and erased
-       specialization identity. Node-backed, mesh-nested, and multi-client
-       behaviour remains covered elsewhere; do not reproduce Python service
-       internals.
+     - **Public call shapes landed.** ``NUMBER``/``NUMBER_2`` lower to
+       constrained native scalar variables; generic implementations resolve
+       from clients; positional paths, multiple request arguments, reply-less
+       request/reply services, and late subscription to an existing value all
+       execute through the erased C++ service runtime. Matching public C++
+       tests cover constrained generics, erased specialization identity,
+       reply-less requests, and sampled late subscriptions. Request/reply
+       forwarding deliberately uses one request cycle followed by same-cycle
+       reply publication, so it is one cycle faster than the old Python
+       executor. Calling a service from inside a compiled ``map_`` or ``mesh_``
+       child still requires a cross-child service endpoint import and remains
+       a nested-boundary task; private Python service-builder layouts are not
+       compatibility targets.
 
 The 215 upstream ``ts_tests`` tests were also copied mechanically to a
 temporary directory and run against the current bridge under Python 3.12.8.
@@ -321,10 +327,12 @@ result was **159 passed, 56 failed**:
      - Failure concentration
    * - ``REF``
      - 18
-     - 12
-     - Opaque-reference introspection and direct ``eval_node`` replay into a
-       REF parameter.  Runtime retargeting and structural REF behaviour have
-       stronger native/ported coverage.  ``.output`` remains prohibited.
+     - 12 at the saved audit
+     - The audit failures for direct ``eval_node`` replay into ``REF`` and
+       Python-node ``value``/``delta_value`` conversion have since landed,
+       including sampled rebinding to an already-valid target. Runtime
+       retargeting and structural REF behaviour have stronger native/ported
+       coverage. Borrowed ``.output`` access remains prohibited.
    * - ``TS``
      - 39
      - 4
@@ -499,8 +507,11 @@ Wiring and node-authoring surface
      - Full
      - One-cycle delay, sink/source pair.
    * - Services (reference / subscription / request-reply)
-     - Full
-     - Path-aware, multi-interface impls, template descriptors.
+     - Full at a graph boundary
+     - Path-aware and generic multi-interface implementations, template and
+       erased descriptors, multiple request arguments, reply-less requests,
+       and reference-counted subscriptions. Service calls inside compiled
+       keyed children remain the nested-boundary exception described above.
    * - ``@adaptor`` / service adaptors
      - Full (core and supported families)
      - Source/sink/duplex and per-client keyed service-adaptor exchange are

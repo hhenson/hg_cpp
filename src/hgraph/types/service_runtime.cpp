@@ -370,7 +370,6 @@ namespace hgraph
 
         const Int request_id = service::detail::next_request_id();
         WiringPortRef requests = request_input_source_node(w, descriptor, request_path);
-        WiringPortRef replies  = reply_output_source_node(w, descriptor, replies_path);
         w.register_service_rank_anchor(request_path, requests.peered_node());
 
         WiringPortRef adapted_request = graph_wiring_detail::adapt_source_for_input(
@@ -389,6 +388,10 @@ namespace hgraph
             std::type_index(typeid(service::detail::request_input_capture_marker)), std::move(builder),
             std::span<const WiringInputRef>{inputs.data(), inputs.size()}, Value{request_id});
         w.register_service_client_rank(request_path, "request/reply service", capture.peered_node(), false);
+
+        if (descriptor.response_schema == nullptr) { return {}; }
+
+        WiringPortRef replies = reply_output_source_node(w, descriptor, replies_path);
         w.register_service_client_rank(replies_path, "request/reply service", replies.peered_node(), true);
 
         WiringPortRef dict = replies;
@@ -417,11 +420,21 @@ namespace hgraph
         w.register_built_service_path(base, "request/reply service");
 
         WiringPortRef requests = request_input_source_node(w, descriptor, request_path);
-        WiringPortRef replies  = reply_output_source_node(w, descriptor, replies_path);
         w.register_service_rank_anchor(request_path, requests.peered_node());
 
         std::array<WiringPortRef, 1> impl_inputs{requests};
         WiringPortRef output = wire_impl(w, descriptor, impl, impl_inputs);
+        if (descriptor.response_schema == nullptr)
+        {
+            if (output.schema != nullptr)
+            {
+                throw std::invalid_argument("reply-less service '" + descriptor.name +
+                                            "' implementation returned an output");
+            }
+            return;
+        }
+
+        WiringPortRef replies = reply_output_source_node(w, descriptor, replies_path);
         const auto *dict_meta = TypeRegistry::instance().tsd(scalar_descriptor<Int>::value_meta(),
                                                              descriptor.response_schema);
         const WiringInstance *capture = shared_output_capture_node(
@@ -515,6 +528,11 @@ namespace hgraph
                 return;
             }
             case ServiceFlavour::RequestReply: {
+                if (descriptor.response_schema == nullptr)
+                {
+                    throw std::invalid_argument("reply-less service '" + descriptor.name +
+                                                "' has no implementation output");
+                }
                 const std::string endpoint = request_reply_base(descriptor, path) + "/replies";
                 w.register_service_implementation_stub(endpoint, "request/reply service");
                 WiringPortRef shared = reply_output_source_node(w, descriptor, endpoint);
@@ -564,7 +582,10 @@ namespace hgraph
                     break;
                 case ServiceFlavour::RequestReply:
                     required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/request", {}});
-                    required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/replies", {}});
+                    if (descriptor->response_schema != nullptr)
+                    {
+                        required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/replies", {}});
+                    }
                     break;
                 case ServiceFlavour::ServiceAdaptor:
                     required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/from_graph", {}});

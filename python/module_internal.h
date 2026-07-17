@@ -108,7 +108,7 @@ namespace hgraph::python_bridge
         where a dict is NOT a spec (upstream parity: it iterates as its keys). */
     [[nodiscard]] Value py_tss_spec_to_delta(nb::handle add_from, nb::handle remove_from,
                                              const TSValueTypeMetaData *ts);
-    void                                  install_arrow_conversion_hooks();
+    void                                  install_value_conversion_hooks();
 }  // namespace hgraph::python_bridge
 
 template <>

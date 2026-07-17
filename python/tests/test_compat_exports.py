@@ -3,6 +3,7 @@ utc_now, equal_lambdas/callable_shape_key, EvaluationClock (as annotation
 injectable), get_recorded_value, get_context, TSW_OUT, is_feature_enabled."""
 import os
 
+import _hgraph
 import hgraph as hg
 from hgraph import TS, EvaluationClock, compute_node, graph
 from hgraph.test import eval_node
@@ -38,6 +39,21 @@ def test_get_recorded_value_qualified():
 
             eval_node(g, [1, 2])
         assert [v for _, v in hg.get_recorded_value()] == [1, 2]
+
+
+def test_recorder_api_uses_active_global_state():
+    recorder = object()
+    with hg.GlobalContext(hg.GlobalState()) as state:
+        hg.set_recorder_api(recorder)
+        hg.set_recording_label("test")
+        assert hg.get_recorder_api() is recorder
+        assert hg.get_recording_label() == "test"
+        assert state["__recorder_api__"] is recorder
+
+
+def test_record_replay_reset_mode_is_exposed():
+    assert hg.RecordReplayEnum.RESET == _hgraph.MODE_RESET
+    assert hg.RecordReplayEnum.RESET & hg.RecordReplayEnum.RESET
 
 
 def test_get_context_reads_published_context():

@@ -310,6 +310,12 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     w = _hgraph.Wiring(GlobalState.instance()._impl)
     _wiring_stack.append(w)
     try:
+        def _producer_annotation(annotation):
+            """eval_node samples are values of the producer behind REF[T]."""
+            if isinstance(annotation, _TsExpr) and annotation.handle.is_ref:
+                return _TsExpr(_hgraph.ref_target(annotation.handle), repr(annotation))
+            return annotation
+
         ports = []
         deferred_replay = []
         scalar_positions = set()
@@ -346,6 +352,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             if isinstance(annotation, _GenericTsExpr):
                 samples = series if isinstance(series, (list, tuple)) else [series]
                 annotation = _infer_ts_type(samples)
+            annotation = _producer_annotation(annotation)
             import types as _pytypes
             import typing as _typing
             scalar_annotation = (
@@ -391,6 +398,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                     annotation = _infer_ts_type(series)
                 if annotation is None:
                     raise TypeError(f"named series '{k}' needs typed sample values")
+                annotation = _producer_annotation(annotation)
                 key = f"eval_node::{k}"
                 src = w.wire("__harness_replay", (key,), {}, output_type=annotation.handle)
                 deferred_replay.append((key, list(series), annotation.handle))

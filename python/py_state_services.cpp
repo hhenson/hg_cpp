@@ -131,6 +131,7 @@ namespace hgraph::python_bridge
     m.attr("MODE_REPLAY")        = static_cast<unsigned>(record_replay::Mode::Replay);
     m.attr("MODE_COMPARE")       = static_cast<unsigned>(record_replay::Mode::Compare);
     m.attr("MODE_REPLAY_OUTPUT") = static_cast<unsigned>(record_replay::Mode::ReplayOutput);
+    m.attr("MODE_RESET")         = static_cast<unsigned>(record_replay::Mode::Reset);
     m.attr("MODE_RECOVER")       = static_cast<unsigned>(record_replay::Mode::Recover);
     nb::class_<record_replay::scope>(m, "RecordReplayScope")
         .def(nb::init<record_replay::Mode, std::string>(), nb::arg("mode"), nb::arg("recordable_id") = std::string{});
@@ -188,7 +189,7 @@ namespace hgraph::python_bridge
               {
                   descriptor.flavour         = ServiceFlavour::RequestReply;
                   descriptor.request_schema  = request.value().meta;
-                  descriptor.response_schema = response.value().meta;
+                  descriptor.response_schema = response.has_value() ? response->meta : nullptr;
               }
               else if (flavour == "adaptor")
               {
@@ -217,16 +218,19 @@ namespace hgraph::python_bridge
         return descriptor != nullptr ? nb::cast(PyServiceDesc{descriptor}) : nb::none();
     });
     m.def("service_client", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
-                               std::optional<PyPort> ts) {
+                               std::optional<PyPort> ts) -> nb::object {
         switch (desc.descriptor->flavour)
         {
             case ServiceFlavour::Reference:
-                return PyPort{reference_service_client(w.wiring_ref(), *desc.descriptor, path)};
+                return nb::cast(PyPort{reference_service_client(w.wiring_ref(), *desc.descriptor, path)});
             case ServiceFlavour::Subscription:
-                return PyPort{subscription_service_subscribe(w.wiring_ref(), *desc.descriptor, path,
-                                                             ts.value().ref)};
-            case ServiceFlavour::RequestReply:
-                return PyPort{request_reply_service_call(w.wiring_ref(), *desc.descriptor, path, ts.value().ref)};
+                return nb::cast(PyPort{subscription_service_subscribe(w.wiring_ref(), *desc.descriptor, path,
+                                                                      ts.value().ref)});
+            case ServiceFlavour::RequestReply: {
+                WiringPortRef output = request_reply_service_call(
+                    w.wiring_ref(), *desc.descriptor, path, ts.value().ref);
+                return output.schema != nullptr ? nb::cast(PyPort{std::move(output)}) : nb::none();
+            }
             case ServiceFlavour::Adaptor:
             case ServiceFlavour::ServiceAdaptor:
                 throw std::logic_error("service_client does not accept adaptor descriptors");
@@ -482,7 +486,7 @@ namespace hgraph::python_bridge
         .def("__arrow_c_array__",
              [](const PySeriesArray &self, nb::handle) { return self.arrow_c_array(); },
              nb::arg("requested_schema") = nb::none());
-    install_arrow_conversion_hooks();   // bind Frame/Series conversion onto the type-erased ops
+    install_value_conversion_hooks();   // bind module-owned conversion onto the type-erased ops
     // Wiring-time scalar values as one list-of-Any (part of node identity).
     m.def("any_list", [](nb::list values) {
         auto &registry = TypeRegistry::instance();

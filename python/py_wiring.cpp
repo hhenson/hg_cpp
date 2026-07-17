@@ -39,6 +39,101 @@ namespace
         return *table;
     }
 
+    struct RuntimeOperatorRecord
+    {
+        std::string name;
+        std::vector<std::string> names;
+        std::vector<std::string_view> name_views;
+        std::size_t arity{0};
+        bool variadic{false};
+        bool has_output{false};
+    };
+
+    [[nodiscard]] std::unordered_map<std::string, RuntimeOperatorRecord *> &runtime_operator_registry()
+    {
+        static auto *registry = new std::unordered_map<std::string, RuntimeOperatorRecord *>{};
+        return *registry;
+    }
+
+    [[nodiscard]] WiringPortRef runtime_operator_wire(const void *context, Wiring &w,
+                                                      std::span<const WiringPortRef> args)
+    {
+        const auto &record = *static_cast<const RuntimeOperatorRecord *>(context);
+        return wire_erased_operator(w, record.name, args, record.has_output);
+    }
+
+    [[nodiscard]] CompiledSubGraph runtime_operator_compile(
+        const void *context, std::span<const TSValueTypeMetaData *const> input_schemas)
+    {
+        Wiring child{WiringKind::SubGraph};
+        std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
+        std::vector<WiringPortRef> boundary;
+        boundary.reserve(input_schemas.size());
+        for (std::size_t index = 0; index < input_schemas.size(); ++index)
+        {
+            boundary.push_back(WiringPortRef::boundary_source(index, {}, input_schemas[index]));
+        }
+        WiringPortRef out = runtime_operator_wire(context, child, boundary);
+        const auto &record = *static_cast<const RuntimeOperatorRecord *>(context);
+        if (record.has_output)
+        {
+            return std::move(child).finish_subgraph(out, std::move(schemas));
+        }
+        return std::move(child).finish_subgraph(std::nullopt, std::move(schemas));
+    }
+
+    [[nodiscard]] const WiredFnOps &runtime_operator_ops()
+    {
+        static constexpr WiredFnOps ops{
+            &runtime_operator_wire,
+            &runtime_operator_compile,
+            [](const void *context) {
+                const auto &record = *static_cast<const RuntimeOperatorRecord *>(context);
+                return std::span<const std::string_view>{
+                    record.name_views.data(), record.name_views.size()};
+            },
+            [](const void *) -> const TSValueTypeMetaData * { return nullptr; },
+        };
+        return ops;
+    }
+
+    [[nodiscard]] WiredFn runtime_operator_fn(const std::string &name)
+    {
+        auto &registry = runtime_operator_registry();
+        auto  found    = registry.find(name);
+        if (found == registry.end())
+        {
+            const auto shape = OperatorRegistry::instance().callable_shape(name);
+            if (!shape.has_value())
+            {
+                throw std::invalid_argument(
+                    "operator '" + name +
+                    "' has no single time-series-only callable shape for higher-order use");
+            }
+            auto *record = new RuntimeOperatorRecord{};
+            record->name = name;
+            record->names = shape->parameter_names;
+            record->name_views.reserve(record->names.size());
+            for (const std::string &parameter : record->names)
+            {
+                record->name_views.push_back(parameter);
+            }
+            record->arity = shape->arity;
+            record->variadic = shape->variadic;
+            record->has_output = shape->has_output;
+            found = registry.emplace(name, record).first;
+        }
+        return WiredFn{
+            .ops           = &runtime_operator_ops(),
+            .context       = found->second,
+            .identity      = &typeid(RuntimeOperatorRecord),
+            .operator_name = found->second->name,
+            .arity         = found->second->arity,
+            .variadic      = found->second->variadic,
+            .has_output    = found->second->has_output,
+        };
+    }
+
     /** Immortal callable records (stable scalar identity by pointer). */
     [[nodiscard]] std::unordered_map<PyObject *, PyNodeRecord *> &py_node_registry()
     {
@@ -174,7 +269,10 @@ namespace hgraph::python_bridge
     nb::class_<PyRun>(m, "Run").def("recorded", &PyRun::recorded, nb::arg("key"), nb::arg("sparse") = false);
     m.def("operator_names", [] { return OperatorRegistry::instance().registered_names(); });
 
-    nb::class_<PyWiredFn>(m, "WiredFn");
+    nb::class_<PyWiredFn>(m, "WiredFn")
+        .def_prop_ro("arity", [](const PyWiredFn &self) { return self.fn.arity; })
+        .def_prop_ro("variadic", [](const PyWiredFn &self) { return self.fn.variadic; })
+        .def_prop_ro("has_output", [](const PyWiredFn &self) { return self.fn.has_output; });
     nb::class_<PyNodeHandle>(m, "NodeRef");
     nb::class_<PyScalarValue>(m, "ScalarValue");
     nb::class_<PySender>(m, "Sender").def("send", &PySender::send, nb::arg("value"));
@@ -283,12 +381,7 @@ namespace hgraph::python_bridge
     m.def("wired_op", [](const std::string &name) {
         const auto &table = wired_fn_table();
         const auto  found = table.find(name);
-        if (found == table.end())
-        {
-            throw nb::value_error(
-                ("no wired-fn erasure for operator '" + name + "' (the bridge pre-instantiates a fixed set)").c_str());
-        }
-        return PyWiredFn{found->second};
+        return PyWiredFn{found != table.end() ? found->second : runtime_operator_fn(name)};
     });
 
     // Conversion-layer round trip (test/debug aid): Python -> Value -> Python.

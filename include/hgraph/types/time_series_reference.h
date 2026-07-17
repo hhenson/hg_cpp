@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -196,5 +197,47 @@ namespace std
         std::size_t operator()(const hgraph::TimeSeriesReference &ref) const noexcept { return ref.hash(); }
     };
 }  // namespace std
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+#include <hgraph/types/value/value_ops.h>
+
+#include <nanobind/nanobind.h>
+
+namespace hgraph
+{
+    /**
+     * TimeSeriesReference <-> Python conversion binds onto the atomic value
+     * ops. The Python module owns the opaque wrapper and installs these hooks
+     * during module initialization; the C++ runtime remains Python-free when
+     * user-node support is disabled.
+     */
+    template <>
+    struct python_conversion_traits<TimeSeriesReference>
+    {
+        inline static nanobind::object (*to_python_hook)(const TimeSeriesReference &) = nullptr;
+        inline static TimeSeriesReference (*from_python_hook)(nanobind::handle)       = nullptr;
+
+        static nanobind::object to_python(const TimeSeriesReference &value)
+        {
+            if (to_python_hook == nullptr)
+            {
+                throw std::logic_error(
+                    "TimeSeriesReference python conversion hook not installed (import the module)");
+            }
+            return to_python_hook(value);
+        }
+
+        static TimeSeriesReference from_python(nanobind::handle source)
+        {
+            if (from_python_hook == nullptr)
+            {
+                throw std::logic_error(
+                    "TimeSeriesReference python conversion hook not installed (import the module)");
+            }
+            return from_python_hook(source);
+        }
+    };
+}  // namespace hgraph
+#endif  // HGRAPH_ENABLE_PYTHON_USER_NODES
 
 #endif  // HGRAPH_CPP_ROOT_TIME_SERIES_REFERENCE_H

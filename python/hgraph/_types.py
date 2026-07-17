@@ -86,6 +86,135 @@ def _is_self_recursive_annotation(annotation, scalar, substitutions):
     return False
 
 
+def _forward_compound_target(annotation, scalar, substitutions):
+    """Resolve a CompoundScalar forward reference in the defining scope."""
+    import types
+    import typing
+
+    from ._compat import CompoundScalar, _COMPOUND_SCALAR_CLASSES
+
+    annotation = _substitute_typevars(annotation, substitutions)
+    if isinstance(annotation, type) and issubclass(annotation, CompoundScalar):
+        return annotation
+    if isinstance(annotation, typing.ForwardRef):
+        annotation = annotation.__forward_arg__
+    origin = typing.get_origin(annotation)
+    if origin in (typing.Union, types.UnionType):
+        members = tuple(
+            value for value in typing.get_args(annotation)
+            if value is not type(None)
+        )
+        return (
+            _forward_compound_target(members[0], scalar, substitutions)
+            if len(members) == 1 else None
+        )
+    if not isinstance(annotation, str):
+        return None
+
+    token = annotation.strip().replace(" ", "").replace("'", "").replace('"', "")
+    for prefix in ("typing.Optional[", "Optional["):
+        if token.startswith(prefix) and token.endswith("]"):
+            token = token[len(prefix):-1]
+    if token.endswith("|None"):
+        token = token[:-5]
+    elif token.startswith("None|"):
+        token = token[5:]
+
+    scope = scalar.__qualname__.rsplit(".", 1)[0]
+    candidates = [
+        candidate for candidate in reversed(_COMPOUND_SCALAR_CLASSES)
+        if candidate.__module__ == scalar.__module__
+        and token in (candidate.__name__, candidate.__qualname__)
+    ]
+    return next(
+        (
+            candidate for candidate in candidates
+            if candidate.__qualname__.rsplit(".", 1)[0] == scope
+        ),
+        candidates[0] if candidates else None,
+    )
+
+
+def _mutual_recursive_component(scalar):
+    import dataclasses
+
+    graph = {}
+
+    def visit(current):
+        if current in graph:
+            return
+        edges = set()
+        try:
+            fields = dataclasses.fields(current)
+        except TypeError:
+            fields = ()
+        for field in fields:
+            target = _forward_compound_target(field.type, current, {})
+            if target is not None:
+                edges.add(target)
+        graph[current] = edges
+        for target in edges:
+            visit(target)
+
+    visit(scalar)
+
+    def reaches(start, target, seen=None):
+        if start is target:
+            return True
+        seen = set() if seen is None else seen
+        if start in seen:
+            return False
+        seen.add(start)
+        return any(reaches(child, target, seen) for child in graph.get(start, ()))
+
+    return tuple(
+        candidate for candidate in graph
+        if candidate is not scalar and reaches(candidate, scalar)
+    ) + (scalar,)
+
+
+def _register_mutual_recursive_component(component):
+    from ._compat import CompoundScalar
+    import dataclasses
+
+    generation = _hgraph._registry_generation()
+    unique = tuple(dict.fromkeys(component))
+    indices = {scalar: index for index, scalar in enumerate(unique)}
+    definitions = []
+    for scalar in unique:
+        parent_metas = [
+            _compound_value_type(base)
+            for base in scalar.__bases__
+            if (
+                isinstance(base, type)
+                and issubclass(base, CompoundScalar)
+                and base is not CompoundScalar
+                and base not in indices
+            )
+        ]
+        fields = []
+        for field in dataclasses.fields(scalar):
+            target = _forward_compound_target(field.type, scalar, {})
+            if target in indices:
+                fields.append((field.name, indices[target]))
+            else:
+                fields.append((field.name, _value_type(field.type)))
+        definitions.append((
+            scalar.__dict__.get("__compound_namespace__", scalar.__module__),
+            scalar.__name__,
+            fields,
+            parent_metas,
+            bool(scalar.__dict__.get("__compound_abstract__", False)),
+            scalar.__dict__.get("__compound_discriminator__", "__type__"),
+            [],
+        ))
+
+    metas = _hgraph.recursive_bundles_vt(definitions)
+    for scalar, meta in zip(unique, metas):
+        _hgraph.register_bundle_class(meta, scalar)
+        _COMPOUND_TYPE_CACHE[(generation, scalar, ())] = meta
+
+
 def _compound_value_type(scalar, type_args=()):
     from ._compat import CompoundScalar
     import dataclasses
@@ -101,6 +230,12 @@ def _compound_value_type(scalar, type_args=()):
             f"got {len(type_args)}"
         )
     substitutions = dict(zip(parameters, type_args))
+
+    if not type_args:
+        component = _mutual_recursive_component(scalar)
+        if len(component) > 1:
+            _register_mutual_recursive_component(component)
+            return _COMPOUND_TYPE_CACHE[cache_key]
 
     if type_args:
         argument_patterns = []

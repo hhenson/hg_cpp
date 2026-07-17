@@ -130,6 +130,17 @@ namespace
         }
     };
 
+    struct DeltaValuePassThroughNode
+    {
+        static constexpr auto name = "delta_value_pass_through";
+
+        static void eval(In<"value", TS<Int>> value, Out<TS<Int>> out)
+        {
+            const ValueView delta = value.delta_value();
+            if (delta.has_value()) { out.set(delta.checked_as<Int>()); }
+        }
+    };
+
     struct BaseValueImpl
     {
         [[maybe_unused]] static constexpr auto name = "base_value_impl";
@@ -650,6 +661,18 @@ namespace
         }
     };
 
+    struct LateDuplicatePriceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "late_duplicate_price_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> early, Port<TS<Int>> late)
+        {
+            service::register_subscription_service<PricesService, PricesImpl>(w);
+            static_cast<void>(wire<stdlib::null_sink>(w, wire<PricesService>(w, early)));
+            return wire<DeltaValuePassThroughNode>(w, wire<PricesService>(w, late));
+        }
+    };
+
     struct PathPriceClientGraph
     {
         [[maybe_unused]] static constexpr auto name = "path_price_client_graph";
@@ -969,6 +992,15 @@ TEST_CASE("service wiring: subscription client reads implementation output by re
 
     CHECK_OUTPUT(eval_node<PriceClientGraph>(values<Int>(7, none, 8)),
                  values<Int>(none, 70, none, 80));
+}
+
+TEST_CASE("service wiring: late duplicate subscription samples the existing value")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<LateDuplicatePriceClientGraph>(
+                     values<Int>(7, none, none), values<Int>(none, none, 7)),
+                 values<Int>(none, none, 70));
 }
 
 TEST_CASE("service wiring: subscription service supports explicit paths")

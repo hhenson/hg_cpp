@@ -19,6 +19,7 @@ from hgraph.adaptors.tornado import (
     websocket_client_adaptor,
     websocket_client_adaptor_impl,
     websocket_server_handler,
+    websocket_server_adaptor_impl,
 )
 
 
@@ -133,7 +134,11 @@ def test_websocket_server_handler_round_trips_binary_messages(free_tcp_port):
     @hg.graph
     def server_graph() -> None:
         done = drive_client()
-        register_websocket_server_adaptor(free_tcp_port)
+        hg.register_adaptor(
+            "websocket_server_adaptor",
+            websocket_server_adaptor_impl,
+            port=free_tcp_port,
+        )
         stop_when_done(done)
 
     state = hg.GlobalState()

@@ -286,6 +286,25 @@ def test_self_recursive_compound_scalar_allocates_children_on_demand():
     assert result == [2, -1]
 
 
+def test_mutually_recursive_compound_scalars_resolve_as_one_closed_group():
+    @dataclass
+    class Left(CompoundScalar, namespace="tests.mutual_recursion"):
+        value: int
+        right: Optional["Right"] = None
+
+    @dataclass
+    class Right(CompoundScalar, namespace="tests.mutual_recursion"):
+        value: int
+        left: Optional[Left] = None
+
+    @graph
+    def nested_value(value: TS[Left]) -> TS[int]:
+        return value.right.left.value
+
+    source = Left(1, Right(2, Left(3)))
+    assert eval_node(nested_value, [source]) == [3]
+
+
 def test_compound_scalar_readback_reconstructs_frozen_slotted_value_without_init():
     initialized = []
 

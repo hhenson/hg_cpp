@@ -373,25 +373,32 @@ namespace hgraph
 
                 if (tail)
                 {
-                    // Variadic tail: time-series only, matched against the
-                    // declared pattern INDEPENDENTLY per argument (a throwaway
-                    // binding scope — fixed-prefix bindings constrain the
-                    // match, but heterogeneous tail args never bind vars).
-                    if (arg.kind != WiringArg::Kind::TimeSeries)
-                    {
-                        why = fmt::format("variadic argument {} must be a time-series", i);
-                        return false;
-                    }
+                    // Match each tail argument independently. Plain values
+                    // use the same const-promotion rules as fixed inputs;
+                    // their throwaway binding keeps heterogeneous tails from
+                    // binding one another.
                     ResolutionMap tail_scope = map;
-                    if (!input_ts_pattern_match(param.ts, arg.port.schema, tail_scope))
+                    bool matched = false;
+                    if (arg.kind == WiringArg::Kind::TimeSeries)
                     {
-                        why = fmt::format("variadic argument {} (a {}) does not match {}", i,
-                                          arg.port.schema != nullptr ? arg.port.schema->name()
-                                                                     : std::string_view{"time-series"},
+                        matched = input_ts_pattern_match(param.ts, arg.port.schema, tail_scope);
+                    }
+                    else
+                    {
+                        ++rank_adjustment;
+                        matched = scalar_value_matches_ts_pattern(
+                            param.ts, arg.scalar_value, tail_scope, rank_adjustment);
+                    }
+                    if (!matched)
+                    {
+                        why = fmt::format("variadic argument {} does not match {}", i,
                                           ts_pattern_to_string(param.ts));
                         return false;
                     }
-                    rank_adjustment += input_adaptation_rank(param.ts, arg.port.schema);
+                    if (arg.kind == WiringArg::Kind::TimeSeries)
+                    {
+                        rank_adjustment += input_adaptation_rank(param.ts, arg.port.schema);
+                    }
                     continue;
                 }
 
@@ -598,6 +605,43 @@ namespace hgraph
             else if (shared != meta) { return true; }
         }
         return false;
+    }
+
+    std::optional<OperatorCallableShape> OperatorRegistry::callable_shape(std::string_view name) const
+    {
+        const auto found = overloads_.find(std::string{name});
+        if (found == overloads_.end() || found->second.empty()) { return std::nullopt; }
+
+        std::optional<OperatorCallableShape> result;
+        for (const OperatorImpl &impl : found->second)
+        {
+            OperatorCallableShape candidate;
+            candidate.variadic   = impl.variadic;
+            candidate.has_output = impl.has_output;
+            for (const ParamPattern &parameter : impl.params)
+            {
+                if (parameter.kind != ParamPattern::Kind::Input)
+                {
+                    if (!parameter.default_value.has_value()) { return std::nullopt; }
+                    continue;
+                }
+                candidate.parameter_names.push_back(parameter.name);
+                ++candidate.arity;
+            }
+            if (!result.has_value())
+            {
+                result = std::move(candidate);
+                continue;
+            }
+            if (result->arity != candidate.arity ||
+                result->variadic != candidate.variadic ||
+                result->has_output != candidate.has_output ||
+                result->parameter_names != candidate.parameter_names)
+            {
+                return std::nullopt;
+            }
+        }
+        return result;
     }
 
     std::vector<std::string> OperatorRegistry::registered_names() const

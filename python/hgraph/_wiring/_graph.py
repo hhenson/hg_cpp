@@ -282,6 +282,12 @@ class _GraphFn:
                 param.default is AUTO_RESOLVE and
                 typing.get_origin(param.annotation) is type
             )
+            if is_type_default:
+                type_args = typing.get_args(param.annotation)
+                sentinel = type_args[0] if type_args else None
+                if sentinel in resolved_types:
+                    pinned[name] = resolved_types[sentinel]
+                    continue
             if (isinstance(param.default, _TypeVarSentinel) or is_type_default) \
                     and index < len(scalar_items):
                 pinned[name] = scalar_items[index]

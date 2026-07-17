@@ -308,6 +308,52 @@ TEST_CASE("self-recursive Bundles store one inline owner pointer and allocate on
     REQUIRE(decoded.as_bundle()["next"].as_bundle()["value"].checked_as<std::int64_t>() == 2);
 }
 
+TEST_CASE("mutually recursive Bundles resolve owned edges across one declaration batch")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.value_type("int");
+    REQUIRE(integer != nullptr);
+
+    const auto schemas = registry.recursive_bundles({
+        RecursiveBundleDefinition{
+            .bundle_namespace = "tests.recursion",
+            .local_name = "MutualLeft",
+            .fields = {
+                {.name = "value", .type = integer},
+                {.name = "right", .owned_target = 1},
+            },
+        },
+        RecursiveBundleDefinition{
+            .bundle_namespace = "tests.recursion",
+            .local_name = "MutualRight",
+            .fields = {
+                {.name = "value", .type = integer},
+                {.name = "left", .owned_target = 0},
+            },
+        },
+    });
+
+    REQUIRE(schemas.size() == 2);
+    REQUIRE(schemas[0]->fields[1].type->is_owned());
+    REQUIRE(schemas[0]->fields[1].type->element_type == schemas[1]);
+    REQUIRE(schemas[1]->fields[1].type->is_owned());
+    REQUIRE(schemas[1]->fields[1].type->element_type == schemas[0]);
+    REQUIRE(ValuePlanFactory::instance().type_for(schemas[0]->fields[1].type)
+                .checked_plan().layout.size == sizeof(void *));
+
+    Value left{ValuePlanFactory::instance().type_for(schemas[0])};
+    auto fields = left.as_bundle().begin_mutation();
+    fields["value"].set(std::int64_t{1});
+    auto right = fields["right"].as_bundle().begin_mutation();
+    right["value"].set(std::int64_t{2});
+    right["left"].as_bundle().begin_mutation()["value"].set(std::int64_t{3});
+
+    REQUIRE(left.as_bundle()["right"].as_bundle()["value"].checked_as<std::int64_t>() == 2);
+    REQUIRE(left.as_bundle()["right"].as_bundle()["left"].as_bundle()["value"]
+                .checked_as<std::int64_t>() == 3);
+}
+
 TEST_CASE("TypeRealizationSnapshot closes polymorphic Bundle storage without taxing leaves")
 {
     using namespace hgraph;

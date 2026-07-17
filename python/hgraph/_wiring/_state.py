@@ -11,6 +11,8 @@ from ._sentinels import REMOVE, Removed, _SetDelta
 _global_state_local = threading.local()
 _GLOBAL_MISSING = object()
 _GRAPH_LOGGER_KEY = "__hgraph_graph_logger__"
+_RECORDER_API_KEY = "__recorder_api__"
+_RECORDER_LABEL_KEY = "__recorder_api__label__"
 
 
 def utc_now():
@@ -38,6 +40,24 @@ def get_recorded_value(key="out", recordable_id=None):
     if default_key in state:
         return state[default_key]
     return state[key]
+
+
+def set_recorder_api(recorder):
+    """Store the process-specific recorder API in the active graph state."""
+    GlobalState.instance()[_RECORDER_API_KEY] = recorder
+
+
+def get_recorder_api():
+    """Return the recorder API selected for the active graph state."""
+    return GlobalState.instance()[_RECORDER_API_KEY]
+
+
+def set_recording_label(label):
+    GlobalState.instance()[_RECORDER_LABEL_KEY] = label
+
+
+def get_recording_label():
+    return GlobalState.instance()[_RECORDER_LABEL_KEY]
 
 
 def _friendly_recording_delta(delta):
@@ -222,6 +242,7 @@ class _RecordReplayModes:
     REPLAY = _hgraph.MODE_REPLAY
     COMPARE = _hgraph.MODE_COMPARE
     REPLAY_OUTPUT = _hgraph.MODE_REPLAY_OUTPUT
+    RESET = _hgraph.MODE_RESET
     RECOVER = _hgraph.MODE_RECOVER
 
 

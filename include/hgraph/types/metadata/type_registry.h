@@ -45,6 +45,24 @@ namespace hgraph
         std::vector<Entry> entries{};
     };
 
+    struct RecursiveBundleFieldDefinition
+    {
+        std::string name{};
+        const ValueTypeMetaData *type{nullptr};
+        std::optional<std::size_t> owned_target{};
+    };
+
+    struct RecursiveBundleDefinition
+    {
+        std::string bundle_namespace{};
+        std::string local_name{};
+        std::vector<RecursiveBundleFieldDefinition> fields{};
+        std::vector<const ValueTypeMetaData *> parents{};
+        bool is_abstract{false};
+        std::string discriminator{"__type__"};
+        std::vector<const ValueTypeMetaData *> generic_arguments{};
+    };
+
     /**
      * Process-wide registry that interns value and time-series schemas.
      *
@@ -124,6 +142,11 @@ namespace hgraph
             bool is_abstract = false,
             std::string_view discriminator = "__type__",
             const std::vector<const ValueTypeMetaData *> &generic_arguments = {});
+        /** Atomically declare mutually recursive named bundles. Each field
+            supplies either a direct value schema or an index into this batch;
+            indexed edges are stored as one-pointer Owned values. */
+        std::vector<const ValueTypeMetaData *> recursive_bundles(
+            const std::vector<RecursiveBundleDefinition> &definitions);
         /**
          * Intern a *named* bundle value-schema. Internally synthesises the
          * un-named bundle for ``fields``, then interns a named wrapper keyed

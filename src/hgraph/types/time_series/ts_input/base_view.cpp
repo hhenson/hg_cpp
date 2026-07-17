@@ -405,7 +405,20 @@ namespace hgraph
                     return data.value();
                 }
             }
-            return data.delta_value(evaluation_time_);
+            ValueView delta = data.delta_value(evaluation_time_);
+            if (delta.has_value()) { return delta; }
+
+            // A migrated from-REF alternative can carry the sampled
+            // modification on its endpoint facade while resolving reads to
+            // an older, already-valid target. Atomic TS deltas are their
+            // current value, so preserve the same sampled-rebind contract as
+            // a direct TargetLink instead of exposing an empty target delta.
+            const auto *view_schema = schema();
+            if (view_schema != nullptr && view_schema->kind == TSTypeKind::TS && modified())
+            {
+                return data.value();
+            }
+            return delta;
         }
         throw std::logic_error("TSInputView::delta_value requires a live input view");
     }

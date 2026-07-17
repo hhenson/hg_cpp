@@ -863,95 +863,190 @@ namespace hgraph
         std::string_view discriminator,
         const std::vector<const ValueTypeMetaData *> &generic_arguments)
     {
-        const std::lock_guard lock(mutex_);
-        const std::string qualified_name = qualified_bundle_name(bundle_namespace, local_name);
-        if (value_type(qualified_name) != nullptr)
-        {
-            throw std::invalid_argument("recursive bundle '" + qualified_name + "' is already registered");
-        }
-        if (discriminator.empty()) { throw std::invalid_argument("bundle discriminator must not be empty"); }
-
+        RecursiveBundleDefinition definition;
+        definition.bundle_namespace = bundle_namespace;
+        definition.local_name = local_name;
+        definition.parents = parents;
+        definition.is_abstract = is_abstract;
+        definition.discriminator = discriminator;
+        definition.generic_arguments = generic_arguments;
+        definition.fields.reserve(fields.size());
         for (const auto &[field_name, field_type] : fields)
         {
-            (void)field_type;
-            if (field_name.empty())
-            {
-                throw std::invalid_argument("recursive bundle fields must have non-empty names");
-            }
-            if (std::ranges::count_if(fields, [&](const auto &field) { return field.first == field_name; }) != 1)
-            {
-                throw std::invalid_argument("recursive bundle fields must have unique names");
-            }
+            definition.fields.push_back(RecursiveBundleFieldDefinition{
+                .name = field_name,
+                .type = field_type,
+                .owned_target = field_type == nullptr
+                                    ? std::optional<std::size_t>{0}
+                                    : std::nullopt,
+            });
         }
-        for (const ValueTypeMetaData *parent : parents)
+        return recursive_bundles({definition}).front();
+    }
+
+    std::vector<const ValueTypeMetaData *> TypeRegistry::recursive_bundles(
+        const std::vector<RecursiveBundleDefinition> &definitions)
+    {
+        const std::lock_guard lock(mutex_);
+        if (definitions.empty())
         {
-            if (parent == nullptr || !parent->is_named_bundle() || parent->bundle_hierarchy == nullptr)
+            throw std::invalid_argument("recursive_bundles requires at least one definition");
+        }
+
+        std::vector<std::string> qualified_names;
+        qualified_names.reserve(definitions.size());
+        for (const auto &definition : definitions)
+        {
+            const std::string qualified_name =
+                qualified_bundle_name(definition.bundle_namespace, definition.local_name);
+            if (definition.local_name.empty())
             {
-                throw std::invalid_argument("recursive bundle parents must be named Bundle schemas");
+                throw std::invalid_argument("recursive bundle requires a non-empty local name");
             }
-            if (std::ranges::count(parents, parent) != 1)
+            if (value_type(qualified_name) != nullptr ||
+                std::ranges::count(qualified_names, qualified_name) != 0)
             {
-                throw std::invalid_argument("recursive bundle parents must not contain duplicates");
+                throw std::invalid_argument(
+                    "recursive bundle '" + qualified_name + "' is already registered");
             }
-            for (std::size_t index = 0; index < parent->field_count; ++index)
+            if (definition.discriminator.empty())
             {
-                const auto &parent_field = parent->fields[index];
-                const auto child_field = std::ranges::find_if(fields, [&](const auto &field) {
-                    return parent_field.name != nullptr && field.first == parent_field.name;
-                });
-                if (child_field == fields.end() || child_field->second == nullptr ||
-                    child_field->second != parent_field.type)
+                throw std::invalid_argument("bundle discriminator must not be empty");
+            }
+            for (const auto &field : definition.fields)
+            {
+                if (field.name.empty())
                 {
                     throw std::invalid_argument(
-                        "recursive bundle '" + qualified_name + "' must preserve inherited fields");
+                        "recursive bundle fields must have non-empty names");
+                }
+                if ((field.type == nullptr) == !field.owned_target.has_value())
+                {
+                    throw std::invalid_argument(
+                        "recursive bundle field requires exactly one direct type or owned target");
+                }
+                if (field.owned_target.has_value() &&
+                    *field.owned_target >= definitions.size())
+                {
+                    throw std::invalid_argument(
+                        "recursive bundle owned target is outside the declaration batch");
+                }
+                if (std::ranges::count_if(
+                        definition.fields,
+                        [&](const auto &candidate) {
+                            return candidate.name == field.name;
+                        }) != 1)
+                {
+                    throw std::invalid_argument(
+                        "recursive bundle fields must have unique names");
                 }
             }
+            for (const ValueTypeMetaData *parent : definition.parents)
+            {
+                if (parent == nullptr || !parent->is_named_bundle() ||
+                    parent->bundle_hierarchy == nullptr)
+                {
+                    throw std::invalid_argument(
+                        "recursive bundle parents must be named Bundle schemas");
+                }
+                if (std::ranges::count(definition.parents, parent) != 1)
+                {
+                    throw std::invalid_argument(
+                        "recursive bundle parents must not contain duplicates");
+                }
+                for (std::size_t field_index = 0;
+                     field_index < parent->field_count; ++field_index)
+                {
+                    const auto &parent_field = parent->fields[field_index];
+                    const auto child_field = std::ranges::find_if(
+                        definition.fields,
+                        [&](const auto &field) {
+                            return parent_field.name != nullptr &&
+                                   field.name == parent_field.name;
+                        });
+                    if (child_field == definition.fields.end() ||
+                        child_field->owned_target.has_value() ||
+                        child_field->type != parent_field.type)
+                    {
+                        throw std::invalid_argument(
+                            "recursive bundle '" + qualified_name +
+                            "' must preserve inherited fields");
+                    }
+                }
+            }
+            qualified_names.push_back(qualified_name);
         }
 
-        auto named = std::make_unique<ValueTypeMetaData>(
-            ValueTypeKind::Bundle, ValueTypeFlags::None, store_name_interned(qualified_name));
-        auto hierarchy = std::make_unique<BundleHierarchyMetaData>();
-        hierarchy->namespace_name = store_name_interned(bundle_namespace);
-        hierarchy->local_name = store_name_interned(local_name);
-        hierarchy->parents = parents;
-        hierarchy->generic_arguments = generic_arguments;
-        hierarchy->is_abstract = is_abstract;
-        hierarchy->discriminator = store_name_interned(discriminator);
-        hierarchy->generation = ++bundle_hierarchy_generation_;
-        named->bundle_hierarchy = hierarchy.get();
-        ValueTypeMetaData *named_ptr = named.get();
-        recursive_bundle_storage_.push_back(std::move(named));
-        bundle_hierarchy_storage_.push_back(std::move(hierarchy));
-
-        const ValueTypeMetaData *owned_self = owned(named_ptr);
-        std::vector<std::pair<std::string, const ValueTypeMetaData *>> resolved_fields;
-        resolved_fields.reserve(fields.size());
-        for (const auto &[field_name, field_type] : fields)
+        std::vector<ValueTypeMetaData *> named;
+        named.reserve(definitions.size());
+        for (std::size_t index = 0; index < definitions.size(); ++index)
         {
-            resolved_fields.emplace_back(field_name, field_type != nullptr ? field_type : owned_self);
+            const auto &definition = definitions[index];
+            auto record = std::make_unique<ValueTypeMetaData>(
+                ValueTypeKind::Bundle, ValueTypeFlags::None,
+                store_name_interned(qualified_names[index]));
+            auto hierarchy = std::make_unique<BundleHierarchyMetaData>();
+            hierarchy->namespace_name =
+                store_name_interned(definition.bundle_namespace);
+            hierarchy->local_name = store_name_interned(definition.local_name);
+            hierarchy->parents = definition.parents;
+            hierarchy->generic_arguments = definition.generic_arguments;
+            hierarchy->is_abstract = definition.is_abstract;
+            hierarchy->discriminator =
+                store_name_interned(definition.discriminator);
+            hierarchy->generation = ++bundle_hierarchy_generation_;
+            record->bundle_hierarchy = hierarchy.get();
+            named.push_back(record.get());
+            recursive_bundle_storage_.push_back(std::move(record));
+            bundle_hierarchy_storage_.push_back(std::move(hierarchy));
         }
-        const ValueTypeMetaData *un_named = un_named_bundle(resolved_fields);
-        named_ptr->flags = un_named->flags;
-        named_ptr->fields = un_named->fields;
-        named_ptr->field_count = un_named->field_count;
-        named_ptr->wrapped_un_named = un_named;
 
-        auto *owned_meta = const_cast<ValueTypeMetaData *>(owned_self);
-        owned_meta->flags = (un_named->flags | ValueTypeFlags::Owned) &
-                            ~(ValueTypeFlags::TriviallyConstructible |
-                              ValueTypeFlags::TriviallyDestructible |
-                              ValueTypeFlags::TriviallyCopyable |
-                              ValueTypeFlags::BufferCompatible);
-        owned_meta->fields = named_ptr->fields;
-        owned_meta->field_count = named_ptr->field_count;
-
-        for (const ValueTypeMetaData *parent : parents)
+        for (std::size_t index = 0; index < definitions.size(); ++index)
         {
-            parent->bundle_hierarchy->children.push_back(named_ptr);
-            parent->bundle_hierarchy->generation = ++bundle_hierarchy_generation_;
+            const auto &definition = definitions[index];
+            std::vector<std::pair<std::string, const ValueTypeMetaData *>>
+                resolved_fields;
+            resolved_fields.reserve(definition.fields.size());
+            for (const auto &field : definition.fields)
+            {
+                const ValueTypeMetaData *field_type = field.type;
+                if (field.owned_target.has_value())
+                {
+                    field_type = owned(named[*field.owned_target]);
+                }
+                resolved_fields.emplace_back(field.name, field_type);
+            }
+            const ValueTypeMetaData *un_named =
+                un_named_bundle(resolved_fields);
+            named[index]->flags = un_named->flags;
+            named[index]->fields = un_named->fields;
+            named[index]->field_count = un_named->field_count;
+            named[index]->wrapped_un_named = un_named;
         }
-        register_value_alias(qualified_name, named_ptr);
-        return named_ptr;
+
+        for (std::size_t index = 0; index < definitions.size(); ++index)
+        {
+            auto *owned_meta =
+                const_cast<ValueTypeMetaData *>(owned(named[index]));
+            owned_meta->flags =
+                (named[index]->flags | ValueTypeFlags::Owned) &
+                ~(ValueTypeFlags::TriviallyConstructible |
+                  ValueTypeFlags::TriviallyDestructible |
+                  ValueTypeFlags::TriviallyCopyable |
+                  ValueTypeFlags::BufferCompatible);
+            owned_meta->fields = named[index]->fields;
+            owned_meta->field_count = named[index]->field_count;
+
+            for (const ValueTypeMetaData *parent :
+                 definitions[index].parents)
+            {
+                parent->bundle_hierarchy->children.push_back(named[index]);
+                parent->bundle_hierarchy->generation =
+                    ++bundle_hierarchy_generation_;
+            }
+            register_value_alias(qualified_names[index], named[index]);
+        }
+        return {named.begin(), named.end()};
     }
 
     const ValueTypeMetaData *
