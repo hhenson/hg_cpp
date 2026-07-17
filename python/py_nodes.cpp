@@ -59,16 +59,19 @@ namespace hgraph::python_bridge
         const bool has_value = tss && erased.data_view().has_current_value();
         nb::object current   = tss && has_value ? value_to_py(erased.data_view().value())
                                                 : nb::steal(PyFrozenSet_New(nullptr));
+        nb::object frozenset_added;
+        nb::object frozenset_removed;
         if (tss && PyFrozenSet_CheckExact(result.ptr()))
         {
             // hgraph parity (PythonTimeSeriesSetOutput.value setter): an
             // exact frozenset return REPLACES the whole set - removals are
             // computed against the current value. Any other shape (set with
-            // Removed markers, set_delta, dict) stays a delta.
-            nb::dict spec;
-            spec["added"]   = result.attr("difference")(current);
-            spec["removed"] = current.attr("difference")(result);
-            shaped = spec;
+            // Removed markers, set_delta) stays a delta; a plain dict is NOT
+            // a spec (upstream parity: it iterates as its keys), so the
+            // explicit added/removed pair goes through the INTERNAL protocol
+            // (py_tss_spec_to_delta) below.
+            frozenset_added   = result.attr("difference")(current);
+            frozenset_removed = current.attr("difference")(result);
         }
 
         if (erased.schema()->kind == TSTypeKind::TSD &&
@@ -153,7 +156,9 @@ namespace hgraph::python_bridge
             }
             return;
         }
-        Value delta = py_to_delta(shaped, erased.schema());
+        Value delta = frozenset_added.is_valid()
+                          ? py_tss_spec_to_delta(frozenset_added, frozenset_removed, erased.schema())
+                          : py_to_delta(shaped, erased.schema());
         if (tss && has_value)
         {
             // hgraph parity (_post_modify): a delta that nets to no change

@@ -103,6 +103,11 @@ namespace hgraph::python_bridge
     [[nodiscard]] ValueTypeRef delta_binding(const ValueTypeMetaData *meta);
     [[nodiscard]] Value                   py_to_value_as(nb::handle object, const ValueTypeMetaData *meta);
     [[nodiscard]] Value                   py_to_delta(nb::handle object, const TSValueTypeMetaData *ts);
+    /** Internal TSS delta protocol (py-node frozenset-return shaping):
+        explicit added/removed iterables. User objects go through py_to_delta,
+        where a dict is NOT a spec (upstream parity: it iterates as its keys). */
+    [[nodiscard]] Value py_tss_spec_to_delta(nb::handle add_from, nb::handle remove_from,
+                                             const TSValueTypeMetaData *ts);
     void                                  install_arrow_conversion_hooks();
 }  // namespace hgraph::python_bridge
 

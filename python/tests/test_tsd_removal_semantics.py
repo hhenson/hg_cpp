@@ -77,3 +77,29 @@ def test_tss_absent_element_removal_is_lenient():
         set_delta(added={1, 2}, tp=int), None]
     assert eval_node(ident, [{1, 2}, set_delta(removed={99}, tp=int)]) == [
         set_delta(added={1, 2}, tp=int), None]
+
+
+def test_tss_dict_input_is_rejected_loudly():
+    """Ruling 2026-07-17: a dict is never a TSS value/delta — the former
+    {"removed": [...]} harness convention is gone. Upstream's typed surface
+    (auto-const) rejects dicts too; its untyped apply path incidentally
+    iterates dict keys, which this typed runtime rejects loudly instead.
+    Removals use set_delta(...) / Removed(...) markers."""
+    @graph
+    def ident(s: TSS[int]) -> TSS[int]:
+        return hg.union(s, s)
+
+    with pytest.raises((TypeError, RuntimeError), match="not a TSS value/delta"):
+        eval_node(ident, [{1, 2}, {"removed": [1]}])
+    with pytest.raises((TypeError, RuntimeError), match="not a TSS value/delta"):
+        eval_node(ident, [{1, 2}, {3: 3}])
+    # The EMPTY dict is upstream's empty-set stand-in: a validating empty
+    # tick (upstream's own len test shape — downstream observes a valid,
+    # empty set). NB the recorded delta for the empty tick reads back None
+    # here vs upstream's empty SetDelta — the open empty-tick-visibility
+    # item in the compliance register, not part of this ruling.
+    @graph
+    def sized(s: TSS[int]) -> hg.TS[int]:
+        return hg.len_(s)
+
+    assert eval_node(sized, [{}, {1, 2}]) == [0, 2]

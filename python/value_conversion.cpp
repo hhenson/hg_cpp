@@ -400,6 +400,46 @@ namespace hgraph::python_bridge
         };
     }
 
+    Value py_tss_spec_to_delta(nb::handle add_from, nb::handle remove_from, const TSValueTypeMetaData *ts)
+    {
+        // INTERNAL protocol: the py-node frozenset-return shaping supplies
+        // explicit added/removed iterables. The public py_to_delta TSS path
+        // routes every user object through add_from (a dict iterates as its
+        // KEYS — upstream duck parity), with Removed(...) members shaping
+        // removals.
+        const auto *elem = ts->value_schema->element_type;
+        SetBuilder  added{delta_binding(elem)};
+        SetBuilder  removed{delta_binding(elem)};
+        if (add_from.is_valid())
+        {
+            for (nb::handle item : add_from)
+            {
+                // hgraph's set-delta literal: Removed(x) members of a
+                // plain set are REMOVALS (TS-schema shaping - this is
+                // exactly py_to_delta's job). The registered Removed
+                // class decides; the name check only covers the
+                // pre-registration import window.
+                if (removed_class_slot().is_valid()
+                        ? nb::isinstance(item, removed_class_slot())
+                        : (nb::hasattr(item, "item") &&
+                           nb::cast<std::string>(item.type().attr("__name__")) == "Removed"))
+                {
+                    (void)removed.insert_copy(py_to_value_as(item.attr("item"), elem).view().data());
+                    continue;
+                }
+                (void)added.insert_copy(py_to_value_as(item, elem).view().data());
+            }
+        }
+        if (remove_from.is_valid())
+        {
+            for (nb::handle item : remove_from) { (void)removed.insert_copy(py_to_value_as(item, elem).view().data()); }
+        }
+        BundleBuilder bundle{delta_binding(ts->delta_value_schema)};
+        bundle.set("added", added.build());
+        bundle.set("removed", removed.build());
+        return bundle.build();
+    }
+
     Value py_to_delta(nb::handle object, const TSValueTypeMetaData *ts)
     {
         std::shared_ptr<const TypeRealizationSnapshot> conversion_snapshot;
@@ -416,55 +456,25 @@ namespace hgraph::python_bridge
             case TSTypeKind::TS:
                 return py_to_value_as(object, ts->value_schema);
             case TSTypeKind::TSS: {
-                const auto *elem = ts->value_schema->element_type;
-                SetBuilder  added{delta_binding(elem)};
-                SetBuilder  removed{delta_binding(elem)};
-                nb::handle  add_from = object;
-                nb::handle  remove_from{};
-                if (nb::isinstance<nb::dict>(object))
+                // hgraph parity (ruling 2026-07-17): a dict is NEVER a TSS
+                // value or delta spec — the former {removed: [...]} removal
+                // convention is gone. Upstream's typed surface rejects dicts
+                // too (its auto-const tests pin it); its untyped apply path
+                // incidentally iterates dict keys, which this typed runtime
+                // rejects LOUDLY instead. Removals are expressed with
+                // set_delta(...) or Removed(...) markers. The {added,
+                // removed} spec shape survives only as the INTERNAL protocol
+                // (py_tss_spec_to_delta), used by the py-node
+                // frozenset-return shaping.
+                // The EMPTY dict is accepted as an empty tick: upstream's own
+                // tests write `{}` because Python has no empty-set literal.
+                if (nb::isinstance<nb::dict>(object) && nb::len(object) != 0)
                 {
-                    auto spec = nb::cast<nb::dict>(object);
-                    for (auto [key, item] : spec)
-                    {
-                        // Only the delta spec shape is a dict; anything else
-                        // (e.g. {0: 1}) is not a set delta.
-                        if (!nb::isinstance<nb::str>(key) ||
-                            (nb::cast<std::string>(key) != "added" && nb::cast<std::string>(key) != "removed"))
-                        {
-                            throw nb::type_error("a TSS delta dict may only carry 'added'/'removed'");
-                        }
-                    }
-                    add_from    = spec.contains("added") ? spec["added"] : nb::handle{};
-                    remove_from = spec.contains("removed") ? spec["removed"] : nb::handle{};
+                    throw nb::type_error(
+                        "a dict is not a TSS value/delta: use a set, set_delta(...), "
+                        "or Removed(...) markers ({} is accepted as the empty set)");
                 }
-                if (add_from.is_valid())
-                {
-                    for (nb::handle item : add_from)
-                    {
-                        // hgraph's set-delta literal: Removed(x) members of a
-                        // plain set are REMOVALS (TS-schema shaping - this is
-                        // exactly py_to_delta's job). The registered Removed
-                        // class decides; the name check only covers the
-                        // pre-registration import window.
-                        if (removed_class_slot().is_valid()
-                                ? nb::isinstance(item, removed_class_slot())
-                                : (nb::hasattr(item, "item") &&
-                                   nb::cast<std::string>(item.type().attr("__name__")) == "Removed"))
-                        {
-                            (void)removed.insert_copy(py_to_value_as(item.attr("item"), elem).view().data());
-                            continue;
-                        }
-                        (void)added.insert_copy(py_to_value_as(item, elem).view().data());
-                    }
-                }
-                if (remove_from.is_valid())
-                {
-                    for (nb::handle item : remove_from) { (void)removed.insert_copy(py_to_value_as(item, elem).view().data()); }
-                }
-                BundleBuilder bundle{delta_binding(ts->delta_value_schema)};
-                bundle.set("added", added.build());
-                bundle.set("removed", removed.build());
-                return bundle.build();
+                return py_tss_spec_to_delta(object, nb::handle{}, ts);
             }
             case TSTypeKind::TSD: {
                 const auto *key_meta = ts->key_type();

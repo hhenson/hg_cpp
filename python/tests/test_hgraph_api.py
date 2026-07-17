@@ -205,11 +205,14 @@ def test_tsd_key_removal():
 
 
 def test_tss_deltas():
+    # Removals use hgraph's forms (set_delta / Removed markers) — a dict fed
+    # to a TSS is NOT a removal directive (upstream parity: it iterates as
+    # its keys; see test_tsd_removal_semantics.py).
     @graph
     def sized(s: TSS[int]) -> TS[int]:
         return hg.len_(s)
 
-    out = eval_node(sized, [{1, 2}, {3}, {"removed": [1]}])
+    out = eval_node(sized, [{1, 2}, {3}, hg.set_delta(removed={1}, tp=int)])
     check(out == [2, 3, 2], f"tss: {out}")
 
 

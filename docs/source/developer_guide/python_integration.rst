@@ -160,11 +160,13 @@ the ``_hgraph`` bridge module (built from ``python/module.cpp``):
 - **Composition/evaluation**: ``@graph`` (nested graphs inline by calling),
   ``run_graph(fn, *args, start_time=, end_time=)`` returning
   ``[(time, value), ...]``, ``eval_node(fn, *vectors, __start_time__=,
-  __end_time__=)`` with schema-directed test vectors (TSS from sets, TSD
-  from ``{key: value}`` dicts with ``None`` = removal, TSL from per-index
-  lists) and friendly delta read-back (``REMOVED`` sentinel). No implicit
-  run bound is injected — a test that cannot quiesce sets ``__end_time__``
-  explicitly and says why.
+  ``__end_time__=)`` with schema-directed test vectors (TSS from sets —
+  removals via ``set_delta(...)``/``Removed(...)`` markers; a dict is NEVER
+  a TSS value/delta and rejects loudly, except the empty ``{}`` which is
+  upstream's empty-set stand-in — TSD from ``{key: value}`` dicts with
+  ``None`` = lenient removal, TSL from per-index lists) and friendly delta
+  read-back (``REMOVE`` sentinel). No implicit run bound is injected — a
+  test that cannot quiesce sets ``__end_time__`` explicitly and says why.
 - **Higher-order**: ``map_``/``reduce``/``switch_`` over **named operator
   callables** — the bridge pre-instantiates ``fn<X>()`` erasures for the
   stdlib markers (``wired_op``); ``switch_`` builds the ``SwitchCases``
