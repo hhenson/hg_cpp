@@ -252,12 +252,6 @@ namespace hgraph
             return *policy_context(context).sender_schema;
         }
 
-        [[nodiscard]] bool current_value_output_compatible(const void *context,
-                                                           const TSValueTypeMetaData &output_schema)
-        {
-            return current_value_schema_compatible(output_schema, *policy_context(context).sender_schema);
-        }
-
         [[nodiscard]] bool delta_output_compatible(const void *context,
                                                    const TSValueTypeMetaData &output_schema)
         {
@@ -288,7 +282,7 @@ namespace hgraph
             auto item = MemoryUtils::cast<detail::QueuePolicyStorage>(storage)->try_pop();
             if (!item.has_value()) { return false; }
 
-            apply_current_value(output, item->value.view());
+            apply_delta(output, item->value.view());
             return item->more_pending;
         }
 
@@ -325,7 +319,7 @@ namespace hgraph
             static const detail::PushSourcePolicyOps ops{
                 .storage_plan = &MemoryUtils::plan_for<detail::QueuePolicyStorage>(),
                 .sender_schema_impl = &sender_schema_impl,
-                .output_compatible_impl = &current_value_output_compatible,
+                .output_compatible_impl = &delta_output_compatible,
                 .start_impl = &queue_policy_start,
                 .stop_impl = &queue_policy_stop,
                 .send_impl = &queue_policy_send,
@@ -396,7 +390,8 @@ namespace hgraph
                 context.on_start(detail::PushSourcePolicyAccess::make_sender(
                     context.policy,
                     storage,
-                    view.graph().root().executor().push_queue_engine()));
+                    view.graph().root().executor().push_queue_engine(),
+                    view.graph().type_realization()));
             }
             rollback.release();
         }
@@ -485,12 +480,14 @@ namespace hgraph
     PushSourceSender detail::PushSourcePolicyAccess::make_sender(
         PushSourcePolicy policy,
         void *storage,
-        PushQueueEngineView push_engine) noexcept
+        PushQueueEngineView push_engine,
+        const TypeRealizationSnapshot *type_realization) noexcept
     {
         return PushSourceSender{PushSourcePolicyStorageRef{
             .policy = policy,
             .storage = storage,
             .push_engine = std::move(push_engine),
+            .type_realization = type_realization,
         }};
     }
 
@@ -521,6 +518,11 @@ namespace hgraph
     bool PushSourceSender::valid() const noexcept
     {
         return policy_storage_.bound();
+    }
+
+    const TypeRealizationSnapshot *PushSourceSender::type_realization() const noexcept
+    {
+        return policy_storage_.type_realization;
     }
 
     void PushSourceSender::send(Value value) const
@@ -601,7 +603,7 @@ namespace hgraph
     {
         return make_push_source_node(
             output_schema,
-            make_push_source_queue_policy(*output_schema.value_schema),
+            make_push_source_queue_policy(*output_schema.delta_value_schema),
             std::move(on_start));
     }
 }  // namespace hgraph

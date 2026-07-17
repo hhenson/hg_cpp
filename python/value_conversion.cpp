@@ -299,6 +299,10 @@ namespace hgraph::python_bridge
 
     ValueTypeRef delta_binding(const ValueTypeMetaData *meta)
     {
+        if (const auto *snapshot = active_type_realization())
+        {
+            if (const auto realized = snapshot->type_for(meta)) { return realized; }
+        }
         const auto type = ValuePlanFactory::instance().type_for(meta);
         if (!type) { throw nb::type_error("schema has no canonical type"); }
         return type;
@@ -398,6 +402,15 @@ namespace hgraph::python_bridge
 
     Value py_to_delta(nb::handle object, const TSValueTypeMetaData *ts)
     {
+        std::shared_ptr<const TypeRealizationSnapshot> conversion_snapshot;
+        const auto *snapshot = active_type_realization();
+        if (snapshot == nullptr)
+        {
+            conversion_snapshot = TypeRealizationSnapshot::capture(TypeRegistry::instance());
+            snapshot = conversion_snapshot.get();
+        }
+        TypeRealizationScope realization_scope{snapshot};
+
         switch (ts->kind)
         {
             case TSTypeKind::TS:

@@ -9,7 +9,9 @@
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/time_series/ts_delta.h>
 
@@ -224,6 +226,48 @@ TEST_CASE("ts_delta: capture/apply round-trip a TSD-of-scalar dict delta")
                   dict_delta<Str, TS<Int>>({{"b"s, 9}})});
 }
 
+TEST_CASE("TSD output slots use the graph's closed Bundle realization")
+{
+    auto       &registry = TypeRegistry::instance();
+    const auto *integer  = registry.register_scalar<Int>("int");
+    const auto *text     = registry.register_scalar<Str>("str");
+    const auto *base = registry.bundle("tests.tsd.realization", "Request", {{"id", integer}}, {}, true);
+    const auto *leaf = registry.bundle(
+        "tests.tsd.realization", "PostRequest", {{"id", integer}, {"body", text}}, {base});
+    const auto *base_ts     = registry.ts(base);
+    const auto *dict_schema = registry.tsd(integer, base_ts);
+
+    const auto snapshot = TypeRealizationSnapshot::capture(registry);
+    TypeRealizationScope scope{snapshot.get()};
+    TSOutput             output{*dict_schema};
+    TSInput              input{TSInputBuilderFactory::checked_builder_for(
+        *dict_schema, TSEndpointSchema::peered(dict_schema))};
+    input.view(nullptr, MIN_ST).bind_output(output.view(MIN_ST));
+
+    Value request{ValuePlanFactory::instance().type_for(leaf)};
+    auto  request_fields = request.as_bundle().begin_mutation();
+    request_fields["id"].set(Int{7});
+    request_fields["body"].set(Str{"payload"});
+
+    Value key{Int{1}};
+    auto  output_view = output.view(MIN_ST);
+    auto  dict        = output_view.as_dict();
+    {
+        auto mutation = dict.begin_mutation(MIN_ST);
+        mutation.set(key.view(), request.view());
+    }
+
+    const auto stored = dict.at(key.view()).value().concrete();
+    REQUIRE(stored.schema() == leaf);
+    REQUIRE(stored.as_bundle()["body"].checked_as<Str>() == "payload");
+
+    const Value captured = capture_delta(input.view(nullptr, MIN_ST));
+    const auto  modified = captured.view().as_bundle()["modified"].as_map();
+    const auto  captured_request = modified.at(key.view()).concrete();
+    REQUIRE(captured_request.schema() == leaf);
+    REQUIRE(captured_request.as_bundle()["body"].checked_as<Str>() == "payload");
+}
+
 TEST_CASE("ts_delta: capture/apply round-trip a TSB sparse field delta")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");
@@ -237,6 +281,23 @@ TEST_CASE("ts_delta: capture/apply round-trip a TSB sparse field delta")
         [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
     CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
                  {tsb_delta<Quote>(1, 10), tsb_delta<Quote>(std::nullopt, 20), tsb_delta<Quote>(3, std::nullopt)});
+}
+
+TEST_CASE("ts_delta: capture/apply round-trip a TSD of TSB values")
+{
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    const std::vector<std::optional<Value>> deltas{
+        dict_delta<Int, Quote>({{1, tsb_delta<Quote>(10, 20)}}),
+        dict_delta<Int, Quote>({{1, tsb_delta<Quote>(11, std::nullopt)}}),
+        dict_delta<Int, Quote>({{2, tsb_delta<Quote>(30, 40)}}, {1}),
+    };
+
+    auto rt = run_graph<RoundTripGraph<TSD<Int, Quote>>>(
+        [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
+    CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
+                 {dict_delta<Int, Quote>({{1, tsb_delta<Quote>(10, 20)}}),
+                  dict_delta<Int, Quote>({{1, tsb_delta<Quote>(11, std::nullopt)}}),
+                  dict_delta<Int, Quote>({{2, tsb_delta<Quote>(30, 40)}}, {1})});
 }
 
 TEST_CASE("ts_delta: capture/apply round-trip a TSB with a container field delta")

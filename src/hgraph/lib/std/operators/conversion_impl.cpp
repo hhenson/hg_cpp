@@ -16,6 +16,7 @@ namespace hgraph::stdlib
         register_overload<default_, default_impl>();
         register_overload<str_, str_impl>();
         register_overload<convert, convert_identity_impl>();
+        register_overload<convert, convert_bundle_upcast_impl>();
         register_overload<downcast_, downcast_bundle_impl>();
         register_overload<downcast_ref, downcast_ref_impl>();
         register_overload<convert, convert_numeric_impl<Int, Float>>();

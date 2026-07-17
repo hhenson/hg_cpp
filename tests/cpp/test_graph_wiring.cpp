@@ -984,6 +984,44 @@ TEST_CASE("graph wiring: identical nodes are interned to one")
     CHECK(graph.graph().node_count() == 1);   // deduped to a single runtime node
 }
 
+TEST_CASE("graph wiring: push sources form the runtime prefix across implementations")
+{
+    using namespace hgraph;
+
+    struct FirstPushSourceTag {};
+    struct InterleavedSinkTag {};
+    struct SecondPushSourceTag {};
+
+    const auto *schema = ts_type<TS<Int>>();
+    Wiring w;
+    (void)w.add_unique_node(
+        std::type_index(typeid(FirstPushSourceTag)),
+        make_push_source_node(*schema),
+        std::span<const WiringPortRef>{},
+        Value{});
+
+    NodeTypeMetaData sink_schema;
+    sink_schema.display_name = "interleaved_sink";
+    sink_schema.node_kind = NodeKind::Sink;
+    (void)w.add_unique_node(
+        std::type_index(typeid(InterleavedSinkTag)),
+        NodeBuilder::native(std::move(sink_schema), {}),
+        std::span<const WiringPortRef>{},
+        Value{});
+
+    (void)w.add_unique_node(
+        std::type_index(typeid(SecondPushSourceTag)),
+        make_push_source_node(*schema),
+        std::span<const WiringPortRef>{},
+        Value{});
+
+    GraphBuilder graph = std::move(w).finish();
+    REQUIRE(graph.node_count() == 3);
+    CHECK(graph.nodes()[0].type().schema()->node_kind == NodeKind::PushSource);
+    CHECK(graph.nodes()[1].type().schema()->node_kind == NodeKind::PushSource);
+    CHECK(graph.nodes()[2].type().schema()->node_kind == NodeKind::Sink);
+}
+
 TEST_CASE("graph wiring: sub-graph composition inlines (flattens) into the parent")
 {
     using namespace hgraph;

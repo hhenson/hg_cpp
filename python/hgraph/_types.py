@@ -102,6 +102,37 @@ def _compound_value_type(scalar, type_args=()):
         )
     substitutions = dict(zip(parameters, type_args))
 
+    if type_args:
+        argument_patterns = []
+        generic = False
+        for argument in type_args:
+            try:
+                argument_patterns.append(
+                    _hgraph.scalar_pattern_value(_value_type(argument))
+                )
+            except _GenericType as error:
+                if error.pattern is None:
+                    raise TypeError(
+                        f"generic CompoundScalar argument {argument!r} has no C++ pattern"
+                    ) from error
+                generic = True
+                argument_patterns.append(error.pattern)
+        if generic:
+            bundle_namespace = scalar.__dict__.get(
+                "__compound_namespace__", scalar.__module__
+            )
+            qualified_origin = (
+                f"{bundle_namespace}::{scalar.__name__}"
+                if bundle_namespace else scalar.__name__
+            )
+            schema_variable = f"__bundle__{qualified_origin}"
+            raise _GenericType(
+                repr(scalar),
+                _hgraph.scalar_pattern_bundle_generic(
+                    schema_variable, qualified_origin, argument_patterns
+                ),
+            )
+
     parent_metas = []
     original_bases = tuple(scalar.__dict__.get("__orig_bases__", ()))
     consumed = set()
@@ -415,12 +446,14 @@ class _TsExpr:
             # const-lift at their inferred types.
             call = dict(kwargs)
             cs_class = getattr(self, "_cs_class", None)
+            field_types = {}
             if cs_class is not None:
                 # hgraph parity: UNSUPPLIED fields take their dataclass
                 # defaults (supplied-but-invalid stays None in non-strict).
                 import dataclasses
 
                 for field in dataclasses.fields(cs_class):
+                    field_types[field.name] = field.type
                     if (field.name not in call and field.default is not dataclasses.MISSING
                             and field.default is not None):
                         call[field.name] = field.default
@@ -430,7 +463,8 @@ class _TsExpr:
                 if not isinstance(unwrapped, _m.Port):
                     from ._wiring import _infer_ts_type
 
-                    tp = _infer_ts_type([value])
+                    declared = field_types.get(name)
+                    tp = TS[declared] if declared is not None else _infer_ts_type([value])
                     if tp is None:
                         raise TypeError(f"combine_cs: cannot infer a type for '{name}'")
                     value = wire("const", value, output_type=tp)

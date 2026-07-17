@@ -326,6 +326,43 @@ namespace hgraph
         return false;
     }
 
+    std::optional<std::size_t> TypeRegistry::bundle_inheritance_distance(
+        const ValueTypeMetaData *candidate,
+        const ValueTypeMetaData *base) const
+    {
+        const std::lock_guard lock(mutex_);
+        if (candidate == nullptr || base == nullptr || !candidate->is_named_bundle() || !base->is_named_bundle())
+        {
+            return std::nullopt;
+        }
+        if (candidate == base) { return 0; }
+
+        std::vector<std::pair<const ValueTypeMetaData *, std::size_t>> pending{{candidate, 0}};
+        std::unordered_map<const ValueTypeMetaData *, std::size_t> best_distance{{candidate, 0}};
+        std::optional<std::size_t> result;
+        while (!pending.empty())
+        {
+            const auto [current, distance] = pending.back();
+            pending.pop_back();
+            if (result.has_value() && distance >= *result) { continue; }
+            if (current->bundle_hierarchy == nullptr) { continue; }
+            for (const ValueTypeMetaData *parent : current->bundle_hierarchy->parents)
+            {
+                const std::size_t parent_distance = distance + 1;
+                if (parent == base)
+                {
+                    result = !result.has_value() ? parent_distance : std::min(*result, parent_distance);
+                    continue;
+                }
+                const auto [found, inserted] = best_distance.emplace(parent, parent_distance);
+                if (!inserted && found->second <= parent_distance) { continue; }
+                found->second = parent_distance;
+                pending.emplace_back(parent, parent_distance);
+            }
+        }
+        return result;
+    }
+
     std::vector<const ValueTypeMetaData *> TypeRegistry::bundle_descendants(
         const ValueTypeMetaData *base,
         bool include_base,

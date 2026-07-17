@@ -51,6 +51,7 @@ namespace hgraph
         std::vector<const ValueTypeMetaData *> constraints{};  ///< ``Var``: accepted concrete scalar schemas.
         std::vector<ScalarPattern> children{};      ///< recursive scalar payloads.
         bool                       schema_var{false}; ///< ``Bundle``: true when ``name`` is a schema variable.
+        std::string                bundle_origin{}; ///< ``Bundle``: qualified generic origin, when constrained.
 
         [[nodiscard]] static ScalarPattern var(std::string name,
                                                std::vector<const ValueTypeMetaData *> constraints = {})
@@ -122,6 +123,18 @@ namespace hgraph
             p.kind       = Kind::Bundle;
             p.name       = std::move(schema_variable);
             p.schema_var = true;
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern bundle_generic(std::string schema_variable,
+                                                          std::string qualified_origin,
+                                                          std::vector<ScalarPattern> arguments)
+        {
+            ScalarPattern p;
+            p.kind          = Kind::Bundle;
+            p.name          = std::move(schema_variable);
+            p.schema_var    = true;
+            p.bundle_origin = std::move(qualified_origin);
+            p.children      = std::move(arguments);
             return p;
         }
     };

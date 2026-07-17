@@ -441,22 +441,39 @@ namespace hgraph
                 }
             }
 
+            const auto is_push_source = [](const WiringInstance *instance) {
+                const auto *schema = instance->builder.type().schema();
+                return schema != nullptr && schema->node_kind == NodeKind::PushSource;
+            };
+
+            std::deque<const WiringInstance *> ready_push_sources;
             std::deque<const WiringInstance *> ready;
             for (const WiringInstance *instance : all)  // insertion order → stable tie-break
             {
-                if (indegree[instance] == 0) { ready.push_back(instance); }
+                if (is_push_source(instance) && indegree[instance] != 0)
+                {
+                    throw std::invalid_argument("Push source nodes cannot have rank dependencies");
+                }
+                if (indegree[instance] == 0)
+                {
+                    (is_push_source(instance) ? ready_push_sources : ready).push_back(instance);
+                }
             }
 
             std::vector<const WiringInstance *> ranked;
             ranked.reserve(all.size());
-            while (!ready.empty())
+            while (!ready_push_sources.empty() || !ready.empty())
             {
-                const WiringInstance *instance = ready.front();
-                ready.pop_front();
+                auto &next = !ready_push_sources.empty() ? ready_push_sources : ready;
+                const WiringInstance *instance = next.front();
+                next.pop_front();
                 ranked.push_back(instance);
                 for (const WiringInstance *consumer : consumers[instance])
                 {
-                    if (--indegree[consumer] == 0) { ready.push_back(consumer); }
+                    if (--indegree[consumer] == 0)
+                    {
+                        (is_push_source(consumer) ? ready_push_sources : ready).push_back(consumer);
+                    }
                 }
             }
 
@@ -541,7 +558,32 @@ namespace hgraph
                                                               const TSValueTypeMetaData *input_schema,
                                                               WiringPortRef source)
     {
-        if (input_schema == nullptr || !source.is_structural_source()) { return source; }
+        if (input_schema == nullptr) { return source; }
+
+        auto &registry = TypeRegistry::instance();
+        const auto *input = registry.dereference(input_schema);
+        const auto *output = registry.dereference(source.schema);
+        const bool bundle_upcast = input_schema->kind == TSTypeKind::TS &&
+                                   source.schema != nullptr &&
+                                   source.schema->kind == TSTypeKind::TS &&
+                                   input != nullptr && output != nullptr &&
+                                   input->kind == TSTypeKind::TS && output->kind == TSTypeKind::TS &&
+                                   input->value_schema != nullptr && output->value_schema != nullptr &&
+                                   input->value_schema->is_named_bundle() &&
+                                   output->value_schema->is_named_bundle() &&
+                                   TypeRegistry::instance().bundle_is_a(
+                                       output->value_schema, input->value_schema);
+        if (bundle_upcast && !time_series_schema_equivalent(input, output))
+        {
+            WiringArg arg;
+            arg.kind = WiringArg::Kind::TimeSeries;
+            arg.port = std::move(source);
+            std::array<WiringArg, 1> args{std::move(arg)};
+            return wire_operator(w, "convert", std::span<const WiringArg>{args}, true, input_schema)
+                .output.erased();
+        }
+
+        if (!source.is_structural_source()) { return source; }
 
         if (input_schema->kind == TSTypeKind::REF)
         {

@@ -377,11 +377,31 @@ Dynamic TSL mapping and reduction remain fully supported independently.
 **Remaining boundary mode:** push sources inside nested graphs if a concrete
 adaptor requires them.
 
+**In progress: Tornado web adaptors (2026-07-16).**  The upstream Python HTTP,
+WebSocket, and REST adaptor family has been ported onto the C++ service/adaptor
+runtime.  The Python layer owns Tornado transport objects; graph wiring,
+closed-union request values, keyed multiplexing, deltas, scheduling, and
+execution remain C++ runtime responsibilities.  Focused macOS evidence is 39
+passing tests covering all four HTTP methods, single and batch handlers,
+``str`` and ``bytes`` WebSockets, the native service-adaptor client path, REST
+request/response conversion through ``eval_node``, all five REST client
+operations, lifecycle cleanup, and optional Negotiate/NTLM challenge handling.
+The upstream Python implementation is the behavioural reference for this
+family.
+
+The remaining web compatibility item is auxiliary ``TSB`` output support for
+HTTP and REST handler decorators.  The primary response-only single and keyed
+batch signatures are supported.  This is a tracked gap, not an accepted
+deviation.  Platform authentication providers remain lazy optional
+dependencies, as in upstream: they are imported only when a server issues the
+corresponding authentication challenge.
+
 **Remaining external-resource work:** subscription-adaptor flows not already
 covered by the service-adaptor exchange, scheduler integration for external
-events, explicit lifecycle ownership, and concrete adaptor families such as
-catalogue, messaging, or database adaptors.  Build these from the common C++
-boundary model when demanded by a real integration.
+events, and concrete adaptor families such as catalogue, messaging, or
+database adaptors.  The Tornado slice above now provides concrete lifecycle
+coverage.  Build further families from the common C++ boundary model when
+demanded by a real integration.
 
 Priority 3: Catalogue and Operations
 ------------------------------------

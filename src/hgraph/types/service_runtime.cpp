@@ -373,7 +373,9 @@ namespace hgraph
         WiringPortRef replies  = reply_output_source_node(w, descriptor, replies_path);
         w.register_service_rank_anchor(request_path, requests.peered_node());
 
-        std::array<WiringPortRef, 2>  sources{request, requests};
+        WiringPortRef adapted_request = graph_wiring_detail::adapt_source_for_input(
+            w, descriptor.request_schema, request);
+        std::array<WiringPortRef, 2>  sources{std::move(adapted_request), requests};
         std::array<WiringInputRef, 2> inputs{{
             WiringInputRef{.source = sources[0]},
             WiringInputRef{.source = sources[1], .rank_dependency = false},
@@ -760,7 +762,9 @@ namespace hgraph
             std::type_index(typeid(service_adaptor::detail::output_source_marker)));
         w.register_service_rank_anchor(request_path, requests.peered_node());
 
-        std::array<WiringPortRef, 2> sources{in, requests};
+        WiringPortRef adapted_input = graph_wiring_detail::adapt_source_for_input(
+            w, descriptor.input_schema, in);
+        std::array<WiringPortRef, 2> sources{std::move(adapted_input), requests};
         std::array<WiringInputRef, 2> inputs{{
             WiringInputRef{.source = sources[0]},
             WiringInputRef{.source = sources[1], .rank_dependency = false},

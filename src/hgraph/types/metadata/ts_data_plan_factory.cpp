@@ -3,6 +3,7 @@
 #include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
 
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/time_series/ts_output/alternative.h>
 
 #include <fmt/format.h>
@@ -369,6 +370,28 @@ namespace hgraph
 
         std::lock_guard lock(mutex_);
         return realized_output_type_cache_.try_emplace(key, type).first->second;
+    }
+
+    TSOutputTypeRef TSDataPlanFactory::output_type_for(const TSValueTypeMetaData *schema,
+                                                       TSRoleTypeRef element_type)
+    {
+        if (schema == nullptr || schema->kind != TSTypeKind::TSD || !element_type ||
+            !time_series_schema_equivalent(schema->element_ts(), element_type.schema()))
+        {
+            throw std::invalid_argument(
+                "realized TSD output_type_for requires a compatible element TS binding");
+        }
+
+        const auto *plan = plan_detail::synthesise_slot_tsd_plan(*schema, element_type);
+        if (plan == nullptr)
+        {
+            throw std::logic_error("realized TSD output_type_for could not resolve its slot plan");
+        }
+        const auto &ops = plan_detail::slot_tsd_ts_data_ops(
+            *schema, *plan, 0, element_type, TypeRole::Output);
+        return checked_ts_role_type(
+            intern_ts_type(*schema, TypeRole::Output, *plan, ops, "ts.tsd.output.root"),
+            std::integral_constant<TypeRole, TypeRole::Output>{});
     }
 
     TSDataTypeRef TSDataPlanFactory::find_data_type(const TSValueTypeMetaData *schema) const noexcept

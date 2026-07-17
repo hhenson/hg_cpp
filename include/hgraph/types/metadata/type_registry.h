@@ -21,6 +21,7 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <typeindex>
@@ -155,6 +156,12 @@ namespace hgraph
         /** True when ``candidate`` is ``base`` or has ``base`` in its registered ancestry. */
         [[nodiscard]] bool bundle_is_a(const ValueTypeMetaData *candidate,
                                        const ValueTypeMetaData *base) const;
+        /** Shortest number of registered parent edges from ``candidate`` to
+            ``base``; zero for the same named Bundle and ``nullopt`` when the
+            schemas are unrelated. */
+        [[nodiscard]] std::optional<std::size_t> bundle_inheritance_distance(
+            const ValueTypeMetaData *candidate,
+            const ValueTypeMetaData *base) const;
         /**
          * Return the closed registered descendant set for ``base`` in
          * registration order. ``base`` is included when it is concrete and

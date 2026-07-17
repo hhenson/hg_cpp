@@ -226,7 +226,8 @@ class _GraphFn:
         # DEFAULT[SCALAR_1] pattern): params whose default is a typevar
         # sentinel receive the subscript items in declaration order. Slice
         # syntax (g[TIME_SERIES_TYPE: TS[int]]) resolves annotated typevars.
-        from .._types import _TypeVarSentinel
+        from .._types import AUTO_RESOLVE, _TypeVarSentinel
+        import typing
 
         items = item if isinstance(item, tuple) else (item,)
         resolved_types = {
@@ -237,7 +238,12 @@ class _GraphFn:
         scalar_items = [value for value in items if not isinstance(value, slice)]
         pinned, index = {}, 0
         for name, param in self._signature.parameters.items():
-            if isinstance(param.default, _TypeVarSentinel) and index < len(scalar_items):
+            is_type_default = (
+                param.default is AUTO_RESOLVE and
+                typing.get_origin(param.annotation) is type
+            )
+            if (isinstance(param.default, _TypeVarSentinel) or is_type_default) \
+                    and index < len(scalar_items):
                 pinned[name] = scalar_items[index]
                 index += 1
         import functools

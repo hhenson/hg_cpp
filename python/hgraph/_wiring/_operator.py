@@ -127,11 +127,34 @@ def _overload_wire_trampoline(impl):
         for parameter in call_parameters
     )
 
-    def _wire(borrowed_wiring, args, kwargs):
+    def _wire(borrowed_wiring, args, kwargs, resolution_scope):
         _wiring_stack.append(borrowed_wiring)
         try:
             wrap = lambda a: WiringPort(a) if isinstance(a, _hgraph.Port) else a
             values = [wrap(value) for value in args]
+            from .._types import AUTO_RESOLVE, _type_var_name
+            import typing
+
+            for index, (parameter, value) in enumerate(zip(call_parameters, values)):
+                if value is not AUTO_RESOLVE or typing.get_origin(parameter.annotation) is not type:
+                    continue
+                type_arguments = typing.get_args(parameter.annotation)
+                if not type_arguments:
+                    continue
+                variable_name = _type_var_name(type_arguments[0])
+                resolved = resolution_scope.find_scalar(variable_name)
+                if resolved is not None:
+                    values[index] = _hgraph.python_type_for_value(resolved)
+                    continue
+                resolved = resolution_scope.find_ts(variable_name)
+                if resolved is not None:
+                    from .._types import _TsExpr
+                    values[index] = _TsExpr(resolved, f"resolved[{variable_name}]")
+                    continue
+                resolved = resolution_scope.find_size(variable_name)
+                if resolved is not None:
+                    from ._graph import _ResolvedSize
+                    values[index] = _ResolvedSize(resolved)
             call_kwargs = {key: wrap(value) for key, value in kwargs.items()}
             if has_variadic:
                 call_args = values
@@ -142,7 +165,10 @@ def _overload_wire_trampoline(impl):
                         call_kwargs[parameter.name] = value
                     else:
                         call_args.append(value)
-            out = impl(*call_args, **call_kwargs)
+            callable_impl = impl
+            if hasattr(impl, "_with_resolution"):
+                callable_impl = impl._with_resolution(resolution_scope.bindings)
+            out = callable_impl(*call_args, **call_kwargs)
             if out is None:
                 return None
             if not isinstance(out, WiringPort):
@@ -219,9 +245,18 @@ def _register_overload(target, impl, requires=None):
             try:
                 patterns = (_pattern_of(annotation),)
             except TypeError:
-                patterns = (
-                    _scalar_pattern(annotation if annotation is not inspect.Parameter.empty else object),
-                )
+                # ``type[T]`` is a wiring-time type carrier, not a value of
+                # T. Its referenced type is resolved from the surrounding
+                # input/output patterns and materialised in the Python wire
+                # trampoline; do not bind T to the carrier implementation.
+                if typing.get_origin(annotation) is type:
+                    patterns = (_hgraph.scalar_pattern_var(
+                        f"__type_arg__{id(impl):x}__{parameter.name}"
+                    ),)
+                else:
+                    patterns = (
+                        _scalar_pattern(annotation if annotation is not inspect.Parameter.empty else object),
+                    )
         if parameter.default is inspect.Parameter.empty:
             param_options.append(tuple((parameter.name, pattern) for pattern in patterns))
         else:

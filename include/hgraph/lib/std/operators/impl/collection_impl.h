@@ -2935,8 +2935,10 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
+                const WiringArg *key = scalar_arg_at(context, 1);
                 return ts_list_meta(context, 0) != nullptr &&
-                       time_series_arg_matches<AnyTS>(context, 1);
+                       (time_series_arg_matches<AnyTS>(context, 1) ||
+                        (key != nullptr && key->scalar_value.try_as<Int>() != nullptr));
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -3014,8 +3016,10 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
+                const WiringArg *key = scalar_arg_at(context, 1);
                 return homogeneous_tuple(context) != nullptr &&
-                       time_series_arg_matches<AnyTS>(context, 1);
+                       (time_series_arg_matches<AnyTS>(context, 1) ||
+                        (key != nullptr && key->scalar_value.try_as<Int>() != nullptr));
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)

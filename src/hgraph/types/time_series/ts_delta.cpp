@@ -392,12 +392,21 @@ namespace hgraph
 
         Value capture_delta_tsd(const TSInputView &in)
         {
-            const TSValueTypeMetaData *schema = in.schema();
-            const ValueTypeMetaData *bundle_meta = schema->delta_value_schema;
-            const ValueTypeRef bundle_binding = binding_for(bundle_meta, "capture_delta");
-            const ValueTypeRef key_binding = binding_for(schema->key_type(), "capture_delta");
+            const auto &data = in.data_view();
+            const auto  data_dict = data.as_dict();
+            const auto &layout = data_dict.layout();
+            const ValueTypeRef key_binding = layout.key_binding;
+            const auto *element_schema = in.schema()->element_ts();
+            const ValueTypeRef canonical_delta_binding =
+                binding_for(element_schema->delta_value_schema, "capture_delta");
             const ValueTypeRef delta_binding =
-                binding_for(schema->element_ts()->delta_value_schema, "capture_delta");
+                element_schema->kind == TSTypeKind::TS
+                    ? layout.element_delta_binding
+                    : canonical_delta_binding;
+            if (delta_binding.schema() != in.schema()->element_ts()->delta_value_schema)
+            {
+                throw std::logic_error("capture_delta_tsd resolved the wrong element delta binding");
+            }
 
             const auto dict = in.as_dict();
             SetBuilder removed{key_binding};
@@ -407,13 +416,36 @@ namespace hgraph
             for (const auto &[key, child] : dict.modified_items())
             {
                 if (!child.valid()) { continue; }   // empty-reference elements have no value
+                if (child.schema() != in.schema()->element_ts())
+                {
+                    throw std::logic_error("capture_delta_tsd resolved the wrong child TS schema");
+                }
                 const Value child_delta = capture_delta(child);
-                modified.set_item_copy(key.data(), child_delta.view().data());
+                if (child_delta.binding() == delta_binding)
+                {
+                    modified.set_item_copy(key.data(), child_delta.view().data());
+                    continue;
+                }
+                Value stored_delta{delta_binding};
+                // An atomic closed union stores the concrete leaf selected by
+                // the child TS in its owning alternative binding.
+                delta_binding.ops_ref().copy_assign_from(
+                    delta_binding,
+                    const_cast<void *>(stored_delta.view().data()),
+                    child_delta.binding(),
+                    child_delta.view().data());
+                modified.set_item_copy(key.data(), stored_delta.view().data());
             }
 
+            Value removed_delta = removed.build();
+            Value modified_delta = modified.build();
+            const std::array field_bindings{removed_delta.binding(), modified_delta.binding()};
+            const auto bundle_binding = ValuePlanFactory::instance().realized_composite_type_for(
+                in.schema()->delta_value_schema,
+                field_bindings);
             BundleBuilder bundle{bundle_binding};
-            bundle.set("removed", removed.build());
-            bundle.set("modified", modified.build());
+            bundle.set("removed", std::move(removed_delta));
+            bundle.set("modified", std::move(modified_delta));
             return bundle.build();
         }
 

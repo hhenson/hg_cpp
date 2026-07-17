@@ -9,9 +9,11 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/time_series/ts_delta.h>
+#include <hgraph/types/value/mutable_container_ops.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/util/date_time.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -79,11 +81,14 @@ namespace hgraph::testing
 
     /** A fresh, empty TYPED dense recording buffer: ``List<delta_schema>``
         with holes as UNSET elements (element validity). */
+    [[nodiscard]] inline Value make_dense_buffer(ValueTypeRef delta_binding)
+    {
+        return Value{mutable_list_type(delta_binding)};
+    }
+
     [[nodiscard]] inline Value make_dense_buffer(const ValueTypeMetaData *delta_schema)
     {
-        auto       &registry = TypeRegistry::instance();
-        const auto *schema   = registry.mutable_list(delta_schema);
-        return Value{recording_binding_for(schema)};
+        return make_dense_buffer(recording_binding_for(delta_schema));
     }
 
     /** The delta at ``index`` of a dense buffer, either layout: the seeded
@@ -121,21 +126,44 @@ namespace hgraph::testing
         return registry.tuple({registry.value_type("datetime"), delta_schema});
     }
 
+    [[nodiscard]] inline ValueTypeRef sparse_entry_binding(ValueTypeRef delta_binding)
+    {
+        auto       &factory = ValuePlanFactory::instance();
+        const auto *schema  = sparse_entry_meta(delta_binding.schema());
+        const auto canonical_delta = factory.type_for(delta_binding.schema());
+        if (delta_binding == canonical_delta) { return recording_binding_for(schema); }
+        const std::array fields{
+            factory.type_for(TypeRegistry::instance().value_type("datetime")),
+            delta_binding,
+        };
+        return factory.realized_composite_type_for(schema, fields);
+    }
+
     /** A fresh, empty sparse buffer for the given delta schema. */
+    [[nodiscard]] inline Value make_sparse_buffer(ValueTypeRef delta_binding)
+    {
+        return Value{mutable_list_type(sparse_entry_binding(delta_binding))};
+    }
+
     [[nodiscard]] inline Value make_sparse_buffer(const ValueTypeMetaData *delta_schema)
     {
-        auto       &registry = TypeRegistry::instance();
-        const auto *schema   = registry.mutable_list(sparse_entry_meta(delta_schema));
-        return Value{recording_binding_for(schema)};
+        return make_sparse_buffer(recording_binding_for(delta_schema));
     }
 
     /** Build a (time, delta) sparse-buffer entry. */
-    [[nodiscard]] inline Value make_sparse_entry(const ValueTypeMetaData *delta_schema, DateTime when, Value delta)
+    [[nodiscard]] inline Value make_sparse_entry(ValueTypeRef delta_binding, DateTime when, Value delta)
     {
-        BundleBuilder entry{recording_binding_for(sparse_entry_meta(delta_schema))};
+        BundleBuilder entry{sparse_entry_binding(delta_binding)};
         entry.set(0, Value{when});
         entry.set(1, std::move(delta));
         return entry.build();
+    }
+
+    [[nodiscard]] inline Value make_sparse_entry(const ValueTypeMetaData *delta_schema, DateTime when, Value delta)
+    {
+        (void)delta_schema;
+        const auto binding = delta.binding();
+        return make_sparse_entry(binding, when, std::move(delta));
     }
 
     // -----------------------------------------------------------------
@@ -344,25 +372,25 @@ namespace hgraph::testing
                 // SPARSE (the harness's __elide__): TYPED (time, delta)
                 // tuple entries in evaluation order - one entry per tick
                 // regardless of the gap, no Any boxing.
-                const auto *delta_schema = ts.base().schema()->delta_value_schema;
-                ValueView   buffer       = gs.get(key.value());
+                const auto delta_binding = recording_binding_for(schema->delta_value_schema);
+                ValueView buffer = gs.get(key.value());
                 if (!buffer.valid())
                 {
-                    gs.set(key.value(), make_sparse_buffer(delta_schema));
+                    gs.set(key.value(), make_sparse_buffer(delta_binding));
                     buffer = gs.get(key.value());
                 }
                 auto mutation = buffer.as_list().begin_mutation();
-                mutation.push_back(make_sparse_entry(delta_schema, now, std::move(delta)).view());
+                mutation.push_back(make_sparse_entry(delta_binding, now, std::move(delta)).view());
                 return;
             }
             // DENSE: a TYPED List<delta_schema>; skipped cycles are UNSET
             // elements (element validity) - one default-constructed slot per
             // hole instead of a boxed Any.
-            const auto *delta_schema = ts.base().schema()->delta_value_schema;
-            ValueView   buffer       = gs.get(key.value());
+            const auto delta_binding = recording_binding_for(schema->delta_value_schema);
+            ValueView buffer = gs.get(key.value());
             if (!buffer.valid())
             {
-                gs.set(key.value(), make_dense_buffer(delta_schema));
+                gs.set(key.value(), make_dense_buffer(delta_binding));
                 buffer = gs.get(key.value());
             }
             const std::size_t offset   = cycle_offset(now);

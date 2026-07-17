@@ -11,6 +11,7 @@ namespace hgraph
 {
     class PushSourceSender;
     class TSOutputView;
+    class TypeRealizationSnapshot;
 
     namespace detail
     {
@@ -51,6 +52,7 @@ namespace hgraph
             PushSourcePolicy   policy{};
             void              *storage{nullptr};
             PushQueueEngineView push_engine{};
+            const TypeRealizationSnapshot *type_realization{nullptr};
 
             [[nodiscard]] bool bound() const noexcept;
             void send(Value value) const;
@@ -66,7 +68,8 @@ namespace hgraph
             [[nodiscard]] static PushSourceSender make_sender(
                 PushSourcePolicy policy,
                 void *storage,
-                PushQueueEngineView push_engine) noexcept;
+                PushQueueEngineView push_engine,
+                const TypeRealizationSnapshot *type_realization) noexcept;
             static void start(const PushSourcePolicy &policy,
                               void *storage,
                               const TSValueTypeMetaData &output_schema);
@@ -90,6 +93,7 @@ namespace hgraph
         PushSourceSender() noexcept = default;
 
         [[nodiscard]] bool valid() const noexcept;
+        [[nodiscard]] const TypeRealizationSnapshot *type_realization() const noexcept;
 
         void send(Value value) const;
 

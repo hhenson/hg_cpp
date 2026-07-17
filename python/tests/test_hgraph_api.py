@@ -940,6 +940,51 @@ def test_service_adaptor_from_python():
         check("missing implementation" in str(e), f"unexpected missing implementation error: {e}")
 
 
+def test_generic_adaptor_specializations_from_python():
+    from typing import TypeVar
+
+    payload = TypeVar("payload", int, str)
+
+    @hg.adaptor
+    def generic_adaptor(value: TS[payload], path: str = "generic_adaptor") -> TS[payload]: ...
+
+    int_adaptor = generic_adaptor[payload:int]
+
+    @hg.adaptor_impl(interfaces=int_adaptor)
+    def int_adaptor_impl(path: str):
+        value = hg.from_graph(int_adaptor, path=path)
+        hg.to_graph(int_adaptor, value + 1, path=path)
+
+    @hg.service_adaptor
+    def generic_service_adaptor(
+        request: TS[payload], path: str = "generic_service_adaptor"
+    ) -> TS[payload]: ...
+
+    int_service_adaptor = generic_service_adaptor[payload:int]
+
+    @hg.service_adaptor_impl(interfaces=int_service_adaptor)
+    def int_service_adaptor_impl(
+        requests: TSD[int, TS[int]],
+    ) -> TSD[int, TS[int]]:
+        return requests
+
+    @graph
+    def app(value: TS[int]) -> TS[int]:
+        hg.register_adaptor("generic", int_adaptor_impl)
+        hg.register_adaptor("generic_service", int_service_adaptor_impl)
+        adapted = generic_adaptor(value, path="generic")
+        return generic_service_adaptor(adapted, path="generic_service")
+
+    out = eval_node(app, [2, None, 4])
+    check(out == [None, 3, None, 5], f"generic adaptors: {out}")
+
+    try:
+        generic_adaptor[payload:float]
+        check(False, "expected generic adaptor constraint error")
+    except TypeError as e:
+        check("must be one of" in str(e), f"unexpected generic adaptor error: {e}")
+
+
 def test_multi_interface_service_impl():
     # ONE implementation serving TWO interfaces (register_services +
     # impl_input/impl_output, erased): a reference rate and a request/reply

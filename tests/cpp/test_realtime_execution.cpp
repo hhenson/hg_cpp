@@ -371,6 +371,69 @@ TEST_CASE("real-time push source drains multiple queued values across cycles")
     CHECK(observed_values[1] == Int{2});
 }
 
+TEST_CASE("real-time push source applies queued collection deltas in order")
+{
+    using namespace hgraph;
+    using namespace std::string_literals;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<Int>("int");
+    const auto *str_meta = registry.register_scalar<Str>("str");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *tsd_int  = registry.tsd(str_meta, ts_int);
+    const auto *input_schema = hgraph::testing::single_input_schema(*tsd_int);
+
+    std::vector<Value> observed_values;
+
+    GraphBuilder graph_builder;
+    graph_builder.add_node(make_push_source_node(
+        *tsd_int,
+        [](PushSourceSender sender) {
+            sender.send(dict_delta<Str, TS<Int>>({{"a"s, Int{1}}, {"b"s, Int{2}}}));
+            sender.send(dict_delta<Str, TS<Int>>({{"a"s, Int{3}}}, {"b"s}));
+        }));
+
+    NodeTypeMetaData sink_schema;
+    sink_schema.display_name = "testing_collecting_value_sink";
+    sink_schema.input_schema = input_schema;
+    sink_schema.node_kind = NodeKind::Sink;
+    NodeCallbacks sink_callbacks;
+    sink_callbacks.evaluate = [&observed_values](const NodeView &view, DateTime evaluation_time) {
+        auto       root   = view.input(evaluation_time);
+        auto       bundle = root.as_bundle();
+        const auto input  = bundle[0];
+        observed_values.emplace_back(input.value());
+        if (observed_values.size() == 2) { view.graph().executor().request_stop(); }
+    };
+    graph_builder.add_node(NodeBuilder::native(
+        std::move(sink_schema),
+        std::move(sink_callbacks),
+        hgraph::testing::single_input_endpoint(*input_schema, *tsd_int)));
+    graph_builder.add_edge(GraphEdge{
+        .source_node = make_graph_edge_source(0),
+        .source_path = {},
+        .target_node = 1,
+        .target_path = {0},
+    });
+
+    const DateTime start_time = hgraph::testing::wall_now();
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .mode(GraphExecutorMode::RealTime)
+        .start_time(start_time)
+        .end_time(start_time + TimeDelta{1'000'000});
+    auto executor = executor_builder.make_executor();
+    executor.view().run();
+
+    REQUIRE(observed_values.size() == 2);
+    const auto first = observed_values[0].view().as_map();
+    CHECK(first.at(Value{Str{"a"}}.view()).checked_as<Int>() == Int{1});
+    CHECK(first.at(Value{Str{"b"}}.view()).checked_as<Int>() == Int{2});
+    const auto second = observed_values[1].view().as_map();
+    CHECK(second.at(Value{Str{"a"}}.view()).checked_as<Int>() == Int{3});
+    CHECK_FALSE(second.contains(Value{Str{"b"}}.view()));
+}
+
 TEST_CASE("real-time conflating push source emits only the latest pending value")
 {
     using namespace hgraph;

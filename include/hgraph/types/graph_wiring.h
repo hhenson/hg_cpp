@@ -1293,8 +1293,14 @@ namespace hgraph
             if (input_schema->kind == TSTypeKind::SIGNAL) { return true; }
 
             auto &registry = TypeRegistry::instance();
-            return time_series_schema_equivalent(registry.dereference(input_schema),
-                                                 registry.dereference(output_schema));
+            const auto *input = registry.dereference(input_schema);
+            const auto *output = registry.dereference(output_schema);
+            if (time_series_schema_equivalent(input, output)) { return true; }
+            return input != nullptr && output != nullptr && input->kind == TSTypeKind::TS &&
+                   output->kind == TSTypeKind::TS && input->value_schema != nullptr &&
+                   output->value_schema != nullptr && input->value_schema->is_named_bundle() &&
+                   output->value_schema->is_named_bundle() &&
+                   registry.bundle_is_a(output->value_schema, input->value_schema);
         }
 
         template <typename OutSchema>

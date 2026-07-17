@@ -85,34 +85,42 @@ namespace hgraph::python_bridge
                                       std::optional<std::vector<std::size_t>> sizes = std::nullopt)
         {
             ensure_open();
-            auto wiring_args = build_args(args, kwargs);
             // Target-directed scalar conversion: with an explicit output
             // type, a leading plain-python scalar converts AT the target's
             // value schema (const((1,2,3), tp=TS[tuple[int,...]]) builds
-            // the variadic tuple, not a generic mutable list).
+            // the variadic tuple, not a generic mutable list). Perform this
+            // before generic argument conversion: an empty tuple/map has no
+            // inferable element schema without the target.
+            std::optional<Value> target_const;
             if (name == "const" && output_type.has_value() && output_type->meta != nullptr &&
-                output_type->meta->value_schema != nullptr && nb::len(args) >= 1 &&
-                !wiring_args.empty() && wiring_args[0].kind == WiringArg::Kind::Scalar)
+                output_type->meta->value_schema != nullptr && nb::len(args) >= 1)
             {
                 // Whole value first, then the DELTA form (a partial value -
                 // dict over a TSL/TSD, set delta, ...) at the canonical delta
-                // schema; if both fail, keep the generic conversion
-                // (resolution reports mismatches).
-                auto converted = fallback_on_exception(std::optional<Value>{}, [&] {
+                // schema; if both fail, generic conversion below reports the
+                // ordinary mismatch.
+                target_const = fallback_on_exception(std::optional<Value>{}, [&] {
                     return std::optional<Value>{py_to_value_as(args[0], output_type->meta->value_schema)};
                 });
-                if (!converted.has_value())
+                if (!target_const.has_value())
                 {
-                    converted = fallback_on_exception(std::optional<Value>{}, [&] {
+                    target_const = fallback_on_exception(std::optional<Value>{}, [&] {
                         return std::optional<Value>{py_to_delta(args[0], output_type->meta)};
                     });
                 }
-                if (converted.has_value())
-                {
-                    wiring_args[0].scalar_value = std::move(*converted);
-                    wiring_args[0].scalar_meta  = wiring_args[0].scalar_value.schema();
-                }
             }
+            std::vector<WiringArg> wiring_args;
+            if (target_const.has_value())
+            {
+                nb::list converted_args;
+                converted_args.append(nb::cast(PyScalarValue{std::move(*target_const)}));
+                for (std::size_t index = 1; index < nb::len(args); ++index)
+                {
+                    converted_args.append(args[index]);
+                }
+                wiring_args = build_args(nb::tuple(converted_args), kwargs);
+            }
+            else { wiring_args = build_args(args, kwargs); }
             const std::vector<std::size_t> size_hints = sizes.value_or(std::vector<std::size_t>{});
             ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
                 name, std::span<const WiringArg>{wiring_args.data(), wiring_args.size()}, std::nullopt,
@@ -213,11 +221,12 @@ namespace hgraph::python_bridge
             ensure_open();
             auto slot     = std::make_shared<PySenderSlot>();
             slot->schema  = ts_type.meta;
-            auto policy   = conflate ? make_push_source_conflating_policy(*ts_type.meta->value_schema)
-                                     : make_push_source_queue_policy(*ts_type.meta->value_schema);
+            auto policy   = conflate ? make_push_source_conflating_policy(*ts_type.meta->delta_value_schema)
+                                     : make_push_source_queue_policy(*ts_type.meta->delta_value_schema);
             NodeBuilder builder = make_push_source_node(
                 *ts_type.meta, std::move(policy), [slot, on_start](PushSourceSender sender) {
                     slot->sender = std::move(sender);
+                    slot->type_realization = slot->sender.type_realization();
                     if (!on_start.is_none())
                     {
                         // hgraph's @push_queue contract: the wrapped function

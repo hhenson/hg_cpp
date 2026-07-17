@@ -127,11 +127,29 @@ namespace hgraph
                        scalar_pattern_match(pattern.children[0], concrete->key_type, map) &&
                        scalar_pattern_match(pattern.children[1], concrete->element_type, map);
             case ScalarPattern::Kind::Bundle:
+            {
                 if (concrete->value_kind() != ValueTypeKind::Bundle) { return false; }
+                if (!pattern.bundle_origin.empty())
+                {
+                    const std::string_view actual = concrete->name();
+                    if (!actual.starts_with(pattern.bundle_origin) ||
+                        actual.size() <= pattern.bundle_origin.size() ||
+                        actual[pattern.bundle_origin.size()] != '[')
+                    {
+                        return false;
+                    }
+                    const auto &arguments = concrete->bundle_generic_arguments();
+                    if (arguments.size() != pattern.children.size()) { return false; }
+                    for (std::size_t index = 0; index < arguments.size(); ++index)
+                    {
+                        if (!scalar_pattern_match(pattern.children[index], arguments[index], map)) { return false; }
+                    }
+                }
                 if (!pattern.schema_var) { return true; }
                 if (const ValueTypeMetaData *bound = map.find_scalar(pattern.name)) { return bound == concrete; }
                 map.bind_scalar(pattern.name, concrete);
                 return true;
+            }
         }
         return false;
     }
@@ -337,7 +355,13 @@ namespace hgraph
                 for (const ScalarPattern &child : pattern.children) { rank += scalar_pattern_rank(child) / 2; }
                 return rank;
             }
-            case ScalarPattern::Kind::Bundle: return pattern.schema_var ? SCALAR_VAR_RANK / 2 : 1;
+            case ScalarPattern::Kind::Bundle:
+            {
+                if (pattern.bundle_origin.empty()) { return pattern.schema_var ? SCALAR_VAR_RANK / 2 : 1; }
+                int rank = 1;
+                for (const ScalarPattern &child : pattern.children) { rank += scalar_pattern_rank(child) / 2; }
+                return rank;
+            }
         }
         return 0;
     }
@@ -537,6 +561,16 @@ namespace hgraph
                                          scalar_pattern_to_string(pattern.children[1]))
                            : std::string{"Mapping"};
             case ScalarPattern::Kind::Bundle:
+                if (!pattern.bundle_origin.empty())
+                {
+                    std::vector<std::string> arguments;
+                    arguments.reserve(pattern.children.size());
+                    for (const ScalarPattern &child : pattern.children)
+                    {
+                        arguments.push_back(scalar_pattern_to_string(child));
+                    }
+                    return fmt::format("{}[{}]", pattern.bundle_origin, fmt::join(arguments, ", "));
+                }
                 return pattern.schema_var ? fmt::format("CompoundScalar[~{}]", pattern.name)
                                           : std::string{"CompoundScalar"};
         }

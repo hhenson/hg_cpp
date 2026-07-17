@@ -359,6 +359,42 @@ TEST_CASE("operators: an ambiguous overload (tied at the minimum rank) raises")
     REQUIRE_THROWS_AS(eval_node<add_>(values<Int>(1), values<Int>(2)), OperatorResolutionError);
 }
 
+TEST_CASE("operators: a nominal leaf overload beats inherited Bundle inputs")
+{
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.value_type("int");
+    const auto *animal = registry.bundle("tests.operator", "Animal", {{"id", integer}});
+    const auto *dog = registry.bundle(
+        "tests.operator", "Dog", {{"id", integer}, {"barks", registry.value_type("bool")}}, {animal});
+    const auto *puppy = registry.bundle(
+        "tests.operator", "Puppy",
+        {{"id", integer}, {"barks", registry.value_type("bool")}, {"young", registry.value_type("bool")}},
+        {dog});
+
+    const auto register_candidate = [&](const ValueTypeMetaData *schema, std::string label) {
+        OperatorImpl impl;
+        impl.name = "nominal_overload";
+        impl.label = std::move(label);
+        impl.params.push_back(ParamPattern{
+            .kind = ParamPattern::Kind::Input,
+            .name = "value",
+            .ts = TypePattern::concrete(registry.ts(schema)),
+        });
+        impl.rank = operator_dispatch_detail::operator_rank(impl.params);
+        OperatorRegistry::instance().register_overload(std::move(impl));
+    };
+    register_candidate(animal, "animal");
+    register_candidate(dog, "dog");
+
+    std::array<WiringArg, 1> args{ts_arg(registry.ts(puppy))};
+    const auto resolved = OperatorRegistry::instance().resolve(
+        "nominal_overload", std::span<const WiringArg>{args}, false);
+    REQUIRE(resolved.impl != nullptr);
+    CHECK(resolved.impl->label == "dog");
+    CHECK(registry.bundle_inheritance_distance(puppy, dog) == 1);
+    CHECK(registry.bundle_inheritance_distance(puppy, animal) == 2);
+}
+
 TEST_CASE("operators: an unregistered operator name raises")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");
@@ -816,6 +852,55 @@ TEST_CASE("operators: TypePattern matches generic TSW and TSB structures")
             {{"T", ScalarPattern::concrete(scalar_type<Int>())}});
         CHECK(ts_pattern_resolve(specialized, ResolutionMap{}) == ts_type<ConcreteBundle>());
     }
+}
+
+TEST_CASE("operators: generic Bundle patterns retain nominal origin and bind arguments")
+{
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.value_type("int");
+    const auto *text = registry.value_type("str");
+    REQUIRE(integer != nullptr);
+    REQUIRE(text != nullptr);
+
+    const auto *integer_box = registry.bundle(
+        "tests.pattern", "Box[int]", {{"value", integer}}, {}, false, "__type__", {integer});
+    const auto *text_box = registry.bundle(
+        "tests.pattern", "Box[str]", {{"value", text}}, {}, false, "__type__", {text});
+    const auto *integer_other = registry.bundle(
+        "tests.pattern", "Other[int]", {{"value", integer}}, {}, false, "__type__", {integer});
+
+    const ScalarPattern pattern = ScalarPattern::bundle_generic(
+        "__box", "tests.pattern::Box", {ScalarPattern::var("T")});
+    ResolutionMap integer_map;
+    REQUIRE(scalar_pattern_match(pattern, integer_box, integer_map));
+    CHECK(integer_map.find_scalar("T") == integer);
+    CHECK(scalar_pattern_resolve(pattern, integer_map) == integer_box);
+
+    ResolutionMap text_map;
+    REQUIRE(scalar_pattern_match(pattern, text_box, text_map));
+    CHECK(text_map.find_scalar("T") == text);
+
+    ResolutionMap other_map;
+    CHECK_FALSE(scalar_pattern_match(pattern, integer_other, other_map));
+    CHECK(scalar_pattern_to_string(pattern) == "tests.pattern::Box[~T]");
+
+    const auto *request = registry.bundle(
+        "tests.pattern", "Request", {{"url", text}}, {}, true);
+    const auto *create = registry.bundle(
+        "tests.pattern", "Create", {{"url", text}, {"value", integer}}, {request});
+    stdlib::register_conversion_operators();
+    std::array<WiringArg, 1> args{ts_arg(registry.ts(create))};
+    const auto resolved = OperatorRegistry::instance().resolve(
+        "convert", std::span<const WiringArg>{args}, true, registry.ts(request));
+    REQUIRE(resolved.impl != nullptr);
+    CHECK(resolved.impl->label.find("convert_bundle_upcast") != std::string::npos);
+
+    Wiring wiring{WiringKind::SubGraph};
+    const auto source = WiringPortRef::boundary_source(0, {}, registry.ts(create));
+    const auto adapted = graph_wiring_detail::adapt_source_for_input(
+        wiring, registry.ts(request), source);
+    CHECK(adapted.schema == registry.ts(request));
+    CHECK(adapted.is_peered_source());
 }
 
 TEST_CASE("operators: explicit output schemas participate in operator resolution")

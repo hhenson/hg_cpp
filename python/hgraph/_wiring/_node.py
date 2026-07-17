@@ -167,6 +167,22 @@ class _PyNode:
                 pinned._pins[_type_var_name(entry.start)] = entry.stop
         return pinned
 
+    def _with_resolution(self, bindings):
+        """Return a call-local node seeded from operator dispatch.
+
+        The C++ overload registry has already unified the candidate's input,
+        output, scalar, and size patterns. Reusing those bindings prevents a
+        Python implementation from starting a second, incomplete type
+        resolution pass when its generic is fixed only by the requested
+        output.
+        """
+        import copy
+
+        resolved = copy.copy(self)
+        resolved._pins = dict(self._pins)
+        resolved._pins.update(bindings)
+        return resolved
+
     @staticmethod
     def _bind_resolved(scope, name, resolved):
         """Seed a pinned/resolved type variable into the C++ scope: a ts
@@ -176,6 +192,8 @@ class _PyNode:
 
         if isinstance(resolved, _TsExpr):
             scope.bind_ts(name, resolved.handle)
+        elif isinstance(resolved, _hgraph.TsType):
+            scope.bind_ts(name, resolved)
         elif isinstance(resolved, int) and not isinstance(resolved, bool):
             scope.bind_size(name, resolved)
         else:

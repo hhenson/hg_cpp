@@ -133,6 +133,29 @@ namespace hgraph
 
         constexpr int variadic_pack_fixed_input_penalty = 100'000'000;
 
+        [[nodiscard]] int input_adaptation_rank(const TypePattern &pattern,
+                                                const TSValueTypeMetaData *concrete)
+        {
+            if (pattern.kind != TypePattern::Kind::Concrete || pattern.meta == nullptr || concrete == nullptr)
+            {
+                return 0;
+            }
+
+            TypeRegistry &registry = TypeRegistry::instance();
+            const auto *expected = registry.dereference(pattern.meta);
+            const auto *actual = registry.dereference(concrete);
+            if (expected == nullptr || actual == nullptr ||
+                time_series_schema_equivalent(expected, actual) ||
+                expected->kind != TSTypeKind::TS || actual->kind != TSTypeKind::TS)
+            {
+                return 0;
+            }
+
+            const auto distance = registry.bundle_inheritance_distance(
+                actual->value_schema, expected->value_schema);
+            return distance.has_value() ? static_cast<int>(*distance) : 0;
+        }
+
         [[nodiscard]] bool append_tail_arg(const WiringArg &arg,
                                            std::vector<WiringArg> &tail,
                                            std::string &why)
@@ -368,6 +391,7 @@ namespace hgraph
                                           ts_pattern_to_string(param.ts));
                         return false;
                     }
+                    rank_adjustment += input_adaptation_rank(param.ts, arg.port.schema);
                     continue;
                 }
 
@@ -389,6 +413,7 @@ namespace hgraph
                                               ts_pattern_to_string(param.ts));
                             return false;
                         }
+                        rank_adjustment += input_adaptation_rank(param.ts, arg.port.schema);
                     }
                     else
                     {
@@ -410,6 +435,13 @@ namespace hgraph
                     {
                         why = fmt::format("argument {} should be a scalar", i);
                         return false;
+                    }
+                    if (!arg.scalar_value.has_value() && param.scalar.kind == ScalarPattern::Kind::Var)
+                    {
+                        // A Python ``None`` default is an absent wiring-time
+                        // scalar. It may satisfy an unconstrained scalar/type
+                        // carrier but cannot bind the variable by itself.
+                        continue;
                     }
                     bool scalar_matches = false;
                     if (param.scalar.kind == ScalarPattern::Kind::Concrete)

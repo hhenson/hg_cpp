@@ -153,7 +153,10 @@ namespace hgraph
         if (!time_series_schema_equivalent(registry.dereference(source_schema),
                                            registry.dereference(&requested_schema)))
         {
-            throw std::invalid_argument("TSOutput alternative binding requires dereference-compatible schemas");
+            throw std::invalid_argument(
+                "TSOutput alternative binding requires dereference-compatible schemas: source '" +
+                std::string{source_schema->name()} + "', requested '" +
+                std::string{requested_schema.name()} + "'");
         }
 
         if (!alternatives_) { alternatives_ = std::make_unique<detail::TSOutputAlternativeStore>(); }
@@ -175,6 +178,22 @@ namespace hgraph
             if (realized != ValuePlanFactory::instance().type_for(schema->value_schema))
             {
                 return TSData{TSDataPlanFactory::instance().output_type_for(schema, realized)};
+            }
+        }
+        if (const auto *snapshot = active_type_realization();
+            snapshot != nullptr && schema->kind == TSTypeKind::TSD && schema->element_ts() != nullptr)
+        {
+            const auto *element_schema = schema->element_ts();
+            if (element_schema->kind == TSTypeKind::TS && element_schema->value_schema != nullptr)
+            {
+                const auto realized_value = snapshot->type_for(element_schema->value_schema);
+                if (realized_value != ValuePlanFactory::instance().type_for(element_schema->value_schema))
+                {
+                    const auto realized_element = TSDataPlanFactory::instance().output_type_for(
+                        element_schema, realized_value);
+                    return TSData{TSDataPlanFactory::instance().output_type_for(
+                        schema, TSRoleTypeRef{realized_element.as_role()})};
+                }
             }
         }
         return TSData{TSDataPlanFactory::instance().output_type_for(schema)};

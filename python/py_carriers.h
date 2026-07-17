@@ -127,6 +127,7 @@ namespace hgraph::python_bridge
     {
         PushSourceSender           sender{};
         const TSValueTypeMetaData *schema{nullptr};
+        const TypeRealizationSnapshot *type_realization{nullptr};
     };
 
     struct PySender
@@ -139,6 +140,7 @@ namespace hgraph::python_bridge
             {
                 throw std::logic_error("push sender is not started yet (the graph must be running)");
             }
+            TypeRealizationScope realization_scope{slot->type_realization};
             Value value = py_to_delta(object, slot->schema);
             nb::gil_scoped_release release;
             slot->sender.send(std::move(value));

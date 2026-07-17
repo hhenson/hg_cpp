@@ -154,6 +154,25 @@ namespace hgraph::python_bridge
         if (meta == nullptr) { throw nb::value_error(("unknown value type: " + name).c_str()); }
         return PyValueType{meta};
     });
+    m.def("python_type_for_value", [](PyValueType value) -> nb::object {
+        if (value.meta == nullptr) { return nb::none(); }
+        const auto bundle = bundle_class_info_registry().find(value.meta);
+        if (bundle != bundle_class_info_registry().end() && bundle->second.type.is_valid())
+        {
+            return bundle->second.type;
+        }
+        const auto enumeration = enum_class_registry().find(value.meta);
+        if (enumeration != enum_class_registry().end()) { return enumeration->second; }
+
+        const std::string_view name = value.meta->name();
+        nb::module_ builtins = nb::module_::import_("builtins");
+        if (name == "bool") { return builtins.attr("bool"); }
+        if (name == "int") { return builtins.attr("int"); }
+        if (name == "float") { return builtins.attr("float"); }
+        if (name == "str") { return builtins.attr("str"); }
+        if (name == "bytes") { return builtins.attr("bytes"); }
+        return nb::cast(value);
+    });
     m.def("ts", [](PyValueType v) { return PyTsType{TypeRegistry::instance().ts(v.meta)}; });
     m.def("ref_ts", [](PyTsType target) { return PyTsType{TypeRegistry::instance().ref(target.meta)}; });
     m.def("ref_target", [](PyTsType ref) { return PyTsType{TypeRegistry::instance().dereference(ref.meta)}; });
@@ -314,6 +333,19 @@ namespace hgraph::python_bridge
     m.def("scalar_pattern_bundle", [](const std::string &schema_variable) {
         return PyScalarPattern{ScalarPattern::bundle_var(schema_variable)};
     });
+    m.def("scalar_pattern_bundle_generic",
+          [](const std::string &schema_variable, const std::string &qualified_origin,
+             nb::list arguments) {
+              std::vector<ScalarPattern> patterns;
+              patterns.reserve(nb::len(arguments));
+              for (nb::handle argument : arguments)
+              {
+                  patterns.push_back(nb::cast<PyScalarPattern &>(argument).pattern);
+              }
+              return PyScalarPattern{ScalarPattern::bundle_generic(
+                  schema_variable, qualified_origin, std::move(patterns))};
+          },
+          nb::arg("schema_variable"), nb::arg("qualified_origin"), nb::arg("arguments"));
 
     m.def("size_pattern_var", [](const std::string &name) {
         return PySizePattern{true, name, 0};
@@ -632,7 +664,7 @@ namespace hgraph::python_bridge
                     return nb::cast<bool>(requires_fn(nb::cast(scope), scalars));
                 };
             }
-            impl.wire = [wire_fn](Wiring &w, const ResolutionMap &, std::span<const WiringArg> args,
+            impl.wire = [wire_fn](Wiring &w, const ResolutionMap &map, std::span<const WiringArg> args,
                                   std::span<const std::pair<std::string, WiringPortRef>> kwargs)
                 -> OperatorWireResult {
                 nb::gil_scoped_acquire gil;
@@ -655,7 +687,9 @@ namespace hgraph::python_bridge
                     py_kwargs[nb::str(kw_name.c_str())] = nb::cast(PyPort{port});
                 }
                 nb::object borrowed = nb::cast(PyWiring::borrow(w));
-                nb::object result   = wire_fn(borrowed, nb::tuple(py_args), py_kwargs);
+                PyResolutionScope scope;
+                scope.map = map;
+                nb::object result = wire_fn(borrowed, nb::tuple(py_args), py_kwargs, nb::cast(scope));
                 if (result.is_none()) { return OperatorWireResult{}; }
                 return OperatorWireResult{true, Port<void>{w, nb::cast<PyPort &>(result).ref}};
             };

@@ -163,18 +163,19 @@ namespace hgraph::stdlib
             TraitsView traits, GlobalStateView gs, DateTime now)
         {
             if (!ts.modified()) { return; }
-            const auto *delta_schema = ts.base().schema()->delta_value_schema;
             const std::string fq_key = io_impl_detail::memory_recording_key(
                 traits, recordable_id.value(), key.value());
+            Value delta = capture_delta(ts.base());
             ValueView buffer = gs.get(fq_key);
             if (!buffer.valid())
             {
-                gs.set(fq_key, testing::make_sparse_buffer(delta_schema));
+                gs.set(fq_key, testing::make_sparse_buffer(delta.binding()));
                 buffer = gs.get(fq_key);
             }
             auto mutation = buffer.as_list().begin_mutation();
+            const auto delta_binding = delta.binding();
             Value entry = testing::make_sparse_entry(
-                delta_schema, now, capture_delta(ts.base()));
+                delta_binding, now, std::move(delta));
             mutation.push_back(entry.view());
         }
     };
