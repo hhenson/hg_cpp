@@ -193,10 +193,12 @@ namespace hgraph
                 return;
             }
             auto  mutation = output.begin_mutation(evaluation_time);
-            if (!mutation.move_value_from(std::move(reference)))
-            {
-                throw std::logic_error("structural REF node failed to move the reference value");
-            }
+            // move_value_from returns NEWLY-MODIFIED, not success: publishing
+            // a reference that lands as no new modification (e.g. an emptied
+            // reference over an invalid output while a switch/map cascade
+            // tears a branch down) is a legitimate no-op — UNBIND IS SILENT,
+            // consumers observe invalidity by reading, not by tick.
+            static_cast<void>(mutation.move_value_from(std::move(reference)));
         }
 
         /** The ts-input schema preserving the SOURCE children's REF-ness.

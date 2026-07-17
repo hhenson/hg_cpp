@@ -48,10 +48,10 @@ namespace hgraph::python_bridge
                 return;
             }
             auto mutation = erased.begin_mutation(erased.evaluation_time());
-            if (!mutation.move_value_from(Value{std::move(reference)}))
-            {
-                throw std::logic_error("REF output failed to move the reference value");
-            }
+            // move_value_from returns NEWLY-MODIFIED, not success: a publish
+            // landing as no new modification is a legitimate no-op (same rule
+            // as the structural REF node in graph_wiring.cpp).
+            static_cast<void>(mutation.move_value_from(Value{std::move(reference)}));
             return;
         }
         nb::object shaped    = nb::borrow(result);
