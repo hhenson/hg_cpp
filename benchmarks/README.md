@@ -8,23 +8,26 @@ Cross-implementation performance bench for the three hgraph runtimes:
 | `upstream-cpp` | the same package with `HGRAPH_USE_CPP=true` (the old C++ runtime) |
 | `hg-cpp` | an optimized wheel built from the current repository source |
 
-Every scenario is written **once**, in standard Python hgraph syntax
-(`benchmarks/scenarios.py`), and runs unchanged on all three. Two flavours:
-`*_std` scenarios are mostly-graph/standard-operator; `*_py` scenarios push
-the work through custom `@compute_node` python nodes. Additional axes: value
-types (int / float / str / CompoundScalar — the str and compound-scalar
-scenarios expose the new runtime's `std::string`/native-compound costs vs the
-old python-object values) and TSD key types (int vs str keys).
+Comparative scenarios are written **once**, in standard Python hgraph syntax
+(`benchmarks/scenarios.py`), and run unchanged on all three implementations.
+The scenario registry gives every workload a stable command-line ID, a readable
+label, a report group, a suite, and the set of runtimes that support it.
+`*_std` scenarios are mostly graph/standard-operator workloads; `*_py`
+scenarios deliberately put work in Python-authored nodes.
 
-Scenario families: large graph construction, hot-loop ticking (feedback),
-dense / sparse TSD ticking, `map_` + `reduce` with key churn (items coming
-and going), an inter-key dependency `mesh_` with a sliding key window,
-reference / request-reply / subscription services, duplex adaptors, and
-multiplexed service adaptors. Service and adaptor families cover both native
-standard-operator implementations and implementations containing Python
-compute nodes. Request/reply, subscription, and service-adaptor clients leave
-one idle engine cycle between requests: their next-cycle transport deliberately
-conflates a client that re-ticks before its prior request has been forwarded.
+The **core** suite covers graph construction, scheduler hot loops, scalar and
+compound values, dense/sparse/churning TSDs, switch and mesh nested graphs,
+services, and adaptors. The **diagnostic** suite decomposes the hot paths and
+adds fan-in/fan-out/conflation, Python boundary costs, TSB/TSS/TSW behavior,
+large retained TSD capacity, capacity growth, clear/repopulate, multi-input
+membership, explicit key sets, reducer implementation shapes, and multi-path
+services.
+
+Dynamic TSL is an hg_cpp feature with no valid upstream comparison. Its
+diagnostic workload is therefore restricted to hg_cpp and appears in a
+separate, explicitly non-comparative report section. Low-level native timings,
+allocation counts, and additional dynamic TSL/TSW operations remain in the
+`type_erasure_perf` C++ benchmark.
 
 Terminal outputs use the implementation's native `null_sink`, keeping sink
 overhead out of the Python node boundary in every mode.
@@ -33,10 +36,23 @@ overhead out of the Python node boundary in every mode.
 
 ```sh
 # from the repo root, in the repo's environment (hg_cpp installed):
-uv run python benchmarks/orchestrate.py                 # full matrix, default scale
-uv run python benchmarks/orchestrate.py --scale 0.1     # quick pass
+uv run python benchmarks/orchestrate.py                 # core, 3 samples
+uv run python benchmarks/orchestrate.py --scale 0.1     # quick legacy shorthand
+uv run python benchmarks/orchestrate.py \
+  --suite core --suite diagnostic                       # all workloads
+uv run python benchmarks/orchestrate.py \
+  --cycle-scale 2 --size-scale 0.5                      # independent axes
+uv run python benchmarks/orchestrate.py \
+  --group "TSD - key lifecycle" --samples 5
 uv run python benchmarks/orchestrate.py --scenario tick_std --mode hg-cpp
+uv run python benchmarks/runner.py --list               # readable inventory
 ```
+
+`--cycle-scale` changes the number of engine cycles without changing graph or
+collection size. `--size-scale` changes graph width/depth, TSD cardinality, or
+service client count without changing cycle count. `--scale` sets both and is
+kept for compatibility with older commands. Explicit `--scenario` filters
+override suite/group selection.
 
 The first run for each active Python version creates
 `benchmarks/.venv-upstream-X.Y` (pip-installs `hgraph`) and
@@ -48,9 +64,11 @@ All modes use the same interpreter version. Delete the upstream directory to
 refresh its published package. Results (markdown matrix + raw JSON) are written
 to `benchmarks/results/`.
 
-Each (scenario, mode) runs in a fresh subprocess: crashes and timeouts show
-as `FAIL` cells with the captured error, never as a lost matrix. Default
-scale targets roughly 1–2 minutes per mode.
+Each timing sample runs in a fresh subprocess. The orchestrator rotates mode
+order deterministically between samples, reports the median and median absolute
+deviation, and preserves every individual result in the raw JSON. A failure in
+any sample makes the aggregate cell fail rather than being hidden by successful
+samples. Unsupported runtimes show as `N/A`, not `FAIL`.
 
 Before timing, the orchestrator runs the small `eval_node` workload guards in
 every selected mode. These verify emitted values, service callback counts,
@@ -59,6 +77,12 @@ dense and sparse updates, key churn, and mesh dependencies. Use
 preflight.
 
 **Timings are not CI gates.** The workload guards run in the normal Python
-test suite, while comparative timing exists for occasional controlled runs,
-not for pass/fail gating. Keep scenario definitions stable between runs you
-intend to compare; bump sizes via `--scale` rather than editing the defaults.
+test suite, while timing exists for occasional controlled runs, not pass/fail
+gating. Keep scenario definitions stable between runs you intend to compare.
+Use the independent scale controls rather than editing scenario defaults.
+
+The timed interval is the complete `run_graph` call, so it includes graph
+construction, startup, steady-state execution, and teardown. Dedicated graph
+construction scenarios expose fixed setup costs; use longer cycle scales when
+the objective is steady-state throughput. The C++ microbenchmark pack is the
+appropriate tool for operation-level timing and allocation counts.

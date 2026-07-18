@@ -5,7 +5,7 @@ import importlib.util
 from pathlib import Path
 
 import hgraph as hg
-from hgraph import TS, TSD, compute_node, graph, mesh_, reduce
+from hgraph import Size, TS, TSD, TSL, compute_node, graph, mesh_, reduce
 from hgraph.test import eval_node
 
 
@@ -285,3 +285,237 @@ def test_benchmark_mesh_processes_dependencies_and_key_churn():
         [0, 84, 87, 97, 118],
         [0, 28, 85, 81, 68, 83],
     )
+
+
+def test_benchmark_scheduler_conflates_many_input_notifications():
+    calls = []
+
+    @compute_node
+    def observe(values: TSL[TS[int], Size[4]]) -> TS[int]:
+        calls.append(tuple(value.value for value in values.values()))
+        return sum(value.value for value in values.values())
+
+    @graph
+    def app(value: TS[int]) -> TS[int]:
+        return observe(TSL.from_ts(*(value + offset for offset in range(4))))
+
+    assert eval_node(app, [1, 2, 3]) == [10, 14, 18]
+    assert calls == [(1, 2, 3, 4), (2, 3, 4, 5), (3, 4, 5, 6)]
+
+
+def test_benchmark_python_sink_receives_every_generator_tick():
+    seen = []
+
+    @hg.sink_node
+    def collect(value: TS[int]):
+        seen.append(value.value)
+
+    @graph
+    def app(trigger: TS[bool]) -> TS[bool]:
+        collect(bench._int_pulse(3))
+        return trigger
+
+    assert eval_node(
+        app,
+        [True],
+        __end_time__=hg.MIN_ST + 5 * hg.MIN_TD,
+    ) == [True]
+    assert seen == [0, 1, 2]
+
+
+def test_benchmark_tsd_capacity_growth_and_clear_repopulate_do_real_work():
+    assert eval_node(
+        _source_graph(
+            lambda: bench._map_reduce_std(bench._tsd_growing_pulse(3, 2))
+        ),
+        [True],
+        __end_time__=hg.MIN_ST + 5 * hg.MIN_TD,
+    ) == [0, 4, 12, 24]
+    assert eval_node(
+        _source_graph(
+            lambda: bench._map_reduce_std(
+                bench._tsd_clear_repopulate_pulse(4, 2)
+            )
+        ),
+        [True],
+        __end_time__=hg.MIN_ST + 6 * hg.MIN_TD,
+    ) == [0, 6, 0, 22, 0]
+
+
+def test_benchmark_tsd_explicit_keys_follow_key_lifecycle():
+    @graph
+    def keyed_total(values: TSD[int, TS[int]]) -> TS[int]:
+        keyed = hg.map_(bench._key_identity, __keys__=values.key_set)
+        return reduce(hg.add_, keyed, 0)
+
+    assert eval_node(
+        _source_graph(
+            lambda: keyed_total(bench._tsd_churn_pulse(4, 4, 1))
+        ),
+        [True],
+        __end_time__=hg.MIN_ST + 6 * hg.MIN_TD,
+    ) == [0, 6, 10, 14, 18]
+
+
+def test_benchmark_tsd_remove_and_recreate_reuses_key_slots():
+    assert eval_node(
+        _source_graph(
+            lambda: bench._map_reduce_std(
+                bench._tsd_reactivate_pulse(4, 2, 1)
+            )
+        ),
+        [True],
+        __end_time__=hg.MIN_ST + 6 * hg.MIN_TD,
+    ) == [0, 6, 4, 10, 4]
+
+
+def test_benchmark_tsd_union_map_tracks_both_memberships():
+    @graph
+    def app(lhs: TSD[int, TS[int]], rhs: TSD[int, TS[int]]) -> TS[int]:
+        combined = hg.map_(bench._sum_optional, lhs, rhs)
+        return reduce(hg.add_, combined, 0)
+
+    assert eval_node(
+        app,
+        [{0: 1}, {1: 2}, {0: hg.REMOVE}],
+        [{1: 10}, {2: 20}, {1: hg.REMOVE}],
+    ) == [11, 33, 22]
+
+
+def test_benchmark_tsd_intersection_map_tracks_shared_membership():
+    @graph
+    def app(lhs: TSD[int, TS[int]], rhs: TSD[int, TS[int]]) -> TS[int]:
+        combined = hg.map_(
+            bench._sum_optional,
+            lhs,
+            rhs,
+            __keys__=lhs.key_set & rhs.key_set,
+        )
+        return reduce(hg.add_, combined, 0)
+
+    assert eval_node(
+        app,
+        [{0: 1}, {1: 2}, {0: hg.REMOVE}],
+        [{1: 10}, {2: 20}, {1: hg.REMOVE}],
+    ) == [0, 12, 0]
+
+
+def test_benchmark_reduce_combiner_variants_produce_the_same_values():
+    @graph
+    def graph_combiner(values: TSD[int, TS[int]]) -> TS[int]:
+        return reduce(bench._add_graph, values, 0)
+
+    @graph
+    def python_combiner(values: TSD[int, TS[int]]) -> TS[int]:
+        return reduce(bench._add_py, values, 0)
+
+    inputs = [{0: 1, 1: 2}, {0: 3}, {1: hg.REMOVE}]
+    assert eval_node(graph_combiner, inputs) == [3, 5, 3]
+    assert eval_node(python_combiner, inputs) == [3, 5, 3]
+
+
+def test_benchmark_ordered_fixed_tsl_reduce_preserves_left_to_right_order():
+    @graph
+    def app(values: TSL[TS[int], Size[4]]) -> TS[int]:
+        return reduce(
+            bench._subtract_graph,
+            values,
+            hg.const(0, tp=TS[int]),
+            is_associative=False,
+        )
+
+    assert eval_node(
+        app,
+        [{0: 1, 1: 2, 2: 3, 3: 4}, {0: 10}],
+    ) == [-8, 1]
+
+
+def test_benchmark_switch_alternates_different_sized_branches():
+    @graph
+    def app(selector: TS[bool], value: TS[int]) -> TS[int]:
+        return hg.switch_(
+            selector,
+            {False: bench._switch_short, True: bench._switch_deep},
+            value=value,
+        )
+
+    assert eval_node(app, [False, True, False], [1, 2, 3]) == [2, 14, 4]
+
+
+def test_benchmark_switch_forwards_keyed_branch_lifecycle():
+    @graph
+    def app(
+        selector: TS[bool], values: TSD[int, TS[int]]
+    ) -> TS[int]:
+        selected = hg.switch_(
+            selector,
+            {
+                False: bench._switch_tsd_identity,
+                True: bench._switch_tsd_double,
+            },
+            values=values,
+        )
+        return reduce(hg.add_, selected, 0)
+
+    assert eval_node(
+        app,
+        [False, True, False],
+        [{0: 1, 1: 2}, {0: 3}, {1: hg.REMOVE}],
+    ) == [3, 14, 3]
+
+
+def test_benchmark_bundle_and_window_workloads_publish_updates():
+    @graph
+    def bundle_app(value: TS[int]) -> TS[int]:
+        bundle = hg.TSB[bench.BenchBundle].from_ts(
+            fast=value,
+            medium=value + 1,
+            slow=value + 2,
+        )
+        return bundle.fast + bundle.medium + bundle.slow
+
+    @graph
+    def window_app(value: TS[int]) -> hg.TSW[int]:
+        return hg.to_window(value, 3, 1)
+
+    assert eval_node(bundle_app, [1, 2, 3]) == [6, 9, 12]
+    assert eval_node(window_app, [1, 2, 3, 4]) == [1, 2, 3, 4]
+
+
+def test_benchmark_set_churn_keeps_the_requested_live_size():
+    @graph
+    def app(trigger: TS[bool]) -> TS[int]:
+        return hg.len_(bench._tss_churn_pulse(4, 4, 1))
+
+    actual = eval_node(
+        app,
+        [True],
+        __end_time__=hg.MIN_ST + 6 * hg.MIN_TD,
+    )
+    # hg_cpp deduplicates the unchanged length while upstream republishes it;
+    # both traces prove that every add/remove delta preserved four live keys.
+    assert actual in ([0, 4], [None, 4, 4, 4, 4])
+
+
+def test_hg_cpp_benchmark_reduce_without_zero_tracks_cardinality():
+    @graph
+    def app(values: TSD[int, TS[int]]) -> TS[int]:
+        return reduce(bench._add_graph, values)
+
+    assert eval_node(
+        app,
+        [{}, {0: 4}, {1: 6}, {0: hg.REMOVE}, {1: hg.REMOVE}],
+    ) == [None, 4, 10, 6, None]
+
+
+def test_hg_cpp_benchmark_dynamic_tsl_map_reduce_processes_sparse_updates():
+    @graph
+    def app(trigger: TS[bool]) -> TS[int]:
+        values = bench._dynamic_tsl_sparse_pulse(3, 4, 1)
+        return reduce(hg.add_, hg.map_(bench._mapped_std, values), 0)
+
+    assert eval_node(
+        app,
+        [True],
+        __end_time__=hg.MIN_ST + 5 * hg.MIN_TD,
+    ) == [0, 20, 28, 36]

@@ -16,15 +16,18 @@ Value-type axes: int, float, str (std::string vs PyStr cost in the new
 runtime) and CompoundScalar (new compound-scalar value vs old python object).
 Key-type axis for TSD: int keys vs str keys.
 
-Each scenario returns (graph_fn, n_cycles) — the runner times a single
-run_graph() over n_cycles engine cycles in simulation mode.
+Each scenario returns (graph_fn, n_cycles). Scenario metadata at the bottom of
+the module controls grouping, supported runtimes, and whether collection size
+is scaled independently from the number of engine cycles.
 """
 from dataclasses import dataclass
+from typing import Callable
 
 import hgraph as hg
 from hgraph import (
-    TS, TSD, TSS, CompoundScalar, compute_node, feedback, generator, graph, map_,
-    mesh_, null_sink, reduce,
+    TS, TSB, TSD, TSL, TSS, CompoundScalar, Size, TimeSeriesSchema,
+    compute_node, feedback, generator, graph, map_, mesh_, null_sink, reduce,
+    sink_node,
 )
 
 MIN_TD = hg.MIN_TD
@@ -36,6 +39,26 @@ MIN_TD = hg.MIN_TD
 # TSD key removal sentinel: both export REMOVE today; keep the lookup soft so
 # the bench degrades with a clear message rather than an import error.
 REMOVE = getattr(hg, "REMOVE")
+
+ALL_MODES = ("upstream-py", "upstream-cpp", "hg-cpp")
+HG_CPP_ONLY = ("hg-cpp",)
+
+
+@dataclass(frozen=True)
+class BenchmarkScenario:
+    """Description and construction policy for one timed workload."""
+
+    group: str
+    label: str
+    factory: Callable
+    suite: str = "core"
+    modes: tuple[str, ...] = ALL_MODES
+    independent_size: bool = False
+
+    def build(self, cycle_scale: float, size_scale: float):
+        if self.independent_size:
+            return self.factory(cycle_scale, size_scale)
+        return self.factory(cycle_scale)
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +93,12 @@ def _symbol_pulse(cycles: int) -> TS[str]:
 
 
 @generator
+def _bool_pulse(cycles: int) -> TS[bool]:
+    for i in range(cycles):
+        yield MIN_TD, bool(i & 1)
+
+
+@generator
 def _service_int_pulse(requests: int) -> TS[int]:
     """Requests separated by the idle cycle required by service forwarding."""
     for i in range(requests):
@@ -88,6 +117,12 @@ class BenchCS(CompoundScalar):
     ident: int
     price: float
     label: str
+
+
+class BenchBundle(TimeSeriesSchema):
+    fast: TS[int]
+    medium: TS[int]
+    slow: TS[int]
 
 
 @generator
@@ -112,13 +147,17 @@ def _tsd_dense_pulse_strkeys(cycles: int, keys: int) -> TSD[str, TS[int]]:
 
 
 @generator
-def _tsd_sparse_pulse(cycles: int, keys: int, per_cycle: int) -> TSD[int, TS[int]]:
+def _tsd_sparse_pulse(
+    cycles: int, keys: int, per_cycle: int, offset: int = 0
+) -> TSD[int, TS[int]]:
     """Universe of `keys` keys, created up front; only `per_cycle` tick each
     cycle (sparse)."""
-    yield MIN_TD, {k: 0 for k in range(keys)}
+    yield MIN_TD, {offset + k: 0 for k in range(keys)}
     for i in range(1, cycles):
         base = (i * per_cycle) % keys
-        yield MIN_TD, {(base + j) % keys: i for j in range(per_cycle)}
+        yield MIN_TD, {
+            offset + (base + j) % keys: i for j in range(per_cycle)
+        }
 
 
 @generator
@@ -135,6 +174,85 @@ def _tsd_churn_pulse(cycles: int, live: int, churn: int) -> TSD[int, TS[int]]:
             delta[front + j] = i
         front += churn
         yield MIN_TD, delta
+
+
+@generator
+def _tsd_reactivate_pulse(
+    cycles: int, live: int, churn: int
+) -> TSD[int, TS[int]]:
+    """Remove and later recreate the same keys to exercise slot reuse."""
+    yield MIN_TD, {key: key for key in range(live)}
+    keys = tuple(range(churn))
+    for i in range(1, cycles):
+        if i & 1:
+            yield MIN_TD, {key: REMOVE for key in keys}
+        else:
+            yield MIN_TD, {key: i for key in keys}
+
+
+@generator
+def _tsd_growing_pulse(cycles: int, per_cycle: int) -> TSD[int, TS[int]]:
+    """Grow monotonically to exercise slot-store capacity boundaries."""
+    front = 0
+    for i in range(cycles):
+        yield MIN_TD, {front + j: i for j in range(per_cycle)}
+        front += per_cycle
+
+
+@generator
+def _tsd_clear_repopulate_pulse(cycles: int, keys: int) -> TSD[int, TS[int]]:
+    """Alternately erase every live key and repopulate a fresh key range."""
+    base = 0
+    live = tuple(range(keys))
+    for i in range(cycles):
+        if i & 1:
+            yield MIN_TD, {key: REMOVE for key in live}
+        else:
+            live = tuple(range(base, base + keys))
+            yield MIN_TD, {key: i + key for key in live}
+            base += keys
+
+
+@generator
+def _tsd_cardinality_pulse(cycles: int) -> TSD[int, TS[int]]:
+    """Cycle repeatedly through empty, singleton, and two-value states."""
+    yield MIN_TD, {}
+    for i in range(1, cycles):
+        phase = i % 4
+        if phase == 1:
+            yield MIN_TD, {0: i}
+        elif phase == 2:
+            yield MIN_TD, {1: i}
+        elif phase == 3:
+            yield MIN_TD, {0: REMOVE}
+        else:
+            yield MIN_TD, {1: REMOVE}
+
+
+@generator
+def _tss_churn_pulse(cycles: int, live: int, churn: int) -> TSS[int]:
+    """Maintain a fixed-size set using explicit add/remove deltas."""
+    yield MIN_TD, set(range(live))
+    front = live
+    for _ in range(1, cycles):
+        removed = range(front - live, front - live + churn)
+        added = range(front, front + churn)
+        yield MIN_TD, {*added, *(hg.Removed(key) for key in removed)}
+        front += churn
+
+
+@generator
+def _dynamic_tsl_sparse_pulse(
+    cycles: int, initial_size: int, per_cycle: int
+) -> TSL[TS[int], Size[0]]:
+    """hg_cpp-only unbounded TSL source with sparse positional updates."""
+    yield MIN_TD, {index: index for index in range(initial_size)}
+    for i in range(1, cycles):
+        base = (i * per_cycle) % initial_size
+        yield MIN_TD, {
+            (base + offset) % initial_size: initial_size + i
+            for offset in range(per_cycle)
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -174,8 +292,9 @@ def _wide_chain_py(x, width, depth):
     return total
 
 
-def construct_std(scale: float):
-    width, depth = max(2, int(30 * scale)), max(2, int(100 * scale))
+def construct_std(_cycle_scale: float, size_scale: float):
+    width = max(2, int(30 * size_scale))
+    depth = max(2, int(100 * size_scale))
 
     @graph
     def g():
@@ -185,8 +304,9 @@ def construct_std(scale: float):
     return g, 1  # 1 cycle: measured time ~= wiring + build cost
 
 
-def construct_py(scale: float):
-    width, depth = max(2, int(30 * scale)), max(2, int(100 * scale))
+def construct_py(_cycle_scale: float, size_scale: float):
+    width = max(2, int(30 * size_scale))
+    depth = max(2, int(100 * size_scale))
 
     @graph
     def g():
@@ -223,6 +343,73 @@ def tick_py(scale: float):
         for _ in range(5):
             x = _add_one_py(x)
         null_sink(x)
+
+    return g, cycles
+
+
+@sink_node
+def _discard_py(value: TS[int]):
+    pass
+
+
+def scheduler_fan_out_std(cycle_scale: float, size_scale: float):
+    cycles = int(20_000 * cycle_scale)
+    width = max(2, int(32 * size_scale))
+
+    @graph
+    def g():
+        source = _int_pulse(cycles)
+        for branch in range(width):
+            null_sink(source + branch)
+
+    return g, cycles
+
+
+def scheduler_fan_in_std(cycle_scale: float, size_scale: float):
+    cycles = int(20_000 * cycle_scale)
+    width = max(2, int(32 * size_scale))
+
+    @graph
+    def g():
+        source = _int_pulse(cycles)
+        branches = [source + branch for branch in range(width)]
+        total = branches[0]
+        for branch in branches[1:]:
+            total = total + branch
+        null_sink(total)
+
+    return g, cycles
+
+
+def scheduler_conflated_fixed_tsl_std(scale: float):
+    """Eight inputs notify one lifted reducer during each engine cycle."""
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        source = _int_pulse(cycles)
+        values = TSL.from_ts(*(source + offset for offset in range(8)))
+        null_sink(reduce(hg.add_, values, 0))
+
+    return g, cycles
+
+
+def python_generator_boundary(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        null_sink(_int_pulse(cycles))
+
+    return g, cycles
+
+
+def python_sink_boundary(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        _discard_py(_int_pulse(cycles))
 
     return g, cycles
 
@@ -296,6 +483,86 @@ def type_cs_py(scale: float):
     return g, cycles
 
 
+def type_tsb_partial_fields_std(scale: float):
+    """A structural bundle where only a subset of fields tick each cycle."""
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        source = _int_pulse(cycles)
+        medium = hg.if_(source % 2 == 0, source).true
+        slow = hg.if_(source % 8 == 0, source).true
+        bundle = TSB[BenchBundle].from_ts(
+            fast=source,
+            medium=medium,
+            slow=slow,
+        )
+        null_sink(bundle.fast + bundle.medium + bundle.slow)
+
+    return g, cycles
+
+
+def type_tsw_append_evict_std(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        null_sink(hg.to_window(_int_pulse(cycles), 64, 1))
+
+    return g, cycles
+
+
+@graph
+def _switch_short(value: TS[int]) -> TS[int]:
+    return value + 1
+
+
+@graph
+def _switch_deep(value: TS[int]) -> TS[int]:
+    return _chain_std(value, 12)
+
+
+def switch_alternating_branch_sizes_std(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        selected = hg.switch_(
+            _bool_pulse(cycles),
+            {False: _switch_short, True: _switch_deep},
+            value=_int_pulse(cycles),
+        )
+        null_sink(selected)
+
+    return g, cycles
+
+
+@graph
+def _switch_tsd_double(values: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
+    return map_(_mapped_std, values)
+
+
+@graph
+def _switch_tsd_identity(values: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
+    return values
+
+
+def switch_keyed_collection_std(cycle_scale: float, size_scale: float):
+    cycles = int(2_000 * cycle_scale)
+    live = max(8, int(200 * size_scale))
+
+    @graph
+    def g():
+        selected = hg.switch_(
+            _bool_pulse(cycles),
+            {False: _switch_tsd_identity, True: _switch_tsd_double},
+            values=_tsd_churn_pulse(cycles, live, 5),
+        )
+        null_sink(reduce(hg.add_, selected, 0))
+
+    return g, cycles
+
+
 # ---------------------------------------------------------------------------
 # D/E/F. TSD ticking: dense / sparse / churn through map_ + reduce
 # ---------------------------------------------------------------------------
@@ -320,8 +587,8 @@ def _map_reduce_py(tsd: TSD[int, TS[int]]) -> TS[int]:
     return reduce(hg.add_, map_(_mapped_py, tsd), 0)
 
 
-def tsd_dense_std(scale: float):
-    cycles, keys = int(1_000 * scale), max(4, int(200 * scale))
+def tsd_dense_std(cycle_scale: float, size_scale: float):
+    cycles, keys = int(1_000 * cycle_scale), max(4, int(200 * size_scale))
 
     @graph
     def g():
@@ -330,9 +597,9 @@ def tsd_dense_std(scale: float):
     return g, cycles
 
 
-def tsd_dense_source_std(scale: float):
+def tsd_dense_source_std(cycle_scale: float, size_scale: float):
     """Dense diagnostic: Python generator and native sink only."""
-    cycles, keys = int(1_000 * scale), max(4, int(200 * scale))
+    cycles, keys = int(1_000 * cycle_scale), max(4, int(200 * size_scale))
 
     @graph
     def g():
@@ -341,9 +608,9 @@ def tsd_dense_source_std(scale: float):
     return g, cycles
 
 
-def tsd_dense_map_std(scale: float):
+def tsd_dense_map_std(cycle_scale: float, size_scale: float):
     """Dense diagnostic: source plus the native nested map graph."""
-    cycles, keys = int(1_000 * scale), max(4, int(200 * scale))
+    cycles, keys = int(1_000 * cycle_scale), max(4, int(200 * size_scale))
 
     @graph
     def g():
@@ -352,9 +619,9 @@ def tsd_dense_map_std(scale: float):
     return g, cycles
 
 
-def tsd_dense_reduce_std(scale: float):
+def tsd_dense_reduce_std(cycle_scale: float, size_scale: float):
     """Dense diagnostic: source plus the native reduce tree."""
-    cycles, keys = int(1_000 * scale), max(4, int(200 * scale))
+    cycles, keys = int(1_000 * cycle_scale), max(4, int(200 * size_scale))
 
     @graph
     def g():
@@ -363,8 +630,8 @@ def tsd_dense_reduce_std(scale: float):
     return g, cycles
 
 
-def tsd_dense_py(scale: float):
-    cycles, keys = int(1_000 * scale), max(4, int(200 * scale))
+def tsd_dense_py(cycle_scale: float, size_scale: float):
+    cycles, keys = int(1_000 * cycle_scale), max(4, int(200 * size_scale))
 
     @graph
     def g():
@@ -373,9 +640,9 @@ def tsd_dense_py(scale: float):
     return g, cycles
 
 
-def tsd_dense_strkeys_std(scale: float):
+def tsd_dense_strkeys_std(cycle_scale: float, size_scale: float):
     """Key-type axis: identical to tsd_dense_std but with str keys."""
-    cycles, keys = int(1_000 * scale), max(4, int(200 * scale))
+    cycles, keys = int(1_000 * cycle_scale), max(4, int(200 * size_scale))
 
     @graph
     def g():
@@ -385,8 +652,8 @@ def tsd_dense_strkeys_std(scale: float):
     return g, cycles
 
 
-def tsd_sparse_std(scale: float):
-    cycles, keys = int(2_000 * scale), max(16, int(2_000 * scale))
+def tsd_sparse_std(cycle_scale: float, size_scale: float):
+    cycles, keys = int(2_000 * cycle_scale), max(16, int(2_000 * size_scale))
 
     @graph
     def g():
@@ -395,8 +662,8 @@ def tsd_sparse_std(scale: float):
     return g, cycles
 
 
-def tsd_churn_std(scale: float):
-    cycles, live, churn = int(2_000 * scale), max(8, int(200 * scale)), 5
+def tsd_churn_std(cycle_scale: float, size_scale: float):
+    cycles, live, churn = int(2_000 * cycle_scale), max(8, int(200 * size_scale)), 5
 
     @graph
     def g():
@@ -405,12 +672,261 @@ def tsd_churn_std(scale: float):
     return g, cycles
 
 
-def tsd_churn_py(scale: float):
-    cycles, live, churn = int(2_000 * scale), max(8, int(200 * scale)), 5
+def tsd_churn_py(cycle_scale: float, size_scale: float):
+    cycles, live, churn = int(2_000 * cycle_scale), max(8, int(200 * size_scale)), 5
 
     @graph
     def g():
         null_sink(_map_reduce_py(_tsd_churn_pulse(cycles, live, churn)))
+
+    return g, cycles
+
+
+def _tsd_sparse_variant(cycle_scale: float, size_scale: float, stage: str):
+    cycles = int(2_000 * cycle_scale)
+    keys = max(16, int(2_000 * size_scale))
+
+    @graph
+    def g():
+        values = _tsd_sparse_pulse(cycles, keys, 5)
+        if stage == "map":
+            values = map_(_mapped_std, values)
+        elif stage == "reduce":
+            values = reduce(hg.add_, values, 0)
+        null_sink(values)
+
+    return g, cycles
+
+
+def tsd_sparse_source_std(cycle_scale: float, size_scale: float):
+    return _tsd_sparse_variant(cycle_scale, size_scale, "source")
+
+
+def tsd_sparse_map_std(cycle_scale: float, size_scale: float):
+    return _tsd_sparse_variant(cycle_scale, size_scale, "map")
+
+
+def tsd_sparse_reduce_std(cycle_scale: float, size_scale: float):
+    return _tsd_sparse_variant(cycle_scale, size_scale, "reduce")
+
+
+def _tsd_churn_variant(cycle_scale: float, size_scale: float, stage: str):
+    cycles = int(2_000 * cycle_scale)
+    live = max(8, int(200 * size_scale))
+
+    @graph
+    def g():
+        values = _tsd_churn_pulse(cycles, live, 5)
+        if stage == "map":
+            values = map_(_mapped_std, values)
+        elif stage == "reduce":
+            values = reduce(hg.add_, values, 0)
+        null_sink(values)
+
+    return g, cycles
+
+
+def tsd_churn_source_std(cycle_scale: float, size_scale: float):
+    return _tsd_churn_variant(cycle_scale, size_scale, "source")
+
+
+def tsd_churn_map_std(cycle_scale: float, size_scale: float):
+    return _tsd_churn_variant(cycle_scale, size_scale, "map")
+
+
+def tsd_churn_reduce_std(cycle_scale: float, size_scale: float):
+    return _tsd_churn_variant(cycle_scale, size_scale, "reduce")
+
+
+def tsd_sparse_large_capacity_std(cycle_scale: float, size_scale: float):
+    """Regression guard for accidental O(capacity) work on a tiny delta."""
+    cycles = int(5_000 * cycle_scale)
+    keys = max(128, int(20_000 * size_scale))
+
+    @graph
+    def g():
+        null_sink(_map_reduce_std(_tsd_sparse_pulse(cycles, keys, 2)))
+
+    return g, cycles
+
+
+def tsd_capacity_growth_std(cycle_scale: float, size_scale: float):
+    cycles = int(1_000 * cycle_scale)
+    per_cycle = max(1, int(4 * size_scale))
+
+    @graph
+    def g():
+        values = _tsd_growing_pulse(cycles, per_cycle)
+        null_sink(_map_reduce_std(values))
+
+    return g, cycles
+
+
+def tsd_clear_repopulate_std(cycle_scale: float, size_scale: float):
+    cycles = int(200 * cycle_scale)
+    keys = max(8, int(1_000 * size_scale))
+
+    @graph
+    def g():
+        values = _tsd_clear_repopulate_pulse(cycles, keys)
+        null_sink(_map_reduce_std(values))
+
+    return g, cycles
+
+
+def tsd_key_reactivation_std(cycle_scale: float, size_scale: float):
+    cycles = int(2_000 * cycle_scale)
+    live = max(8, int(200 * size_scale))
+
+    @graph
+    def g():
+        values = _tsd_reactivate_pulse(cycles, live, 5)
+        null_sink(_map_reduce_std(values))
+
+    return g, cycles
+
+
+@graph
+def _sum_optional(lhs: TS[int], rhs: TS[int]) -> TS[int]:
+    return hg.default(lhs, 0) + hg.default(rhs, 0)
+
+
+def tsd_two_input_union_std(cycle_scale: float, size_scale: float):
+    cycles = int(2_000 * cycle_scale)
+    keys = max(16, int(1_000 * size_scale))
+
+    @graph
+    def g():
+        lhs = _tsd_sparse_pulse(cycles, keys, 3)
+        rhs = _tsd_sparse_pulse(cycles, keys, 3, offset=keys // 2)
+        combined = map_(_sum_optional, lhs, rhs)
+        null_sink(reduce(hg.add_, combined, 0))
+
+    return g, cycles
+
+
+def tsd_two_input_intersection_std(cycle_scale: float, size_scale: float):
+    cycles = int(2_000 * cycle_scale)
+    keys = max(16, int(1_000 * size_scale))
+
+    @graph
+    def g():
+        lhs = _tsd_sparse_pulse(cycles, keys, 3)
+        rhs = _tsd_sparse_pulse(cycles, keys, 3, offset=keys // 2)
+        combined = map_(
+            _sum_optional,
+            lhs,
+            rhs,
+            __keys__=lhs.key_set & rhs.key_set,
+        )
+        null_sink(reduce(hg.add_, combined, 0))
+
+    return g, cycles
+
+
+@graph
+def _key_identity(key: TS[int]) -> TS[int]:
+    return key
+
+
+def tsd_explicit_key_set_std(cycle_scale: float, size_scale: float):
+    cycles = int(2_000 * cycle_scale)
+    live = max(8, int(200 * size_scale))
+
+    @graph
+    def g():
+        source = _tsd_churn_pulse(cycles, live, 5)
+        keyed = map_(_key_identity, __keys__=source.key_set)
+        null_sink(reduce(hg.add_, keyed, 0))
+
+    return g, cycles
+
+
+@graph
+def _add_graph(lhs: TS[int], rhs: TS[int]) -> TS[int]:
+    return lhs + rhs
+
+
+@compute_node
+def _add_py(lhs: TS[int], rhs: TS[int]) -> TS[int]:
+    return lhs.value + rhs.value
+
+
+def reduce_tsd_nested_graph_std(cycle_scale: float, size_scale: float):
+    cycles = int(1_000 * cycle_scale)
+    keys = max(4, int(200 * size_scale))
+
+    @graph
+    def g():
+        null_sink(reduce(_add_graph, _tsd_dense_pulse(cycles, keys), 0))
+
+    return g, cycles
+
+
+def reduce_tsd_python_combiner(cycle_scale: float, size_scale: float):
+    cycles = int(1_000 * cycle_scale)
+    keys = max(4, int(200 * size_scale))
+
+    @graph
+    def g():
+        null_sink(reduce(_add_py, _tsd_dense_pulse(cycles, keys), 0))
+
+    return g, cycles
+
+
+@graph
+def _subtract_graph(lhs: TS[int], rhs: TS[int]) -> TS[int]:
+    return lhs - rhs
+
+
+def reduce_fixed_tsl_ordered_std(scale: float):
+    cycles = int(10_000 * scale)
+
+    @graph
+    def g():
+        source = _int_pulse(cycles)
+        values = TSL.from_ts(*(source + offset for offset in range(8)))
+        reduced = reduce(
+            _subtract_graph,
+            values,
+            hg.const(0, tp=TS[int]),
+            is_associative=False,
+        )
+        null_sink(reduced)
+
+    return g, cycles
+
+
+def reduce_dynamic_tsl_std(cycle_scale: float, size_scale: float):
+    cycles = int(5_000 * cycle_scale)
+    initial_size = max(4, int(128 * size_scale))
+
+    @graph
+    def g():
+        values = _dynamic_tsl_sparse_pulse(cycles, initial_size, 2)
+        null_sink(reduce(hg.add_, map_(_mapped_std, values), 0))
+
+    return g, cycles
+
+
+def reduce_tsd_without_zero_std(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        null_sink(reduce(_add_graph, _tsd_cardinality_pulse(cycles)))
+
+    return g, cycles
+
+
+def tss_add_remove_std(cycle_scale: float, size_scale: float):
+    cycles = int(5_000 * cycle_scale)
+    live = max(8, int(500 * size_scale))
+
+    @graph
+    def g():
+        values = _tss_churn_pulse(cycles, live, 3)
+        null_sink(hg.len_(values))
 
     return g, cycles
 
@@ -445,10 +961,10 @@ def _mesh_cell(key: TS[int], v: TS[int]) -> TS[int]:
     return v + dep
 
 
-def mesh_std(scale: float):
+def mesh_std(cycle_scale: float, size_scale: float):
     """Inter-key dependency mesh; the key window slides forward so instances
     come and go (creation, dependency ranking, teardown)."""
-    cycles, live, churn = int(500 * scale), max(8, int(50 * scale)), 2
+    cycles, live, churn = int(500 * cycle_scale), max(8, int(50 * size_scale)), 2
 
     @graph
     def g():
@@ -477,25 +993,27 @@ def _benchmark_reference_py_impl(path: str, cycles: int) -> TS[int]:
     return _add_one_py(_int_pulse(cycles))
 
 
-def service_reference_std(scale: float):
-    cycles = int(20_000 * scale)
+def service_reference_std(cycle_scale: float, size_scale: float):
+    cycles = int(20_000 * cycle_scale)
+    clients = max(1, int(4 * size_scale))
 
     @graph
     def g():
         hg.register_service("benchmark", _benchmark_reference_std_impl, cycles=cycles)
-        for _ in range(4):
+        for _ in range(clients):
             null_sink(_benchmark_reference(path="benchmark"))
 
     return g, cycles
 
 
-def service_reference_py(scale: float):
-    cycles = int(20_000 * scale)
+def service_reference_py(cycle_scale: float, size_scale: float):
+    cycles = int(20_000 * cycle_scale)
+    clients = max(1, int(4 * size_scale))
 
     @graph
     def g():
         hg.register_service("benchmark", _benchmark_reference_py_impl, cycles=cycles)
-        for _ in range(4):
+        for _ in range(clients):
             null_sink(_benchmark_reference(path="benchmark"))
 
     return g, cycles
@@ -519,30 +1037,50 @@ def _benchmark_request_reply_py_impl(
     return map_(_mapped_py, request)
 
 
-def service_request_reply_std(scale: float):
-    requests = int(10_000 * scale)
+def service_request_reply_std(cycle_scale: float, size_scale: float):
+    requests = int(10_000 * cycle_scale)
     cycles = requests * 2
+    clients = max(1, int(4 * size_scale))
 
     @graph
     def g():
         source = _service_int_pulse(requests)
         hg.register_service("benchmark", _benchmark_request_reply_std_impl)
-        for _ in range(4):
+        for _ in range(clients):
             null_sink(_benchmark_request_reply(source, path="benchmark"))
 
     return g, cycles
 
 
-def service_request_reply_py(scale: float):
-    requests = int(10_000 * scale)
+def service_request_reply_py(cycle_scale: float, size_scale: float):
+    requests = int(10_000 * cycle_scale)
     cycles = requests * 2
+    clients = max(1, int(4 * size_scale))
 
     @graph
     def g():
         source = _service_int_pulse(requests)
         hg.register_service("benchmark", _benchmark_request_reply_py_impl)
-        for _ in range(4):
+        for _ in range(clients):
             null_sink(_benchmark_request_reply(source, path="benchmark"))
+
+    return g, cycles
+
+
+def service_request_reply_multiple_paths_std(
+    cycle_scale: float, size_scale: float
+):
+    requests = int(5_000 * cycle_scale)
+    cycles = requests * 2
+    paths = max(2, int(4 * size_scale))
+
+    @graph
+    def g():
+        source = _service_int_pulse(requests)
+        for path_index in range(paths):
+            path = f"benchmark-{path_index}"
+            hg.register_service(path, _benchmark_request_reply_std_impl)
+            null_sink(_benchmark_request_reply(source, path=path))
 
     return g, cycles
 
@@ -575,26 +1113,32 @@ def _benchmark_subscription_py_impl(
     return map_(_subscription_value_py, __keys__=key)
 
 
-def service_subscription_std(scale: float):
-    requests = int(10_000 * scale)
+def service_subscription_std(cycle_scale: float, size_scale: float):
+    requests = int(10_000 * cycle_scale)
     cycles = requests * 2
+    clients = max(1, int(1 * size_scale))
 
     @graph
     def g():
         hg.register_service("benchmark", _benchmark_subscription_std_impl)
-        null_sink(_benchmark_subscription(_service_symbol_pulse(requests), path="benchmark"))
+        source = _service_symbol_pulse(requests)
+        for _ in range(clients):
+            null_sink(_benchmark_subscription(source, path="benchmark"))
 
     return g, cycles
 
 
-def service_subscription_py(scale: float):
-    requests = int(10_000 * scale)
+def service_subscription_py(cycle_scale: float, size_scale: float):
+    requests = int(10_000 * cycle_scale)
     cycles = requests * 2
+    clients = max(1, int(1 * size_scale))
 
     @graph
     def g():
         hg.register_service("benchmark", _benchmark_subscription_py_impl)
-        null_sink(_benchmark_subscription(_service_symbol_pulse(requests), path="benchmark"))
+        source = _service_symbol_pulse(requests)
+        for _ in range(clients):
+            null_sink(_benchmark_subscription(source, path="benchmark"))
 
     return g, cycles
 
@@ -668,62 +1212,237 @@ def _benchmark_service_adaptor_py_impl(
     return map_(_mapped_py, request)
 
 
-def service_adaptor_std(scale: float):
-    requests = int(10_000 * scale)
+def service_adaptor_std(cycle_scale: float, size_scale: float):
+    requests = int(10_000 * cycle_scale)
     cycles = requests * 2
+    clients = max(1, int(4 * size_scale))
 
     @graph
     def g():
         source = _service_int_pulse(requests)
         hg.register_adaptor("benchmark", _benchmark_service_adaptor_std_impl)
-        for client in range(4):
+        for client in range(clients):
             null_sink(_benchmark_service_adaptor(source + client, path="benchmark"))
 
     return g, cycles
 
 
-def service_adaptor_py(scale: float):
-    requests = int(10_000 * scale)
+def service_adaptor_py(cycle_scale: float, size_scale: float):
+    requests = int(10_000 * cycle_scale)
     cycles = requests * 2
+    clients = max(1, int(4 * size_scale))
 
     @graph
     def g():
         source = _service_int_pulse(requests)
         hg.register_adaptor("benchmark", _benchmark_service_adaptor_py_impl)
-        for client in range(4):
+        for client in range(clients):
             null_sink(_benchmark_service_adaptor(source + client, path="benchmark"))
 
     return g, cycles
 
 
+def _scenario(
+    group: str,
+    label: str,
+    factory: Callable,
+    *,
+    suite: str = "core",
+    modes: tuple[str, ...] = ALL_MODES,
+    independent_size: bool = False,
+) -> BenchmarkScenario:
+    return BenchmarkScenario(
+        group=group,
+        label=label,
+        factory=factory,
+        suite=suite,
+        modes=modes,
+        independent_size=independent_size,
+    )
+
+
+# Stable IDs remain suitable for command-line filtering and historical result
+# matching. Reports use the group and label fields instead of exposing these
+# implementation-oriented names as the primary description.
 SCENARIOS = {
-    "construct_std": construct_std,
-    "construct_py": construct_py,
-    "tick_std": tick_std,
-    "tick_py": tick_py,
-    "type_int_std": type_int_std,
-    "type_float_std": type_float_std,
-    "type_str_std": type_str_std,
-    "type_cs_std": type_cs_std,
-    "type_cs_py": type_cs_py,
-    "tsd_dense_std": tsd_dense_std,
-    "tsd_dense_source_std": tsd_dense_source_std,
-    "tsd_dense_map_std": tsd_dense_map_std,
-    "tsd_dense_reduce_std": tsd_dense_reduce_std,
-    "tsd_dense_py": tsd_dense_py,
-    "tsd_dense_strkeys_std": tsd_dense_strkeys_std,
-    "tsd_sparse_std": tsd_sparse_std,
-    "tsd_churn_std": tsd_churn_std,
-    "tsd_churn_py": tsd_churn_py,
-    "mesh_std": mesh_std,
-    "service_reference_std": service_reference_std,
-    "service_reference_py": service_reference_py,
-    "service_request_reply_std": service_request_reply_std,
-    "service_request_reply_py": service_request_reply_py,
-    "service_subscription_std": service_subscription_std,
-    "service_subscription_py": service_subscription_py,
-    "adaptor_std": adaptor_std,
-    "adaptor_py": adaptor_py,
-    "service_adaptor_std": service_adaptor_std,
-    "service_adaptor_py": service_adaptor_py,
+    "construct_std": _scenario(
+        "Graph construction", "Wide/deep graph - native operators",
+        construct_std, independent_size=True),
+    "construct_py": _scenario(
+        "Graph construction", "Wide/deep graph - Python nodes",
+        construct_py, independent_size=True),
+
+    "tick_std": _scenario(
+        "Scheduler", "Feedback hot loop - native add", tick_std),
+    "tick_py": _scenario(
+        "Scheduler", "Five-node Python compute chain", tick_py),
+    "scheduler_fan_out_std": _scenario(
+        "Scheduler", "One source fanning out to many sinks",
+        scheduler_fan_out_std, suite="diagnostic", independent_size=True),
+    "scheduler_fan_in_std": _scenario(
+        "Scheduler", "Many branches joining one output",
+        scheduler_fan_in_std, suite="diagnostic", independent_size=True),
+    "scheduler_conflated_fixed_tsl_std": _scenario(
+        "Scheduler", "Eight notifications conflated into one reducer",
+        scheduler_conflated_fixed_tsl_std, suite="diagnostic"),
+
+    "python_generator_boundary": _scenario(
+        "Python boundary", "Python scalar generator to native sink",
+        python_generator_boundary, suite="diagnostic"),
+    "python_sink_boundary": _scenario(
+        "Python boundary", "Python scalar generator to Python sink",
+        python_sink_boundary, suite="diagnostic"),
+
+    "type_int_std": _scenario(
+        "Value types", "Integer arithmetic", type_int_std),
+    "type_float_std": _scenario(
+        "Value types", "Floating-point arithmetic", type_float_std),
+    "type_str_std": _scenario(
+        "Value types", "String concatenation", type_str_std),
+    "type_cs_std": _scenario(
+        "Value types", "CompoundScalar field access - native operators",
+        type_cs_std),
+    "type_cs_py": _scenario(
+        "Value types", "CompoundScalar crossing Python nodes", type_cs_py),
+    "type_tsb_partial_fields_std": _scenario(
+        "Value types", "Bundle with partial field updates",
+        type_tsb_partial_fields_std, suite="diagnostic"),
+    "type_tsw_append_evict_std": _scenario(
+        "Value types", "Tick window append and eviction",
+        type_tsw_append_evict_std, suite="diagnostic"),
+    "tss_add_remove_std": _scenario(
+        "Value types", "Set add/remove deltas", tss_add_remove_std,
+        suite="diagnostic", independent_size=True),
+
+    "tsd_dense_std": _scenario(
+        "TSD - dense", "Map and reduce - native child graph",
+        tsd_dense_std, independent_size=True),
+    "tsd_dense_py": _scenario(
+        "TSD - dense", "Map and reduce - Python map child",
+        tsd_dense_py, independent_size=True),
+    "tsd_dense_source_std": _scenario(
+        "TSD - dense", "Source only", tsd_dense_source_std,
+        suite="diagnostic", independent_size=True),
+    "tsd_dense_map_std": _scenario(
+        "TSD - dense", "Map only", tsd_dense_map_std,
+        suite="diagnostic", independent_size=True),
+    "tsd_dense_reduce_std": _scenario(
+        "TSD - dense", "Reduce only", tsd_dense_reduce_std,
+        suite="diagnostic", independent_size=True),
+    "tsd_dense_strkeys_std": _scenario(
+        "TSD - dense", "String-key map and reduce", tsd_dense_strkeys_std,
+        suite="diagnostic", independent_size=True),
+
+    "tsd_sparse_std": _scenario(
+        "TSD - sparse", "Map and reduce with five updates per cycle",
+        tsd_sparse_std, independent_size=True),
+    "tsd_sparse_source_std": _scenario(
+        "TSD - sparse", "Source only", tsd_sparse_source_std,
+        suite="diagnostic", independent_size=True),
+    "tsd_sparse_map_std": _scenario(
+        "TSD - sparse", "Map only", tsd_sparse_map_std,
+        suite="diagnostic", independent_size=True),
+    "tsd_sparse_reduce_std": _scenario(
+        "TSD - sparse", "Reduce only", tsd_sparse_reduce_std,
+        suite="diagnostic", independent_size=True),
+    "tsd_sparse_large_capacity_std": _scenario(
+        "TSD - sparse", "Large retained capacity with two updates per cycle",
+        tsd_sparse_large_capacity_std, suite="diagnostic",
+        independent_size=True),
+
+    "tsd_churn_std": _scenario(
+        "TSD - key lifecycle", "Map and reduce with key replacement",
+        tsd_churn_std, independent_size=True),
+    "tsd_churn_py": _scenario(
+        "TSD - key lifecycle", "Python map with key replacement",
+        tsd_churn_py, independent_size=True),
+    "tsd_churn_source_std": _scenario(
+        "TSD - key lifecycle", "Key replacement - source only",
+        tsd_churn_source_std, suite="diagnostic", independent_size=True),
+    "tsd_churn_map_std": _scenario(
+        "TSD - key lifecycle", "Key replacement - map only",
+        tsd_churn_map_std, suite="diagnostic", independent_size=True),
+    "tsd_churn_reduce_std": _scenario(
+        "TSD - key lifecycle", "Key replacement - reduce only",
+        tsd_churn_reduce_std, suite="diagnostic", independent_size=True),
+    "tsd_capacity_growth_std": _scenario(
+        "TSD - key lifecycle", "Monotonic key growth across capacity boundaries",
+        tsd_capacity_growth_std, suite="diagnostic", independent_size=True),
+    "tsd_clear_repopulate_std": _scenario(
+        "TSD - key lifecycle", "Full clear followed by repopulation",
+        tsd_clear_repopulate_std, suite="diagnostic", independent_size=True),
+    "tsd_key_reactivation_std": _scenario(
+        "TSD - key lifecycle", "Remove and later recreate the same keys",
+        tsd_key_reactivation_std, suite="diagnostic", independent_size=True),
+    "tsd_two_input_union_std": _scenario(
+        "TSD - key lifecycle", "Two-input map with union membership",
+        tsd_two_input_union_std, suite="diagnostic", independent_size=True),
+    "tsd_two_input_intersection_std": _scenario(
+        "TSD - key lifecycle", "Two-input map with intersection membership",
+        tsd_two_input_intersection_std, suite="diagnostic",
+        independent_size=True),
+    "tsd_explicit_key_set_std": _scenario(
+        "TSD - key lifecycle", "Map driven by an explicit key set",
+        tsd_explicit_key_set_std, suite="diagnostic", independent_size=True),
+
+    "reduce_tsd_nested_graph_std": _scenario(
+        "Reduce", "Dense TSD with nested graph combiner",
+        reduce_tsd_nested_graph_std, suite="diagnostic", independent_size=True),
+    "reduce_tsd_python_combiner": _scenario(
+        "Reduce", "Dense TSD with Python node combiner",
+        reduce_tsd_python_combiner, suite="diagnostic", independent_size=True),
+    "reduce_fixed_tsl_ordered_std": _scenario(
+        "Reduce", "Ordered non-associative fixed-list reduction",
+        reduce_fixed_tsl_ordered_std, suite="diagnostic"),
+    "reduce_tsd_without_zero_std": _scenario(
+        "Reduce", "Empty/singleton/two-value TSD without zero",
+        reduce_tsd_without_zero_std, suite="diagnostic", modes=HG_CPP_ONLY),
+    "reduce_dynamic_tsl_std": _scenario(
+        "hg_cpp - dynamic TSL", "Sparse map and reduce over an unbounded list",
+        reduce_dynamic_tsl_std, suite="diagnostic", modes=HG_CPP_ONLY,
+        independent_size=True),
+
+    "switch_alternating_branch_sizes_std": _scenario(
+        "Nested graphs", "Switch alternating small and large branches",
+        switch_alternating_branch_sizes_std),
+    "switch_keyed_collection_std": _scenario(
+        "Nested graphs", "Switch returning a churning keyed collection",
+        switch_keyed_collection_std, independent_size=True),
+    "mesh_std": _scenario(
+        "Nested graphs", "Mesh with predecessor dependencies and key churn",
+        mesh_std, independent_size=True),
+
+    "service_reference_std": _scenario(
+        "Services", "Reference service - native implementation",
+        service_reference_std, independent_size=True),
+    "service_reference_py": _scenario(
+        "Services", "Reference service - Python implementation",
+        service_reference_py, independent_size=True),
+    "service_request_reply_std": _scenario(
+        "Services", "Request/reply service - native implementation",
+        service_request_reply_std, independent_size=True),
+    "service_request_reply_py": _scenario(
+        "Services", "Request/reply service - Python implementation",
+        service_request_reply_py, independent_size=True),
+    "service_request_reply_multiple_paths_std": _scenario(
+        "Services", "Request/reply service across multiple paths",
+        service_request_reply_multiple_paths_std, suite="diagnostic",
+        independent_size=True),
+    "service_subscription_std": _scenario(
+        "Services", "Subscription service - native implementation",
+        service_subscription_std, independent_size=True),
+    "service_subscription_py": _scenario(
+        "Services", "Subscription service - Python implementation",
+        service_subscription_py, independent_size=True),
+
+    "adaptor_std": _scenario(
+        "Adaptors", "Duplex adaptor - native implementation", adaptor_std),
+    "adaptor_py": _scenario(
+        "Adaptors", "Duplex adaptor - Python implementation", adaptor_py),
+    "service_adaptor_std": _scenario(
+        "Adaptors", "Multiplexed service adaptor - native implementation",
+        service_adaptor_std, independent_size=True),
+    "service_adaptor_py": _scenario(
+        "Adaptors", "Multiplexed service adaptor - Python implementation",
+        service_adaptor_py, independent_size=True),
 }

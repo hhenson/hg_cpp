@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import platform
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -127,12 +128,22 @@ def mode_invocation(mode: str):
     return str(upstream_python()), env
 
 
-def run_one(mode: str, scenario: str, scale: float, timeout: int):
+def run_one(
+    mode: str,
+    scenario: str,
+    cycle_scale: float,
+    size_scale: float,
+    timeout: int,
+):
     exe, extra_env = mode_invocation(mode)
     env = os.environ.copy()
     env.pop("HGRAPH_USE_CPP", None)
     env.update(extra_env)
-    cmd = [exe, str(RUNNER), "--scenario", scenario, "--scale", str(scale)]
+    cmd = [
+        exe, str(RUNNER), "--scenario", scenario,
+        "--cycle-scale", str(cycle_scale),
+        "--size-scale", str(size_scale),
+    ]
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout, env=env,
@@ -150,6 +161,44 @@ def run_one(mode: str, scenario: str, scale: float, timeout: int):
         return {"scenario": scenario, "ok": False, "error": f"timeout after {timeout}s"}
 
 
+def aggregate_samples(sample_results: list[dict]) -> dict:
+    """Combine fresh-process samples without hiding intermittent failures."""
+    failures = [sample for sample in sample_results if not sample.get("ok")]
+    if failures:
+        errors = [
+            f"sample {index + 1}: {sample.get('error', 'unknown failure')}"
+            for index, sample in enumerate(sample_results)
+            if not sample.get("ok")
+        ]
+        result = dict(sample_results[0])
+        result.update(
+            ok=False,
+            error="\n".join(errors),
+            samples=sample_results,
+        )
+        return result
+
+    seconds = [sample["seconds"] for sample in sample_results]
+    median_seconds = statistics.median(seconds)
+    mad_seconds = statistics.median(
+        abs(value - median_seconds) for value in seconds
+    )
+    result = dict(sample_results[0])
+    result.update(
+        seconds=median_seconds,
+        seconds_mad=mad_seconds,
+        seconds_min=min(seconds),
+        seconds_max=max(seconds),
+        sample_count=len(seconds),
+        samples=sample_results,
+        cycles_per_s=(
+            round(result["cycles"] / median_seconds) if median_seconds > 0 else None
+        ),
+        max_rss_mb=max(sample["max_rss_mb"] for sample in sample_results),
+    )
+    return result
+
+
 def validate_mode(mode: str) -> None:
     exe, extra_env = mode_invocation(mode)
     env = os.environ.copy()
@@ -163,44 +212,86 @@ def validate_mode(mode: str) -> None:
         raise RuntimeError(f"benchmark workload validation failed for {mode}:\n{detail}")
 
 
-def render(results: dict, scale: float) -> str:
+def render(
+    results: dict,
+    cycle_scale: float,
+    size_scale: float,
+    samples: int,
+) -> str:
     """results: {scenario: {mode: result_dict}} -> markdown matrix."""
-    scenarios = list(results)
     lines = [
-        f"# hgraph performance matrix (scale={scale})",
+        "# hgraph performance matrix",
         "",
         f"- date: {dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')}",
         f"- host: {platform.platform()} / {platform.processor() or platform.machine()}",
+        f"- cycle scale: {cycle_scale}",
+        f"- size scale: {size_scale}",
+        f"- fresh-process samples: {samples}",
         f"- modes: upstream-py / upstream-cpp = pip hgraph "
         f"(HGRAPH_USE_CPP toggles the old C++ runtime); hg-cpp = this repo",
         "",
-        "Seconds per scenario (lower is better); xN = speed-up vs upstream-py.",
-        "",
-        "| scenario | cycles | upstream-py | upstream-cpp | hg-cpp |",
-        "|---|---|---|---|---|",
+        "Median seconds per scenario (lower is better); +/- is median absolute "
+        "deviation and xN is speed-up vs upstream-py.",
+        "hg_cpp-only sections are tracked without an upstream comparison.",
     ]
-    for name in scenarios:
-        per_mode = results[name]
+    current_group = None
+    group_is_hg_cpp_only = False
+    for name, per_mode in results.items():
+        metadata = next(
+            (value for value in per_mode.values() if not value.get("skipped")),
+            next(iter(per_mode.values())),
+        )
+        group = metadata.get("group", "Ungrouped")
+        label = metadata.get("label", name)
+        if group != current_group:
+            current_group = group
+            group_is_hg_cpp_only = metadata.get("supported_modes") == ["hg-cpp"]
+            lines += ["", f"## {group}", ""]
+            if group_is_hg_cpp_only:
+                lines += [
+                    "This section is tracked within hg_cpp and is not a "
+                    "cross-implementation comparison.",
+                    "",
+                    "| workload | cycles | hg-cpp |",
+                    "|---|---|---|",
+                ]
+            else:
+                lines += [
+                    "| workload | cycles | upstream-py | upstream-cpp | hg-cpp |",
+                    "|---|---|---|---|---|",
+                ]
         base = per_mode.get("upstream-py", {})
         base_s = base.get("seconds") if base.get("ok") else None
         cycles = next(
             (r.get("cycles") for r in per_mode.values() if r.get("ok")), "-")
         cells = []
         for mode in MODES:
-            r = per_mode.get(mode, {})
+            r = per_mode.get(mode)
+            if r is None or r.get("skipped"):
+                cells.append("N/A")
+                continue
             if r.get("ok"):
                 s = r["seconds"]
                 cell = f"{s:.3f}s"
+                if r.get("sample_count", 1) > 1:
+                    cell += f" +/- {r['seconds_mad']:.3f}s"
                 if base_s and mode != "upstream-py":
                     cell += f" (x{base_s / s:.1f})" if s else ""
                 cells.append(cell)
             else:
                 cells.append("FAIL")
-        lines.append(f"| {name} | {cycles} | {cells[0]} | {cells[1]} | {cells[2]} |")
+        if group_is_hg_cpp_only:
+            lines.append(f"| {label} (`{name}`) | {cycles} | {cells[2]} |")
+        else:
+            lines.append(
+                f"| {label} (`{name}`) | {cycles} | "
+                f"{cells[0]} | {cells[1]} | {cells[2]} |"
+            )
     failures = [
         (name, mode, r["error"])
         for name, per_mode in results.items()
-        for mode, r in per_mode.items() if not r.get("ok")
+        for mode, r in per_mode.items()
+        if not r.get("ok") and not r.get("skipped")
     ]
     if failures:
         lines += ["", "## Failures", ""]
@@ -211,9 +302,20 @@ def render(results: dict, scale: float) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scale", type=float, default=1.0)
+    parser.add_argument("--scale", type=float,
+                        help="legacy shorthand setting both cycle and size scale")
+    parser.add_argument("--cycle-scale", type=float,
+                        help="scale only the number of engine cycles")
+    parser.add_argument("--size-scale", type=float,
+                        help="scale graph width, collection size, or client count")
+    parser.add_argument("--samples", type=int, default=3,
+                        help="fresh-process timing samples per workload/mode")
     parser.add_argument("--scenario", action="append",
                         help="restrict to scenario(s); default all")
+    parser.add_argument("--suite", action="append", choices=("core", "diagnostic"),
+                        help="select suite(s); default core")
+    parser.add_argument("--group", action="append",
+                        help="restrict to exact report group name")
     parser.add_argument("--mode", action="append", choices=MODES,
                         help="restrict to mode(s); default all")
     parser.add_argument("--timeout", type=int, default=300,
@@ -222,6 +324,13 @@ def main() -> int:
     parser.add_argument("--skip-validation", action="store_true",
                         help="skip the cross-runtime workload correctness preflight")
     args = parser.parse_args()
+
+    if args.samples < 1:
+        parser.error("--samples must be at least 1")
+    cycle_scale = args.cycle_scale if args.cycle_scale is not None else args.scale
+    size_scale = args.size_scale if args.size_scale is not None else args.scale
+    cycle_scale = 1.0 if cycle_scale is None else cycle_scale
+    size_scale = 1.0 if size_scale is None else size_scale
 
     modes = args.mode or list(MODES)
     if any(m.startswith("upstream") for m in modes):
@@ -239,21 +348,72 @@ def main() -> int:
 
     sys.path.insert(0, str(BENCH_DIR))
     import scenarios as sc
-    names = args.scenario or list(sc.SCENARIOS)
+    if args.scenario:
+        unknown = sorted(set(args.scenario) - set(sc.SCENARIOS))
+        if unknown:
+            parser.error(f"unknown scenario(s): {', '.join(unknown)}")
+        names = args.scenario
+    else:
+        default_suites = ("core", "diagnostic") if args.group else ("core",)
+        suites = set(args.suite or default_suites)
+        groups = set(args.group or ())
+        names = [
+            name for name, scenario in sc.SCENARIOS.items()
+            if scenario.suite in suites and (not groups or scenario.group in groups)
+        ]
+    if not names:
+        parser.error("scenario filters selected no workloads")
 
     results = {}
-    for name in names:
+    for scenario_index, name in enumerate(names):
+        scenario = sc.SCENARIOS[name]
         results[name] = {}
+        active_modes = [mode for mode in modes if mode in scenario.modes]
         for mode in modes:
-            print(f"[run] {name} / {mode} ...", end="", flush=True)
-            r = run_one(mode, name, args.scale, args.timeout)
-            results[name][mode] = r
-            print(f" {r.get('seconds', 'FAIL')}{'s' if r.get('ok') else ''}")
+            if mode not in scenario.modes:
+                results[name][mode] = {
+                    "scenario": name,
+                    "group": scenario.group,
+                    "label": scenario.label,
+                    "suite": scenario.suite,
+                    "supported_modes": list(scenario.modes),
+                    "skipped": True,
+                    "reason": "workload is not supported by this runtime",
+                }
+
+        collected = {mode: [] for mode in active_modes}
+        for sample_index in range(args.samples):
+            if active_modes:
+                offset = (scenario_index + sample_index) % len(active_modes)
+                ordered_modes = active_modes[offset:] + active_modes[:offset]
+            else:
+                ordered_modes = []
+            for mode in ordered_modes:
+                print(
+                    f"[run] {name} / {mode} / sample "
+                    f"{sample_index + 1}/{args.samples} ...",
+                    end="", flush=True,
+                )
+                sample = run_one(
+                    mode, name, cycle_scale, size_scale, args.timeout
+                )
+                collected[mode].append(sample)
+                print(
+                    f" {sample.get('seconds', 'FAIL')}"
+                    f"{'s' if sample.get('ok') else ''}"
+                )
+        for mode, sample_results in collected.items():
+            aggregate = aggregate_samples(sample_results)
+            aggregate.setdefault("group", scenario.group)
+            aggregate.setdefault("label", scenario.label)
+            aggregate.setdefault("suite", scenario.suite)
+            aggregate.setdefault("supported_modes", list(scenario.modes))
+            results[name][mode] = aggregate
 
     RESULTS_DIR.mkdir(exist_ok=True)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
     (RESULTS_DIR / f"raw-{stamp}.json").write_text(json.dumps(results, indent=2))
-    report = render(results, args.scale)
+    report = render(results, cycle_scale, size_scale, args.samples)
     report_path = RESULTS_DIR / f"matrix-{stamp}.md"
     report_path.write_text(report)
     print(f"\n{report}\nwritten: {report_path}")

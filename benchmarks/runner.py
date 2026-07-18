@@ -3,7 +3,7 @@ implementation is installed in the current interpreter and prints a JSON
 result line. Always run in a fresh process (state isolation; a crash must
 not take the matrix down).
 
-    python benchmarks/runner.py --scenario tick_std --scale 1.0
+    python benchmarks/runner.py --scenario tick_std --cycle-scale 1.0
     python benchmarks/runner.py --list
 """
 import argparse
@@ -36,19 +36,38 @@ def _implementation_label():
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--scenario")
-    parser.add_argument("--scale", type=float, default=1.0)
+    parser.add_argument("--scale", type=float,
+                        help="legacy shorthand setting both cycle and size scale")
+    parser.add_argument("--cycle-scale", type=float)
+    parser.add_argument("--size-scale", type=float)
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
 
     import scenarios as sc
 
     if args.list:
-        print("\n".join(sc.SCENARIOS))
+        for scenario_id, scenario in sc.SCENARIOS.items():
+            modes = ",".join(scenario.modes)
+            print(
+                f"{scenario_id:44} [{scenario.suite}] "
+                f"{scenario.group} / {scenario.label} ({modes})"
+            )
         return 0
+
+    cycle_scale = args.cycle_scale if args.cycle_scale is not None else args.scale
+    size_scale = args.size_scale if args.size_scale is not None else args.scale
+    cycle_scale = 1.0 if cycle_scale is None else cycle_scale
+    size_scale = 1.0 if size_scale is None else size_scale
+    scenario = sc.SCENARIOS[args.scenario]
 
     result = {
         "scenario": args.scenario,
-        "scale": args.scale,
+        "group": scenario.group,
+        "label": scenario.label,
+        "suite": scenario.suite,
+        "supported_modes": list(scenario.modes),
+        "cycle_scale": cycle_scale,
+        "size_scale": size_scale,
         "use_cpp": os.environ.get("HGRAPH_USE_CPP", ""),
         "source_fingerprint": os.environ.get("HGRAPH_BENCHMARK_SOURCE_FINGERPRINT", ""),
         "hgraph": _implementation_label(),
@@ -62,7 +81,7 @@ def main() -> int:
     try:
         import hgraph as hg
 
-        graph_fn, cycles = sc.SCENARIOS[args.scenario](args.scale)
+        graph_fn, cycles = scenario.build(cycle_scale, size_scale)
         start = hg.MIN_ST
         end = start + (cycles + 2) * hg.MIN_TD
 
@@ -73,7 +92,7 @@ def main() -> int:
         rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         result.update(
             ok=True,
-            seconds=round(seconds, 4),
+            seconds=round(seconds, 6),
             cycles=cycles,
             cycles_per_s=round(cycles / seconds) if seconds > 0 else None,
             max_rss_mb=round(rss / (1024 * 1024 if sys.platform == "darwin" else 1024), 1),

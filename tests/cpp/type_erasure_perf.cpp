@@ -40,6 +40,7 @@ namespace
     std::atomic<std::size_t> g_allocated_bytes{0};
     std::atomic<const hgraph::ValueView *> g_atomic_value_view_input{nullptr};
     volatile std::uint64_t g_retained_value{0};
+    std::uint64_t g_graph_observation{0};
 
     void record_allocation(std::size_t size) noexcept
     {
@@ -340,6 +341,57 @@ namespace
                 }
             }
             cycle.set(current + 1);
+        }
+    };
+
+    struct SparseDynamicTslSource
+    {
+        static constexpr auto name              = "type_erasure_perf_sparse_dynamic_tsl_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(hgraph::Scalar<"size", hgraph::Int> size,
+                         hgraph::Scalar<"per_cycle", hgraph::Int> per_cycle,
+                         hgraph::State<hgraph::Int> cycle,
+                         hgraph::Out<hgraph::TSL<hgraph::TS<hgraph::Int>>> out)
+        {
+            const hgraph::Int current = cycle.get();
+            if (current == 0)
+            {
+                for (hgraph::Int index = 0; index < size.value(); ++index)
+                {
+                    out.set(static_cast<std::size_t>(index), index);
+                }
+            }
+            else
+            {
+                const hgraph::Int base = current * per_cycle.value() % size.value();
+                for (hgraph::Int offset = 0; offset < per_cycle.value(); ++offset)
+                {
+                    out.set(static_cast<std::size_t>((base + offset) % size.value()),
+                            size.value() + current);
+                }
+            }
+            cycle.set(current + 1);
+        }
+    };
+
+    struct DynamicTslObservationSink
+    {
+        static constexpr auto name = "type_erasure_perf_dynamic_tsl_observation_sink";
+
+        static void eval(hgraph::In<"values", hgraph::TSL<hgraph::TS<hgraph::Int>>> values)
+        {
+            g_graph_observation = values.modified() ? 1 : 0;
+        }
+    };
+
+    struct ScalarObservationSink
+    {
+        static constexpr auto name = "type_erasure_perf_scalar_observation_sink";
+
+        static void eval(hgraph::In<"value", hgraph::TS<hgraph::Int>> value)
+        {
+            g_graph_observation = value.modified() ? 1 : 0;
         }
     };
 }  // namespace
@@ -839,8 +891,9 @@ int main()
         });
     nested_graph.stop();
 
-    const auto run_native_tsd_graph = [&](std::string_view name, GraphBuilder builder,
-                                          std::size_t iterations) {
+    const auto run_native_graph = [&](std::string_view name, GraphBuilder builder,
+                                      std::size_t iterations,
+                                      std::optional<std::uint64_t> expected_observation = std::nullopt) {
         MockGraphExecutor executor{builder, MIN_ST, MAX_ET};
         auto graph = executor.view().graph();
         graph.start(MIN_ST);
@@ -857,15 +910,21 @@ int main()
                 const DateTime evaluation_time =
                     MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(++cycle)};
                 executor.set_evaluation_time(evaluation_time);
+                if (expected_observation.has_value()) { g_graph_observation = 0; }
                 graph.schedule_node(0, evaluation_time);
                 if (!graph.evaluate(evaluation_time))
                 {
                     throw std::runtime_error(std::string{name} + " paused");
                 }
-                return std::uint64_t{1};
+                return expected_observation.has_value() ? g_graph_observation : 1;
             },
-            [name](std::uint64_t value) {
-                if (value != 1) { throw std::runtime_error(std::string{name} + " checksum failed"); }
+            [name, expected_observation](std::uint64_t value) {
+                const auto expected = expected_observation.value_or(1);
+                if (expected_observation.has_value() && g_graph_observation != expected)
+                {
+                    throw std::runtime_error(std::string{name} + " did not publish the expected delta");
+                }
+                if (value != expected) { throw std::runtime_error(std::string{name} + " checksum failed"); }
             });
         graph.stop();
     };
@@ -874,21 +933,21 @@ int main()
         Wiring wiring;
         auto source = wire<SparseTsdSource>(wiring, Int{2000}, Int{5});
         static_cast<void>(wire<stdlib::null_sink>(wiring, source));
-        run_native_tsd_graph("native_sparse_tsd_source_cycle", std::move(wiring).finish(), 20000);
+        run_native_graph("native_sparse_tsd_source_cycle", std::move(wiring).finish(), 20000);
     }
     {
         Wiring wiring;
         auto source = wire<SparseTsdSource>(wiring, Int{2000}, Int{5});
         auto mapped = wire<stdlib::map_>(wiring, fn<BenchmarkMapper>(), source);
         static_cast<void>(wire<stdlib::null_sink>(wiring, mapped));
-        run_native_tsd_graph("native_sparse_tsd_map_cycle", std::move(wiring).finish(), 20000);
+        run_native_graph("native_sparse_tsd_map_cycle", std::move(wiring).finish(), 20000);
     }
     {
         Wiring wiring;
         auto source = wire<SparseTsdSource>(wiring, Int{2000}, Int{5});
         auto reduced = wire<stdlib::reduce_>(wiring, fn<stdlib::add_>(), source);
         static_cast<void>(wire<stdlib::null_sink>(wiring, reduced));
-        run_native_tsd_graph("native_sparse_tsd_reduce_cycle", std::move(wiring).finish(), 20000);
+        run_native_graph("native_sparse_tsd_reduce_cycle", std::move(wiring).finish(), 20000);
     }
     {
         Wiring wiring;
@@ -896,7 +955,7 @@ int main()
         auto mapped = wire<stdlib::map_>(wiring, fn<BenchmarkMapper>(), source);
         auto reduced = wire<stdlib::reduce_>(wiring, fn<stdlib::add_>(), mapped);
         static_cast<void>(wire<stdlib::null_sink>(wiring, reduced));
-        run_native_tsd_graph("native_sparse_tsd_map_reduce_cycle", std::move(wiring).finish(), 20000);
+        run_native_graph("native_sparse_tsd_map_reduce_cycle", std::move(wiring).finish(), 20000);
     }
 
     const auto add_native_tsd_variants = [&](std::string_view prefix, auto wire_source) {
@@ -904,21 +963,21 @@ int main()
             Wiring wiring;
             auto source = wire_source(wiring);
             static_cast<void>(wire<stdlib::null_sink>(wiring, source));
-            run_native_tsd_graph(std::string{prefix} + "_source_cycle", std::move(wiring).finish(), 2000);
+            run_native_graph(std::string{prefix} + "_source_cycle", std::move(wiring).finish(), 2000);
         }
         {
             Wiring wiring;
             auto source = wire_source(wiring);
             auto mapped = wire<stdlib::map_>(wiring, fn<BenchmarkMapper>(), source);
             static_cast<void>(wire<stdlib::null_sink>(wiring, mapped));
-            run_native_tsd_graph(std::string{prefix} + "_map_cycle", std::move(wiring).finish(), 2000);
+            run_native_graph(std::string{prefix} + "_map_cycle", std::move(wiring).finish(), 2000);
         }
         {
             Wiring wiring;
             auto source = wire_source(wiring);
             auto reduced = wire<stdlib::reduce_>(wiring, fn<stdlib::add_>(), source);
             static_cast<void>(wire<stdlib::null_sink>(wiring, reduced));
-            run_native_tsd_graph(std::string{prefix} + "_reduce_cycle", std::move(wiring).finish(), 2000);
+            run_native_graph(std::string{prefix} + "_reduce_cycle", std::move(wiring).finish(), 2000);
         }
         {
             Wiring wiring;
@@ -926,7 +985,7 @@ int main()
             auto mapped = wire<stdlib::map_>(wiring, fn<BenchmarkMapper>(), source);
             auto reduced = wire<stdlib::reduce_>(wiring, fn<stdlib::add_>(), mapped);
             static_cast<void>(wire<stdlib::null_sink>(wiring, reduced));
-            run_native_tsd_graph(std::string{prefix} + "_map_reduce_cycle", std::move(wiring).finish(), 2000);
+            run_native_graph(std::string{prefix} + "_map_reduce_cycle", std::move(wiring).finish(), 2000);
         }
     };
 
@@ -942,6 +1001,42 @@ int main()
     add_native_tsd_variants("native_churn_tsd", [](Wiring &wiring) {
         return wire<ChurnTsdSource>(wiring, Int{200}, Int{5});
     });
+
+    const auto add_native_dynamic_tsl_variants = [&](std::string_view prefix) {
+        const auto wire_source = [](Wiring &wiring) {
+            return wire<SparseDynamicTslSource>(wiring, Int{2000}, Int{5});
+        };
+        {
+            Wiring wiring;
+            auto source = wire_source(wiring);
+            static_cast<void>(wire<DynamicTslObservationSink>(wiring, source));
+            run_native_graph(std::string{prefix} + "_source_cycle", std::move(wiring).finish(), 20000, 1);
+        }
+        {
+            Wiring wiring;
+            auto source = wire_source(wiring);
+            auto mapped = wire<stdlib::map_>(wiring, fn<BenchmarkMapper>(), source);
+            static_cast<void>(wire<DynamicTslObservationSink>(wiring, mapped));
+            run_native_graph(std::string{prefix} + "_map_cycle", std::move(wiring).finish(), 20000, 1);
+        }
+        {
+            Wiring wiring;
+            auto source = wire_source(wiring);
+            auto reduced = wire<stdlib::reduce_>(wiring, fn<stdlib::add_>(), source);
+            static_cast<void>(wire<ScalarObservationSink>(wiring, reduced));
+            run_native_graph(std::string{prefix} + "_reduce_cycle", std::move(wiring).finish(), 20000, 1);
+        }
+        {
+            Wiring wiring;
+            auto source = wire_source(wiring);
+            auto mapped = wire<stdlib::map_>(wiring, fn<BenchmarkMapper>(), source);
+            auto reduced = wire<stdlib::reduce_>(wiring, fn<stdlib::add_>(), mapped);
+            static_cast<void>(wire<ScalarObservationSink>(wiring, reduced));
+            run_native_graph(std::string{prefix} + "_map_reduce_cycle", std::move(wiring).finish(), 20000, 1);
+        }
+    };
+
+    add_native_dynamic_tsl_variants("native_sparse_dynamic_tsl");
 
     const std::vector<std::optional<Str>> switch_keys{Str{"a"}, Str{"b"}, Str{"a"}, Str{"b"}};
     const std::vector<std::optional<Int>> switch_inputs{Int{3}, Int{4}, Int{5}, Int{6}};
