@@ -51,10 +51,19 @@ namespace hgraph::ts_data_plan_factory_detail
         using TSDataErasedOwner =
             MemoryUtils::ErasedOwner<HeapOnlyTSDataStoragePolicy, TypeRecord>;
 
+        struct DynamicTSLIndexEntry
+        {
+            std::int64_t ordinal_key{0};
+            std::size_t next_modified{0};
+        };
+
         class DynamicTSLStorage
         {
           public:
-            DynamicTSLStorage() = default;
+            DynamicTSLStorage() : ordinal_keys_(1)
+            {
+                ordinal_keys_.front().ordinal_key = MIN_DT.time_since_epoch().count();
+            }
 
             DynamicTSLStorage(const DynamicTSLStorage &)            = delete;
             DynamicTSLStorage &operator=(const DynamicTSLStorage &) = delete;
@@ -79,7 +88,73 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] const std::int64_t &ordinal_key(std::size_t index) const
             {
-                return ordinal_keys_.at(index);
+                return ordinal_keys_.at(index + 1).ordinal_key;
+            }
+
+            void record_child_modified(std::size_t index, DateTime modified_time)
+            {
+                auto &header = ordinal_keys_.front();
+                if (DateTime{std::chrono::microseconds{header.ordinal_key}} != modified_time)
+                {
+                    header.ordinal_key = modified_time.time_since_epoch().count();
+                    header.next_modified = 0;
+                }
+                // Child tracking notifies its parent only on the first mutation
+                // at a given evaluation time. Keep a circular list whose header
+                // points at the tail, preserving notification order in the
+                // existing ordinal-key allocation.
+                const std::size_t position = index + 1;
+                auto &entry = ordinal_keys_.at(position);
+                if (header.next_modified == 0)
+                {
+                    entry.next_modified = position;
+                }
+                else
+                {
+                    auto &tail = ordinal_keys_[header.next_modified];
+                    entry.next_modified = tail.next_modified;
+                    tail.next_modified = position;
+                }
+                header.next_modified = position;
+            }
+
+            [[nodiscard]] std::size_t modified_index_count() const noexcept
+            {
+                const auto &header = ordinal_keys_.front();
+                if (DateTime{std::chrono::microseconds{header.ordinal_key}} != tracking_.last_modified_time ||
+                    header.next_modified == 0)
+                {
+                    return 0;
+                }
+
+                const std::size_t first = ordinal_keys_[header.next_modified].next_modified;
+                std::size_t count = 1;
+                for (std::size_t position = ordinal_keys_[first].next_modified; position != first;
+                     position = ordinal_keys_[position].next_modified)
+                {
+                    ++count;
+                }
+                return count;
+            }
+
+            [[nodiscard]] std::size_t modified_index_at(std::size_t ordinal) const
+            {
+                const auto &header = ordinal_keys_.front();
+                if (DateTime{std::chrono::microseconds{header.ordinal_key}} != tracking_.last_modified_time ||
+                    header.next_modified == 0)
+                {
+                    throw std::out_of_range("dynamic TSL has no current modified indices");
+                }
+                std::size_t position = ordinal_keys_[header.next_modified].next_modified;
+                for (std::size_t current = 0; current < ordinal; ++current)
+                {
+                    position = ordinal_keys_.at(position).next_modified;
+                    if (position == ordinal_keys_[header.next_modified].next_modified)
+                    {
+                        throw std::out_of_range("dynamic TSL modified index ordinal is out of range");
+                    }
+                }
+                return position - 1;
             }
 
             void ensure_size(std::size_t size, TSRoleTypeRef element_type)
@@ -100,7 +175,9 @@ namespace hgraph::ts_data_plan_factory_detail
                     const auto index = elements_.size();
                     elements_.emplace_back(*element_type.record());
                     auto rollback = UnwindCleanupGuard([&] { elements_.pop_back(); });
-                    ordinal_keys_.push_back(static_cast<std::int64_t>(index));
+                    ordinal_keys_.push_back(DynamicTSLIndexEntry{
+                        .ordinal_key = static_cast<std::int64_t>(index),
+                    });
                     rollback.release();
                 }
                 binding_rollback.release();
@@ -113,7 +190,7 @@ namespace hgraph::ts_data_plan_factory_detail
             // must not. The heap-only policy above keeps published child
             // addresses stable while preserving vector locality for handles.
             std::vector<TSDataErasedOwner>  elements_{};
-            std::vector<std::int64_t>         ordinal_keys_{};
+            std::vector<DynamicTSLIndexEntry> ordinal_keys_{};
         };
 
         void dynamic_list_storage_construct(void *dst, const void *)
@@ -284,6 +361,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     .mutable_value_memory_impl = &dynamic_mutable_value_memory,
                     .delta_memory_impl         = &dynamic_delta_memory,
                     .mutable_delta_memory_impl = &dynamic_mutable_delta_memory,
+                    .record_child_modified_impl = &dynamic_record_child_modified,
                     .copy_value_from_impl      = &dynamic_copy_value_from,
                     .move_value_from_impl      = &dynamic_move_value_from,
                     .empty_delta_impl          = &ts_data_detail::empty_delta_tsl,
@@ -297,6 +375,8 @@ namespace hgraph::ts_data_plan_factory_detail
                     .indexed_child_growth      = true,
                 };
                 ops.size_impl                   = &dynamic_indexed_size;
+                ops.modified_index_count_impl   = &dynamic_modified_index_count;
+                ops.modified_index_at_impl      = &dynamic_modified_index_at;
                 ops.element_binding_impl        = &dynamic_indexed_element_binding;
                 ops.element_memory_impl         = &dynamic_indexed_element_memory;
                 ops.mutable_element_memory_impl = &dynamic_mutable_indexed_element_memory;
@@ -453,6 +533,24 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::size_t dynamic_indexed_size(const void *, const void *memory) noexcept
             {
                 return storage(memory).size();
+            }
+
+            static void dynamic_record_child_modified(const void *, void *memory, std::size_t child_id,
+                                                      DateTime modified_time)
+            {
+                storage(memory).record_child_modified(child_id, modified_time);
+            }
+
+            [[nodiscard]] static std::size_t dynamic_modified_index_count(const void *,
+                                                                          const void *memory) noexcept
+            {
+                return storage(memory).modified_index_count();
+            }
+
+            [[nodiscard]] static std::size_t dynamic_modified_index_at(const void *, const void *memory,
+                                                                       std::size_t ordinal)
+            {
+                return storage(memory).modified_index_at(ordinal);
             }
 
             [[nodiscard]] static TSRoleTypeRef dynamic_indexed_element_binding(const void *context,
@@ -654,38 +752,19 @@ namespace hgraph::ts_data_plan_factory_detail
                 return time != MIN_DT && child_tracking != nullptr && child_tracking->last_modified_time == time;
             }
 
-            [[nodiscard]] static bool dynamic_delta_child_predicate(const void *context,
-                                                                    const void *memory,
-                                                                    std::size_t index)
-            {
-                return child_modified_for_parent_time(ctx(context), memory, index);
-            }
-
             [[nodiscard]] static std::size_t dynamic_delta_map_size(const void *context,
                                                                     const void *memory) noexcept
             {
-                const auto *state = ctx(context);
-                const auto &store = storage(memory);
-                std::size_t count = 0;
-                for (std::size_t index = 0; index < store.size(); ++index)
-                {
-                    if (child_modified_for_parent_time(state, memory, index)) { ++count; }
-                }
-                return count;
+                static_cast<void>(context);
+                return storage(memory).modified_index_count();
             }
 
             [[nodiscard]] static std::size_t nth_modified_child(const DynamicTSLContext *state,
                                                                 const void *memory,
                                                                 std::size_t ordinal)
             {
-                const auto &store = storage(memory);
-                std::size_t seen = 0;
-                for (std::size_t index = 0; index < store.size(); ++index)
-                {
-                    if (!child_modified_for_parent_time(state, memory, index)) { continue; }
-                    if (seen++ == ordinal) { return index; }
-                }
-                throw std::out_of_range("dynamic TSL delta map index out of range");
+                static_cast<void>(state);
+                return storage(memory).modified_index_at(ordinal);
             }
 
             [[nodiscard]] static const void *dynamic_delta_map_key_at_index(const void *context,
@@ -745,15 +824,17 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] static ValueView dynamic_delta_map_key_projector(const void *context,
                                                                            const void *memory,
-                                                                           std::size_t index)
+                                                                           std::size_t ordinal)
             {
+                const auto index = nth_modified_child(ctx(context), memory, ordinal);
                 return ValueView{ctx(context)->ordinal_key_binding, &storage(memory).ordinal_key(index)};
             }
 
             [[nodiscard]] static ValueView dynamic_delta_map_value_projector(const void *context,
                                                                              const void *memory,
-                                                                             std::size_t index)
+                                                                             std::size_t ordinal)
             {
+                const auto index = nth_modified_child(ctx(context), memory, ordinal);
                 return child_delta_view(ctx(context), memory, index);
             }
 
@@ -770,8 +851,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 return Range<ValueView>{
                     .context   = context,
                     .memory    = memory,
-                    .limit     = storage(memory).size(),
-                    .predicate = &dynamic_delta_child_predicate,
+                    .limit     = dynamic_delta_map_size(context, memory),
+                    .predicate = nullptr,
                     .projector = &dynamic_delta_map_key_projector,
                 };
             }
@@ -782,8 +863,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 return Range<ValueView>{
                     .context   = context,
                     .memory    = memory,
-                    .limit     = storage(memory).size(),
-                    .predicate = &dynamic_delta_child_predicate,
+                    .limit     = dynamic_delta_map_size(context, memory),
+                    .predicate = nullptr,
                     .projector = &dynamic_delta_map_value_projector,
                 };
             }
@@ -795,8 +876,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 return KeyValueRange<ValueView, ValueView>{
                     .context   = context,
                     .memory    = memory,
-                    .limit     = storage(memory).size(),
-                    .predicate = &dynamic_delta_child_predicate,
+                    .limit     = dynamic_delta_map_size(context, memory),
+                    .predicate = nullptr,
                     .projector = &dynamic_delta_map_kv_projector,
                 };
             }
@@ -813,9 +894,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 const auto *state = ctx(context);
                 const auto &store = storage(memory);
                 std::size_t result = 0;
-                for (std::size_t index = 0; index < store.size(); ++index)
+                for (std::size_t ordinal = 0; ordinal < store.modified_index_count(); ++ordinal)
                 {
-                    if (!child_modified_for_parent_time(state, memory, index)) { continue; }
+                    const auto index = store.modified_index_at(ordinal);
                     const auto key_hash = state->ordinal_key_binding.ops_ref().hash(&store.ordinal_key(index));
                     const auto value_hash = view_hash(child_delta_view(state, memory, index));
                     result ^= dynamic_combine_hash(key_hash, value_hash);
@@ -868,9 +949,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 fmt::memory_buffer out;
                 fmt::format_to(std::back_inserter(out), "{{");
                 bool first = true;
-                for (std::size_t index = 0; index < store.size(); ++index)
+                for (std::size_t ordinal = 0; ordinal < store.modified_index_count(); ++ordinal)
                 {
-                    if (!child_modified_for_parent_time(state, memory, index)) { continue; }
+                    const auto index = store.modified_index_at(ordinal);
                     if (!first) { fmt::format_to(std::back_inserter(out), ", "); }
                     first = false;
                     fmt::format_to(std::back_inserter(out), "{}: {}",
@@ -921,9 +1002,9 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 MapBuilder builder{key_binding, value_binding};
                 const auto &store = storage(memory);
-                for (std::size_t index = 0; index < store.size(); ++index)
+                for (std::size_t ordinal = 0; ordinal < store.modified_index_count(); ++ordinal)
                 {
-                    if (!child_modified_for_parent_time(state, memory, index)) { continue; }
+                    const auto index = store.modified_index_at(ordinal);
                     Value child_delta{child_delta_view(state, memory, index)};
                     if (child_delta.binding() != value_binding)
                     {
@@ -946,12 +1027,10 @@ namespace hgraph::ts_data_plan_factory_detail
                 const auto *state = ctx(context);
                 const auto &store = storage(memory);
                 std::size_t result = 0;
-                for (std::size_t index = 0; index < store.size(); ++index)
+                for (std::size_t ordinal = 0; ordinal < store.modified_index_count(); ++ordinal)
                 {
-                    if (child_modified_for_parent_time(state, memory, index))
-                    {
-                        result ^= state->ordinal_key_binding.ops_ref().hash(&store.ordinal_key(index));
-                    }
+                    const auto index = store.modified_index_at(ordinal);
+                    result ^= state->ordinal_key_binding.ops_ref().hash(&store.ordinal_key(index));
                 }
                 return result;
             }
@@ -989,16 +1068,15 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                        : std::partial_ordering::unordered;
             }
 
-            [[nodiscard]] static std::string dynamic_delta_key_set_to_string(const void *context, const void *memory)
+            [[nodiscard]] static std::string dynamic_delta_key_set_to_string(const void *, const void *memory)
             {
-                const auto *state = ctx(context);
                 const auto &store = storage(memory);
                 fmt::memory_buffer out;
                 fmt::format_to(std::back_inserter(out), "{{");
                 bool first = true;
-                for (std::size_t index = 0; index < store.size(); ++index)
+                for (std::size_t ordinal = 0; ordinal < store.modified_index_count(); ++ordinal)
                 {
-                    if (!child_modified_for_parent_time(state, memory, index)) { continue; }
+                    const auto index = store.modified_index_at(ordinal);
                     if (!first) { fmt::format_to(std::back_inserter(out), ", "); }
                     first = false;
                     fmt::format_to(std::back_inserter(out), "{}", store.ordinal_key(index));
@@ -1041,12 +1119,10 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 SetBuilder builder{key_binding};
                 const auto &store = storage(memory);
-                for (std::size_t index = 0; index < store.size(); ++index)
+                for (std::size_t ordinal = 0; ordinal < store.modified_index_count(); ++ordinal)
                 {
-                    if (child_modified_for_parent_time(state, memory, index))
-                    {
-                        builder.insert_copy(&store.ordinal_key(index));
-                    }
+                    const auto index = store.modified_index_at(ordinal);
+                    builder.insert_copy(&store.ordinal_key(index));
                 }
                 return builder.build_storage();
             }
@@ -1099,6 +1175,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     {
                         throw std::logic_error("dynamic TSL child reported a duplicate modification");
                     }
+                    target.record_child_modified(index, modified_time);
                 }
 
                 return first_for_parent;
@@ -1171,6 +1248,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     {
                         throw std::logic_error("dynamic TSL child reported a duplicate modification");
                     }
+                    target.record_child_modified(index, modified_time);
                 }
 
                 return first_for_parent;

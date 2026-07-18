@@ -62,6 +62,9 @@ namespace hgraph
         /** Children modified at the parent view's current modification time. */
         [[nodiscard]] Range<TSDataView> modified_values(DateTime evaluation_time) const;
 
+        /** Child indices modified with the parent's current delta. */
+        [[nodiscard]] Range<std::size_t> modified_indices() const;
+
         /** ``index -> child`` pairs in natural index order. */
         [[nodiscard]] KeyValueRange<std::size_t, TSDataView> items() const;
         [[nodiscard]] KeyValueRange<std::size_t, TSDataView> valid_items() const;
@@ -88,6 +91,8 @@ namespace hgraph
         [[nodiscard]] static KeyValueRange<std::size_t, TSDataView> empty_items_range() noexcept;
         [[nodiscard]] static bool child_valid_predicate(const void *context, const void *, std::size_t index);
         [[nodiscard]] static bool child_modified_predicate(const void *context, const void *, std::size_t index);
+        [[nodiscard]] static std::size_t project_modified_index(const void *context, const void *,
+                                                                std::size_t ordinal);
         [[nodiscard]] static TSDataView project_value(const void *context, const void *, std::size_t index);
         [[nodiscard]] static std::pair<std::size_t, TSDataView> project_item(const void *context, const void *,
                                                                              std::size_t index);

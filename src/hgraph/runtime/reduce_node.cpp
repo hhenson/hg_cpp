@@ -492,47 +492,94 @@ namespace hgraph
             return structural;
         }
 
-        [[nodiscard]] bool reconcile_leaf_state(ReduceNodeStorage &storage, const TSLInputView &list_input)
+        [[nodiscard]] bool reconcile_leaf_state(ReduceNodeStorage &storage, const TSLInputView &list_input,
+                                                bool full)
         {
             bool structural = false;
 
-            // A TSL's shape includes slots which have not acquired a value.
-            // Reduction is over its currently-valid children, not its static
-            // capacity, so remove invalidated/repointed children first.
-            std::size_t leaf = 0;
-            while (leaf < storage.dense_to_key.size())
+            if (full)
             {
-                const std::size_t source_slot = storage.dense_to_source_slot[leaf];
-                if (source_slot >= list_input.size() || !list_input[source_slot].valid())
+                // A TSL's shape includes slots which have not acquired a value.
+                // Reduction is over its currently-valid children, not its static
+                // capacity, so remove invalidated/repointed children first.
+                std::size_t leaf = 0;
+                while (leaf < storage.dense_to_key.size())
                 {
-                    record_removed_leaf_paths(storage, leaf);
-                    remove_leaf_at(storage, leaf);
+                    const std::size_t source_slot = storage.dense_to_source_slot[leaf];
+                    if (source_slot >= list_input.size() || !list_input[source_slot].valid())
+                    {
+                        record_removed_leaf_paths(storage, leaf);
+                        remove_leaf_at(storage, leaf);
+                        structural = true;
+                        continue;
+                    }
+                    TSOutputHandle source = effective_output_handle(list_input[source_slot].bound_output());
+                    if (!source.same_as(storage.dense_to_source_handle[leaf]))
+                    {
+                        storage.structural_leaves.push_back(leaf);
+                        storage.dense_to_source_handle[leaf] = source;
+                        structural = true;
+                    }
+                    ++leaf;
+                }
+
+                for (std::size_t index = 0; index < list_input.size(); ++index)
+                {
+                    if (!list_input[index].valid()) { continue; }
+                    Value key{static_cast<Int>(index)};
+                    if (storage.key_to_leaf.find(key) != storage.key_to_leaf.end()) { continue; }
+                    const std::size_t dense_leaf = storage.dense_to_key.size();
+                    storage.structural_leaves.push_back(dense_leaf);
+                    storage.key_to_leaf.emplace(key, dense_leaf);
+                    storage.dense_to_key.push_back(std::move(key));
+                    storage.dense_to_source_slot.push_back(index);
+                    storage.dense_to_source_handle.push_back(
+                        effective_output_handle(list_input[index].bound_output()));
+                    structural = true;
+                }
+                return structural;
+            }
+
+            // Ordinary value ticks cannot affect unmodified TSL children. Limit
+            // validity and forwarding-handle checks to the current delta instead
+            // of walking the retained list twice on every sparse update.
+            auto list_data = list_input.data_view();
+            for (const std::size_t index : list_data.modified_indices())
+            {
+                auto child = list_input[index];
+                Value key{static_cast<Int>(index)};
+                const auto found = storage.key_to_leaf.find(key);
+                if (!child.valid())
+                {
+                    if (found != storage.key_to_leaf.end())
+                    {
+                        record_removed_leaf_paths(storage, found->second);
+                        remove_leaf_at(storage, found->second);
+                        structural = true;
+                    }
+                    continue;
+                }
+
+                if (found == storage.key_to_leaf.end())
+                {
+                    const std::size_t dense_leaf = storage.dense_to_key.size();
+                    storage.structural_leaves.push_back(dense_leaf);
+                    storage.key_to_leaf.emplace(key, dense_leaf);
+                    storage.dense_to_key.push_back(std::move(key));
+                    storage.dense_to_source_slot.push_back(index);
+                    storage.dense_to_source_handle.push_back(
+                        effective_output_handle(child.bound_output()));
                     structural = true;
                     continue;
                 }
-                TSOutputHandle source = effective_output_handle(list_input[source_slot].bound_output());
-                if (!source.same_as(storage.dense_to_source_handle[leaf]))
+
+                TSOutputHandle source = effective_output_handle(child.bound_output());
+                if (!source.same_as(storage.dense_to_source_handle[found->second]))
                 {
-                    storage.structural_leaves.push_back(leaf);
-                    storage.dense_to_source_handle[leaf] = source;
+                    storage.structural_leaves.push_back(found->second);
+                    storage.dense_to_source_handle[found->second] = source;
                     structural = true;
                 }
-                ++leaf;
-            }
-
-            for (std::size_t index = 0; index < list_input.size(); ++index)
-            {
-                if (!list_input[index].valid()) { continue; }
-                Value key{static_cast<Int>(index)};
-                if (storage.key_to_leaf.find(key) != storage.key_to_leaf.end()) { continue; }
-                const std::size_t dense_leaf = storage.dense_to_key.size();
-                storage.structural_leaves.push_back(dense_leaf);
-                storage.key_to_leaf.emplace(key, dense_leaf);
-                storage.dense_to_key.push_back(std::move(key));
-                storage.dense_to_source_slot.push_back(index);
-                storage.dense_to_source_handle.push_back(
-                    effective_output_handle(list_input[index].bound_output()));
-                structural = true;
             }
             return structural;
         }
@@ -544,9 +591,9 @@ namespace hgraph
             return reconcile_leaf_state(storage, dict, full);
         }
 
-        [[nodiscard]] bool reconcile_list_collection(ReduceNodeStorage &storage, TSInputView &input, bool)
+        [[nodiscard]] bool reconcile_list_collection(ReduceNodeStorage &storage, TSInputView &input, bool full)
         {
-            return reconcile_leaf_state(storage, input.as_list());
+            return reconcile_leaf_state(storage, input.as_list(), full);
         }
 
         [[nodiscard]] bool dict_structure_modified(const TSInputView &input, DateTime evaluation_time)
@@ -578,9 +625,9 @@ namespace hgraph
                                          std::vector<std::size_t> &leaves)
         {
             auto list = input.as_list();
-            for (auto &&[index, child] : list.modified_items())
+            auto list_data = list.data_view();
+            for (const std::size_t index : list_data.modified_indices())
             {
-                static_cast<void>(child);
                 const Value key{static_cast<Int>(index)};
                 const auto found = storage.key_to_leaf.find(key);
                 if (found != storage.key_to_leaf.end()) { leaves.push_back(found->second); }
@@ -1016,7 +1063,7 @@ namespace hgraph
                 zero_source = effective_output_handle(root_input.indexed_child_at(1).bound_output());
             }
             const bool list_collection = collection_input.schema()->kind == TSTypeKind::TSL;
-            const bool collection_repointed = !list_collection && storage.source_handles_initialised &&
+            const bool collection_repointed = storage.source_handles_initialised &&
                                               !collection_source.same_as(storage.collection_source);
             const bool zero_repointed = context.spec.has_zero && storage.source_handles_initialised &&
                                         !zero_source.same_as(storage.zero_source);

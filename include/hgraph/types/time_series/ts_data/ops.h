@@ -304,6 +304,10 @@ namespace hgraph
     struct IndexedTSDataOps : TSDataOps
     {
         std::size_t (*size_impl)(const void *context, const void *memory) = &ts_data_detail::missing_indexed_size;
+        /** Optional dense delta index surface. Null retains the generic child-time scan. */
+        std::size_t (*modified_index_count_impl)(const void *context, const void *memory) = nullptr;
+        std::size_t (*modified_index_at_impl)(const void *context, const void *memory,
+                                              std::size_t ordinal) = nullptr;
         TSRoleTypeRef (*element_binding_impl)(
             const void *context,
             const void *memory,

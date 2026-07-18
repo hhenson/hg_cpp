@@ -107,6 +107,28 @@ namespace hgraph
         return values_range(&child_modified_predicate);
     }
 
+    Range<std::size_t> IndexedTSDataView::modified_indices() const
+    {
+        const auto &ops = indexed_ops();
+        if (ops.modified_index_count_impl != nullptr && ops.modified_index_at_impl != nullptr)
+        {
+            return Range<std::size_t>{
+                .context = this,
+                .memory = nullptr,
+                .limit = ops.modified_index_count_impl(ops.context, storage_.data()),
+                .predicate = nullptr,
+                .projector = &project_modified_index,
+            };
+        }
+        return Range<std::size_t>{
+            .context = this,
+            .memory = nullptr,
+            .limit = size(),
+            .predicate = &child_modified_predicate,
+            .projector = &project_modified_index,
+        };
+    }
+
     KeyValueRange<std::size_t, TSDataView> IndexedTSDataView::items() const
     {
         return items_range(nullptr);
@@ -219,6 +241,16 @@ namespace hgraph
     bool IndexedTSDataView::child_modified_predicate(const void *context, const void *, std::size_t index)
     {
         return static_cast<const IndexedTSDataView *>(context)->child_modified_at_parent_time(index);
+    }
+
+    std::size_t IndexedTSDataView::project_modified_index(const void *context, const void *,
+                                                          std::size_t ordinal)
+    {
+        const auto *self = static_cast<const IndexedTSDataView *>(context);
+        const auto &ops = self->indexed_ops();
+        return ops.modified_index_at_impl != nullptr
+                   ? ops.modified_index_at_impl(ops.context, self->storage_.data(), ordinal)
+                   : ordinal;
     }
 
     TSDataView IndexedTSDataView::project_value(const void *context, const void *, std::size_t index)

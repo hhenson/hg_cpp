@@ -1697,6 +1697,8 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     REQUIRE(t1_delta.contains(key_one.view()));
     REQUIRE(t1_delta.at(key_zero.view()).checked_as<std::int32_t>() == 11);
     REQUIRE(t1_delta.at(key_one.view()).checked_as<std::int32_t>() == 22);
+    REQUIRE(std::vector<std::size_t>(list.modified_indices().begin(), list.modified_indices().end()) ==
+            std::vector<std::size_t>{0, 1});
 
     {
         auto longer = stdlib::make_list<std::int32_t>({11, 22, 44});
@@ -1713,6 +1715,8 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     REQUIRE(grown_t1_delta.contains(key_one.view()));
     REQUIRE(grown_t1_delta.contains(key_two.view()));
     REQUIRE(grown_t1_delta.at(key_two.view()).checked_as<std::int32_t>() == 44);
+    REQUIRE(std::vector<std::size_t>(list.modified_indices().begin(), list.modified_indices().end()) ==
+            std::vector<std::size_t>{0, 1, 2});
 
     const auto *float_meta = registry.register_scalar<double>("double");
     const auto *float_tsl = registry.tsl(registry.ts(float_meta), 0);
@@ -1734,6 +1738,8 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     REQUIRE(t2_delta.contains(key_one.view()));
     REQUIRE_FALSE(t2_delta.contains(key_two.view()));
     REQUIRE(t2_delta.at(key_one.view()).checked_as<std::int32_t>() == 33);
+    REQUIRE(std::vector<std::size_t>(list.modified_indices().begin(), list.modified_indices().end()) ==
+            std::vector<std::size_t>{1});
 
     {
         auto shorter = stdlib::make_list<std::int32_t>({1});
