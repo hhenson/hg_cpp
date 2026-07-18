@@ -55,9 +55,15 @@ def _publish_bytes(msg: TS[bytes], topic: str, message_state: object):
     message_state.publish(topic, msg.value)
 
 
+@_publish_bytes.start
+def _start_publish_bytes(message_state: object):
+    message_state.acquire_producer()
+
+
 @_publish_bytes.stop
 def _stop_publish_bytes(message_state: object):
     message_state.flush()
+    message_state.close_producer()
 
 
 @sink_node
@@ -65,9 +71,15 @@ def _publish_message(msg: TS[KafkaMessage], topic: str, message_state: object):
     message_state.publish(topic, msg.value)
 
 
+@_publish_message.start
+def _start_publish_message(message_state: object):
+    message_state.acquire_producer()
+
+
 @_publish_message.stop
 def _stop_publish_message(message_state: object):
     message_state.flush()
+    message_state.close_producer()
 
 
 def message_publisher_operator(msg, topic: str):

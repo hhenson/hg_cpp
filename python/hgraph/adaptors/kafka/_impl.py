@@ -38,8 +38,13 @@ class KafkaMessageState(MessageState):
     config: dict = field(default_factory=dict)
     publishers: set[str] = field(default_factory=set)
     subscribers: set[str] = field(default_factory=set)
-    _producer: object = None
-    _producer_owned: bool = False
+    # The shared Kafka producer, reference-counted across live publisher
+    # nodes (upstream parity: created on the first acquire, closed when the
+    # last publisher releases it). An INJECTED producer (via config) is left
+    # open for the caller that owns it.
+    _kafka_producer: object = None
+    _kafka_producer_count: int = 0
+    _producer_injected: bool = False
     _consumers: dict = field(default_factory=dict)
 
     @classmethod
@@ -55,8 +60,8 @@ class KafkaMessageState(MessageState):
         self.config = dict(config)
         producer = self.config.pop("producer", None)
         if producer is not None:
-            self._producer = producer
-            self._producer_owned = False
+            self._kafka_producer = producer
+            self._producer_injected = True
 
     def add_publisher(self, topic):
         if topic in self.publishers:
@@ -66,24 +71,46 @@ class KafkaMessageState(MessageState):
     def add_subscriber(self, topic):
         self.subscribers.add(topic)
 
+    def acquire_producer(self):
+        """Acquire the shared producer for a publisher node (ref-counted).
+        Creates it lazily on the first acquire; every publisher must release
+        it with ``close_producer`` on stop."""
+        if self._kafka_producer is None:
+            factory = self.config.get("producer_factory")
+            options = {
+                key: value
+                for key, value in self.config.items()
+                if key not in {"producer_factory", "consumer_factory"}
+            }
+            if factory is None:
+                try:
+                    from kafka import KafkaProducer
+                except ModuleNotFoundError as error:
+                    raise RuntimeError("Kafka publishing requires the 'kafka' extra") from error
+                factory = KafkaProducer
+            self._kafka_producer = factory(**options)
+        self._kafka_producer_count += 1
+        return self._kafka_producer
+
+    def close_producer(self):
+        """Release one publisher's producer reference. The shared producer is
+        closed when the last publisher releases it (an injected producer is
+        left open for its owner)."""
+        if self._kafka_producer is None:
+            return
+        self._kafka_producer_count -= 1
+        if self._kafka_producer_count <= 0:
+            if not self._producer_injected:
+                self._kafka_producer.close()
+            self._kafka_producer = None
+            self._kafka_producer_count = 0
+
     def producer(self):
-        if self._producer is not None:
-            return self._producer
-        factory = self.config.get("producer_factory")
-        options = {
-            key: value
-            for key, value in self.config.items()
-            if key not in {"producer_factory", "consumer_factory"}
-        }
-        if factory is None:
-            try:
-                from kafka import KafkaProducer
-            except ModuleNotFoundError as error:
-                raise RuntimeError("Kafka publishing requires the 'kafka' extra") from error
-            factory = KafkaProducer
-        self._producer = factory(**options)
-        self._producer_owned = True
-        return self._producer
+        """The shared producer (defensively acquired if a publisher never
+        did)."""
+        if self._kafka_producer is None:
+            return self.acquire_producer()
+        return self._kafka_producer
 
     def publish(self, topic, message):
         producer = self.producer()
@@ -101,8 +128,8 @@ class KafkaMessageState(MessageState):
             producer.send(topic, message)
 
     def flush(self):
-        if self._producer is not None:
-            self._producer.flush()
+        if self._kafka_producer is not None:
+            self._kafka_producer.flush()
 
     def start_consumer(self, topic, sender):
         if topic in self._consumers:
@@ -148,11 +175,14 @@ class KafkaMessageState(MessageState):
     def close(self):
         for topic in tuple(self._consumers):
             self.stop_consumer(topic)
-        if self._producer is not None:
-            self._producer.flush()
-            if self._producer_owned:
-                self._producer.close()
-            self._producer = None
+        # Backstop: if any producer reference outlives its publisher's stop
+        # (or none was ref-counted), flush and close the owned producer here.
+        if self._kafka_producer is not None:
+            self._kafka_producer.flush()
+            if not self._producer_injected:
+                self._kafka_producer.close()
+            self._kafka_producer = None
+            self._kafka_producer_count = 0
 
 
 def register_kafka_adaptor(config: dict):

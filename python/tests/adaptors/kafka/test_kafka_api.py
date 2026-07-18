@@ -82,3 +82,76 @@ def test_bundle_publisher_returns_its_non_message_output():
     with hg.GlobalContext(hg.GlobalState()):
         assert hg.eval_node(app) == [True]
     producer.send.assert_called_once()
+
+
+def test_owned_producer_is_closed_on_stop():
+    """Regression: an auto-created (owned) producer must be closed when the
+    publisher stops. Previously KafkaMessageState.close() was never called and
+    the publisher's stop only flushed, leaking the producer connection."""
+    producer = MagicMock()
+
+    @message_publisher(topic="test")
+    def publisher() -> hg.TS[bytes]:
+        return hg.const(b"payload", tp=hg.TS[bytes])
+
+    @hg.graph
+    def app():
+        # producer_factory -> the state OWNS the producer (vs injecting one).
+        register_kafka_adaptor({"producer_factory": lambda **opts: producer})
+        publisher()
+
+    with hg.GlobalContext(hg.GlobalState()):
+        assert hg.eval_node(app) is None
+
+    producer.send.assert_called_once_with("test", b"payload")
+    producer.close.assert_called_once()   # the leak is fixed
+
+
+def test_injected_producer_is_not_closed():
+    """An injected producer is owned by the caller and must be left open."""
+    producer = MagicMock()
+
+    @message_publisher(topic="test")
+    def publisher() -> hg.TS[bytes]:
+        return hg.const(b"payload", tp=hg.TS[bytes])
+
+    @hg.graph
+    def app():
+        register_kafka_adaptor({"producer": producer})
+        publisher()
+
+    with hg.GlobalContext(hg.GlobalState()):
+        assert hg.eval_node(app) is None
+
+    producer.close.assert_not_called()
+
+
+def test_producer_is_reference_counted_across_publishers():
+    """Two publishers share one owned producer: created once, closed once
+    when the last publisher stops."""
+    created = []
+
+    def factory(**opts):
+        producer = MagicMock()
+        created.append(producer)
+        return producer
+
+    @message_publisher(topic="a")
+    def publisher_a() -> hg.TS[bytes]:
+        return hg.const(b"a", tp=hg.TS[bytes])
+
+    @message_publisher(topic="b")
+    def publisher_b() -> hg.TS[bytes]:
+        return hg.const(b"b", tp=hg.TS[bytes])
+
+    @hg.graph
+    def app():
+        register_kafka_adaptor({"producer_factory": factory})
+        publisher_a()
+        publisher_b()
+
+    with hg.GlobalContext(hg.GlobalState()):
+        assert hg.eval_node(app) is None
+
+    assert len(created) == 1                     # one shared producer
+    created[0].close.assert_called_once()        # closed exactly once
