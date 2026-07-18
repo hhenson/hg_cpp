@@ -554,6 +554,12 @@ The following are intentional unless separately re-opened:
   TSS/TSD delta that nets to no change does not tick. Explicit writes are
   unaffected and match upstream exactly: a python node returning the same
   scalar each evaluation ticks each time, as do repeated TSD entry writes.
+- **Lower-latency request/reply** (ruling 2026-07-18): a request/reply
+  service round-trip completes in one fewer engine cycle than upstream — the
+  reply is observable at the requester one cycle earlier (hg_cpp yields
+  ``[None, value]`` where upstream yields ``[None, None, value]``). This is a
+  deliberate latency improvement, not a defect; upstream tests that pin the
+  exact cycle count therefore see the reply one index earlier.
 - Python ``REF`` is an opaque value and does not expose ``.output``.
 - ``None`` in CompoundScalar/Bundle construction means an unset field.
 - TSB deltas are canonically dense; sparse-bundle delta parity is not required.
