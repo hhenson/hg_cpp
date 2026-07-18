@@ -608,7 +608,23 @@ namespace hgraph::python_bridge
         .def("notify", &PyNode::notify)
         .def("notify_next_cycle", &PyNode::notify_next_cycle);
     nb::class_<PyScheduler>(m, "Scheduler")
-        .def("schedule", [](const PyScheduler &self, DateTime when) { self.scheduler.schedule(when); })
-        .def("schedule_delta", [](const PyScheduler &self, TimeDelta delta) { self.scheduler.schedule(delta); });
+        // hgraph's SCHEDULER.schedule(when: datetime | timedelta, tag=None,
+        // on_wall_clock=False). Two overloads distinguish absolute times from
+        // relative deltas; a non-empty tag replaces any prior event under it.
+        .def("schedule",
+             [](const PyScheduler &self, DateTime when, std::optional<std::string> tag, bool on_wall_clock) {
+                 self.scheduler.schedule(when, std::move(tag), on_wall_clock);
+             },
+             nb::arg("when"), nb::arg("tag") = nb::none(), nb::arg("on_wall_clock") = false)
+        .def("schedule",
+             [](const PyScheduler &self, TimeDelta delta, std::optional<std::string> tag, bool on_wall_clock) {
+                 self.scheduler.schedule(delta, std::move(tag), on_wall_clock);
+             },
+             nb::arg("when"), nb::arg("tag") = nb::none(), nb::arg("on_wall_clock") = false)
+        .def("schedule_delta", [](const PyScheduler &self, TimeDelta delta) { self.scheduler.schedule(delta); })
+        .def("reset", [](const PyScheduler &self) { self.scheduler.reset(); })
+        .def("has_tag", [](const PyScheduler &self, std::string_view tag) { return self.scheduler.has_tag(tag); })
+        .def_prop_ro("is_scheduled", [](const PyScheduler &self) { return self.scheduler.is_scheduled(); })
+        .def_prop_ro("is_scheduled_now", [](const PyScheduler &self) { return self.scheduler.is_scheduled_now(); });
     }
 }  // namespace hgraph::python_bridge

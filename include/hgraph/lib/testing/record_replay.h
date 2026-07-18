@@ -317,7 +317,8 @@ namespace hgraph::testing
             return record_replay::model_is(context.global_state, record_replay::IN_MEMORY);
         }
 
-        static auto defaults() { return std::tuple{arg<"sparse">(Bool{false})}; }
+        // hgraph parity: record(ts) defaults key to "out".
+        static auto defaults() { return std::tuple{arg<"key">(Str{"out"}), arg<"sparse">(Bool{false})}; }
 
         static void start(Scalar<"key", std::string> key, Scalar<"sparse", Bool>, GlobalStateView gs)
         {
