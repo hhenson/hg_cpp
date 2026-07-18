@@ -334,6 +334,9 @@ def test_http_server_adaptor_round_trips_all_methods(free_tcp_port):
                         },
                     )
                     response = connection.getresponse()
+                    if response.status == 404 and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                        continue
                     responses.append(
                         {
                             "status": response.status,
@@ -455,6 +458,9 @@ def test_http_server_handler_registers_and_maps_single_requests(free_tcp_port):
                     try:
                         connection.request("GET", f"/handler-{free_tcp_port}/item")
                         response = connection.getresponse()
+                        if response.status == 404 and time.monotonic() < deadline:
+                            time.sleep(0.02)
+                            continue
                         client_result.append((response.status, response.read()))
                         break
                     except (ConnectionRefusedError, OSError):
@@ -534,6 +540,9 @@ def test_http_server_handler_registers_batch_requests(free_tcp_port):
                         try:
                             connection.request("GET", route)
                             response = connection.getresponse()
+                            if response.status == 404 and time.monotonic() < deadline:
+                                time.sleep(0.02)
+                                continue
                             client_results.append((response.status, response.read()))
                             break
                         except (ConnectionRefusedError, OSError):
@@ -620,6 +629,9 @@ def test_http_server_handler_preserves_keyed_auxiliary_outputs(free_tcp_port):
                     try:
                         connection.request("GET", route)
                         response = connection.getresponse()
+                        if response.status == 404 and time.monotonic() < deadline:
+                            time.sleep(0.02)
+                            continue
                         client_results.append((response.status, response.read()))
                         break
                     except (ConnectionRefusedError, OSError):
