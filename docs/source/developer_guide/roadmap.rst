@@ -602,6 +602,19 @@ The following are intentional unless separately re-opened:
 - ``GlobalState`` keeps C++ copy-in/copy-out ownership.  Python's thread-local
   seed and ``GlobalContext`` are authoring adapters, not alternate runtime
   global state.
+- The ``Hg*TypeMetaData`` **type-reflection family is not supported** —
+  ``HgTypeMetaData`` and every ``Hg*TypeMetaData`` subclass, plus
+  ``parse_type``/``parse_value``, ``resolve``/``build_resolution_dict``,
+  ``generic_rank``, and ``cpp_type``/``cpp_native``.  Type identity, resolution,
+  and overload ranking live in C++; re-exposing a parallel Python metadata
+  hierarchy is the forbidden parallel abstraction.  Upstream tests importing or
+  asserting against these classes are **not compatibility targets** and their
+  failures/collection-blocks are ignored; user code that used the reflection API
+  must migrate.  The migration path is cheap — types are first-class comparable
+  values (``TS[int] == TS[int]``; ``parse_type(X)`` becomes ``X``) and resolved
+  signatures expose comparable ``input_types``/``output_type`` directly, with a
+  small ``hgraph.reflection`` convenience layer for structural decomposition.
+  See ``type_reflection.rst``.
 
 Recorded Residue Requiring a Decision
 -------------------------------------

@@ -24,4 +24,5 @@ The developer guide describes the internal design of the C++ implementation. The
    record_replay_table
    python_integration
    python_bridge
+   type_reflection
    testing
