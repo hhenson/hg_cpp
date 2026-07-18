@@ -42,7 +42,9 @@ namespace
         return arg;
     }
 
-    // The whole bridge surface: resolve by name, wire the winner.
+    // The whole bridge surface: resolve by name, wire the winner. Passes the
+    // wiring's operator state exactly as the Python bridge (PyWiring::wire)
+    // does, so record/replay model selection matches.
     OperatorWireResult call_operator(Wiring &w,
                                      std::string_view name,
                                      std::vector<WiringArg> args,
@@ -50,8 +52,18 @@ namespace
                                      const TSValueTypeMetaData *expected_output = nullptr)
     {
         ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
-            name, std::span<const WiringArg>{args.data(), args.size()}, output_required, expected_output);
+            name, std::span<const WiringArg>{args.data(), args.size()}, output_required, expected_output, {},
+            w.operator_state(), &w);
         return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs);
+    }
+
+    // The raw stateless bridge records densely (mirrors PyWiring's default):
+    // by-name record/replay bind to the cycle-aligned harness backend.
+    void use_dense_recording(Wiring &w)
+    {
+        record_replay::set_config(
+            w.global_state(),
+            record_replay::Config{.model = std::string{record_replay::IN_MEMORY_DENSE}});
     }
 
     struct RuntimeMetas
@@ -90,6 +102,7 @@ TEST_CASE("erased wiring: a full graph wires and runs via name-resolved operator
     const auto metas = runtime_metas();
 
     Wiring w;
+    use_dense_recording(w);
     auto lhs = call_operator(w, "const", {scalar_arg(Value{Int{42}}, metas.int_meta)}, true, metas.ts_int);
     auto rhs = call_operator(w, "const", {scalar_arg(Value{Int{8}}, metas.int_meta)}, true, metas.ts_int);
     REQUIRE(lhs.has_output);
@@ -116,6 +129,7 @@ TEST_CASE("erased wiring: keyword arguments and defaults resolve as in Python ca
     const auto metas = runtime_metas();
 
     Wiring w;
+    use_dense_recording(w);
     // const(value=7): keyword scalar; the ``delay`` param materialises from its default.
     auto src = call_operator(
         w, "const", {scalar_arg(Value{Int{7}}, metas.int_meta, "value")}, true, metas.ts_int);
@@ -147,6 +161,7 @@ TEST_CASE("erased wiring: expected-output schema drives generic source resolutio
     // from the expected output schema, the exact shape a Python ``replay[TS[int]]``
     // call produces.
     Wiring w;
+    use_dense_recording(w);
     auto src = call_operator(
         w, "replay", {scalar_arg(Value{Str{"erased::in"}}, metas.str_meta)}, true, metas.ts_int);
     REQUIRE(src.has_output);

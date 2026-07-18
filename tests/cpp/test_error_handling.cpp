@@ -265,11 +265,11 @@ namespace
         static constexpr auto name = "per_node_capture_graph";
         static void           compose(Wiring &w)
         {
-            auto x       = wire<testing::replay, TS<Int>>(w, Str{"x"});
+            auto x       = wire<stdlib::replay_impl, TS<Int>>(w, Str{"x"});
             auto doubled = wire<ThrowOnNegative>(w, x);
             auto err     = exception_time_series(doubled);
-            wire<testing::record>(w, doubled, Str{"out"});
-            wire<testing::record>(w, wire<ErrorMsgOf>(w, err), Str{"err"});
+            wire<stdlib::dense_record_impl>(w, doubled, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, wire<ErrorMsgOf>(w, err), Str{"err"});
         }
     };
 
@@ -278,10 +278,10 @@ namespace
         static constexpr auto name = "try_except_value_graph";
         static void           compose(Wiring &w)
         {
-            auto x      = wire<testing::replay, TS<Int>>(w, Str{"x"});
+            auto x      = wire<stdlib::replay_impl, TS<Int>>(w, Str{"x"});
             auto result = try_except_<DoublerOrThrowG>(w, x).as<TryIntResult>();
-            wire<testing::record>(w, wire<TryOutValue>(w, result), Str{"out"});
-            wire<testing::record>(w, wire<TryExcMsg>(w, result), Str{"err"});
+            wire<stdlib::dense_record_impl>(w, wire<TryOutValue>(w, result), Str{"out"});
+            wire<stdlib::dense_record_impl>(w, wire<TryExcMsg>(w, result), Str{"err"});
         }
     };
 
@@ -290,11 +290,11 @@ namespace
         static constexpr auto name = "per_node_unknown_capture_graph";
         static void           compose(Wiring &w)
         {
-            auto x       = wire<testing::replay, TS<Int>>(w, Str{"x"});
+            auto x       = wire<stdlib::replay_impl, TS<Int>>(w, Str{"x"});
             auto tripled = wire<ThrowUnknownOnNegative>(w, x);
             auto err     = exception_time_series(tripled);
-            wire<testing::record>(w, tripled, Str{"out"});
-            wire<testing::record>(w, wire<ErrorMsgOf>(w, err), Str{"err"});
+            wire<stdlib::dense_record_impl>(w, tripled, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, wire<ErrorMsgOf>(w, err), Str{"err"});
         }
     };
 
@@ -303,10 +303,10 @@ namespace
         static constexpr auto name = "try_except_unknown_graph";
         static void           compose(Wiring &w)
         {
-            auto x      = wire<testing::replay, TS<Int>>(w, Str{"x"});
+            auto x      = wire<stdlib::replay_impl, TS<Int>>(w, Str{"x"});
             auto result = try_except_<TriplerOrUnknownG>(w, x).as<TryIntResult>();
-            wire<testing::record>(w, wire<TryOutValue>(w, result), Str{"out"});
-            wire<testing::record>(w, wire<TryExcMsg>(w, result), Str{"err"});
+            wire<stdlib::dense_record_impl>(w, wire<TryOutValue>(w, result), Str{"out"});
+            wire<stdlib::dense_record_impl>(w, wire<TryExcMsg>(w, result), Str{"err"});
         }
     };
 
@@ -315,9 +315,9 @@ namespace
         static constexpr auto name = "try_except_sink_graph";
         static void           compose(Wiring &w)
         {
-            auto x   = wire<testing::replay, TS<Int>>(w, Str{"x"});
+            auto x   = wire<stdlib::replay_impl, TS<Int>>(w, Str{"x"});
             auto err = try_except_<SinkOrThrowG>(w, x).as<TS<NodeError>>();
-            wire<testing::record>(w, wire<ErrorMsgOf>(w, err), Str{"err"});
+            wire<stdlib::dense_record_impl>(w, wire<ErrorMsgOf>(w, err), Str{"err"});
         }
     };
 
@@ -326,9 +326,9 @@ namespace
         static constexpr auto name = "try_except_pause_graph";
         static void           compose(Wiring &w)
         {
-            auto x      = wire<testing::replay, TS<Int>>(w, Str{"x"});
+            auto x      = wire<stdlib::replay_impl, TS<Int>>(w, Str{"x"});
             auto result = try_except_<PauseOnceG>(w, x).as<TryIntResult>();
-            wire<testing::record>(w, wire<TryOutValue>(w, result), Str{"out"});
+            wire<stdlib::dense_record_impl>(w, wire<TryOutValue>(w, result), Str{"out"});
         }
     };
 

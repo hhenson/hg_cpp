@@ -15,6 +15,7 @@ namespace hgraph::stdlib
         register_control_operators();
         register_higher_order_operators();
         register_io_operators();
+        register_record_replay_memory_operators();
         register_json_operators();
         register_table_operators();
         register_data_frame_operators();

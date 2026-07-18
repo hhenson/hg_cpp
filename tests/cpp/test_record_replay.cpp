@@ -33,9 +33,9 @@ namespace
         static constexpr auto name = "replay_record_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, std::string{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, std::string{"in"});
             auto inc = wire<AddOne>(w, src);
-            wire<testing::record>(w, inc, std::string{"out"});
+            wire<stdlib::dense_record_impl>(w, inc, std::string{"out"});
         }
     };
 
@@ -54,7 +54,7 @@ namespace
         static void           compose(Wiring &w)
         {
             auto src = wire<DelayedSource>(w);
-            wire<testing::record>(w, src, std::string{"out"});
+            wire<stdlib::dense_record_impl>(w, src, std::string{"out"});
         }
     };
 }  // namespace

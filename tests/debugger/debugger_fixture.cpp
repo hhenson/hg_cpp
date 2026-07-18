@@ -152,10 +152,10 @@ int main()
     fixture_graph_pointer = fixture_root_graph->graph().pointer().to_any();
 
     Wiring nested_wiring;
-    auto switch_key = wire<testing::replay, TS<Str>>(nested_wiring, Str{"debugger_switch_key"});
-    auto switch_value = wire<testing::replay, TS<Int>>(nested_wiring, Str{"debugger_switch_value"});
-    auto source = wire<testing::replay, TSD<Int, TS<Int>>>(nested_wiring, Str{"debugger_source"});
-    auto keys = wire<testing::replay, TSS<Int>>(nested_wiring, Str{"debugger_keys"});
+    auto switch_key = wire<stdlib::replay_impl, TS<Str>>(nested_wiring, Str{"debugger_switch_key"});
+    auto switch_value = wire<stdlib::replay_impl, TS<Int>>(nested_wiring, Str{"debugger_switch_value"});
+    auto source = wire<stdlib::replay_impl, TSD<Int, TS<Int>>>(nested_wiring, Str{"debugger_source"});
+    auto keys = wire<stdlib::replay_impl, TSS<Int>>(nested_wiring, Str{"debugger_keys"});
 
     auto switched = wire<stdlib::switch_>(
                         nested_wiring, switch_key,

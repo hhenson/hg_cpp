@@ -376,8 +376,9 @@ namespace hgraph::python_bridge
     m.def("has_context", [](PyWiring &w, const std::string &name) {
         return graph_wiring_detail::has_context_source(w.wiring_ref(), name);
     });
-    m.attr("IN_MEMORY")  = std::string{record_replay::IN_MEMORY};
-    m.attr("DATA_FRAME") = std::string{record_replay::DATA_FRAME};
+    m.attr("IN_MEMORY")       = std::string{record_replay::IN_MEMORY};
+    m.attr("IN_MEMORY_DENSE")  = std::string{record_replay::IN_MEMORY_DENSE};
+    m.attr("DATA_FRAME")       = std::string{record_replay::DATA_FRAME};
     m.attr("MIN_ST")     = nb::cast(MIN_ST);
     m.attr("MIN_TD")     = nb::cast(MIN_TD);
     m.attr("MAX_DT")     = nb::cast(MAX_DT);

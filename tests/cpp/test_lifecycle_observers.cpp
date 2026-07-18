@@ -202,9 +202,9 @@ namespace
         static constexpr auto name = "lifecycle_nested_graph";
         static void           compose(Wiring &w)
         {
-            auto in  = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto in  = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto out = nested_<LifecycleNestedAddOneSubGraph>(w, in);
-            wire<testing::record>(w, out, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, out, Str{"out"});
         }
     };
 }  // namespace

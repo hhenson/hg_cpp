@@ -437,8 +437,8 @@ TEST_CASE("mesh_: removed instances stop for one cycle before slot erase")
     std::vector<std::size_t> constructed_counts;
     std::vector<NestedLifecycleSnapshot> lifecycle;
     Wiring                   w;
-    auto source = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"source"});
-    auto keys   = wire<testing::replay, TSS<Str>>(w, Str{"keys"});
+    auto source = wire<stdlib::replay_impl, TSD<Str, TS<Int>>>(w, Str{"source"});
+    auto keys   = wire<stdlib::replay_impl, TSS<Str>>(w, Str{"keys"});
     auto mesh   = wire<stdlib::mesh_>(w, fn<NestedLifecycleNode>(), source, arg<"__keys__">(keys))
                       .as<TSD<Str, TS<Int>>>();
 

@@ -429,8 +429,8 @@ write:
 
    using namespace hgraph::stdlib::syntax;
 
-   auto a = wire<testing::replay, TS<Int>>(w, "a");
-   auto b = wire<testing::replay, TS<Int>>(w, "b");
+   auto a = wire<stdlib::replay_impl, TS<Int>>(w, "a");
+   auto b = wire<stdlib::replay_impl, TS<Int>>(w, "b");
    auto c = (a + b * Int{2}).as<TS<Int>>();
 
 The overloaded C++ operators are only sugar for ``wire<stdlib::add_>`` /

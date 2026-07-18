@@ -321,7 +321,7 @@ namespace
         static constexpr auto name = "sink_graph";
         static void           compose(Wiring &w)
         {
-            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
+            auto a = wire<stdlib::replay_impl, TS<Int>>(w, Str{"a"});
             wire<sink_>(w, a);
         }
     };
@@ -332,7 +332,7 @@ namespace
         static void           compose(Wiring &w)
         {
             auto out = wire<echo_, TSS<Int>>(w, stdlib::make_set<Int>({Int{1}, Int{2}}));
-            wire<testing::record>(w, out, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, out, Str{"out"});
         }
     };
 

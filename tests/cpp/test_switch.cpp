@@ -550,8 +550,8 @@ TEST_CASE("switch_: alternating branches reuse two fixed graph addresses")
     std::vector<std::uintptr_t> active_addresses;
     std::vector<NestedLifecycleSnapshot> lifecycle;
     Wiring                      w;
-    auto key = wire<testing::replay, TS<Str>>(w, Str{"key"});
-    auto source = wire<testing::replay, TS<Int>>(w, Str{"source"});
+    auto key = wire<stdlib::replay_impl, TS<Str>>(w, Str{"key"});
+    auto source = wire<stdlib::replay_impl, TS<Int>>(w, Str{"source"});
     auto switched = wire<stdlib::switch_>(
                         w, key,
                         stdlib::switch_cases({{Value{Str{"a"}}, fn<NestedLifecycleNode>()},

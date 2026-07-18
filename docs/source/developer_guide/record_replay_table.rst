@@ -363,8 +363,9 @@ The Arrow data-frame record/replay backend, model
   ``recordable_id`` scalar, defaulting through the trait chain) and creates
   a ``FrameRecorder`` (multi-tick Arrow builder accumulator, pimpl'd in the
   table codec); ``eval`` appends one bitemporal row; ``stop`` finishes the
-  frame and writes it to the store. The in-memory (GlobalState) testing
-  backend now carries the matching ``requires_`` gate on ``IN_MEMORY``.
+  frame and writes it to the store. The in-memory (GlobalState) record
+  backends carry the matching ``requires_`` gate on the in-memory models
+  (see *In-memory record/replay — sparse vs dense*).
 - **``replay`` (frame backend)** — ``start`` reads the frame, resolves the
   converter from the resolved output, and schedules the first row's
   recorded value time; ``eval`` applies every row stamped at the current
@@ -416,6 +417,62 @@ intern-identity ruling.
 
 Deferred from step 5: scalar compose params on component graphs. Tests:
 ``tests/cpp/test_component.cpp``.
+
+In-memory record/replay — sparse vs dense (2026-07-18)
+------------------------------------------------------
+
+Every in-memory record/replay OPERATOR backend lives in one file,
+``lib/std/operators/impl/record_replay_memory_impl.h`` (the sibling of the frame
+backend ``record_replay_frame_impl.h``). ``record`` has **two** backends selected
+by the record/replay *model* (``record_replay::Config::model``); ``replay`` is a
+**single** operator serving both:
+
+- **``record`` under ``IN_MEMORY``** (default) → ``stdlib::sparse_record_impl``:
+  **sparse, absolute-time**. Recordings are a ``List`` of
+  ``(evaluation_time, delta)`` tuples under ``:memory:<fq_recordable_id>.<key>``;
+  they append across runs and tolerate **arbitrary cross-cycle gaps** (real-time
+  scheduler alarms, ``@component`` persistence, RECOVER seeding). A bare
+  ``record(ts)`` defaults ``key="out"`` and ``recordable_id="nodes.record"`` so
+  it round-trips with ``get_recorded_value()`` (which reads
+  ``:memory:nodes.record.out`` by default). This is the upstream
+  ``_record_replay_in_memory`` semantics.
+- **``record`` under ``IN_MEMORY_DENSE``** → ``stdlib::dense_record_impl``:
+  **dense, cycle-aligned**. Recordings are a plain-key ``List`` indexed by
+  evaluation cycle (``MIN_ST + i*MIN_TD``; a hole = no tick that cycle), read
+  back with ``get_recorded_values`` / ``Run.recorded``. This is the graph
+  **testing harness** recorder. The raw stateless
+  wiring bridge (``_hgraph.Wiring()`` / ``PyWiring``) defaults its GlobalState to
+  this model — it *is* the dense harness; a state-seeded wiring inherits its
+  GlobalState's model, so real runs (``evaluate_graph`` / ``run_graph``) and
+  components stay sparse.
+- **``replay`` (one backend)** → ``stdlib::replay_impl``, active under **both**
+  in-memory models. Replay is not
+  split by the record model — it just replays what was recorded, keyed on the
+  presence of a ``recordable_id``: a bare ``replay(key)`` reads the seeded /
+  recorded **plain-key** cycle-aligned buffer (``set_replay_values`` /
+  ``Run.set_replay`` always seed this layout); an explicit ``recordable_id``
+  (component ReplayOutput / Replay / Compare) reads the **sparse absolute-time**
+  ``:memory:<fq_recordable_id>.<key>`` recording, replaying each delta at its
+  recorded time. The empty-vs-present ``recordable_id`` fully disambiguates, so
+  the two paths share one impl with no resolution ambiguity.
+
+The cycle-aligned **buffer-format helpers** (``make_sparse_buffer``,
+``dense_entry_delta``, …) both backends and the harness share live in
+``lib/testing/record_replay_buffer.h``; the harness **seed/read API**
+(``set_replay_values`` / ``get_recorded_values``) is
+``lib/testing/record_replay.h``. The layering is
+one-directional (``record_replay_buffer.h`` ← ``record_replay_memory_impl.h`` ←
+``record_replay.h``): an operator impl and the testing harness depend on a common
+base, not on each other.
+
+Prior to this split both in-memory ``record`` backends gated on ``IN_MEMORY`` and
+were distinguished only by a ``recordable_id`` argument, and there were two
+separate replays — a code smell (a bare ``record(ts)`` in a real-time run wrongly
+selected the dense recorder and rejected the large cross-cycle gap). The model
+split + single replay make the choice explicit and close the two upstream
+wall-clock scheduler tests (``ported/_runtime/test_scheduler.py``). Tests:
+``tests/cpp/test_record_replay.cpp``, ``test_erased_wiring.cpp``,
+``python/tests/test_bridge.py``.
 
 The Compare sink (landed)
 -------------------------

@@ -76,7 +76,7 @@ namespace
         if (!replay.has_output) { throw std::logic_error("runtime-schema replay did not produce an output"); }
 
         Port<TS<Out>> out = GraphT::compose(w, replay.output);
-        wire<record>(w, out, std::string{"eval_node::out"});
+        wire<stdlib::dense_record_impl>(w, out, std::string{"eval_node::out"});
 
         GraphBuilder gb = std::move(w).finish();
         set_replay_deltas(gb.global_state(), "eval_node::in", input);
@@ -1538,7 +1538,7 @@ TEST_CASE("std operators: schedule and resample are bounded by executor end time
     {
         Wiring w;
         auto   ticks = wire<stdlib::schedule>(w, MIN_TD * 2);
-        wire<record>(w, ticks, Str{"schedule_out"});
+        wire<stdlib::dense_record_impl>(w, ticks, Str{"schedule_out"});
 
         GraphBuilder graph_builder = std::move(w).finish();
         GraphExecutorBuilder executor_builder;
@@ -1555,9 +1555,9 @@ TEST_CASE("std operators: schedule and resample are bounded by executor end time
 
     {
         Wiring w;
-        auto   ts  = wire<replay, TS<Int>>(w, Str{"resample_in"});
+        auto   ts  = wire<stdlib::replay_impl, TS<Int>>(w, Str{"resample_in"});
         auto   out = wire<stdlib::resample>(w, ts, MIN_TD * 2);
-        wire<record>(w, out, Str{"resample_out"});
+        wire<stdlib::dense_record_impl>(w, out, Str{"resample_out"});
 
         GraphBuilder graph_builder = std::move(w).finish();
         set_replay_values<Int>(graph_builder.global_state(),

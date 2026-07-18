@@ -249,11 +249,11 @@ comparing them is an element-wise list compare.
 it is authored over a deferred output type (``Out<TsVar<"S">>``) and resolved at
 wiring. Supply the output type explicitly, which also gives back a typed port:
 
-* ``wire<testing::replay, TS<Int>>(w, key)`` for a scalar source.
-* ``wire<testing::replay, TSS<Int>>(w, key)`` for a set.
-* ``wire<testing::replay, TSD<Str, TS<Int>>>(w, key)`` for a dict.
-* ``wire<testing::replay, TSL<TS<Int>, N>>(w, key)`` for a list.
-* ``wire<testing::replay, TSW<Int, 3, 1>>(w, key)`` for a tick window.
+* ``wire<stdlib::replay_impl, TS<Int>>(w, key)`` for a scalar source.
+* ``wire<stdlib::replay_impl, TSS<Int>>(w, key)`` for a set.
+* ``wire<stdlib::replay_impl, TSD<Str, TS<Int>>>(w, key)`` for a dict.
+* ``wire<stdlib::replay_impl, TSL<TS<Int>, N>>(w, key)`` for a list.
+* ``wire<stdlib::replay_impl, TSW<Int, 3, 1>>(w, key)`` for a tick window.
 
 It initiates itself at start via
 ``schedule_on_start`` (sources are not scheduled by default), reads its buffer from
@@ -264,7 +264,7 @@ the ``GlobalState`` under the ``key`` scalar, ticks once per cycle that has a va
 .. code-block:: cpp
 
    // emits the value at the current cycle, then re-arms for the next
-   auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+   auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
 
 The ``key`` names the ``GlobalState`` entry holding the input buffer; seed it
 before running (``gs.set("in", buffer)``). A cycle whose element is an empty
@@ -276,7 +276,7 @@ before running (``gs.set("in", buffer)``). A cycle whose element is an empty
 ``record`` is the sink node — the dual of ``replay``, likewise a **single erased
 node** over a deferred input type (``In<"ts", TsVar<"S">>``); its type resolves from
 the connected port, so it is wired without a type argument:
-``wire<testing::record>(w, port, key)``. On ``start`` it creates a fresh
+``wire<stdlib::dense_record_impl>(w, port, key)``. On ``start`` it creates a fresh
 cycle-aligned ``List<Any>`` in the ``GlobalState`` under its ``key``; on each
 evaluation where the input ticks it captures the per-tick **delta** (via the runtime
 ``capture_delta`` — the per-tick event, not the cumulative ``value``; they coincide
@@ -286,7 +286,7 @@ the recorded output, readable from the ``GlobalState``.
 
 .. code-block:: cpp
 
-   wire<testing::record>(w, inc, Str{"out"});  // (input port, key)
+   wire<stdlib::dense_record_impl>(w, inc, Str{"out"});  // (input port, key)
 
 Worked example
 --------------
@@ -306,9 +306,9 @@ Wiring ``replay → add_one → record`` and reading the result back:
        static constexpr auto name = "replay_record_graph";
        static void           compose(Wiring &w)
        {
-           auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+           auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
            auto inc = wire<AddOne>(w, src);
-           wire<testing::record>(w, inc, Str{"out"});
+           wire<stdlib::dense_record_impl>(w, inc, Str{"out"});
        }
    };
 
@@ -453,8 +453,8 @@ delta ``Value`` from ``set_delta``.
    };
    CHECK_OUTPUT(testing::eval_node<MirrorSet>(deltas), deltas);   // round-trips the deltas
 
-By hand: ``wire<testing::replay, TSS<T>>`` re-creates ticks from a delta ``Value``
-(remove then add); ``wire<testing::record>`` captures the per-tick delta; ``CHECK_OUTPUT`` renders each delta as
+By hand: ``wire<stdlib::replay_impl, TSS<T>>`` re-creates ticks from a delta ``Value``
+(remove then add); ``wire<stdlib::dense_record_impl>`` captures the per-tick delta; ``CHECK_OUTPUT`` renders each delta as
 ``{added: {…}, removed: {…}}`` on mismatch. A constant set source is
 ``wire<stdlib::const_, TSS<T>>(w, stdlib::make_set<T>({values...}))``.
 
@@ -499,9 +499,9 @@ are themselves ``set_delta`` ``Value``\ s, a TSL-of-TSL delta a ``Map`` of ``Map
    // TSL<TSL<TS<Int>,2>> delta: Map<int, Map<int, int>>
    const Value nd = list_delta<TSL<TS<Int>, 2>>({{0, list_delta<TS<Int>>({{0, Int{7}}, {1, Int{8}}})}});
 
-By hand: ``wire<testing::replay, TSL<C, N>>`` re-creates ticks by recursively applying
+By hand: ``wire<stdlib::replay_impl, TSL<C, N>>`` re-creates ticks by recursively applying
 each ``index -> child_delta`` of the buffered delta to the matching child output;
-``wire<testing::record>`` captures the per-tick delta (only the children that ticked);
+``wire<stdlib::dense_record_impl>`` captures the per-tick delta (only the children that ticked);
 ``CHECK_OUTPUT`` renders each delta as the map ``{0: 1, 1: 10}`` on mismatch.
 
 .. note::

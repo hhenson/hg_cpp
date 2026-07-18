@@ -1179,10 +1179,16 @@ namespace
         static constexpr auto name              = "__harness_replay";
         static constexpr bool schedule_on_start = true;
 
-        static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched, State<Int> index,
-                         Out<TsVar<"S">> out)
+        // The eval_node harness always replays a seeded plain-key (dense) buffer;
+        // the empty recordable_id selects the unified replay's dense path.
+        static auto defaults() { return std::tuple{arg<"recordable_id">(Str{""})}; }
+
+        static void eval(Scalar<"key", std::string> key, Scalar<"recordable_id", Str> recordable_id,
+                         TraitsView traits, GlobalStateView gs, NodeScheduler sched, State<Int> index,
+                         DateTime now, Out<TsVar<"S">> out)
         {
-            testing::replay::eval(std::move(key), std::move(gs), std::move(sched), std::move(index), std::move(out));
+            stdlib::replay_impl::eval(std::move(key), std::move(recordable_id), std::move(traits), std::move(gs),
+                                  std::move(sched), std::move(index), now, std::move(out));
         }
     };
 
@@ -1194,13 +1200,13 @@ namespace
 
         static void start(Scalar<"key", std::string> key, Scalar<"sparse", Bool> sparse, GlobalStateView gs)
         {
-            testing::record::start(std::move(key), std::move(sparse), std::move(gs));
+            stdlib::dense_record_impl::start(std::move(key), std::move(sparse), std::move(gs));
         }
 
         static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Scalar<"key", std::string> key,
                          Scalar<"sparse", Bool> sparse, GlobalStateView gs, DateTime now)
         {
-            testing::record::eval(std::move(ts), std::move(key), std::move(sparse), std::move(gs), now);
+            stdlib::dense_record_impl::eval(std::move(ts), std::move(key), std::move(sparse), std::move(gs), now);
         }
     };
 

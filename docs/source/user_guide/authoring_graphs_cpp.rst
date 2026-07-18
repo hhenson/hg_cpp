@@ -181,8 +181,8 @@ For standard operators, a compose body may opt into expression syntax:
 
    using namespace hgraph::stdlib::syntax;
 
-   auto a = wire<testing::replay, TS<Int>>(w, "a");
-   auto b = wire<testing::replay, TS<Int>>(w, "b");
+   auto a = wire<stdlib::replay_impl, TS<Int>>(w, "a");
+   auto b = wire<stdlib::replay_impl, TS<Int>>(w, "b");
    auto c = (a + b * Int{2}).as<TS<Int>>();
 
 The C++ operators are only syntax for the standard operator registry

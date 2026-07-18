@@ -1,12 +1,12 @@
 # Ported from ext/main/hgraph_unit_tests/_runtime/test_scheduler.py
-# Changes from upstream: three tests are skipped (marked precisely) -
+# Changes from upstream: one test is skipped (marked precisely) -
 #  - test_map_scheduler: map_ with a trailing scalar arg passed to the
-#    mapped function is not yet resolved (map_/reduce tier residue);
-#  - test_wall_clock_scheduler[_reschedule]: the wall-clock record path
-#    selects the dense recorder and rejects the large cross-cycle gap
-#    (the two-IN_MEMORY-record-impl smell; sparse recording needed).
+#    mapped function is not yet resolved (map_/reduce tier residue).
 # SCHEDULER.schedule(datetime|timedelta, tag) and record(ts) default
-# key both landed 2026-07-18.
+# key both landed 2026-07-18. The wall-clock record path now selects the
+# SPARSE ``:memory:`` recorder under the default IN_MEMORY model (the
+# IN_MEMORY_DENSE split, 2026-07-18), so the large cross-cycle real-time
+# gap records correctly.
 import time
 from datetime import timedelta, datetime
 
@@ -112,7 +112,6 @@ def my_scheduler_realtime(ts: TS[int], tag: str = None, _scheduler: SCHEDULER = 
 def sleep(s: SIGNAL, seconds: float):
     time.sleep(seconds)
     
-@pytest.mark.skip(reason="gap: wall-clock record selects the dense recorder; sparse needed for the cross-cycle gap")
 def test_wall_clock_scheduler():
     @graph
     def g():
@@ -133,7 +132,6 @@ def test_wall_clock_scheduler():
     assert values[1][0] < now + timedelta(milliseconds=107)
     
     
-@pytest.mark.skip(reason="gap: wall-clock record selects the dense recorder; sparse needed for the cross-cycle gap")
 def test_wall_clock_scheduler_reschedule():
     @graph
     def g():

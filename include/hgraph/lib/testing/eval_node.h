@@ -53,7 +53,7 @@ namespace hgraph::testing
         static constexpr bool is_scalar     = static_node_detail::is_scalar_ts<S>::value;
 
         // Source: the output type is supplied explicitly (S), giving a typed Port<S>.
-        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay, S>(w, key); }
+        static auto wire_replay(Wiring &w, const std::string &key) { return wire<stdlib::replay_impl, S>(w, key); }
 
         static void seed(const GlobalStateView &gs, std::string_view key, const std::vector<std::optional<element>> &seq)
         {
@@ -65,7 +65,7 @@ namespace hgraph::testing
         template <typename Port>
         static void wire_record(Wiring &w, Port port, const std::string &key)
         {
-            wire<record>(w, port, key);
+            wire<stdlib::dense_record_impl>(w, port, key);
         }
 
         static std::vector<std::optional<element>> read(const GlobalStateView &gs, std::string_view key)
@@ -85,7 +85,7 @@ namespace hgraph::testing
 
         static auto wire_replay(Wiring &w, const std::string &key)
         {
-            return wire<replay, S>(w, key);
+            return wire<stdlib::replay_impl, S>(w, key);
         }
 
         static void seed(const GlobalStateView &gs, std::string_view key,
@@ -97,7 +97,7 @@ namespace hgraph::testing
         template <typename Port>
         static void wire_record(Wiring &w, Port port, const std::string &key)
         {
-            wire<record>(w, port, key);
+            wire<stdlib::dense_record_impl>(w, port, key);
         }
 
         static std::vector<std::optional<Value>> read(const GlobalStateView &gs,
@@ -593,7 +593,7 @@ namespace hgraph::testing
                 return GraphT::compose(w, wire_arg.template operator()<I>()...);
             }(std::make_index_sequence<sig::param_count()>{});
 
-            if constexpr (std::is_void_v<out_schema>) { wire<record>(w, out_port, std::string{"eval_node::out"}); }
+            if constexpr (std::is_void_v<out_schema>) { wire<stdlib::dense_record_impl>(w, out_port, std::string{"eval_node::out"}); }
             else { ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"}); }
             GraphBuilder gb = std::move(w).finish();
             label_if_named<GraphT>(gb);
@@ -752,7 +752,7 @@ namespace hgraph::testing
             else if constexpr (eval_node_detail::is_optional_vector<A>::value)
             {
                 using T = typename eval_node_detail::optional_vector_element<A>::type;
-                return rewrap(wire<replay, TS<T>>(w, eval_node_detail::input_key(I)));
+                return rewrap(wire<stdlib::replay_impl, TS<T>>(w, eval_node_detail::input_key(I)));
             }
             else
             {
@@ -764,7 +764,7 @@ namespace hgraph::testing
             return wire<Op>(w, wire_arg.template operator()<I>()...);
         }(std::make_index_sequence<arg_count>{});
 
-        wire<record>(w, out_port, std::string{"eval_node::out"});
+        wire<stdlib::dense_record_impl>(w, out_port, std::string{"eval_node::out"});
         GraphBuilder gb = std::move(w).finish();
         eval_node_detail::label_if_named<Op>(gb);
 
@@ -824,7 +824,7 @@ namespace hgraph::testing
     {
         Wiring w;
         auto   out_port = wire<Op>(w, std::forward<Args>(args)...);
-        wire<record>(w, out_port, std::string{"eval_node::out"});
+        wire<stdlib::dense_record_impl>(w, out_port, std::string{"eval_node::out"});
 
         GraphBuilder gb = std::move(w).finish();
         GraphExecutorBuilder eb;
@@ -846,7 +846,7 @@ namespace hgraph::testing
     {
         Wiring w;
         auto   out_port = wire<Op, OutSchema>(w, std::forward<Args>(args)...);
-        wire<record>(w, out_port, std::string{"eval_node::out"});
+        wire<stdlib::dense_record_impl>(w, out_port, std::string{"eval_node::out"});
 
         GraphBuilder gb = std::move(w).finish();
         GraphExecutorBuilder eb;

@@ -100,7 +100,7 @@ namespace
         static constexpr auto name = "ts_delta_capture_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, S>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, S>(w, Str{"in"});
             wire<ProbeRecord<S>>(w, src, Str{"out"});
         }
     };
@@ -113,7 +113,7 @@ namespace
         static void           compose(Wiring &w)
         {
             auto src = wire<ProbeReplay<S>>(w, Str{"in"});
-            wire<testing::record>(w, src, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, src, Str{"out"});
         }
     };
 

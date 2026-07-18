@@ -82,14 +82,14 @@ namespace
     struct SourceOnlySubGraph
     {
         static constexpr auto name = "source_only_subgraph";
-        static Port<TS<Int>>  compose(Wiring &w) { return wire<replay, TS<Int>>(w, Str{"src"}); }
+        static Port<TS<Int>>  compose(Wiring &w) { return wire<stdlib::replay_impl, TS<Int>>(w, Str{"src"}); }
     };
 
     // A sink sub-graph: compose returns void; the nested node becomes a sink.
     struct RecordSubGraph
     {
         static constexpr auto name = "record_subgraph";
-        static void           compose(Wiring &w, Port<TS<Int>> in) { wire<record>(w, in, Str{"out"}); }
+        static void           compose(Wiring &w, Port<TS<Int>> in) { wire<stdlib::dense_record_impl>(w, in, Str{"out"}); }
     };
 
     // Returning a boundary input directly is the pass-through mode
@@ -189,7 +189,7 @@ namespace
     struct TslRecordSubGraph
     {
         static constexpr auto name = "tsl_record_subgraph";
-        static void           compose(Wiring &w, Port<TSL<TS<Int>, 2>> in) { wire<record>(w, in, Str{"out"}); }
+        static void           compose(Wiring &w, Port<TSL<TS<Int>, 2>> in) { wire<stdlib::dense_record_impl>(w, in, Str{"out"}); }
     };
 
     struct GlobalStateSeedingSubGraph
@@ -232,7 +232,7 @@ namespace
         static constexpr auto name = "nested_source_only_graph";
         static void           compose(Wiring &w)
         {
-            wire<record>(w, nested_<SourceOnlySubGraph>(w), Str{"out"});
+            wire<stdlib::dense_record_impl>(w, nested_<SourceOnlySubGraph>(w), Str{"out"});
         }
     };
 
@@ -241,7 +241,7 @@ namespace
         static constexpr auto name = "nested_scaled_graph";
         static void           compose(Wiring &w)
         {
-            auto in = wire<replay, TS<Int>>(w, Str{"in"});
+            auto in = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
 
             auto a = nested_<ScaledSubGraph>(w, in, Int{2});
             auto b = nested_<ScaledSubGraph>(w, in, Int{2});
@@ -251,8 +251,8 @@ namespace
             CHECK(a.node() == b.node());
             CHECK(a.node() != c.node());
 
-            wire<record>(w, a, Str{"doubled"});
-            wire<record>(w, c, Str{"tripled"});
+            wire<stdlib::dense_record_impl>(w, a, Str{"doubled"});
+            wire<stdlib::dense_record_impl>(w, c, Str{"tripled"});
         }
     };
 
@@ -261,7 +261,7 @@ namespace
         static constexpr auto name = "nested_record_graph";
         static void           compose(Wiring &w)
         {
-            auto in = wire<replay, TS<Int>>(w, Str{"in"});
+            auto in = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             nested_<RecordSubGraph>(w, in);
         }
     };
@@ -333,8 +333,8 @@ namespace
         static constexpr auto name = "nested_tsl_graph";
         static void           compose(Wiring &w)
         {
-            auto a = wire<replay, TS<Int>>(w, Str{"a"});
-            auto b = wire<replay, TS<Int>>(w, Str{"b"});
+            auto a = wire<stdlib::replay_impl, TS<Int>>(w, Str{"a"});
+            auto b = wire<stdlib::replay_impl, TS<Int>>(w, Str{"b"});
             nested_<TslRecordSubGraph>(w, {a, b});
         }
     };
@@ -602,6 +602,6 @@ TEST_CASE("nested wiring: a sub-graph compose must not seed GlobalState")
     stdlib::register_standard_operators();
 
     Wiring w;
-    auto   in = wire<replay, TS<Int>>(w, Str{"in"});
+    auto   in = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
     CHECK_THROWS_AS((void)nested_<GlobalStateSeedingSubGraph>(w, in), std::invalid_argument);
 }

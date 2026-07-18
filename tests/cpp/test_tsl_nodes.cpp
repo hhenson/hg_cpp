@@ -110,10 +110,10 @@ namespace
         static constexpr auto name = "tsl_spread_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto sp  = wire<Spread>(w, src);   // -> Port<TSL<TS<Int>, 2>>
             auto tot = wire<Total>(w, sp);
-            wire<testing::record>(w, tot, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, tot, Str{"out"});
         }
     };
 
@@ -122,8 +122,8 @@ namespace
         static constexpr auto name = "tsl_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TSL<TS<Int>, 2>>(w, Str{"in"});
-            wire<testing::record>(w, src, Str{"out"});
+            auto src = wire<stdlib::replay_impl, TSL<TS<Int>, 2>>(w, Str{"in"});
+            wire<stdlib::dense_record_impl>(w, src, Str{"out"});
         }
     };
 
@@ -132,10 +132,10 @@ namespace
         static constexpr auto name = "dynamic_tsl_spread_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto sp  = wire<DynamicSpread>(w, src);  // -> Port<TSL<TS<Int>>>
             auto tot = wire<DynamicTotal>(w, sp);
-            wire<testing::record>(w, tot, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, tot, Str{"out"});
         }
     };
 
@@ -144,8 +144,8 @@ namespace
         static constexpr auto name = "dynamic_tsl_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TSL<TS<Int>>>(w, Str{"in"});
-            wire<testing::record>(w, src, Str{"out"});
+            auto src = wire<stdlib::replay_impl, TSL<TS<Int>>>(w, Str{"in"});
+            wire<stdlib::dense_record_impl>(w, src, Str{"out"});
         }
     };
 
@@ -155,8 +155,8 @@ namespace
         static constexpr auto name = "tsl_set_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TSL<TSS<Int>, 2>>(w, Str{"in"});
-            wire<testing::record>(w, src, Str{"out"});
+            auto src = wire<stdlib::replay_impl, TSL<TSS<Int>, 2>>(w, Str{"in"});
+            wire<stdlib::dense_record_impl>(w, src, Str{"out"});
         }
     };
 }  // namespace

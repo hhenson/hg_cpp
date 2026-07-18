@@ -1017,11 +1017,11 @@ namespace
         static constexpr auto name = "map_kwargs_mixed_collection_graph";
         static void           compose(Wiring &w)
         {
-            auto lhs = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"lhs"});
-            auto rhs = wire<testing::replay, TSL<TS<Int>, 2>>(w, Str{"rhs"});
+            auto lhs = wire<stdlib::replay_impl, TSD<Str, TS<Int>>>(w, Str{"lhs"});
+            auto rhs = wire<stdlib::replay_impl, TSL<TS<Int>, 2>>(w, Str{"rhs"});
             // Raw call order sees the TSL first, but func parameter order sees
             // the TSD first. The TSD kernel must win.
-            wire<testing::record>(w, wire<stdlib::map_>(w, fn<NamedTsdThenTslFn>(),
+            wire<stdlib::dense_record_impl>(w, wire<stdlib::map_>(w, fn<NamedTsdThenTslFn>(),
                                                         arg<"rhs">(rhs), arg<"lhs">(lhs)),
                                   Str{"out"});
         }
@@ -1110,8 +1110,8 @@ TEST_CASE("map_: removed children stop before their source slot erases")
     std::vector<std::size_t> constructed_counts;
     std::vector<NestedLifecycleSnapshot> lifecycle;
     Wiring                   w;
-    auto source = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"source"});
-    auto keys   = wire<testing::replay, TSS<Str>>(w, Str{"keys"});
+    auto source = wire<stdlib::replay_impl, TSD<Str, TS<Int>>>(w, Str{"source"});
+    auto keys   = wire<stdlib::replay_impl, TSS<Str>>(w, Str{"keys"});
     auto mapped = wire<stdlib::map_>(w, fn<NestedLifecycleNode>(), source, arg<"__keys__">(keys))
                       .as<TSD<Str, TS<Int>>>();
 
@@ -1158,8 +1158,8 @@ TEST_CASE("map_: __keys__ creates children for keys missing from the multiplexed
 
     std::vector<std::size_t> counts;
     Wiring                   w;
-    auto source = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"source"});
-    auto keys   = wire<testing::replay, TSS<Str>>(w, Str{"keys"});
+    auto source = wire<stdlib::replay_impl, TSD<Str, TS<Int>>>(w, Str{"source"});
+    auto keys   = wire<stdlib::replay_impl, TSS<Str>>(w, Str{"keys"});
     auto mapped = wire<stdlib::map_>(w, fn<AddOneG>(), source, arg<"__keys__">(keys))
                       .as<TSD<Str, TS<Int>>>();
 
@@ -1186,11 +1186,11 @@ TEST_CASE("map_: multiplexed dict add and remove rebind existing explicit-key ch
 
     std::vector<std::size_t> counts;
     Wiring                   w;
-    auto source = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"source"});
-    auto keys   = wire<testing::replay, TSS<Str>>(w, Str{"keys"});
+    auto source = wire<stdlib::replay_impl, TSD<Str, TS<Int>>>(w, Str{"source"});
+    auto keys   = wire<stdlib::replay_impl, TSS<Str>>(w, Str{"keys"});
     auto mapped = wire<stdlib::map_>(w, fn<AddOneG>(), source, arg<"__keys__">(keys))
                       .as<TSD<Str, TS<Int>>>();
-    wire<testing::record>(w, mapped, Str{"out"});
+    wire<stdlib::dense_record_impl>(w, mapped, Str{"out"});
 
     const std::array<WiringPortRef, 2> triggers{keys.erased(), source.erased()};
     wire_map_active_count_recorder(w, mapped.erased(), triggers, counts);
@@ -1257,8 +1257,8 @@ TEST_CASE("map_: __keys__ source repoint rebuilds children from the new slot lay
     std::vector<std::size_t> counts;
     std::vector<std::size_t> constructed_counts;
     Wiring                   w;
-    auto source = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"source"});
-    auto select = wire<testing::replay, TS<Str>>(w, Str{"select"});
+    auto source = wire<stdlib::replay_impl, TSD<Str, TS<Int>>>(w, Str{"source"});
+    auto select = wire<stdlib::replay_impl, TS<Str>>(w, Str{"select"});
     auto keys = wire<stdlib::switch_>(
                     w, select,
                     stdlib::switch_cases({{Value{Str{"ab"}}, fn<ConstABKeys>()},
@@ -1266,7 +1266,7 @@ TEST_CASE("map_: __keys__ source repoint rebuilds children from the new slot lay
                     .as<TSS<Str>>();
     auto mapped = wire<stdlib::map_>(w, fn<AddOneG>(), source, arg<"__keys__">(keys))
                       .as<TSD<Str, TS<Int>>>();
-    wire<testing::record>(w, mapped, Str{"out"});
+    wire<stdlib::dense_record_impl>(w, mapped, Str{"out"});
 
     const std::array<WiringPortRef, 2> triggers{keys.erased(), source.erased()};
     wire_map_active_count_recorder(w, mapped.erased(), triggers, counts,
@@ -1302,8 +1302,8 @@ TEST_CASE("map_: invalid __keys__ source clears children and output")
 
     std::vector<std::size_t> counts;
     Wiring                   w;
-    auto source = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"source"});
-    auto select = wire<testing::replay, TS<Str>>(w, Str{"select"});
+    auto source = wire<stdlib::replay_impl, TSD<Str, TS<Int>>>(w, Str{"source"});
+    auto select = wire<stdlib::replay_impl, TS<Str>>(w, Str{"select"});
     auto keys = wire<stdlib::switch_>(
                     w, select,
                     stdlib::switch_cases({{Value{Str{"ab"}}, fn<ConstABKeys>()},
@@ -1311,7 +1311,7 @@ TEST_CASE("map_: invalid __keys__ source clears children and output")
                     .as<TSS<Str>>();
     auto mapped = wire<stdlib::map_>(w, fn<AddOneG>(), source, arg<"__keys__">(keys))
                       .as<TSD<Str, TS<Int>>>();
-    wire<testing::record>(w, mapped, Str{"out"});
+    wire<stdlib::dense_record_impl>(w, mapped, Str{"out"});
 
     const std::array<WiringPortRef, 2> triggers{keys.erased(), source.erased()};
     wire_map_active_count_recorder(w, mapped.erased(), triggers, counts);

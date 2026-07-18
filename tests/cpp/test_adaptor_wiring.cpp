@@ -174,7 +174,7 @@ namespace
         static void compose(Wiring &w)
         {
             auto input = adaptor::from_graph<SinkOnlyAdaptor>(w);
-            wire<testing::record>(w, input, std::string{"sink_out"});
+            wire<stdlib::dense_record_impl>(w, input, std::string{"sink_out"});
         }
     };
 
@@ -190,7 +190,7 @@ namespace
         {
             const auto custom = adaptor::path(path.value());
             auto input = adaptor::from_graph<NamedSinkAdaptor>(w, custom);
-            wire<testing::record>(w, input, std::string{"named_sink_out"});
+            wire<stdlib::dense_record_impl>(w, input, std::string{"named_sink_out"});
         }
     };
 
@@ -372,7 +372,7 @@ namespace
         static void compose(Wiring &w)
         {
             auto out = wire<SourceOnlyAdaptor>(w);
-            wire<testing::record>(w, out, std::string{"missing_adaptor_out"});
+            wire<stdlib::dense_record_impl>(w, out, std::string{"missing_adaptor_out"});
         }
     };
 

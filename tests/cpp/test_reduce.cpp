@@ -76,9 +76,9 @@ namespace
         static constexpr auto name = "nested_boundary_reduce_graph";
         static void           compose(Wiring &w)
         {
-            auto a = wire<replay, TS<Int>>(w, Str{"a"});
-            auto b = wire<replay, TS<Int>>(w, Str{"b"});
-            wire<record>(w, nested_<BoundaryReduceSubGraph>(w, {a, b}), Str{"out"});
+            auto a = wire<stdlib::replay_impl, TS<Int>>(w, Str{"a"});
+            auto b = wire<stdlib::replay_impl, TS<Int>>(w, Str{"b"});
+            wire<stdlib::dense_record_impl>(w, nested_<BoundaryReduceSubGraph>(w, {a, b}), Str{"out"});
         }
     };
 

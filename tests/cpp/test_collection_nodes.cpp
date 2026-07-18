@@ -59,10 +59,10 @@ namespace
         static constexpr auto name = "dict_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto d   = wire<DictSpread>(w, src);
             auto sum = wire<DictTotal>(w, d);
-            wire<testing::record>(w, sum, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, sum, Str{"out"});
         }
     };
 
@@ -71,8 +71,8 @@ namespace
         static constexpr auto name = "dict_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, IntDict>(w, Str{"in"});
-            wire<testing::record>(w, src, Str{"out"});
+            auto src = wire<stdlib::replay_impl, IntDict>(w, Str{"in"});
+            wire<stdlib::dense_record_impl>(w, src, Str{"out"});
         }
     };
 
@@ -98,10 +98,10 @@ namespace
         static constexpr auto name = "window_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto win = wire<WindowPush>(w, src);
             auto sum = wire<WindowTotal>(w, win);
-            wire<testing::record>(w, sum, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, sum, Str{"out"});
         }
     };
 
@@ -110,8 +110,8 @@ namespace
         static constexpr auto name = "window_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, IntWindow>(w, Str{"in"});
-            wire<testing::record>(w, src, Str{"out"});
+            auto src = wire<stdlib::replay_impl, IntWindow>(w, Str{"in"});
+            wire<stdlib::dense_record_impl>(w, src, Str{"out"});
         }
     };
 
@@ -139,10 +139,10 @@ namespace
         static constexpr auto name = "quote_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto q   = wire<QuoteSpread>(w, src);
             auto sum = wire<QuoteTotal>(w, q);
-            wire<testing::record>(w, sum, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, sum, Str{"out"});
         }
     };
 
@@ -151,8 +151,8 @@ namespace
         static constexpr auto name = "quote_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, Quote>(w, Str{"in"});
-            wire<testing::record>(w, src, Str{"out"});
+            auto src = wire<stdlib::replay_impl, Quote>(w, Str{"in"});
+            wire<stdlib::dense_record_impl>(w, src, Str{"out"});
         }
     };
 
@@ -161,8 +161,8 @@ namespace
         static constexpr auto name = "quote_list_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, QuoteList>(w, Str{"in"});
-            wire<testing::record>(w, src, Str{"out"});
+            auto src = wire<stdlib::replay_impl, QuoteList>(w, Str{"in"});
+            wire<stdlib::dense_record_impl>(w, src, Str{"out"});
         }
     };
 
@@ -171,8 +171,8 @@ namespace
         static constexpr auto name = "quote_dict_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, QuoteDict>(w, Str{"in"});
-            wire<testing::record>(w, src, Str{"out"});
+            auto src = wire<stdlib::replay_impl, QuoteDict>(w, Str{"in"});
+            wire<stdlib::dense_record_impl>(w, src, Str{"out"});
         }
     };
 
@@ -205,10 +205,10 @@ namespace
         static constexpr auto name = "signal_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto sig = wire<Pulse>(w, src);
             auto cnt = wire<CountPulses>(w, sig);
-            wire<testing::record>(w, cnt, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, cnt, Str{"out"});
         }
     };
 
@@ -217,9 +217,9 @@ namespace
         static constexpr auto name = "signal_from_ts_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto cnt = wire<CountPulses>(w, src);
-            wire<testing::record>(w, cnt, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, cnt, Str{"out"});
         }
     };
 
@@ -228,10 +228,10 @@ namespace
         static constexpr auto name = "signal_from_dict_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto d   = wire<DictSpread>(w, src);
             auto cnt = wire<CountPulses>(w, d);
-            wire<testing::record>(w, cnt, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, cnt, Str{"out"});
         }
     };
 
@@ -240,10 +240,10 @@ namespace
         static constexpr auto name = "signal_from_window_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto win = wire<WindowPush>(w, src);
             auto cnt = wire<CountPulses>(w, win);
-            wire<testing::record>(w, cnt, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, cnt, Str{"out"});
         }
     };
 
@@ -262,9 +262,9 @@ namespace
         static constexpr auto name = "signal_delta_from_ts_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto out = wire<SignalDeltaToBool>(w, src);
-            wire<testing::record>(w, out, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, out, Str{"out"});
         }
     };
 

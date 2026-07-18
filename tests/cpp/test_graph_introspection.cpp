@@ -39,8 +39,8 @@ namespace
         static constexpr auto name = "introspection_throwing_graph";
         static void           compose(Wiring &w)
         {
-            auto x = wire<testing::replay, TS<Int>>(w, Str{"x"});
-            wire<testing::record>(w, wire<ThrowOnNegative>(w, x), Str{"out"});
+            auto x = wire<stdlib::replay_impl, TS<Int>>(w, Str{"x"});
+            wire<stdlib::dense_record_impl>(w, wire<ThrowOnNegative>(w, x), Str{"out"});
         }
     };
 }  // namespace

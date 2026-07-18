@@ -7,13 +7,9 @@ namespace hgraph::stdlib
         register_overload<debug_print, debug_print_impl>();
         register_overload<null_sink, null_sink_impl>();
         register_overload<stop_engine, stop_engine_impl>();
-        // The cycle-aligned testing harness and persistent component backend
-        // are distinct overloads, selected from call shape and GlobalState.
-        register_overload<record, testing::record>();
-        register_overload<replay, testing::replay>();
-        register_overload<record, memory_record_impl>();
-        register_overload<replay, memory_replay_impl>();
-        register_overload<compare, memory_compare_impl>();
+        // The in-memory record/replay/compare overloads (dense harness + sparse
+        // absolute-time backends) are registered by
+        // register_record_replay_memory_operators (impl/record_replay_memory_impl.h).
         register_overload<log_sink_op, log_sink_impl>();
         register_graph_overload<log_, log_compose>();
         register_overload<print_sink_op, print_sink_impl>();

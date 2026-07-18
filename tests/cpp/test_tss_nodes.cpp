@@ -49,10 +49,10 @@ namespace
         static constexpr auto name = "tss_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TS<Int>>(w, Str{"in"});
             auto acc = wire<Accumulate>(w, src);   // -> Port<TSS<Int>>
             auto sz  = wire<SetSize>(w, acc);       // In<TSS<Int>> -> Out<TS<Int>>
-            wire<testing::record>(w, sz, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, sz, Str{"out"});
         }
     };
 
@@ -62,8 +62,8 @@ namespace
         static constexpr auto name = "tss_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TSS<Int>>(w, Str{"in"});
-            wire<testing::record>(w, src, Str{"out"});
+            auto src = wire<stdlib::replay_impl, TSS<Int>>(w, Str{"in"});
+            wire<stdlib::dense_record_impl>(w, src, Str{"out"});
         }
     };
 
@@ -73,9 +73,9 @@ namespace
         static constexpr auto name = "tss_added_count_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TSS<Int>>(w, Str{"in"});
+            auto src = wire<stdlib::replay_impl, TSS<Int>>(w, Str{"in"});
             auto cnt = wire<AddedCount>(w, src);
-            wire<testing::record>(w, cnt, Str{"out"});
+            wire<stdlib::dense_record_impl>(w, cnt, Str{"out"});
         }
     };
 }  // namespace

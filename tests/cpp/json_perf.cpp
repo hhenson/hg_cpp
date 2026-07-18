@@ -146,14 +146,14 @@ namespace
     template <typename OutSchema>
     void wire_record(hgraph::Wiring &w, hgraph::Port<OutSchema> out, std::string_view key)
     {
-        hgraph::wire<hgraph::testing::record>(w, out, std::string{key});
+        hgraph::wire<hgraph::stdlib::dense_record_impl>(w, out, std::string{key});
     }
 
     template <typename Graph>
     Metrics run_one_input(std::string name, const std::vector<std::optional<hgraph::Str>> &input)
     {
         hgraph::Wiring w;
-        auto raw = hgraph::wire<hgraph::testing::replay, hgraph::TS<hgraph::Str>>(w, std::string{"raw"});
+        auto raw = hgraph::wire<hgraph::stdlib::replay_impl, hgraph::TS<hgraph::Str>>(w, std::string{"raw"});
         auto out = Graph::compose(w, raw);
         wire_record(w, out, "out");
 
@@ -184,8 +184,8 @@ namespace
                          const std::vector<std::optional<hgraph::Str>> &rhs)
     {
         hgraph::Wiring w;
-        auto left = hgraph::wire<hgraph::testing::replay, hgraph::TS<hgraph::Str>>(w, std::string{"lhs"});
-        auto right = hgraph::wire<hgraph::testing::replay, hgraph::TS<hgraph::Str>>(w, std::string{"rhs"});
+        auto left = hgraph::wire<hgraph::stdlib::replay_impl, hgraph::TS<hgraph::Str>>(w, std::string{"lhs"});
+        auto right = hgraph::wire<hgraph::stdlib::replay_impl, hgraph::TS<hgraph::Str>>(w, std::string{"rhs"});
         auto out = JsonEqualityGraph::compose(w, left, right);
         wire_record(w, out, "out");
 

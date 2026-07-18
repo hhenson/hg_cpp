@@ -60,7 +60,7 @@ namespace
             auto a = wire<stdlib::const_>(w, "a"_str);
             auto b = wire<stdlib::const_>(w, "b"_str);
             auto c = stdlib::to_tsl<TSL<TS<Str>>>(w, a, b);
-            wire<testing::record>(w, c, "out"_str);
+            wire<stdlib::dense_record_impl>(w, c, "out"_str);
         }
     };
 
@@ -69,10 +69,10 @@ namespace
         static constexpr auto name = "to_tsl_replay_record_graph";
         static void           compose(Wiring &w)
         {
-            auto a = wire<testing::replay, TS<Str>>(w, "a"_str);
-            auto b = wire<testing::replay, TS<Str>>(w, "b"_str);
+            auto a = wire<stdlib::replay_impl, TS<Str>>(w, "a"_str);
+            auto b = wire<stdlib::replay_impl, TS<Str>>(w, "b"_str);
             auto c = stdlib::to_tsl(w, a, b);
-            wire<testing::record>(w, c, "out"_str);
+            wire<stdlib::dense_record_impl>(w, c, "out"_str);
         }
     };
 
@@ -84,7 +84,7 @@ namespace
             auto left  = wire<stdlib::const_>(w, "a"_str);
             auto right = wire<stdlib::const_>(w, "b"_str);
             auto out   = stdlib::to_tsb<StrPairTSB>(w, left, right);
-            wire<testing::record>(w, out, "out"_str);
+            wire<stdlib::dense_record_impl>(w, out, "out"_str);
         }
     };
 
@@ -93,10 +93,10 @@ namespace
         static constexpr auto name = "to_tsb_replay_record_graph";
         static void           compose(Wiring &w)
         {
-            auto a   = wire<testing::replay, TS<Str>>(w, "a"_str);
-            auto b   = wire<testing::replay, TS<Str>>(w, "b"_str);
+            auto a   = wire<stdlib::replay_impl, TS<Str>>(w, "a"_str);
+            auto b   = wire<stdlib::replay_impl, TS<Str>>(w, "b"_str);
             auto out = stdlib::to_tsb<StrPairUnNamedTSB>(w, a, b);
-            wire<testing::record>(w, out, "out"_str);
+            wire<stdlib::dense_record_impl>(w, out, "out"_str);
         }
     };
 
@@ -117,9 +117,9 @@ namespace
         static constexpr auto name = "pass_through_graph";
         static void           compose(Wiring &w)
         {
-            auto input = wire<testing::replay, TS<Int>>(w, "in"_str);
+            auto input = wire<stdlib::replay_impl, TS<Int>>(w, "in"_str);
             auto out   = wire<stdlib::pass_through_node>(w, input);
-            wire<testing::record>(w, out, "out"_str);
+            wire<stdlib::dense_record_impl>(w, out, "out"_str);
         }
     };
 

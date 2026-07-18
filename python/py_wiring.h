@@ -59,6 +59,19 @@ namespace hgraph::python_bridge
         PyWiring()
             : owned(std::make_unique<Wiring>()), raw(owned.get())
         {
+            // The raw stateless wiring bridge IS the dense recording harness
+            // (``Run.recorded`` reads cycle-aligned buffers): record/replay
+            // resolve to the DENSE backend here. A seeded wiring (below)
+            // inherits its GlobalState's model instead (default IN_MEMORY =
+            // sparse ``:memory:`` recording for real graph runs / components).
+            // Guarded so an ambient non-default model (e.g. DATA_FRAME) wins.
+            const GlobalStateView state = raw->global_state();
+            if (record_replay::model_is(state, record_replay::IN_MEMORY))
+            {
+                record_replay::Config config = record_replay::config(state);
+                config.model                 = std::string{record_replay::IN_MEMORY_DENSE};
+                record_replay::set_config(state, std::move(config));
+            }
         }
 
         explicit PyWiring(GlobalState &state)

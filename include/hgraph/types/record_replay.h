@@ -54,8 +54,22 @@ namespace hgraph::record_replay
                flag != Mode::None;
     }
 
-    /** The default (in-memory GlobalState buffer) record/replay model. */
+    /** The default (in-memory GlobalState buffer) record/replay model. Under
+        this model ``record`` binds to the SPARSE, absolute-time
+        ``:memory:<recordable_id>.<key>`` backend (``stdlib::sparse_record_impl``)
+        — the upstream semantics that append across runs and tolerate arbitrary
+        cross-cycle gaps (real-time alarms, components). ``replay`` is a single
+        backend serving both models; see
+        ``record_replay_table.rst`` (*In-memory record/replay — sparse vs dense*). */
     inline constexpr std::string_view IN_MEMORY = "InMemory";
+
+    /** The DENSE cycle-aligned in-memory model (the graph testing harness).
+        Under this model ``record`` binds to ``stdlib::dense_record_impl``:
+        a plain-key ``List`` indexed by evaluation
+        cycle (``MIN_ST + i*MIN_TD``), read back with ``get_recorded_values`` /
+        ``Run.recorded``. Distinct model so a single ``record`` operator selects
+        sparse (default) vs dense purely from wiring-time configuration. */
+    inline constexpr std::string_view IN_MEMORY_DENSE = "InMemoryDense";
 
     /** The Arrow data-frame record/replay model (frame-store backed). */
     inline constexpr std::string_view DATA_FRAME = "DataFrame";
