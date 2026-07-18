@@ -644,6 +644,66 @@ namespace hgraph
         return result;
     }
 
+    std::optional<OperatorParameterListShape> OperatorRegistry::parameter_shape(std::string_view name) const
+    {
+        const auto found = overloads_.find(std::string{name});
+        if (found == overloads_.end() || found->second.empty()) { return std::nullopt; }
+
+        std::optional<OperatorParameterListShape> result;
+        for (const OperatorImpl &impl : found->second)
+        {
+            OperatorParameterListShape candidate;
+            candidate.variadic = impl.variadic;
+            candidate.parameters.reserve(impl.params.size());
+            for (const ParamPattern &parameter : impl.params)
+            {
+                const bool variable = parameter.kind == ParamPattern::Kind::Input
+                                          ? ts_pattern_has_var(parameter.ts)
+                                          : scalar_pattern_has_var(parameter.scalar);
+                const TSValueTypeMetaData *fixed = nullptr;
+                if (parameter.kind == ParamPattern::Kind::Input && !variable)
+                {
+                    ResolutionMap empty;
+                    const TSValueTypeMetaData *resolved = ts_pattern_resolve(parameter.ts, empty);
+                    // SIGNAL is an input interface accepting any time-series,
+                    // not a concrete producer schema suitable for a harness.
+                    if (resolved != nullptr && resolved->kind != TSTypeKind::SIGNAL) { fixed = resolved; }
+                }
+                candidate.parameters.push_back(OperatorParameterShape{
+                    .name = parameter.name,
+                    .kind = parameter.kind,
+                    .type_variable = variable,
+                    .fixed_ts = fixed,
+                });
+            }
+
+            if (!result.has_value())
+            {
+                result = std::move(candidate);
+                continue;
+            }
+            std::size_t common_size = std::min(result->parameters.size(), candidate.parameters.size());
+            std::size_t index = 0;
+            for (; index < common_size; ++index)
+            {
+                OperatorParameterShape       &merged = result->parameters[index];
+                const OperatorParameterShape &next = candidate.parameters[index];
+                if (merged.name != next.name || merged.kind != next.kind) { break; }
+                merged.type_variable = merged.type_variable || next.type_variable;
+                if (merged.type_variable || merged.fixed_ts != next.fixed_ts) { merged.fixed_ts = nullptr; }
+            }
+            common_size = index;
+            if (common_size != result->parameters.size() ||
+                common_size != candidate.parameters.size() ||
+                result->variadic != candidate.variadic)
+            {
+                result->variadic = false;
+            }
+            result->parameters.resize(common_size);
+        }
+        return result;
+    }
+
     std::vector<std::string> OperatorRegistry::registered_names() const
     {
         std::vector<std::string> names;

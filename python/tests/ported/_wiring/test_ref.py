@@ -142,6 +142,15 @@ def test_route_ref():
     ]
 
 
+def test_route_ref_with_positional_inputs():
+    assert eval_node(if_[TIME_SERIES_TYPE : TS[int]], [True, None, False, None], [1, 2, None, 4]) == [
+        {"true": 1},
+        {"true": 2},
+        {"false": 2},
+        {"false": 4},
+    ]
+
+
 @compute_node
 def merge_ref(index: TS[int], ts: TSL[REF[TIME_SERIES_TYPE], SIZE]) -> REF[TIME_SERIES_TYPE]:
     return cast(REF, ts[index.value].value)

@@ -214,6 +214,40 @@ def _infer_ts_type(series):
     return None
 
 
+def _operator_parameter_annotations(fn):
+    """Resolve eval harness annotations from the native operator signature.
+
+    Subscript values such as ``op[TIME_SERIES_TYPE: TS[int]]`` resolve
+    generic input positions only. Concrete positions come directly from the
+    C++ registry; Python must not assign these hints by call order.
+    """
+    if not isinstance(fn, _OperatorFunction):
+        return (), False
+    shape = _hgraph.operator_parameter_shape(fn.__name__)
+    if shape is None:
+        return (), False
+
+    parameters, variadic = shape
+    hints = fn._ts_hint
+    if hints is None:
+        hints = []
+    elif not isinstance(hints, list):
+        hints = [hints]
+
+    annotations = []
+    hint_index = 0
+    for name, is_input, type_variable, fixed in parameters:
+        annotation = None
+        if is_input:
+            if fixed is not None:
+                annotation = _TsExpr(fixed, repr(fixed))
+            if type_variable and hints:
+                annotation = hints[min(hint_index, len(hints) - 1)]
+                hint_index += 1
+        annotations.append((name, annotation))
+    return tuple(annotations), variadic
+
+
 def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
               __trace__=False, __trace_wiring__=False, __observers__=None,
               __start_time__=None, __end_time__=None, __scalars__=None,
@@ -321,6 +355,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                          __observers__=__observers__,
                          __start_time__=__start_time__, __end_time__=__end_time__,
                          __scalars__=__scalars__, __elide__=__elide__, **kwargs)
+    operator_annotations, operator_variadic = _operator_parameter_annotations(fn)
+    operator_annotations_by_name = dict(operator_annotations)
     trace = _make_evaluation_trace(__trace__)
     w = _hgraph.Wiring(GlobalState.instance()._impl)
     _wiring_stack.append(w)
@@ -336,16 +372,18 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         scalar_positions = set()
         for i, series in enumerate(inputs):
             annotation = annotations_by_name.get(params[i].name) if i < len(params) else None
-            if annotation is None and getattr(fn, "_ts_hint", None) is not None:
-                hints = fn._ts_hint       # op[TYPEVAR: TYPE, ...] types the inputs
-                if not isinstance(hints, list):
-                    hints = [hints]
-                annotation = hints[i] if i < len(hints) else hints[-1]
+            annotation_from_operator = False
+            if annotation is None and operator_annotations:
+                if i < len(operator_annotations):
+                    annotation = operator_annotations[i][1]
+                elif operator_variadic:
+                    annotation = operator_annotations[-1][1]
+                annotation_from_operator = annotation is not None
+            if annotation_from_operator:
                 from .._types import TS as _TS, _TsExpr as _TsE, _GenericTsExpr as _GTsE
                 if not isinstance(annotation, (_TsE, _GTsE)) and isinstance(series, (list, tuple)):
-                    # op[SCALAR: int] resolves the ELEMENT type - a LIST input
-                    # at this position is a TS[int] series (a non-list value
-                    # stays a scalar argument).
+                    # A scalar type-variable resolution describes the element
+                    # type of a time-series input to the native operator.
                     annotation = _TS[annotation]
             if resolution_dict and i < len(params) and params[i].name in resolution_dict:
                 annotation = resolution_dict[params[i].name]
@@ -402,21 +440,20 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         # the node as scalars.
         if not params:
             # OPERATOR functions have no python signature: named list kwargs
-            # are input series wired as keyword ports.
+            # are input series wired as keyword ports. The native registry
+            # supplies fixed/generic parameter roles; keyword order does not.
             named_ports = {}
-            hints = getattr(fn, "_ts_hint", None) or []
-            if not isinstance(hints, list):
-                hints = [hints]
-            hints = [h for h in hints if isinstance(h, _TsExpr)]
             for k in [k for k, v in kwargs.items() if isinstance(v, (list, tuple))]:
                 series = kwargs.pop(k)
                 annotation = None
                 if resolution_dict and k in resolution_dict and isinstance(resolution_dict[k], _TsExpr):
                     annotation = resolution_dict[k]   # the dict types NAMED series too
-                if annotation is None and hints:
-                    # op[TYPE, ...] subscript hints type named series in
-                    # order, exactly as they type positional inputs.
-                    annotation = hints.pop(0)
+                if annotation is None:
+                    annotation = operator_annotations_by_name.get(k)
+                if annotation is not None:
+                    from .._types import TS as _TS, _GenericTsExpr as _GTsE
+                    if not isinstance(annotation, (_TsExpr, _GTsE)):
+                        annotation = _TS[annotation]
                 if annotation is None:
                     annotation = _infer_ts_type(series)
                 if annotation is None:

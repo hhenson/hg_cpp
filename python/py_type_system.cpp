@@ -580,6 +580,25 @@ namespace hgraph::python_bridge
         return OperatorRegistry::instance().output_is_selective(name);
     });
 
+    m.def("operator_parameter_shape", [](const std::string &name) -> nb::object {
+        const auto shape = OperatorRegistry::instance().parameter_shape(name);
+        if (!shape.has_value()) { return nb::none(); }
+
+        nb::list parameters;
+        for (const OperatorParameterShape &parameter : shape->parameters)
+        {
+            nb::object fixed = parameter.fixed_ts != nullptr
+                                   ? nb::cast(PyTsType{parameter.fixed_ts})
+                                   : nb::none();
+            parameters.append(nb::make_tuple(
+                parameter.name,
+                parameter.kind == ParamPattern::Kind::Input,
+                parameter.type_variable,
+                std::move(fixed)));
+        }
+        return nb::make_tuple(std::move(parameters), shape->variadic);
+    });
+
     // --- python operator overloads (end-game A2): a python @compute_node/
     // @graph registers as an ordinary OperatorImpl{Source::Python} candidate.
     // Matching/ranking/normalisation are ENTIRELY the C++ registry's (the

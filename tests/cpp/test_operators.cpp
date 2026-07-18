@@ -120,6 +120,34 @@ namespace
         static void eval(In<"ts", TsVar<"S">> ts) { static_cast<void>(ts); }
     };
 
+    struct route_shape_ : Operator<"route_shape", In<"condition", TS<Bool>>, In<"ts", TsVar<"S">>,
+                                   In<"pulse", SIGNAL>>
+    {
+    };
+    struct route_shape_any
+    {
+        static void eval(In<"condition", TS<Bool>> condition, In<"ts", TsVar<"S">> ts,
+                         In<"pulse", SIGNAL> pulse)
+        {
+            static_cast<void>(condition);
+            static_cast<void>(ts);
+            static_cast<void>(pulse);
+        }
+    };
+    struct route_shape_labeled
+    {
+        static auto defaults() { return std::tuple{arg<"label">(Str{})}; }
+
+        static void eval(In<"condition", TS<Bool>> condition, In<"ts", TsVar<"S">> ts,
+                         In<"pulse", SIGNAL> pulse, Scalar<"label", Str> label)
+        {
+            static_cast<void>(condition);
+            static_cast<void>(ts);
+            static_cast<void>(pulse);
+            static_cast<void>(label);
+        }
+    };
+
     struct double_ : Operator<"double", In<"in", TS<Int>>, Out<TS<Int>>>
     {
     };
@@ -698,6 +726,35 @@ TEST_CASE("operators: sink operators return void and do not expose a null output
     auto ex = run_graph<SinkGraph>(
         [](const GlobalStateView &gs) { set_replay_values<Int>(gs, "a", {1, 2, 3}); });
     static_cast<void>(ex);
+}
+
+TEST_CASE("operators: parameter shape distinguishes fixed and generic inputs")
+{
+    register_overload<route_shape_, route_shape_any>();
+    register_overload<route_shape_, route_shape_labeled>();
+
+    const auto shape = OperatorRegistry::instance().parameter_shape("route_shape");
+    REQUIRE(shape.has_value());
+    CHECK_FALSE(shape->variadic);
+    REQUIRE(shape->parameters.size() == 3);
+
+    const OperatorParameterShape &condition = shape->parameters[0];
+    CHECK(condition.name == "condition");
+    CHECK(condition.kind == ParamPattern::Kind::Input);
+    CHECK_FALSE(condition.type_variable);
+    CHECK(condition.fixed_ts == ts_type<TS<Bool>>());
+
+    const OperatorParameterShape &ts = shape->parameters[1];
+    CHECK(ts.name == "ts");
+    CHECK(ts.kind == ParamPattern::Kind::Input);
+    CHECK(ts.type_variable);
+    CHECK(ts.fixed_ts == nullptr);
+
+    const OperatorParameterShape &pulse = shape->parameters[2];
+    CHECK(pulse.name == "pulse");
+    CHECK(pulse.kind == ParamPattern::Kind::Input);
+    CHECK_FALSE(pulse.type_variable);
+    CHECK(pulse.fixed_ts == nullptr);
 }
 
 TEST_CASE("operators: graph implementations can be registered as overloads")

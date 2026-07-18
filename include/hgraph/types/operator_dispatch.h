@@ -264,6 +264,30 @@ namespace hgraph
         bool                     has_output{false};
     };
 
+    /** One declared parameter in the common shape of an operator overload set. */
+    struct OperatorParameterShape
+    {
+        std::string                      name{};
+        ParamPattern::Kind               kind{ParamPattern::Kind::Input};
+        bool                             type_variable{false};
+        const TSValueTypeMetaData       *fixed_ts{nullptr};
+    };
+
+    /**
+     * Common parameter prefix shared by every candidate in an overload set.
+     *
+     * ``type_variable`` is the union across otherwise-compatible candidates;
+     * ``fixed_ts`` is populated only when every candidate declares the same
+     * concrete time-series schema at that position. Parameters after the first
+     * name/kind mismatch are omitted. This is intentionally a registry view
+     * rather than a second signature model in a language bridge.
+     */
+    struct OperatorParameterListShape
+    {
+        std::vector<OperatorParameterShape> parameters{};
+        bool                                variadic{false};
+    };
+
     /**
      * The outcome of overload selection: the winning candidate, its resolved
      * type variables, and the **normalised** call — arguments in declared
@@ -340,6 +364,10 @@ namespace hgraph
             Returns nullopt when overloads disagree or require scalar
             configuration that a WiredFn cannot carry. */
         [[nodiscard]] std::optional<OperatorCallableShape> callable_shape(std::string_view name) const;
+
+        /** Common parameter prefix for tooling which must prepare a call. */
+        [[nodiscard]] std::optional<OperatorParameterListShape> parameter_shape(
+            std::string_view name) const;
 
         [[nodiscard]] Value evaluate_const(std::string_view name,
                                            std::span<const WiringArg> args,
