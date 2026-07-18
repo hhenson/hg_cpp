@@ -119,7 +119,7 @@ namespace hgraph
 
         void bind_branch_output(const NodeView &view, const SwitchNodeContext &context,
                                 const SingleNestedGraphNodeSpec &spec, const GraphView &child,
-                                DateTime evaluation_time)
+                                DateTime evaluation_time, bool sampled = false)
         {
             if (!spec.output_binding.has_value()) { return; }
 
@@ -162,7 +162,8 @@ namespace hgraph
                 // mesh_subscribe may re-point while the branch evaluates.
                 if (!switch_output.forwarding_target().same_as(branch_terminal.handle()))
                 {
-                    switch_output.bind_forwarding_target(branch_terminal);
+                    if (sampled) { switch_output.bind_forwarding_target_sampled(branch_terminal); }
+                    else { switch_output.bind_forwarding_target(branch_terminal); }
                 }
                 return;
             }
@@ -270,12 +271,25 @@ namespace hgraph
             bind_branch_inputs(view, spec, next, evaluation_time, true);
             construction_rollback.release();
 
-            switch_teardown(view, context, storage, evaluation_time);
+            if (context.spec.output_forwards_to_child_terminal)
+            {
+                GraphValue *active = storage.active_graph();
+                bind_branch_output(view, context, spec, next, evaluation_time, true);
+                if (active != nullptr && active->has_value()) { active->view().stop(); }
+                storage.previous_slot = storage.active_slot;
+                storage.active_slot.reset();
+                storage.active_key  = Value{};
+                storage.active_spec = nullptr;
+            }
+            else { switch_teardown(view, context, storage, evaluation_time); }
             storage.active_slot = next_slot;
             storage.active_key  = std::move(key);
             storage.active_spec = &spec;
 
-            bind_branch_output(view, context, spec, next, evaluation_time);
+            if (!context.spec.output_forwards_to_child_terminal)
+            {
+                bind_branch_output(view, context, spec, next, evaluation_time);
+            }
             // Selecting a branch samples the current boundary values once.
             // This is an explicit switch_ lifecycle operation: activating an
             // input only subscribes it and must never synthesize scheduling or

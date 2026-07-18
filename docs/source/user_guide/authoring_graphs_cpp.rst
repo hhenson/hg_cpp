@@ -448,14 +448,12 @@ Flow control
      - variadic ``*args: TS<Bool>``; ``TSD<K, TS<Bool>>``
      - ``TS<Bool>``
      - Empty variadic calls return ``true``. Non-empty variadic calls are packed
-       into a fixed ``TSL`` and wired through ``reduce`` with ``false`` as the
-       default value for not-yet-valid leaves.
+       into a fixed ``TSL`` and wired through the boolean reduction path.
    * - ``any_``
      - variadic ``*args: TS<Bool>``; ``TSD<K, TS<Bool>>``
      - ``TS<Bool>``
      - Empty variadic calls return ``false``. Non-empty variadic calls are packed
-       into a fixed ``TSL`` and wired through ``reduce`` with ``false`` as the
-       default value for not-yet-valid leaves.
+       into a fixed ``TSL`` and wired through the boolean reduction path.
    * - ``if_true``
      - ``condition: TS<Bool>``; optional scalar ``tick_once_only``
      - ``TS<Bool>``
@@ -710,18 +708,25 @@ time the key *ticks*, even to the same value.
 ``reduce_`` — fold a collection
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``reduce_(func, collection[, zero])`` folds a fixed ``TSL`` or a ``TSD`` down
-to one value with a binary combiner (associative — and, for ``TSD``,
-commutative, since dict reduction is unordered):
+``reduce_(func, collection[, zero])`` folds a fixed or dynamic ``TSL``, or a
+``TSD``, down to one value with a binary combiner (associative — and, for
+``TSD``, commutative, since dict reduction is unordered):
 
 .. code-block:: cpp
 
    auto total = wire<stdlib::reduce_>(w, fn<stdlib::add_>(), values).as<TS<Int>>();
 
-For known operations the identity is derived (``zero_`` mirrors Python's
-``zero(tp, op)``: ``add_`` → 0, ``mul_`` → 1, …); pass an explicit zero for a
-custom combiner. Over a ``TSD`` the runtime maintains a minimal combiner tree
-and only re-computes the affected path when a key ticks.
+Omitting ``zero`` means there is no zero: an empty collection produces an
+invalid result, a singleton returns its value without calling ``func``, and a
+larger collection reduces its values normally. When ``zero`` is supplied, an
+empty collection returns it and a singleton evaluates ``func(value, zero)``;
+once two or more values are live, zero is not used. Unset fixed-``TSL`` slots
+are not values. This intentionally differs from the previous Python engine,
+which inferred an operation-specific zero and used it for unset slots.
+
+Over a ``TSD`` the runtime maintains a minimal combiner tree and only
+re-computes affected paths when keys tick. The same live-value rule applies to
+fixed and dynamic ``TSL`` inputs.
 
 ``mesh_`` — instances that read each other
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1279,8 +1284,8 @@ machinery used by nodes and operators. Beyond those the following are deferred
 - **multiple outputs** — a graph returning a ``TSB`` becomes a bundle ``Port``
   with ``.field<"x">()`` to take a sub-port; as syntactic sugar a graph's outputs
   may instead be returned as an array;
-- **dynamic-TSL multiplexing** in ``map_`` / ``reduce`` / ``mesh_``,
-  non-associative ``reduce``, and sink maps / all-sink switches.
+- **dynamic-TSL multiplexing** in ``map_`` / ``mesh_``, and sink maps /
+  all-sink switches.
 
 
 C++ ↔ Python cheat sheet
@@ -1309,7 +1314,7 @@ C++ ↔ Python cheat sheet
    * - ``wire<stdlib::switch_>(w, key, switch_cases({...}), ts...)``
      - ``switch_(key, {...}, ts...)``
    * - ``wire<stdlib::reduce_>(w, fn<F>(), coll)``
-     - ``reduce(f, coll, zero)``
+     - ``reduce(f, coll[, zero])``
    * - ``wire<stdlib::mesh_>(w, fn<F>(), tsd...)`` / ``mesh_ref<S>(w, key)``
      - ``mesh_(f, tsd...)`` / ``mesh_(f)[k]``
    * - ``stdlib::feedback<S>(w, init)``; ``fb(port)`` / ``fb()``

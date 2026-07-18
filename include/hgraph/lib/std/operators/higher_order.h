@@ -34,18 +34,22 @@ namespace hgraph::stdlib
     /**
      * ``reduce`` — reduce a time-series **collection** into a single
      * time-series with the (associative) combiner ``func``. Mirrors Python
-     * ``reduce(func, ts, zero=ZERO, is_associative=true)``:
+     * ``reduce(func, ts[, zero], is_associative=true)``. For associative
+     * reduction, ``zero`` has deliberately narrow semantics:
+     *
+     * - no live values: publish ``zero`` when supplied, otherwise remain invalid;
+     * - one live value: return that value directly when ``zero`` is omitted, or
+     *   evaluate ``func(value, zero)`` when it is supplied;
+     * - two or more live values: reduce only those values; ``zero`` is not an
+     *   operand.
      *
      * - ``ts`` — any multiplexed collection (``TSL`` / ``TSD``; ``TSS`` once
      *   the Python reference grows one). Each collection kind is its own
      *   registered overload of this name, selected by pattern rank —
-     *   implemented today: fixed-size ``TSL`` (static wiring-time layout);
-     *   the dynamic ``TSD`` kernel follows.
+     *   implemented today: fixed/dynamic ``TSL`` and ``TSD``.
      * - ``zero`` — **optional**, modelled as arity overloads (like ``const``):
-     *   when omitted, the zero is derived from the operation via the ``zero``
-     *   operator (``zero(item_tp, func)``); when supplied, the value is wired
-     *   as ``const(zero)`` at the element schema. Elements that have not
-     *   ticked yet count as the zero (``default(ts[i], zero)`` leaves).
+     *   when supplied as a scalar, the value is wired as ``const(zero)`` at
+     *   the element schema. Unset ``TSL`` slots are not live values.
      * - ``is_associative=false`` — select an ordered left fold. A fixed TSL
      *   folds statically; a contiguous ``TSD[int, E]`` uses the live ``zero``
      *   input as its initial accumulator and permits an accumulator type that
@@ -54,7 +58,7 @@ namespace hgraph::stdlib
     struct reduce_ : Operator<"reduce",
                               Scalar<"func", WiredFn>,
                               In<"ts", TsVar<"C">>,           // the collection (TSL / TSD / TSS ...)
-                              Scalar<"zero", ScalarVar<"Z">>, // optional (arity): defaults to zero(item_tp, func)
+                              Scalar<"zero", ScalarVar<"Z">>, // optional arity; never inferred
                               Scalar<"is_associative", Bool>,
                               Out<TsVar<"V">>>
     {

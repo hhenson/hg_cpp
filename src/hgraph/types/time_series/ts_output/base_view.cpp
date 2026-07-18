@@ -111,6 +111,21 @@ namespace hgraph
         }
     }
 
+    void TSOutputView::bind_forwarding_target_sampled(const TSOutputView &source) const
+    {
+        if (!forwarding())
+        {
+            throw std::logic_error(
+                "TSOutputView::bind_forwarding_target_sampled requires a forwarding output view");
+        }
+        if (evaluation_time_ == MIN_DT)
+        {
+            throw std::invalid_argument(
+                "TSOutputView::bind_forwarding_target_sampled requires an evaluation time");
+        }
+        detail::bind_target_link_sampled(data_, source, evaluation_time_);
+    }
+
     void TSOutputView::clear_forwarding_target() const
     {
         if (!forwarding())
@@ -123,6 +138,34 @@ namespace hgraph
         {
             detail::mutable_target_link_storage(data_)->record_target_modified(evaluation_time_);
         }
+    }
+
+    void TSOutputView::clear_forwarding_target_sampled() const
+    {
+        if (!forwarding())
+        {
+            throw std::logic_error(
+                "TSOutputView::clear_forwarding_target_sampled requires a forwarding output view");
+        }
+        if (evaluation_time_ == MIN_DT)
+        {
+            throw std::invalid_argument(
+                "TSOutputView::clear_forwarding_target_sampled requires an evaluation time");
+        }
+
+        auto *link = detail::mutable_target_link_storage(data_);
+        if (link == nullptr) { throw std::logic_error("Forwarding output has no target-link storage"); }
+        const auto *target_schema = schema();
+        if (target_schema != nullptr &&
+            (target_schema->kind == TSTypeKind::TSS || target_schema->kind == TSTypeKind::TSD))
+        {
+            link->unbind_structural(evaluation_time_);
+            return;
+        }
+
+        const bool was_bound = link->bound();
+        link->unbind();
+        if (was_bound) { link->record_target_modified(evaluation_time_); }
     }
 
     void TSOutputView::subscribe(Notifiable *observer) const

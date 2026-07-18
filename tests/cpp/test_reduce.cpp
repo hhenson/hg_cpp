@@ -1,9 +1,8 @@
 // The ``reduce`` higher-order OPERATOR (lib/std/operators/higher_order.h).
 //
 // reduce is an Operator marker whose default overload (impl/higher_order_impl.h)
-// covers a fixed-size TSL by laying the reduction out statically at wiring time
-// (linear chain for small sizes, balanced binary tree with odd-element carry —
-// mirroring Python _reduce_tsl). The combiner is a WiredFn scalar (fn<X>()), so
+// covers fixed/dynamic TSL and TSD collections with a live-value reduction tree.
+// The combiner is a WiredFn scalar (fn<X>()), so
 // user specialisations register as ordinary overloads and are selected by the
 // standard best-match machinery — including requires_ gating on the function's
 // identity, mirroring ext/main's map_ overload test.
@@ -56,6 +55,18 @@ namespace
         {
             using namespace hgraph::stdlib::syntax;
             return (lhs + rhs).as<TS<Int>>();
+        }
+    };
+
+    // The offset makes invocation observable: a singleton without zero must
+    // remain unchanged, while a singleton with zero must pass through this node.
+    struct OffsetSumCombiner
+    {
+        static constexpr auto name = "offset_sum_combiner";
+
+        static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out)
+        {
+            out.set(lhs.value() + rhs.value() + Int{100});
         }
     };
 
@@ -323,6 +334,147 @@ namespace
                 .as<TS<Int>>();
         }
     };
+
+    struct AddOptionalInts
+    {
+        static constexpr auto name = "reduce_add_optional_ints";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            using namespace hgraph::stdlib::syntax;
+            auto zero = wire<stdlib::const_, TS<Int>>(w, Int{0});
+            auto lhs_or_zero = wire<stdlib::default_>(w, lhs, zero).as<TS<Int>>();
+            auto rhs_or_zero = wire<stdlib::default_>(w, rhs, zero).as<TS<Int>>();
+            return (lhs_or_zero + rhs_or_zero).as<TS<Int>>();
+        }
+    };
+
+    struct MergeIntDicts
+    {
+        static constexpr auto name = "reduce_merge_int_dicts";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w,
+                                                Port<TSD<Int, TS<Int>>> lhs,
+                                                Port<TSD<Int, TS<Int>>> rhs)
+        {
+            return wire<stdlib::map_, TSD<Int, TS<Int>>>(
+                w, fn<AddOptionalInts>(), lhs, rhs);
+        }
+    };
+
+    struct ReduceNestedIntDicts
+    {
+        static constexpr auto name = "reduce_nested_int_dicts";
+
+        static Port<TSD<Int, TS<Int>>> compose(
+            Wiring &w, Port<TSD<Int, TSD<Int, TS<Int>>>> values)
+        {
+            return wire<stdlib::reduce_>(w, fn<MergeIntDicts>(), values)
+                .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct IncrementInt
+    {
+        static constexpr auto name = "reduce_increment_int";
+
+        static void eval(In<"value", TS<Int>> value, Out<TS<Int>> out)
+        {
+            out.set(value.value() + Int{1});
+        }
+    };
+
+    struct ReduceAndMapNestedIntDicts
+    {
+        static constexpr auto name = "reduce_and_map_nested_int_dicts";
+
+        static Port<TSD<Int, TS<Int>>> compose(
+            Wiring &w, Port<TSD<Int, TSD<Int, TS<Int>>>> values)
+        {
+            auto reduced = wire<stdlib::reduce_>(w, fn<MergeIntDicts>(), values)
+                               .as<TSD<Int, TS<Int>>>();
+            return wire<stdlib::map_, TSD<Int, TS<Int>>>(w, fn<IncrementInt>(), reduced);
+        }
+    };
+
+    struct SwitchReducedNestedIntDicts
+    {
+        static constexpr auto name = "switch_reduced_nested_int_dicts";
+
+        static Port<TSD<Int, TS<Int>>> compose(
+            Wiring &w, Port<TSD<Int, TSD<Int, TS<Int>>>> values,
+            Port<TS<Bool>> key)
+        {
+            return wire<stdlib::switch_, TSD<Int, TS<Int>>>(
+                w, key,
+                stdlib::switch_cases({{Value{false}, fn<ReduceAndMapNestedIntDicts>()},
+                                      {Value{true}, fn<ReduceAndMapNestedIntDicts>()}}),
+                values);
+        }
+    };
+
+    struct AddReducedInts
+    {
+        static constexpr auto name = "add_reduced_ints";
+
+        static Port<TS<Int>> compose(Wiring &, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (lhs + rhs).as<TS<Int>>();
+        }
+    };
+
+    struct SwitchReducedInts
+    {
+        static constexpr auto name = "switch_reduced_ints";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Bool>> key,
+                                     Port<TSD<Int, TS<Int>>> values)
+        {
+            auto reduced = wire<stdlib::reduce_>(w, fn<stdlib::add_>(), values).as<TS<Int>>();
+            return wire<stdlib::switch_, TS<Int>>(
+                w, key,
+                stdlib::switch_cases({{Value{false}, fn<AddReducedInts>()},
+                                      {Value{true}, fn<AddReducedInts>()}}),
+                reduced, reduced);
+        }
+    };
+
+    struct EmptyRefDictNode
+    {
+        static constexpr auto name = "reduce_empty_ref_dict";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(DateTime now, Out<TSD<Str, REF<TS<Int>>>> out)
+        {
+            out.begin_mutation(now).touch();
+        }
+    };
+
+    struct ObserveValueDict
+    {
+        static constexpr auto name = "reduce_observe_value_dict";
+
+        static void eval(In<"values", TSD<Str, TS<Int>>, InputValidity::Unchecked> values,
+                         Out<TS<Int>> out)
+        {
+            out.set(static_cast<Int>(values.size()));
+        }
+    };
+
+    struct SwitchEmptyRefDict
+    {
+        static constexpr auto name = "reduce_switch_empty_ref_dict";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Bool>> key)
+        {
+            auto selected = wire<stdlib::switch_, TSD<Str, REF<TS<Int>>>>(
+                w, key,
+                stdlib::switch_cases({{Value{false}, fn<EmptyRefDictNode>()},
+                                      {Value{true}, fn<EmptyRefDictNode>()}}));
+            return wire<ObserveValueDict>(w, selected);
+        }
+    };
 }  // namespace
 
 TEST_CASE("reduce: a five-element TSL reduces through a binary tree with carry")
@@ -354,7 +506,7 @@ TEST_CASE("reduce: a lifted scalar add reduces a fixed TSL in one specialised no
     CHECK(operator_fn_gb.node_count() == 2);   // const source + lifted reduce node resolved through fn<add_>
 }
 
-TEST_CASE("reduce: a lifted scalar function can take its identity from lift")
+TEST_CASE("reduce: a lifted function identity does not supply reduce zero")
 {
     using namespace hgraph;
     stdlib::register_standard_operators();
@@ -364,6 +516,11 @@ TEST_CASE("reduce: a lifted scalar function can take its identity from lift")
                      values<Value>(list_delta<TS<Int>>({1, 2, 3, 4, 5}),
                                    list_delta<TS<Int>>({{0, 10}})))),
                  values<Int>(15, 24));
+
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSL<TS<Int>, 2>>(
+                     lift<ReduceLiftedAddNoIdentity, Int{100}>(),
+                     values<Value>(list_delta<TS<Int>>({{0, 7}})))),
+                 values<Int>(7));
 
     GraphBuilder gb = build_graph<LiftedReduceExplicitIdentityConstGraph>();
     CHECK(gb.node_count() == 2);   // const source + lifted reduce node
@@ -405,18 +562,40 @@ TEST_CASE("reduce: lifted standard kernels use built-in and explicit identities"
     CHECK(operator_min_gb.node_count() == 2);   // const source + lifted reduce node via fn<min_>
 }
 
-TEST_CASE("reduce: not-yet-valid elements count as the operation's zero")
+TEST_CASE("reduce: unset TSL slots are not live reduction values")
 {
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    // Python parity: every leaf is default(ts[i], zero), so a partially-valid
-    // TSL reduces immediately with zeros for the absent elements.
+    // Only the two valid positions participate in the first reduction.
     CHECK_OUTPUT((eval_node<stdlib::reduce_, TSL<TS<Int>, 5>>(
                      fn<stdlib::add_>(),
-                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}}),              // partial: 1+2+0+0+0
-                                   list_delta<TS<Int>>({{2, 3}, {3, 4}, {4, 5}})))),   // completes: full sum
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}}),
+                                   list_delta<TS<Int>>({{2, 3}, {3, 4}, {4, 5}})))),
                  values<Int>(3, 15));
+}
+
+TEST_CASE("reduce: omitted zero leaves empty invalid and bypasses the combiner for a singleton")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSL<TS<Int>, 3>>(
+                     fn<OffsetSumCombiner>(),
+                     values<Value>(list_delta<TS<Int>>({}),
+                                   list_delta<TS<Int>>({{0, 7}}),
+                                   list_delta<TS<Int>>({{1, 2}})))),
+                 values<Int>(none, 7, 109));
+
+    using namespace std::string_literals;
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSD<Str, TS<Int>>>(
+                     fn<OffsetSumCombiner>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 1}}),
+                                   dict_delta<Str, TS<Int>>({{"b"s, 2}}),
+                                   dict_delta<Str, TS<Int>>({}, {"b"s}),
+                                   dict_delta<Str, TS<Int>>({}, {"a"s})))),
+                 values<Int>(none, 1, 103, 1, none));
 }
 
 TEST_CASE("reduce: small sizes lay out as a linear chain")
@@ -455,19 +634,20 @@ TEST_CASE("reduce: the combiner may be a sub-graph, with an explicit zero value"
                  values<Int>(10, 46));
 }
 
-TEST_CASE("reduce: a supplied zero value substitutes for not-yet-valid elements")
+TEST_CASE("reduce: a supplied zero handles only empty and singleton collections")
 {
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    // Only element 0 ticks on the first cycle: the explicit zero (10) pads the
-    // other three leaves (1 + 10 + 10 + 10), then the full sum once all tick.
+    // Empty aliases zero; one live value evaluates func(value, zero); once a
+    // second value is live, zero is no longer an operand.
     CHECK_OUTPUT((eval_node<stdlib::reduce_, TSL<TS<Int>, 4>>(
-                     fn<stdlib::add_>(),
-                     values<Value>(list_delta<TS<Int>>({{0, 1}}),
-                                   list_delta<TS<Int>>({{1, 2}, {2, 3}, {3, 4}})),
+                     fn<OffsetSumCombiner>(),
+                     values<Value>(list_delta<TS<Int>>({}),
+                                   list_delta<TS<Int>>({{0, 1}}),
+                                   list_delta<TS<Int>>({{1, 2}})),
                      Int{10})),
-                 values<Int>(31, 10));
+                 values<Int>(10, 111, 103));
 }
 
 TEST_CASE("reduce: works over a sub-graph boundary TSL via boundary element projection")
@@ -495,7 +675,7 @@ TEST_CASE("reduce: a VarIn tail without zero folds raw inputs")
     CHECK_OUTPUT(eval_node<VariadicRawReduce>(values<Int>(1, none, 4),
                                               values<Int>(2, 3, none),
                                               values<Int>(none, 5, 6)),
-                 values<Int>(none, 9, 13));
+                 values<Int>(3, 9, 13));
 }
 
 TEST_CASE("reduce: a user overload gated on the wired function's identity wins selection")
@@ -562,10 +742,10 @@ TEST_CASE("reduce: ordered TSD rejects holes in its integer key sequence")
 }
 
 // ---------------------------------------------------------------------------
-// Dynamic TSD reduce (the runtime kernel — Nested Graphs > reduce over
-// dynamic TSD): a balanced tree of combiner child graphs over the LIVE keys.
-// Leaves alias source elements (no leaf child graphs); zero is the
-// empty-collection result only — never odd-branch padding.
+// Dynamic TSD reduce (the runtime kernel — Nested Graphs > Associative reduce
+// runtime): a balanced tree of combiner child graphs over the LIVE keys.
+// Leaves alias source elements (no leaf child graphs); zero is used only for
+// the empty and singleton cases — never odd-branch padding.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("reduce over TSD: sums the live values, follows updates and removals")
@@ -584,7 +764,7 @@ TEST_CASE("reduce over TSD: sums the live values, follows updates and removals")
                  values<Int>(6, 15, 12));
 }
 
-TEST_CASE("reduce over TSD: an empty collection publishes the derived zero")
+TEST_CASE("reduce over TSD: an empty collection without zero remains invalid")
 {
     using namespace hgraph;
     using namespace std::string_literals;
@@ -593,25 +773,26 @@ TEST_CASE("reduce over TSD: an empty collection publishes the derived zero")
     CHECK_OUTPUT((eval_node<stdlib::reduce_, TSD<Str, TS<Int>>>(
                      fn<stdlib::add_>(),
                      values<Value>(dict_delta<Str, TS<Int>>({})))),
-                 values<Int>(0));
+                 values<Int>(none));
 }
 
-TEST_CASE("reduce over TSD: a single live key aliases the element — no zero padding")
+TEST_CASE("reduce over TSD: explicit zero applies to singleton but not larger collections")
 {
     using namespace hgraph;
     using namespace std::string_literals;
     stdlib::register_standard_operators();
 
-    // The 2603 no-spurious-zero regression: with an explicit zero of 100, one
-    // live key must publish the element itself (1), NOT element + zero (101);
-    // emptying the collection falls back to the zero (100).
+    // The singleton evaluates add(value, zero). With two values only those
+    // values are reduced; returning to one value applies zero again.
     CHECK_OUTPUT((eval_node<stdlib::reduce_, TSD<Str, TS<Int>>>(
                      fn<stdlib::add_>(),
                      values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}}),
+                                   dict_delta<Str, TS<Int>>({{"b"s, 2}}),
                                    dict_delta<Str, TS<Int>>({{"a"s, 7}}),
+                                   dict_delta<Str, TS<Int>>({}, {"b"s}),
                                    dict_delta<Str, TS<Int>>({}, {"a"s})),
                      Int{100})),
-                 values<Int>(1, 7, 100));
+                 values<Int>(101, 3, 9, 107, 100));
 }
 
 TEST_CASE("reduce over TSD: a live time-series zero drives the empty result")
@@ -624,9 +805,13 @@ TEST_CASE("reduce over TSD: a live time-series zero drives the empty result")
                      values<Value>(dict_delta<Str, TS<Int>>({}),
                                    none,
                                    dict_delta<Str, TS<Int>>({{"a"s, 5}}),
+                                   none,
+                                   dict_delta<Str, TS<Int>>({{"b"s, 2}}),
+                                   none,
+                                   dict_delta<Str, TS<Int>>({}, {"b"s}),
                                    dict_delta<Str, TS<Int>>({}, {"a"s})),
-                     values<Int>(10, 20, none, 30)),
-                 values<Int>(10, 20, 5, 30));
+                     values<Int>(10, 20, none, 30, none, 40, none, none)),
+                 values<Int>(10, 20, 25, 35, 7, none, 45, 40));
 }
 
 TEST_CASE("reduce over TSD: fixed composite results remain projectable and follow structural changes")
@@ -676,6 +861,84 @@ TEST_CASE("reduce over TSD: a sub-graph combiner with an explicit zero")
                                    dict_delta<Str, TS<Int>>({{"b"s, 200}})),
                      Int{0})),
                  values<Int>(60, 240));
+}
+
+TEST_CASE("reduce over TSD: a collection combiner wires a three-argument map")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        (eval_node<ReduceNestedIntDicts>(
+            values<Value>(
+                dict_delta<Int, TSD<Int, TS<Int>>>(
+                    {{1, dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}})}}),
+                dict_delta<Int, TSD<Int, TS<Int>>>(
+                    {{2, dict_delta<Int, TS<Int>>({{1, 3}, {2, 4}})}}),
+                dict_delta<Int, TSD<Int, TS<Int>>>(
+                    {{3, dict_delta<Int, TS<Int>>({{2, 1}, {3, 3}})}}),
+                dict_delta<Int, TSD<Int, TS<Int>>>({}, {3})))),
+        values<Value>(dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}}),
+                      dict_delta<Int, TS<Int>>({{1, 4}, {2, 6}}),
+                      dict_delta<Int, TS<Int>>({{1, 4}, {2, 7}, {3, 3}}),
+                      dict_delta<Int, TS<Int>>({{2, 6}}, {3})));
+}
+
+TEST_CASE("reduce over TSD: a switched keyed result removes through a downstream map")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        (eval_node<ReduceAndMapNestedIntDicts>(
+            values<Value>(
+                dict_delta<Int, TSD<Int, TS<Int>>>(
+                    {{0, dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}})},
+                     {1, dict_delta<Int, TS<Int>>({{1, 3}, {2, 4}})}}),
+                dict_delta<Int, TSD<Int, TS<Int>>>({}, {0}),
+                dict_delta<Int, TSD<Int, TS<Int>>>({}, {1})))),
+        values<Value>(dict_delta<Int, TS<Int>>({{1, 5}, {2, 7}}),
+                      dict_delta<Int, TS<Int>>({{1, 4}, {2, 5}}),
+                      dict_delta<Int, TS<Int>>({}, {1, 2})));
+
+    CHECK_OUTPUT(
+        (eval_node<SwitchReducedNestedIntDicts>(
+            values<Value>(
+                dict_delta<Int, TSD<Int, TS<Int>>>(
+                    {{0, dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}})},
+                     {1, dict_delta<Int, TS<Int>>({{1, 3}, {2, 4}})}}),
+                dict_delta<Int, TSD<Int, TS<Int>>>({}, {0}),
+                none,
+                dict_delta<Int, TSD<Int, TS<Int>>>({}, {1})),
+            values<Bool>(true, none, false, none))),
+        values<Value>(dict_delta<Int, TS<Int>>({{1, 5}, {2, 7}}),
+                      dict_delta<Int, TS<Int>>({{1, 4}, {2, 5}}),
+                      dict_delta<Int, TS<Int>>({{1, 4}, {2, 5}}),
+                      dict_delta<Int, TS<Int>>({}, {1, 2})));
+}
+
+TEST_CASE("reduce over TSD: an omitted zero remains invalid through switch")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        (eval_node<SwitchReducedInts>(
+            values<Bool>(true, none, none, none),
+            values<Value>(dict_delta<Int, TS<Int>>({}),
+                          dict_delta<Int, TS<Int>>({{1, 1}}),
+                          dict_delta<Int, TS<Int>>({{2, 2}}),
+                          dict_delta<Int, TS<Int>>({{3, 3}, {4, 4}, {5, 5}})))),
+        values<Int>(none, 2, 6, 30));
+}
+
+TEST_CASE("switch_: an empty interior-REF TSD sample survives dereference")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<SwitchEmptyRefDict>(values<Bool>(true, false, true)),
+                 values<Int>(0, 0, 0));
 }
 
 TEST_CASE("reduce over TSD: source retarget refreshes bindings and invalid source publishes zero")

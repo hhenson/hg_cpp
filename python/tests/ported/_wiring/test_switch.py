@@ -180,7 +180,7 @@ def test_switch_from_reduce():
         return switch_(key, {DEFAULT: lambda na, nb: na + nb}, no, no)
 
     assert eval_node(switch_test, ["o"], [{}, {1: 1}, {2: 2}, {3: 3, 4: 4, 5: 5}]) == [
-        0,
+        None,
         2,
         6,
         30,
@@ -232,7 +232,7 @@ def test_switch_bundle_from_reduce():
         )
 
     assert eval_node(switch_test, ["o", None, None], [{}, {1: 1}, {2: 2}, {3: 3, 4: 4, 5: 5}]) == [
-        0,
+        None,
         2,
         6,
         30,

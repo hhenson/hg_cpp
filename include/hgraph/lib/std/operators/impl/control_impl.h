@@ -325,7 +325,12 @@ namespace hgraph::stdlib
         static auto compose(Wiring &w, VarIn<"tsl", TsVar<"S">> ts)
         {
             if (ts.empty()) { throw std::invalid_argument("merge requires at least one input"); }
-            return wire<reduce_>(w, fn<control_impl_detail::merge_binary>(), ts);
+            // merge_binary observes positional invalidity so that it can fall
+            // back to another source. Public reduce_ deliberately skips
+            // invalid values, therefore merge owns this static fold directly.
+            return higher_order_impl_detail::reduce_layout(
+                w, fn<control_impl_detail::merge_binary>(),
+                std::vector<WiringPortRef>{ts.begin(), ts.end()});
         }
     };
 
@@ -351,8 +356,11 @@ namespace hgraph::stdlib
         static Port<TS<Bool>> compose(Wiring &w, VarIn<"args", TS<Bool>> args)
         {
             if (args.empty()) { return control_impl_detail::bool_const(w, true); }
-            return wire<reduce_, TS<Bool>>(w, fn<control_impl_detail::all_bool_binary>(),
-                                           args, false);
+            std::vector<WiringPortRef> elements{args.begin(), args.end()};
+            elements.push_back(control_impl_detail::bool_const(w, true).erased());
+            return Port<TS<Bool>>{w, higher_order_impl_detail::reduce_layout(
+                                        w, fn<control_impl_detail::all_bool_binary>(),
+                                        std::move(elements))};
         }
     };
 
@@ -363,8 +371,11 @@ namespace hgraph::stdlib
         static Port<TS<Bool>> compose(Wiring &w, VarIn<"args", TS<Bool>> args)
         {
             if (args.empty()) { return control_impl_detail::bool_const(w, false); }
-            return wire<reduce_, TS<Bool>>(w, fn<control_impl_detail::any_bool_binary>(),
-                                           args, false);
+            std::vector<WiringPortRef> elements{args.begin(), args.end()};
+            elements.push_back(control_impl_detail::bool_const(w, false).erased());
+            return Port<TS<Bool>>{w, higher_order_impl_detail::reduce_layout(
+                                        w, fn<control_impl_detail::any_bool_binary>(),
+                                        std::move(elements))};
         }
     };
 

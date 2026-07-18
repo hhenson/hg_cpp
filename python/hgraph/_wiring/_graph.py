@@ -76,7 +76,7 @@ def _wrap_graph_fn(gfn):
 
     out_tp = sig.return_annotation
     out_handle = out_tp.handle if isinstance(out_tp, _TsExpr) else None
-    return _hgraph.graph_fn(wrapper, user_fn, names, has_output, output_type=out_handle)
+    return _hgraph.graph_fn(wrapper, gfn, names, has_output, output_type=out_handle)
 
 
 def _as_wired(func):

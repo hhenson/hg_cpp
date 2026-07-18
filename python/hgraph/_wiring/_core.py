@@ -7,6 +7,7 @@ rebind it."""
 import _hgraph
 
 from .._types import _TsExpr
+from ._sentinels import _REDUCE_ZERO
 
 _wiring_stack = []
 
@@ -270,12 +271,10 @@ def _port_getattr(self, name):
         raise
 
 
-def _port_reduce(self, fn, zero=None, is_associative=True):
+def _port_reduce(self, fn, zero=_REDUCE_ZERO, is_associative=True):
     from ._compose import reduce
 
-    if zero is not None:
-        return reduce(fn, self, zero, is_associative=is_associative)
-    return reduce(fn, self, is_associative=is_associative)
+    return reduce(fn, self, zero, is_associative=is_associative)
 
 
 def _port_keys(self):

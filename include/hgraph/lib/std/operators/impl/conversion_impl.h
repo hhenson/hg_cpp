@@ -175,6 +175,19 @@ namespace hgraph::stdlib
         }
     };
 
+    /** A TSD identity is the correctly typed, permanently invalid source. */
+    struct zero_tsd
+    {
+        static constexpr auto name = "zero_tsd";
+
+        static void eval(Scalar<"op", WiredFn> op,
+                         Out<TSD<ScalarVar<"K">, TsVar<"V">>> out)
+        {
+            static_cast<void>(op);
+            static_cast<void>(out);
+        }
+    };
+
     /**
      * ``default`` implementation — the REF-forwarding node, mirroring Python
      * ``_impl/_operators/_graph_operators.py`` ``_default`` (``valid=()``):
@@ -192,24 +205,59 @@ namespace hgraph::stdlib
      * matching/unification (a variable binds the dereferenced type) and
      * consumers bind through the reference at runtime.
      */
-    struct default_impl
+    struct default_ref_impl
     {
-        static constexpr auto name = "default";
+        static constexpr auto name = "default_ref";
 
-        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
-                         In<"default_value", TsVar<"S">, InputValidity::Unchecked> default_value,
+        static void eval(In<"ts_ref", REF<TsVar<"S">>, InputValidity::Unchecked> ts_ref,
+                         In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         In<"default_value", REF<TsVar<"S">>, InputValidity::Unchecked> default_value,
                          Out<REF<TsVar<"S">>> out)
         {
             if (!ts.valid())
             {
                 ts.make_active();
-                out.set(default_value.reference());
+                out.set(default_value.value());
             }
             else
             {
                 ts.make_passive();
-                out.set(ts.reference());
+                out.set(ts_ref.value());
             }
+        }
+    };
+
+    /** Preserve the active-reference/value split of Python hgraph's
+        ``default_impl``. The REF input observes endpoint rebinds while the
+        dereferenced value input may remain passive after becoming valid. */
+    struct default_impl
+    {
+        static constexpr auto name = "default";
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (const auto *source = time_series_schema_at(context, 0); source != nullptr)
+            {
+                resolution.bind_ts("__out__", source);
+            }
+        }
+
+        static WiringPortRef compose(Wiring &w, NamedPort<"ts", TsVar<"S">> ts,
+                                     NamedPort<"default_value", TsVar<"S">> default_value)
+        {
+            auto &registry = TypeRegistry::instance();
+
+            WiringPortRef ts_value = ts.erased();
+            WiringPortRef ts_ref = ts_value;
+            ts_ref.schema = registry.ref(ts_value.schema);
+
+            WiringPortRef default_ref = default_value.erased();
+            default_ref.schema = registry.ref(default_ref.schema);
+
+            return wire<default_ref_impl>(
+                       w, Port<void>{w, std::move(ts_ref)}, Port<void>{w, std::move(ts_value)},
+                       Port<void>{w, std::move(default_ref)})
+                .erased();
         }
     };
 

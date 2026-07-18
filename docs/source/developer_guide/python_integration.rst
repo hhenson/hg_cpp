@@ -171,7 +171,10 @@ the ``_hgraph`` bridge module (built from ``python/module.cpp``):
   callables** — the bridge pre-instantiates ``fn<X>()`` erasures for the
   stdlib markers (``wired_op``); ``switch_`` builds the ``SwitchCases``
   scalar; ``feedback(tp, initial)`` replicates the C++ feedback wiring
-  erased (same node tags → same interning).
+  erased (same node tags → same interning). Associative ``reduce`` preserves
+  omitted zero as a distinct arity: empty is invalid and a singleton bypasses
+  the combiner; a supplied zero handles empty/singleton only and is ignored for
+  two or more live values.
 - **Value conversion**: all atoms (incl. date/time/bytes) + recursive
   containers both ways; ``evaluate_const`` exposes the P1 kernel.
 

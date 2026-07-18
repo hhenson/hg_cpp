@@ -5,6 +5,12 @@ to the C++ bridge at package import (``_hgraph._set_removed_sentinel`` and
 friends) so class identity — not equality — shapes TSS/TSD delta application.
 Define them here once; every other module re-exports."""
 
+# ``reduce(func, ts)`` has no zero, whereas ``reduce(func, ts, None)`` supplies
+# a typed, never-valid zero. Keep omission distinct without exposing another
+# public marker.
+_REDUCE_ZERO = object()
+
+
 class _Removed:
     """hgraph's REMOVE marker: a TSD key removal (input) / removed key
     (test read-back)."""

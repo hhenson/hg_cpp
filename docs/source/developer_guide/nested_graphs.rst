@@ -249,26 +249,28 @@ nothing special about them now that sub-graph compilation is standardised.
 time-series with the (associative) combiner — any wirable function: an
 operator (``add_``), a node, or an ``(lhs, rhs)`` sub-graph (flattened at
 every reduction node). The operator's contract covers any collection kind
-(``TSL`` / ``TSD``; ``TSS`` once the Python reference grows one) — each kind
-is its own registered overload selected by pattern rank. Implemented today:
-the **fixed-size TSL** overloads
-(``wire<stdlib::reduce_>(w, fn<add_>(), tsl_port)``) described here, and the
-**dynamic TSD** kernel (next section).
+(``TSL`` / ``TSD``; ``TSS`` once supported) — each kind is its own registered
+overload selected by pattern rank. Fixed and dynamic ``TSL`` plus ``TSD`` use
+the same native associative reduction model.
 
-The default overloads lay the reduction out **statically at wiring time**,
-mirroring Python ``_reduce_tsl``: every leaf is ``default(ts[i], zero)`` — an
-element that has not ticked yet counts as ``zero`` — then a linear chain below
-four elements, otherwise balanced binary pairing with an odd-element carry
-(``over_run``). No nested node is involved. The associative forms have two
-arities, like Python:
+The associative forms have two arities. The number of **currently valid/live
+values**, not a collection's capacity, determines the result:
 
-- ``reduce(func, ts)`` — the zero is derived from the operation,
-  ``zero(item_tp, func)`` (the op-aware ``zero_`` operator: ``add_`` -> 0,
-  ``mul_`` -> 1, ``min_`` -> the max bound, …). A combiner with no registered
-  zero (e.g. a custom sub-graph) is a wiring-time error, like Python's
-  ``KeyError``;
-- ``reduce(func, ts, zero)`` — the explicit zero value, wired as
-  ``const(zero)`` at the element schema.
+- ``reduce(func, ts)`` supplies no zero. Empty input remains invalid, a
+  singleton returns that value without evaluating ``func``, and two or more
+  values are reduced with ``func``;
+- ``reduce(func, ts, zero)`` wires the scalar as ``const(zero)`` at the element
+  schema (a live time-series zero is also supported). Empty input publishes
+  ``zero``; a singleton evaluates ``func(value, zero)``; with two or more live
+  values, only those values are reduced and ``zero`` is not an operand.
+
+.. note:: Compatibility deviation
+
+   The previous Python implementation inferred an operation-specific zero when
+   it was omitted and used zero/default leaves for unset fixed-``TSL`` slots.
+   hg_cpp deliberately does neither. Omission means **no zero**, and unset list
+   slots do not participate. Code that requires an empty value must supply one
+   explicitly and account for its documented singleton application.
 
 ``reduce(func, ts, zero_ts, is_associative=false)`` selects the ordered form.
 It requires a live time-series ``zero_ts`` and always lays out a left fold,
@@ -276,31 +278,24 @@ including for four or more elements. Invalid positions still use
 ``default(ts[i], zero_ts)``; once an element is valid, changes to ``zero_ts``
 do not disturb that position.
 
-The leaves dispatch ``zero`` / ``default`` / ``const`` **through the registry
-at the resolved element schema** (``wire_operator`` — the runtime-schema
-counterpart of ``wire<Op, OutSchema>``). ``default`` itself is the
-REF-forwarding implementation mirroring Python's ``_default`` (substitute
-while invalid, then forward the reference and go passive). Element access uses
-the erased ``tsl_element_ref`` projection (typed form ``tsl_element(port, i)``
-in ``subgraph_wiring.h``), which works on any source kind: a peered output
-path, a structural child, or a **sub-graph boundary** (so ``reduce`` composes
-inside a sub-graph ``compose`` over a boundary TSL). The overloads'
-``requires_`` accept fixed-size TSL inputs only; the dynamic-TSD overloads
-(next section) gate on a TSD input the same way. Still deferred: dynamic-TSL
-reduction and a live ``zero`` argument for the associative fixed-TSL form.
+Element access works on any source kind: a peered output path, a structural
+child, or a **sub-graph boundary** (so ``reduce`` composes inside a sub-graph
+``compose`` over a boundary TSL). Compatible scalar lifted kernels retain a
+single-node fast path for fixed ``TSL`` inputs; all other associative forms use
+the runtime tree below.
 
 Tests: ``tests/cpp/test_reduce.cpp`` (including a user overload gated on the
 wired function's identity, mirroring ``ext/main``'s ``test_map_overload``).
 
 
-Associative ``reduce`` over dynamic ``TSD``
--------------------------------------------
+Associative ``reduce`` runtime
+------------------------------
 
-The dynamic kernel is a further registered overload of ``reduce`` — one
-**runtime node** owning a balanced binary tree of combiner child graphs over
-the live keys of its TSD input. This section is derived from the earlier 2603
-design record and reconciled to the current substrate; where the two differ,
-this section is authoritative.
+The native kernel is one **runtime node** owning a balanced binary tree of
+combiner child graphs over the live keys of a ``TSD`` or valid children of a
+``TSL``. This section is derived from the earlier 2603 design record and
+reconciled to the current substrate; where the two differ, this section is
+authoritative.
 
 **Vocabulary reconciliation** (2603 → current): ``ChildGraphTemplate`` /
 ``ChildGraphInstance`` → ``CompiledSubGraph`` (compiled once at wiring from
@@ -318,16 +313,15 @@ slots: compacting the leaves is what keeps the live combiner count at ``n-1``.
 - **Leaves are aliases, not child graphs.** A leaf position references a live
   source element output (``tsd.at(key)``); only **internal combine points**
   instantiate the combiner child graph, and only when **both** subtrees are
-  non-empty. ``n`` live keys cost at most ``n - 1`` live combiners; 0 or 1
-  keys cost none.
-- **``zero`` is the empty-collection result, not odd-branch padding.** The
-  Python implementation pads odd branches with ``zero`` (the known
-  spurious-zero-tick wart); the dynamic kernel never does. Root publication:
-  no live keys → forward to the ``zero`` input's bound output; one →
-  forward to that element directly; more → forward to the root combiner's
-  output. (The **fixed-TSL** overloads above retain Python's
-  ``default(ts[i], zero)`` semantics — a principled difference: a fixed TSL
-  has not-yet-valid *positions*, a TSD key is live by existence.)
+  non-empty, except for the singleton root described next. ``n`` live values
+  normally cost at most ``n - 1`` live combiners.
+- **``zero`` is only an empty/singleton input, never tree padding.** With no
+  live values the output forwards to a supplied zero or remains unbound. With
+  exactly one value and a supplied zero, the root owns one combiner bound as
+  ``func(value, zero)``; when zero is omitted the output aliases the value and
+  no combiner exists. With two or more values the zero is completely excluded
+  from the tree. A zero tick therefore schedules work only in the singleton
+  state.
 - **Dense leaves over a power-of-two capacity.** ``key ↔ dense leaf``
   mappings; erasing a key moves the **last** live leaf into the vacated
   position (bounded rebalancing). Internal nodes are heap-indexed
@@ -375,6 +369,13 @@ heap allocations. At final node disposal the previous generation is destroyed
 before the active generation: a stopped retired parent can still retain a target
 handle to a surviving current child output, so the retired subscriber must die
 before that producer.
+When a same-capacity reshape changes the keyed root source, publication also
+alternates two stable snapshots. The old root is copied before stop; after the
+new root evaluates, the snapshot is reconciled key by key so downstream sees
+the logical added/removed/changed delta rather than a full sample caused by the
+internal re-point. The output returns to direct forwarding on the next reduce
+evaluation. Capacity growth retains sampled-rebind behavior and publishes the
+new root's complete current value.
 The node's own output is a forwarding endpoint linking into field-held
 combiner outputs, so the reduce field uses the default *before-output* plan
 placement (the ``nested_``/``switch_`` direction).
@@ -391,13 +392,10 @@ subscription or forwarding output is left pointing at dead child storage. Future
 optimisations to the rebuild path must keep that stop-after-failure safety
 property even if they make the key/combiner update more transactional.
 
-**Deferred:** ``TSS`` reduction, pass-through combiner outputs for the dynamic
-kernel, and unifying the fixed-TSL overload onto this kernel (2603 §10
-recommends keeping TSL static-shaped first — we do).
+**Deferred:** ``TSS`` reduction.
 
 Runtime: ``runtime/reduce_node.{h,cpp}``. Tests: ``tests/cpp/test_reduce.cpp``
-(dynamic-TSD cases, including the no-spurious-zero regression from 2603
-phase 3).
+(fixed/dynamic ``TSL`` and ``TSD`` cases, including every zero cardinality).
 
 
 Ordered ``reduce`` over contiguous ``TSD[int, E]``
@@ -842,12 +840,12 @@ Roadmap (this milestone)
 1. **Done — sub-graph compilation.** ``BoundarySource`` +
    ``Wiring::finish_subgraph`` + ``compile_subgraph<G>`` + ``nested_<G>``
    (this page, above).
-2. **Done — ``reduce`` over a fixed-size ``TSL``, as an operator** — the
-   wiring-time linear/tree flatten mirroring Python ``_reduce_tsl`` is the
-   default registered overload of the ``reduce`` operator; the combiner is the
-   ``WiredFn`` scalar (see its section above); leaves are
-   ``default(ts[i], zero)`` with the op-aware ``zero_`` (derived) or the
-   explicit-zero arity. ``map_`` / ``switch_`` follow the same operator shape.
+2. **Done — associative ``reduce`` over ``TSL`` / ``TSD``, as an operator** —
+   the native live-value tree is the default registered overload of the
+   ``reduce`` operator and the combiner is the ``WiredFn`` scalar (see its
+   section above). Omitted and explicit zero arities follow the documented
+   empty/singleton/multi-value rules. ``map_`` / ``switch_`` follow the same
+   operator shape.
 3. **Done — scheduling push delegation + shared binding helpers.** See
    *Scheduling delegation* above; helpers extracted to
    ``runtime/nested_bindings.h``.
@@ -864,7 +862,8 @@ Roadmap (this milestone)
    storage type through TSD target-link traversal.
 6. **Done — associative ``reduce`` over ``TSD``** (see its section above):
    the 2603 design ported/reconciled first, then the runtime kernel —
-   alias leaves, minimal combiner tree, zero as the empty result only.
+   alias leaves, minimal combiner tree, and the documented optional-zero
+   empty/singleton/multi-value behavior.
    ASAN/UBSAN-verified.
 7. **Done — ``mesh_`` over ``TSD``** (see its section above): map-compatible
    output ownership plus cross-instance forwarding, on-demand instance
@@ -872,8 +871,8 @@ Roadmap (this milestone)
 
 Non-goals for the milestone: services/contexts (since landed as their own
 milestone — see :doc:`services`),
-push sources inside nested graphs, non-associative reduce, and dynamic-TSL
-reduction. (Explicit ``__keys__`` and the ``pass_through`` /
+push sources inside nested graphs. (Non-associative reduction and dynamic-TSL
+reduction have since landed. Explicit ``__keys__`` and the ``pass_through`` /
 ``no_key`` wrappers, originally deferred, landed within the milestone —
 see the ``map_`` section. ``try_except_`` landed as its own follow-on
 milestone — see :doc:`error_handling`.)

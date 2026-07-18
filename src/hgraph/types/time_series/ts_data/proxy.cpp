@@ -1567,7 +1567,11 @@ namespace hgraph
             }
         }
 
-        if (touched) { mark_modified(modified_time); }
+        // With no live slots, a source-root notification cannot have come
+        // from a child value. It is therefore an explicit sample of the empty
+        // collection and must remain visible through the proxy. Non-empty
+        // sources retain the identity-sensitive suppression above.
+        if (touched || dict.size() == 0) { mark_modified(modified_time); }
         if (structure_pending_)
         {
             mark_structure_modified(modified_time);

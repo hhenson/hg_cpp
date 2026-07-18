@@ -23,6 +23,8 @@ namespace hgraph
          * compatible native associative reducers can bypass its scheduler.
          */
         const LiftedKernel *lifted_kernel{nullptr};
+        /** Whether the optional outer ``zero`` input is present. */
+        bool has_zero{false};
     };
 
     /** Typed extension view exposed by ``reduce_node`` (runtime inspection surface). */
@@ -35,7 +37,7 @@ namespace hgraph
         [[nodiscard]] const NodeView &node() const noexcept;
         /** Live key (dense leaf) count. */
         [[nodiscard]] std::size_t leaf_count() const noexcept;
-        /** Live internal combiner child-graph count (at most ``leaf_count - 1``). */
+        /** Live combiner count (``n - 1`` normally; one for explicit-zero singleton). */
         [[nodiscard]] std::size_t combiner_count() const noexcept;
         /** True when every live combiner graph resides in one of the two stable banks. */
         [[nodiscard]] bool        child_graphs_use_in_place_storage() const noexcept;
@@ -53,18 +55,20 @@ namespace hgraph
     };
 
     /**
-     * Build the dynamic associative ``reduce`` node over a multiplexed TSD or
-     * grow-only dynamic TSL
+     * Build the associative ``reduce`` node over a multiplexed TSD or TSL
      * input: a balanced binary tree whose **leaves alias the live source
      * elements** and whose internal combine points own combiner child graphs
-     * — instantiated only when both subtrees are non-empty. The node's
-     * forwarding output publishes the root aggregate (``zero`` input when
-     * empty, the single element when one key is live, else the root
-     * combiner's output). The live key set is reconciled against the current
+     * — instantiated when both subtrees are non-empty, plus the root when a
+     * supplied zero must combine with a single live value. The node's
+     * forwarding output publishes the root aggregate: no live values publish
+     * the supplied zero or remain invalid when it is omitted; one live value
+     * aliases that value when zero is omitted and combines it with zero when
+     * supplied. The live key set is reconciled against the current
      * collection input when it modifies, re-points, becomes invalid, or is
-     * first observed. See *Nested Graphs > reduce over dynamic TSD*.
+     * first observed. See *Nested Graphs > Associative reduce runtime*.
      *
-     * Outer inputs: ``[ts (TSD or dynamic TSL), zero (element)]``.
+     * Outer inputs: ``[ts (TSD or dynamic TSL)]`` with an optional trailing
+     * ``zero (element)``.
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder reduce_node(NodeTypeMetaData meta, ReduceNodeSpec spec);
 }  // namespace hgraph

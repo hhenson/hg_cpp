@@ -125,7 +125,7 @@ namespace hgraph::stdlib
                                                   std::span<const TSValueTypeMetaData *const>{input_schemas.data(),
                                                                                               input_schemas.size()},
                                                   element);
-            if (kernel == nullptr || kernel->arity != 2 || !kernel->associative || !kernel->has_identity())
+            if (kernel == nullptr || kernel->arity != 2 || !kernel->associative)
             {
                 return nullptr;
             }
@@ -144,9 +144,9 @@ namespace hgraph::stdlib
                                                                   const LiftedKernel *kernel,
                                                                   const WiringPortRef &ts)
         {
-            if (kernel == nullptr || !kernel->valid() || !kernel->has_identity())
+            if (kernel == nullptr || !kernel->valid())
             {
-                throw std::invalid_argument("reduce: lifted fast path requires a lifted function with an identity");
+                throw std::invalid_argument("reduce: lifted fast path requires a valid lifted function");
             }
 
             const auto *collection = time_series_schema_as<AnyTSL>(ts.schema);
@@ -179,19 +179,25 @@ namespace hgraph::stdlib
                 auto ts_field = root.field("ts");
                 auto list = ts_field.as_list();
 
-                Value accumulator = kernel->identity_value();
+                std::optional<Value> accumulator;
                 for (std::size_t i = 0; i < list.size(); ++i)
                 {
                     auto item = list[i];
                     if (!item.valid()) { continue; }
+                    if (!accumulator.has_value())
+                    {
+                        accumulator.emplace(item.value());
+                        continue;
+                    }
 
-                    std::array<ValueView, 2> args{accumulator.view(), item.value()};
-                    accumulator = kernel->eval(std::span<const ValueView>{args.data(), args.size()});
+                    std::array<ValueView, 2> args{accumulator->view(), item.value()};
+                    *accumulator = kernel->eval(std::span<const ValueView>{args.data(), args.size()});
                 }
+                if (!accumulator.has_value()) { return; }
 
                 auto output = view.output(evaluation_time);
                 auto mutation = output.begin_mutation(evaluation_time);
-                if (!mutation.move_value_from(std::move(accumulator)))
+                if (!mutation.move_value_from(std::move(*accumulator)))
                 {
                     throw std::logic_error("reduce: lifted fast path failed to move the result");
                 }
@@ -251,11 +257,9 @@ namespace hgraph::stdlib
         };
 
         /**
-         * The shared fixed-TSL reduction wiring, mirroring Python ``_reduce_tsl``:
-         * every leaf is ``default(ts[i], zero)`` — an element that has not ticked
-         * yet counts as ``zero`` — then the linear/tree layout combines the
-         * leaves. ``default`` is dispatched through the registry at the resolved
-         * element schema.
+         * Ordered fixed-TSL wiring. Its required live ``zero`` is the initial
+         * accumulator/default for invalid positions; this is intentionally
+         * distinct from the optional-zero contract of associative ``reduce``.
          */
         [[nodiscard]] inline WiringPortRef reduce_tsl_wire(Wiring &w, const WiredFn &combiner,
                                                            const WiringPortRef &ts, const WiringPortRef &zero,
@@ -296,37 +300,9 @@ namespace hgraph::stdlib
             return reduce_layout(w, combiner, std::move(elements), associative);
         }
 
-        /**
-         * Raw variadic reduction: no derived zero and no default() leaves. This
-         * is used when a graph overload passes a VarIn tail to reduce_ directly;
-         * the dispatcher has packed that tail into a structural TSL but tagged
-         * the WiringArg so ordinary collection reduce keeps its zero semantics.
-         */
-        [[nodiscard]] inline WiringPortRef reduce_variadic_tsl_wire(Wiring &w, const WiredFn &combiner,
-                                                                    const WiringPortRef &ts)
-        {
-            if (!combiner.valid())
-            {
-                throw std::invalid_argument("reduce: 'func' must be a wirable function (fn<X>())");
-            }
-            if (combiner.arity != 2 || !combiner.has_output)
-            {
-                throw std::invalid_argument(
-                    "reduce: the combiner must take (lhs, rhs) time-series inputs and produce an output");
-            }
-
-            const TSValueTypeMetaData *schema  = ts.schema;
-            const TSValueTypeMetaData *element = schema->element_ts();
-            const std::size_t          size    = schema->fixed_size();
-
-            std::vector<WiringPortRef> elements;
-            elements.reserve(size);
-            for (std::size_t i = 0; i < size; ++i)
-            {
-                elements.push_back(subgraph_wiring_detail::tsl_element_ref(ts, i, element));
-            }
-            return reduce_layout(w, combiner, std::move(elements));
-        }
+        [[nodiscard]] inline WiringPortRef wire_reduce_tsd(
+            Wiring &w, const Scalar<"func", WiredFn> &func, WiringPortRef ts,
+            std::optional<WiringPortRef> zero);
 
         inline void resolve_reduce_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
         {
@@ -353,17 +329,11 @@ namespace hgraph::stdlib
             static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
                                          NamedPort<"ts", TSL<TsVar<"V">>> ts)
             {
-                return reduce_variadic_tsl_wire(w, func.value(), ts.erased());
+                return wire_reduce_tsd(w, func, ts.erased(), std::nullopt);
             }
         };
 
-        /**
-         * ``reduce(func, ts: TSL[V, SIZE]) -> V`` — the zero is derived from the
-         * operation: ``zero(item_tp, func)`` (op-aware: ``add_`` -> 0, ``mul_``
-         * -> 1, ...). A combiner with no registered zero (e.g. a custom
-         * sub-graph) is a wiring-time error, like Python's ``KeyError`` — use
-         * the explicit-zero arity instead.
-         */
+        /** ``reduce(func, ts: TSL[V, SIZE]) -> V`` without a default value. */
         struct reduce_tsl
         {
             static constexpr auto name = "reduce_tsl";
@@ -381,21 +351,14 @@ namespace hgraph::stdlib
             static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
                                          NamedPort<"ts", TSL<TsVar<"V">>> ts)
             {
-                const TSValueTypeMetaData *element = ts.erased().schema->element_ts();
-
-                const std::array<WiringArg, 1> zero_args{operator_dispatch_detail::make_wiring_arg(func)};
-                const WiringPortRef            zero =
-                    wire_operator(w, "zero", {zero_args.data(), zero_args.size()}, true, element).output.erased();
-
-                return reduce_tsl_wire(w, func.value(), ts.erased(), zero);
+                return wire_reduce_tsd(w, func, ts.erased(), std::nullopt);
             }
         };
 
         /**
          * ``reduce(func, ts: TSL[V, SIZE], zero) -> V`` — the explicit-zero
          * arity (Python's third parameter): ``zero`` is a plain value wired as
-         * ``const(zero)`` at the element schema. Required when the combiner has
-         * no registered ``zero`` overload (e.g. a custom sub-graph).
+         * ``const(zero)`` at the element schema.
          */
         struct reduce_tsl_zero
         {
@@ -424,7 +387,7 @@ namespace hgraph::stdlib
                 const WiringPortRef zero =
                     wire_operator(w, "const", {&zero_arg, 1}, true, element).output.erased();
 
-                return reduce_tsl_wire(w, func.value(), ts.erased(), zero);
+                return wire_reduce_tsd(w, func, ts.erased(), zero);
             }
         };
 
@@ -475,25 +438,22 @@ namespace hgraph::stdlib
         {
         };
 
-        [[nodiscard]] inline const TSValueTypeMetaData *dynamic_reduce_element(const WiringPortRef &ts)
+        [[nodiscard]] inline const TSValueTypeMetaData *reduce_collection_element(const WiringPortRef &ts)
         {
             if (const auto *tsd = time_series_schema_as<AnyTSD>(ts.schema)) { return tsd->element_ts(); }
-            if (const auto *tsl = time_series_schema_as<AnyTSL>(ts.schema);
-                tsl != nullptr && tsl->fixed_size() == 0)
-            {
-                return tsl->element_ts();
-            }
+            if (const auto *tsl = time_series_schema_as<AnyTSL>(ts.schema)) { return tsl->element_ts(); }
             return nullptr;
         }
 
         /**
-         * The dynamic-TSD reduce wiring core (see *Nested Graphs > reduce over
-         * dynamic TSD*): compile the binary combiner once, add ONE reduce node
-         * whose outer inputs are ``[ts (TSD), zero (element)]`` and whose
-         * forwarding output publishes the root aggregate.
+         * The associative collection-reduce wiring core (see *Nested Graphs >
+         * reduce*): compile the binary combiner once, add ONE reduce node whose
+         * outer inputs are ``[ts]`` with an optional trailing ``zero``, and
+         * whose forwarding output publishes the root aggregate.
          */
-        [[nodiscard]] inline WiringPortRef wire_reduce_tsd(Wiring &w, const Scalar<"func", WiredFn> &func,
-                                                           WiringPortRef ts, WiringPortRef zero)
+        [[nodiscard]] inline WiringPortRef wire_reduce_tsd(
+            Wiring &w, const Scalar<"func", WiredFn> &func, WiringPortRef ts,
+            std::optional<WiringPortRef> zero)
         {
             const WiredFn &combiner = func.value();
             if (!combiner.valid() || combiner.arity != 2 || !combiner.has_output)
@@ -502,10 +462,10 @@ namespace hgraph::stdlib
                     "reduce: 'func' must be a wirable (lhs, rhs) -> value function (fn<X>())");
             }
 
-            const auto *element = dynamic_reduce_element(ts);
+            const auto *element = reduce_collection_element(ts);
             if (element == nullptr)
             {
-                throw std::invalid_argument("reduce: the collection input must be a TSD or dynamic TSL");
+                throw std::invalid_argument("reduce: the collection input must be a TSD or TSL");
             }
             auto       &registry = TypeRegistry::instance();
 
@@ -530,9 +490,9 @@ namespace hgraph::stdlib
             // The empty result aliases one root output. A structural fixed
             // collection has only child sources, so materialise that uncommon
             // zero shape through the standard native pass-through node.
-            if (zero.is_structural_source())
+            if (zero.has_value() && zero->is_structural_source())
             {
-                zero = wire<pass_through_node>(w, Port<void>{w, std::move(zero)}).erased();
+                *zero = wire<pass_through_node>(w, Port<void>{w, std::move(*zero)}).erased();
             }
 
             ReduceNodeSpec spec;
@@ -546,12 +506,20 @@ namespace hgraph::stdlib
             {
                 spec.lifted_kernel = nullptr;
             }
+            spec.has_zero = zero.has_value();
 
-            const auto *input_schema =
-                TypeRegistry::instance().un_named_tsb({{"ts", ts.schema}, {"zero", zero.schema}});
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> input_fields{
+                {"ts", ts.schema}};
+            std::vector<WiringPortRef> inputs;
+            inputs.reserve(spec.has_zero ? 2 : 1);
+            inputs.push_back(std::move(ts));
+            if (zero.has_value())
+            {
+                input_fields.emplace_back("zero", zero->schema);
+                inputs.push_back(std::move(*zero));
+            }
+            const auto *input_schema = TypeRegistry::instance().un_named_tsb(input_fields);
             const auto *output_schema = element;
-
-            const std::array<WiringPortRef, 2> inputs{std::move(ts), std::move(zero)};
 
             WiringNodeSchema node_schema;
             node_schema.input  = input_schema;
@@ -711,7 +679,7 @@ namespace hgraph::stdlib
             }
         };
 
-        /** ``reduce(func, ts: TSD[K, V]) -> V`` — the zero is ``zero(item_tp, func)``. */
+        /** ``reduce(func, ts: TSD[K, V]) -> V`` without an empty value. */
         struct reduce_tsd
         {
             static constexpr auto name = "reduce_tsd";
@@ -729,14 +697,7 @@ namespace hgraph::stdlib
             static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
                                          NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
             {
-                const auto *element =
-                    TypeRegistry::instance().dereference(ts.erased().schema)->element_ts();
-
-                const std::array<WiringArg, 1> zero_args{operator_dispatch_detail::make_wiring_arg(func)};
-                const WiringPortRef            zero =
-                    wire_operator(w, "zero", {zero_args.data(), zero_args.size()}, true, element).output.erased();
-
-                return wire_reduce_tsd(w, func, ts.erased(), zero);
+                return wire_reduce_tsd(w, func, ts.erased(), std::nullopt);
             }
         };
 
@@ -815,11 +776,7 @@ namespace hgraph::stdlib
             static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
                                          NamedPort<"ts", TSL<TsVar<"V">>> ts)
             {
-                const auto *element = ts.erased().schema->element_ts();
-                const std::array<WiringArg, 1> zero_args{operator_dispatch_detail::make_wiring_arg(func)};
-                const WiringPortRef zero =
-                    wire_operator(w, "zero", {zero_args.data(), zero_args.size()}, true, element).output.erased();
-                return wire_reduce_tsd(w, func, ts.erased(), zero);
+                return wire_reduce_tsd(w, func, ts.erased(), std::nullopt);
             }
         };
 

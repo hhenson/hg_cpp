@@ -14,6 +14,7 @@
 #include <bit>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string_view>
@@ -126,6 +127,8 @@ namespace hgraph
             std::vector<Value> dense_to_key{};
             /** dense leaf -> source collection slot, avoiding repeated key lookup while binding the tree. */
             std::vector<std::size_t> dense_to_source_slot{};
+            /** TSL dense leaf -> effective child source, detecting same-slot re-points. */
+            std::vector<TSOutputHandle> dense_to_source_handle{};
             ankerl::unordered_dense::map<Value, std::size_t, ValueKeyHash, ValueKeyEqual> key_to_leaf{};
 
             /** Power-of-two tree width (monotonic; 0 until the first key). */
@@ -152,6 +155,14 @@ namespace hgraph
             TSOutputHandle collection_source{};
             TSOutputHandle zero_source{};
 
+            // A sampled root re-point must expose the previous keyed value
+            // until downstream nodes consume its delta. Stopping the retired
+            // combiner may clear that output, so alternate stable snapshots.
+            std::array<std::optional<TSOutput>, 2> publication_snapshots{};
+            std::size_t publication_snapshot_bank{0};
+            TSOutputHandle pending_publication_source{};
+            bool publication_snapshot_active{false};
+
             // Ordinary collection ticks populate only the affected leaf-to-root
             // paths. Full scans remain the conservative path for structural
             // changes, repoints, and independently scheduled child graphs.
@@ -171,7 +182,8 @@ namespace hgraph
             void (*append_modified_leaves)(const ReduceNodeStorage &storage,
                                            TSInputView &input,
                                            std::vector<std::size_t> &leaves);
-            TSOutputView (*leaf_output)(TSOutputView source, std::size_t leaf, const Value &key,
+            TSOutputView (*leaf_output)(TSInputView &input, TSOutputView source,
+                                        std::size_t leaf, const Value &key,
                                         std::size_t source_slot);
         };
 
@@ -181,10 +193,13 @@ namespace hgraph
                                          std::vector<std::size_t> &leaves);
         void append_modified_list_leaves(const ReduceNodeStorage &storage, TSInputView &input,
                                          std::vector<std::size_t> &leaves);
-        [[nodiscard]] TSOutputView dict_leaf_output(TSOutputView source, std::size_t leaf, const Value &key,
+        [[nodiscard]] TSOutputView dict_leaf_output(TSInputView &input, TSOutputView source,
+                                                    std::size_t leaf, const Value &key,
                                                     std::size_t source_slot);
-        [[nodiscard]] TSOutputView list_leaf_output(TSOutputView source, std::size_t leaf, const Value &key,
+        [[nodiscard]] TSOutputView list_leaf_output(TSInputView &input, TSOutputView source,
+                                                    std::size_t leaf, const Value &key,
                                                     std::size_t source_slot);
+        [[nodiscard]] TSOutputHandle effective_output_handle(TSOutputView source);
 
         struct ReduceNodeContext
         {
@@ -271,9 +286,15 @@ namespace hgraph
             return {Aggregate::Kind::Node, aggregate_position};
         }
 
-        [[nodiscard]] Aggregate root_aggregate(const ReduceNodeStorage &storage)
+        [[nodiscard]] Aggregate root_aggregate(const ReduceNodeContext &context,
+                                               const ReduceNodeStorage &storage)
         {
-            if (storage.leaf_capacity == 0) { return {Aggregate::Kind::Empty, 0}; }
+            const std::size_t live = storage.dense_to_key.size();
+            if (live == 0) { return {Aggregate::Kind::Empty, 0}; }
+            if (context.spec.has_zero && live == 1 && !storage.combiners.empty())
+            {
+                return {Aggregate::Kind::Node, 0};
+            }
             return resolve_aggregate(storage, 0);
         }
 
@@ -303,11 +324,13 @@ namespace hgraph
             {
                 case Aggregate::Kind::Leaf:
                 {
-                    auto collection = storage.collection_source.view(evaluation_time);
-                    if (!collection.bound()) { return TSOutputView{}; }
+                    auto collection_input = view.input(evaluation_time).indexed_child_at(0);
+                    TSOutputView collection = storage.collection_source.bound()
+                                                  ? storage.collection_source.view(evaluation_time)
+                                                  : TSOutputView{};
                     const Value &key = storage.dense_to_key[aggregate.index];
                     return context.collection_ops->leaf_output(
-                        std::move(collection), aggregate.index, key,
+                        collection_input, std::move(collection), aggregate.index, key,
                         storage.dense_to_source_slot[aggregate.index]);
                 }
                 case Aggregate::Kind::Node:
@@ -333,14 +356,19 @@ namespace hgraph
                         entry->graph.view().node_at(output_binding->source.node).output(evaluation_time),
                         output_binding->source.path);
                 }
-                case Aggregate::Kind::Empty: break;
+                case Aggregate::Kind::Empty:
+                {
+                    return storage.zero_source.bound()
+                               ? storage.zero_source.view(evaluation_time)
+                               : TSOutputView{};
+                }
             }
             return TSOutputView{};
         }
 
         void bind_combiner_inputs(const NodeView &view, const ReduceNodeContext &context,
                                   const ReduceNodeStorage &storage, CombinerEntry &entry, const Aggregate &left,
-                                  const Aggregate &right, DateTime evaluation_time)
+                                  const Aggregate &right, DateTime evaluation_time, bool sampled)
         {
             auto child = entry.graph.view();
             for (const NestedGraphInputBinding &binding : context.spec.child.input_bindings)
@@ -355,7 +383,15 @@ namespace hgraph
                 }
                 auto target = walk_ts_path(child.node_at(binding.target.node).input(evaluation_time),
                                            binding.target.path);
-                bind_input_to_source(std::move(target), source);
+                const bool same_source = target.bound() && source.bound() &&
+                                         target.bound_output().handle().same_as(source.handle());
+                if (same_source || (!target.bound() && !source.bound())) { continue; }
+
+                if (sampled)
+                {
+                    bind_sampled_input_to_source(std::move(target), source, evaluation_time);
+                }
+                else { bind_input_to_source(std::move(target), source); }
             }
         }
 
@@ -367,16 +403,19 @@ namespace hgraph
             {
                 storage.dense_to_key[leaf]                      = std::move(storage.dense_to_key[last]);
                 storage.dense_to_source_slot[leaf]              = storage.dense_to_source_slot[last];
+                storage.dense_to_source_handle[leaf]            = storage.dense_to_source_handle[last];
                 storage.key_to_leaf[storage.dense_to_key[leaf]] = leaf;
             }
             storage.dense_to_key.pop_back();
             storage.dense_to_source_slot.pop_back();
+            storage.dense_to_source_handle.pop_back();
         }
 
         void clear_leaf_state(ReduceNodeStorage &storage)
         {
             storage.dense_to_key.clear();
             storage.dense_to_source_slot.clear();
+            storage.dense_to_source_handle.clear();
             storage.key_to_leaf.clear();
         }
 
@@ -394,6 +433,7 @@ namespace hgraph
                 clear_leaf_state(storage);
                 storage.dense_to_key.reserve(dict.size());
                 storage.dense_to_source_slot.reserve(dict.size());
+                storage.dense_to_source_handle.reserve(dict.size());
                 storage.key_to_leaf.reserve(dict.size());
                 for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
                 {
@@ -402,15 +442,15 @@ namespace hgraph
                     storage.key_to_leaf.emplace(key, storage.dense_to_key.size());
                     storage.dense_to_key.push_back(std::move(key));
                     storage.dense_to_source_slot.push_back(slot);
+                    storage.dense_to_source_handle.emplace_back();
                 }
                 return true;
             }
 
             bool structural = false;
-            for (std::size_t slot = dict.next_removed_slot(); slot != TS_DATA_NO_CHILD_ID;
-                 slot = dict.next_removed_slot(slot))
+            for (const ValueView &removed_key : dict.removed_keys())
             {
-                const auto found = storage.key_to_leaf.find(dict.key_at_slot(slot));
+                const auto found = storage.key_to_leaf.find(removed_key);
                 if (found == storage.key_to_leaf.end()) { continue; }
                 record_removed_leaf_paths(storage, found->second);
                 remove_leaf_at(storage, found->second);
@@ -426,6 +466,7 @@ namespace hgraph
                 storage.key_to_leaf.emplace(typed_key, storage.dense_to_key.size());
                 storage.dense_to_key.push_back(std::move(typed_key));
                 storage.dense_to_source_slot.push_back(slot);
+                storage.dense_to_source_handle.emplace_back();
                 structural = true;
             }
 
@@ -435,20 +476,43 @@ namespace hgraph
         [[nodiscard]] bool reconcile_leaf_state(ReduceNodeStorage &storage, const TSLInputView &list_input)
         {
             bool structural = false;
-            while (storage.dense_to_key.size() > list_input.size())
+
+            // A TSL's shape includes slots which have not acquired a value.
+            // Reduction is over its currently-valid children, not its static
+            // capacity, so remove invalidated/repointed children first.
+            std::size_t leaf = 0;
+            while (leaf < storage.dense_to_key.size())
             {
-                record_removed_leaf_paths(storage, storage.dense_to_key.size() - 1);
-                remove_leaf_at(storage, storage.dense_to_key.size() - 1);
-                structural = true;
+                const std::size_t source_slot = storage.dense_to_source_slot[leaf];
+                if (source_slot >= list_input.size() || !list_input[source_slot].valid())
+                {
+                    record_removed_leaf_paths(storage, leaf);
+                    remove_leaf_at(storage, leaf);
+                    structural = true;
+                    continue;
+                }
+                TSOutputHandle source = effective_output_handle(list_input[source_slot].bound_output());
+                if (!source.same_as(storage.dense_to_source_handle[leaf]))
+                {
+                    storage.structural_leaves.push_back(leaf);
+                    storage.dense_to_source_handle[leaf] = source;
+                    structural = true;
+                }
+                ++leaf;
             }
-            while (storage.dense_to_key.size() < list_input.size())
+
+            for (std::size_t index = 0; index < list_input.size(); ++index)
             {
-                const std::size_t index = storage.dense_to_key.size();
-                storage.structural_leaves.push_back(index);
+                if (!list_input[index].valid()) { continue; }
                 Value key{static_cast<Int>(index)};
-                storage.key_to_leaf.emplace(key, index);
+                if (storage.key_to_leaf.find(key) != storage.key_to_leaf.end()) { continue; }
+                const std::size_t dense_leaf = storage.dense_to_key.size();
+                storage.structural_leaves.push_back(dense_leaf);
+                storage.key_to_leaf.emplace(key, dense_leaf);
                 storage.dense_to_key.push_back(std::move(key));
                 storage.dense_to_source_slot.push_back(index);
+                storage.dense_to_source_handle.push_back(
+                    effective_output_handle(list_input[index].bound_output()));
                 structural = true;
             }
             return structural;
@@ -491,18 +555,20 @@ namespace hgraph
             }
         }
 
-        void append_modified_list_leaves(const ReduceNodeStorage &, TSInputView &input,
+        void append_modified_list_leaves(const ReduceNodeStorage &storage, TSInputView &input,
                                          std::vector<std::size_t> &leaves)
         {
             auto list = input.as_list();
             for (auto &&[index, child] : list.modified_items())
             {
                 static_cast<void>(child);
-                leaves.push_back(index);
+                const Value key{static_cast<Int>(index)};
+                const auto found = storage.key_to_leaf.find(key);
+                if (found != storage.key_to_leaf.end()) { leaves.push_back(found->second); }
             }
         }
 
-        [[nodiscard]] TSOutputView dict_leaf_output(TSOutputView source, std::size_t,
+        [[nodiscard]] TSOutputView dict_leaf_output(TSInputView &, TSOutputView source, std::size_t,
                                                     const Value &, std::size_t source_slot)
         {
             auto dict = source.as_dict();
@@ -511,11 +577,14 @@ namespace hgraph
                        : TSOutputView{};
         }
 
-        [[nodiscard]] TSOutputView list_leaf_output(TSOutputView source, std::size_t leaf,
-                                                    const Value &, std::size_t)
+        [[nodiscard]] TSOutputView list_leaf_output(TSInputView &input, TSOutputView,
+                                                    std::size_t, const Value &,
+                                                    std::size_t source_slot)
         {
-            auto list = source.as_list();
-            return leaf < list.size() ? list.at(leaf) : TSOutputView{};
+            auto list = input.as_list();
+            if (source_slot >= list.size()) { return TSOutputView{}; }
+            TSOutputHandle source = effective_output_handle(list[source_slot].bound_output());
+            return source.bound() ? source.view(input.evaluation_time()) : TSOutputView{};
         }
 
         [[nodiscard]] const ReduceCollectionOps &reduce_collection_ops_for(
@@ -534,6 +603,154 @@ namespace hgraph
                 .leaf_output = &list_leaf_output,
             };
             return schema.kind == TSTypeKind::TSD ? dict_ops : list_ops;
+        }
+
+        void begin_reduce_publication(TSOutputView output, const TSOutputView &source,
+                                      ReduceNodeStorage &storage, DateTime evaluation_time,
+                                      bool reconcile_repoint)
+        {
+            TSOutputView resolved_source = resolve_forwarding_source(source.borrowed_ref());
+            const TSOutputHandle previous = output.forwarding() ? output.forwarding_target()
+                                                                 : TSOutputHandle{};
+            const bool changed = output.forwarding() && previous.bound() &&
+                                 (!resolved_source.bound() || !previous.same_as(resolved_source.handle()));
+            const auto *schema = output.schema();
+            const bool keyed = schema != nullptr &&
+                               (schema->kind == TSTypeKind::TSD || schema->kind == TSTypeKind::TSS);
+
+            if (!changed || !keyed || !reconcile_repoint)
+            {
+                bind_reduce_output(std::move(output), source, evaluation_time);
+                if (resolved_source.bound())
+                {
+                    for (auto &snapshot : storage.publication_snapshots) { snapshot.reset(); }
+                }
+                return;
+            }
+
+            TSOutputView previous_view = previous.view(evaluation_time);
+            if (!previous_view.valid())
+            {
+                bind_reduce_output(std::move(output), source, evaluation_time);
+                return;
+            }
+
+            const std::size_t next_bank = 1U - storage.publication_snapshot_bank;
+            auto &snapshot = storage.publication_snapshots[next_bank];
+            snapshot.emplace(schema);
+            DateTime snapshot_time = previous_view.last_modified_time();
+            if (snapshot_time == MIN_DT) { snapshot_time = evaluation_time; }
+            auto snapshot_view = snapshot->view(snapshot_time);
+            if (schema->kind == TSTypeKind::TSD)
+            {
+                auto mutation = snapshot_view.as_dict().begin_mutation(snapshot_time);
+                static_cast<void>(mutation.copy_value_from(previous_view.value()));
+            }
+            else
+            {
+                auto mutation = snapshot_view.as_set().begin_mutation(snapshot_time);
+                static_cast<void>(mutation.copy_value_from(previous_view.value()));
+            }
+
+            // First move the forwarding endpoint to an equal, stable snapshot
+            // without publishing a second transition. The snapshot is updated
+            // after the new combiner root evaluates, producing a minimal delta
+            // while the retired source is free to stop immediately.
+            const std::size_t old_bank = storage.publication_snapshot_bank;
+            auto timeless_output = output.handle().view(MIN_DT);
+            timeless_output.bind_forwarding_target(snapshot_view);
+            storage.publication_snapshot_bank = next_bank;
+            storage.publication_snapshots[old_bank].reset();
+            storage.pending_publication_source = resolved_source.bound()
+                                                     ? resolved_source.handle()
+                                                     : TSOutputHandle{};
+            storage.publication_snapshot_active = true;
+        }
+
+        void finish_reduce_publication(const NodeView &view, ReduceNodeStorage &storage,
+                                       DateTime evaluation_time)
+        {
+            if (!storage.publication_snapshot_active) { return; }
+
+            auto &snapshot = storage.publication_snapshots[storage.publication_snapshot_bank];
+            if (!snapshot.has_value())
+            {
+                throw std::logic_error("reduce publication snapshot is not available");
+            }
+
+            TSOutputView source = storage.pending_publication_source.bound()
+                                      ? storage.pending_publication_source.view(evaluation_time)
+                                      : TSOutputView{};
+            if (!source.valid())
+            {
+                bind_reduce_output(view.output(evaluation_time), source, evaluation_time);
+                return;
+            }
+
+            auto snapshot_view = snapshot->view(evaluation_time);
+            if (snapshot_view.schema()->kind == TSTypeKind::TSD)
+            {
+                auto snapshot_dict = snapshot_view.as_dict();
+                auto source_dict = source.as_dict();
+                std::vector<Value> removed_keys;
+                removed_keys.reserve(snapshot_dict.size());
+                for (const ValueView &key : snapshot_dict.keys())
+                {
+                    if (!source_dict.contains(key)) { removed_keys.emplace_back(key); }
+                }
+
+                auto mutation = snapshot_dict.begin_mutation(evaluation_time);
+                for (const Value &key : removed_keys)
+                {
+                    static_cast<void>(mutation.erase(key.view()));
+                }
+                for (auto &&[key, child] : source_dict.items())
+                {
+                    if (!child.valid()) { continue; }
+                    const bool changed = !mutation.contains(key) || !mutation.at(key).valid() ||
+                                         !mutation.at(key).value().equals(child.value());
+                    if (changed) { mutation.set(key, child.value()); }
+                }
+            }
+            else
+            {
+                auto snapshot_set = snapshot_view.as_set();
+                auto source_set = source.as_set();
+                std::vector<Value> removed_keys;
+                removed_keys.reserve(snapshot_set.size());
+                for (const ValueView &key : snapshot_set.values())
+                {
+                    if (!source_set.contains(key)) { removed_keys.emplace_back(key); }
+                }
+
+                auto mutation = snapshot_set.begin_mutation(evaluation_time);
+                for (const Value &key : removed_keys)
+                {
+                    static_cast<void>(mutation.remove(key.view()));
+                }
+                for (const ValueView &key : source_set.values())
+                {
+                    if (!mutation.contains(key)) { static_cast<void>(mutation.add(key)); }
+                }
+            }
+        }
+
+        void release_reduce_publication_snapshot(const NodeView &view, ReduceNodeStorage &storage,
+                                                 DateTime evaluation_time)
+        {
+            if (!storage.publication_snapshot_active) { return; }
+
+            if (storage.pending_publication_source.bound())
+            {
+                auto output = view.output(MIN_DT);
+                auto source = storage.pending_publication_source.view(evaluation_time);
+                // Rebind even when the handle is already current: this clears
+                // the prior sampled transition before its snapshot is erased.
+                output.bind_forwarding_target(source);
+                storage.publication_snapshots[storage.publication_snapshot_bank].reset();
+            }
+            storage.pending_publication_source.reset();
+            storage.publication_snapshot_active = false;
         }
 
         [[nodiscard]] TSOutputHandle effective_output_handle(TSOutputView source)
@@ -582,19 +799,24 @@ namespace hgraph
             const std::size_t old_capacity = storage.leaf_capacity;
             const std::size_t live = storage.dense_to_key.size();
             std::size_t       capacity = storage.leaf_capacity;
-            if (live > 0) { capacity = std::max({capacity, std::size_t{1}, std::bit_ceil(live)}); }
+            // Only the explicit-zero form needs a singleton root combiner.
+            // The no-zero form keeps cardinality zero/one free of combiner
+            // slots and grows to the ordinary tree when a second value arrives.
+            const std::size_t minimum_capacity = context.spec.has_zero ? 2U : 0U;
+            capacity = std::max(
+                {capacity, minimum_capacity, live > 0 ? std::bit_ceil(live) : std::size_t{0}});
 
             const std::size_t old_bank = storage.current_bank;
             std::vector<CombinerEntry *> retired_shape{};
             std::vector<std::pair<std::size_t, CombinerEntry *>> retired{};
             std::vector<std::size_t> created{};
-            if (capacity != storage.leaf_capacity)
+            const bool bank_changed = capacity != storage.leaf_capacity;
+            if (bank_changed)
             {
                 full_structure = true;
-                // Capacity growth re-shapes the tree wholesale: every existing
-                // combiner retires and the needed set is rebuilt (the recorded
-                // v1 simplification; capacity is monotonic, shrink is a
-                // refinement).
+                // Capacity growth changes the tree shape wholesale. Build the
+                // replacement in the inactive bank and retain the stopped old
+                // generation through this cycle.
                 const std::size_t next_bank = 1U - storage.current_bank;
                 auto &new_bank = storage.combiner_banks[next_bank];
                 if (new_bank.has_entries())
@@ -636,7 +858,7 @@ namespace hgraph
             }
             auto rollback = UnwindCleanupGuard([&] {
                 auto &current_bank = storage.combiner_banks[storage.current_bank];
-                if (storage.leaf_capacity != old_capacity)
+                if (bank_changed)
                 {
                     for (const std::size_t position : created)
                     {
@@ -670,8 +892,9 @@ namespace hgraph
             {
                 const Aggregate left   = resolve_aggregate(storage, 2 * position + 1);
                 const Aggregate right  = resolve_aggregate(storage, 2 * position + 2);
-                const bool      needed = left.kind != Aggregate::Kind::Empty &&
-                                         right.kind != Aggregate::Kind::Empty;
+                const bool      needed = (position == 0 && context.spec.has_zero && live == 1) ||
+                                         (left.kind != Aggregate::Kind::Empty &&
+                                          right.kind != Aggregate::Kind::Empty);
                 auto &entry = storage.combiners[position];
 
                 if (needed && entry == nullptr)
@@ -711,7 +934,9 @@ namespace hgraph
                     if (entry == nullptr) { continue; }
                     const Aggregate left  = resolve_aggregate(storage, 2 * position + 1);
                     const Aggregate right = resolve_aggregate(storage, 2 * position + 2);
-                    bind_combiner_inputs(view, context, storage, *entry, left, right, evaluation_time);
+                    const bool created_now = std::ranges::find(created, position) != created.end();
+                    bind_combiner_inputs(view, context, storage, *entry, left, right, evaluation_time,
+                                         !created_now);
                 }
                 for (auto it = created.rbegin(); it != created.rend(); ++it)
                 {
@@ -727,13 +952,10 @@ namespace hgraph
             // re-point to an already-valid source is a tick of this output at
             // the publication time (the sampled contract): the aliased VALUE
             // changed even though the new target did not write this cycle.
-            const Aggregate root   = root_aggregate(storage);
+            const Aggregate root   = root_aggregate(context, storage);
             TSOutputView    source = aggregate_output(view, context, storage, root, evaluation_time);
-            if (root.kind == Aggregate::Kind::Empty)
-            {
-                source = view.input(evaluation_time).indexed_child_at(1).bound_output();
-            }
-            bind_reduce_output(view.output(evaluation_time), source, evaluation_time);
+            begin_reduce_publication(view.output(evaluation_time), source, storage, evaluation_time,
+                                     !bank_changed);
             storage.published = true;
 
             // Phase 3 — stop root-first, but keep the retired graph storage
@@ -767,13 +989,17 @@ namespace hgraph
         {
             auto root_input = view.input(evaluation_time);
             auto collection_input = root_input.indexed_child_at(0);
-            auto zero_input = root_input.indexed_child_at(1);
 
             TSOutputHandle collection_source = effective_output_handle(collection_input.bound_output());
-            TSOutputHandle zero_source = effective_output_handle(zero_input.bound_output());
-            const bool collection_repointed = storage.source_handles_initialised &&
+            TSOutputHandle zero_source{};
+            if (context.spec.has_zero)
+            {
+                zero_source = effective_output_handle(root_input.indexed_child_at(1).bound_output());
+            }
+            const bool list_collection = collection_input.schema()->kind == TSTypeKind::TSL;
+            const bool collection_repointed = !list_collection && storage.source_handles_initialised &&
                                               !collection_source.same_as(storage.collection_source);
-            const bool zero_repointed = storage.source_handles_initialised &&
+            const bool zero_repointed = context.spec.has_zero && storage.source_handles_initialised &&
                                         !zero_source.same_as(storage.zero_source);
             storage.collection_source = collection_source;
             storage.zero_source = zero_source;
@@ -783,7 +1009,9 @@ namespace hgraph
             storage.structural_positions.clear();
             bool structural = false;
             bool full_structure = collection_repointed || !storage.published;
-            if (collection_input.valid())
+            const bool collection_available = list_collection ? collection_input.bound()
+                                                              : collection_input.valid();
+            if (collection_available)
             {
                 if (!storage.primed || collection_repointed ||
                     context.collection_ops->structure_modified(collection_input, evaluation_time))
@@ -803,7 +1031,10 @@ namespace hgraph
                 storage.primed = false;
             }
 
-            if (structural || collection_repointed || zero_repointed || !storage.published)
+            const bool zero_affects_structure =
+                zero_repointed && storage.dense_to_key.size() <= 1;
+            full_structure = full_structure || zero_affects_structure;
+            if (structural || collection_repointed || zero_affects_structure || !storage.published)
             {
                 rebuild_structure(view, context, storage, evaluation_time, full_structure);
                 return true;
@@ -852,18 +1083,28 @@ namespace hgraph
 
             auto root_input = view.input(evaluation_time);
             auto collection_input = root_input.indexed_child_at(0);
-            auto zero_input = root_input.indexed_child_at(1);
             const bool collection_event = collection_input.modified();
-            const bool input_event = collection_event || zero_input.modified();
+            const bool zero_event = context.spec.has_zero &&
+                                    root_input.indexed_child_at(1).modified();
+            const bool input_event = collection_event || zero_event;
             bool full_scan = storage.has_future_combiner_schedule || (!rebuilt && !input_event);
 
             if (rebuilt && !full_scan)
             {
-                storage.evaluation_positions.assign(storage.structural_positions.begin(),
-                                                    storage.structural_positions.end());
+                for (const std::size_t position : storage.structural_positions)
+                {
+                    if (position < storage.combiners.size() && storage.combiners[position] != nullptr)
+                    {
+                        storage.evaluation_candidates.set(position);
+                    }
+                }
             }
 
-            if (!rebuilt && !full_scan && collection_event && collection_input.valid())
+            // A structural delta may also modify existing leaves. Rebinding
+            // the added/removed paths does not evaluate unaffected sibling
+            // paths, so include value modifications even after a rebuild.
+            if (!full_scan && collection_event &&
+                (collection_input.valid() || collection_input.schema()->kind == TSTypeKind::TSL))
             {
                 storage.modified_leaves.clear();
                 context.collection_ops->append_modified_leaves(
@@ -872,6 +1113,14 @@ namespace hgraph
                 {
                     append_leaf_path(storage, leaf, storage.evaluation_candidates);
                 }
+            }
+
+            // The explicit zero is an operand only for a singleton. It must
+            // neither schedule nor perturb a reduction containing 2+ values.
+            if (!full_scan && zero_event && storage.dense_to_key.size() == 1 &&
+                !storage.combiners.empty() && storage.combiners[0] != nullptr)
+            {
+                storage.evaluation_candidates.set(0);
             }
 
             if (full_scan)
@@ -941,6 +1190,7 @@ namespace hgraph
             const bool resuming = storage.resume_candidate_plus_one != 0;
             if (!resuming)
             {
+                release_reduce_publication_snapshot(view, storage, evaluation_time);
                 storage.destroy_previous_generation_before(evaluation_time);
                 const bool rebuilt = reduce_reconcile(view, context, storage, evaluation_time);
                 prepare_reduce_evaluation_positions(view, context, storage, evaluation_time, rebuilt);
@@ -980,6 +1230,7 @@ namespace hgraph
             }
             storage.resume_candidate_plus_one = 0;
             storage.evaluation_positions.clear();
+            finish_reduce_publication(view, storage, evaluation_time);
             return true;
         }
 
@@ -1011,16 +1262,17 @@ namespace hgraph
                 throw std::invalid_argument("reduce_node requires a combiner output binding");
             }
             if (meta.input_schema == nullptr || meta.input_schema->kind != TSTypeKind::TSB ||
-                meta.input_schema->field_count() != 2)
+                meta.input_schema->field_count() != (spec.has_zero ? 2 : 1))
             {
-                throw std::invalid_argument("reduce_node requires input schema [ts, zero]");
+                throw std::invalid_argument(
+                    "reduce_node requires input schema [ts] with an optional trailing zero");
             }
             const auto *fields = meta.input_schema->fields();
             if (fields[0].type == nullptr ||
                 (fields[0].type->kind != TSTypeKind::TSD &&
-                 (fields[0].type->kind != TSTypeKind::TSL || fields[0].type->fixed_size() != 0)))
+                 fields[0].type->kind != TSTypeKind::TSL))
             {
-                throw std::invalid_argument("reduce_node first input must be a TSD or dynamic TSL");
+                throw std::invalid_argument("reduce_node first input must be a TSD or TSL");
             }
             if (meta.output_schema == nullptr)
             {

@@ -343,6 +343,11 @@ namespace hgraph
         {
             mutation_.mark_modified();
         }
+        auto keys = key_set();
+        if (keys.last_modified_time() == MIN_DT)
+        {
+            static_cast<void>(keys.base().mutable_tracking().record_modified(current_mutation_time()));
+        }
     }
 
     TSDataView TSDDataMutationView::at(const ValueView &key)

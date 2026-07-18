@@ -44,7 +44,7 @@ class _KeySubscripted:
         return self._for(tp)
 
     def __call__(self, *args, **kwargs):
-        return self._for(object)(*args, **kwargs)
+        return self._for(K)(*args, **kwargs)
 
 
 def _keys_where_true_for(tp):

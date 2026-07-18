@@ -392,10 +392,13 @@ def _value_type(scalar):
             pattern=_hgraph.scalar_pattern_var(_type_var_name(scalar), constraints)
             if constraints else _hgraph.scalar_pattern_var(_type_var_name(scalar)))
     # typing generics: tuple[X, ...] / tuple[A, B] / frozenset[X] / dict[K, V]
+    import collections.abc as _abc
     import enum as _enum
     import typing
 
     origin = typing.get_origin(scalar)
+    if scalar in (typing.Callable, _abc.Callable) or origin is _abc.Callable:
+        return _hgraph.value_type("fn")
     if origin is not None:
         args = typing.get_args(scalar)
         from ._compat import CompoundScalar
@@ -405,7 +408,6 @@ def _value_type(scalar):
             origin is dict
             or getattr(origin, "__name__", "") == "frozendict"
             or getattr(origin, "__name__", "") in ("Mapping", "MutableMapping")
-            or origin.__module__ == "collections.abc"
         )
         if not args:
             if origin is tuple:

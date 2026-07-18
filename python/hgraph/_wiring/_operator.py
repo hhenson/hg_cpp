@@ -87,6 +87,12 @@ def _run_requires(user_requires, bindings, scalar_values):
     """Evaluate a ``requires=lambda m[, <scalar names...>]`` predicate.
     Returns True to accept; False or an explanation string rejects."""
     names = list(inspect.signature(user_requires).parameters)[1:]
+    scalar_values = {
+        name: (value._python_callable
+               if isinstance(value, _hgraph.WiredFn) and value._python_callable is not None
+               else value)
+        for name, value in scalar_values.items()
+    }
     return user_requires(_BindingsMap(bindings),
                          **{name: scalar_values.get(name) for name in names})
 

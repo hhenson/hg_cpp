@@ -472,12 +472,9 @@ namespace hgraph::detail
                 link->bind_sampled(*schema, output, modified_time);
                 return;
             }
-            bind_target_link(target, output);
-            // Only a scalar/fixed-shape rebind to a LIVE (valid) target samples
-            // (linking_strategies.rst): binding to a target that has never
-            // ticked must not fabricate a tick - the target's first real
-            // tick notifies through the link's subscription.
-            if (output.data_view().has_current_value()) { link->record_target_modified(modified_time); }
+            // A scalar or fixed-shape reference retarget samples a live source
+            // at the retarget time without creating structural slot state.
+            link->bind_current_value(*schema, output, modified_time);
         }
 
         [[nodiscard]] TSOutputView output_child_view(const TSOutputView &parent,

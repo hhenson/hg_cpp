@@ -709,10 +709,12 @@ collection input is expected; the dispatcher erases it as a fixed structural
 ``TSL`` with one child per tail element. This is the variadic-tail counterpart of
 scalar auto-const promotion, and lets graph overloads write calls such as
 ``wire<reduce_>(w, fn<binary>(), args, zero)`` directly. ``reduce`` also detects
-that packed-tail marker: ``reduce(func, args)`` is a raw variadic fold with no
-zero/default leaves, while ``reduce(func, args, zero)`` is the ordinary collection
-reduction with default leaf values. This is why ``merge(*ts) -> S`` can delegate
-to ``reduce`` without sharing a private fold helper. If a packed ``VarIn`` could
+that packed-tail marker: ``reduce(func, args)`` has no zero, while
+``reduce(func, args, zero)`` supplies the optional associative zero. In both
+cases only valid/live values participate; see *Nested Graphs > reduce* for the
+empty/singleton/multi-value contract. Operators such as ``merge`` whose
+combiner must observe positional invalidity use the shared static binary-layout
+helper directly rather than ``reduce``. If a packed ``VarIn`` could
 match both a true variadic overload and a fixed ``TSL`` overload, the dispatcher
 expands it back into tail arguments for the variadic candidate and penalizes the
 fixed-``TSL`` conversion, so the variadic overload wins. Pure variadic overloads

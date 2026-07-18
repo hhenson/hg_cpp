@@ -282,13 +282,14 @@ namespace hgraph
         return walk_source_to_output(std::move(root), std::span<const std::size_t>{path});
     }
 
-    [[nodiscard]] inline bool nested_input_binding_has_valid_active_target(
+    [[nodiscard]] inline bool nested_input_binding_has_sampled_active_target(
         const NodeView &node,
         DateTime evaluation_time,
         std::span<const std::size_t> target_path)
     {
         const auto *schema = node.schema();
         if (schema == nullptr || schema->input_schema == nullptr) { return false; }
+        const bool accepts_invalid = schema->valid_inputs.has_value() && schema->valid_inputs->empty();
 
         auto input = node.input(evaluation_time);
         if (!target_path.empty())
@@ -299,28 +300,29 @@ namespace hgraph
                 input = input.indexed_child_at(component);
                 active = active || input.active();
             }
-            return active && input.valid();
+            return active && (input.valid() || accepts_invalid);
         }
         if (schema->input_schema->kind != TSTypeKind::TSB)
         {
-            return input.active() && input.valid();
+            return input.active() && (input.valid() || accepts_invalid);
         }
 
         const auto bundle = input.as_bundle();
         for (std::size_t slot = 0; slot < schema->input_schema->field_count(); ++slot)
         {
             const auto child = bundle[slot];
-            if (child.active() && child.valid()) { return true; }
+            if (child.active() && (child.valid() || accepts_invalid)) { return true; }
         }
         return false;
     }
 
     /**
-     * Schedule the active consumers of already-valid boundary inputs after a
-     * newly constructed child graph starts. Startup first establishes the
-     * actual endpoint activity, including custom nodes whose activity is more
-     * precise than their root schema. Declaratively passive child inputs remain
-     * passive and cannot trigger this sample.
+     * Schedule active consumers of sampled boundary inputs after a newly
+     * constructed child graph starts. A valid source supplies its current
+     * value; a node with an explicit empty validity gate also samples an unset
+     * source so it can publish an identity such as an empty collection.
+     * Startup first establishes the actual endpoint activity, including custom
+     * nodes whose activity is more precise than their root schema.
      *
      * This is the explicit sampled-initialization step owned by nested graph
      * lifecycle code. Input activation only establishes subscriptions; it does
@@ -334,7 +336,7 @@ namespace hgraph
         for (const NestedGraphInputBinding &binding : bindings)
         {
             const auto node = child.node_at(binding.target.node);
-            if (nested_input_binding_has_valid_active_target(
+            if (nested_input_binding_has_sampled_active_target(
                     node,
                     evaluation_time,
                     binding.target.path))

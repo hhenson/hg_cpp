@@ -12,8 +12,9 @@ namespace hgraph::stdlib
         register_graph_overload<zero_, zero_int>();
         register_graph_overload<zero_, zero_float>();
         register_graph_overload<zero_, zero_str>();
+        register_overload<zero_, zero_tsd>();
 
-        register_overload<default_, default_impl>();
+        register_graph_overload<default_, default_impl>();
         register_overload<str_, str_impl>();
         register_overload<convert, convert_identity_impl>();
         register_overload<convert, convert_bundle_upcast_impl>();

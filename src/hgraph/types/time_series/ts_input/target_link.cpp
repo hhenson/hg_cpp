@@ -8,6 +8,7 @@
 #include <hgraph/util/scope.h>
 
 #include <algorithm>
+#include <string>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -78,8 +79,12 @@ namespace hgraph::detail
         {
             if (!node.observed.bound()) { return; }
             [[maybe_unused]] auto reset_observed = make_scope_exit([&]() noexcept { node.observed.reset(); });
-            [[maybe_unused]] auto unsubscribe_observer =
-                make_scope_exit<true>([&] { node.observed.data_view().unsubscribe(&notifier); });
+            auto view = node.observed.data_view();
+            if (view.valid() && view.tracking().observers.contains(&notifier))
+            {
+                [[maybe_unused]] auto unsubscribe_observer =
+                    make_scope_exit<true>([&] { view.unsubscribe(&notifier); });
+            }
         }
 
         void unsubscribe_handle_noexcept(TSOutputHandle &observed, Notifiable *observer) noexcept
@@ -149,7 +154,9 @@ namespace hgraph::detail
             }
             if (target.schema()->kind == TSTypeKind::TSD) { return target.as_dict().key_set(); }
             if (target.schema()->kind == TSTypeKind::TSS) { return target.as_set(); }
-            throw std::logic_error("Target-link slot observer requires a TSS or TSD target");
+            throw std::logic_error(
+                "Target-link slot observer requires a TSS or TSD target, got " +
+                std::string{target.schema()->name()});
         }
 
         [[nodiscard]] bool has_published_structural_key(const TSDataView &target,
@@ -157,6 +164,10 @@ namespace hgraph::detail
         {
             if (!target.valid() || target.schema() == nullptr) { return false; }
             const bool modified_now = target.modified(transition_time);
+            // A previously published empty collection is still structural
+            // state. It must produce a sampled empty transition when a
+            // forwarding endpoint moves to a fresh, currently-unset target.
+            if (!modified_now && target.has_current_value()) { return true; }
             if (target.schema()->kind == TSTypeKind::TSS)
             {
                 auto set = target.as_set();
@@ -470,7 +481,19 @@ namespace hgraph::detail
 
     void TSInputTargetLinkStorage::bind(const TSValueTypeMetaData &schema, const TSOutputView &output)
     {
-        bind_impl(schema, output, MIN_DT, false);
+        bind_impl(schema, output, MIN_DT, false, true);
+    }
+
+    void TSInputTargetLinkStorage::bind_current_value(const TSValueTypeMetaData &schema,
+                                                      const TSOutputView &output,
+                                                      DateTime modified_time)
+    {
+        if (modified_time == MIN_DT)
+        {
+            throw std::invalid_argument("Current-value TSInput target binding requires an evaluation time");
+        }
+        bind_impl(schema, output, MIN_DT, false, false);
+        if (output.data_view().has_current_value()) { record_target_modified(modified_time); }
     }
 
     void TSInputTargetLinkStorage::bind_sampled(const TSValueTypeMetaData &schema,
@@ -481,13 +504,14 @@ namespace hgraph::detail
         {
             throw std::invalid_argument("Sampled TSInput target binding requires an evaluation time");
         }
-        bind_impl(schema, output, modified_time, true);
+        bind_impl(schema, output, modified_time, true, false);
     }
 
     void TSInputTargetLinkStorage::bind_impl(const TSValueTypeMetaData &schema,
                                              const TSOutputView &output,
                                              DateTime modified_time,
-                                             bool sampled)
+                                             bool sampled,
+                                             bool replay_source_time)
     {
         if (!output_view_bound(output))
         {
@@ -504,10 +528,11 @@ namespace hgraph::detail
             throw std::invalid_argument("TSInput target binding schema does not match the input slot schema");
         }
 
+        const bool structural = schema.kind == TSTypeKind::TSS || schema.kind == TSTypeKind::TSD;
         const bool previous_has_published_key =
-            sampled && state_.target.bound() &&
+            sampled && structural && state_.target.bound() &&
             has_published_structural_key(state_.target.data_view(), modified_time);
-        if (state_.target.bound()) { detach_target(sampled, modified_time); }
+        if (state_.target.bound()) { detach_target(sampled && structural, modified_time); }
         else if (!sampled || structural_transition_time() != modified_time)
         {
             if (structural_transition_) { structural_transition_->clear(); }
@@ -517,27 +542,33 @@ namespace hgraph::detail
         state.target = target;
         auto rollback = make_scope_exit<true>([this] { unbind(); });
         state.target.data_view().subscribe(&state);
-        if (state.target.data_view().last_modified_time() != MIN_DT)
+        // A sampled rebind represents the source's current value at
+        // modified_time. Replaying the source's historical timestamp first
+        // can move a parent's delta clock backwards and erase sibling changes
+        // already recorded for this cycle.
+        if (replay_source_time && state.target.data_view().last_modified_time() != MIN_DT)
         {
             record_target_modified(state.target.data_view().last_modified_time());
         }
         subscribe_key_set_tracking();
         subscribe_slot_observers();
         resubscribe_active_target(schema);
-        const bool publish_sampled_transition =
-            sampled && (output.valid() || previous_has_published_key);
+        const bool publish_sampled_transition = sampled && (output.valid() || previous_has_published_key);
         if (publish_sampled_transition)
         {
-            if (!structural_transition_)
+            if (structural)
             {
-                structural_transition_ = std::make_unique<StructuralTransition>(*this);
+                if (!structural_transition_)
+                {
+                    structural_transition_ = std::make_unique<StructuralTransition>(*this);
+                }
+                structural_transition_->modified_time = modified_time;
+                structural_transition_->sampled_current = true;
+                record_key_set_modified(modified_time);
             }
-            structural_transition_->modified_time = modified_time;
-            structural_transition_->sampled_current = true;
-            record_key_set_modified(modified_time);
             record_target_modified(modified_time);
         }
-        else if (sampled && structural_transition_) { structural_transition_->clear(); }
+        else if (sampled && structural && structural_transition_) { structural_transition_->clear(); }
         rollback.release();
     }
 

@@ -72,6 +72,7 @@ namespace hgraph
             std::vector<TSOutputHandle> outer_sources{};
             TSOutputHandle              observed_keys_source{};
             bool                        observing_keys{false};
+            bool                        keys_source_cleared{false};
             bool primed{false};
 
             // Rebinding is required for a wholesale source repoint, or for a
@@ -139,10 +140,11 @@ namespace hgraph
 
             [[nodiscard]] bool observe_keys_source(TSOutputHandle source)
             {
-                if (source.same_as(observed_keys_source)) { return false; }
+                if (source.same_as(observed_keys_source) && !keys_source_cleared) { return false; }
 
                 unsubscribe_keys_noexcept();
                 observed_keys_source = source;
+                keys_source_cleared = false;
                 if (source.bound())
                 {
                     auto data = source.data_view();
@@ -166,6 +168,7 @@ namespace hgraph
                 }
                 observed_keys_source.reset();
                 observing_keys = false;
+                keys_source_cleared = false;
             }
 
             void destroy_entries_without_output_noexcept() noexcept
@@ -195,10 +198,9 @@ namespace hgraph
             // this slot callback alone could stop an unrelated replacement key.
             void on_remove(std::size_t) override {}
             void on_erase(std::size_t slot) override { entries.destroy_at(slot); }
-            void on_clear() override
-            {
-                destroy_entries_without_output_noexcept();
-            }
+            // Reconciliation must stop children and publish their removals
+            // before an erase callback performs destruction.
+            void on_clear() override { keys_source_cleared = true; }
         };
 
         struct MapNodeContext
@@ -439,10 +441,9 @@ namespace hgraph
                 {
                     storage.membership_changed_keys.emplace_back(dict.key_at_slot(slot));
                 }
-                for (std::size_t slot = dict.next_removed_slot(); slot != TS_DATA_NO_CHILD_ID;
-                     slot = dict.next_removed_slot(slot))
+                for (const ValueView &removed_key : dict.removed_keys())
                 {
-                    storage.membership_changed_keys.emplace_back(dict.key_at_slot(slot));
+                    storage.membership_changed_keys.emplace_back(removed_key);
                 }
             }
 
@@ -461,7 +462,6 @@ namespace hgraph
                 remove_all_entries(view, context, storage,
                                    output_mutation ? &*output_mutation : nullptr,
                                    error_mutation ? &*error_mutation : nullptr, evaluation_time);
-                if (output_mutation) { output_mutation->clear(); }
                 storage.unsubscribe_keys_noexcept();
                 storage.retire_entries(evaluation_time);
                 storage.primed = false;
@@ -474,7 +474,6 @@ namespace hgraph
                 remove_all_entries(view, context, storage,
                                    output_mutation ? &*output_mutation : nullptr,
                                    error_mutation ? &*error_mutation : nullptr, evaluation_time);
-                if (output_mutation) { output_mutation->clear(); }
                 storage.primed = false;
             }
             else
@@ -486,13 +485,15 @@ namespace hgraph
                 const bool rebuild = !storage.primed || source_status.keys_repointed || keys_observer_changed;
                 if (rebuild)
                 {
+                    const bool publish_initial_empty = key_set.empty() && view.has_output() &&
+                                                       !view.output(evaluation_time).valid();
                     auto output_mutation = begin_map_output_mutation(view, evaluation_time);
                     auto error_mutation  = begin_map_error_mutation(view, evaluation_time);
                     auto *mutation       = output_mutation ? &*output_mutation : nullptr;
                     auto *errors         = error_mutation ? &*error_mutation : nullptr;
                     remove_all_entries(view, context, storage, mutation, errors, evaluation_time);
-                    if (output_mutation) { output_mutation->clear(); }
                     create_live_key_entries(view, context, storage, mutation, key_set, evaluation_time);
+                    if (publish_initial_empty && output_mutation) { output_mutation->touch(); }
                     storage.primed = true;
                 }
                 else if (keys_input.modified())
@@ -768,7 +769,6 @@ namespace hgraph
             remove_all_entries(view, context, storage,
                                output_mutation ? &*output_mutation : nullptr,
                                error_mutation ? &*error_mutation : nullptr, evaluation_time);
-            if (output_mutation) { output_mutation->clear(); }
             storage.unsubscribe_keys_noexcept();
             storage.primed = false;
             storage.refresh_all_bindings = false;

@@ -1581,6 +1581,10 @@ TEST_CASE("std operators: control operators cover variadic booleans merge and se
 {
     stdlib::register_standard_operators();
 
+    CHECK_OUTPUT(eval_node<stdlib::all_>(values<Bool>(none, true, false)),
+                 values<Bool>(false, true, false));
+    CHECK_OUTPUT(eval_node<stdlib::any_>(values<Bool>(none, true, false)),
+                 values<Bool>(false, true, false));
     CHECK_OUTPUT(eval_node<stdlib::all_>(values<Bool>(true, true, true),
                                          values<Bool>(true, false, true),
                                          values<Bool>(true, true, none)),

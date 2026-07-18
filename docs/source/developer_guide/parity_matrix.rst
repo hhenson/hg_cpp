@@ -505,6 +505,11 @@ Wiring and node-authoring surface
        ``mesh_ref`` remains a C++ implementation primitive rather than a
        public Python function. Explicit ``__keys__`` also supports key-only
        mesh functions.
+       **Documented reduce deviation:** an omitted associative zero is never
+       inferred. Empty input remains invalid and a singleton bypasses the
+       combiner. A supplied zero is the empty result and the singleton's second
+       operand, but is ignored for two or more live values; unset ``TSL`` slots
+       do not participate.
    * - ``dispatch_``
      - Full for Bundle values
      - Native ``dispatch_cases`` / ``dispatch_case`` wiring builds a closed

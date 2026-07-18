@@ -8,6 +8,7 @@ from ._core import (WiringError, WiringPort, _current_wiring, _unwrap,
                     operator_function, wire)
 from ._graph import _as_wired
 from ._markers import _unbounded_tuple_kind
+from ._sentinels import _REDUCE_ZERO
 
 def map_(func, *args, **kwargs):
     """hgraph's map_. ``func`` may be a native operator or a Python-authored
@@ -77,10 +78,33 @@ def mesh_(func, *args, __name__=None, __keys__=None, __key_arg__=None, **kwargs)
     return wire("mesh_", _as_wired(func), *args, **kwargs)
 
 
-def reduce(func, ts, zero=None, is_associative=True, **kwargs):
-    """hgraph's associative tree reduce or explicit left-to-right reduce."""
+def _reduce_nothing(ts):
+    """Create the typed invalid identity used by an explicit ``zero=None``."""
+    collection = _unwrap(ts).ts_type
+    if collection.is_ref:
+        collection = _hgraph.ref_target(collection)
+    if collection.is_tsd:
+        element = _hgraph.tsd_element_ts(collection)
+    elif collection.is_tsl:
+        element = _hgraph.tsl_element_ts(collection)
+    else:
+        raise WiringError("zero=None requires a TSD or TSL reduce input")
+    return wire("nothing", output_type=element)
+
+
+def reduce(func, ts, zero=_REDUCE_ZERO, is_associative=True, **kwargs):
+    """Reduce live collection values.
+
+    For an associative reduction, an omitted zero leaves an empty result
+    invalid and returns a singleton directly. A supplied zero is returned for
+    an empty collection and combined with a singleton; it is ignored when two
+    or more live values are present. Ordered reduction uses its required zero
+    as the initial accumulator.
+    """
+    if zero is None:
+        zero = _reduce_nothing(ts)
     if not is_associative:
-        if zero is None or not isinstance(zero, WiringPort):
+        if zero is _REDUCE_ZERO or not isinstance(zero, WiringPort):
             raise WiringError(
                 "Non-associative reduce requires a time-series zero/initial accumulator")
 
@@ -94,7 +118,7 @@ def reduce(func, ts, zero=None, is_associative=True, **kwargs):
                 ts = wire("convert", ts, output_type=enumerated_type)
 
         kwargs["is_associative"] = False
-    if zero is None:
+    if zero is _REDUCE_ZERO:
         return wire("reduce", _as_wired(func), ts, **kwargs)
     return wire("reduce", _as_wired(func), ts, zero, **kwargs)
 

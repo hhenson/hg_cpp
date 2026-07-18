@@ -83,6 +83,8 @@ namespace hgraph::detail
 
         [[nodiscard]] bool bound() const noexcept;
         void bind(const TSValueTypeMetaData &schema, const TSOutputView &output);
+        void bind_current_value(const TSValueTypeMetaData &schema, const TSOutputView &output,
+                                DateTime modified_time);
         void bind_sampled(const TSValueTypeMetaData &schema, const TSOutputView &output,
                           DateTime modified_time);
         void unbind();
@@ -126,7 +128,7 @@ namespace hgraph::detail
 
       private:
         void bind_impl(const TSValueTypeMetaData &schema, const TSOutputView &output,
-                       DateTime modified_time, bool sampled);
+                       DateTime modified_time, bool sampled, bool replay_source_time);
         void detach_target(bool retain_structural_target, DateTime modified_time);
         void subscribe_slot_observers();
         void unsubscribe_slot_observers();

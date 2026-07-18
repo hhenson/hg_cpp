@@ -317,8 +317,8 @@ namespace hgraph::stdlib
 
         [[nodiscard]] static const TSValueTypeMetaData *element_bundle_schema(const TSValueTypeMetaData *tsd)
         {
-            if (tsd == nullptr || tsd->kind != TSTypeKind::TSD) { return nullptr; }
-            return time_series_schema_as<AnyTSB>(tsd->element_ts());
+            const auto *dict = time_series_schema_as<AnyTSD>(tsd);
+            return dict != nullptr ? time_series_schema_as<AnyTSB>(dict->element_ts()) : nullptr;
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
@@ -334,10 +334,10 @@ namespace hgraph::stdlib
         {
             if (resolution.find_ts("__out__") != nullptr) { return; }
             if (context.args.size() != 2) { return; }
-            const auto *tsd    = context.args[0].port.schema;
-            const auto *bundle = element_bundle_schema(tsd);
+            const auto *tsd    = time_series_schema_as<AnyTSD>(context.args[0].port.schema);
+            const auto *bundle = element_bundle_schema(context.args[0].port.schema);
             const Str  *attr   = context.scalar_as<Str>("attr");
-            if (bundle == nullptr || attr == nullptr) { return; }
+            if (tsd == nullptr || bundle == nullptr || attr == nullptr) { return; }
             const auto index = container_impl_detail::find_tsb_field_index(*bundle, *attr);
             if (!index.has_value()) { return; }
             auto &registry = TypeRegistry::instance();

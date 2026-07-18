@@ -62,7 +62,18 @@ namespace hgraph::stdlib
         inline void apply_tss_delta(TSSOutputView &out, const std::vector<Value> &removed,
                                     const std::vector<Value> &added)
         {
-            if (removed.empty() && added.empty()) { return; }
+            if (removed.empty() && added.empty())
+            {
+                // An evaluated set expression has a current value even when
+                // that value is empty. Do not emit repeated empty ticks once
+                // the identity has been published.
+                if (!out.valid())
+                {
+                    auto mutation = out.begin_mutation(out.evaluation_time());
+                    mutation.touch();
+                }
+                return;
+            }
 
             auto mutation = out.begin_mutation(out.evaluation_time());
             for (const Value &member : removed) { (void)mutation.remove(member.view()); }

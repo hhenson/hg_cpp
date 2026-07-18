@@ -43,7 +43,7 @@ namespace hgraph::runtime_detail
     {
         if (target.forwarding())
         {
-            if (target.forwarding_bound()) { target.clear_forwarding_target(); }
+            if (target.forwarding_bound()) { target.clear_forwarding_target_sampled(); }
             return;
         }
 
@@ -68,12 +68,17 @@ namespace hgraph::runtime_detail
     {
         if (target.forwarding())
         {
-            const TSOutputHandle before = target.forwarding_target();
-            bind_forwarding_output_to_source(target, source);
-            const TSOutputHandle after = target.forwarding_target();
-            if (after.bound() && !after.same_as(before) && after.view(evaluation_time).valid())
+            TSOutputView resolved_source = resolve_forwarding_source(source.borrowed_ref());
+            if (!resolved_source.bound())
             {
-                target.begin_mutation(evaluation_time).mark_modified();
+                if (target.forwarding_bound()) { target.clear_forwarding_target_sampled(); }
+                return;
+            }
+
+            const TSOutputHandle before = target.forwarding_target();
+            if (!before.same_as(resolved_source.handle()))
+            {
+                target.bind_forwarding_target_sampled(resolved_source);
             }
             return;
         }

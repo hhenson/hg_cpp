@@ -135,7 +135,9 @@ namespace hgraph
         [[nodiscard]] bool forwarding_bound() const noexcept;
         [[nodiscard]] TSOutputHandle forwarding_target() const noexcept;
         void bind_forwarding_target(const TSOutputView &source) const;
+        void bind_forwarding_target_sampled(const TSOutputView &source) const;
         void clear_forwarding_target() const;
+        void clear_forwarding_target_sampled() const;
 
         /** Register / remove an observer at this view's TSData level. */
         void subscribe(Notifiable *observer) const;
