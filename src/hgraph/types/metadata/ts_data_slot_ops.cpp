@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <compare>
 #include <cstddef>
+#include <cstdint>
 #include <fmt/format.h>
 #include <iterator>
 #include <memory>
@@ -33,6 +34,51 @@ namespace hgraph::ts_data_plan_factory_detail
 {
     namespace
     {
+        template <typename SourceBinding, typename SourceMemory>
+        void copy_projected_bundle_fields(const ValueTypeRef &binding,
+                                          void *destination_memory,
+                                          std::size_t field_count,
+                                          SourceBinding source_binding,
+                                          SourceMemory source_memory)
+        {
+            const auto &plan = binding.checked_plan();
+            const auto components = plan.components();
+            for (std::size_t index = 0; index < field_count; ++index)
+            {
+                const auto destination = ValuePlanFactory::instance().type_for(
+                    binding.schema()->fields[index].type);
+                const auto source = source_binding(index);
+                if (!destination || !source)
+                {
+                    throw std::logic_error("projected bundle field binding is unresolved");
+                }
+                const auto &source_ops = source.ops_ref();
+                const auto owning_source = source_ops.owning_type(source);
+                if (destination.plan() != owning_source.plan())
+                {
+                    throw std::logic_error("projected bundle field has an incompatible owning binding");
+                }
+                source_ops.copy_assign_view(
+                    destination,
+                    MemoryUtils::advance(destination_memory, components[index].offset),
+                    source_memory(index));
+            }
+
+            // Bundle validity is the trailing composite component. Projected
+            // TS deltas always expose every canonical delta field, including
+            // explicitly-empty added/removed collections.
+            if (components.size() > field_count)
+            {
+                auto *words = MemoryUtils::cast<std::uint64_t>(
+                    MemoryUtils::advance(destination_memory, components[field_count].offset));
+                constexpr std::size_t bits_per_word = sizeof(std::uint64_t) * 8U;
+                for (std::size_t index = 0; index < field_count; ++index)
+                {
+                    words[index / bits_per_word] |= std::uint64_t{1} << (index % bits_per_word);
+                }
+            }
+        }
+
         [[nodiscard]] std::size_t combine_hash(std::size_t seed, std::size_t value) noexcept
         {
             seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
@@ -1166,16 +1212,14 @@ namespace hgraph::ts_data_plan_factory_detail
                     throw std::logic_error("TSS delta copy requires a two-field structured plan");
                 }
 
-                auto added = Value{ValueView{delta_bundle_element_binding(context, memory, 0),
-                                             delta_bundle_element_at(context, memory, 0)}};
-                auto removed = Value{ValueView{delta_bundle_element_binding(context, memory, 1),
-                                               delta_bundle_element_at(context, memory, 1)}};
-
-                BundleBuilder builder{binding};
-                builder.set(0, added.view());
-                builder.set(1, removed.view());
-                Value bundle = builder.build();
-                plan.copy_assign(dst, bundle.view().data());
+                copy_projected_bundle_fields(
+                    binding, dst, 2,
+                    [&](std::size_t index) {
+                        return delta_bundle_element_binding(context, memory, index);
+                    },
+                    [&](std::size_t index) {
+                        return delta_bundle_element_at(context, memory, index);
+                    });
             }
 
           public:
@@ -2205,19 +2249,14 @@ namespace hgraph::ts_data_plan_factory_detail
                     throw std::logic_error("TSD delta copy requires a three-field structured plan");
                 }
 
-                auto removed = Value{ValueView{dict_delta_element_binding(context, memory, 0),
-                                               dict_delta_element_at(context, memory, 0)}};
-                auto modified = Value{ValueView{dict_delta_element_binding(context, memory, 1),
-                                                dict_delta_element_at(context, memory, 1)}};
-                auto removed_strict = Value{ValueView{dict_delta_element_binding(context, memory, 2),
-                                                      dict_delta_element_at(context, memory, 2)}};
-
-                BundleBuilder builder{binding};
-                builder.set(0, removed.view());
-                builder.set(1, modified.view());
-                builder.set(2, removed_strict.view());
-                Value bundle = builder.build();
-                plan.copy_assign(dst, bundle.view().data());
+                copy_projected_bundle_fields(
+                    binding, dst, 3,
+                    [&](std::size_t index) {
+                        return dict_delta_element_binding(context, memory, index);
+                    },
+                    [&](std::size_t index) {
+                        return dict_delta_element_at(context, memory, index);
+                    });
             }
 
           public:

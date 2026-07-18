@@ -61,7 +61,16 @@ namespace hgraph
             {
                 throw std::logic_error("feedback sink target node has no delta state");
             }
-            source_node.replace_state(capture_delta(ts));
+            // Canonical TSData delta views expose owning copy hooks. Copying
+            // through the already-planned source state avoids constructing an
+            // intermediate Value on every feedback tick. A sampled rebind can
+            // expose the current-value schema instead of the delta schema, so
+            // retain capture_delta as the general fallback.
+            auto state = source_node.state().begin_mutation();
+            if (!state.try_copy_from(ts.delta_value()))
+            {
+                source_node.replace_state(capture_delta(ts));
+            }
 
             GraphValue *graph = source_node.graph_value();
             if (graph == nullptr)

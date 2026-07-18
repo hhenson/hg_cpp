@@ -2,6 +2,7 @@
 import datetime
 
 import hgraph as hg
+import pytest
 from hgraph import TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, graph, run_graph, eval_node
 
 
@@ -353,6 +354,23 @@ def test_compute_node_any_arity():
         return combine(a, b, c, d, e)
 
     check(eval_node(wide, [1], [2], [3], [4], [5]) == [15], "five inputs")
+
+
+def test_two_input_fast_compute_does_not_repoint_retained_views():
+    retained = []
+
+    @hg.compute_node
+    def add(lhs: TS[int], rhs: TS[int]) -> TS[int]:
+        retained.append((lhs, rhs))
+        return lhs.value + rhs.value
+
+    check(eval_node(add, [1, 2], [10, 20]) == [11, 22], "two-input fast compute")
+    check(len(retained) == 2, "two-input fast compute invocation count")
+    for lhs, rhs in retained:
+        with pytest.raises(RuntimeError, match="outside its node's evaluation"):
+            _ = lhs.value
+        with pytest.raises(RuntimeError, match="outside its node's evaluation"):
+            _ = rhs.value
 
 
 def test_user_node_scalars_and_injectables():

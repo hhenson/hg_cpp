@@ -347,6 +347,8 @@ namespace
         GlobalStateView     global_state{};
         PyObject           *input_object{nullptr};
         PyTimeSeries       *input_wrapper{nullptr};
+        std::array<PyObject *, 2> pair_objects{};
+        std::array<PyTimeSeries *, 2> pair_wrappers{};
 
         [[nodiscard]] bool direct() const noexcept
         {
@@ -354,6 +356,16 @@ namespace
                    (shape.layout.front() == 't' || shape.layout.front() == 'u' ||
                     shape.layout.front() == 'T' || shape.layout.front() == 'U' ||
                     shape.layout.front() == 'a' || shape.layout.front() == 'A');
+        }
+
+        [[nodiscard]] bool direct_pair() const noexcept
+        {
+            if (!shape.kw_names.empty() || shape.layout.size() != 2) { return false; }
+            const auto is_ts = [](char kind) {
+                return kind == 't' || kind == 'u' || kind == 'T' || kind == 'U' ||
+                       kind == 'a' || kind == 'A';
+            };
+            return is_ts(shape.layout[0]) && is_ts(shape.layout[1]);
         }
     };
 
@@ -423,6 +435,47 @@ namespace
         cache.input_object = result.ptr();
         cache.input_wrapper = std::addressof(nb::cast<PyTimeSeries &>(result));
         nb::handle(cache.input_object).inc_ref();
+        return true;
+    }
+
+    [[nodiscard]] bool py_make_cached_pair_ts_arg(PyFastComputeCache &cache,
+                                                  std::size_t slot,
+                                                  char kind,
+                                                  TSInputView child,
+                                                  const PyTsLease &lease,
+                                                  nb::object &result)
+    {
+        const auto &evaluation_data = child.data_view();
+        if (kind != 'u' && kind != 'U' &&
+            (!evaluation_data.valid() || !evaluation_data.has_current_value()))
+        {
+            return false;
+        }
+        if ((kind == 'a' || kind == 'A') && !evaluation_data.all_valid()) { return false; }
+        const auto evaluation_storage = evaluation_data.valid()
+                                            ? evaluation_data.storage_ref()
+                                            : TSDataStorageRef<>{};
+        PyTimeSeries wrapped{std::move(child), lease, evaluation_storage};
+
+        PyObject *&cached_object = cache.pair_objects.at(slot);
+        PyTimeSeries *&cached_wrapper = cache.pair_wrappers.at(slot);
+        if (cached_object != nullptr && Py_REFCNT(cached_object) == 1)
+        {
+            *cached_wrapper = std::move(wrapped);
+            result = nb::borrow<nb::object>(nb::handle(cached_object));
+            return true;
+        }
+
+        if (cached_object != nullptr)
+        {
+            nb::handle(cached_object).dec_ref();
+            cached_object = nullptr;
+            cached_wrapper = nullptr;
+        }
+        result = nb::cast(std::move(wrapped));
+        cached_object = result.ptr();
+        cached_wrapper = std::addressof(nb::cast<PyTimeSeries &>(result));
+        nb::handle(cached_object).inc_ref();
         return true;
     }
 
@@ -863,6 +916,35 @@ namespace
                                                    runtime_state);
                 }
             }
+            else if (cache->direct_pair())
+            {
+                TSInputView input = cache->input.borrowed_ref(now);
+                auto bundle = input.as_bundle();
+                nb::object lhs;
+                nb::object rhs;
+                if (!py_make_cached_pair_ts_arg(
+                        *cache, 0, cache->shape.layout[0], bundle[0], lease, lhs) ||
+                    !py_make_cached_pair_ts_arg(
+                        *cache, 1, cache->shape.layout[1], bundle[1], lease, rhs))
+                {
+                    return;
+                }
+                if (py_has_active_runtime_global_state())
+                {
+                    result = cache->record->fn(lhs, rhs);
+                }
+                else
+                {
+                    nb::list call_args;
+                    call_args.append(lhs);
+                    call_args.append(rhs);
+                    std::optional<nb::list> context_values;
+                    nb::object runtime_state =
+                        py_runtime_global_state_for_call(cache->global_state, lease.guard);
+                    result = py_call_with_contexts(cache->record->fn, call_args, context_values,
+                                                   runtime_state);
+                }
+            }
             else
             {
                 TSInputView input = cache->input.borrowed_ref(now);
@@ -898,6 +980,16 @@ namespace
                 nb::handle(cache->input_object).dec_ref();
                 cache->input_object = nullptr;
                 cache->input_wrapper = nullptr;
+            }
+            if (cache != nullptr)
+            {
+                for (std::size_t slot = 0; slot < cache->pair_objects.size(); ++slot)
+                {
+                    if (cache->pair_objects[slot] == nullptr) { continue; }
+                    nb::handle(cache->pair_objects[slot]).dec_ref();
+                    cache->pair_objects[slot] = nullptr;
+                    cache->pair_wrappers[slot] = nullptr;
+                }
             }
             py_clear_input_activity(parse_py_call_shape(config.value()).layout, args.base());
         }

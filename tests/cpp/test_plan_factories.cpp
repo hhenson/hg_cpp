@@ -1426,6 +1426,10 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     auto next_delta = view.delta_value(t2).as_bundle();
     REQUIRE(next_delta.at("added").as_set().empty());
     REQUIRE(next_delta.at("removed").as_set().contains(one.view()));
+    const auto projected_delta = view.delta_value(t2);
+    Value copied_delta{projected_delta.binding().ops_ref().owning_type(projected_delta.binding())};
+    REQUIRE(copied_delta.begin_mutation().try_copy_from(projected_delta));
+    REQUIRE(copied_delta.view().equals(projected_delta));
     REQUIRE(set.added_values().begin() == set.added_values().end());
     REQUIRE(set.removed_values().begin() != set.removed_values().end());
     REQUIRE(view.last_modified_time() == t2);
@@ -1554,6 +1558,10 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     auto next_delta = view.delta_value(t3).as_bundle();
     REQUIRE(next_delta.at("removed").as_set().contains(key.view()));
     REQUIRE_FALSE(next_delta.at("modified").as_map().contains(key.view()));
+    const auto projected_delta = view.delta_value(t3);
+    Value copied_delta{projected_delta.binding().ops_ref().owning_type(projected_delta.binding())};
+    REQUIRE(copied_delta.begin_mutation().try_copy_from(projected_delta));
+    REQUIRE(copied_delta.view().equals(projected_delta));
     REQUIRE(view.last_modified_time() == t3);
 
     const auto t4 = t3 + TimeDelta{1};
