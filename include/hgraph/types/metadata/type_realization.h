@@ -55,6 +55,11 @@ namespace hgraph
 
     [[nodiscard]] HGRAPH_EXPORT const TypeRealizationSnapshot *active_type_realization() noexcept;
 
+    /** Resolve storage for a wiring-time value. Reuse an enclosing graph's
+        closed-union snapshot, or capture the current registered hierarchy. */
+    [[nodiscard]] HGRAPH_EXPORT ValueTypeRef
+    value_type_for_wiring(const ValueTypeMetaData *schema);
+
     /** Test-only registry teardown hook; call after TypeRecordRegistry reset. */
     HGRAPH_EXPORT void clear_type_realization_snapshots() noexcept;
 }

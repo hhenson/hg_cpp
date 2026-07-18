@@ -3012,22 +3012,41 @@ namespace hgraph::stdlib
             const WiredFn *func = context.scalar_as<WiredFn>("func");
             if (func == nullptr) { return std::nullopt; }
 
-            // Normalized args interleave the operator's own scalars (``func``,
-            // the keyword-only ``__key_arg__``) with the time-series tail —
-            // only the time-series args are func arguments. Ordering works on
-            // the full PORT REFS so the wiring-time argument tags ride along.
+            // Normalized args place map_'s own scalars before the variadic
+            // function arguments. Plain values in that tail are promoted to
+            // const sources during composition; use the same natural TS schema
+            // here so output probing sees the complete function signature.
             std::vector<WiringPortRef> positional;
-            for (const WiringArg &argument : context.args)
+            const std::size_t tail_start = context.params.empty() ? 0 : context.params.size() - 1;
+            for (std::size_t index = tail_start; index < context.args.size(); ++index)
             {
-                if (argument.kind == WiringArg::Kind::TimeSeries) { positional.push_back(argument.port); }
+                const WiringArg &argument = context.args[index];
+                if (argument.kind == WiringArg::Kind::TimeSeries)
+                {
+                    positional.push_back(argument.port);
+                }
+                else if (const auto *schema = argument.scalar_value.schema())
+                {
+                    positional.push_back(
+                        WiringPortRef::null_source(TypeRegistry::instance().ts(schema)));
+                }
+                else { return std::nullopt; }
             }
             std::vector<std::pair<std::string, WiringPortRef>> named;
             named.reserve(context.kwargs.size());
             for (const auto &[name, kw_arg] : context.kwargs)
             {
                 if (name == "__keys__") { continue; }   // map_'s own argument, not func's
-                if (kw_arg.kind != WiringArg::Kind::TimeSeries) { continue; }
-                named.emplace_back(name, kw_arg.port);
+                if (kw_arg.kind == WiringArg::Kind::TimeSeries)
+                {
+                    named.emplace_back(name, kw_arg.port);
+                }
+                else if (const auto *schema = kw_arg.scalar_value.schema())
+                {
+                    named.emplace_back(
+                        name, WiringPortRef::null_source(TypeRegistry::instance().ts(schema)));
+                }
+                else { return std::nullopt; }
             }
 
             const std::string *key_override = context.scalar_as<Str>("__key_arg__");
@@ -3064,6 +3083,41 @@ namespace hgraph::stdlib
             if (func == nullptr) { return; }
             auto ordered = ordered_map_schemas(context, "key");
             if (!ordered.has_value()) { return; }
+
+            if (const TSValueTypeMetaData *element = func->output_schema())
+            {
+                const auto output_schema = fallback_on_exception(
+                    static_cast<const TSValueTypeMetaData *>(nullptr), [&] {
+                        const MapArgClassification classified = classify_map_args(
+                            {ordered->schemas.data(), ordered->schemas.size()},
+                            {ordered->arg_tags.data(), ordered->arg_tags.size()},
+                            keys_kwarg_element(context));
+                        std::size_t parameter = 0;
+                        const auto accepts = [&](const TSValueTypeMetaData *actual) {
+                            const TSValueTypeMetaData *expected = func->input_schema(parameter++);
+                            return expected == nullptr ||
+                                   graph_wiring_detail::input_accepts_output_schema(expected, actual);
+                        };
+                        if (ordered->takes_key &&
+                            !accepts(TypeRegistry::instance().ts(classified.key_meta)))
+                        {
+                            return static_cast<const TSValueTypeMetaData *>(nullptr);
+                        }
+                        for (const TSValueTypeMetaData *child : classified.child_schemas)
+                        {
+                            if (!accepts(child))
+                            {
+                                return static_cast<const TSValueTypeMetaData *>(nullptr);
+                            }
+                        }
+                        return TypeRegistry::instance().tsd(classified.key_meta, element);
+                    });
+                if (output_schema != nullptr)
+                {
+                    bind_graph_output(resolution, output_schema, "O");
+                    return;
+                }
+            }
 
             auto output_schema = try_resolve_map_output_schema(
                 *func, {ordered->schemas.data(), ordered->schemas.size()},

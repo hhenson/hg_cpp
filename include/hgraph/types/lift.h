@@ -546,6 +546,7 @@ namespace hgraph
                 },
                 [](const void *) { return lift_detail::param_names<F>(); },
                 nullptr,
+                nullptr,
             };
             return ops;
         }

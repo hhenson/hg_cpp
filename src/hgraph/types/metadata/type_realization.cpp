@@ -821,6 +821,12 @@ namespace hgraph
 
     const TypeRealizationSnapshot *active_type_realization() noexcept { return active_snapshot; }
 
+    ValueTypeRef value_type_for_wiring(const ValueTypeMetaData *schema)
+    {
+        if (active_snapshot != nullptr) { return active_snapshot->type_for(schema); }
+        return TypeRealizationSnapshot::capture(TypeRegistry::instance())->type_for(schema);
+    }
+
     void clear_type_realization_snapshots() noexcept
     {
         std::lock_guard lock(snapshot_mutex());

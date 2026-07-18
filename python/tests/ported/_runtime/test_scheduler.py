@@ -1,7 +1,4 @@
-# Ported from ext/main/hgraph_unit_tests/_runtime/test_scheduler.py
-# Changes from upstream: one test is skipped (marked precisely) -
-#  - test_map_scheduler: map_ with a trailing scalar arg passed to the
-#    mapped function is not yet resolved (map_/reduce tier residue).
+# Ported from ext/main/hgraph_unit_tests/_runtime/test_scheduler.py.
 # SCHEDULER.schedule(datetime|timedelta, tag) and record(ts) default
 # key both landed 2026-07-18. The wall-clock record path now selects the
 # SPARSE ``:memory:`` recorder under the default IN_MEMORY model (the
@@ -52,7 +49,6 @@ def test_scheduler():
     assert eval_node(my_scheduler, [2, 3]) == [2, 3, -1, None, -1]
 
 @pytest.mark.smoke
-@pytest.mark.skip(reason="gap: map_ with a trailing scalar arg to the mapped function")
 def test_map_scheduler():
     @graph
     def map_scheduler(tsd: TSD[str, TS[int]]) -> TSD[str, TS[int]]:

@@ -20,9 +20,11 @@ namespace hgraph
      * identity*; rulings 2026-07-05). A ``RuntimeServiceDescriptor`` is the
      * erased form of a service interface: C++ descriptor types synthesise one
      * at first use, the Python bridge builds one from a stub's annotations.
-     * Descriptors intern by name and optional generic specialization
-     * (immortal registry); re-registration with matching schemas returns the
-     * interned record, mismatches throw.
+     * Descriptors intern by name, optional generic specialization, flavour,
+     * and erased schemas (immortal registry). Re-registration with the same
+     * identity returns the interned record. Same-named Python interfaces with
+     * different schemas remain distinct records while retaining the same
+     * runtime path grammar.
      *
      * Node identity rides the name-qualified full path (the path scalar) plus
      * the per-ROLE markers — the same key the C++ templates use — so a Python
@@ -58,13 +60,13 @@ namespace hgraph
         std::string                default_path;
     };
 
-    /** Intern by name and optional specialization; schema-match is enforced
-        on re-registration. The returned reference is stable for the process
-        lifetime. */
+    /** Intern by name, optional specialization, flavour, and erased schemas.
+        The returned reference is stable for the process lifetime. */
     [[nodiscard]] HGRAPH_EXPORT const RuntimeServiceDescriptor &intern_service_descriptor(
         RuntimeServiceDescriptor descriptor);
 
-    /** The interned descriptor for ``name``, or null. */
+    /** The unique unspecialized descriptor for ``name``, or null when absent
+        or ambiguous. */
     [[nodiscard]] HGRAPH_EXPORT const RuntimeServiceDescriptor *find_service_descriptor(std::string_view name);
 
     /** Every interned descriptor name (sorted) — discovery for the bridge. */

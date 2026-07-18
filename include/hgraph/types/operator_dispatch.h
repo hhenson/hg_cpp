@@ -5,6 +5,7 @@
 #include <hgraph/runtime/node.h>                       // NodeBuilder
 #include <hgraph/types/call_args.h>                    // NamedArg, arg<"name">(...)
 #include <hgraph/types/graph_wiring.h>                 // Wiring, Port, WiringPortRef, wire<>, operator_tag, graph_wiring_detail
+#include <hgraph/types/metadata/type_realization.h>    // graph-scoped closed-union value bindings
 #include <hgraph/types/metadata/value_plan_factory.h>  // ValuePlanFactory
 #include <hgraph/types/static_node.h>                  // StaticNodeSignature, selector traits
 #include <hgraph/types/type_pattern.h>                 // TypePattern, ScalarPattern, to_pattern, match/rank/resolve
@@ -769,7 +770,7 @@ namespace hgraph
             else
             {
                 using wire_params   = typename sig::wire_param_types;
-                const auto binding = ValuePlanFactory::instance().type_for(sig::scalar_schema(map));
+                const auto binding = value_type_for_wiring(sig::scalar_schema(map));
                 BundleBuilder bundle{binding};
                 [&]<std::size_t... I>(std::index_sequence<I...>) {
                     (
@@ -830,8 +831,8 @@ namespace hgraph
             map.bind_scalar("T", coerced->schema());
             map.bind_ts("S", target_schema);
 
-            const auto binding =
-                ValuePlanFactory::instance().type_for(StaticNodeSignature<operator_auto_const>::scalar_schema(map));
+            const auto binding = value_type_for_wiring(
+                StaticNodeSignature<operator_auto_const>::scalar_schema(map));
             BundleBuilder bundle{binding};
             bundle.set("value", std::move(*coerced));
 

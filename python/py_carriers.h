@@ -177,6 +177,7 @@ namespace hgraph::python_bridge
         nb::object                    user_fn;   ///< identity anchor + keepalive
         std::vector<std::string>      name_storage;
         std::vector<std::string_view> names;
+        std::vector<const TSValueTypeMetaData *> input_schemas;
         std::size_t                   arity{0};
         bool                          has_output{true};
         /** The annotated output schema, when known (mesh_ needs the element

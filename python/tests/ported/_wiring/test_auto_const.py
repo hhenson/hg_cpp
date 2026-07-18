@@ -1,10 +1,11 @@
-# Ported from ext/main/hgraph_unit_tests/_wiring/test_auto_const.py
-import pytest
+from dataclasses import dataclass
 
 import pytest
 from frozendict import frozendict
 
-from hgraph import compute_node, TS, TIME_SERIES_TYPE, graph, SCALAR, TSL, Size, TSS, TSD, operator
+from hgraph import (AUTO_RESOLVE, COMPOUND_SCALAR, CompoundScalar, compute_node,
+                    sink_node, TS, TIME_SERIES_TYPE, graph, SCALAR, TSL,
+                    Size, TSS, TSD, operator)
 from hgraph.test import eval_node
 
 
@@ -59,3 +60,37 @@ def test_auto_cons_with_overload():
         return op(a, 1)
 
     assert eval_node(g, [1]) == [2]
+
+
+def test_generic_time_series_input_auto_const_infers_its_schema():
+    captured = []
+
+    @sink_node
+    def capture(value: TIME_SERIES_TYPE):
+        captured.append(value.value)
+
+    @graph
+    def g():
+        capture(True)
+
+    eval_node(g)
+    assert captured == [True]
+
+
+def test_generic_graph_input_auto_const_retains_compound_scalar_schema():
+    @dataclass(frozen=True)
+    class Payload(CompoundScalar):
+        value: int
+
+    @graph
+    def generic_identity(
+        value: TS[COMPOUND_SCALAR],
+        _tp: type[COMPOUND_SCALAR] = AUTO_RESOLVE,
+    ) -> TS[COMPOUND_SCALAR]:
+        return value
+
+    @graph
+    def g() -> TS[Payload]:
+        return generic_identity(Payload(7))
+
+    assert eval_node(g) == [Payload(7)]

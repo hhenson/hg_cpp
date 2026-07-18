@@ -172,7 +172,7 @@ TEST_CASE("service runtime: an erased numeric specialization serves a generic te
     CHECK_OUTPUT(eval_node<ErasedSpecializationRegisterTemplateClient>(), values<Int>(41));
 }
 
-TEST_CASE("service runtime: descriptor interning enforces schema match by name")
+TEST_CASE("service runtime: descriptor interning includes erased schemas")
 {
     RuntimeServiceDescriptor first;
     first.name          = "intern_check";
@@ -183,11 +183,13 @@ TEST_CASE("service runtime: descriptor interning enforces schema match by name")
     // Same name + schemas: the SAME record (python re-import tolerance).
     CHECK(&intern_service_descriptor(first) == interned);
 
-    RuntimeServiceDescriptor conflicting = first;
-    conflicting.output_schema = TypeRegistry::instance().ts(scalar_descriptor<Float>::value_meta());
-    CHECK_THROWS_AS((void)intern_service_descriptor(conflicting), std::invalid_argument);
+    RuntimeServiceDescriptor different = first;
+    different.output_schema = TypeRegistry::instance().ts(scalar_descriptor<Float>::value_meta());
+    const auto *different_record = &intern_service_descriptor(different);
 
-    CHECK(find_service_descriptor("intern_check") == interned);
+    CHECK(different_record != interned);
+    CHECK(&intern_service_descriptor(different) == different_record);
+    CHECK(find_service_descriptor("intern_check") == nullptr);
 }
 
 TEST_CASE("service runtime: generic descriptor specializations have independent concrete schemas")

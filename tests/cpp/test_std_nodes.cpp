@@ -11,6 +11,7 @@
 #include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -134,6 +135,53 @@ namespace
         }
     };
 
+    struct PolymorphicTsdConstGraph
+    {
+        static constexpr auto name = "polymorphic_tsd_const_graph";
+
+        static Port<void> compose(Wiring &w)
+        {
+            auto &registry = TypeRegistry::instance();
+            const auto *integer = registry.value_type("int");
+            const auto *text = registry.value_type("str");
+            if (integer == nullptr || text == nullptr)
+            {
+                throw std::logic_error("polymorphic const test requires primitive schemas");
+            }
+            const auto *base = registry.bundle(
+                "tests.const", "PolymorphicValue", {{"id", integer}}, {}, true);
+            const auto *leaf = registry.bundle(
+                "tests.const", "PolymorphicLeaf", {{"id", integer}, {"label", text}}, {base});
+            const auto realization = TypeRealizationSnapshot::capture(registry);
+            const auto base_binding = realization->type_for(base);
+            const auto leaf_binding = ValuePlanFactory::instance().type_for(leaf);
+
+            Value leaf_value{leaf_binding};
+            auto leaf_fields = leaf_value.as_bundle().begin_mutation();
+            leaf_fields["id"].set(Int{7});
+            leaf_fields["label"].set(Str{"seven"});
+            Value union_value{base_binding};
+            base_binding.ops_ref().copy_assign_from(
+                base_binding, union_value.begin_mutation().mutable_data(),
+                leaf_binding, leaf_value.view().data());
+
+            const Value key{Str{"item"}};
+            MapBuilder values{ValuePlanFactory::instance().type_for(text), base_binding};
+            values.set_item_copy(key.view().data(), union_value.view().data());
+            Value configured = values.build();
+
+            WiringArg argument;
+            argument.kind = WiringArg::Kind::Scalar;
+            argument.scalar_meta = configured.schema();
+            argument.scalar_value = std::move(configured);
+            const auto *output_schema = registry.tsd(text, registry.ts(base));
+            OperatorWireResult output = wire_operator(
+                w, "const", std::span<const WiringArg>{&argument, 1}, true, output_schema);
+            if (!output.has_output) { throw std::logic_error("const must produce an output"); }
+            return output.output;
+        }
+    };
+
 }  // namespace
 
 TEST_CASE("stdlib::const_ emits its configured value once at start")
@@ -203,6 +251,19 @@ TEST_CASE("stdlib::const_ creates a TSD from a map value")
     CHECK_OUTPUT((testing::eval_node<stdlib::const_, TSD<Str, TS<Int>>>(
                      stdlib::make_map<Str, Int>({{Str{"alpha"}, 11_i}, {Str{"beta"}, 22_i}}))),
                  {expected});
+}
+
+TEST_CASE("stdlib::const_ keeps polymorphic TSD values in the graph realization")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    const auto recorded = testing::eval_node<PolymorphicTsdConstGraph>();
+    const Value key{Str{"item"}};
+    REQUIRE(recorded.size() == 1);
+    REQUIRE(recorded.front().has_value());
+    const ValueView child = recorded.front()->as_bundle()["modified"].as_map().at(key.view());
+    REQUIRE(std::string{child.concrete().schema()->name()} == "tests.const::PolymorphicLeaf");
+    REQUIRE(child.concrete().as_bundle()["label"].checked_as<Str>() == "seven");
 }
 
 TEST_CASE("stdlib::const_ creates a non-peered TSB from a structural bundle value")

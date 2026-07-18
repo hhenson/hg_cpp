@@ -1,8 +1,15 @@
 #include <hgraph/lib/std/operators/impl/collection_impl.h>
 #include <hgraph/lib/std/operators/impl/conversion_impl.h>
 
+#include <simdjson.h>
+
 namespace hgraph::stdlib
 {
+    bool conversion_detail::valid_utf8(std::string_view text) noexcept
+    {
+        return simdjson::validate_utf8(text);
+    }
+
     void register_conversion_operators()
     {
         register_overload<const_, const_source>();    // const(value)         -> tick at start
@@ -26,6 +33,8 @@ namespace hgraph::stdlib
         register_overload<convert, convert_numeric_impl<Bool, Int>>();
         register_overload<convert, convert_numeric_impl<Float, Bool>>();
         register_overload<convert, convert_numeric_impl<Bool, Float>>();
+        register_overload<convert, convert_text_bytes_impl<Str, Bytes>>();
+        register_overload<convert, convert_text_bytes_impl<Bytes, Str>>();
         register_overload<convert, convert_to_str_impl<Int>>();
         register_overload<convert, convert_to_str_impl<Float>>();
         register_overload<convert, convert_to_str_impl<Bool>>();

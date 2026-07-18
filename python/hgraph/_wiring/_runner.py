@@ -2,6 +2,7 @@
 eval_node test harness."""
 import inspect
 import logging
+from datetime import timedelta
 
 import _hgraph
 
@@ -12,7 +13,7 @@ from ._core import (WiringPort, _OperatorFunction, _unwrap, _wiring_stack,
 from ._graph import _GraphFn
 from ._node import _PyNode
 from ._sentinels import _simplify_delta
-from ._state import GlobalState, _GRAPH_LOGGER_KEY
+from ._state import GlobalState, _GRAPH_LOGGER_KEY, utc_now
 
 class EvaluationMode:
     SIMULATION = "simulation"
@@ -45,6 +46,13 @@ class GraphConfiguration:
             cleanup_on_error=True):
         self.run_mode = run_mode
         self.start_time = start_time
+        if isinstance(end_time, timedelta):
+            relative_start = (
+                utc_now()
+                if run_mode == EvaluationMode.REAL_TIME
+                else start_time if start_time is not None else _hgraph.MIN_ST
+            )
+            end_time = relative_start + end_time
         self.end_time = end_time
         self.trace = trace
         self.profile = profile

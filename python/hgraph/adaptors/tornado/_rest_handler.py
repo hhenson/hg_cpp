@@ -38,6 +38,7 @@ from .http_server_adaptor import (
     HttpRequest,
     HttpResponse,
     _bundle_field_types,
+    _handler_parameters,
     http_server_handler,
 )
 
@@ -217,15 +218,15 @@ def rest_handler(fn=None, *, url: str, data_type: type[CompoundScalar]):
     ):
         TS[leaf]
 
+    visible_parameters = _handler_parameters(signature)
     parameters = {
-        name: parameter.annotation
-        for name, parameter in signature.parameters.items()
-        if name != "request"
+        parameter.name: parameter.annotation
+        for parameter in visible_parameters
     }
     defaults = {
-        name: parameter.default
-        for name, parameter in signature.parameters.items()
-        if name != "request" and parameter.default is not inspect.Parameter.empty
+        parameter.name: parameter.default
+        for parameter in visible_parameters
+        if parameter.default is not inspect.Parameter.empty
     }
     route = f"{url}/?(.*)"
 

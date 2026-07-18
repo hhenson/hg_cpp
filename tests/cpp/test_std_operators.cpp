@@ -674,6 +674,26 @@ namespace
         }
     };
 
+    struct TextToBytesGraph
+    {
+        static constexpr auto name = "text_to_bytes_graph";
+
+        static Port<TS<Bytes>> compose(Wiring &w, Port<TS<Str>> ts)
+        {
+            return wire<stdlib::convert, TS<Bytes>>(w, ts);
+        }
+    };
+
+    struct BytesToTextGraph
+    {
+        static constexpr auto name = "bytes_to_text_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Bytes>> ts)
+        {
+            return wire<stdlib::convert, TS<Str>>(w, ts);
+        }
+    };
+
 }  // namespace
 
 TEST_CASE("std operators: add_ selects the int implementation for TS<Int> operands")
@@ -1435,6 +1455,20 @@ TEST_CASE("std operators: str_ converts scalar time-series values to strings")
 
     CHECK_OUTPUT(eval_node<stdlib::str_>(values<Int>(3, -2)), values<Str>(Str{"3"}, Str{"-2"}));
     CHECK_OUTPUT(eval_node<stdlib::str_>(values<Bool>(true, false)), values<Str>(Str{"true"}, Str{"false"}));
+}
+
+TEST_CASE("std operators: convert preserves UTF-8 payloads between text and bytes")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<TextToBytesGraph>(
+                     values<Str>(Str{"plain"}, Str{"caf\xC3\xA9"}))),
+                 values<Bytes>(bytes_("plain"), bytes_("caf\xC3\xA9")));
+    CHECK_OUTPUT((eval_node<BytesToTextGraph>(
+                     values<Bytes>(bytes_("plain"), bytes_("caf\xC3\xA9")))),
+                 values<Str>(Str{"plain"}, Str{"caf\xC3\xA9"}));
+    CHECK_THROWS((eval_node<BytesToTextGraph>(
+        values<Bytes>(bytes_(std::string_view{"\xFF", 1})))));
 }
 
 TEST_CASE("std operators: stream operators cover sampling filtering slicing and scalar analytics")

@@ -155,6 +155,16 @@ namespace
         }
     };
 
+    struct MapScalarOffsetG
+    {
+        static constexpr auto name = "map_scalar_offset_g";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TSD<Str, TS<Int>>> ts)
+        {
+            return wire<stdlib::map_>(w, fn<AddOffsetG>(), ts, Int{100})
+                .as<TSD<Str, TS<Int>>>();
+        }
+    };
+
     struct IdentityG
     {
         static constexpr auto name = "identity_g";
@@ -551,6 +561,16 @@ TEST_CASE("map_: a broadcast argument binds whole to every child")
                  values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 101}, {"b"s, 102}}),
                                dict_delta<Str, TS<Int>>({{"a"s, 105}}),
                                dict_delta<Str, TS<Int>>({{"a"s, 205}, {"b"s, 202}})));
+}
+
+TEST_CASE("map_: a trailing scalar argument promotes to a broadcast const source")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<MapScalarOffsetG>(
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 101}, {"b"s, 102}})));
 }
 
 TEST_CASE("map_: a broadcast source re-point refreshes existing child bindings")

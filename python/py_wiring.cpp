@@ -92,6 +92,7 @@ namespace
                 return std::span<const std::string_view>{
                     record.name_views.data(), record.name_views.size()};
             },
+            [](const void *, std::size_t) -> const TSValueTypeMetaData * { return nullptr; },
             [](const void *) -> const TSValueTypeMetaData * { return nullptr; },
         };
         return ops;
@@ -190,6 +191,10 @@ namespace
             [](const void *context) {
                 const auto &record = *static_cast<const PyGraphFnRecord *>(context);
                 return std::span<const std::string_view>{record.names.data(), record.names.size()};
+            },
+            [](const void *context, std::size_t index) -> const TSValueTypeMetaData * {
+                const auto &record = *static_cast<const PyGraphFnRecord *>(context);
+                return index < record.input_schemas.size() ? record.input_schemas[index] : nullptr;
             },
             [](const void *context) {
                 // Known when the python fn carries a TS return annotation
@@ -318,7 +323,7 @@ namespace hgraph::python_bridge
     });
 
     m.def("graph_fn", [](nb::object wrapper, nb::object user_fn, nb::list param_names, bool has_output,
-                         std::optional<PyTsType> output_type) {
+                         std::optional<PyTsType> output_type, nb::list input_types) {
         auto &registry = py_graph_fn_registry();
         auto  found    = registry.find(user_fn.ptr());
         if (found == registry.end())
@@ -329,6 +334,12 @@ namespace hgraph::python_bridge
             record->has_output = has_output;
             record->arity      = nb::len(param_names);
             if (output_type.has_value()) { record->output_schema = output_type->meta; }
+            record->input_schemas.reserve(record->arity);
+            for (nb::handle input_type : input_types)
+            {
+                record->input_schemas.push_back(
+                    input_type.is_none() ? nullptr : nb::cast<PyTsType &>(input_type).meta);
+            }
             record->name_storage.reserve(record->arity);
             for (nb::handle name : param_names) { record->name_storage.push_back(nb::cast<std::string>(name)); }
             for (const auto &name : record->name_storage) { record->names.emplace_back(name); }
@@ -343,7 +354,7 @@ namespace hgraph::python_bridge
             .has_output = record->has_output,
         }};
     }, nb::arg("wrapper"), nb::arg("user_fn"), nb::arg("param_names"), nb::arg("has_output"),
-       nb::arg("output_type") = nb::none());
+       nb::arg("output_type") = nb::none(), nb::arg("input_types") = nb::list());
 
     nb::class_<PySwitchCases>(m, "SwitchCases");
     nb::class_<PyDispatchCases>(m, "DispatchCases");

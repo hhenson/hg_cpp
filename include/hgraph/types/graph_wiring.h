@@ -4,6 +4,7 @@
 #include <hgraph/runtime/graph.h>                       // GraphBuilder, GraphEdge
 #include <hgraph/runtime/node.h>                        // NodeBuilder, NodeTypeRef
 #include <hgraph/types/call_args.h>                     // NamedArg / arg<"name">(...)
+#include <hgraph/types/metadata/type_realization.h>     // graph-scoped closed-union value bindings
 #include <hgraph/types/metadata/value_plan_factory.h>   // ValuePlanFactory (scalar bundle binding)
 #include <hgraph/types/static_node.h>                   // StaticNodeSignature, In/Out/State/Scalar markers
 #include <hgraph/types/static_schema.h>                 // schema_descriptor
@@ -2582,7 +2583,7 @@ namespace hgraph
                 Value scalars;
                 if constexpr (signature::scalar_count() > 0)
                 {
-                    const auto binding = ValuePlanFactory::instance().type_for(signature::scalar_schema(map));
+                    const auto binding = value_type_for_wiring(signature::scalar_schema(map));
                     BundleBuilder bundle{binding};
                     [&]<std::size_t... I>(std::index_sequence<I...>) {
                         (
@@ -2715,7 +2716,7 @@ namespace hgraph
                 Value scalars;
                 if constexpr (signature::scalar_count() > 0)
                 {
-                    const auto binding = ValuePlanFactory::instance().type_for(signature::scalar_schema());
+                    const auto binding = value_type_for_wiring(signature::scalar_schema());
                     scalars             = Value{binding};
                     auto mutation       = scalars.as_bundle().begin_mutation();
                     [&]<std::size_t... I>(std::index_sequence<I...>) {

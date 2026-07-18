@@ -6,7 +6,7 @@ import warnings
 import _hgraph
 
 from .._types import (_ContextExpr, _GenericTsExpr, _Required, _TsExpr,
-                      _TypeVarSentinel, _type_var_name)
+                      _TypeVarSentinel, _type_var_is_scalar, _type_var_name)
 from ._core import (IncorrectTypeBinding, RequirementsNotMetWiringError,
                     WiringError, WiringPort, _current_wiring,
                     _resolve_context, _unwrap, wire)
@@ -22,6 +22,30 @@ def _warn_deprecated(name, deprecated):
         return
     message = deprecated if isinstance(deprecated, str) else f"'{name}' is deprecated"
     warnings.warn(message, DeprecationWarning, stacklevel=3)
+
+
+def _is_time_series_annotation(annotation):
+    return (
+        isinstance(annotation, (_TsExpr, _ContextExpr, _GenericTsExpr))
+        or (
+            isinstance(annotation, _TypeVarSentinel)
+            and not _type_var_is_scalar(annotation)
+        )
+    )
+
+
+def _lift_time_series_argument(value, annotation):
+    """Lift a plain Python value to the time-series shape declared by a
+    graph or node parameter, retaining nominal CompoundScalar schemas when
+    the annotation itself is generic."""
+    if isinstance(annotation, _TsExpr):
+        return wire("const", value, output_type=annotation)
+
+    from .._compat import CompoundScalar
+    if isinstance(value, CompoundScalar):
+        from .._types import TS
+        return wire("const", value, output_type=TS[type(value)])
+    return wire("const", value)
 
 class _PyNode:
     """@compute_node / @sink_node: a Python function as a runtime node. The
@@ -93,7 +117,7 @@ class _PyNode:
             for param in self._params
             # Generic annotations (TIME_SERIES_TYPE, TSS[SCALAR], ...) are
             # time-series parameters too - they resolve from the wired ports.
-            if isinstance(param.annotation, (_TsExpr, _ContextExpr, _GenericTsExpr, _TypeVarSentinel))
+            if _is_time_series_annotation(param.annotation)
         }
         self._ts_names = ts_names
         for policy, names in (("active", self._active), ("valid", self._valid),
@@ -375,8 +399,8 @@ class _PyNode:
         # Pre-collect scalar values so callable active=/valid= policies can
         # evaluate before layout letters are chosen.
         for param in self._params:
-            if (isinstance(param.annotation, (_TsExpr, _ContextExpr, _GenericTsExpr,
-                                              _TypeVarSentinel, _RecordableStateExpr))):
+            if (_is_time_series_annotation(param.annotation)
+                    or isinstance(param.annotation, _RecordableStateExpr)):
                 continue
             if param.annotation in _INJECTABLE_MARKERS or param.annotation is LOGGER:
                 continue
@@ -390,8 +414,8 @@ class _PyNode:
         # resolution map, not an empty pre-binding scope.
         for param in self._params:
             value = bound.arguments.get(param.name, _MISSING)
-            if isinstance(value, WiringPort) and isinstance(
-                    param.annotation, (_TsExpr, _GenericTsExpr, _TypeVarSentinel)):
+            if isinstance(value, WiringPort) and _is_time_series_annotation(
+                    param.annotation):
                 self._check_binding(scope, param, value)
         if self._resolvers:
             self._apply_resolvers(scope, scalar_values)
@@ -541,14 +565,13 @@ class _PyNode:
                 if value is None and isinstance(param.annotation, (_TsExpr,)):
                     # unwired optional ts input: a never-ticking source
                     value = wire("nothing", output_type=param.annotation)
-            if not isinstance(value, WiringPort) and isinstance(
-                    param.annotation, (_TsExpr, _GenericTsExpr)) and value is not None \
+            if not isinstance(value, WiringPort) and _is_time_series_annotation(
+                    param.annotation) and value is not None \
                     and not (value is _MISSING):
                 # A plain VALUE on a time-series parameter lifts to const at
                 # the declared type (hgraph's auto-const rule); conversion
                 # errors surface as wiring errors.
-                if isinstance(param.annotation, _TsExpr):
-                    value = wire("const", value, output_type=param.annotation)
+                value = _lift_time_series_argument(value, param.annotation)
             if isinstance(value, WiringPort):
                 self._check_binding(scope, param, value)
                 if all_valid_policy is not None and param.name in all_valid_policy:

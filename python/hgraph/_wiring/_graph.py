@@ -9,11 +9,12 @@ from .._types import (_ContextExpr, _GenericTsExpr, _TsExpr,
 from ._core import (ParseError, WiringError, WiringPort, _current_wiring,
                     _unwrap, _wiring_stack, wire)
 from ._markers import _INJECTABLE_MARKERS
-from ._node import _PyNode, _warn_deprecated
+from ._node import (_PyNode, _is_time_series_annotation,
+                    _lift_time_series_argument, _warn_deprecated)
 from ._operator import _register_overload, _run_requires
 from ._state import GlobalState
 
-def _wrap_graph_fn(gfn):
+def _wrap_graph_fn(gfn, *, input_names=None, scalar_bindings=None):
     """Erase a Python @graph function into a WiredFn: the wrapper runs the
     function against whatever Wiring the C++ side supplies (inline OR a
     fresh child during sub-graph compilation), pushing it as the active
@@ -22,10 +23,11 @@ def _wrap_graph_fn(gfn):
     # Introspect the REAL signature (unwrap @compute_node/@graph wrappers);
     # injectable/context parameters are not wired inputs.
     sig = inspect.signature(getattr(user_fn, "fn", user_fn))
-    names = [
+    names = list(input_names) if input_names is not None else [
         p.name for p in sig.parameters.values()
         if p.annotation not in _INJECTABLE_MARKERS and not isinstance(p.annotation, _ContextExpr)
     ]
+    scalar_bindings = dict(scalar_bindings or {})
     # Node decorators are authoritative even when the wrapped user function is
     # unannotated. For graphs/lambdas, only explicit ``-> None`` marks a sink;
     # an unannotated callable remains provisionally output-producing.
@@ -34,18 +36,27 @@ def _wrap_graph_fn(gfn):
     def wrapper(borrowed_wiring, ports):
         _wiring_stack.append(borrowed_wiring)
         try:
-            wrapped_ports = [WiringPort(port) for port in ports]
-            if isinstance(gfn, _GraphFn):
-                call_args = []
-                call_kwargs = {}
-                for parameter, port in zip(sig.parameters.values(), wrapped_ports):
-                    if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-                        call_kwargs[parameter.name] = port
-                    else:
-                        call_args.append(port)
-                out = gfn(*call_args, **call_kwargs)
-            else:
-                out = user_fn(*wrapped_ports)
+            supplied = dict(scalar_bindings)
+            supplied.update(zip(names, (WiringPort(port) for port in ports)))
+            call_args = []
+            call_kwargs = {}
+            positional_gap = False
+            for parameter in sig.parameters.values():
+                if parameter.name not in supplied:
+                    if parameter.kind in (
+                            inspect.Parameter.POSITIONAL_ONLY,
+                            inspect.Parameter.POSITIONAL_OR_KEYWORD):
+                        positional_gap = True
+                    continue
+                value = supplied[parameter.name]
+                if (parameter.kind is inspect.Parameter.POSITIONAL_ONLY or
+                        (parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+                         and not positional_gap)):
+                    call_args.append(value)
+                else:
+                    call_kwargs[parameter.name] = value
+            out = gfn(*call_args, **call_kwargs) if isinstance(
+                gfn, (_GraphFn, _PyNode)) else user_fn(*call_args, **call_kwargs)
             if out is None:
                 return None
             if not isinstance(out, WiringPort):
@@ -76,7 +87,84 @@ def _wrap_graph_fn(gfn):
 
     out_tp = sig.return_annotation
     out_handle = out_tp.handle if isinstance(out_tp, _TsExpr) else None
-    return _hgraph.graph_fn(wrapper, gfn, names, has_output, output_type=out_handle)
+    input_handles = []
+    for name in names:
+        annotation = sig.parameters[name].annotation
+        input_handles.append(
+            annotation.handle if isinstance(annotation, _TsExpr) else None)
+    identity = wrapper if input_names is not None or scalar_bindings else gfn
+    return _hgraph.graph_fn(
+        wrapper, identity, names, has_output, output_type=out_handle,
+        input_types=input_handles)
+
+
+def _prepare_higher_order_call(func, args, kwargs, *, default_key_arg):
+    """Bind wiring-time scalar parameters into a Python mapped callable.
+
+    Native nested graphs expose only time-series boundaries. Python scalar
+    parameters are therefore configuration captured while wiring the child,
+    rather than const time-series inputs owned by every child instance.
+    """
+    if isinstance(func, (_hgraph.WiredFn, str)) or not isinstance(
+            func, (_GraphFn, _PyNode)) and not callable(func):
+        return _as_wired(func), args, kwargs
+    if (not isinstance(func, (_GraphFn, _PyNode))
+            and getattr(func, "__name__", None) != "<lambda>"):
+        return _as_wired(func), args, kwargs
+
+    user_fn = func.fn if isinstance(func, (_GraphFn, _PyNode)) else func
+    signature = inspect.signature(getattr(user_fn, "fn", user_fn))
+    parameters = [
+        parameter for parameter in signature.parameters.values()
+        if parameter.annotation not in _INJECTABLE_MARKERS
+        and not isinstance(parameter.annotation, _ContextExpr)
+    ]
+    if any(parameter.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD) for parameter in parameters):
+        return _as_wired(func), args, kwargs
+
+    key_arg = kwargs.get("__key_arg__") or default_key_arg
+    takes_key = bool(parameters and parameters[0].name == key_arg)
+    call_parameters = parameters[1:] if takes_key else parameters
+    callable_signature = signature.replace(parameters=call_parameters)
+    ordinary_kwargs = {
+        name: value for name, value in kwargs.items()
+        if not name.startswith("__")
+    }
+    bound = callable_signature.bind_partial(*args, **ordinary_kwargs)
+
+    input_names = [parameters[0].name] if takes_key else []
+    scalar_bindings = {}
+    prepared_args = []
+    for parameter in call_parameters:
+        value = bound.arguments.get(parameter.name, inspect.Parameter.empty)
+        if _is_time_series_annotation(parameter.annotation):
+            input_names.append(parameter.name)
+            if value is not inspect.Parameter.empty:
+                prepared_args.append(value)
+            continue
+        if parameter.annotation is inspect.Parameter.empty:
+            if value is inspect.Parameter.empty:
+                input_names.append(parameter.name)
+                continue
+            if isinstance(value, WiringPort):
+                input_names.append(parameter.name)
+                prepared_args.append(value)
+                continue
+        if value is not inspect.Parameter.empty:
+            scalar_bindings[parameter.name] = value
+
+    special_kwargs = {
+        name: value for name, value in kwargs.items()
+        if name.startswith("__")
+    }
+    return (
+        _wrap_graph_fn(
+            func, input_names=input_names, scalar_bindings=scalar_bindings),
+        tuple(prepared_args),
+        special_kwargs,
+    )
 
 
 def _as_wired(func):
@@ -330,6 +418,12 @@ class _GraphFn:
         for param in self._signature.parameters.values():
             if param.annotation is GlobalState and param.name not in bound.arguments:
                 bound.arguments[param.name] = GlobalState.instance()
+            value = bound.arguments.get(param.name)
+            if (param.name in bound.arguments and value is not None
+                    and not isinstance(value, WiringPort)
+                    and _is_time_series_annotation(param.annotation)):
+                bound.arguments[param.name] = _lift_time_series_argument(
+                    value, param.annotation)
         bound.arguments.update(_graph_auto_resolve(
             self._signature, bound.arguments, self._resolvers, self._requires,
             getattr(self, "_seed_bindings", None)))

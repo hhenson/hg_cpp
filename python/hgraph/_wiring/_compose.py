@@ -6,14 +6,16 @@ import _hgraph
 
 from ._core import (WiringError, WiringPort, _current_wiring, _unwrap,
                     operator_function, wire)
-from ._graph import _as_wired
+from ._graph import _as_wired, _prepare_higher_order_call
 from ._markers import _unbounded_tuple_kind
 from ._sentinels import _REDUCE_ZERO
 
 def map_(func, *args, **kwargs):
     """hgraph's map_. ``func`` may be a native operator or a Python-authored
     graph/node; outputless functions create keyed sink child graphs."""
-    return wire("map_", _as_wired(func), *args, **kwargs)
+    wired, args, kwargs = _prepare_higher_order_call(
+        func, args, kwargs, default_key_arg="key")
+    return wire("map_", wired, *args, **kwargs)
 
 
 def _mesh_name(fn_or_name):
@@ -75,7 +77,9 @@ def mesh_(func, *args, __name__=None, __keys__=None, __key_arg__=None, **kwargs)
         kwargs["__keys__"] = __keys__
     if __key_arg__ is not None:
         kwargs["__key_arg__"] = __key_arg__
-    return wire("mesh_", _as_wired(func), *args, **kwargs)
+    wired, args, kwargs = _prepare_higher_order_call(
+        func, args, kwargs, default_key_arg="key")
+    return wire("mesh_", wired, *args, **kwargs)
 
 
 def _reduce_nothing(ts):

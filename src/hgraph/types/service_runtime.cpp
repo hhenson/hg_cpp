@@ -7,36 +7,74 @@
 
 #include <array>
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <stdexcept>
+#include <type_traits>
 #include <unordered_map>
 
 namespace hgraph
 {
     namespace
     {
-        [[nodiscard]] bool schemas_match(const RuntimeServiceDescriptor &lhs, const RuntimeServiceDescriptor &rhs)
+        struct DescriptorIdentity
         {
-            return lhs.specialization == rhs.specialization && lhs.flavour == rhs.flavour &&
-                   lhs.output_schema == rhs.output_schema &&
-                   lhs.key_type == rhs.key_type && lhs.value_schema == rhs.value_schema &&
-                   lhs.request_schema == rhs.request_schema && lhs.response_schema == rhs.response_schema &&
-                   lhs.input_schema == rhs.input_schema;
-        }
+            std::string                name;
+            std::string                specialization;
+            ServiceFlavour             flavour;
+            const TSValueTypeMetaData *output_schema;
+            const ValueTypeMetaData   *key_type;
+            const TSValueTypeMetaData *value_schema;
+            const TSValueTypeMetaData *request_schema;
+            const TSValueTypeMetaData *response_schema;
+            const TSValueTypeMetaData *input_schema;
 
-        [[nodiscard]] std::string descriptor_key(const RuntimeServiceDescriptor &descriptor)
+            friend bool operator==(const DescriptorIdentity &, const DescriptorIdentity &) = default;
+        };
+
+        struct DescriptorIdentityHash
         {
-            if (descriptor.specialization.empty()) { return descriptor.name; }
-            std::string key = descriptor.name;
-            key.push_back('\0');
-            key.append(descriptor.specialization);
-            return key;
+            [[nodiscard]] std::size_t operator()(const DescriptorIdentity &identity) const noexcept
+            {
+                std::size_t seed = 0;
+                const auto combine = [&seed](const auto &value) {
+                    const std::size_t hash = std::hash<std::decay_t<decltype(value)>>{}(value);
+                    seed ^= hash + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
+                };
+                combine(identity.name);
+                combine(identity.specialization);
+                combine(identity.flavour);
+                combine(identity.output_schema);
+                combine(identity.key_type);
+                combine(identity.value_schema);
+                combine(identity.request_schema);
+                combine(identity.response_schema);
+                combine(identity.input_schema);
+                return seed;
+            }
+        };
+
+        [[nodiscard]] DescriptorIdentity descriptor_identity(const RuntimeServiceDescriptor &descriptor)
+        {
+            return DescriptorIdentity{
+                .name            = descriptor.name,
+                .specialization  = descriptor.specialization,
+                .flavour         = descriptor.flavour,
+                .output_schema   = descriptor.output_schema,
+                .key_type        = descriptor.key_type,
+                .value_schema    = descriptor.value_schema,
+                .request_schema  = descriptor.request_schema,
+                .response_schema = descriptor.response_schema,
+                .input_schema    = descriptor.input_schema,
+            };
         }
 
         /** Immortal (registry rule): descriptor addresses must stay stable. */
-        [[nodiscard]] std::unordered_map<std::string, RuntimeServiceDescriptor *> &descriptor_registry()
+        [[nodiscard]] std::unordered_map<DescriptorIdentity, RuntimeServiceDescriptor *, DescriptorIdentityHash> &
+        descriptor_registry()
         {
-            static auto *registry = new std::unordered_map<std::string, RuntimeServiceDescriptor *>{};
+            static auto *registry =
+                new std::unordered_map<DescriptorIdentity, RuntimeServiceDescriptor *, DescriptorIdentityHash>{};
             return *registry;
         }
 
@@ -152,35 +190,33 @@ namespace hgraph
     {
         if (descriptor.name.empty()) { throw std::invalid_argument("service descriptor requires a name"); }
         auto &registry = descriptor_registry();
-        auto  found    = registry.find(descriptor_key(descriptor));
-        if (found != registry.end())
-        {
-            if (!schemas_match(*found->second, descriptor))
-            {
-                throw std::invalid_argument("service '" + descriptor.name +
-                                            "' is already interned with different schemas");
-            }
-            return *found->second;
-        }
+        auto  found    = registry.find(descriptor_identity(descriptor));
+        if (found != registry.end()) { return *found->second; }
         auto *record = new RuntimeServiceDescriptor{std::move(descriptor)};
-        registry.emplace(descriptor_key(*record), record);
+        registry.emplace(descriptor_identity(*record), record);
         return *record;
     }
 
     const RuntimeServiceDescriptor *find_service_descriptor(std::string_view name)
     {
         const auto &registry = descriptor_registry();
-        const auto  found    = registry.find(std::string{name});
-        return found != registry.end() ? found->second : nullptr;
+        const RuntimeServiceDescriptor *result = nullptr;
+        for (const auto &[identity, descriptor] : registry)
+        {
+            if (identity.name != name || !identity.specialization.empty()) { continue; }
+            if (result != nullptr) { return nullptr; }
+            result = descriptor;
+        }
+        return result;
     }
 
     std::vector<std::string> service_descriptor_names()
     {
         std::vector<std::string> names;
         names.reserve(descriptor_registry().size());
-        for (const auto &[key, descriptor] : descriptor_registry())
+        for (const auto &[identity, descriptor] : descriptor_registry())
         {
-            (void)key;
+            (void)identity;
             names.push_back(descriptor->name);
         }
         std::sort(names.begin(), names.end());

@@ -333,13 +333,15 @@ def test_rest_handler_maps_batch_requests(free_tcp_port, monkeypatch):
     @hg.compute_node
     def handler(
         request: hg.TSD[int, hg.TS[RestRequest]],
+        _state: hg.STATE = None,
     ) -> hg.TSD[int, hg.TS[RestResponse]]:
         responses = {}
         for request_id, request_value in request.modified_items():
             assert isinstance(request_value.value, RestDeleteRequest)
+            _state.count = getattr(_state, "count", 0) + 1
             responses[request_id] = RestDeleteResponse(
                 status=RestResultEnum.NOT_FOUND,
-                reason=f"missing:{request_value.value.id}",
+                reason=f"missing:{request_value.value.id}:{_state.count}",
             )
         return responses
 
@@ -406,8 +408,8 @@ def test_rest_handler_maps_batch_requests(free_tcp_port, monkeypatch):
 
     assert client_errors == []
     assert client_responses == [
-        (404, b'{ "reason": "missing:one" }'),
-        (404, b'{ "reason": "missing:two" }'),
+        (404, b'{ "reason": "missing:one:1" }'),
+        (404, b'{ "reason": "missing:two:2" }'),
     ]
     assert not any(key.startswith("http_server_adaptor://") for key in state.keys())
 

@@ -28,10 +28,26 @@ from hgraph import (
 )
 from hgraph._types import _TsExpr
 from hgraph._wiring import _GraphFn, _PyNode
+from hgraph._wiring._markers import (
+    LOGGER,
+    _INJECTABLE_MARKERS,
+    _RecordableStateExpr,
+)
 
 from ._tornado_web import BaseHandler, TornadoWeb
 
 logger = logging.getLogger(__name__)
+
+
+def _handler_parameters(signature):
+    return tuple(
+        parameter
+        for name, parameter in signature.parameters.items()
+        if name != "request"
+        and parameter.annotation not in _INJECTABLE_MARKERS
+        and parameter.annotation is not LOGGER
+        and not isinstance(parameter.annotation, _RecordableStateExpr)
+    )
 
 
 def _ts_expr(handle) -> _TsExpr:
@@ -307,11 +323,7 @@ class _HttpServerHandler:
                 f"'response' field of that type, or a keyed TSD of response bundles"
             )
 
-        parameters = tuple(
-            parameter
-            for name, parameter in signature.parameters.items()
-            if name != "request"
-        )
+        parameters = _handler_parameters(signature)
         self.__signature__ = signature.replace(parameters=parameters)
         self.auto_wire = not self._auxiliary_output and all(
             parameter.default is not inspect.Parameter.empty

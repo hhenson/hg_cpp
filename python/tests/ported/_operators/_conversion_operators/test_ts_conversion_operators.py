@@ -32,6 +32,8 @@ class derived_test_class(base_test_class):
         [TS[bool], [True, False], TS[int], [1, 0]],
         [TS[bool], [True, False], TS[float], [1.0, 0.0]],
         [TS[bool], [True, False], TS[str], ["True", "False"]],
+        [TS[str], ["plain", "caf\u00e9"], TS[bytes], [b"plain", b"caf\xc3\xa9"]],
+        [TS[bytes], [b"plain", b"caf\xc3\xa9"], TS[str], ["plain", "caf\u00e9"]],
         [TS[bool], [True, False], TSS[bool], [frozenset({True}), frozenset({False, Removed(True)})]],
         [TS[tuple[int, ...]], [tuple(), (1,), (1, 2)], TS[bool], [False, True, True]],
         [TS[tuple[int, ...]], [tuple(), (1,), (1, 2)], TS[str], ["()", "(1,)", "(1, 2)"]],

@@ -92,6 +92,24 @@ def test_graph_configuration_honours_run_mode_and_logger():
     assert logger.level == logging.WARNING
 
 
+def test_graph_configuration_resolves_relative_end_time():
+    simulation_start = hg.MIN_ST + timedelta(seconds=1)
+    simulation = hg.GraphConfiguration(
+        start_time=simulation_start,
+        end_time=timedelta(seconds=2),
+    )
+    assert simulation.end_time == simulation_start + timedelta(seconds=2)
+
+    before = hg.utc_now()
+    real_time = hg.GraphConfiguration(
+        run_mode=hg.EvaluationMode.REAL_TIME,
+        end_time=timedelta(seconds=2),
+    )
+    after = hg.utc_now()
+    assert before + timedelta(seconds=2) <= real_time.end_time
+    assert real_time.end_time <= after + timedelta(seconds=2)
+
+
 def test_graph_configuration_rejects_unimplemented_options_explicitly():
     @hg.graph
     def app() -> hg.TS[int]:

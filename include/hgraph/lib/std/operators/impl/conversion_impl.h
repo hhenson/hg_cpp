@@ -20,10 +20,16 @@
 #include <limits>
 #include <deque>
 #include <stdexcept>
+#include <string_view>
 
 namespace hgraph::stdlib
 {
     using namespace hgraph::operator_type_resolution;
+
+    namespace conversion_detail
+    {
+        [[nodiscard]] HGRAPH_EXPORT bool valid_utf8(std::string_view text) noexcept;
+    }
 
     /**
      * Implementations + registration for the conversion / utility operators. The abstract
@@ -384,6 +390,36 @@ namespace hgraph::stdlib
         {
             if constexpr (std::same_as<To, Bool>) { out.set(ts.value() != From{}); }
             else { out.set(static_cast<To>(ts.value())); }
+        }
+    };
+
+    /** UTF-8 text/binary conversions matching Python's str.encode() and
+        bytes.decode() defaults. Str storage is already UTF-8, so these
+        kernels only change the scalar schema and preserve the byte payload. */
+    template <typename From, typename To>
+    struct convert_text_bytes_impl
+    {
+        static_assert((std::same_as<From, Str> && std::same_as<To, Bytes>) ||
+                      (std::same_as<From, Bytes> && std::same_as<To, Str>));
+        static constexpr auto name = "convert_text_bytes";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return ts_value_schema_at(context, 0) ==
+                   scalar_descriptor<From>::value_meta();
+        }
+
+        static void eval(In<"ts", TS<From>> ts, Out<TS<To>> out)
+        {
+            if constexpr (std::same_as<From, Str>) { out.set(Bytes{ts.value()}); }
+            else
+            {
+                if (!conversion_detail::valid_utf8(ts.value().data))
+                {
+                    throw std::invalid_argument("bytes value is not valid UTF-8");
+                }
+                out.set(Str{ts.value().data});
+            }
         }
     };
 

@@ -251,6 +251,25 @@ def test_generic_multi_service_reuses_shared_registration_specialization():
     ) == [None, {}, {"first": "first"}, {"second": "second"}]
 
 
+def test_same_named_service_specializations_can_have_different_reply_schemas():
+    @hg.request_reply_service
+    def submit(value: TS[hg.KEYABLE_SCALAR]): ...
+
+    replyless = submit[hg.KEYABLE_SCALAR:int]
+
+    @hg.request_reply_service
+    def submit(
+        value: TS[hg.KEYABLE_SCALAR],
+        tp: Type[hg.TIME_SERIES_TYPE] = TS[hg.KEYABLE_SCALAR],
+    ) -> hg.TIME_SERIES_TYPE: ...
+
+    replying = submit[hg.KEYABLE_SCALAR:int]
+
+    assert replyless.descriptor.name == "submit"
+    assert replying.descriptor.name == "submit"
+    assert replyless.descriptor is not replying.descriptor
+
+
 def test_subscription_client_samples_existing_value_when_key_becomes_valid():
     @hg.subscription_service
     def subscribe(path: str, key: TS[str]) -> TS[str]: ...

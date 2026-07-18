@@ -122,6 +122,7 @@ namespace hgraph
         WiringPortRef (*wire)(const void *context, Wiring &, std::span<const WiringPortRef>){nullptr};
         CompiledSubGraph (*compile)(const void *context, std::span<const TSValueTypeMetaData *const>){nullptr};
         std::span<const std::string_view> (*param_names)(const void *context){nullptr};
+        const TSValueTypeMetaData *(*input_schema)(const void *context, std::size_t index){nullptr};
         const TSValueTypeMetaData *(*output_schema)(const void *context){nullptr};
     };
 
@@ -153,6 +154,17 @@ namespace hgraph
         [[nodiscard]] const TSValueTypeMetaData *output_schema() const
         {
             return ops != nullptr && ops->output_schema != nullptr ? ops->output_schema(context) : nullptr;
+        }
+
+        /** The statically-known schema of input ``index``, or ``nullptr`` when
+            the callable is generic and must be compiled to resolve it. */
+        [[nodiscard]] const TSValueTypeMetaData *input_schema(std::size_t index) const
+        {
+            if (index >= arity) { return nullptr; }
+            if (lifted != nullptr) { return lifted->input_schema(index); }
+            return ops != nullptr && ops->input_schema != nullptr
+                       ? ops->input_schema(context, index)
+                       : nullptr;
         }
 
         /**
@@ -556,6 +568,55 @@ namespace hgraph
         // operators (a type-var output is only known after resolution) and for X
         // without an output.
         template <typename X>
+        [[nodiscard]] const TSValueTypeMetaData *input_schema_thunk(std::size_t index)
+        {
+            static const auto schemas = [] {
+                std::array<const TSValueTypeMetaData *, arity_of<X>()> out{};
+                if constexpr (graph_wiring_detail::is_graph_def<X>)
+                {
+                    using params = typename StaticGraphSignature<X>::param_types;
+                    std::size_t next = 0;
+                    [&]<std::size_t... I>(std::index_sequence<I...>) {
+                        (
+                            [&] {
+                                using P = std::tuple_element_t<I, params>;
+                                if constexpr (graph_wiring_detail::is_port<P>::value)
+                                {
+                                    using S = typename graph_wiring_detail::port_static_schema<P>::type;
+                                    if constexpr (!std::is_void_v<S>)
+                                    {
+                                        if constexpr (schema_descriptor<S>::is_concrete())
+                                        {
+                                            out[next] = schema_descriptor<S>::ts_meta();
+                                        }
+                                    }
+                                    ++next;
+                                }
+                            }(),
+                            ...);
+                    }(std::make_index_sequence<std::tuple_size_v<params>>{});
+                }
+                else if constexpr (!std::is_base_of_v<operator_tag, X>)
+                {
+                    using inputs = typename StaticNodeSignature<X>::input_schema_types;
+                    [&]<std::size_t... I>(std::index_sequence<I...>) {
+                        (
+                            [&] {
+                                using S = std::tuple_element_t<I, inputs>;
+                                if constexpr (schema_descriptor<S>::is_concrete())
+                                {
+                                    out[I] = schema_descriptor<S>::ts_meta();
+                                }
+                            }(),
+                            ...);
+                    }(std::make_index_sequence<std::tuple_size_v<inputs>>{});
+                }
+                return out;
+            }();
+            return index < schemas.size() ? schemas[index] : nullptr;
+        }
+
+        template <typename X>
         [[nodiscard]] const TSValueTypeMetaData *output_schema_thunk()
         {
             if constexpr (!has_output_of<X>()) { return nullptr; }
@@ -589,6 +650,7 @@ namespace hgraph
                     return compile_thunk<X>(schemas);
                 },
                 [](const void *) { return param_names_thunk<X>(); },
+                [](const void *, std::size_t index) { return input_schema_thunk<X>(index); },
                 [](const void *) { return output_schema_thunk<X>(); },
             };
             return ops;
