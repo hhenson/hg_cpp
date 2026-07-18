@@ -136,10 +136,13 @@ class HttpAdaptorManager:
     def set_queue(self, path: str, sender) -> None:
         self._queues[path] = sender
 
-    def start(self, path: str) -> None:
+    def register_path(self, path: str) -> None:
         if path not in self._registered_paths:
             self._web.add_handler(path, HttpHandler, {"path": path, "manager": self})
             self._registered_paths.add(path)
+
+    def start(self, path: str) -> None:
+        self.register_path(path)
         self._web.start()
 
     def stop(self, path: str) -> None:
@@ -396,7 +399,15 @@ def http_server_adaptor_impl(path: str, port: int = 80) -> None:
 
 def register_http_server_adaptor(port: int) -> None:
     """Register the HTTP server implementation and wire automatic handlers."""
-    for path, handler in tuple(_HTTP_SERVER_HANDLERS.items()):
+    handlers = tuple(_HTTP_SERVER_HANDLERS.items())
+    manager = HttpAdaptorManager.instance(port)
+
+    # A shared listener may accept requests as soon as the first adaptor starts.
+    # Install the complete route table before any adaptor can open that listener.
+    for path, _ in handlers:
+        manager.register_path(path)
+
+    for path, handler in handlers:
         register_adaptor(path, http_server_adaptor_impl, port=port)
         if handler.auto_wire:
             handler()
