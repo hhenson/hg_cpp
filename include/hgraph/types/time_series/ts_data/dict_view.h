@@ -57,6 +57,8 @@ namespace hgraph
         /** Key or child TSData view at ``slot``; throws if the slot is not occupied. */
         [[nodiscard]] ValueView key_at_slot(std::size_t slot) const;
         [[nodiscard]] TSDataView at_slot(std::size_t slot) const;
+        /** Retained key at a sparse removed-delta slot; valid until that slot is erased. */
+        [[nodiscard]] ValueView removed_key_at_slot(std::size_t slot) const;
 
         /** Key lookup helpers. Missing keys return an empty child view from ``at``. */
         [[nodiscard]] bool contains(const ValueView &key) const;

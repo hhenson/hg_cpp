@@ -1547,6 +1547,10 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     REQUIRE(dict.removed_keys().begin() != dict.removed_keys().end());
     REQUIRE(dict.removed_values().begin() != dict.removed_values().end());
     REQUIRE(dict.removed_items().begin() != dict.removed_items().end());
+    const std::size_t removed_slot = dict.next_removed_slot();
+    REQUIRE(removed_slot != TS_DATA_NO_CHILD_ID);
+    REQUIRE(dict.removed_key_at_slot(removed_slot).checked_as<std::int32_t>() == 7);
+    REQUIRE_THROWS_AS(dict.removed_key_at_slot(TS_DATA_NO_CHILD_ID), std::out_of_range);
     auto next_delta = view.delta_value(t3).as_bundle();
     REQUIRE(next_delta.at("removed").as_set().contains(key.view()));
     REQUIRE_FALSE(next_delta.at("modified").as_map().contains(key.view()));

@@ -441,9 +441,23 @@ namespace hgraph
                 {
                     storage.membership_changed_keys.emplace_back(dict.key_at_slot(slot));
                 }
-                for (const ValueView &removed_key : dict.removed_keys())
+                const std::size_t first_removed_slot = dict.next_removed_slot();
+                if (first_removed_slot != TS_DATA_NO_CHILD_ID && dict.slot_removed(first_removed_slot))
                 {
-                    storage.membership_changed_keys.emplace_back(removed_key);
+                    for (std::size_t slot = first_removed_slot; slot != TS_DATA_NO_CHILD_ID;
+                         slot = dict.next_removed_slot(slot))
+                    {
+                        storage.membership_changed_keys.emplace_back(dict.removed_key_at_slot(slot));
+                    }
+                }
+                else
+                {
+                    // A sampled forwarding transition owns its removed-key
+                    // surface independently of the current source slots.
+                    for (const ValueView &removed_key : dict.removed_keys())
+                    {
+                        storage.membership_changed_keys.emplace_back(removed_key);
+                    }
                 }
             }
 

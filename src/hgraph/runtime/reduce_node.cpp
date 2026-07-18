@@ -448,13 +448,32 @@ namespace hgraph
             }
 
             bool structural = false;
-            for (const ValueView &removed_key : dict.removed_keys())
+            const std::size_t first_removed_slot = dict.next_removed_slot();
+            if (first_removed_slot != TS_DATA_NO_CHILD_ID && dict.slot_removed(first_removed_slot))
             {
-                const auto found = storage.key_to_leaf.find(removed_key);
-                if (found == storage.key_to_leaf.end()) { continue; }
-                record_removed_leaf_paths(storage, found->second);
-                remove_leaf_at(storage, found->second);
-                structural = true;
+                for (std::size_t slot = first_removed_slot; slot != TS_DATA_NO_CHILD_ID;
+                     slot = dict.next_removed_slot(slot))
+                {
+                    const ValueView removed_key = dict.removed_key_at_slot(slot);
+                    const auto found = storage.key_to_leaf.find(removed_key);
+                    if (found == storage.key_to_leaf.end()) { continue; }
+                    record_removed_leaf_paths(storage, found->second);
+                    remove_leaf_at(storage, found->second);
+                    structural = true;
+                }
+            }
+            else
+            {
+                // Sampled forwarding transitions retain their own removed-key
+                // value surface rather than keys in the current source slots.
+                for (const ValueView &removed_key : dict.removed_keys())
+                {
+                    const auto found = storage.key_to_leaf.find(removed_key);
+                    if (found == storage.key_to_leaf.end()) { continue; }
+                    record_removed_leaf_paths(storage, found->second);
+                    remove_leaf_at(storage, found->second);
+                    structural = true;
+                }
             }
 
             for (std::size_t slot = dict.next_added_slot(); slot != TS_DATA_NO_CHILD_ID;
