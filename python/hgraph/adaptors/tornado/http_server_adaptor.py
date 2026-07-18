@@ -19,6 +19,7 @@ from hgraph import (
     adaptor_impl,
     feedback,
     from_graph,
+    graph,
     map_,
     push_queue,
     register_adaptor,
@@ -26,6 +27,7 @@ from hgraph import (
     to_graph,
 )
 from hgraph._types import _TsExpr
+from hgraph._wiring import _GraphFn, _PyNode
 
 from ._tornado_web import BaseHandler, TornadoWeb
 
@@ -254,7 +256,12 @@ class HttpHandler(BaseHandler):
 
 class _HttpServerHandler:
     def __init__(self, fn, url: str):
-        self._fn = fn
+        # A handler is a graph or a Python-authored node. A bare function is
+        # treated as a graph (matching rest_handler's `graph(fn)` and so the
+        # later `map_(self._fn, ...)` accepts it); already-decorated graphs and
+        # nodes pass through unchanged. The global _as_wired strictness (bare
+        # named functions must be tagged) is intentionally left in place.
+        self._fn = fn if isinstance(fn, (_GraphFn, _PyNode)) else graph(fn)
         self.url = url
         self.__name__ = getattr(fn, "__name__", "http_server_handler")
 
