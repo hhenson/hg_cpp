@@ -150,7 +150,10 @@ namespace hgraph
         if (time_series_schema_equivalent(source_schema, &requested_schema)) { return source.handle(); }
 
         auto &registry = TypeRegistry::instance();
-        if (!time_series_schema_equivalent(registry.dereference(source_schema),
+        const bool signal_from_reference =
+            requested_schema.kind == TSTypeKind::SIGNAL && source_schema->kind == TSTypeKind::REF;
+        if (!signal_from_reference &&
+            !time_series_schema_equivalent(registry.dereference(source_schema),
                                            registry.dereference(&requested_schema)))
         {
             throw std::invalid_argument(

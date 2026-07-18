@@ -64,7 +64,7 @@ uv build --wheel --python 3.12 --out-dir "$wheel_dir"
 uv venv --python 3.14 "$test_env"
 uv pip install --python "$test_env/bin/python" \
   "$wheel_dir"/*.whl "pytest>=8" "frozendict>=2.4" "tornado>=6.5" \
-  trove-classifiers
+  "polars>=1.32" trove-classifiers
 "$test_env/bin/python" -m pytest python/tests -q -m "not wip"
 ```
 
@@ -74,6 +74,19 @@ local Linux VM before reporting completion. Use the Ubuntu/OrbStack workflow in
 `docs/source/developer_guide/debugging.rst`; add ASan when lifetime or memory
 safety is involved. macOS is the normal local gate. Windows remains a
 best-effort CI platform, but portable code should still be maintained.
+
+The x86_64 OrbStack VM on Apple Silicon does not expose AVX/AVX2. Standard
+Polars warns about the missing CPU features and then segfaults inside
+`_polars_runtime` during ordinary `DataFrame` construction. This is a VM
+dependency issue, not an hgraph failure. Always install the compatibility
+runtime before running the Python suite in that VM:
+
+```sh
+uv pip install --python "$test_env/bin/python" "polars[rtcompat]>=1.32"
+```
+
+Do not retry the full suite with standard Polars after seeing its missing-CPU-
+features warning; switch to `rtcompat` immediately.
 
 GitHub CI runs after a push and is not a substitute for these local gates. The
 user monitors post-push CI and will report platform-specific failures. Do not

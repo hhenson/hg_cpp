@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <memory>
 #include <stdexcept>
@@ -105,13 +106,13 @@ namespace hgraph
         {
             NodePtr     source{};
             TSInputView input{};
+            Int         request_id{0};
             bool        live{false};
         };
 
         struct RequestInputCaptureContext
         {
             std::string path{};
-            Int         request_id{0};
             std::size_t storage_offset{0};
         };
 
@@ -208,12 +209,10 @@ namespace hgraph
 
         [[nodiscard]] const RequestInputCaptureContext &register_request_input_capture_context(
             std::string path,
-            Int request_id,
             std::size_t storage_offset)
         {
             auto context = std::make_unique<RequestInputCaptureContext>(RequestInputCaptureContext{
                 .path           = std::move(path),
-                .request_id     = request_id,
                 .storage_offset = storage_offset,
             });
             const auto *result = context.get();
@@ -401,9 +400,14 @@ namespace hgraph
             auto bundle   = input.as_bundle();
             storage.input = bundle.at(0);
             auto requests = bundle.at(1);
+            auto request_id = bundle.at(2);
             if (!requests.bound())
             {
                 throw std::logic_error("request input capture requires a bound requests source");
+            }
+            if (!request_id.valid())
+            {
+                throw std::logic_error("request input capture requires a valid runtime request id");
             }
 
             NodeView source = requests.bound_output().owner_node();
@@ -412,21 +416,34 @@ namespace hgraph
                 throw std::logic_error("request input capture is not bound to a request input source");
             }
             storage.source = source.pointer();
+            storage.request_id = request_id.value().checked_as<Int>();
         }
 
         /**
-         * Request stubs (subscription keys, request/reply requests) are the
-         * sanctioned NEXT-cycle forwarders: their pairing with the service
-         * source is deliberately rank-free (no rank dependency at wiring), so
-         * the temporal break here — rather than a wiring edge — is what allows
-         * a client's request to derive from the service's own response.
-         * Capture during ``start`` schedules for the current engine time so
-         * the first cycle publishes. (Shared-output relays are the opposite:
+         * Request stubs (subscription keys, request/reply requests) are
+         * NEXT-cycle forwarders. Wiring rank places the first sending client
+         * before the source and later clients after it when they have work at
+         * the same engine time; this function provides the temporal break by
+         * scheduling newly captured work later.
+         * Root capture during ``start`` can schedule for the current engine
+         * time because evaluation has not begun. A dynamically started nested
+         * capture schedules the next cycle because the outer source rank may
+         * already have passed. (Shared-output relays are the opposite:
          * rank-correct and same-cycle — see shared_output_node.cpp.)
          */
-        [[nodiscard]] DateTime request_stub_forward_time(DateTime evaluation_time, bool start_phase)
+        [[nodiscard]] DateTime request_stub_forward_time(
+            const NodeView &view,
+            DateTime evaluation_time,
+            bool start_phase)
         {
-            return start_phase ? evaluation_time : evaluation_time + MIN_TD;
+            // A nested graph can start while its parent is already being
+            // evaluated. The outer transport source may therefore have passed
+            // its rank for this engine time; schedule the hand-off for the
+            // next cycle. Root graph start runs before evaluation begins and
+            // can still publish at the current engine time.
+            return start_phase && !view.graph().is_nested()
+                       ? evaluation_time
+                       : evaluation_time + MIN_TD;
         }
 
         void apply_pending_subscription_key_changes(
@@ -572,7 +589,8 @@ namespace hgraph
             initialize_subscription_capture(view, evaluation_time, storage);
             auto key    = storage.input.borrowed_ref(evaluation_time);
             auto source = NodeView{storage.source}.as<SubscriptionKeySourceView>();
-            const DateTime schedule_time = request_stub_forward_time(evaluation_time, start_phase);
+            const DateTime schedule_time = request_stub_forward_time(
+                view, evaluation_time, start_phase);
             record_subscription_key(source, storage, key, schedule_time);
         }
 
@@ -586,18 +604,19 @@ namespace hgraph
             initialize_request_capture(view, evaluation_time, storage);
             auto request = storage.input.borrowed_ref(evaluation_time);
             auto source  = NodeView{storage.source}.as<RequestInputSourceView>();
-            const DateTime schedule_time = request_stub_forward_time(evaluation_time, start_phase);
+            const DateTime schedule_time = request_stub_forward_time(
+                view, evaluation_time, start_phase);
 
             if (request.valid())
             {
-                source.set(context.request_id, capture_delta(request), schedule_time);
+                source.set(storage.request_id, capture_delta(request), schedule_time);
                 storage.live = true;
                 return;
             }
 
             if (storage.live)
             {
-                source.remove(context.request_id, schedule_time);
+                source.remove(storage.request_id, schedule_time);
                 storage.live = false;
             }
         }
@@ -655,7 +674,7 @@ namespace hgraph
 
             initialize_request_capture(view, evaluation_time, storage);
             auto source = NodeView{storage.source}.as<RequestInputSourceView>();
-            source.remove(context->request_id, evaluation_time + MIN_TD);
+            source.remove(storage.request_id, evaluation_time + MIN_TD);
             storage.live   = false;
             storage.source = NodePtr{};
             storage.input  = TSInputView{};
@@ -673,6 +692,29 @@ namespace hgraph
             return path;
         }
     }  // namespace
+
+    NodeBuilder make_request_id_source_node()
+    {
+        static std::atomic<Int> next_request_id{0};
+
+        NodeTypeMetaData schema;
+        schema.display_name  = "request_id_source";
+        schema.output_schema = TypeRegistry::instance().ts(scalar_descriptor<Int>::value_meta());
+        schema.node_kind     = NodeKind::PullSource;
+
+        NodeCallbacks callbacks;
+        callbacks.start = [](const NodeView &view, DateTime evaluation_time) {
+            const Int request_id = next_request_id.fetch_add(1, std::memory_order_relaxed) + 1;
+            auto mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
+            if (!mutation.move_value_from(Value{request_id}))
+            {
+                throw std::logic_error("request id source failed to publish its id");
+            }
+        };
+        NodeBuilder builder = NodeBuilder::native(std::move(schema), std::move(callbacks));
+        builder.label("request_id_source");
+        return builder;
+    }
 
     NodeBuilder make_subscription_key_source_node(std::string path, const ValueTypeMetaData &key_schema)
     {
@@ -778,8 +820,7 @@ namespace hgraph
 
     NodeBuilder make_request_input_capture_node(
         std::string path,
-        const TSValueTypeMetaData &request_schema,
-        Int request_id)
+        const TSValueTypeMetaData &request_schema)
     {
         path = request_input_path(std::move(path));
 
@@ -792,9 +833,10 @@ namespace hgraph
         descriptor.schema.input_schema = registry.un_named_tsb({
             {"request", &request_schema},
             {"requests", requests_schema},
+            {"request_id", registry.ts(request_id_meta)},
         });
         descriptor.schema.node_kind     = NodeKind::Sink;
-        descriptor.schema.active_inputs = std::vector<std::size_t>{0};
+        descriptor.schema.active_inputs = std::vector<std::size_t>{0, 2};
         descriptor.schema.valid_inputs  = std::vector<std::size_t>{};
 
         const std::array fields{NodeStorageField{
@@ -804,7 +846,7 @@ namespace hgraph
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
         const auto *context = &register_request_input_capture_context(
-            path, request_id, descriptor.storage_plan->component(request_input_capture_storage_field).offset);
+            path, descriptor.storage_plan->component(request_input_capture_storage_field).offset);
 
         descriptor.callbacks.start = [context](const NodeView &view, DateTime evaluation_time) {
             capture_request_input(*context, view, evaluation_time, true);

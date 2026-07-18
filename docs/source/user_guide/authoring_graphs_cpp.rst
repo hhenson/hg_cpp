@@ -853,7 +853,7 @@ verb**. How the flavours (and the adaptor kinds of the next section) differ:
    * - **Request/reply service**
      - ``request_schema`` + ``response_schema``
      - ``wire<S>(w, request)``
-     - its **own** reply (next cycle)
+     - its **own** reply (after request and response cycle boundaries)
      - ``TSD<Int, request_schema>`` keyed by client id in; ``TSD<Int, response_schema>`` keyed by the same id out
    * - **Adaptor**
      - ``: adaptor::interface`` + ``input_schema`` / ``output_schema``
@@ -1010,13 +1010,16 @@ so its reply is erased:
        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
        {
            service::register_request_reply_service<AddOneService, AddOneImplNode>(w);
-           return wire<AddOneService>(w, request);      // this client's own reply, next cycle
+           return wire<AddOneService>(w, request);      // this client's own delayed reply
        }
    };
 
 Two clients of the same service are two independent request-dictionary
 entries; the implementation sees both requests in one cumulative delta and
-each client receives only its own reply.
+each client receives only its own reply. Request capture advances one engine
+cycle and response publication crosses a second, outer-graph feedback edge;
+the observable sequence for one request is therefore
+``[None, None, response]``, matching Python.
 
 Paths and other service mechanics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

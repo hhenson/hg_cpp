@@ -179,6 +179,15 @@ def test_sample():
     ]
 
 
+def test_sample_observes_the_selected_reference_branch():
+    @graph
+    def g(ts: TS[int]) -> TS[int]:
+        zero, _ = if_(ts == 0, ts)
+        return sample(zero, 1)
+
+    assert eval_node(g, [3, 2, 1, 0]) == [None, None, None, 1]
+
+
 def test_lag_tick():
     @graph
     def g(ts: TS[int], delay: int) -> TS[int]:

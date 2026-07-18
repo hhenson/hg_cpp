@@ -333,6 +333,7 @@ namespace hgraph
         void emit_edges(const WiringPortRef                                             &source,
                         const std::vector<std::size_t>                                 &target_path,
                         const std::unordered_map<const WiringInstance *, std::size_t>   &index_of,
+                        const std::unordered_map<const WiringInstance *, std::size_t>   *external_sources,
                         GraphBuilder                                                   &graph_builder,
                         std::size_t                                                     target_node,
                         std::vector<NestedGraphInputBinding>                           *boundary_bindings,
@@ -340,6 +341,18 @@ namespace hgraph
         {
             if (source.is_peered_source())
             {
+                if (external_sources != nullptr)
+                {
+                    const auto external = external_sources->find(source.peered_node());
+                    if (external != external_sources->end())
+                    {
+                        boundary_bindings->push_back(NestedGraphInputBinding{
+                            .source_path = {external->second},
+                            .target      = NestedGraphEndpoint{.node = target_node, .path = target_path},
+                        });
+                        return;
+                    }
+                }
                 const auto it = index_of.find(source.peered_node());
                 if (it == index_of.end())
                 {
@@ -395,8 +408,8 @@ namespace hgraph
             {
                 std::vector<std::size_t> child_target_path = target_path;
                 child_target_path.push_back(index);
-                emit_edges(children[index], child_target_path, index_of, graph_builder, target_node,
-                           boundary_bindings, captures);
+                emit_edges(children[index], child_target_path, index_of, external_sources,
+                           graph_builder, target_node, boundary_bindings, captures);
             }
         }
 
@@ -412,11 +425,18 @@ namespace hgraph
         [[nodiscard]] RankedGraphBuild build_ranked_graph(
             const std::deque<WiringInstance>     &instances,
             std::vector<NestedGraphInputBinding> *boundary_bindings,
-            OuterCaptureCollector                *captures = nullptr)
+            OuterCaptureCollector                *captures = nullptr,
+            const std::unordered_map<const WiringInstance *, std::size_t> *external_sources = nullptr)
         {
             std::vector<const WiringInstance *> all;
             all.reserve(instances.size());
-            for (const auto &instance : instances) { all.push_back(&instance); }
+            for (const auto &instance : instances)
+            {
+                if (external_sources == nullptr || !external_sources->contains(&instance))
+                {
+                    all.push_back(&instance);
+                }
+            }
             std::unordered_set<const WiringInstance *> owned{all.begin(), all.end()};
 
             std::unordered_map<const WiringInstance *, std::size_t>                         indegree;
@@ -437,7 +457,7 @@ namespace hgraph
                 }
                 for (const WiringInstance *producer : instance->rank_dependencies)
                 {
-                    if (producer == nullptr) { continue; }
+                    if (producer == nullptr || !owned.contains(producer)) { continue; }
                     ++indegree[instance];
                     consumers[producer].push_back(instance);
                 }
@@ -548,8 +568,8 @@ namespace hgraph
                     const WiringInputRef &input = instance->inputs[input_index];
                     std::vector<std::size_t> target_path =
                         input.target_path.empty() ? std::vector<std::size_t>{input_index} : input.target_path;
-                    emit_edges(input.source, target_path, build.index_of, build.graph_builder, i,
-                               boundary_bindings, captures);
+                    emit_edges(input.source, target_path, build.index_of, external_sources,
+                               build.graph_builder, i, boundary_bindings, captures);
                 }
             }
             return build;
@@ -810,6 +830,7 @@ namespace hgraph
         builder.scalars(std::move(scalars));   // record the scalar configuration on the build artifact
 
         WiringInstance &instance = impl_->instances.emplace_back();
+        instance.definition      = def;
         instance.builder         = std::move(builder);
         instance.inputs.assign(inputs.begin(), inputs.end());
         if (interns) { impl_->interned.emplace(std::move(key), &instance); }
@@ -832,11 +853,10 @@ namespace hgraph
                                           std::span<const WiringInputRef> inputs,
                                           Value scalars)
     {
-        static_cast<void>(def);
-
         builder.scalars(std::move(scalars));
 
         WiringInstance &instance = impl_->instances.emplace_back();
+        instance.definition      = def;
         instance.builder         = std::move(builder);
         instance.inputs.assign(inputs.begin(), inputs.end());
 
@@ -1130,16 +1150,11 @@ namespace hgraph
     }
 
     WiringPortRef Wiring::add_node(std::type_index def, const WiringNodeSchema &schema,
-                                   std::span<const WiringPortRef> inputs, Value scalars,
+                                   std::span<const WiringInputRef> inputs, Value scalars,
                                    std::function<NodeBuilder()> make_builder)
     {
-        std::vector<WiringInputRef> input_refs;
-        input_refs.reserve(inputs.size());
-        for (const WiringPortRef &input : inputs) { input_refs.push_back(WiringInputRef{.source = input}); }
-
         const bool interns = schema.output != nullptr;
-        InstanceKey key = make_key(def, schema,
-                                   std::span<const WiringInputRef>{input_refs.data(), input_refs.size()}, scalars);
+        InstanceKey key = make_key(def, schema, inputs, scalars);
         if (interns)
         {
             if (auto it = impl_->interned.find(key); it != impl_->interned.end())
@@ -1153,11 +1168,24 @@ namespace hgraph
         builder.scalars(std::move(scalars));
 
         WiringInstance &instance = impl_->instances.emplace_back();
+        instance.definition      = def;
         instance.builder         = std::move(builder);
-        instance.inputs          = std::move(input_refs);
+        instance.inputs.assign(inputs.begin(), inputs.end());
         if (interns) { impl_->interned.emplace(std::move(key), &instance); }
 
         return WiringPortRef::peered_source(&instance, {}, output_schema_of(instance));
+    }
+
+    WiringPortRef Wiring::add_node(std::type_index def, const WiringNodeSchema &schema,
+                                   std::span<const WiringPortRef> inputs, Value scalars,
+                                   std::function<NodeBuilder()> make_builder)
+    {
+        std::vector<WiringInputRef> input_refs;
+        input_refs.reserve(inputs.size());
+        for (const WiringPortRef &input : inputs) { input_refs.push_back(WiringInputRef{.source = input}); }
+        return add_node(def, schema,
+                        std::span<const WiringInputRef>{input_refs.data(), input_refs.size()},
+                        std::move(scalars), std::move(make_builder));
     }
 
     const TSValueTypeMetaData *Wiring::activate_error_capture(const WiringInstance *node,
@@ -1200,6 +1228,7 @@ namespace hgraph
 
     void Wiring::apply_service_rank_dependencies()
     {
+        std::unordered_set<std::string> ranked_senders;
         for (const auto &client : impl_->service_client_ranks)
         {
             auto anchor_it = impl_->service_rank_anchors.find(client.path);
@@ -1215,9 +1244,13 @@ namespace hgraph
             {
                 add_rank_dependency(client.node, anchor);
             }
-            else
+            else if (ranked_senders.insert(client.path).second)
             {
                 add_rank_dependency(anchor, client.node);
+            }
+            else
+            {
+                add_rank_dependency(client.node, anchor);
             }
         }
     }
@@ -1258,14 +1291,6 @@ namespace hgraph
             throw std::logic_error(
                 "Wiring::finish_subgraph encountered an unterminated service/adaptor implementation scope");
         }
-        for (const auto &[path, kind] : impl_->client_service_paths)
-        {
-            if (!impl_->built_service_paths.contains(path))
-            {
-                throw std::invalid_argument("missing implementation for " + kind + " '" + path + "'");
-            }
-        }
-
         apply_service_rank_dependencies();
         CompiledSubGraph compiled;
         compiled.input_schemas = std::move(input_schemas);
@@ -1274,7 +1299,78 @@ namespace hgraph
             .base_index = compiled.input_schemas.size(),
             .captured   = std::move(impl_->captured_inputs),
         };
-        RankedGraphBuild build = build_ranked_graph(impl_->instances, &compiled.input_bindings, &captures);
+
+        struct ExternalServiceEndpoint
+        {
+            std::string_view       path{};
+            WiringPortRef::ArgTag arg_tag{WiringPortRef::ArgTag::None};
+        };
+        const auto endpoint_for = [](std::string_view label) -> std::optional<ExternalServiceEndpoint> {
+            constexpr std::array prefixes{
+                std::pair{std::string_view{"shared_output_source:"}, WiringPortRef::ArgTag::PassThrough},
+                std::pair{std::string_view{"subscription_key_source:"}, WiringPortRef::ArgTag::Passive},
+                std::pair{std::string_view{"request_input_source:"}, WiringPortRef::ArgTag::Passive},
+            };
+            for (const auto &[prefix, arg_tag] : prefixes)
+            {
+                if (label.starts_with(prefix))
+                {
+                    return ExternalServiceEndpoint{label.substr(prefix.size()), arg_tag};
+                }
+            }
+            return std::nullopt;
+        };
+        const auto endpoint_belongs_to = [](std::string_view endpoint, std::string_view service_path) {
+            return endpoint == service_path ||
+                   (endpoint.size() > service_path.size() && endpoint.starts_with(service_path) &&
+                    endpoint[service_path.size()] == '/');
+        };
+
+        std::vector<const WiringInstance *> external_instances;
+        for (const auto &[service_path, service_kind] : impl_->client_service_paths)
+        {
+            if (impl_->built_service_paths.contains(service_path)) { continue; }
+
+            bool found_endpoint = false;
+            for (const WiringInstance &instance : impl_->instances)
+            {
+                const auto endpoint = endpoint_for(instance.builder.label());
+                if (!endpoint.has_value() || !endpoint_belongs_to(endpoint->path, service_path)) { continue; }
+
+                found_endpoint = true;
+                if (std::ranges::find(external_instances, &instance) != external_instances.end()) { continue; }
+                const auto *source_schema = output_schema_of(instance);
+                if (source_schema == nullptr)
+                {
+                    throw std::logic_error("external service transport source has no output schema");
+                }
+                compiled.external_service_inputs.push_back(NestedServiceInput{
+                    .service_path  = service_path,
+                    .service_kind  = service_kind,
+                    .definition    = instance.definition,
+                    .builder       = instance.builder,
+                    .source_schema = source_schema,
+                    .arg_tag       = endpoint->arg_tag,
+                });
+                external_instances.push_back(&instance);
+            }
+            if (!found_endpoint)
+            {
+                throw std::invalid_argument(
+                    "nested graph cannot externalize " + service_kind + " '" + service_path +
+                    "': no supported service transport endpoint was wired");
+            }
+        }
+
+        std::unordered_map<const WiringInstance *, std::size_t> external_sources;
+        for (std::size_t index = 0; index < external_instances.size(); ++index)
+        {
+            external_sources.emplace(
+                external_instances[index], captures.base_index + captures.captured.size() + index);
+        }
+
+        RankedGraphBuild build = build_ranked_graph(
+            impl_->instances, &compiled.input_bindings, &captures, &external_sources);
         validate_same_cycle_pairs(build.index_of);
         // GraphBuilder's default construction honours an active top-level
         // GlobalContext. A compiled child must instead share its root graph's
@@ -1307,26 +1403,38 @@ namespace hgraph
             }
             else if (output->is_peered_source())
             {
-                if (output->peered_output_kind() != GraphEdgeSourceKind::Output)
-                {
-                    throw std::invalid_argument(
-                        "Wiring::finish_subgraph: error/recordable-state outputs cannot be a sub-graph output");
-                }
-                const auto it = index_of.find(output->peered_node());
-                if (it == index_of.end())
+                const auto external = external_sources.find(output->peered_node());
+                if (external != external_sources.end())
                 {
                     compiled.output_binding = NestedGraphOutputBinding{
                         .kind = NestedGraphOutputBinding::Kind::ParentInput,
-                        .parent_source_path = {captures.base_index + captures.index_for(*output)},
+                        .parent_source_path = {external->second},
                     };
                     compiled.output_schema = output->schema;
                 }
                 else
                 {
-                    compiled.output_binding = NestedGraphOutputBinding{
-                        .source = NestedGraphEndpoint{.node = it->second, .path = output->peered_path()},
-                    };
-                    compiled.output_schema = output->schema;
+                    if (output->peered_output_kind() != GraphEdgeSourceKind::Output)
+                    {
+                        throw std::invalid_argument(
+                            "Wiring::finish_subgraph: error/recordable-state outputs cannot be a sub-graph output");
+                    }
+                    const auto it = index_of.find(output->peered_node());
+                    if (it == index_of.end())
+                    {
+                        compiled.output_binding = NestedGraphOutputBinding{
+                            .kind = NestedGraphOutputBinding::Kind::ParentInput,
+                            .parent_source_path = {captures.base_index + captures.index_for(*output)},
+                        };
+                        compiled.output_schema = output->schema;
+                    }
+                    else
+                    {
+                        compiled.output_binding = NestedGraphOutputBinding{
+                            .source = NestedGraphEndpoint{.node = it->second, .path = output->peered_path()},
+                        };
+                        compiled.output_schema = output->schema;
+                    }
                 }
             }
             else
@@ -1342,6 +1450,10 @@ namespace hgraph
             compiled.input_schemas.push_back(outer.schema);
         }
         compiled.captured_inputs = std::move(captures.captured);
+        for (const NestedServiceInput &input : compiled.external_service_inputs)
+        {
+            compiled.input_schemas.push_back(input.source_schema);
+        }
 
         // Wiring-time GlobalState entries cannot be carried by a sub-graph:
         // nested graphs delegate global state to the root graph at runtime, so

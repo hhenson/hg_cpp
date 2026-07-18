@@ -8,6 +8,9 @@
 
 namespace hgraph
 {
+    /** Build a source that allocates one process-unique request id per runtime node instance. */
+    [[nodiscard]] HGRAPH_EXPORT NodeBuilder make_request_id_source_node();
+
     /**
      * Build a source node that owns a service subscription key set output.
      *
@@ -63,8 +66,7 @@ namespace hgraph
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder make_request_input_capture_node(
         std::string path,
-        const TSValueTypeMetaData &request_schema,
-        Int request_id);
+        const TSValueTypeMetaData &request_schema);
 }  // namespace hgraph
 
 #endif  // HGRAPH_RUNTIME_SERVICE_NODE_H

@@ -53,7 +53,7 @@ source/capture pair** — applied with different payloads:
 - **Scheduling matrix** (see *Lifecycle Teardown* in :doc:`architecture` for
   the invariant statement):
 
-  - **Shared-output relays** (reference outputs, service responses, adaptor
+  - **Shared-output relays** (reference and subscription outputs, adaptor
     ``from_graph``/``to_graph``, contexts) are **rank-correct and
     same-cycle**: pairs are declared with ``Wiring::add_same_cycle_pair``
     (source rank-constrained after every capture); ``Wiring::finish`` re-ranks
@@ -66,8 +66,12 @@ source/capture pair** — applied with different payloads:
     **next cycle** by design: the pairing is rank-free (no rank dependency),
     and the capture schedules the service source for
     ``evaluation_time + MIN_TD`` (current time during ``start``). The temporal
-    break replaces a wiring edge, so a client's request may derive from the
-    service's own response — the same one-cycle rule as ``feedback``.
+    request mutation does not run the implementation in the capture cycle.
+  - **Request/reply responses** cross an explicit feedback source/sink pair in
+    the graph that owns the implementation, then publish through the ordinary
+    same-cycle shared-output relay. Request/reply clients are omitted from
+    indirect service ranking, so recursive request/reply calls are legal. No
+    nested client or higher-order operator constructs this feedback path.
 - **Lifecycle:** the source clears its captured state on ``stop``. A restarted
   graph must republish through capture before the source can produce a live
   shared output.
@@ -107,7 +111,10 @@ The per-flavour payloads:
   before the source emits, so the final request delta is **cumulative**
   (``make_request_input_source_node`` / ``make_request_input_capture_node``;
   proven by "request/reply source emits cumulative client requests" in
-  ``test_service_wiring.cpp``).
+  ``test_service_wiring.cpp``). The implementation output is captured by an
+  outer-graph feedback sink and replayed on the following cycle before the
+  keyed shared response is published. A direct request therefore has Python's
+  observable sequence ``[None, None, response]``.
 
 Related decision recorded with this layer: real-time wall-clock scheduler
 alarms use the normal graph schedule queue — ``NodeScheduler(...,
@@ -467,9 +474,9 @@ second implementation for the same service kind + path throws
 **Semantics proven by tests** (``test_service_wiring.cpp``): a reference client
 reads the implementation output by reference (no copy); paths keep shared
 outputs separate; a subscription client's keys reach the implementation on the
-next cycle and the response flows back keyed; request/reply replies are keyed
-by the client's request id; two clients' requests reach the implementation as
-one cumulative delta.
+next cycle and the response flows back keyed; request/reply replies cross the
+outer feedback edge and remain keyed by the client's request id; two clients'
+requests reach the implementation as one cumulative delta.
 
 
 How a client expression lowers

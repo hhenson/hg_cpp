@@ -1,3 +1,5 @@
+from typing import Type
+
 import pytest
 
 import hgraph as hg
@@ -79,8 +81,8 @@ def test_specialized_numeric_request_reply_services_use_native_exchange():
         hg.register_service("adjust", float_adjust_impl)
         return float_adjust(value, path="adjust")
 
-    assert eval_node(integer_client, [1], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD) == [None, 2]
-    assert eval_node(float_client, [1.5], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD) == [None, 2.0]
+    assert eval_node(integer_client, [1], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD) == [None, None, 2]
+    assert eval_node(float_client, [1.5], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD) == [None, None, 2.0]
 
 
 def test_request_reply_accepts_positional_path_and_multiple_requests():
@@ -100,7 +102,7 @@ def test_request_reply_accepts_positional_path_and_multiple_requests():
 
     assert eval_node(
         client, [1], [2], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD,
-    ) == [None, 3]
+    ) == [None, None, 3]
 
 
 def test_replyless_request_reply_service_captures_requests():
@@ -127,6 +129,126 @@ def test_replyless_request_reply_service_captures_requests():
         client, [1, None, 2], __end_time__=hg.MIN_ST + 5 * hg.MIN_TD,
     ) == [1, None, 2]
     assert seen == [1, 2]
+
+
+@pytest.mark.parametrize("higher_order", [hg.map_, hg.mesh_], ids=["map", "mesh"])
+def test_higher_order_child_calls_outer_request_reply_service(higher_order):
+    @hg.request_reply_service
+    def add_one(path: str, value: TS[int]) -> TS[int]: ...
+
+    @hg.service_impl(interfaces=add_one)
+    def add_one_impl(values: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
+        return hg.map_(lambda value: value + 1, values)
+
+    @graph
+    def mapped(value: TS[int]) -> TS[int]:
+        return add_one("one_path", value) + 1
+
+    @graph
+    def client(values: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
+        hg.register_service("one_path", add_one_impl)
+        return higher_order(mapped, values)
+
+    assert eval_node(
+        client,
+        [{1: 10, 2: 20}],
+        __end_time__=hg.MIN_ST + 6 * hg.MIN_TD,
+    ) == [{}, None, {1: 12, 2: 22}]
+
+
+def test_mapped_request_reply_service_can_call_itself_recursively():
+    @hg.request_reply_service
+    def add_one(path: str, value: TS[int]) -> TS[int]: ...
+
+    @graph
+    def add_one_item(value: TS[int]) -> TS[int]:
+        zero, non_zero = hg.if_(value == 0, value)
+        return hg.merge(
+            hg.sample(zero, 1),
+            add_one("recursive", non_zero - 1) + 1,
+        )
+
+    @hg.service_impl(interfaces=add_one)
+    def add_one_impl(values: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
+        return hg.map_(add_one_item, values)
+
+    @graph
+    def client(value: TS[int]) -> TS[int]:
+        hg.register_service("recursive", add_one_impl)
+        return add_one("recursive", value)
+
+    result = eval_node(client, [3])
+    assert result[-1] == 4
+
+
+def test_generic_multi_service_reuses_shared_registration_specialization():
+    @hg.request_reply_service
+    def submit(
+        path: str,
+        ts: TS[hg.KEYABLE_SCALAR],
+        tp: Type[hg.TIME_SERIES_TYPE] = TS[hg.KEYABLE_SCALAR],
+    ) -> hg.TIME_SERIES_TYPE: ...
+
+    @hg.reference_service
+    def receive(path: str) -> hg.TSS[hg.KEYABLE_SCALAR]: ...
+
+    @hg.subscription_service(resolvers={hg.SCALAR_1: str})
+    def subscribe(path: str, ts: TS[hg.KEYABLE_SCALAR]) -> TS[hg.SCALAR_1]: ...
+
+    @hg.service_impl(interfaces=(submit, receive, subscribe))
+    def impl(
+        path: str,
+        tp: Type[hg.KEYABLE_SCALAR] = hg.AUTO_RESOLVE,
+        tp_2: Type[hg.TIME_SERIES_TYPE] = TS[hg.KEYABLE_SCALAR],
+    ):
+        submissions: TSD[tp, TS[tp]] = submit[
+            hg.KEYABLE_SCALAR:tp
+        ].wire_impl_inputs_stub(path).ts
+        submit[hg.KEYABLE_SCALAR:tp].wire_impl_out_stub(path, submissions)
+
+        items = hg.map_(
+            lambda key: hg.format_("{}", key),
+            __keys__=hg.flip(submissions).key_set,
+        )
+        receive[hg.KEYABLE_SCALAR:tp].wire_impl_out_stub(path, items.key_set)
+        subscription_keys = subscribe[
+            hg.KEYABLE_SCALAR:tp
+        ].wire_impl_inputs_stub(path).ts
+        subscribe[hg.KEYABLE_SCALAR:tp].wire_impl_out_stub(
+            path,
+            hg.map_(
+                lambda item: item,
+                __keys__=subscription_keys,
+                item=items,
+            ),
+        )
+
+    @graph
+    def client(
+        ts1: TS[hg.SCALAR],
+        ts2: TS[hg.SCALAR],
+        tp: Type[hg.SCALAR] = hg.AUTO_RESOLVE,
+    ) -> TSD[hg.SCALAR, TS[hg.SCALAR_1]]:
+        hg.register_service("submit", impl)
+        submit("submit", ts1)
+        submit("submit", ts2)
+        return hg.map_(
+            lambda key: subscribe("submit", key),
+            __keys__=receive[hg.KEYABLE_SCALAR:tp]("submit"),
+        )
+
+    assert eval_node(
+        client[hg.SCALAR:int, hg.SCALAR_1:str],
+        [1, None],
+        [None, 2],
+        __end_time__=hg.MIN_ST + 8 * hg.MIN_TD,
+    ) == [None, {}, {1: "1"}, {2: "2"}]
+    assert eval_node(
+        client[hg.SCALAR:str, hg.SCALAR_1:str],
+        ["first", None],
+        [None, "second"],
+        __end_time__=hg.MIN_ST + 8 * hg.MIN_TD,
+    ) == [None, {}, {"first": "first"}, {"second": "second"}]
 
 
 def test_subscription_client_samples_existing_value_when_key_becomes_valid():

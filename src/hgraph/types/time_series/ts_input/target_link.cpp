@@ -519,7 +519,14 @@ namespace hgraph::detail
         }
 
         const bool closed_union_narrowing = is_closed_union_narrowing(schema, output.schema());
-        auto target = schema.kind == TSTypeKind::SIGNAL || closed_union_narrowing
+        const bool signal_from_reference =
+            schema.kind == TSTypeKind::SIGNAL && output.schema() != nullptr &&
+            output.schema()->kind == TSTypeKind::REF;
+        // SIGNAL accepts every concrete time-series shape, but a REF source is
+        // transparent at an input boundary: observe the referenced output's
+        // ticks, not changes to the reference token itself.
+        auto target = (schema.kind == TSTypeKind::SIGNAL && !signal_from_reference) ||
+                              closed_union_narrowing
                           ? output.handle()
                           : output.binding_for(schema);
         if (schema.kind != TSTypeKind::SIGNAL && !closed_union_narrowing &&

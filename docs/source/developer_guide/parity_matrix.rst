@@ -303,13 +303,13 @@ model.
        request/reply services, and late subscription to an existing value all
        execute through the erased C++ service runtime. Matching public C++
        tests cover constrained generics, erased specialization identity,
-       reply-less requests, and sampled late subscriptions. Request/reply
-       forwarding deliberately uses one request cycle followed by same-cycle
-       reply publication, so it is one cycle faster than the old Python
-       executor. Calling a service from inside a compiled ``map_`` or ``mesh_``
-       child still requires a cross-child service endpoint import and remains
-       a nested-boundary task; private Python service-builder layouts are not
-       compatibility targets.
+       reply-less requests, and sampled late subscriptions. Request/reply uses
+       the Python timing model: request capture advances one cycle and reply
+       publication crosses an outer-graph feedback edge before the client sees
+       it. Compiled ``map_`` and ``mesh_`` children import their outer service
+       transport inputs through the nested boundary; request/reply feedback is
+       owned by the outer implementation, not by the child consumer. Private
+       Python service-builder layouts are not compatibility targets.
 
 The 215 upstream ``ts_tests`` tests were also copied mechanically to a
 temporary directory and run against the current bridge under Python 3.12.8.
@@ -529,8 +529,8 @@ Wiring and node-authoring surface
      - Full at a graph boundary
      - Path-aware and generic multi-interface implementations, template and
        erased descriptors, multiple request arguments, reply-less requests,
-       and reference-counted subscriptions. Service calls inside compiled
-       keyed children remain the nested-boundary exception described above.
+       reference-counted subscriptions, Python-compatible request/reply
+       feedback, and service calls inside compiled keyed children.
    * - ``@adaptor`` / service adaptors
      - Full (core and supported families)
      - Source/sink/duplex and per-client keyed service-adaptor exchange are

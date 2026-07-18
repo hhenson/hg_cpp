@@ -106,6 +106,13 @@ namespace hgraph
                               [path, target_meta]() { return make_shared_output_source_node(path, *target_meta); });
         }
 
+        [[nodiscard]] WiringPortRef request_id_source_node(Wiring &w)
+        {
+            return w.add_unique_node(
+                std::type_index(typeid(service::detail::request_id_source_marker)),
+                make_request_id_source_node(), std::span<const WiringPortRef>{}, Value{});
+        }
+
         [[nodiscard]] const WiringInstance *shared_output_capture_node(Wiring &w, std::type_index role,
                                                                        const TSValueTypeMetaData *output_meta,
                                                                        const std::string &path,
@@ -248,7 +255,7 @@ namespace hgraph
         w.register_service_rank_anchor(subs_path, subscriptions.peered_node());
         w.register_service_client_rank(out_path, "subscription service", shared.peered_node(), true);
 
-        // The subscription capture (a rank-free next-cycle forwarder).
+        // The subscription capture schedules the source for the next cycle.
         std::array<WiringPortRef, 2>  sources{key, subscriptions};
         std::array<WiringInputRef, 2> inputs{{
             WiringInputRef{.source = sources[0]},
@@ -368,31 +375,32 @@ namespace hgraph
         const std::string replies_path = base + "/replies";
         w.register_service_client_path(base, "request/reply service");
 
-        const Int request_id = service::detail::next_request_id();
+        WiringPortRef request_id = request_id_source_node(w);
         WiringPortRef requests = request_input_source_node(w, descriptor, request_path);
         w.register_service_rank_anchor(request_path, requests.peered_node());
 
         WiringPortRef adapted_request = graph_wiring_detail::adapt_source_for_input(
             w, descriptor.request_schema, request);
-        std::array<WiringPortRef, 2>  sources{std::move(adapted_request), requests};
-        std::array<WiringInputRef, 2> inputs{{
+        std::array<WiringPortRef, 3>  sources{std::move(adapted_request), requests, request_id};
+        std::array<WiringInputRef, 3> inputs{{
             WiringInputRef{.source = sources[0]},
             WiringInputRef{.source = sources[1], .rank_dependency = false},
+            WiringInputRef{.source = sources[2]},
         }};
         NodeBuilder builder =
-            make_request_input_capture_node(request_path, *descriptor.request_schema, request_id);
+            make_request_input_capture_node(request_path, *descriptor.request_schema);
         builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
             builder.type().schema()->input_schema,
             std::span<const WiringPortRef>{sources.data(), sources.size()}));
-        WiringPortRef capture = w.add_node(
+        static_cast<void>(w.add_node(
             std::type_index(typeid(service::detail::request_input_capture_marker)), std::move(builder),
-            std::span<const WiringInputRef>{inputs.data(), inputs.size()}, Value{request_id});
-        w.register_service_client_rank(request_path, "request/reply service", capture.peered_node(), false);
+            std::span<const WiringInputRef>{inputs.data(), inputs.size()}, Value{}));
+        // Request/reply transport is ordered by its response feedback edge, not
+        // by indirect service dependencies. This permits request/reply cycles.
 
         if (descriptor.response_schema == nullptr) { return {}; }
 
         WiringPortRef replies = reply_output_source_node(w, descriptor, replies_path);
-        w.register_service_client_rank(replies_path, "request/reply service", replies.peered_node(), true);
 
         WiringPortRef dict = replies;
         dict.schema        = TypeRegistry::instance().tsd(scalar_descriptor<Int>::value_meta(),
@@ -401,9 +409,8 @@ namespace hgraph
         dict_arg.kind = WiringArg::Kind::TimeSeries;
         dict_arg.port = dict;
         WiringArg id_arg;
-        id_arg.kind         = WiringArg::Kind::Scalar;
-        id_arg.scalar_value = Value{request_id};
-        id_arg.scalar_meta  = id_arg.scalar_value.schema();
+        id_arg.kind = WiringArg::Kind::TimeSeries;
+        id_arg.port = request_id;
         std::array<WiringArg, 2> item_args{dict_arg, id_arg};
         ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
             "getitem_", std::span<const WiringArg>{item_args.data(), item_args.size()});
@@ -437,9 +444,10 @@ namespace hgraph
         WiringPortRef replies = reply_output_source_node(w, descriptor, replies_path);
         const auto *dict_meta = TypeRegistry::instance().tsd(scalar_descriptor<Int>::value_meta(),
                                                              descriptor.response_schema);
+        output = service::detail::request_reply_response_feedback(w, std::move(output), *dict_meta);
         const WiringInstance *capture = shared_output_capture_node(
             w, std::type_index(typeid(service::detail::request_reply_output_capture_marker)),
-            output.schema != nullptr ? output.schema : dict_meta, replies_path, output, replies);
+            dict_meta, replies_path, output, replies);
         w.register_service_rank_anchor(replies_path, capture);
     }
 
@@ -538,9 +546,11 @@ namespace hgraph
                 WiringPortRef shared = reply_output_source_node(w, descriptor, endpoint);
                 const auto *dict_meta = TypeRegistry::instance().tsd(scalar_descriptor<Int>::value_meta(),
                                                                      descriptor.response_schema);
+                WiringPortRef feedback = service::detail::request_reply_response_feedback(
+                    w, out, *dict_meta);
                 const WiringInstance *capture = shared_output_capture_node(
                     w, std::type_index(typeid(service::detail::request_reply_output_capture_marker)),
-                    out.schema != nullptr ? out.schema : dict_meta, endpoint, out, shared);
+                    dict_meta, endpoint, feedback, shared);
                 w.register_service_rank_anchor(endpoint, capture);
                 return;
             }
@@ -772,7 +782,7 @@ namespace hgraph
         const std::string base          = service_adaptor_base(descriptor, path);
         const std::string request_path  = base + "/from_graph";
         const std::string replies_path  = base + "/to_graph";
-        const Int         request_id    = service::detail::next_request_id();
+        WiringPortRef request_id = request_id_source_node(w);
         w.register_service_client_path(base, "service adaptor");
 
         WiringPortRef requests = keyed_request_input_source_node(
@@ -785,20 +795,21 @@ namespace hgraph
 
         WiringPortRef adapted_input = graph_wiring_detail::adapt_source_for_input(
             w, descriptor.input_schema, in);
-        std::array<WiringPortRef, 2> sources{std::move(adapted_input), requests};
-        std::array<WiringInputRef, 2> inputs{{
+        std::array<WiringPortRef, 3> sources{std::move(adapted_input), requests, request_id};
+        std::array<WiringInputRef, 3> inputs{{
             WiringInputRef{.source = sources[0]},
             WiringInputRef{.source = sources[1], .rank_dependency = false},
+            WiringInputRef{.source = sources[2]},
         }};
         NodeBuilder builder = make_request_input_capture_node(
-            request_path, *descriptor.input_schema, request_id);
+            request_path, *descriptor.input_schema);
         builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
             builder.type().schema()->input_schema,
             std::span<const WiringPortRef>{sources.data(), sources.size()}));
         WiringPortRef capture = w.add_node(
             std::type_index(typeid(service_adaptor::detail::request_input_capture_marker)),
             std::move(builder), std::span<const WiringInputRef>{inputs.data(), inputs.size()},
-            Value{request_id});
+            Value{});
         w.register_service_client_rank(request_path, "service adaptor", capture.peered_node(), false);
         w.register_service_client_rank(replies_path, "service adaptor", replies.peered_node(), true);
 
@@ -809,9 +820,8 @@ namespace hgraph
         dict_arg.kind = WiringArg::Kind::TimeSeries;
         dict_arg.port = dict;
         WiringArg id_arg;
-        id_arg.kind         = WiringArg::Kind::Scalar;
-        id_arg.scalar_value = Value{request_id};
-        id_arg.scalar_meta  = id_arg.scalar_value.schema();
+        id_arg.kind = WiringArg::Kind::TimeSeries;
+        id_arg.port = request_id;
         std::array<WiringArg, 2> item_args{dict_arg, id_arg};
         ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
             "getitem_", std::span<const WiringArg>{item_args.data(), item_args.size()});

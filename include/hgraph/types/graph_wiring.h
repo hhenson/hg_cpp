@@ -635,6 +635,7 @@ namespace hgraph
      */
     struct WiringInstance
     {
+        std::type_index                     definition{typeid(void)};
         NodeBuilder                         builder;
         std::vector<WiringInputRef>          inputs;
         std::vector<const WiringInstance *> rank_dependencies;
@@ -734,8 +735,9 @@ namespace hgraph
          * ``source`` is rank-constrained after the ``capture``, and ``finish``
          * VALIDATES the final order, so the runtime schedules the source for
          * the current evaluation time with no hot-path checks. Request stubs
-         * (subscription/request-reply) must NOT use this — they are the
-         * sanctioned next-cycle forwarders with rank-free pairing.
+         * (subscription/request-reply) do not use this helper: their sources
+         * are scheduled for the next cycle. Same-time work is ordered as the
+         * first sending client, then the source, then later sending clients.
          */
         void add_same_cycle_pair(const WiringInstance *capture, const WiringInstance *source);
 
@@ -807,6 +809,11 @@ namespace hgraph
          * not happen for a deduped instance — e.g. a nested-graph node
          * registering its program-lifetime child-graph context.
          */
+        WiringPortRef add_node(std::type_index def, const WiringNodeSchema &schema,
+                               std::span<const WiringInputRef> inputs, Value scalars,
+                               std::function<NodeBuilder()> make_builder);
+
+        /** Convenience form of the deferred-builder overload for ordinary inputs. */
         WiringPortRef add_node(std::type_index def, const WiringNodeSchema &schema,
                                std::span<const WiringPortRef> inputs, Value scalars,
                                std::function<NodeBuilder()> make_builder);

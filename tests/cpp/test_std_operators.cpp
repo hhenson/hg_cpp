@@ -534,6 +534,19 @@ namespace
         }
     };
 
+    struct SampleIfTrueRouteGraph
+    {
+        static constexpr auto name = "sample_if_true_route_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Bool>> condition, Port<TS<Int>> ts)
+        {
+            auto routed = wire<stdlib::if_, IfIntRefBundle>(w, condition, ts).as<IfIntRefBundle>();
+            auto signal = wire<stdlib::getitem_>(w, routed, Str{"true"}).as<TS<Int>>();
+            auto one = wire<stdlib::const_, TS<Int>>(w, Int{1});
+            return wire<stdlib::sample>(w, signal, one).as<TS<Int>>();
+        }
+    };
+
     struct IfTrueTsdFilterGraph
     {
         static constexpr auto name = "if_true_tsd_filter_graph";
@@ -1625,6 +1638,9 @@ TEST_CASE("std operators: control operators cover variadic booleans merge and se
     CHECK_OUTPUT(eval_node<IfFalseRouteGraph>(values<Bool>(true, true, false, false, true),
                                               values<Int>(1, 2, 3, 4, 5)),
                  values<Int>(none, none, 3, 4, none));
+    CHECK_OUTPUT(eval_node<SampleIfTrueRouteGraph>(values<Bool>(false, false, true, false, true),
+                                                   values<Int>(1, 2, 3, 4, 5)),
+                 values<Int>(none, none, 1, none, 1));
     CHECK_OUTPUT(eval_node<RouteByIndexSlotTwoGraph>(values<Int>(0, 2, none, 1, 2),
                                                      values<Int>(10, 20, 30, 40, 50)),
                  values<Int>(none, 20, 30, none, 50));

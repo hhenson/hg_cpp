@@ -172,7 +172,7 @@ exceptions exist, each declared rather than accidental:
   scheduled then splits by kind — the boundary scheduling matrix:
 
   - **Shared-output relays** (adaptor ``from_graph``/``to_graph``, reference
-    service outputs, service response outputs, context/shared outputs) are
+    and subscription service outputs, context/shared outputs) are
     **rank-correct and same-cycle**: pairs are declared with
     ``Wiring::add_same_cycle_pair``, which rank-constrains the paired source
     *after* every capture; ``Wiring::finish`` re-ranks the whole graph once
@@ -187,9 +187,12 @@ exceptions exist, each declared rather than accidental:
     sanctioned **next-cycle** forwarders: the pairing is rank-free (no rank
     dependency at all), and the capture forwards to the service source at
     ``evaluation_time + MIN_TD`` (current time during ``start``). The temporal
-    break — not a wiring edge — is what allows a client's request to derive
-    from the service's own response without creating a wiring cycle, exactly
-    like ``feedback``.
+    break ensures client mutations never run the implementation in the same
+    engine cycle. Request/reply responses additionally pass through an explicit
+    outer-graph ``feedback`` edge before their shared response source is
+    published. Request/reply clients are therefore excluded from indirect
+    service ranking, permitting recursive and mutually dependent request/reply
+    calls without making this a property of nested-graph consumers.
 
 Anything else pointing backward is a wiring bug.
 

@@ -44,6 +44,63 @@ namespace hgraph::stdlib
 
     namespace higher_order_impl_detail
     {
+        inline void append_external_service_inputs(
+            Wiring &w,
+            std::vector<NestedServiceInput> external_inputs,
+            std::vector<const TSValueTypeMetaData *> &schemas,
+            std::vector<std::uint8_t> &arg_tags,
+            std::vector<WiringPortRef> &ports)
+        {
+            for (NestedServiceInput &input : external_inputs)
+            {
+                w.register_service_client_path(input.service_path, input.service_kind);
+                Value scalars = input.builder.scalars();
+                WiringPortRef source = w.add_node(
+                    input.definition, std::move(input.builder), std::span<const WiringPortRef>{},
+                    std::move(scalars));
+                source.arg_tag = input.arg_tag;
+                schemas.push_back(source.schema);
+                arg_tags.push_back(static_cast<std::uint8_t>(source.arg_tag));
+                ports.push_back(std::move(source));
+            }
+        }
+
+        inline void configure_passive_transport_inputs(
+            NodeTypeMetaData &meta,
+            std::span<const WiringPortRef> inputs)
+        {
+            std::vector<std::size_t> active;
+            active.reserve(inputs.size());
+            bool has_passive = false;
+            for (std::size_t index = 0; index < inputs.size(); ++index)
+            {
+                if (inputs[index].arg_tag == WiringPortRef::ArgTag::Passive)
+                {
+                    has_passive = true;
+                }
+                else
+                {
+                    active.push_back(index);
+                }
+            }
+            if (has_passive) { meta.active_inputs = std::move(active); }
+        }
+
+        [[nodiscard]] inline std::vector<WiringInputRef> higher_order_input_refs(
+            std::span<const WiringPortRef> inputs)
+        {
+            std::vector<WiringInputRef> refs;
+            refs.reserve(inputs.size());
+            for (const WiringPortRef &input : inputs)
+            {
+                refs.push_back(WiringInputRef{
+                    .source = input,
+                    .rank_dependency = input.arg_tag != WiringPortRef::ArgTag::Passive,
+                });
+            }
+            return refs;
+        }
+
         inline void bind_graph_output(ResolutionMap &resolution,
                                       const TSValueTypeMetaData *output,
                                       std::string_view legacy_var = {})
@@ -2303,7 +2360,8 @@ namespace hgraph::stdlib
                                                            std::span<const std::uint8_t> arg_tags,
                                                            const TSValueTypeMetaData *&output_schema,
                                                            std::vector<WiringPortRef> *captured = nullptr,
-                                                           const ValueTypeMetaData *fallback_key_meta = nullptr)
+                                                           const ValueTypeMetaData *fallback_key_meta = nullptr,
+                                                           std::vector<NestedServiceInput> *external_services = nullptr)
         {
             if (!func.valid())
             {
@@ -2385,14 +2443,28 @@ namespace hgraph::stdlib
                         terminal_meta != nullptr ? terminal_meta->output_endpoint_schema : terminal_override;
                     const TSEndpointSchema &terminal_endpoint =
                         !terminal_override.empty() ? terminal_override : terminal_declared;
+                    const auto *terminal_schema = terminal_meta != nullptr
+                                                      ? terminal_meta->output_schema
+                                                      : nullptr;
+                    const bool requires_alternative_binding =
+                        !time_series_schema_equivalent(terminal_schema, out);
+                    if (requires_alternative_binding &&
+                        !time_series_schema_equivalent(
+                            registry.dereference(terminal_schema), registry.dereference(out)))
+                    {
+                        throw std::invalid_argument(
+                            "map_: child terminal schema is incompatible with its declared output");
+                    }
                     // A declared forwarding terminal already owns its link, and a
                     // non-peered terminal has required child endpoint topology
                     // (for example, map_ owns a TSD root whose elements forward).
-                    // Preserve either shape and make the parent map element point
-                    // at the terminal. Only an ordinary/owned terminal can be
-                    // safely re-homed onto the parent element.
-                    if (!terminal_endpoint.empty() &&
-                        (terminal_endpoint.is_peered() || terminal_endpoint.is_non_peered()))
+                    // Preserve either shape, as well as a REF terminal exposed
+                    // through its dereferenced schema, and make the parent map
+                    // element point at the terminal. Only an ordinary/owned
+                    // terminal of the same schema can be safely re-homed.
+                    if (requires_alternative_binding ||
+                        (!terminal_endpoint.empty() &&
+                         (terminal_endpoint.is_peered() || terminal_endpoint.is_non_peered())))
                     {
                         spec.output_binding_mode = MapOutputBindingMode::OutputElementForwardsToChildTerminal;
                     }
@@ -2435,6 +2507,18 @@ namespace hgraph::stdlib
                 }
                 *captured = std::move(compiled.captured_inputs);
             }
+            for (std::size_t i = 0; i < compiled.external_service_inputs.size(); ++i)
+            {
+                spec.args.push_back(MapArgSource{
+                    .kind        = MapArgSourceKind::OuterInput,
+                    .outer_index = ts_schemas.size() +
+                                   (captured != nullptr ? captured->size() : compiled.captured_inputs.size()) + i,
+                });
+            }
+            if (external_services != nullptr)
+            {
+                *external_services = std::move(compiled.external_service_inputs);
+            }
             return spec;
         }
 
@@ -2475,7 +2559,9 @@ namespace hgraph::stdlib
             return fallback_on_exception<std::optional<const TSValueTypeMetaData *>>(std::nullopt, [&] {
                 const TSValueTypeMetaData *output_schema = nullptr;
                 std::vector<WiringPortRef> captured;
-                (void)compile_map_child(func, ts_schemas, arg_tags, output_schema, &captured, fallback_key_meta);
+                std::vector<NestedServiceInput> external_services;
+                (void)compile_map_child(func, ts_schemas, arg_tags, output_schema, &captured,
+                                        fallback_key_meta, &external_services);
                 if (output_schema == nullptr) { return std::optional<const TSValueTypeMetaData *>{}; }
                 return std::optional<const TSValueTypeMetaData *>{output_schema};
             });
@@ -2490,8 +2576,9 @@ namespace hgraph::stdlib
             return fallback_on_exception<std::optional<bool>>(std::nullopt, [&] {
                 const TSValueTypeMetaData *output_schema = nullptr;
                 std::vector<WiringPortRef> captured;
+                std::vector<NestedServiceInput> external_services;
                 (void)compile_map_child(func, ts_schemas, arg_tags, output_schema, &captured,
-                                        fallback_key_meta);
+                                        fallback_key_meta, &external_services);
                 return std::optional<bool>{output_schema != nullptr};
             });
         }
@@ -2531,9 +2618,10 @@ namespace hgraph::stdlib
                 {ts_schemas.data(), ts_schemas.size()}, {arg_tags.data(), arg_tags.size()},
                 explicit_key_meta);
             std::vector<WiringPortRef> captured;
+            std::vector<NestedServiceInput> external_services;
             MapNodeSpec spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
                                                  {arg_tags.data(), arg_tags.size()}, output_schema, &captured,
-                                                 explicit_key_meta);
+                                                 explicit_key_meta, &external_services);
             if ((output_schema != nullptr) != output_required)
             {
                 throw std::invalid_argument(output_required
@@ -2549,6 +2637,8 @@ namespace hgraph::stdlib
                 arg_tags.push_back(static_cast<std::uint8_t>(WiringPortRef::ArgTag::PassThrough));
                 ordered.push_back(std::move(outer));
             }
+            append_external_service_inputs(
+                w, std::move(external_services), ts_schemas, arg_tags, ordered);
 
             // The lifecycle key set: an explicit ``__keys__`` when supplied,
             // else derived from the multiplexed dicts — ``keys_(tsd)`` for
@@ -2616,15 +2706,19 @@ namespace hgraph::stdlib
             // operator parameter), MapCallConfig is built here, so register
             // the scalar at the point of use.
             (void)scalar_descriptor<MapCallConfig>::value_meta();
+            const auto input_refs = higher_order_input_refs(
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()});
             WiringPortRef out = w.add_node(
                 std::type_index(typeid(map_node_tag)), node_schema,
-                std::span<const WiringPortRef>{inputs.data(), inputs.size()},
+                std::span<const WiringInputRef>{input_refs.data(), input_refs.size()},
                 Value{MapCallConfig{func.value(), Str{key_arg}, Str{}, arg_tags}},
                 [&]() {
                     NodeTypeMetaData meta;
                     meta.display_name  = "map_";
                     meta.input_schema  = input_schema;
                     meta.output_schema = output_schema;
+                    configure_passive_transport_inputs(
+                        meta, std::span<const WiringPortRef>{inputs.data(), inputs.size()});
 
                     NodeBuilder builder = map_node(std::move(meta), std::move(spec));
                     builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
@@ -2672,15 +2766,12 @@ namespace hgraph::stdlib
                 arg_tags.push_back(static_cast<std::uint8_t>(port.arg_tag));
             }
 
-            // The element type is statically known from the function signature; push it
-            // as the mesh scope so a mesh_(func)[k] in the body resolves to this mesh.
+            // A declared element type enables mesh self-reference during child
+            // compilation. An erased function may instead become concrete only
+            // after wiring (for example, a generic service client); those
+            // functions are compiled without a mesh scope and infer the element
+            // from the resulting TSD schema.
             const TSValueTypeMetaData *element_schema = func.value().output_schema();
-            if (element_schema == nullptr)
-            {
-                throw std::invalid_argument(
-                    "mesh_: 'func' must have a statically-known output type (an operator with a "
-                    "type-var output cannot be a mesh function)");
-            }
             const ValueTypeMetaData *explicit_key_meta = nullptr;
             if (keys.has_value())
             {
@@ -2697,13 +2788,28 @@ namespace hgraph::stdlib
             const TSValueTypeMetaData *output_schema = nullptr;
             MapNodeSpec                map_spec;
             std::vector<WiringPortRef> captured;
+            std::vector<NestedServiceInput> external_services;
+            if (element_schema != nullptr)
             {
                 OperatorRegistry::instance().push_mesh_scope(
                     element_schema, classified.key_meta, std::string{mesh_name});
                 auto pop = make_scope_exit([] noexcept { OperatorRegistry::instance().pop_mesh_scope(); });
                 map_spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
                                              {arg_tags.data(), arg_tags.size()}, output_schema, &captured,
-                                             explicit_key_meta);
+                                             explicit_key_meta, &external_services);
+            }
+            else
+            {
+                map_spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
+                                             {arg_tags.data(), arg_tags.size()}, output_schema, &captured,
+                                             explicit_key_meta, &external_services);
+                const auto *inferred = time_series_schema_as<AnyTSD>(output_schema);
+                if (inferred == nullptr)
+                {
+                    throw std::invalid_argument(
+                        "mesh_: 'func' output type could not be inferred during child wiring");
+                }
+                element_schema = inferred->element_ts();
             }
 
             for (WiringPortRef &outer : captured)
@@ -2712,6 +2818,8 @@ namespace hgraph::stdlib
                 arg_tags.push_back(static_cast<std::uint8_t>(WiringPortRef::ArgTag::PassThrough));
                 ordered.push_back(std::move(outer));
             }
+            append_external_service_inputs(
+                w, std::move(external_services), ts_schemas, arg_tags, ordered);
 
             auto &registry = TypeRegistry::instance();
 
@@ -2778,15 +2886,19 @@ namespace hgraph::stdlib
             node_schema.output = output_schema;
 
             (void)scalar_descriptor<MapCallConfig>::value_meta();
+            const auto input_refs = higher_order_input_refs(
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()});
             WiringPortRef out = w.add_node(
                 std::type_index(typeid(mesh_node_tag)), node_schema,
-                std::span<const WiringPortRef>{inputs.data(), inputs.size()},
+                std::span<const WiringInputRef>{input_refs.data(), input_refs.size()},
                 Value{MapCallConfig{func.value(), Str{key_arg}, Str{mesh_name}, arg_tags}},
                 [&]() {
                     NodeTypeMetaData meta;
                     meta.display_name  = "mesh_";
                     meta.input_schema  = input_schema;
                     meta.output_schema = output_schema;
+                    configure_passive_transport_inputs(
+                        meta, std::span<const WiringPortRef>{inputs.data(), inputs.size()});
 
                     NodeBuilder builder = mesh_node(std::move(meta), std::move(spec));
                     builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
@@ -3097,19 +3209,29 @@ namespace hgraph::stdlib
          * ``map_impl_tsd``; lowers to a mesh node via ``wire_mesh``. With no
          * cross-instance ``mesh_(func)[k]`` requests this is observably ``map_``.
          */
-        // mesh output resolution: TSD<K, OUT> where OUT is the function's statically
-        // known output schema. Unlike map_, this does NOT compile the child — a
-        // mesh_(func)[k] in the body needs the mesh scope (only pushed by wire_mesh),
-        // so compiling here would fail. func->output_schema() gives OUT directly.
+        // mesh output resolution: prefer the declared function output because a
+        // mesh_(func)[k] in the body needs the scope established by wire_mesh.
+        // When the output is erased, try the same child inference as map_; that
+        // supports functions which become concrete while wiring (for example a
+        // generic service client). A function using mesh self-reference without
+        // a declared output still fails this probe and remains unresolved.
         inline void resolve_mesh_output(ResolutionMap &resolution, OperatorCallContext context)
         {
             if (resolution.find_ts("__out__") != nullptr) { return; }
             const WiredFn *func = context.scalar_as<WiredFn>("func");
             if (func == nullptr) { return; }
-            const TSValueTypeMetaData *element = func->output_schema();
-            if (element == nullptr) { return; }
             auto ordered = ordered_map_schemas(context, "key");
             if (!ordered.has_value()) { return; }
+            const TSValueTypeMetaData *element = func->output_schema();
+            if (element == nullptr)
+            {
+                const auto inferred = try_resolve_map_output_schema(
+                    *func, {ordered->schemas.data(), ordered->schemas.size()},
+                    {ordered->arg_tags.data(), ordered->arg_tags.size()},
+                    keys_kwarg_element(context));
+                if (inferred.has_value()) { bind_graph_output(resolution, *inferred, "O"); }
+                return;
+            }
             try
             {
                 const MapArgClassification classified =
@@ -3463,7 +3585,8 @@ namespace hgraph::stdlib
                                                                           std::span<const TSValueTypeMetaData *const> ts_schemas,
                                                                           std::span<const std::uint8_t>               arg_tags,
                                                                           const TSValueTypeMetaData                 *&output_schema,
-                                                                          std::vector<WiringPortRef>                 &captured) {
+                                                                          std::vector<WiringPortRef>                 &captured,
+                                                                          std::vector<NestedServiceInput>            &external_services) {
             if (!func.valid()) { throw std::invalid_argument("map_: 'func' must be a wirable function (fn<X>())"); }
 
             auto       &registry = TypeRegistry::instance();
@@ -3529,7 +3652,8 @@ namespace hgraph::stdlib
                 output_schema = nullptr;
             }
 
-            spec.args.reserve(child_schemas.size() + compiled.captured_inputs.size());
+            spec.args.reserve(child_schemas.size() + compiled.captured_inputs.size() +
+                              compiled.external_service_inputs.size());
             if (takes_index) { spec.args.push_back(MapArgSource{.kind = MapArgSourceKind::Key}); }
             for (std::size_t i = 0; i < ts_schemas.size(); ++i) {
                 if (multiplexed[i]) {
@@ -3551,7 +3675,14 @@ namespace hgraph::stdlib
                     .outer_index = ts_schemas.size() + i,
                 });
             }
+            for (std::size_t i = 0; i < compiled.external_service_inputs.size(); ++i) {
+                spec.args.push_back(MapArgSource{
+                    .kind        = MapArgSourceKind::OuterInput,
+                    .outer_index = ts_schemas.size() + compiled.captured_inputs.size() + i,
+                });
+            }
             captured = std::move(compiled.captured_inputs);
+            external_services = std::move(compiled.external_service_inputs);
             return spec;
         }
 
@@ -3569,8 +3700,10 @@ namespace hgraph::stdlib
 
             const TSValueTypeMetaData *output_schema = nullptr;
             std::vector<WiringPortRef> captured;
+            std::vector<NestedServiceInput> external_services;
             TslMapNodeSpec spec = compile_dynamic_tsl_map_child(func, takes_index, {ts_schemas.data(), ts_schemas.size()},
-                                                                {arg_tags.data(), arg_tags.size()}, output_schema, captured);
+                                                                {arg_tags.data(), arg_tags.size()}, output_schema, captured,
+                                                                external_services);
             if ((output_schema != nullptr) != output_required) {
                 throw std::invalid_argument(output_required ? "map_: 'func' must produce an output"
                                                             : "map_sink_: 'func' must be a sink");
@@ -3581,6 +3714,8 @@ namespace hgraph::stdlib
                 arg_tags.push_back(static_cast<std::uint8_t>(WiringPortRef::ArgTag::PassThrough));
                 ordered.push_back(std::move(outer));
             }
+            append_external_service_inputs(
+                w, std::move(external_services), ts_schemas, arg_tags, ordered);
 
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
             fields.reserve(ts_schemas.size());
@@ -3592,13 +3727,17 @@ namespace hgraph::stdlib
             node_schema.output = output_schema;
 
             (void)scalar_descriptor<MapCallConfig>::value_meta();
+            const auto input_refs = higher_order_input_refs(
+                std::span<const WiringPortRef>{ordered.data(), ordered.size()});
             return w.add_node(std::type_index(typeid(dynamic_tsl_map_node_tag)), node_schema,
-                              std::span<const WiringPortRef>{ordered.data(), ordered.size()},
+                              std::span<const WiringInputRef>{input_refs.data(), input_refs.size()},
                               Value{MapCallConfig{func, Str{key_arg}, Str{}, arg_tags}}, [&]() {
                                   NodeTypeMetaData meta;
                                   meta.display_name  = "map_";
                                   meta.input_schema  = input_schema;
                                   meta.output_schema = output_schema;
+                                  configure_passive_transport_inputs(
+                                      meta, std::span<const WiringPortRef>{ordered.data(), ordered.size()});
 
                                   NodeBuilder builder = tsl_map_node(std::move(meta), std::move(spec));
                                   builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(

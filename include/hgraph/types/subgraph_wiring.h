@@ -23,6 +23,23 @@
 namespace hgraph
 {
     /**
+     * A service transport source used by a compiled child but implemented by
+     * an enclosing graph. The exact wiring identity and builder are retained
+     * so the owner can intern the same endpoint in its wiring; child inputs
+     * then bind directly to that outer source through the normal nested-graph
+     * boundary protocol.
+     */
+    struct NestedServiceInput
+    {
+        std::string                        service_path{};
+        std::string                        service_kind{};
+        std::type_index                    definition{typeid(void)};
+        NodeBuilder                        builder{};
+        const TSValueTypeMetaData         *source_schema{nullptr};
+        WiringPortRef::ArgTag              arg_tag{WiringPortRef::ArgTag::None};
+    };
+
+    /**
      * A wiring-compiled child-graph template: the ranked child ``GraphBuilder``
      * plus the boundary binding specs that connect it to an owning nested node.
      *
@@ -47,6 +64,8 @@ namespace hgraph
          * support must reject a non-empty list.
          */
         std::vector<WiringPortRef> captured_inputs{};
+        /** Service endpoint sources supplied by the graph that owns this child. */
+        std::vector<NestedServiceInput> external_service_inputs{};
     };
 
     namespace subgraph_wiring_detail

@@ -7,7 +7,14 @@ import _hgraph
 from .._types import (_GenericTsExpr, _TsExpr, _TypeVarSentinel,
                       _pattern_of, _type_var_is_scalar, _type_var_name,
                       _value_type)
-from ._core import WiringError, WiringPort, _current_wiring, _unwrap, wire
+from ._core import (
+    WiringError,
+    WiringPort,
+    _current_wiring,
+    _unwrap,
+    _wiring_stack,
+    wire,
+)
 from ._graph import _wrap_graph_fn
 from ._node import _PyNode, _warn_deprecated
 
@@ -187,7 +194,8 @@ class _ServiceStub:
     wires a CLIENT; register_service registers an implementation."""
 
     def __init__(self, fn, flavour, *, resolution=None, specialization="",
-                 resolvers=None, deprecated=False, pending_registrations=None):
+                 resolvers=None, deprecated=False, pending_registrations=None,
+                 registered_resolutions=None):
         self.fn = fn
         self.__name__ = fn.__name__
         self.flavour = flavour
@@ -196,6 +204,9 @@ class _ServiceStub:
         self._deprecated = deprecated
         self._pending_registrations = (
             pending_registrations if pending_registrations is not None else []
+        )
+        self._registered_resolutions = (
+            registered_resolutions if registered_resolutions is not None else []
         )
         self._signature = inspect.signature(fn)
         self._request_params = tuple(
@@ -271,7 +282,8 @@ class _ServiceStub:
             self.fn, self.flavour, resolution=resolution,
             specialization=specialization, resolvers=self._resolvers,
             deprecated=self._deprecated,
-            pending_registrations=self._pending_registrations)
+            pending_registrations=self._pending_registrations,
+            registered_resolutions=self._registered_resolutions)
         if result.descriptor is None:
             raise TypeError(
                 f"service '{self.__name__}' specialization leaves an unresolved time-series type")
@@ -313,6 +325,7 @@ class _ServiceStub:
     def __call__(self, *args, **kwargs):
         _warn_deprecated(self.__name__, self._deprecated)
         path, requests = self._bind_call(args, kwargs)
+        w = _current_wiring()
         stub = self
         if self.descriptor is None:
             if requests:
@@ -324,18 +337,28 @@ class _ServiceStub:
                             f"generic service '{self.__name__}' request does not match its type pattern")
                 _apply_service_defaults(self._signature, resolution)
                 _apply_service_resolvers(resolution, self._resolvers)
-                _expand_pending_resolution(self, resolution, _current_wiring())
-                specialization = _specialization_label(resolution)
+                _expand_pending_resolution(self, resolution, w)
             else:
                 resolution = _apply_service_resolvers(
                     _hgraph.ResolutionScope(), self._resolvers)
-                specialization = _specialization_label(resolution)
+            resolution = _registered_service_resolution(self, w, path, resolution)
+            specialization = _specialization_label(resolution)
             stub = _ServiceStub(
                 self.fn, self.flavour, resolution=resolution,
                 specialization=specialization, resolvers=self._resolvers,
                 deprecated=self._deprecated,
-                pending_registrations=self._pending_registrations)
-        w = _current_wiring()
+                pending_registrations=self._pending_registrations,
+                registered_resolutions=self._registered_resolutions)
+        elif self._registered_resolutions:
+            resolution = _registered_service_resolution(
+                self, w, path, self._resolution)
+            specialization = _specialization_label(resolution)
+            stub = _ServiceStub(
+                self.fn, self.flavour, resolution=resolution,
+                specialization=specialization, resolvers=self._resolvers,
+                deprecated=self._deprecated,
+                pending_registrations=self._pending_registrations,
+                registered_resolutions=self._registered_resolutions)
         _materialize_pending_registrations(self, stub._resolution, w)
         request = None
         if len(requests) == 1:
@@ -966,6 +989,7 @@ def _specialize_registered_implementation(implementation, resolution):
             specialization=specialization, resolvers=stub._resolvers,
             deprecated=stub._deprecated,
             pending_registrations=stub._pending_registrations,
+            registered_resolutions=stub._registered_resolutions,
         )
         if concrete.descriptor is None:
             raise WiringError(
@@ -983,9 +1007,16 @@ def _queue_service_registration(path, implementation, config, owners=None):
     owners = tuple(owners or unresolved)
     if not owners:
         raise WiringError("cannot defer a registration without a generic service interface")
+    wiring = _current_wiring()
+    root_wiring = _wiring_stack[0] if _wiring_stack else wiring
     pending = _PendingServiceRegistration(
-        _current_wiring(), path, implementation, dict(config), owners)
+        wiring, path, implementation, dict(config), owners)
     for stub in owners:
+        stub._registered_resolutions[:] = [
+            registered
+            for registered in stub._registered_resolutions
+            if registered[0] is root_wiring
+        ]
         stub._pending_registrations.append(pending)
 
 
@@ -1004,8 +1035,47 @@ def _materialize_pending_registrations(owner, resolution, wiring):
             pending.completed = False
             raise
         for stub in pending.owners:
+            registered = (pending.wiring, pending.path, resolution)
+            if not any(
+                    registered_wiring is pending.wiring
+                    and path == pending.path
+                    and existing.bindings == resolution.bindings
+                    for registered_wiring, path, existing
+                    in stub._registered_resolutions):
+                stub._registered_resolutions.append(registered)
             if pending in stub._pending_registrations:
                 stub._pending_registrations.remove(pending)
+
+
+def _registered_service_resolution(owner, wiring, path, requested):
+    """Recover the full specialization shared by a multi-service registration.
+
+    An individual interface can mention only a subset of the type variables
+    that determine the shared implementation path.  Match that local result
+    against registrations on the same path so sibling clients address the
+    implementation specialization selected by the first client.
+    """
+    root_wiring = _wiring_stack[0] if _wiring_stack else wiring
+    requested_bindings = requested.bindings
+    candidates = []
+    for registered_wiring, registered_path, resolution in owner._registered_resolutions:
+        if registered_wiring is not root_wiring or registered_path != path:
+            continue
+        bindings = resolution.bindings
+        if all(
+                name in bindings and bindings[name] == value
+                for name, value in requested_bindings.items()):
+            candidates.append(resolution)
+    if not candidates:
+        return requested
+
+    labels = {_specialization_label(candidate) for candidate in candidates}
+    if len(labels) != 1:
+        raise WiringError(
+            f"service '{owner.__name__}' has multiple registered specializations "
+            f"matching path '{path}' and bindings "
+            f"'{_specialization_label(requested)}'")
+    return candidates[0]
 
 
 def _expand_pending_resolution(owner, resolution, wiring):

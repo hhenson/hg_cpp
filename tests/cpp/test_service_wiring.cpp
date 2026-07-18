@@ -44,6 +44,8 @@ namespace
     using PairRequest = TSB<"PairRequest",
                             Field<"left", TS<Int>>,
                             Field<"right", TS<Int>>>;
+    using IfIntRefBundle =
+        UnNamedTSB<Field<"true", REF<TS<Int>>>, Field<"false", REF<TS<Int>>>>;
 
     struct SumPairService
     {
@@ -731,6 +733,22 @@ namespace
         }
     };
 
+    struct AddOneStagedClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "add_one_staged_client_graph";
+
+        static auto compose(
+            Wiring &w,
+            Port<TS<Int>> lhs_request,
+            Port<TS<Int>> rhs_request)
+        {
+            service::register_request_reply_service<AddOneService, AddOneImplNode>(w);
+            auto lhs_reply = wire<AddOneService>(w, lhs_request);
+            auto rhs_reply = wire<AddOneService>(w, rhs_request);
+            return stdlib::to_tsl<TSL<TS<Int>, 2>>(w, lhs_reply, rhs_reply);
+        }
+    };
+
     struct SumPairClientGraph
     {
         [[maybe_unused]] static constexpr auto name = "sum_pair_client_graph";
@@ -750,6 +768,123 @@ namespace
         static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
         {
             return wire<AddOneService>(w, request);
+        }
+    };
+
+    struct AddOneMappedFunction
+    {
+        [[maybe_unused]] static constexpr auto name = "add_one_mapped_function";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (wire<AddOneService>(w, service::path("mapped"), request) + Int{1}).as<TS<Int>>();
+        }
+    };
+
+    struct MappedServiceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "mapped_service_client_graph";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TSD<Int, TS<Int>>> requests)
+        {
+            service::register_request_reply_service<AddOneService, AddOneImplNode>(
+                w, service::path("mapped"));
+            return wire<stdlib::map_>(w, fn<AddOneMappedFunction>(), requests)
+                .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct RecursiveAddOneMappedFunction
+    {
+        [[maybe_unused]] static constexpr auto name = "recursive_add_one_mapped_function";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            using namespace hgraph::stdlib::syntax;
+
+            auto routed = wire<stdlib::if_, IfIntRefBundle>(w, request == Int{0}, request)
+                              .as<IfIntRefBundle>();
+            auto zero = wire<stdlib::getitem_>(w, routed, Str{"true"}).as<TS<Int>>();
+            auto non_zero = wire<stdlib::getitem_>(w, routed, Str{"false"}).as<TS<Int>>();
+            auto one = wire<stdlib::const_, TS<Int>>(w, Int{1});
+            auto base = wire<stdlib::sample>(w, zero, one).as<TS<Int>>();
+            auto recurse =
+                (wire<AddOneService>(w, service::path("recursive"), non_zero - Int{1}) + Int{1})
+                    .as<TS<Int>>();
+            return wire<stdlib::merge>(w, base, recurse).as<TS<Int>>();
+        }
+    };
+
+    struct RecursiveAddOneImplGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "recursive_add_one_impl_graph";
+
+        static Port<TSD<Int, TS<Int>>> compose(
+            Wiring &w,
+            Port<TSD<Int, TS<Int>>> requests)
+        {
+            return wire<stdlib::map_>(w, fn<RecursiveAddOneMappedFunction>(), requests)
+                .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct RecursiveAddOneClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "recursive_add_one_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            service::register_request_reply_service<AddOneService, RecursiveAddOneImplGraph>(
+                w, service::path("recursive"));
+            return wire<AddOneService>(w, service::path("recursive"), request);
+        }
+    };
+
+    struct MeshedServiceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "meshed_service_client_graph";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TSD<Int, TS<Int>>> requests)
+        {
+            service::register_request_reply_service<AddOneService, AddOneImplNode>(
+                w, service::path("mapped"));
+            return wire<stdlib::mesh_>(w, fn<AddOneMappedFunction>(), requests)
+                .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct MappedSubscriptionFunction
+    {
+        [[maybe_unused]] static constexpr auto name = "mapped_subscription_function";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> key)
+        {
+            return wire<PricesService>(w, service::path("mapped_prices"), key);
+        }
+    };
+
+    struct MappedSubscriptionClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "mapped_subscription_client_graph";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TSD<Int, TS<Int>>> keys)
+        {
+            service::register_subscription_service<PricesService, PricesImpl>(
+                w, service::path("mapped_prices"));
+            return wire<stdlib::map_>(w, fn<MappedSubscriptionFunction>(), keys)
+                .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct MissingMappedServiceImplementationGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "missing_mapped_service_implementation_graph";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TSD<Int, TS<Int>>> requests)
+        {
+            return wire<stdlib::map_>(w, fn<AddOneMappedFunction>(), requests)
+                .as<TSD<Int, TS<Int>>>();
         }
     };
 
@@ -1023,14 +1158,14 @@ TEST_CASE("service wiring: request/reply client receives keyed implementation re
 {
     hgraph::stdlib::register_standard_operators();
 
-    CHECK_OUTPUT(eval_node<AddOneClientGraph>(values<Int>(1)), values<Int>(none, 2));
+    CHECK_OUTPUT(eval_node<AddOneClientGraph>(values<Int>(1)), values<Int>(none, none, 2));
 }
 
 TEST_CASE("service wiring: request/reply service supports explicit paths")
 {
     hgraph::stdlib::register_standard_operators();
 
-    CHECK_OUTPUT(eval_node<AddOnePathClientGraph>(values<Int>(7)), values<Int>(none, 107));
+    CHECK_OUTPUT(eval_node<AddOnePathClientGraph>(values<Int>(7)), values<Int>(none, none, 107));
 }
 
 TEST_CASE("service wiring: request/reply source emits cumulative client requests")
@@ -1038,7 +1173,25 @@ TEST_CASE("service wiring: request/reply source emits cumulative client requests
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<AddOneTwoClientGraph>(values<Int>(1), values<Int>(10)),
-                 values<Int>(none, 13));
+                 values<Int>(none, none, 13));
+}
+
+TEST_CASE("service wiring: response feedback preserves requests from successive cycles")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        eval_node<AddOneClientGraph>(values<Int>(1, 2)),
+        values<Int>(none, none, 2, 3));
+
+    CHECK_OUTPUT(
+        eval_node<AddOneStagedClientGraph>(
+            values<Int>(1, none), values<Int>(none, 10)),
+        values<Value>(
+            none,
+            none,
+            list_delta<TS<Int>>({2, none}),
+            list_delta<TS<Int>>({none, 11})));
 }
 
 TEST_CASE("service wiring: request/reply transports recursive bundle deltas")
@@ -1047,7 +1200,64 @@ TEST_CASE("service wiring: request/reply transports recursive bundle deltas")
 
     CHECK_OUTPUT(eval_node<SumPairClientGraph>(values<Int>(1, none, 2),
                                                values<Int>(10, none, none)),
-                 values<Int>(none, 11, none, 12));
+                 values<Int>(none, none, 11, none, 12));
+}
+
+TEST_CASE("service wiring: request/reply feedback belongs to the owning graph")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    Wiring wiring;
+    auto requests = ts_harness<TSD<Int, TS<Int>>>::wire_replay(
+        wiring, "request_reply_feedback_owner");
+    static_cast<void>(MappedServiceClientGraph::compose(wiring, requests));
+    const GraphBuilder graph = std::move(wiring).finish();
+    std::size_t feedback_sources = 0;
+    std::size_t feedback_sinks = 0;
+    for (const NodeBuilder &node : graph.nodes())
+    {
+        const NodeTypeMetaData *meta = node.type().schema();
+        if (meta == nullptr || meta->display_name == nullptr) { continue; }
+        const std::string_view name{meta->display_name};
+        feedback_sources += name == "feedback_source" ? 1 : 0;
+        feedback_sinks += name == "feedback_sink" ? 1 : 0;
+    }
+    CHECK(feedback_sources == 1);
+    CHECK(feedback_sinks == 1);
+}
+
+TEST_CASE("service wiring: map and mesh children call an outer request/reply service")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    const auto requests = values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}}));
+    const auto expected = values<Value>(
+        dict_delta<Int, TS<Int>>({}),
+        none,
+        dict_delta<Int, TS<Int>>({{1, 12}, {2, 22}}));
+    CHECK_OUTPUT(eval_node<MappedServiceClientGraph>(requests), expected);
+    CHECK_OUTPUT(eval_node<MeshedServiceClientGraph>(requests), expected);
+}
+
+TEST_CASE("service wiring: a mapped request/reply implementation can call itself recursively")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    const auto result = eval_node<RecursiveAddOneClientGraph>(values<Int>(3));
+    REQUIRE_FALSE(result.empty());
+    REQUIRE(result.back().has_value());
+    CHECK(*result.back() == Int{4});
+}
+
+TEST_CASE("service wiring: mapped children forward subscription keys to an outer service")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    const auto keys = values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}}));
+    const auto expected = values<Value>(
+        dict_delta<Int, TS<Int>>({}),
+        dict_delta<Int, TS<Int>>({{1, 100}, {2, 200}}));
+    CHECK_OUTPUT(eval_node<MappedSubscriptionClientGraph>(keys), expected);
 }
 
 TEST_CASE("service wiring: validates missing implementations and illegal stubs")
@@ -1055,6 +1265,10 @@ TEST_CASE("service wiring: validates missing implementations and illegal stubs")
     hgraph::stdlib::register_standard_operators();
 
     CHECK_THROWS_AS((void)eval_node<MissingServiceImplementationGraph>(values<Int>(1)), std::invalid_argument);
+    CHECK_THROWS_AS(
+        (void)eval_node<MissingMappedServiceImplementationGraph>(
+            values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}))),
+        std::invalid_argument);
     CHECK_THROWS_AS(build_graph<IllegalServiceStubGraph>(), std::invalid_argument);
     CHECK_THROWS_AS(build_graph<MissingMultiServiceStubGraph>(), std::invalid_argument);
 }
@@ -1063,7 +1277,7 @@ TEST_CASE("service wiring: multi-interface implementation graph wires explicit s
 {
     hgraph::stdlib::register_standard_operators();
 
-    CHECK_OUTPUT(eval_node<MultiServiceClientGraph>(values<Int>(1)), values<Int>(none, 13));
+    CHECK_OUTPUT(eval_node<MultiServiceClientGraph>(values<Int>(1)), values<Int>(none, none, 13));
 }
 
 TEST_CASE("service wiring: service adaptors collect multiple client requests")
@@ -1102,16 +1316,16 @@ TEST_CASE("service wiring: templated service descriptors bind as concrete interf
 {
     hgraph::stdlib::register_standard_operators();
 
-    CHECK_OUTPUT(eval_node<TemplateServiceClientGraph>(values<Int>(3)), values<Int>(none, 4));
+    CHECK_OUTPUT(eval_node<TemplateServiceClientGraph>(values<Int>(3)), values<Int>(none, none, 4));
 }
 
 TEST_CASE("service wiring: generic service descriptors resolve from client inputs")
 {
     hgraph::stdlib::register_standard_operators();
 
-    CHECK_OUTPUT(eval_node<GenericServiceClientGraph>(values<Int>(3)), values<Int>(none, 4));
+    CHECK_OUTPUT(eval_node<GenericServiceClientGraph>(values<Int>(3)), values<Int>(none, none, 4));
     CHECK_OUTPUT(eval_node<GenericFloatServiceClientGraph>(values<Float>(1.5)),
-                 values<Float>(none, 2.0));
+                 values<Float>(none, none, 2.0));
     CHECK_OUTPUT(eval_node<GenericServiceAdaptorClientGraph>(values<Int>(3)), values<Int>(none, 23));
     CHECK_THROWS_AS((void)eval_node<GenericStringServiceClientGraph>(values<Str>("not numeric")),
                     std::invalid_argument);
