@@ -302,7 +302,7 @@ def _compound_value_type(scalar, type_args=()):
 
     try:
         dataclass_fields = dataclasses.fields(scalar)
-    except TypeError as exc:
+    except TypeError:
         annotations = {
             name: annotation
             for base in reversed(scalar.__mro__)
@@ -310,11 +310,15 @@ def _compound_value_type(scalar, type_args=()):
             for name, annotation in getattr(base, "__annotations__", {}).items()
         }
         if annotations:
-            raise TypeError(
-                f"field-bearing CompoundScalar {scalar.__module__}.{scalar.__qualname__} must be a dataclass "
-                "before it is used in a graph annotation"
-            ) from exc
-        dataclass_fields = ()
+            # A field-bearing CompoundScalar declared without @dataclass is
+            # materialised lazily here: apply the frozen-dataclass form (matching
+            # upstream's CompoundScalar.__init_subclass__ auto-dataclass and the
+            # un-named-compound helper's frozen convention), then read its fields.
+            # Classes the user already decorated succeed the fields() call above
+            # and never reach this branch.
+            dataclass_fields = dataclasses.fields(dataclasses.dataclass(frozen=True)(scalar))
+        else:
+            dataclass_fields = ()
     fields = []
     has_self_recursion = False
     locally_declared = scalar.__dict__.get("__annotations__", {})
