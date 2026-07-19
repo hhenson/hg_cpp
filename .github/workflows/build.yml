@@ -233,12 +233,15 @@ jobs:
           /opt/python/cp312-cp312/bin/python - <<'PY'
           from pathlib import Path
           import subprocess
+          from packaging.tags import Tag
+          from packaging.utils import parse_wheel_filename
 
           wheels = list(Path("dist").glob("*.whl"))
           assert len(wheels) == 1, wheels
           wheel = wheels[0]
-          assert "-cp312-abi3-" in wheel.name, wheel.name
-          assert wheel.name.endswith("-manylinux_2_28_x86_64.whl"), wheel.name
+          tags = parse_wheel_filename(wheel.name)[3]
+          expected = Tag("cp312", "abi3", "manylinux_2_28_x86_64")
+          assert expected in tags, (wheel.name, tags)
           subprocess.check_call(["abi3audit", "--strict", str(wheel)])
           PY
       - uses: actions/upload-artifact@v7
