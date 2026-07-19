@@ -757,6 +757,35 @@ cross-instance references, ``mesh_`` behaves exactly like ``map_``.
 (``mesh_ref`` lives in ``lib/std/operators/impl/higher_order_impl.h``.)
 
 
+Delayed binding — construction order only
+------------------------------------------
+
+Use ``delayed_binding`` when a graph must wire a consumer before the producer is
+available, but the final graph is still a DAG:
+
+.. code-block:: cpp
+
+   struct ConsumeBeforeProduce
+   {
+       static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> in)
+       {
+           auto late = delayed_binding<TS<Int>>(w);
+           auto out  = wire<stdlib::pass_through_node>(w, late()); // read it
+           late(in);                                             // bind once
+           return out;
+       }
+   };
+
+The placeholder is resolved before graph ranking. It adds no runtime node and no
+tick delay, so its producer still ranks before its consumers. Leaving it unbound,
+binding it twice, binding an incompatible schema, or using it to create a cycle
+is a wiring error. Fixed ``TSL``/``TSB`` bindings are expanded into delayed
+leaves, so both their projections and structural aggregates assembled from
+separate ports work without materialization. ``TSD`` key-set projections are
+also supported. A dynamic structural ``TSL`` has no cardinality at declaration
+time and must be materialized as a peered output before it is bound.
+
+
 Feedback — the sanctioned back-edge
 -----------------------------------
 
@@ -1322,6 +1351,8 @@ C++ ↔ Python cheat sheet
      - ``mesh_(f, tsd...)`` / ``mesh_(f)[k]``
    * - ``stdlib::feedback<S>(w, init)``; ``fb(port)`` / ``fb()``
      - ``feedback(TS[...], init)``; ``fb(port)`` / ``fb()``
+   * - ``delayed_binding<S>(w)``; ``late(port)`` / ``late()``
+     - ``delayed_binding(TS[...])``; ``late(port)`` / ``late()``
    * - ``exception_time_series(port)`` / ``try_except_<G>(w, ...)``
      - ``exception_time_series(ts)`` / ``try_except(g, ...)``
    * - ``service::register_*_service<S, Impl>(w)`` + ``wire<S>(w, ...)``

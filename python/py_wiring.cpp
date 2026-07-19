@@ -361,6 +361,13 @@ namespace hgraph::python_bridge
     nb::class_<PyFeedback>(m, "Feedback")
         .def_prop_ro("port", [](const PyFeedback &fb) { return PyPort{fb.delegate}; })
         .def_prop_ro("bound", [](const PyFeedback &fb) { return fb.bound; });
+    nb::class_<PyDelayedBinding>(m, "DelayedBinding")
+        .def_prop_ro("port", [](const PyDelayedBinding &delayed) {
+            return PyPort{delayed.binding.port()};
+        })
+        .def_prop_ro("bound", [](const PyDelayedBinding &delayed) {
+            return delayed.binding.bound();
+        });
 
     m.def("switch_cases", [](nb::dict cases, bool reload) {
         stdlib::SwitchCases result;
@@ -440,6 +447,9 @@ namespace hgraph::python_bridge
              nb::arg("ts_type") = nb::none())
         .def("feedback", &PyWiring::feedback, nb::arg("ts_type"), nb::arg("initial") = nb::none())
         .def("feedback_bind", &PyWiring::feedback_bind, nb::arg("feedback"), nb::arg("port"))
+        .def("delayed_binding", &PyWiring::delayed_binding, nb::arg("ts_type"))
+        .def("delayed_binding_bind", &PyWiring::delayed_binding_bind,
+             nb::arg("delayed"), nb::arg("port"))
         .def("_release_seed_context", &PyWiring::release_seed_context)
         .def("run", &PyWiring::run, nb::arg("start_time") = nb::none(), nb::arg("end_time") = nb::none(),
              nb::arg("realtime") = false, nb::arg("trace").none() = nb::none())

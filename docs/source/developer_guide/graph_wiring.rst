@@ -26,7 +26,8 @@ same runtime graph the same way.
    ``tests/cpp/test_graph_wiring.cpp``. The ``wire``-level higher-order operators
    (``map_`` / ``reduce`` / ``switch_`` / ``mesh_``), standalone sub-graph
    building with supplied time-series boundary ports (``compile_subgraph<G>`` —
-   see slice 9 below), and feedback edges have all since landed; see
+   see slice 9 below), feedback edges, and wiring-only ``delayed_binding``
+   placeholders have all since landed; see
    :doc:`nested_graphs` and :doc:`mesh` for their design records, with the
    corresponding slices of this page as the wiring-level record. The user-facing
    view is *User Guide > Wiring Graphs in C++*.
@@ -108,8 +109,10 @@ identification and ranking are separate steps:
 The **runtime is unchanged** by this: it still evaluates in index order and relies
 on ``rank(parent) < rank(child)``; that invariant is now *produced* by the rank
 pass rather than being the caller's responsibility (which is the fragility behind
-add-order-equals-rank-order assumptions). Feedback edges are deferred: they are
-delayed edges that must not constrain rank, and the first cut is DAG-only.
+add-order-equals-rank-order assumptions). ``feedback`` is the explicit exception:
+its one-cycle-delayed edge does not constrain rank. A ``delayed_binding`` is not
+such an exception; it resolves to an ordinary source before ranking and therefore
+cannot create a cycle.
 
 
 The shared core
@@ -125,8 +128,10 @@ The shared core
    // recordable-state output), and an output path within that root. A *structural*
    // source has no producer of its own — its children are the sources for each
    // fixed child slot (to_tsl / to_tsb and brace initializers build these). A
-   // *null* source is an unbound fixed slot carrying only its schema. Target info
-   // lives on WiringInputRef, never here.
+   // *delayed* source carries shared wiring-only binding state plus a projection
+   // path until its producer is supplied. A *null* source is an unbound fixed
+   // slot carrying only its schema. Target info lives on WiringInputRef, never
+   // here.
    struct WiringPortRef {
        struct PeeredSource {
            const WiringInstance *node;
@@ -134,7 +139,11 @@ The shared core
            GraphEdgeSourceKind output_kind;
        };
        struct StructuralSource { std::vector<WiringPortRef> children; };
-       enum class SourceKind { Unbound, Null, Peered, Structural };
+       struct DelayedSource {
+           std::shared_ptr<WiringDelayedBindingState> state;
+           std::vector<std::size_t> path;
+       };
+       enum class SourceKind { Unbound, Null, Peered, Structural, Boundary, Delayed };
 
        // Wiring-time argument adornment (Python's pass_through()/no_key()
        // map_ wrappers): consumed by the operator that receives the port,
@@ -188,6 +197,25 @@ reflects passivity. Marking every input passive throws (the node could
 never fire). The motivating idiom is the feedback read —
 ``add_(ts, passive(fb()))`` — which lets a bound feedback loop quiesce
 instead of re-ticking forever.
+
+**A delayed binding changes compose order, not evaluation order.**
+``delayed_binding<S>(w)`` owns shared control state. Atomic and dynamically
+shaped schemas expose one ``DelayedSource``. Fixed ``TSL`` and ``TSB`` schemas
+instead expose a structural tree whose leaves are delayed sources, so consumers
+select the correct non-peered endpoint layout immediately. Binding a peered
+aggregate projects it onto those leaves; binding a structural aggregate pairs
+the leaves recursively. ``TSD`` key-set views append their component to the
+single delayed source's projection path. ``finish`` resolves every delayed
+source, then performs the normal producer collection, ranking, and edge emission.
+An unbound handle, incompatible schema, duplicate binding, or dependency cycle is
+a wiring error. No delayed source, binding state, node, or extra tick reaches the
+runtime graph.
+
+The consumer endpoint schema is fixed when the consumer node is added. A
+structural source whose cardinality is not known from the declared schema, such
+as a dynamic ``TSL`` assembled from independent ports, must therefore first be
+materialized as a peered output. Fixed ``TSL``/``TSB`` structural sources,
+their projections, and key-set projections from a delayed ``TSD`` are supported.
 
 - ``add_node`` keys the instance on ``(def, resolved schemas, input edges,
   scalars)`` — ``def`` is the node type's identity (``typeid(T)``), the resolved

@@ -144,6 +144,25 @@ class Feedback:
         return self
 
 
+class DelayedBinding:
+    """A typed wiring placeholder resolved before graph ranking.
+
+    This changes wiring order only. It does not delay values or permit a
+    dependency cycle; use ``feedback`` for that runtime behavior.
+    """
+
+    __slots__ = ("_wiring", "_binding")
+
+    def __init__(self, wiring, binding):
+        self._wiring = wiring
+        self._binding = binding
+
+    def __call__(self, port=None):
+        if port is None:
+            return WiringPort(self._binding.port)
+        self._wiring.delayed_binding_bind(self._binding, _unwrap(port))
+
+
 def passive(port):
     """hgraph's passive marker: the receiving node's input for THIS usage is
     removed from its active list (ticks no longer schedule the node; values
@@ -170,6 +189,22 @@ def feedback(tp_or_wp, default=None):
         result(port)
         return result
     return Feedback(w, w.feedback(_unwrap(tp_or_wp), default))
+
+
+def delayed_binding(tp_or_wp):
+    """Create a typed source placeholder and bind its producer later."""
+    from .._types import _TsExpr
+
+    w = _current_wiring()
+    if isinstance(tp_or_wp, WiringPort):
+        ts_type = _unwrap(tp_or_wp).ts_type
+    elif isinstance(tp_or_wp, _TsExpr):
+        ts_type = tp_or_wp.handle
+    elif isinstance(tp_or_wp, _hgraph.TsType):
+        ts_type = tp_or_wp
+    else:
+        raise TypeError("delayed_binding expects a time-series type or wiring port")
+    return DelayedBinding(w, w.delayed_binding(ts_type))
 
 
 def combine(*args, __output_type__=None, **kwargs):

@@ -3,6 +3,7 @@
 #include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/operator_dispatch.h>   // context scope stack (OperatorRegistry)
 #include <hgraph/types/subgraph_wiring.h>
+#include <hgraph/util/scope.h>
 
 #include <array>
 #include <algorithm>
@@ -51,6 +52,8 @@ namespace hgraph
             std::size_t                boundary_arg{static_cast<std::size_t>(-1)};
             std::vector<std::size_t>   boundary_path{};
             bool                       captured_boundary{false};
+            const WiringDelayedBindingState *delayed_state{nullptr};
+            std::vector<std::size_t>          delayed_path{};
 
             bool operator==(const SourceKey &) const noexcept = default;
         };
@@ -122,6 +125,9 @@ namespace hgraph
                 for (std::size_t p : source.boundary_path) { combine(h, std::hash<std::size_t>{}(p)); }
                 combine(h, std::hash<bool>{}(source.captured_boundary));
                 combine(h, 0xB0B0B0B0ULL);  // boundary separator
+                combine(h, std::hash<const void *>{}(source.delayed_state));
+                for (std::size_t p : source.delayed_path) { combine(h, std::hash<std::size_t>{}(p)); }
+                combine(h, 0xD3D3D3D3ULL);  // delayed-path separator
             }
         };
 
@@ -147,6 +153,11 @@ namespace hgraph
                                        : source.boundary_arg_index();
                 key.boundary_path     = source.boundary_path();
                 key.captured_boundary = source.is_captured_boundary_source();
+            }
+            else if (source.is_delayed_source())
+            {
+                key.delayed_state = source.delayed_state().get();
+                key.delayed_path  = source.delayed_path();
             }
             return key;
         }
@@ -272,9 +283,204 @@ namespace hgraph
             return builder;
         }
 
+        [[nodiscard]] WiringPortRef make_delayed_port_tree(
+            Wiring *wiring,
+            const TSValueTypeMetaData *schema,
+            std::vector<std::shared_ptr<WiringDelayedBindingState>> &leaves)
+        {
+            if (schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0)
+            {
+                std::vector<WiringPortRef> children;
+                children.reserve(schema->fixed_size());
+                for (std::size_t index = 0; index < schema->fixed_size(); ++index)
+                {
+                    children.push_back(make_delayed_port_tree(wiring, schema->element_ts(), leaves));
+                }
+                return WiringPortRef::structural_source(schema, std::move(children));
+            }
+            if (schema->kind == TSTypeKind::TSB)
+            {
+                std::vector<WiringPortRef> children;
+                children.reserve(schema->field_count());
+                for (std::size_t index = 0; index < schema->field_count(); ++index)
+                {
+                    children.push_back(
+                        make_delayed_port_tree(wiring, schema->fields()[index].type, leaves));
+                }
+                return WiringPortRef::structural_source(schema, std::move(children));
+            }
+
+            auto state = std::make_shared<WiringDelayedBindingState>(WiringDelayedBindingState{
+                .wiring = wiring,
+                .schema = schema,
+            });
+            leaves.push_back(state);
+            return WiringPortRef::delayed_source(std::move(state), {}, schema);
+        }
+
+        [[nodiscard]] WiringPortRef project_source_component(
+            const WiringPortRef &source,
+            std::size_t index,
+            const TSValueTypeMetaData *schema)
+        {
+            if (source.is_structural_source())
+            {
+                if (index >= source.structural_children().size())
+                {
+                    throw std::invalid_argument(
+                        "delayed_binding structural source has the wrong number of children");
+                }
+                return source.structural_children()[index];
+            }
+            if (source.is_peered_source())
+            {
+                std::vector<std::size_t> path = source.peered_path();
+                path.push_back(index);
+                return WiringPortRef::peered_source(source.peered_node(), std::move(path), schema,
+                                                    source.peered_output_kind());
+            }
+            if (source.is_boundary_source())
+            {
+                std::vector<std::size_t> path = source.boundary_path();
+                path.push_back(index);
+                return source.projected_boundary_source(std::move(path), schema);
+            }
+            if (source.is_delayed_source())
+            {
+                std::vector<std::size_t> path = source.delayed_path();
+                path.push_back(index);
+                return source.projected_delayed_source(std::move(path), schema);
+            }
+            if (source.is_null_source()) { return WiringPortRef::null_source(schema); }
+            throw std::invalid_argument("delayed_binding cannot bind an unbound source");
+        }
+
+        struct DelayedLeafBinding
+        {
+            std::shared_ptr<WiringDelayedBindingState> state{};
+            WiringPortRef                               source{};
+        };
+
+        void collect_delayed_leaf_bindings(
+            const WiringPortRef &placeholder,
+            const WiringPortRef &source,
+            std::vector<DelayedLeafBinding> &bindings)
+        {
+            if (placeholder.is_structural_source())
+            {
+                const auto &children = placeholder.structural_children();
+                if (source.is_structural_source() &&
+                    source.structural_children().size() != children.size())
+                {
+                    throw std::invalid_argument(
+                        "delayed_binding structural source has the wrong number of children");
+                }
+                for (std::size_t index = 0; index < children.size(); ++index)
+                {
+                    collect_delayed_leaf_bindings(
+                        children[index],
+                        project_source_component(source, index, children[index].schema),
+                        bindings);
+                }
+                return;
+            }
+
+            if (!placeholder.is_delayed_source())
+            {
+                throw std::logic_error("delayed_binding placeholder tree contains a non-delayed leaf");
+            }
+            if (source.is_structural_source())
+            {
+                throw std::invalid_argument(
+                    "a dynamic structural source must be materialized before delayed_binding can bind it");
+            }
+            if (source.is_delayed_source() &&
+                source.delayed_state() == placeholder.delayed_state())
+            {
+                throw std::runtime_error("delayed_binding cannot bind directly to itself");
+            }
+            bindings.push_back(DelayedLeafBinding{placeholder.delayed_state(), source});
+        }
+
+        [[nodiscard]] WiringPortRef project_delayed_source(WiringPortRef source,
+                                                           const WiringPortRef &delayed)
+        {
+            const auto &path = delayed.delayed_path();
+            if (source.is_structural_source())
+            {
+                for (const std::size_t component : path)
+                {
+                    if (!source.is_structural_source() || component >= source.structural_children().size())
+                    {
+                        throw std::logic_error(
+                            "delayed_binding projection does not match the bound structural source");
+                    }
+                    source = source.structural_children()[component];
+                }
+            }
+            else if (source.is_peered_source())
+            {
+                std::vector<std::size_t> source_path = source.peered_path();
+                source_path.insert(source_path.end(), path.begin(), path.end());
+                source = WiringPortRef::peered_source(source.peered_node(), std::move(source_path),
+                                                       delayed.schema, source.peered_output_kind());
+            }
+            else if (source.is_boundary_source())
+            {
+                std::vector<std::size_t> source_path = source.boundary_path();
+                source_path.insert(source_path.end(), path.begin(), path.end());
+                source = source.projected_boundary_source(std::move(source_path), delayed.schema);
+            }
+            else if (source.is_null_source())
+            {
+                source = WiringPortRef::null_source(delayed.schema);
+            }
+            else
+            {
+                throw std::logic_error("delayed_binding resolved to an unsupported wiring source");
+            }
+
+            source.schema  = delayed.schema;
+            source.arg_tag = delayed.arg_tag;
+            return source;
+        }
+
+        [[nodiscard]] WiringPortRef resolve_delayed_source_impl(
+            const WiringPortRef &source,
+            std::vector<const WiringDelayedBindingState *> &resolving)
+        {
+            if (!source.is_delayed_source()) { return source; }
+
+            const auto &state = source.delayed_state();
+            if (state == nullptr || !state->source.has_value())
+            {
+                throw std::logic_error("Wiring::finish encountered an unbound delayed_binding");
+            }
+            if (std::ranges::find(resolving, state.get()) != resolving.end())
+            {
+                throw std::runtime_error("Wiring::finish detected a cycle between delayed_binding placeholders");
+            }
+
+            resolving.push_back(state.get());
+            auto pop = make_scope_exit([&] { resolving.pop_back(); });
+            WiringPortRef resolved = resolve_delayed_source_impl(*state->source, resolving);
+            return project_delayed_source(std::move(resolved), source);
+        }
+
+        [[nodiscard]] WiringPortRef resolve_delayed_source(const WiringPortRef &source)
+        {
+            std::vector<const WiringDelayedBindingState *> resolving;
+            return resolve_delayed_source_impl(source, resolving);
+        }
+
         void collect_producers(const WiringPortRef &source, std::vector<const WiringInstance *> &producers,
                                const std::unordered_set<const WiringInstance *> &owned)
         {
+            if (source.is_delayed_source())
+            {
+                collect_producers(resolve_delayed_source(source), producers, owned);
+                return;
+            }
             if (source.is_peered_source())
             {
                 // Foreign producers (outer captures) rank in the OUTER graph;
@@ -339,6 +545,12 @@ namespace hgraph
                         std::vector<NestedGraphInputBinding>                           *boundary_bindings,
                         OuterCaptureCollector                                          *captures)
         {
+            if (source.is_delayed_source())
+            {
+                emit_edges(resolve_delayed_source(source), target_path, index_of, external_sources,
+                           graph_builder, target_node, boundary_bindings, captures);
+                return;
+            }
             if (source.is_peered_source())
             {
                 if (external_sources != nullptr)
@@ -743,6 +955,77 @@ namespace hgraph
     Wiring::~Wiring()                              = default;
     Wiring::Wiring(Wiring &&) noexcept             = default;
     Wiring &Wiring::operator=(Wiring &&) noexcept  = default;
+
+    ErasedDelayedBindingWiringPort::ErasedDelayedBindingWiringPort(
+        Wiring &wiring,
+        const TSValueTypeMetaData *schema)
+    {
+        if (schema == nullptr)
+        {
+            throw std::invalid_argument("delayed_binding requires a concrete time-series schema");
+        }
+        control_ = std::make_shared<WiringDelayedBindingControl>();
+        control_->wiring = &wiring;
+        control_->schema = schema;
+        control_->port = make_delayed_port_tree(&wiring, schema, control_->leaves);
+    }
+
+    WiringDelayedBindingControl &ErasedDelayedBindingWiringPort::control() const
+    {
+        if (control_ == nullptr) { throw std::logic_error("delayed_binding is not initialized"); }
+        return *control_;
+    }
+
+    WiringPortRef ErasedDelayedBindingWiringPort::port() const { return control().port; }
+
+    ErasedDelayedBindingWiringPort &ErasedDelayedBindingWiringPort::bind(WiringPortRef source)
+    {
+        auto &c = control();
+        if (c.bound) { throw std::logic_error("delayed_binding is already bound"); }
+        if (!graph_wiring_detail::input_accepts_output_schema(c.schema, source.schema))
+        {
+            throw std::invalid_argument(
+                "delayed_binding output type does not match the port being bound");
+        }
+
+        std::vector<DelayedLeafBinding> bindings;
+        bindings.reserve(c.leaves.size());
+        collect_delayed_leaf_bindings(c.port, source, bindings);
+        for (const auto &binding : bindings)
+        {
+            if (binding.state->source.has_value())
+            {
+                throw std::logic_error("delayed_binding leaf is already bound");
+            }
+        }
+
+        std::size_t assigned = 0;
+        bool committed = false;
+        auto rollback = make_scope_exit([&] {
+            if (!committed)
+            {
+                for (std::size_t index = 0; index < assigned; ++index)
+                {
+                    bindings[index].state->source.reset();
+                }
+            }
+        });
+        for (auto &binding : bindings)
+        {
+            binding.source.arg_tag = WiringPortRef::ArgTag::None;
+            binding.state->source = std::move(binding.source);
+            ++assigned;
+        }
+        c.bound = true;
+        committed = true;
+        return *this;
+    }
+
+    bool ErasedDelayedBindingWiringPort::bound() const { return control().bound; }
+
+    const TSValueTypeMetaData *ErasedDelayedBindingWiringPort::schema() const { return control().schema; }
+
+    Wiring *ErasedDelayedBindingWiringPort::wiring() const { return control().wiring; }
 
     WiringPortRef Wiring::capture_outer_source(WiringPortRef source)
     {
@@ -1383,6 +1666,10 @@ namespace hgraph
         compiled.graph_builder = std::move(build.graph_builder);
         const auto &index_of   = build.index_of;
 
+        if (output.has_value() && output->is_delayed_source())
+        {
+            output = resolve_delayed_source(*output);
+        }
         if (output.has_value())
         {
             if (output->is_boundary_source())

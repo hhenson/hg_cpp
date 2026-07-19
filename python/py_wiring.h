@@ -280,6 +280,18 @@ namespace hgraph::python_bridge
             return PyFeedback{&wiring_ref(), std::move(ref), schema, false};
         }
 
+        [[nodiscard]] PyDelayedBinding delayed_binding(PyTsType ts_type)
+        {
+            ensure_open();
+            return PyDelayedBinding{ErasedDelayedBindingWiringPort{wiring_ref(), ts_type.meta}};
+        }
+
+        void delayed_binding_bind(PyDelayedBinding &delayed, const PyPort &port)
+        {
+            ensure_open();
+            delayed.binding.bind(port.ref);
+        }
+
         void feedback_bind(PyFeedback &fb, const PyPort &port)
         {
             ensure_open();

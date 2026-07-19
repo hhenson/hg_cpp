@@ -159,6 +159,7 @@ hgraph_add_test_objects(hgraph_wiring_test_objects
     test_adaptor_wiring.cpp
     test_component.cpp
     test_context_wiring.cpp
+    test_delayed_binding.cpp
     test_erased_wiring.cpp
     test_error_handling.cpp
     test_eval_node.cpp

@@ -26,6 +26,13 @@ class WiringPort:
     def __init__(self, port):
         self._port = port
 
+    @property
+    def output_type(self):
+        """The resolved time-series type carried by this wiring port."""
+        from .._types import _TsExpr
+
+        return _TsExpr(self._port.ts_type, repr(self._port.ts_type))
+
 
 def _unwrap(value):
     if isinstance(value, WiringPort):

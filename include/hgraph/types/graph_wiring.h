@@ -35,6 +35,7 @@
 
 namespace hgraph
 {
+    class Wiring;
     /**
      * C++ graph wiring (slice 1: top-level node wiring, no scalars yet).
      *
@@ -50,6 +51,8 @@ namespace hgraph
      */
 
     struct WiringInstance;
+    struct WiringDelayedBindingState;
+    struct WiringDelayedBindingControl;
 
     /**
      * Erased wiring-time handle to a time-series source.
@@ -88,6 +91,13 @@ namespace hgraph
             bool                     captured{false};
         };
 
+        /** A typed wiring source whose producer is supplied later in compose(). */
+        struct DelayedSource
+        {
+            std::shared_ptr<WiringDelayedBindingState> state{};
+            std::vector<std::size_t>                   path{};
+        };
+
         enum class SourceKind
         {
             Unbound,
@@ -95,6 +105,7 @@ namespace hgraph
             Peered,
             Structural,
             Boundary,
+            Delayed,
         };
 
         const TSValueTypeMetaData *schema{nullptr};
@@ -187,11 +198,25 @@ namespace hgraph
             return ref;
         }
 
+        [[nodiscard]] static WiringPortRef delayed_source(
+            std::shared_ptr<WiringDelayedBindingState> state,
+            std::vector<std::size_t> path,
+            const TSValueTypeMetaData *schema)
+        {
+            if (state == nullptr) { throw std::logic_error("WiringPortRef::delayed_source requires state"); }
+            if (schema == nullptr) { throw std::logic_error("WiringPortRef::delayed_source requires a schema"); }
+            WiringPortRef ref;
+            ref.schema  = schema;
+            ref.source_ = DelayedSource{std::move(state), std::move(path)};
+            return ref;
+        }
+
         [[nodiscard]] SourceKind source_kind() const noexcept
         {
             if (std::holds_alternative<PeeredSource>(source_)) { return SourceKind::Peered; }
             if (std::holds_alternative<StructuralSource>(source_)) { return SourceKind::Structural; }
             if (std::holds_alternative<BoundarySource>(source_)) { return SourceKind::Boundary; }
+            if (std::holds_alternative<DelayedSource>(source_)) { return SourceKind::Delayed; }
             return schema != nullptr ? SourceKind::Null : SourceKind::Unbound;
         }
 
@@ -200,6 +225,7 @@ namespace hgraph
         [[nodiscard]] bool is_null_source() const noexcept { return source_kind() == SourceKind::Null; }
         [[nodiscard]] bool is_unbound_source() const noexcept { return source_kind() == SourceKind::Unbound; }
         [[nodiscard]] bool is_boundary_source() const noexcept { return source_kind() == SourceKind::Boundary; }
+        [[nodiscard]] bool is_delayed_source() const noexcept { return source_kind() == SourceKind::Delayed; }
         [[nodiscard]] bool is_captured_boundary_source() const noexcept
         {
             const auto *source = std::get_if<BoundarySource>(&source_);
@@ -246,6 +272,27 @@ namespace hgraph
             return source->captured
                        ? captured_boundary_source(source->arg_index, std::move(path), projected_schema)
                        : boundary_source(source->arg_index, std::move(path), projected_schema);
+        }
+
+        [[nodiscard]] const std::shared_ptr<WiringDelayedBindingState> &delayed_state() const
+        {
+            const auto *source = std::get_if<DelayedSource>(&source_);
+            if (source == nullptr) { throw std::logic_error("WiringPortRef source is not delayed"); }
+            return source->state;
+        }
+
+        [[nodiscard]] const std::vector<std::size_t> &delayed_path() const
+        {
+            const auto *source = std::get_if<DelayedSource>(&source_);
+            if (source == nullptr) { throw std::logic_error("WiringPortRef source is not delayed"); }
+            return source->path;
+        }
+
+        [[nodiscard]] WiringPortRef projected_delayed_source(
+            std::vector<std::size_t> path,
+            const TSValueTypeMetaData *projected_schema) const
+        {
+            return delayed_source(delayed_state(), std::move(path), projected_schema);
         }
 
         [[nodiscard]] const WiringInstance *peered_node() const
@@ -315,6 +362,9 @@ namespace hgraph
                                 ? boundary_capture_index() == other.boundary_capture_index()
                                 : boundary_arg_index() == other.boundary_arg_index()) &&
                            boundary_path() == other.boundary_path();
+                case SourceKind::Delayed:
+                    return delayed_state() == other.delayed_state() &&
+                           delayed_path() == other.delayed_path();
                 case SourceKind::Structural:
                 {
                     const auto &left  = structural_children();
@@ -331,7 +381,26 @@ namespace hgraph
         }
 
       private:
-        std::variant<std::monostate, PeeredSource, StructuralSource, BoundarySource> source_{};
+        std::variant<std::monostate, PeeredSource, StructuralSource, BoundarySource, DelayedSource> source_{};
+    };
+
+    /** Shared state behind one leaf of a delayed binding. */
+    struct WiringDelayedBindingState
+    {
+        Wiring                        *wiring{nullptr};
+        const TSValueTypeMetaData     *schema{nullptr};
+        std::optional<WiringPortRef>   source{};
+    };
+
+    /** Shared handle state for a delayed binding and all copies of its facade. */
+    struct WiringDelayedBindingControl
+    {
+        Wiring                    *wiring{nullptr};
+        const TSValueTypeMetaData *schema{nullptr};
+        WiringPortRef              port{};
+        std::vector<std::shared_ptr<WiringDelayedBindingState>>
+            leaves{};
+        bool bound{false};
     };
 
     /** Consumer-side wiring input: source port plus optional target path on the consuming node. */
@@ -1011,6 +1080,79 @@ namespace hgraph
         Wiring        *wiring_{nullptr};
         WiringPortRef ref_{};
     };
+
+    /** Type-erased core of ``delayed_binding``; Python uses this same handle. */
+    class HGRAPH_EXPORT ErasedDelayedBindingWiringPort
+    {
+      public:
+        ErasedDelayedBindingWiringPort() noexcept = default;
+        ErasedDelayedBindingWiringPort(Wiring &wiring, const TSValueTypeMetaData *schema);
+
+        [[nodiscard]] WiringPortRef port() const;
+        ErasedDelayedBindingWiringPort &bind(WiringPortRef source);
+        [[nodiscard]] bool bound() const;
+        [[nodiscard]] const TSValueTypeMetaData *schema() const;
+        [[nodiscard]] Wiring *wiring() const;
+
+      private:
+        [[nodiscard]] WiringDelayedBindingControl &control() const;
+
+        std::shared_ptr<WiringDelayedBindingControl> control_{};
+    };
+
+    /**
+     * A typed wiring placeholder whose producer may be supplied after its
+     * consumers have been wired. It changes construction order only: the
+     * resolved edge remains a normal same-cycle dependency and cycles fail
+     * during graph ranking. Use ``feedback`` when a cycle and one-cycle delay
+     * are intentional.
+     */
+    template <typename Schema>
+    class DelayedBindingWiringPort
+    {
+      public:
+        using schema = Schema;
+
+        DelayedBindingWiringPort() noexcept = default;
+        explicit DelayedBindingWiringPort(ErasedDelayedBindingWiringPort erased)
+            : erased_(std::move(erased))
+        {
+        }
+
+        [[nodiscard]] Port<Schema> operator()() const
+        {
+            return Port<Schema>{erased_.wiring(), erased_.port()};
+        }
+
+        template <typename SourceSchema>
+        DelayedBindingWiringPort &operator()(const Port<SourceSchema> &source)
+        {
+            erased_.bind(source.erased());
+            return *this;
+        }
+
+        template <typename SourceSchema>
+        DelayedBindingWiringPort &bind(const Port<SourceSchema> &source)
+        {
+            return (*this)(source);
+        }
+
+        [[nodiscard]] bool bound() const { return erased_.bound(); }
+
+      private:
+        ErasedDelayedBindingWiringPort erased_{};
+    };
+
+    template <typename Schema>
+    [[nodiscard]] DelayedBindingWiringPort<Schema> delayed_binding(Wiring &wiring)
+    {
+        const auto *schema = schema_descriptor<Schema>::ts_meta();
+        if (schema == nullptr)
+        {
+            throw std::invalid_argument("delayed_binding<Schema> requires a concrete time-series schema");
+        }
+        return DelayedBindingWiringPort<Schema>{ErasedDelayedBindingWiringPort{wiring, schema}};
+    }
 
     /**
      * A **named** port parameter — gives a ``compose`` time-series parameter a

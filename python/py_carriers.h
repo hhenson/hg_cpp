@@ -211,6 +211,12 @@ namespace hgraph::python_bridge
         bool                       bound{false};
     };
 
+    /** Python carrier for the C++ wiring-core delayed binding handle. */
+    struct PyDelayedBinding
+    {
+        ErasedDelayedBindingWiringPort binding{};
+    };
+
     struct PyNodeRecord
     {
         nb::object fn;

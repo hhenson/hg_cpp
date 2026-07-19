@@ -525,6 +525,14 @@ Wiring and node-authoring surface
    * - ``feedback``
      - Full
      - One-cycle delay, sink/source pair.
+   * - ``delayed_binding``
+     - Full for peered and fixed structural sources
+     - Shared C++ wiring-core placeholder with typed C++ and Python facades.
+       It resolves before ranking, adds no runtime node or delay, preserves
+       fixed-collection and key-set projections, expands fixed ``TSL``/``TSB``
+       structures into delayed leaves, and rejects cycles. A dynamic structural
+       ``TSL`` must first be materialized as a peered output because its
+       cardinality is not declared.
    * - Services (reference / subscription / request-reply)
      - Full at a graph boundary
      - Path-aware and generic multi-interface implementations, template and

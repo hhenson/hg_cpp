@@ -623,6 +623,12 @@ namespace hgraph
                     path.push_back(index);
                     return ts.projected_boundary_source(std::move(path), element_schema);
                 }
+                case WiringPortRef::SourceKind::Delayed:
+                {
+                    std::vector<std::size_t> path = ts.delayed_path();
+                    path.push_back(index);
+                    return ts.projected_delayed_source(std::move(path), element_schema);
+                }
                 case WiringPortRef::SourceKind::Null:
                     return WiringPortRef::null_source(element_schema);
                 case WiringPortRef::SourceKind::Unbound:
@@ -654,6 +660,12 @@ namespace hgraph
                     std::vector<std::size_t> path = ts.boundary_path();
                     path.push_back(index);
                     return ts.projected_boundary_source(std::move(path), field_schema);
+                }
+                case WiringPortRef::SourceKind::Delayed:
+                {
+                    std::vector<std::size_t> path = ts.delayed_path();
+                    path.push_back(index);
+                    return ts.projected_delayed_source(std::move(path), field_schema);
                 }
                 case WiringPortRef::SourceKind::Null:
                     return WiringPortRef::null_source(field_schema);
@@ -694,6 +706,12 @@ namespace hgraph
                     std::vector<std::size_t> path = ts.boundary_path();
                     path.push_back(ts_key_set_path_component);
                     return ts.projected_boundary_source(std::move(path), key_set_schema);
+                }
+                case WiringPortRef::SourceKind::Delayed:
+                {
+                    std::vector<std::size_t> path = ts.delayed_path();
+                    path.push_back(ts_key_set_path_component);
+                    return ts.projected_delayed_source(std::move(path), key_set_schema);
                 }
                 case WiringPortRef::SourceKind::Null:
                     return WiringPortRef::null_source(key_set_schema);
