@@ -79,7 +79,9 @@ namespace hgraph
             // specific key whose membership changed in a multiplexed input.
             // Retain this cycle state across a paused child evaluation.
             bool               refresh_all_bindings{false};
+            bool               selective_repoint_bindings{false};
             std::vector<Value> membership_changed_keys{};
+            std::vector<Value> repoint_modified_keys{};
 
             // Candidate slots are sparse for ordinary multiplexed value ticks.
             // Full scans remain the conservative path for broadcast/repoint and
@@ -212,9 +214,9 @@ namespace hgraph
 
         struct SourceRepointStatus
         {
-            bool any_repointed{false};
             bool mux_repointed{false};    ///< any MULTIPLEXED source re-pointed
             bool keys_repointed{false};   ///< the __keys__ source re-pointed
+            bool broadcast_repointed{false};
         };
 
         // Program-lifetime, intentionally-leaked context storage — same rationale
@@ -290,13 +292,12 @@ namespace hgraph
                     storage.outer_sources[i] = current;
                     if (initialized)
                     {
-                        status.any_repointed = true;
-                        if (std::find(multiplexed_inputs.begin(), multiplexed_inputs.end(), i) !=
-                            multiplexed_inputs.end())
-                        {
-                            status.mux_repointed = true;
-                        }
+                        const bool multiplexed =
+                            std::find(multiplexed_inputs.begin(), multiplexed_inputs.end(), i) !=
+                            multiplexed_inputs.end();
+                        if (multiplexed) { status.mux_repointed = true; }
                         if (i == keys_input_index) { status.keys_repointed = true; }
+                        else if (!multiplexed) { status.broadcast_repointed = true; }
                     }
                 }
             }
@@ -404,6 +405,52 @@ namespace hgraph
             }
         }
 
+        [[nodiscard]] bool key_source_layout_compatible(const MapNodeStorage &storage,
+                                                        const TSSDataView &keys_set)
+        {
+            for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
+            {
+                const MapKeyEntry *entry = storage.entries.entry_at(slot);
+                if (entry == nullptr) { continue; }
+                if (slot >= keys_set.slot_capacity() || !keys_set.slot_occupied(slot) ||
+                    !entry->key.equals(keys_set.at_slot(slot)))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        void reconcile_compatible_key_source(const NodeView &view, const MapNodeContext &context,
+                                             MapNodeStorage &storage, const TSSDataView &keys_set,
+                                             DateTime evaluation_time)
+        {
+            auto output_mutation = begin_map_output_mutation(view, evaluation_time);
+            auto error_mutation  = begin_map_error_mutation(view, evaluation_time);
+            auto *mutation       = output_mutation ? &*output_mutation : nullptr;
+            auto *errors         = error_mutation ? &*error_mutation : nullptr;
+
+            for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
+            {
+                if (storage.entries.entry_at(slot) == nullptr) { continue; }
+                if (slot >= keys_set.slot_capacity() || !keys_set.slot_live(slot))
+                {
+                    remove_entry_at_slot(view, context, storage, mutation, errors,
+                                         slot, evaluation_time);
+                }
+            }
+            for (std::size_t slot = 0; slot < keys_set.slot_capacity(); ++slot)
+            {
+                if (!keys_set.slot_live(slot)) { continue; }
+                const MapKeyEntry *entry = storage.entries.entry_at(slot);
+                if (entry == nullptr || !entry->graph.has_value() || !entry->graph.view().started())
+                {
+                    create_entry_at_slot(view, context, storage, mutation, keys_set,
+                                         slot, evaluation_time);
+                }
+            }
+        }
+
         // Per-key lifecycle reconciliation (the cycle "setup"): re-point source handles,
         // create/remove children from the __keys__ set. Returns whether surviving children
         // need their inputs re-bound. Skipped on a pause/resume re-entry (the key set does
@@ -420,7 +467,23 @@ namespace hgraph
             auto root_input = view.input(evaluation_time);
             SourceRepointStatus source_status =
                 update_source_handles(root_input.borrowed_ref(), storage, spec.multiplexed_inputs, keys_index);
-            bool bindings_need_refresh = source_status.any_repointed;
+            bool bindings_need_refresh = source_status.mux_repointed || source_status.broadcast_repointed;
+            storage.selective_repoint_bindings = source_status.mux_repointed &&
+                                                  !source_status.broadcast_repointed;
+            storage.repoint_modified_keys.clear();
+            if (storage.selective_repoint_bindings)
+            {
+                for (const std::size_t mux_index : spec.multiplexed_inputs)
+                {
+                    auto mux_input = root_input.indexed_child_at(mux_index);
+                    if (!mux_input.valid() || !mux_input.modified()) { continue; }
+                    auto dict = mux_input.as_dict();
+                    for (const ValueView &key : dict.modified_keys())
+                    {
+                        storage.repoint_modified_keys.emplace_back(key);
+                    }
+                }
+            }
 
             // Value ticks keep their stable element endpoint and must not
             // rebind every child. Only structural membership changes need a
@@ -468,8 +531,16 @@ namespace hgraph
             auto keys_input = root_input.indexed_child_at(keys_index);
             auto keys_source = keys_input.bound_output();
             const bool keys_handle_changed = !keys_source.handle().same_as(storage.observed_keys_source);
-            const bool keys_source_replaced = keys_handle_changed || source_status.keys_repointed;
-            if (keys_source_replaced && storage.entries.has_entries())
+            const bool keys_source_replaced = keys_handle_changed || source_status.keys_repointed ||
+                                              storage.keys_source_cleared;
+            bool preserve_compatible_entries = false;
+            if (keys_source_replaced && storage.entries.has_entries() && keys_input.valid())
+            {
+                preserve_compatible_entries = key_source_layout_compatible(
+                    storage, keys_input.data_view().as_set());
+            }
+            if (keys_source_replaced && storage.entries.has_entries() &&
+                !preserve_compatible_entries)
             {
                 auto output_mutation = begin_map_output_mutation(view, evaluation_time);
                 auto error_mutation  = begin_map_error_mutation(view, evaluation_time);
@@ -496,7 +567,9 @@ namespace hgraph
                 auto key_set = keys_data.as_set();
                 storage.entries.reserve_to(key_set.slot_capacity());
 
-                const bool rebuild = !storage.primed || source_status.keys_repointed || keys_observer_changed;
+                const bool rebuild = !storage.primed ||
+                                     ((keys_source_replaced || keys_observer_changed) &&
+                                      !preserve_compatible_entries);
                 if (rebuild)
                 {
                     const bool publish_initial_empty = key_set.empty() && view.has_output() &&
@@ -509,6 +582,11 @@ namespace hgraph
                     create_live_key_entries(view, context, storage, mutation, key_set, evaluation_time);
                     if (publish_initial_empty && output_mutation) { output_mutation->touch(); }
                     storage.primed = true;
+                }
+                else if (keys_source_replaced || keys_observer_changed)
+                {
+                    reconcile_compatible_key_source(view, context, storage, key_set,
+                                                    evaluation_time);
                 }
                 else if (keys_input.modified())
                 {
@@ -542,6 +620,16 @@ namespace hgraph
             for (const Value &changed_key : storage.membership_changed_keys)
             {
                 if (changed_key.equals(key)) { return true; }
+            }
+            return false;
+        }
+
+        [[nodiscard]] bool map_entry_repoint_modified(const MapNodeStorage &storage,
+                                                      const ValueView &key)
+        {
+            for (const Value &modified_key : storage.repoint_modified_keys)
+            {
+                if (modified_key.equals(key)) { return true; }
             }
             return false;
         }
@@ -720,18 +808,23 @@ namespace hgraph
                 // schedule enqueued before the stop) lingers this cycle —
                 // stopped children never evaluate.
                 if (!child.started()) { continue; }
-                if (storage.refresh_all_bindings ||
-                    map_entry_membership_changed(storage, entry->key.view()))
+                const bool membership_changed =
+                    map_entry_membership_changed(storage, entry->key.view());
+                if (storage.refresh_all_bindings || membership_changed)
                 {
+                    const bool silent_repoint = storage.selective_repoint_bindings &&
+                                                !membership_changed &&
+                                                !map_entry_repoint_modified(storage, entry->key.view());
                     const TSOutputView key_source = entry->key_source.bound()
                                                         ? entry->key_source.view(evaluation_time)
                                                         : TSOutputView{};
                     runtime_detail::bind_mapped_child_inputs(view, child, evaluation_time, spec.child,
-                                                             spec.args, entry->key.view(), key_source);
+                                                             spec.args, entry->key.view(), key_source,
+                                                             std::nullopt, silent_repoint);
                     runtime_detail::bind_mapped_child_output(view, child, evaluation_time,
                                                              spec.child.output_binding, spec.args,
                                                              entry->key.view(), key_source,
-                                                             spec.output_binding_mode);
+                                                             spec.output_binding_mode, silent_repoint);
                 }
 
                 const bool resume_this = resuming && position == start_position;
@@ -768,7 +861,9 @@ namespace hgraph
             storage.resume_position_plus_one = 0;
             storage.evaluation_slots.clear();
             storage.refresh_all_bindings = false;
+            storage.selective_repoint_bindings = false;
             storage.membership_changed_keys.clear();
+            storage.repoint_modified_keys.clear();
             return true;
         }
 
@@ -786,7 +881,9 @@ namespace hgraph
             storage.unsubscribe_keys_noexcept();
             storage.primed = false;
             storage.refresh_all_bindings = false;
+            storage.selective_repoint_bindings = false;
             storage.membership_changed_keys.clear();
+            storage.repoint_modified_keys.clear();
             storage.evaluation_slots.clear();
             storage.resume_position_plus_one = 0;
             storage.has_future_child_schedule = false;

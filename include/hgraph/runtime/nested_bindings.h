@@ -125,6 +125,23 @@ namespace hgraph
         if (!current.handle().same_as(source.handle())) { target.bind_output(source); }
     }
 
+    /** Migrate an unchanged runtime-owned route without sampling its consumer. */
+    inline void rebind_input_to_source_silent(TSInputView target, const TSOutputView &source)
+    {
+        if (!target.is_bindable())
+        {
+            throw std::logic_error("Silent nested input rebind target must be a peered child input endpoint");
+        }
+        if (!source.bound())
+        {
+            if (target.bound()) { target.unbind_output(); }
+            return;
+        }
+
+        auto current = target.bound_output();
+        if (!current.handle().same_as(source.handle())) { target.rebind_output_silent(source); }
+    }
+
     /** Bind a newly constructed child boundary and expose the source's current
         value as a sampled delta for this lifecycle transition. */
     inline void bind_sampled_input_to_source(TSInputView target, const TSOutputView &source,

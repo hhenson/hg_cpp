@@ -490,6 +490,16 @@ namespace hgraph
         }
     }
 
+    void TSInputView::rebind_output_silent(const TSOutputView &output)
+    {
+        if (!is_bindable())
+        {
+            throw std::logic_error(
+                "TSInputView::rebind_output_silent requires a peered target-link input view");
+        }
+        data_.bind_target(output);
+    }
+
     void TSInputView::bind_output_sampled(const TSOutputView &output, DateTime modified_time)
     {
         if (!is_bindable())

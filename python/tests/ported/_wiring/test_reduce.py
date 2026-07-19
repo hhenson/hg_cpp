@@ -149,6 +149,14 @@ def _switch_reduced_non_zero(
     )
 
 
+@graph
+def _map_switch_reduced_non_zero(
+    values: TSD[str, TSD[str, TSD[str, TS[float]]]],
+    enabled: TSD[str, TS[bool]],
+) -> TSD[str, TSD[str, TS[float]]]:
+    return map_(_switch_reduced_non_zero, values, enabled)
+
+
 def test_tsd_reduce_without_zero_is_invalid_when_empty_and_aliases_singleton():
     assert eval_node(
         _sum_without_explicit_zero,
@@ -228,4 +236,46 @@ def test_switch_samples_an_empty_nested_reduce_branch():
         {"a": 87.0, "b": 93.0},
         {"a": REMOVE, "b": REMOVE},
         {},
+    ]
+
+
+def test_switch_reduce_map_shrink_with_trace():
+    keys = [f"s{index:02d}" for index in range(17)]
+    assert eval_node(
+        _map_switch_reduced_non_zero,
+        [
+            {
+                "p1": {
+                    key: {"a": float(index + 1), "b": float(index + 2)}
+                    for index, key in enumerate(keys)
+                }
+            },
+            {"p1": {key: REMOVE_IF_EXISTS for key in keys[:11]}},
+            None,
+            {"p1": {key: REMOVE_IF_EXISTS for key in keys[11:]}},
+            {"p1": REMOVE_IF_EXISTS},
+            {"p1": {"r1": {"a": 10.0, "b": 20.0}, "r2": {"a": 1.0}}},
+            {"p1": {"r2": REMOVE_IF_EXISTS}},
+            None,
+        ],
+        [
+            {"p1": True},
+            None,
+            {"p1": False},
+            None,
+            None,
+            {"p1": True},
+            None,
+            {"p1": False},
+        ],
+        __trace__=True,
+    ) == [
+        {"p1": {"a": 153.0, "b": 170.0}},
+        {"p1": {"a": 87.0, "b": 93.0}},
+        {"p1": {"a": 87.0, "b": 93.0}},
+        {"p1": {"a": REMOVE, "b": REMOVE}},
+        None,
+        {"p1": {"a": 11.0, "b": 20.0}},
+        {"p1": {"a": 10.0}},
+        {"p1": {"a": 10.0, "b": 20.0}},
     ]

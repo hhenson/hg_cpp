@@ -397,6 +397,52 @@ namespace
         }
     };
 
+    struct IsNonZeroInt
+    {
+        static constexpr auto name = "reduce_is_non_zero_int";
+
+        static void eval(In<"value", TS<Int>> value, Out<TS<Bool>> out)
+        {
+            out.set(value.value() != Int{0});
+        }
+    };
+
+    struct IntKeysWhereTrue
+    {
+        static constexpr auto name = "reduce_int_keys_where_true";
+
+        static void eval(In<"values", TSD<Int, TS<Bool>>, InputValidity::Unchecked> values,
+                         Out<TSS<Int>> out)
+        {
+            for (const ValueView &key : values.removed_keys())
+            {
+                static_cast<void>(out.remove(key.checked_as<Int>()));
+            }
+            for (auto &&[key, value] : values.modified_items())
+            {
+                const Int typed_key = key.checked_as<Int>();
+                if (value.value()) { static_cast<void>(out.add(typed_key)); }
+                else { static_cast<void>(out.remove(typed_key)); }
+            }
+        }
+    };
+
+    struct ReduceSelectNonZeroNestedIntDicts
+    {
+        static constexpr auto name = "reduce_select_non_zero_nested_int_dicts";
+
+        static Port<TSD<Int, TS<Int>>> compose(
+            Wiring &w, Port<TSD<Int, TSD<Int, TS<Int>>>> values)
+        {
+            auto reduced = wire<stdlib::reduce_>(w, fn<MergeIntDicts>(), values)
+                               .as<TSD<Int, TS<Int>>>();
+            auto non_zero = wire<stdlib::map_, TSD<Int, TS<Bool>>>(
+                w, fn<IsNonZeroInt>(), reduced);
+            auto keys = wire<IntKeysWhereTrue>(w, non_zero);
+            return wire<stdlib::getitem_>(w, reduced, keys).as<TSD<Int, TS<Int>>>();
+        }
+    };
+
     struct SwitchReducedNestedIntDicts
     {
         static constexpr auto name = "switch_reduced_nested_int_dicts";
@@ -915,6 +961,44 @@ TEST_CASE("reduce over TSD: a switched keyed result removes through a downstream
                       dict_delta<Int, TS<Int>>({{1, 4}, {2, 5}}),
                       dict_delta<Int, TS<Int>>({{1, 4}, {2, 5}}),
                       dict_delta<Int, TS<Int>>({}, {1, 2})));
+}
+
+TEST_CASE("reduce over TSD: collapsing to one collection does not resample unchanged mapped keys")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        (eval_node<ReduceAndMapNestedIntDicts>(
+            values<Value>(
+                dict_delta<Int, TSD<Int, TS<Int>>>(
+                    {{0, dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}})},
+                     {1, dict_delta<Int, TS<Int>>({{1, 1}})}}),
+                dict_delta<Int, TSD<Int, TS<Int>>>({}, {1}),
+                dict_delta<Int, TSD<Int, TS<Int>>>(
+                    {{0, dict_delta<Int, TS<Int>>({{2, 30}})}})))),
+        values<Value>(dict_delta<Int, TS<Int>>({{1, 12}, {2, 21}}),
+                      dict_delta<Int, TS<Int>>({{1, 11}}),
+                      dict_delta<Int, TS<Int>>({{2, 31}})));
+}
+
+TEST_CASE("reduce over TSD: selected values do not republish unchanged keys after collapse")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        (eval_node<ReduceSelectNonZeroNestedIntDicts>(
+            values<Value>(
+                dict_delta<Int, TSD<Int, TS<Int>>>(
+                    {{0, dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}})},
+                     {1, dict_delta<Int, TS<Int>>({{1, 1}})}}),
+                dict_delta<Int, TSD<Int, TS<Int>>>({}, {1}),
+                dict_delta<Int, TSD<Int, TS<Int>>>(
+                    {{0, dict_delta<Int, TS<Int>>({{2, 30}})}})))),
+        values<Value>(dict_delta<Int, TS<Int>>({{1, 11}, {2, 20}}),
+                      dict_delta<Int, TS<Int>>({{1, 10}}),
+                      dict_delta<Int, TS<Int>>({{2, 30}})));
 }
 
 TEST_CASE("reduce over TSD: an omitted zero remains invalid through switch")

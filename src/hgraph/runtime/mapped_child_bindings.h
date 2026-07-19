@@ -112,7 +112,8 @@ namespace hgraph::runtime_detail
         std::span<const MapArgSource> args,
         const ValueView &key,
         const TSOutputView &key_source,
-        std::optional<MappedChildSourceOverride> source_override = std::nullopt)
+        std::optional<MappedChildSourceOverride> source_override = std::nullopt,
+        bool silent_repoint = false)
     {
         if (spec.input_bindings.empty()) { return; }
 
@@ -139,7 +140,8 @@ namespace hgraph::runtime_detail
 
             auto target = walk_ts_path(child.node_at(binding.target.node).input(evaluation_time),
                                        binding.target.path);
-            bind_input_to_source(std::move(target), source);
+            if (silent_repoint) { rebind_input_to_source_silent(std::move(target), source); }
+            else { bind_input_to_source(std::move(target), source); }
         }
     }
 
@@ -151,7 +153,8 @@ namespace hgraph::runtime_detail
         std::span<const MapArgSource> args,
         const ValueView &key,
         const TSOutputView &key_source,
-        MapOutputBindingMode mode = MapOutputBindingMode::ChildTerminalWritesElement)
+        MapOutputBindingMode mode = MapOutputBindingMode::ChildTerminalWritesElement,
+        bool silent_repoint = false)
     {
         if (!output_binding.has_value()) { return; }
 
@@ -177,7 +180,8 @@ namespace hgraph::runtime_detail
             auto root_input = parent.input(evaluation_time);
             auto source = mapped_child_input_source(root_input.borrowed_ref(), args[source_index], key,
                                                     key_source, output_binding->parent_source_path);
-            bind_forwarding_output_to_source(element, source);
+            auto target = silent_repoint ? element.handle().view(MIN_DT) : element.borrowed_ref();
+            bind_forwarding_output_to_source(target, source);
             return;
         }
 

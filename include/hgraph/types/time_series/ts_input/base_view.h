@@ -103,6 +103,12 @@ namespace hgraph
         [[nodiscard]] TSOutputView bound_output() const;
 
         void bind_output(const TSOutputView &output);
+        /**
+         * Rebind a runtime-owned route without scheduling its active consumer.
+         * The caller must separately schedule every key/value whose semantic
+         * input changed; this is only for migrating an unchanged endpoint.
+         */
+        void rebind_output_silent(const TSOutputView &output);
         /** Bind an already-valid source as a lifecycle-owned sampled input. */
         void bind_output_sampled(const TSOutputView &output, DateTime modified_time);
         void unbind_output();
