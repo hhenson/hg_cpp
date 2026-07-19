@@ -17,7 +17,7 @@ def test_explode():
     ]
 
 
-@pytest.mark.skip("Skip as the C++ engine only deals with naive datetime objects")
+@pytest.mark.skip(reason="deviation: the native DateTime scalar currently stores naive UTC values")
 def test_add_date_time():
     @graph
     def g(dt: TS[date], tm: TS[time]) -> TS[datetime]:
@@ -38,7 +38,7 @@ def test_add_date_time():
            ]
 
 
-@pytest.mark.skip("Skip as the C++ engine only deals with naive datetime objects")
+@pytest.mark.skip(reason="deviation: the native DateTime scalar currently stores naive UTC values")
 def test_datetime_tzname():
     @graph
     def g(dt: TS[datetime]) -> TS[str]:
@@ -56,7 +56,7 @@ def test_datetime_tzname():
            ]
     
     
-@pytest.mark.skip("Skip as the C++ engine only deals with naive datetime objects")
+@pytest.mark.skip(reason="deviation: standalone timezone-aware time values require a future zoned scalar")
 def test_add_date_time_tz():
     @graph
     def g(dt: TS[date], tm: TS[time]) -> TS[datetime]:
@@ -75,7 +75,7 @@ def test_add_date_time_tz():
            ]
 
 
-@pytest.mark.skip("Skip as the C++ engine only deals with naive datetime objects")
+@pytest.mark.skip(reason="deviation: standalone timezone-aware time values require a future zoned scalar")
 def test_add_date_time_tz_tzname():
     @graph
     def g(dt: TS[date], tm: TS[time]) -> TS[str]:
@@ -92,5 +92,4 @@ def test_add_date_time_tz_tzname():
                'UTC',
                'SAST',
            ]
-
 

@@ -26,7 +26,7 @@ jobs:
           python-version: "3.12"
       - name: Validate package metadata
         run: |
-          python -m pip install --upgrade trove-classifiers
+          python -m pip install --upgrade packaging trove-classifiers
           python python/tests/test_packaging.py
       - name: Validate release tag
         if: github.ref_type == 'tag'
@@ -40,9 +40,12 @@ jobs:
           import re
 
           tag = os.environ["RELEASE_TAG"]
-          match = re.fullmatch(r"v_(\d+\.\d+\.\d+)", tag)
+          match = re.fullmatch(r"v_(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)", tag)
           if match is None:
-              raise SystemExit(f"release tag must match v_x.x.x, got {tag!r}")
+              raise SystemExit(
+                  f"release tag must match v_x.x.x or a PEP 440 prerelease such as "
+                  f"v_0.4.0rc1, got {tag!r}"
+              )
 
           # The TAG is the version authority: the project version in
           # pyproject.toml is ignored for releases (the publish job restamps
@@ -132,10 +135,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            parallel: "2"
-            cmake_generator: Ninja
-            cmake_args: -DHGRAPH_WARNINGS_AS_ERRORS=ON
           - os: windows-latest
             parallel: "2"
             cmake_generator: Visual Studio 18 2026
@@ -143,7 +142,7 @@ jobs:
           - os: macos-26
             parallel: "1"
             cmake_generator: Ninja
-            cmake_args: -DHGRAPH_WARNINGS_AS_ERRORS=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+            cmake_args: -DHGRAPH_WARNINGS_AS_ERRORS=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
 
     steps:
       - uses: actions/checkout@v6
@@ -168,18 +167,6 @@ jobs:
           CMAKE_ARGS: ${{ matrix.cmake_args }}
           CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.parallel }}
         run: python -m build --wheel
-      - name: Repair Linux wheel
-        if: runner.os == 'Linux'
-        run: |
-          python -m pip install --upgrade auditwheel
-          mkdir wheelhouse
-          auditwheel repair \
-            --exclude libarrow.so.2400 \
-            --exclude libarrow_compute.so.2400 \
-            --wheel-dir wheelhouse \
-            dist/*.whl
-          rm dist/*.whl
-          mv wheelhouse/*.whl dist/
       - name: Verify wheel ABI
         shell: python
         run: |
@@ -196,12 +183,67 @@ jobs:
               assert "-macosx_15_0_arm64.whl" in wheel.name, wheel.name
           elif sys.platform == "win32":
               assert wheel.name.endswith("-win_amd64.whl"), wheel.name
-          else:
-              assert wheel.name.endswith("_x86_64.whl"), wheel.name
           subprocess.check_call(["abi3audit", "--strict", str(wheel)])
       - uses: actions/upload-artifact@v7
         with:
           name: distribution-wheel-${{ matrix.os }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  build-linux-wheel:
+    name: Build manylinux 2.28 / GCC 14 wheel
+    needs:
+      - validate-release
+      - reuse-build
+    if: needs.reuse-build.outputs.run-id == ''
+    runs-on: ubuntu-24.04
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64:latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Verify official build toolchain
+        shell: bash
+        run: |
+          g++ --version
+          test "$(g++ -dumpfullversion -dumpversion | cut -d. -f1)" -ge 14
+          /opt/python/cp312-cp312/bin/python --version
+      - name: Install wheel build tools
+        run: /opt/python/cp312-cp312/bin/python -m pip install --upgrade build abi3audit auditwheel
+      - name: Build stable ABI wheel
+        env:
+          CMAKE_GENERATOR: Ninja
+          CMAKE_ARGS: -DHGRAPH_WARNINGS_AS_ERRORS=ON
+          CMAKE_BUILD_PARALLEL_LEVEL: "2"
+        run: /opt/python/cp312-cp312/bin/python -m build --wheel
+      - name: Repair for the glibc 2.28 floor
+        run: |
+          mkdir wheelhouse
+          auditwheel repair \
+            --plat manylinux_2_28_x86_64 \
+            --exclude libarrow.so.2400 \
+            --exclude libarrow_compute.so.2400 \
+            --wheel-dir wheelhouse \
+            dist/*.whl
+          rm dist/*.whl
+          mv wheelhouse/*.whl dist/
+      - name: Verify wheel ABI and platform tag
+        run: |
+          /opt/python/cp312-cp312/bin/python - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          wheels = list(Path("dist").glob("*.whl"))
+          assert len(wheels) == 1, wheels
+          wheel = wheels[0]
+          assert "-cp312-abi3-" in wheel.name, wheel.name
+          assert wheel.name.endswith("-manylinux_2_28_x86_64.whl"), wheel.name
+          subprocess.check_call(["abi3audit", "--strict", str(wheel)])
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: distribution-wheel-ubuntu-latest
           path: dist/*.whl
           if-no-files-found: error
 
@@ -244,6 +286,7 @@ jobs:
     needs:
       - reuse-build
       - build-wheel
+      - build-linux-wheel
     if: needs.reuse-build.outputs.run-id == ''
     runs-on: ${{ matrix.os }}
     strategy:
@@ -304,7 +347,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             parallel: "2"
           - os: macos-26
             parallel: "1"
@@ -323,6 +366,13 @@ jobs:
           echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
           echo "CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
           /usr/bin/clang++ --version
+      - name: Configure GCC 13 on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          echo "CC=gcc-13" >> "$GITHUB_ENV"
+          echo "CXX=g++-13" >> "$GITHUB_ENV"
+          g++-13 --version
       - name: Install native build dependencies
         run: python -m pip install --upgrade "cmake>=3.26" ninja "pyarrow>=24,<25"
       - name: Expose Arrow runtime libraries
@@ -347,7 +397,7 @@ jobs:
       - validate-release
       - reuse-build
     if: needs.reuse-build.outputs.run-id == ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
@@ -422,6 +472,7 @@ jobs:
       - test-wheel
       - native-cpp
       - native-install
+      - build-linux-wheel
     runs-on: ubuntu-latest
     environment:
       name: release

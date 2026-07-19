@@ -319,8 +319,9 @@ Recorded divergences / gaps (the morning-summary list):
   over ``ResolutionMap``/``ts_pattern_resolve`` — the single currency for
   py-side typevar resolution; ``IncorrectTypeBinding``/``ParseError``/
   ``RequirementsNotMetWiringError`` are ``WiringError`` subclasses), with
-  three widening rules: ``TS[object]`` accepts any payload (and ``convert``
-  gains a bridge-registered box-to-py-object kernel), ``tuple[E, ...]``
+  three widening rules: ``TS[object]`` accepts any payload through the native
+  ``Any`` type record (with an opaque Python-object fallback only when needed),
+  ``tuple[E, ...]``
   re-matches fixed tuples through the C++ homogeneous-tuple pattern, and
   TSW strictness is deferred until the duration/tick marker lands. Plain
   values on TS params auto-lift to ``const`` (numeric scalars are

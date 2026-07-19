@@ -594,6 +594,25 @@ namespace hgraph
         // modified() / valid() / delta_value() inherited from TSInputView.
     };
 
+    /** ``TS<AnyValue>`` input: expose the contained erased value without
+        pretending the Any box is an ordinary C++ atomic scalar. */
+    template <fixed_string Name, auto... TPolicies>
+    class In<Name, TS<AnyValue>, TPolicies...> : public TSInputView
+    {
+      public:
+        using schema                     = TS<AnyValue>;
+        using value_type                 = AnyValue;
+        static constexpr auto field_name = Name;
+        static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
+
+        explicit In(TSInputView view) noexcept : TSInputView(std::move(view)) {}
+
+        [[nodiscard]] AnyView value() const { return TSInputView::value().as_any(); }
+        [[nodiscard]] ValueView contained_value() const { return value().get(); }
+        [[nodiscard]] const TSInputView &base() const noexcept { return *this; }
+    };
+
     template <fixed_string Name, auto... TPolicies>
     class In<Name, SIGNAL, TPolicies...> : public TSInputView
     {
@@ -991,6 +1010,49 @@ namespace hgraph
             static_cast<void>(mutation.copy_value_from(value));
         }
         // modified() / valid() / evaluation_time() inherited from TSOutputView.
+    };
+
+    /** ``TS<AnyValue>`` output: each write is boxed with its concrete native
+        schema and then applied through the ordinary output mutation path. */
+    template <>
+    class Out<TS<AnyValue>> : public TSOutputView
+    {
+      public:
+        using schema     = TS<AnyValue>;
+        using value_type = AnyValue;
+
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
+
+        void set(const ValueView &value) const
+        {
+            Value boxed{ValuePlanFactory::instance().type_for(TypeRegistry::instance().any())};
+            boxed.as_any().begin_mutation().set(value);
+            apply_box(std::move(boxed));
+        }
+
+        void set(Value value) const
+        {
+            Value boxed{ValuePlanFactory::instance().type_for(TypeRegistry::instance().any())};
+            boxed.as_any().begin_mutation().set(std::move(value));
+            apply_box(std::move(boxed));
+        }
+
+        void apply(const ValueView &boxed) const
+        {
+            if (!boxed.is_any()) { throw std::invalid_argument("Out<TS<AnyValue>>::apply requires an Any value"); }
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
+            static_cast<void>(mutation.copy_value_from(boxed));
+        }
+
+      private:
+        void apply_box(Value boxed) const
+        {
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
+            if (!mutation.move_value_from(std::move(boxed)))
+            {
+                throw std::logic_error("Out<TS<AnyValue>>::set failed to move the boxed value");
+            }
+        }
     };
 
     template <>

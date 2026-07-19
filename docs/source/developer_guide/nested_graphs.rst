@@ -369,16 +369,22 @@ heap allocations. At final node disposal the previous generation is destroyed
 before the active generation: a stopped retired parent can still retain a target
 handle to a surviving current child output, so the retired subscriber must die
 before that producer.
-When a same-capacity reshape changes the keyed root source, publication also
-alternates two stable snapshots. The old root is copied before stop; after the
-new root evaluates, the snapshot is reconciled key by key so downstream sees
-the logical added/removed/changed delta rather than a full sample caused by the
-internal re-point. The output returns to direct forwarding on the next reduce
-evaluation. Capacity growth retains sampled-rebind behavior and publishes the
-new root's complete current value.
-The node's own output is a forwarding endpoint linking into field-held
-combiner outputs, so the reduce field uses the default *before-output* plan
-placement (the ``nested_``/``switch_`` direction).
+When a keyed root first changes source, publication moves to one stable output
+owned for the remaining lifetime of the reduce node. The old root is copied
+before stop and the stable value is reconciled after the new root evaluates.
+This lifetime is required because downstream ``REF`` values can retain child
+endpoint identities after the transition cycle; recycling a temporary
+snapshot would leave those references pointing into freed slot storage.
+Ordinary evaluations copy only the source's modified and removed TSD slots (or
+added and removed TSS slots). A later root-identity change performs one full
+reconciliation. Same-capacity changes publish only logical differences, while
+capacity-bank changes preserve sampled-rebind behavior by marking every live
+TSD child modified (a TSS publishes its structural sample).
+The node's own output is a forwarding endpoint linking either into a live
+combiner output or the field-held stable publication output, so the reduce
+field uses the default *before-output* plan placement (the
+``nested_``/``switch_`` direction). The forwarding output is destroyed before
+the field and therefore detaches before the stable publication storage dies.
 
 **Exception / unwind policy:** reduce rebuild failures are not intended to
 recover and continue execution. If child construction, binding, starting, root

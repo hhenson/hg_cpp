@@ -186,6 +186,11 @@ namespace hgraph
         using value_type = TValue;
     };
 
+    /** Type-erased scalar value. Storage is the native ``Any`` box, whose
+        contained ``Value`` retains its concrete schema and ownership. */
+    struct AnyValue
+    {};
+
     /** Un-named (structural) time-series bundle; corresponds to ``un_named_tsb``. */
     template <typename... TFields>
     struct UnNamedTSB
@@ -478,6 +483,17 @@ namespace hgraph
             {
                 return nullptr;
             }
+        }
+    };
+
+    template <>
+    struct scalar_descriptor<AnyValue>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept { return true; }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            return TypeRegistry::instance().any();
         }
     };
 

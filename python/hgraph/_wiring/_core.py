@@ -99,6 +99,16 @@ class _OperatorFunction:
         self._ts_hint = ts_hint
 
     def __call__(self, *args, **kwargs):
+        if (self.__name__ == "apply" and args
+                and "tp" not in kwargs and "output_type" not in kwargs
+                and self._output_type is None and callable(args[0])
+                and not isinstance(args[0], WiringPort)):
+            import inspect
+            from .._types import TS
+
+            result_type = inspect.signature(args[0]).return_annotation
+            if result_type is not inspect.Signature.empty:
+                kwargs["output_type"] = TS[result_type]
         if (self.__name__ == "const" and args
                 and "tp" not in kwargs and "output_type" not in kwargs):
             from .._compat import CompoundScalar

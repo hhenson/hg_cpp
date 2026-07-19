@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -86,6 +87,62 @@ namespace hgraph::python_bridge
 
     namespace
     {
+        [[nodiscard]] const ValueCallableOps &python_value_callable_ops()
+        {
+            static const ValueCallableOps ops{
+                .invoke = [](const void *context, std::span<const ValueCallArg> args,
+                             const ValueTypeMetaData *output_schema) {
+                    nb::gil_scoped_acquire gil;
+                    const auto &callable = *static_cast<const PyObj *>(context);
+                    std::size_t positional_count = 0;
+                    for (const ValueCallArg &arg : args)
+                    {
+                        if (arg.name.empty()) { ++positional_count; }
+                    }
+                    nb::tuple positional = nb::steal<nb::tuple>(
+                        PyTuple_New(static_cast<Py_ssize_t>(positional_count)));
+                    if (!positional.is_valid()) { throw nb::python_error(); }
+                    nb::dict keywords;
+                    std::size_t index = 0;
+                    for (const ValueCallArg &arg : args)
+                    {
+                        nb::object value = value_to_py(arg.view());
+                        if (arg.name.empty())
+                        {
+                            if (PyTuple_SetItem(positional.ptr(), static_cast<Py_ssize_t>(index++),
+                                                value.release().ptr()) != 0)
+                            {
+                                throw nb::python_error();
+                            }
+                        }
+                        else { keywords[nb::str(arg.name.data(), arg.name.size())] = std::move(value); }
+                    }
+                    nb::object result = nb::steal<nb::object>(
+                        PyObject_Call(callable.get().ptr(), positional.ptr(), keywords.ptr()));
+                    if (!result.is_valid()) { throw nb::python_error(); }
+                    if (result.is_none() || output_schema == nullptr) { return Value{}; }
+                    return py_to_value_as(result, output_schema);
+                },
+            };
+            return ops;
+        }
+
+        [[nodiscard]] ValueCallable python_value_callable(nb::handle source)
+        {
+            if (PyCallable_Check(source.ptr()) == 0)
+            {
+                throw nb::type_error("expected a callable value");
+            }
+            auto record = std::make_shared<PyObj>(nb::borrow<nb::object>(source));
+            return ValueCallable{
+                .ops      = &python_value_callable_ops(),
+                .owner    = record,
+                .context  = record.get(),
+                .identity = source.ptr(),
+                .variadic = true,
+            };
+        }
+
         [[nodiscard]] bool is_py_date(nb::handle object)
         {
             return nb::hasattr(object, "year") && nb::hasattr(object, "month") && nb::hasattr(object, "day") &&
@@ -95,6 +152,19 @@ namespace hgraph::python_bridge
         [[nodiscard]] bool is_py_time(nb::handle object)
         {
             return nb::hasattr(object, "hour") && nb::hasattr(object, "minute") && !nb::hasattr(object, "year");
+        }
+
+        [[nodiscard]] Value box_any(Value value)
+        {
+            Value boxed{ValuePlanFactory::instance().type_for(
+                TypeRegistry::instance().any())};
+            boxed.as_any().begin_mutation().set(std::move(value));
+            return boxed;
+        }
+
+        [[nodiscard]] Value box_python_object(nb::handle object)
+        {
+            return box_any(Value{PyObj{nb::borrow<nb::object>(object)}});
         }
 
         [[nodiscard]] Value py_container_to_value(nb::handle object)
@@ -110,7 +180,13 @@ namespace hgraph::python_bridge
             {
                 std::vector<Value> elements;
                 for (nb::handle item : object) { elements.push_back(py_to_value(item)); }
-                if (elements.empty()) { throw nb::type_error("cannot infer the element type of an empty set"); }
+                if (elements.empty()) { return box_python_object(object); }
+                if (std::ranges::any_of(elements, [&](const Value &element) {
+                        return element.schema() != elements.front().schema();
+                    }))
+                {
+                    return box_python_object(object);
+                }
                 return build(registry.mutable_set(elements.front().schema()), [&](ValueView view) {
                     MutableSetView set{std::move(view)};
                     for (const auto &element : elements) { set.add(element.view()); }
@@ -123,18 +199,57 @@ namespace hgraph::python_bridge
                 {
                     entries.emplace_back(py_to_value(key), py_to_value(item));
                 }
-                if (entries.empty()) { throw nb::type_error("cannot infer the key/value types of an empty dict"); }
+                if (entries.empty()) { return box_python_object(object); }
+                if (std::ranges::any_of(entries, [&](const auto &entry) {
+                        return entry.first.schema() != entries.front().first.schema() ||
+                               entry.second.schema() != entries.front().second.schema();
+                    }))
+                {
+                    return box_python_object(object);
+                }
                 return build(registry.mutable_map(entries.front().first.schema(), entries.front().second.schema()),
                              [&](ValueView view) {
                                  MutableMapView map{std::move(view)};
                                  for (const auto &[key, item] : entries) { map.set_item(key.view(), item.view()); }
                              });
             }
-            if (nb::isinstance<nb::tuple>(object) || nb::isinstance<nb::list>(object))
+            if (nb::isinstance<nb::tuple>(object))
+            {
+                std::vector<Value> elements;
+                std::vector<const ValueTypeMetaData *> schemas;
+                for (nb::handle item : object)
+                {
+                    elements.push_back(py_to_value(item));
+                    schemas.push_back(elements.back().schema());
+                }
+                if (elements.empty()) { return box_python_object(object); }
+                const bool homogeneous = std::ranges::all_of(
+                    elements, [&](const Value &element) {
+                        return element.schema() == elements.front().schema();
+                    });
+                if (homogeneous)
+                {
+                    Value value{ValuePlanFactory::instance().type_for(
+                        registry.list(elements.front().schema(), 0, true))};
+                    value.view().assign_from_python(object);
+                    return value;
+                }
+                Value value{ValuePlanFactory::instance().type_for(
+                    registry.tuple(schemas))};
+                value.view().assign_from_python(object);
+                return value;
+            }
+            if (nb::isinstance<nb::list>(object))
             {
                 std::vector<Value> elements;
                 for (nb::handle item : object) { elements.push_back(py_to_value(item)); }
-                if (elements.empty()) { throw nb::type_error("cannot infer the element type of an empty sequence"); }
+                if (elements.empty()) { return box_python_object(object); }
+                if (std::ranges::any_of(elements, [&](const Value &element) {
+                        return element.schema() != elements.front().schema();
+                    }))
+                {
+                    return box_python_object(object);
+                }
                 return build(registry.mutable_list(elements.front().schema()), [&](ValueView view) {
                     MutableListView list{std::move(view)};
                     for (const auto &element : elements) { list.push_back(element.view()); }
@@ -156,6 +271,13 @@ namespace hgraph::python_bridge
             auto raw = nb::cast<nb::bytes>(object);
             return Value{Bytes{std::string{raw.c_str(), raw.size()}}};
         }
+        // Python classes are callable too, but are scalar data for dispatch,
+        // context, and TS[object]. Only callable instances become runtime
+        // callables during schema-free inference.
+        if (PyType_Check(object.ptr()) == 0 && PyCallable_Check(object.ptr()) != 0)
+        {
+            return Value{python_value_callable(object)};
+        }
         if (is_py_date(object))
         {
             return Value{Date{std::chrono::year{nb::cast<int>(object.attr("year"))},
@@ -164,6 +286,12 @@ namespace hgraph::python_bridge
         }
         if (is_py_time(object))
         {
+            nb::object offset = object.attr("utcoffset")();
+            if (!offset.is_none())
+            {
+                throw nb::type_error(
+                    "timezone-aware time values require a zoned time scalar");
+            }
             const std::int64_t micros = nb::cast<std::int64_t>(object.attr("hour")) * 3'600'000'000LL +
                                         nb::cast<std::int64_t>(object.attr("minute")) * 60'000'000LL +
                                         nb::cast<std::int64_t>(object.attr("second")) * 1'000'000LL +
@@ -190,7 +318,7 @@ namespace hgraph::python_bridge
         {
             return py_container_to_value(object);
         }
-        return Value{PyObj{nb::borrow(object)}};
+        return box_python_object(object);
     }
 
     nb::object PyArrowStream::capsule() const
@@ -355,6 +483,15 @@ namespace hgraph::python_bridge
 
     Value py_to_value_as(nb::handle object, const ValueTypeMetaData *meta)
     {
+        if (meta != nullptr && meta->value_kind() == ValueTypeKind::Any)
+        {
+            Value boxed{ValuePlanFactory::instance().type_for(meta)};
+            if (object.is_none()) { return boxed; }
+            Value inferred = py_to_value(object);
+            if (inferred.schema() == meta) { return inferred; }
+            boxed.as_any().begin_mutation().set(std::move(inferred));
+            return boxed;
+        }
         // Conversion goes through the binding's from_python operation; no
         // schema-kind switch is needed at this boundary.
         std::shared_ptr<const TypeRealizationSnapshot> conversion_snapshot;
@@ -384,6 +521,14 @@ namespace hgraph::python_bridge
 
     void install_value_conversion_hooks()
     {
+        python_conversion_traits<ValueCallable>::to_python_hook = [](const ValueCallable &value) {
+            if (value.ops != &python_value_callable_ops() || value.context == nullptr)
+            {
+                throw nb::type_error("native value callable has no Python callable object");
+            }
+            return static_cast<const PyObj *>(value.context)->get();
+        };
+        python_conversion_traits<ValueCallable>::from_python_hook = &python_value_callable;
         python_conversion_traits<Frame>::to_python_hook   = &frame_to_py;
         python_conversion_traits<Frame>::from_python_hook = [](nb::handle o) {
             return py_arrow_to_frame(o).view().checked_as<Frame>();

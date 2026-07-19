@@ -5,19 +5,20 @@ A clean-slate, **C++-first** implementation of the
 runtime. The C++ runtime is the source of truth. Python provides wiring
 compatibility and supports Python-authored nodes running inside that runtime.
 
-## Python preview
+## Python release candidate
 
-Preview builds are published under the `hg_cpp` distribution name:
+Release candidates are published under the `hg_cpp` distribution name:
 
 ```sh
-python -m pip install hg_cpp
+python -m pip install hg_cpp==0.4.0rc1
 ```
 
 The distribution exposes the `hgraph` import package and the native `_hgraph`
 extension. Install it in an isolated environment rather than alongside the
 main `hgraph` distribution, since both provide the same Python import namespace.
-One platform wheel supports CPython 3.12 and later through the CPython stable
-ABI.
+One wheel per supported platform covers CPython 3.12 and later through the
+CPython stable ABI. The supported Python and platform policy is recorded in
+`docs/source/developer_guide/release_readiness.rst`.
 
 ## Build & test
 
@@ -32,8 +33,8 @@ for the default build (bindings are opt-in via `-DHGRAPH_BUILD_PYTHON_BINDINGS=O
 
 ## Documentation
 
-Sphinx docs live under `docs/source` (`pip install -r docs/requirements.txt`,
-then `sphinx-build -W -b html docs/source docs/_build/html`):
+Sphinx docs live under `docs/source` (`uv sync --extra docs`, then
+`uv run sphinx-build -W -b html docs/source docs/_build/html`):
 
 - **User guide** — start at `docs/source/user_guide/quick_start.rst`, then the
   authoring/testing guides for nodes, graphs, and the `eval_node` harness.

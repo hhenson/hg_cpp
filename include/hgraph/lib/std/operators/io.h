@@ -5,6 +5,7 @@
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
+#include <hgraph/types/value_callable.h>
 
 namespace hgraph::stdlib
 {
@@ -37,10 +38,15 @@ namespace hgraph::stdlib
     {
     };
 
-    /** ``call`` — invoke a callable with the ticked value (a side-effect
-        sink; hgraph's helper for e.g. ``call(print, ts)``). The callable
-        rides an erased scalar — the python bridge registers the PyObj form. */
-    struct call_op : Operator<"call", Scalar<"fn", ScalarVar<"F">>, In<"ts", TsVar<"S">>>
+    /** ``apply`` — invoke a ticking runtime callable and publish its result. */
+    struct apply_op : Operator<"apply", In<"fn", TS<ValueCallable>>, VarIn<"args", TsVar<"S">>,
+                               VarKwIn<"kwargs">, Out<TsVar<"O">>>
+    {
+    };
+
+    /** ``call`` — invoke a ticking runtime callable for side effects. */
+    struct call_op : Operator<"call", In<"fn", TS<ValueCallable>>, VarIn<"args", TsVar<"S">>,
+                              VarKwIn<"kwargs">>
     {
     };
 
@@ -79,6 +85,19 @@ namespace hgraph::stdlib
     /** ``__assert_fmt`` — the runtime half of the format-args ``assert_``. */
     struct assert_fmt_op
         : Operator<"__assert_fmt", In<"condition", TS<Bool>>, Scalar<"error_msg", Str>, In<"args", TsVar<"A">>>
+    {
+    };
+
+    /** Internal packed-argument runtime nodes used by ``apply`` / ``call``. */
+    struct apply_value_callable_op
+        : Operator<"__apply_value_callable", In<"fn", TS<ValueCallable>>,
+                   In<"args", TsVar<"A">>, Scalar<"positional_count", Int>, Out<TsVar<"O">>>
+    {
+    };
+
+    struct call_value_callable_op
+        : Operator<"__call_value_callable", In<"fn", TS<ValueCallable>>,
+                   In<"args", TsVar<"A">>, Scalar<"positional_count", Int>>
     {
     };
 

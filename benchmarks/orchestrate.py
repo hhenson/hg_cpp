@@ -12,9 +12,9 @@ Usage (from the repo root, inside the repo's env):
   uv run python benchmarks/orchestrate.py --scenario tick_std --mode hg-cpp
   uv run python benchmarks/orchestrate.py --setup-only    # just build venvs
 
-The upstream venv is created once per Python major/minor version at
-benchmarks/.venv-upstream-X.Y (delete it to force a refresh). Results land in
-benchmarks/results/.
+The upstream venv is created once per Python major/minor, platform, and
+architecture at benchmarks/.venv-upstream-X.Y-PLATFORM-ARCH (delete it to
+force a refresh). Results land in benchmarks/results/.
 """
 import argparse
 import datetime as dt
@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import platform
+import shlex
 import statistics
 import subprocess
 import sys
@@ -30,8 +31,12 @@ from pathlib import Path
 
 BENCH_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BENCH_DIR.parent
-UPSTREAM_VENV = BENCH_DIR / f".venv-upstream-{sys.version_info.major}.{sys.version_info.minor}"
-HG_CPP_VENV = BENCH_DIR / f".venv-hg-cpp-{sys.version_info.major}.{sys.version_info.minor}"
+ENVIRONMENT_KEY = (
+    f"{sys.version_info.major}.{sys.version_info.minor}-"
+    f"{sys.platform}-{platform.machine().lower()}"
+)
+UPSTREAM_VENV = BENCH_DIR / f".venv-upstream-{ENVIRONMENT_KEY}"
+HG_CPP_VENV = BENCH_DIR / f".venv-hg-cpp-{ENVIRONMENT_KEY}"
 RESULTS_DIR = BENCH_DIR / "results"
 RUNNER = BENCH_DIR / "runner.py"
 VALIDATOR = BENCH_DIR / "validate.py"
@@ -73,6 +78,54 @@ def hg_cpp_source_fingerprint() -> str:
         digest.update(b"\0")
     digest.update(f"python-{sys.version_info.major}.{sys.version_info.minor}".encode())
     return digest.hexdigest()
+
+
+def _first_line(command: list[str]) -> str:
+    try:
+        output = subprocess.run(
+            command, check=True, capture_output=True, text=True, cwd=REPO_ROOT,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return output.splitlines()[0] if output else "unknown"
+
+
+def _cpu_model() -> str:
+    if sys.platform.startswith("linux"):
+        try:
+            for line in Path("/proc/cpuinfo").read_text().splitlines():
+                if line.startswith("model name"):
+                    return line.partition(":")[2].strip()
+        except OSError:
+            pass
+    if sys.platform == "darwin":
+        model = _first_line(["sysctl", "-n", "machdep.cpu.brand_string"])
+        if model != "unknown":
+            return model
+    return platform.processor() or platform.machine()
+
+
+def benchmark_metadata() -> dict[str, str]:
+    revision = _first_line(["git", "rev-parse", "--short=12", "HEAD"])
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
+            check=True, capture_output=True, text=True, cwd=REPO_ROOT,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        status = "unknown"
+    if status.strip():
+        revision += "+dirty"
+
+    compiler = shlex.split(os.environ.get("CXX", "c++"))
+    return {
+        "revision": revision,
+        "source_fingerprint": hg_cpp_source_fingerprint(),
+        "build_type": "Release",
+        "compiler": _first_line([*compiler, "--version"]),
+        "python": platform.python_version(),
+        "cpu": _cpu_model(),
+    }
 
 
 def ensure_upstream_venv() -> None:
@@ -217,13 +270,22 @@ def render(
     cycle_scale: float,
     size_scale: float,
     samples: int,
+    metadata: dict[str, str] | None = None,
 ) -> str:
     """results: {scenario: {mode: result_dict}} -> markdown matrix."""
+    if metadata is None:
+        metadata = benchmark_metadata()
     lines = [
         "# hgraph performance matrix",
         "",
         f"- date: {dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')}",
         f"- host: {platform.platform()} / {platform.processor() or platform.machine()}",
+        f"- CPU: {metadata['cpu']}",
+        f"- Python: {metadata['python']}",
+        f"- compiler: {metadata['compiler']}",
+        f"- hg_cpp revision: {metadata['revision']}",
+        f"- hg_cpp source fingerprint: {metadata['source_fingerprint']}",
+        f"- hg_cpp build type: {metadata['build_type']}",
         f"- cycle scale: {cycle_scale}",
         f"- size scale: {size_scale}",
         f"- fresh-process samples: {samples}",
@@ -340,6 +402,8 @@ def main() -> int:
     if args.setup_only:
         return 0
 
+    metadata = benchmark_metadata()
+
     if not args.skip_validation:
         for mode in modes:
             print(f"[validate] {mode} ...", end="", flush=True)
@@ -408,12 +472,13 @@ def main() -> int:
             aggregate.setdefault("label", scenario.label)
             aggregate.setdefault("suite", scenario.suite)
             aggregate.setdefault("supported_modes", list(scenario.modes))
+            aggregate["benchmark_metadata"] = metadata
             results[name][mode] = aggregate
 
     RESULTS_DIR.mkdir(exist_ok=True)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
     (RESULTS_DIR / f"raw-{stamp}.json").write_text(json.dumps(results, indent=2))
-    report = render(results, cycle_scale, size_scale, args.samples)
+    report = render(results, cycle_scale, size_scale, args.samples, metadata)
     report_path = RESULTS_DIR / f"matrix-{stamp}.md"
     report_path.write_text(report)
     print(f"\n{report}\nwritten: {report_path}")

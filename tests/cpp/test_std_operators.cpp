@@ -55,6 +55,16 @@ namespace
         return Date{year{y} / month{m} / day{d}};
     }
 
+    [[nodiscard]] Value int_tuple(std::initializer_list<Int> values)
+    {
+        const auto *meta = scalar_descriptor<HomogeneousTuple<Int>>::value_meta();
+        const auto binding = ValuePlanFactory::instance().type_for(scalar_descriptor<Int>::value_meta());
+        ListBuilder builder{binding};
+        for (Int value : values) { builder.push_back(value); }
+        ListStorage storage = builder.build_storage();
+        return Value{compact_list_type(binding, *meta), &storage};
+    }
+
     [[nodiscard]] WiringArg scalar_arg(Value value)
     {
         WiringArg arg;
@@ -694,12 +704,154 @@ namespace
         }
     };
 
+    struct AnyNumericRoundTripGraph
+    {
+        static constexpr auto name = "any_numeric_round_trip_graph";
+
+        static Port<TS<Float>> compose(Wiring &w, Port<TS<Int>> ts)
+        {
+            auto boxed = wire<stdlib::convert, TS<AnyValue>>(w, ts);
+            return wire<stdlib::convert, TS<Float>>(w, boxed);
+        }
+    };
+
+    struct AnyDateRoundTripGraph
+    {
+        static constexpr auto name = "any_date_round_trip_graph";
+
+        static Port<TS<DateTime>> compose(Wiring &w, Port<TS<Date>> ts)
+        {
+            auto boxed = wire<stdlib::convert, TS<AnyValue>>(w, ts);
+            return wire<stdlib::convert, TS<DateTime>>(w, boxed);
+        }
+    };
+
+    struct TripleValue
+    {
+        static constexpr auto name = "triple_value";
+        [[nodiscard]] static Int apply(Int value) { return value * 3; }
+    };
+
+    struct AddValues
+    {
+        static constexpr auto name = "add_values";
+        [[nodiscard]] static Int apply(Int lhs, Int rhs) { return lhs + rhs; }
+    };
+
+    struct CaptureValue
+    {
+        static constexpr auto name = "capture_value";
+        inline static Int captured = 0;
+
+        [[nodiscard]] static Int apply(Int value)
+        {
+            captured = value;
+            return value;
+        }
+    };
+
+    struct SameParity
+    {
+        static constexpr auto name = "same_parity";
+        [[nodiscard]] static Bool apply(Int lhs, Int rhs) { return lhs % 2 == rhs % 2; }
+    };
+
+    struct AtLeastThree
+    {
+        static constexpr auto name = "at_least_three";
+        [[nodiscard]] static Bool apply(Int value) { return value >= 3; }
+    };
+
+    struct ApplyValueCallableGraph
+    {
+        static constexpr auto name = "apply_value_callable_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> ts)
+        {
+            auto callable = wire<stdlib::const_, TS<ValueCallable>>(w, value_fn<TripleValue>());
+            return wire<stdlib::apply_op, TS<Int>>(w, callable, ts);
+        }
+    };
+
+    struct CallValueCallableGraph
+    {
+        static constexpr auto name = "call_value_callable_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> ts)
+        {
+            auto callable = wire<stdlib::const_, TS<ValueCallable>>(w, value_fn<CaptureValue>());
+            wire<stdlib::call_op>(w, callable, ts);
+            return ts;
+        }
+    };
+
+    struct ApplyVariadicValueCallableGraph
+    {
+        static constexpr auto name = "apply_variadic_value_callable_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs,
+                                     Port<TS<Int>> rhs)
+        {
+            auto callable = wire<stdlib::const_, TS<ValueCallable>>(w, value_fn<AddValues>());
+            return wire<stdlib::apply_op, TS<Int>>(w, callable, lhs, rhs);
+        }
+    };
+
 }  // namespace
 
 TEST_CASE("std operators: add_ selects the int implementation for TS<Int> operands")
 {
     stdlib::register_standard_operators();
     CHECK_OUTPUT(eval_node<stdlib::add_>(values<Int>(1, 2, 3), values<Int>(10, 20, 30)), values<Int>(11, 22, 33));
+}
+
+TEST_CASE("std operators: convert round trips numeric values through native Any")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<AnyNumericRoundTripGraph>(values<Int>(1, -2, 3)),
+                 values<Float>(1.0, -2.0, 3.0));
+}
+
+TEST_CASE("std operators: convert dispatches from native Any by its contained schema")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<AnyDateRoundTripGraph>(values<Date>(ymd(2024, 1, 2), ymd(2025, 12, 31))),
+                 values<DateTime>(DateTime{sys_days{ymd(2024, 1, 2)}},
+                                  DateTime{sys_days{ymd(2025, 12, 31)}}));
+}
+
+TEST_CASE("std operators: apply invokes a native runtime value callable")
+{
+    stdlib::register_standard_operators();
+    const auto names = OperatorRegistry::instance().registered_names();
+    CHECK(std::ranges::find(names, std::string{stdlib::apply_op::name}) != names.end());
+    CHECK_OUTPUT(eval_node<ApplyValueCallableGraph>(values<Int>(2, -3, 5)),
+                 values<Int>(6, -9, 15));
+}
+
+TEST_CASE("std operators: call invokes a native runtime value callable for side effects")
+{
+    stdlib::register_standard_operators();
+    CaptureValue::captured = 0;
+    CHECK_OUTPUT(eval_node<CallValueCallableGraph>(values<Int>(2, 7)), values<Int>(2, 7));
+    CHECK(CaptureValue::captured == 7);
+}
+
+TEST_CASE("std operators: apply packs multiple native runtime callable arguments")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<ApplyVariadicValueCallableGraph>(values<Int>(2, -3, 5),
+                                                            values<Int>(4, 7, -2)),
+                 values<Int>(6, 4, 3));
+}
+
+TEST_CASE("std operators: tuple subtraction accepts a native erased comparator")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT((eval_node<stdlib::sub_, TS<HomogeneousTuple<Int>>>(
+                     values<Value>(int_tuple({1, 2, 3, 4, 5})), values<Int>(1),
+                     value_fn<SameParity>())),
+                 values<Value>(int_tuple({2, 4})));
 }
 
 TEST_CASE("stdlib nonthrowing schema helpers reject malformed compact kinds")
@@ -1530,6 +1682,14 @@ TEST_CASE("std operators: stream operators cover sampling filtering slicing and 
     CHECK_OUTPUT(eval_node<stdlib::freeze>(fn<stdlib::not_>(),
                                            values<Bool>(true, true, false, true)),
                  values<Bool>(true, true, false, none));
+    // Runtime value callables execute inside the native node. Python
+    // callables use this same overload through the bridge.
+    CHECK_OUTPUT(eval_node<stdlib::until_true>(value_fn<AtLeastThree>(),
+                                               values<Int>(1, 2, 3, 4)),
+                 values<Bool>(false, false, true, none));
+    CHECK_OUTPUT(eval_node<stdlib::freeze>(value_fn<AtLeastThree>(),
+                                           values<Int>(1, 2, 3, 4)),
+                 values<Int>(1, 2, 3, none));
     CHECK_OUTPUT(eval_node<stdlib::gate>(values<Bool>(false, false, true, true),
                                          values<Int>(1, 2, 3, none),
                                          Int{8}),

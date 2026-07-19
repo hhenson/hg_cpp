@@ -53,9 +53,11 @@ extension, so the two distributions should be tested in separate environments.
 Windows x86_64, and Apple Silicon macOS, then installs each platform wheel under
 CPython 3.12, 3.13, and 3.14.  A tag matching ``v_x.x.x`` publishes the tested
 wheels and source distribution through PyPI trusted publishing.  The tag version
-must exactly match the versions in ``pyproject.toml``, ``CMakeLists.txt``, and
-``docs/source/conf.py``.  The PyPI trusted publisher is bound to the ``build.yml``
-workflow and the GitHub ``release`` environment.
+must exactly match ``pyproject.toml`` and ``docs/source/conf.py``.  CMake's
+``project(VERSION)`` field is numeric, so prereleases use the corresponding base
+version there (for example ``0.4.0rc1`` maps to ``0.4.0``).  The packaging tests
+enforce both relationships.  The PyPI trusted publisher is bound to the
+``build.yml`` workflow and the GitHub ``release`` environment.
 
 The macOS build uses the current system Clang from the latest Apple Silicon
 runner image while retaining a macOS 15 deployment target.

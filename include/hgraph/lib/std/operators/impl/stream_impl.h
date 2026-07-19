@@ -16,6 +16,7 @@
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/time_series/ts_delta.h>
 #include <hgraph/types/value/value.h>
+#include <hgraph/types/value_callable.h>
 
 #include <ankerl/unordered_dense.h>
 
@@ -907,12 +908,37 @@ namespace hgraph::stdlib
         }
     };
 
+    /** ``until_true(predicate, ts)`` with a runtime VALUE callable. Unlike a
+        WiredFn, the predicate evaluates inside the node and passivating the
+        input also stops subsequent callable invocations. */
+    struct until_true_value_callable_impl
+    {
+        static constexpr auto name = "until_true_value_callable";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return context.args.size() == 2 &&
+                   context.scalar_as<ValueCallable>("predicate") != nullptr &&
+                   context.args[1].kind == WiringArg::Kind::TimeSeries;
+        }
+
+        static void eval(Scalar<"predicate", ValueCallable> predicate,
+                         In<"ts", TsVar<"S">> ts, Out<TS<Bool>> out)
+        {
+            const ValueCallArg argument{ts.base().value()};
+            Value result = predicate.value().invoke(
+                std::span<const ValueCallArg>{&argument, 1},
+                scalar_descriptor<Bool>::value_meta());
+            const Bool stop = result.view().checked_as<Bool>();
+            out.set(stop);
+            if (stop) { ts.make_passive(); }
+        }
+    };
+
     /** ``until_true(predicate, ts)`` with a WIRED-FUNCTION predicate — the
         C++ form of hgraph's callable predicate (``fn<Op>()`` or a lifted
         kernel): the predicate inlines over ``ts`` and the boolean primitive
-        passivates the flag once true. (A python callable rides the bridge's
-        PyObj overload instead, whose kernel HOLDS the callable so
-        passivation also stops the calls.) */
+        passivates the flag once true. */
     struct until_true_fn_compose
     {
         static constexpr auto name = "until_true_fn";
@@ -958,6 +984,38 @@ namespace hgraph::stdlib
         }
 
         static auto compose(Wiring &w, Scalar<"predicate", WiredFn> predicate, NamedPort<"ts", TsVar<"S">> ts)
+        {
+            auto flag = wire<until_true>(w, predicate.value(), ts);
+            return wire<freeze>(w, flag, ts);
+        }
+    };
+
+    /** ``freeze(predicate, ts)`` with a runtime value callable. */
+    struct freeze_value_callable_compose
+    {
+        static constexpr auto name = "freeze_value_callable";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return context.args.size() == 2 &&
+                   context.scalar_as<ValueCallable>("predicate") != nullptr &&
+                   context.args[1].kind == WiringArg::Kind::TimeSeries;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution,
+                                          OperatorCallContext context)
+        {
+            if (output_bound(resolution)) { return; }
+            if (context.args.size() < 2 ||
+                context.args[1].kind != WiringArg::Kind::TimeSeries)
+            {
+                return;
+            }
+            bind_output(resolution, context.args[1].port.schema);
+        }
+
+        static auto compose(Wiring &w, Scalar<"predicate", ValueCallable> predicate,
+                            NamedPort<"ts", TsVar<"S">> ts)
         {
             auto flag = wire<until_true>(w, predicate.value(), ts);
             return wire<freeze>(w, flag, ts);

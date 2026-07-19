@@ -155,13 +155,16 @@ namespace hgraph
             TSOutputHandle collection_source{};
             TSOutputHandle zero_source{};
 
-            // A sampled root re-point must expose the previous keyed value
-            // until downstream nodes consume its delta. Stopping the retired
-            // combiner may clear that output, so alternate stable snapshots.
-            std::array<std::optional<TSOutput>, 2> publication_snapshots{};
-            std::size_t publication_snapshot_bank{0};
+            // Once a keyed root changes identity, publish through one stable
+            // output for the rest of this node's lifetime. Downstream REF
+            // values may retain child endpoint identities beyond the cycle in
+            // which the re-point was sampled, so rotating temporary snapshots
+            // would leave those references pointing at recycled slot storage.
+            std::optional<TSOutput> publication_snapshot{};
             TSOutputHandle pending_publication_source{};
             bool publication_snapshot_active{false};
+            bool publication_full_reconcile{false};
+            bool publication_sample_all{false};
 
             // Ordinary collection ticks populate only the affected leaf-to-root
             // paths. Full scans remain the conservative path for structural
@@ -673,9 +676,22 @@ namespace hgraph
 
         void begin_reduce_publication(TSOutputView output, const TSOutputView &source,
                                       ReduceNodeStorage &storage, DateTime evaluation_time,
-                                      bool reconcile_repoint)
+                                      bool sample_all)
         {
             TSOutputView resolved_source = resolve_forwarding_source(source.borrowed_ref());
+            if (storage.publication_snapshot_active)
+            {
+                const TSOutputHandle next_source = resolved_source.bound()
+                                                       ? resolved_source.handle()
+                                                       : TSOutputHandle{};
+                storage.publication_full_reconcile =
+                    storage.publication_full_reconcile ||
+                    !next_source.same_as(storage.pending_publication_source);
+                storage.publication_sample_all = storage.publication_sample_all || sample_all;
+                storage.pending_publication_source = next_source;
+                return;
+            }
+
             const TSOutputHandle previous = output.forwarding() ? output.forwarding_target()
                                                                  : TSOutputHandle{};
             const bool changed = output.forwarding() && previous.bound() &&
@@ -684,13 +700,9 @@ namespace hgraph
             const bool keyed = schema != nullptr &&
                                (schema->kind == TSTypeKind::TSD || schema->kind == TSTypeKind::TSS);
 
-            if (!changed || !keyed || !reconcile_repoint)
+            if (!changed || !keyed)
             {
                 bind_reduce_output(std::move(output), source, evaluation_time);
-                if (resolved_source.bound())
-                {
-                    for (auto &snapshot : storage.publication_snapshots) { snapshot.reset(); }
-                }
                 return;
             }
 
@@ -701,8 +713,7 @@ namespace hgraph
                 return;
             }
 
-            const std::size_t next_bank = 1U - storage.publication_snapshot_bank;
-            auto &snapshot = storage.publication_snapshots[next_bank];
+            auto &snapshot = storage.publication_snapshot;
             snapshot.emplace(schema);
             DateTime snapshot_time = previous_view.last_modified_time();
             if (snapshot_time == MIN_DT) { snapshot_time = evaluation_time; }
@@ -722,50 +733,36 @@ namespace hgraph
             // without publishing a second transition. The snapshot is updated
             // after the new combiner root evaluates, producing a minimal delta
             // while the retired source is free to stop immediately.
-            const std::size_t old_bank = storage.publication_snapshot_bank;
             auto timeless_output = output.handle().view(MIN_DT);
             timeless_output.bind_forwarding_target(snapshot_view);
-            storage.publication_snapshot_bank = next_bank;
-            storage.publication_snapshots[old_bank].reset();
             storage.pending_publication_source = resolved_source.bound()
                                                      ? resolved_source.handle()
                                                      : TSOutputHandle{};
             storage.publication_snapshot_active = true;
+            storage.publication_full_reconcile = true;
+            storage.publication_sample_all = sample_all;
         }
 
-        void finish_reduce_publication(const NodeView &view, ReduceNodeStorage &storage,
-                                       DateTime evaluation_time)
+        void update_reduce_dict_publication(TSDOutputView snapshot, const TSOutputView &source,
+                                            DateTime evaluation_time, bool full_reconcile,
+                                            bool sample_all)
         {
-            if (!storage.publication_snapshot_active) { return; }
-
-            auto &snapshot = storage.publication_snapshots[storage.publication_snapshot_bank];
-            if (!snapshot.has_value())
-            {
-                throw std::logic_error("reduce publication snapshot is not available");
-            }
-
-            TSOutputView source = storage.pending_publication_source.bound()
-                                      ? storage.pending_publication_source.view(evaluation_time)
-                                      : TSOutputView{};
+            auto mutation = snapshot.begin_mutation(evaluation_time);
             if (!source.valid())
             {
-                bind_reduce_output(view.output(evaluation_time), source, evaluation_time);
+                mutation.clear();
                 return;
             }
 
-            auto snapshot_view = snapshot->view(evaluation_time);
-            if (snapshot_view.schema()->kind == TSTypeKind::TSD)
+            auto source_dict = source.as_dict();
+            if (full_reconcile)
             {
-                auto snapshot_dict = snapshot_view.as_dict();
-                auto source_dict = source.as_dict();
                 std::vector<Value> removed_keys;
-                removed_keys.reserve(snapshot_dict.size());
-                for (const ValueView &key : snapshot_dict.keys())
+                removed_keys.reserve(snapshot.size());
+                for (const ValueView &key : snapshot.keys())
                 {
                     if (!source_dict.contains(key)) { removed_keys.emplace_back(key); }
                 }
-
-                auto mutation = snapshot_dict.begin_mutation(evaluation_time);
                 for (const Value &key : removed_keys)
                 {
                     static_cast<void>(mutation.erase(key.view()));
@@ -775,21 +772,50 @@ namespace hgraph
                     if (!child.valid()) { continue; }
                     const bool changed = !mutation.contains(key) || !mutation.at(key).valid() ||
                                          !mutation.at(key).value().equals(child.value());
-                    if (changed) { mutation.set(key, child.value()); }
+                    if (sample_all)
+                    {
+                        auto child_mutation = mutation.at(key).begin_mutation(evaluation_time);
+                        static_cast<void>(child_mutation.copy_value_from(child.value()));
+                        child_mutation.mark_modified();
+                    }
+                    else if (changed) { mutation.set(key, child.value()); }
                 }
+                return;
             }
-            else
+
+            for (const ValueView &key : source_dict.removed_keys())
             {
-                auto snapshot_set = snapshot_view.as_set();
-                auto source_set = source.as_set();
+                static_cast<void>(mutation.erase(key));
+            }
+            for (auto &&[key, child] : source_dict.modified_items())
+            {
+                if (!child.valid()) { continue; }
+                const bool changed = !mutation.contains(key) || !mutation.at(key).valid() ||
+                                     !mutation.at(key).value().equals(child.value());
+                if (changed) { mutation.set(key, child.value()); }
+            }
+        }
+
+        void update_reduce_set_publication(TSSOutputView snapshot, const TSOutputView &source,
+                                           DateTime evaluation_time, bool full_reconcile,
+                                           bool sample_all)
+        {
+            auto mutation = snapshot.begin_mutation(evaluation_time);
+            if (!source.valid())
+            {
+                mutation.clear();
+                return;
+            }
+
+            auto source_set = source.as_set();
+            if (full_reconcile)
+            {
                 std::vector<Value> removed_keys;
-                removed_keys.reserve(snapshot_set.size());
-                for (const ValueView &key : snapshot_set.values())
+                removed_keys.reserve(snapshot.size());
+                for (const ValueView &key : snapshot.values())
                 {
                     if (!source_set.contains(key)) { removed_keys.emplace_back(key); }
                 }
-
-                auto mutation = snapshot_set.begin_mutation(evaluation_time);
                 for (const Value &key : removed_keys)
                 {
                     static_cast<void>(mutation.remove(key.view()));
@@ -798,25 +824,49 @@ namespace hgraph
                 {
                     if (!mutation.contains(key)) { static_cast<void>(mutation.add(key)); }
                 }
+                if (sample_all) { mutation.touch(); }
+                return;
+            }
+
+            for (const ValueView &key : source_set.removed())
+            {
+                static_cast<void>(mutation.remove(key));
+            }
+            for (const ValueView &key : source_set.added())
+            {
+                if (!mutation.contains(key)) { static_cast<void>(mutation.add(key)); }
             }
         }
 
-        void release_reduce_publication_snapshot(const NodeView &view, ReduceNodeStorage &storage,
-                                                 DateTime evaluation_time)
+        void finish_reduce_publication(ReduceNodeStorage &storage, DateTime evaluation_time)
         {
             if (!storage.publication_snapshot_active) { return; }
 
-            if (storage.pending_publication_source.bound())
+            auto &snapshot = storage.publication_snapshot;
+            if (!snapshot.has_value())
             {
-                auto output = view.output(MIN_DT);
-                auto source = storage.pending_publication_source.view(evaluation_time);
-                // Rebind even when the handle is already current: this clears
-                // the prior sampled transition before its snapshot is erased.
-                output.bind_forwarding_target(source);
-                storage.publication_snapshots[storage.publication_snapshot_bank].reset();
+                throw std::logic_error("reduce publication snapshot is not available");
             }
-            storage.pending_publication_source.reset();
-            storage.publication_snapshot_active = false;
+
+            TSOutputView source = storage.pending_publication_source.bound()
+                                      ? storage.pending_publication_source.view(evaluation_time)
+                                      : TSOutputView{};
+
+            auto snapshot_view = snapshot->view(evaluation_time);
+            if (snapshot_view.schema()->kind == TSTypeKind::TSD)
+            {
+                update_reduce_dict_publication(snapshot_view.as_dict(), source, evaluation_time,
+                                               storage.publication_full_reconcile,
+                                               storage.publication_sample_all);
+            }
+            else
+            {
+                update_reduce_set_publication(snapshot_view.as_set(), source, evaluation_time,
+                                              storage.publication_full_reconcile,
+                                              storage.publication_sample_all);
+            }
+            storage.publication_full_reconcile = false;
+            storage.publication_sample_all = false;
         }
 
         [[nodiscard]] TSOutputHandle effective_output_handle(TSOutputView source)
@@ -1021,7 +1071,7 @@ namespace hgraph
             const Aggregate root   = root_aggregate(context, storage);
             TSOutputView    source = aggregate_output(view, context, storage, root, evaluation_time);
             begin_reduce_publication(view.output(evaluation_time), source, storage, evaluation_time,
-                                     !bank_changed);
+                                     bank_changed);
             storage.published = true;
 
             // Phase 3 — stop root-first, but keep the retired graph storage
@@ -1256,7 +1306,6 @@ namespace hgraph
             const bool resuming = storage.resume_candidate_plus_one != 0;
             if (!resuming)
             {
-                release_reduce_publication_snapshot(view, storage, evaluation_time);
                 storage.destroy_previous_generation_before(evaluation_time);
                 const bool rebuilt = reduce_reconcile(view, context, storage, evaluation_time);
                 prepare_reduce_evaluation_positions(view, context, storage, evaluation_time, rebuilt);
@@ -1296,7 +1345,7 @@ namespace hgraph
             }
             storage.resume_candidate_plus_one = 0;
             storage.evaluation_positions.clear();
-            finish_reduce_publication(view, storage, evaluation_time);
+            finish_reduce_publication(storage, evaluation_time);
             return true;
         }
 

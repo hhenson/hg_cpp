@@ -7,7 +7,7 @@ endif()
 
 project(
     hgraph
-    VERSION 0.3.0
+    VERSION 0.4.0
     DESCRIPTION "C++ first implementation of the hgraph runtime"
     HOMEPAGE_URL "https://github.com/hhenson/hg_cpp"
     LANGUAGES CXX

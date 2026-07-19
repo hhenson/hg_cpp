@@ -778,11 +778,9 @@ namespace hgraph::testing
                     using A  = eval_node_detail::payload_t<A0>;
                     if constexpr (eval_node_detail::is_value_sequence<A>::value)
                     {
-                        using S = std::tuple_element_t<eval_node_detail::value_sequences_before<I, Args...>(),
-                                                       in_schemas>;
                         const auto &seq = eval_node_detail::payload_of(std::get<I>(all));
                         max_len         = std::max(max_len, seq.size());
-                        ts_harness<S>::seed(gb.global_state(), eval_node_detail::input_key(I), seq);
+                        set_replay_deltas(gb.global_state(), eval_node_detail::input_key(I), seq);
                     }
                     else if constexpr (eval_node_detail::is_optional_vector<A>::value)
                     {

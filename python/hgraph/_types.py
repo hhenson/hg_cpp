@@ -796,6 +796,12 @@ def _size_pattern(size):
 
 class _TSMeta(type):
     def __getitem__(cls, scalar):
+        import collections.abc as _abc
+        import typing
+
+        origin = typing.get_origin(scalar)
+        if scalar in (typing.Callable, _abc.Callable) or origin is _abc.Callable:
+            return _TsExpr(_hgraph.ts(_hgraph.value_type("callable")), "TS[Callable]")
         try:
             expr = _TsExpr(_hgraph.ts(_value_type(scalar)), f"TS[{getattr(scalar, '__name__', scalar)}]")
         except _GenericType as e:

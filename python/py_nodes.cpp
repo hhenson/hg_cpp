@@ -1324,65 +1324,17 @@ namespace
 
     struct op_materialize : Operator<"__materialize", In<"ts", TsVar<"S">>, Out<TsVar<"S">>> {};
 
-    /** hgraph's ``until_true(predicate, ts)`` with a plain python callable:
-        the predicate rides a PyObj SCALAR and the kernel holds it, so
-        passivating ``ts`` also stops the calls (upstream's
-        until_true_default). Dispatch is the registry's — this overload is
-        selected by the object-scalar first argument. */
-    struct until_true_callable_node
-    {
-        static constexpr auto name = "until_true_callable";
-
-        static bool requires_(const ResolutionMap &, OperatorCallContext context)
-        {
-            return context.args.size() == 2 && context.scalar_as<PyObj>("predicate") != nullptr &&
-                   context.args[1].kind == WiringArg::Kind::TimeSeries;
-        }
-
-        static void eval(Scalar<"predicate", PyObj> predicate, In<"ts", TsVar<"S">> ts, Out<TS<Bool>> out)
-        {
-            nb::gil_scoped_acquire gil;
-            const bool stop =
-                nb::cast<bool>(nb::bool_(predicate.value().get()(value_to_py(ts.value()))));
-            out.set(stop);
-            if (stop) { ts.make_passive(); }
-        }
-    };
-
-    /** ``type_(ts)`` — the python TYPE of each tick's value (hgraph's
-        TS[type]; the type object is a py-object scalar). */
+    /** ``type_(ts)`` — the python TYPE of each tick's value. The type object
+        remains an opaque PyObj contained by the native Any output. */
     struct type_py_node
     {
         static constexpr auto name = "type_py";
 
-        static void eval(In<"ts", TsVar<"S">> ts, Out<TS<PyObj>> out)
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TS<AnyValue>> out)
         {
             nb::gil_scoped_acquire gil;
             nb::object value = value_to_py(ts.value());
-            out.set(PyObj{nb::borrow(value.type())});
-        }
-    };
-
-    /** ``convert[TS[object]](ts)`` — box any TS payload into the python-
-        object scalar (py parity: TS[object] widens over any value). */
-    struct convert_to_py_object_node
-    {
-        static constexpr auto name = "convert_to_py_object";
-
-        static bool requires_(const ResolutionMap &, OperatorCallContext context)
-        {
-            using namespace hgraph::operator_type_resolution;
-            // The concrete TS[object] output is gated by the dispatcher's
-            // requested-output match; already-object inputs use identity.
-            const auto *in = time_series_schema_at(context, 0);
-            return in != nullptr && in->kind == TSTypeKind::TS &&
-                   in->value_schema != TypeRegistry::instance().value_type("object");
-        }
-
-        static void eval(In<"ts", TsVar<"S">> ts, Out<TS<PyObj>> out)
-        {
-            nb::gil_scoped_acquire gil;
-            out.set(PyObj{value_to_py(ts.base().value())});
+            out.set(Value{PyObj{nb::borrow(value.type())}});
         }
     };
 
@@ -1402,57 +1354,13 @@ namespace
                    (*attr == "name" || *attr == "__name__");
         }
 
-        static void eval(In<"ts", TS<PyObj>> ts, Scalar<"attr", Str> attr, Out<TS<Str>> out)
+        static void eval(In<"ts", TS<AnyValue>> ts, Scalar<"attr", Str> attr, Out<TS<Str>> out)
         {
             static_cast<void>(attr);
             nb::gil_scoped_acquire gil;
-            nb::handle value{ts.value().get()};
-            out.set(Str{nb::cast<std::string>(value.attr("__name__"))});
-        }
-    };
-
-    /** ``call(fn, ts)`` — hgraph's side-effect sink: invoke the python
-        callable with each ticked value. */
-    struct call_callable_node
-    {
-        static constexpr auto name = "call_callable";
-
-        static bool requires_(const ResolutionMap &, OperatorCallContext context)
-        {
-            return context.args.size() == 2 && context.scalar_as<PyObj>("fn") != nullptr &&
-                   context.args[1].kind == WiringArg::Kind::TimeSeries;
-        }
-
-        static void eval(Scalar<"fn", PyObj> fn, In<"ts", TsVar<"S">> ts)
-        {
-            nb::gil_scoped_acquire gil;
-            fn.value().get()(value_to_py(ts.value()));
-        }
-    };
-
-    /** ``freeze(predicate, ts)`` with a callable: upstream's freeze_predicate
-        — freeze once until_true(predicate, ts) fires. */
-    struct freeze_callable_compose
-    {
-        static constexpr auto name = "freeze_callable";
-
-        static bool requires_(const ResolutionMap &, OperatorCallContext context)
-        {
-            return context.args.size() == 2 && context.scalar_as<PyObj>("predicate") != nullptr &&
-                   context.args[1].kind == WiringArg::Kind::TimeSeries;
-        }
-
-        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
-        {
-            if (operator_type_resolution::output_bound(resolution)) { return; }
-            if (context.args.size() < 2 || context.args[1].kind != WiringArg::Kind::TimeSeries) { return; }
-            operator_type_resolution::bind_output(resolution, context.args[1].port.schema);
-        }
-
-        static auto compose(Wiring &w, Scalar<"predicate", PyObj> predicate, NamedPort<"ts", TsVar<"S">> ts)
-        {
-            auto flag = wire<stdlib::until_true>(w, predicate.value(), ts);
-            return wire<stdlib::freeze>(w, flag, ts);
+            const auto *value = ts.contained_value().try_as<PyObj>();
+            if (value == nullptr) { throw std::invalid_argument("getattr_ type input is not a Python type object"); }
+            out.set(Str{nb::cast<std::string>(value->get().attr("__name__"))});
         }
     };
 
@@ -1500,7 +1408,8 @@ namespace hgraph::python_bridge
         reset_registries (module.cpp) - keep this the ONLY copy. */
     void register_python_overloads()
     {
-        (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar
+        (void)scalar_descriptor<PyObj>::value_meta();   // opaque fallback held inside Any
+        TypeRegistry::instance().register_value_type_alias("object", TypeRegistry::instance().any());
         register_overload<op_materialize, materialize_node>();
         register_overload<op_py_compute, py_fast_compute_node>();
         register_overload<op_py_compute, py_compute_node>();
@@ -1510,12 +1419,7 @@ namespace hgraph::python_bridge
         register_overload<op_recover_pt, stdlib::component_detail::recovering_pass_through>();
         register_overload<op_harness_replay, harness_replay>();
         register_overload<op_harness_record, harness_record>();
-        register_overload<stdlib::until_true, until_true_callable_node>();
         register_overload<stdlib::type_, type_py_node>();
-        register_overload<stdlib::convert, convert_to_py_object_node>();
         register_overload<stdlib::getattr_, getattr_type_name_node>();
-        register_graph_overload<stdlib::freeze, freeze_callable_compose>();
-        register_overload<stdlib::call_op, call_callable_node>();
-
     }
 }  // namespace hgraph::python_bridge

@@ -10,6 +10,7 @@
 
 #include <fmt/core.h>
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -144,11 +145,109 @@ namespace hgraph::stdlib
 
     namespace io_impl_detail
     {
+        /** Build callable arguments from a packed structural bundle. The
+            explicit count keeps keyword names independent of internal field
+            labels. */
+        [[nodiscard]] inline std::optional<std::vector<ValueCallArg>> callable_args(
+            const TSInputView &packed, std::size_t positional_count)
+        {
+            auto bundle = const_cast<TSInputView &>(packed).as_bundle();
+            if (positional_count > bundle.size())
+            {
+                throw std::logic_error("runtime callable positional count exceeds its packed arguments");
+            }
+            std::vector<ValueCallArg> result;
+            result.reserve(bundle.size());
+            std::size_t index = 0;
+            for (auto [name, child] : bundle.items())
+            {
+                if (index < positional_count)
+                {
+                    if (!child.valid()) { return std::nullopt; }
+                    result.emplace_back(child.value());
+                }
+                else if (child.valid()) { result.emplace_back(name, child.value()); }
+                ++index;
+            }
+            return result;
+        }
+    }  // namespace io_impl_detail
+
+    /** Invoke a ticking value callable and publish its typed result. */
+    struct apply_value_callable_impl
+    {
+        static constexpr auto name = "apply_value_callable";
+
+        static void eval(In<"fn", TS<ValueCallable>> fn,
+                         In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+                         Scalar<"positional_count", Int> positional_count,
+                         Out<TsVar<"O">> out)
+        {
+            const auto call_args = io_impl_detail::callable_args(
+                args.base(), static_cast<std::size_t>(positional_count.value()));
+            if (!call_args) { return; }
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            Value result = fn.value().invoke(std::span<const ValueCallArg>{*call_args},
+                                             erased.schema()->value_schema);
+            if (result.has_value()) { out.apply(result.view()); }
+        }
+    };
+
+    /** Invoke a ticking value callable for its side effect. */
+    struct call_value_callable_impl
+    {
+        static constexpr auto name = "call_value_callable";
+
+        static void eval(In<"fn", TS<ValueCallable>> fn,
+                         In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+                         Scalar<"positional_count", Int> positional_count)
+        {
+            const auto call_args = io_impl_detail::callable_args(
+                args.base(), static_cast<std::size_t>(positional_count.value()));
+            if (!call_args) { return; }
+            static_cast<void>(fn.value().invoke(std::span<const ValueCallArg>{*call_args}));
+        }
+    };
+
+    namespace io_impl_detail
+    {
         /** Pack positional format args (unnamed leading fields, call order)
             and kwargs (named fields) into one structural bundle. */
         [[nodiscard]] WiringPortRef pack_format_args(std::vector<WiringPortRef> positional,
                                                      std::vector<std::pair<std::string, WiringPortRef>> named);
     }  // namespace io_impl_detail
+
+    /** Signature-only graph used to reflect the public variadic ``apply``
+        shape. Registration replaces its wire closure because the resolved
+        output schema must be passed to the packed runtime node. */
+    struct apply_value_callable_signature
+    {
+        static constexpr auto name = "apply_value_callable_signature";
+
+        static Port<void> compose(Wiring &, NamedPort<"fn", TS<ValueCallable>>,
+                                  VarIn<"args", TsVar<"S">>, VarKwIn<"kwargs">)
+        {
+            throw std::logic_error("apply signature graph is not executable");
+        }
+    };
+
+    /** ``call`` needs no output resolution and can use the ordinary graph
+        compose path after packing its positional and keyword inputs. */
+    struct call_value_callable_compose
+    {
+        static constexpr auto name = "call_value_callable_compose";
+
+        static void compose(Wiring &w, NamedPort<"fn", TS<ValueCallable>> fn,
+                            VarIn<"args", TsVar<"S">> positional,
+                            VarKwIn<"kwargs"> kwargs)
+        {
+            WiringPortRef packed = io_impl_detail::pack_format_args(
+                std::vector<WiringPortRef>{positional.begin(), positional.end()},
+                std::vector<std::pair<std::string, WiringPortRef>>{kwargs.begin(), kwargs.end()});
+            wire<call_value_callable_op>(w, fn, Port<void>{w, std::move(packed)},
+                                         static_cast<Int>(positional.size()));
+        }
+    };
 
     /** ``print_(fmt, *args, **kwargs)`` — python-style formatting to
         stdout (``__std_out__=False`` writes stderr). */

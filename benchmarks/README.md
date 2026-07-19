@@ -54,15 +54,17 @@ service client count without changing cycle count. `--scale` sets both and is
 kept for compatibility with older commands. Explicit `--scenario` filters
 override suite/group selection.
 
-The first run for each active Python version creates
-`benchmarks/.venv-upstream-X.Y` (pip-installs `hgraph`) and
-`benchmarks/.venv-hg-cpp-X.Y`. The latter contains a Release wheel built from
-the current source and is rebuilt whenever native, binding, or packaged Python
-source changes. The raw result records both the source fingerprint and loaded
-native-module path so a result cannot be mistaken for a stale editable build.
-All modes use the same interpreter version. Delete the upstream directory to
-refresh its published package. Results (markdown matrix + raw JSON) are written
-to `benchmarks/results/`.
+The first run for each Python/platform/architecture combination creates
+`benchmarks/.venv-upstream-X.Y-PLATFORM-ARCH` (pip-installs `hgraph`) and
+`benchmarks/.venv-hg-cpp-X.Y-PLATFORM-ARCH`. This prevents a repository shared
+between macOS and a Linux VM from reusing an incompatible virtual environment.
+The latter contains a Release wheel built from the current source and is rebuilt
+whenever native, binding, or packaged Python source changes. The raw result
+records both the source fingerprint and loaded native-module path so a result
+cannot be mistaken for a stale editable build. All modes use the same
+interpreter version. Delete the upstream directory to refresh its published
+package. Results (markdown matrix + raw JSON) are written to
+`benchmarks/results/`.
 
 Each timing sample runs in a fresh subprocess. The orchestrator rotates mode
 order deterministically between samples, reports the median and median absolute

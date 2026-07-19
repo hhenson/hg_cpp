@@ -472,6 +472,15 @@ namespace hgraph
 
         static Time from_python(nb::handle source)
         {
+            if (nb::hasattr(source, "utcoffset"))
+            {
+                nb::object offset = source.attr("utcoffset")();
+                if (!offset.is_none())
+                {
+                    throw nb::type_error(
+                        "timezone-aware time values require a zoned time scalar");
+                }
+            }
             const auto hours   = nb::cast<std::int64_t>(source.attr("hour"));
             const auto minutes = nb::cast<std::int64_t>(source.attr("minute"));
             const auto seconds = nb::cast<std::int64_t>(source.attr("second"));

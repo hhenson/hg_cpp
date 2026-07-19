@@ -21,8 +21,10 @@ namespace hgraph::stdlib
         register_overload<schedule, schedule_ts_start_impl>();
         register_overload<resample, resample_impl>();
         register_overload<until_true, until_true_bool_impl>();
+        register_overload<until_true, until_true_value_callable_impl>();
         register_graph_overload<until_true, until_true_fn_compose>();
         register_overload<freeze, freeze_impl>();
+        register_graph_overload<freeze, freeze_value_callable_compose>();
         register_graph_overload<freeze, freeze_fn_compose>();
         register_overload<gate, gate_impl>();
         register_overload<to_window, stream_impl_detail::to_window_impl>();

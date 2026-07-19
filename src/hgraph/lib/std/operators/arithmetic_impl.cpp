@@ -69,6 +69,7 @@ namespace hgraph::stdlib
                           arithmetic_impl_detail::set_op_impl<arithmetic_impl_detail::SetOpKind::SymmetricDifference>>();
         register_overload<bit_or, arithmetic_impl_detail::merge_maps_impl>();
         register_overload<sub_, arithmetic_impl_detail::diff_maps_impl>();
+        register_overload<sub_, arithmetic_impl_detail::remove_list_items_impl>();
         register_overload<mul_, arithmetic_impl_detail::timedelta_scale_impl>();
         register_overload<div_, arithmetic_impl_detail::timedelta_div_impl>();
         register_overload<getitem_, arithmetic_impl_detail::getitem_map_scalar_impl>();

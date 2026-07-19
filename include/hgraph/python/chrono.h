@@ -157,6 +157,28 @@ public:
         auto tod_us = std::chrono::duration_cast<std::chrono::microseconds>(tod);
         auto total_us = days_us + tod_us;
 
+        // Native DateTime is a timezone-free UTC instant. Python's datetime
+        // contract defines awareness through a non-None utcoffset(), so use
+        // that result rather than merely inspecting tzinfo (whose utcoffset
+        // may legitimately be None). Subtracting the offset preserves the
+        // instant while deliberately dropping Python's timezone identity.
+        try {
+            object offset = borrow<object>(src).attr("utcoffset")();
+            if (!offset.is_none()) {
+                int offset_days, offset_seconds, offset_micros;
+                if (!unpack_timedelta(offset.ptr(), &offset_days, &offset_seconds,
+                                      &offset_micros)) {
+                    return false;
+                }
+                total_us -= std::chrono::duration_cast<std::chrono::microseconds>(
+                    ch::days{offset_days} + ch::seconds{offset_seconds} +
+                    ch::microseconds{offset_micros});
+            }
+        } catch (python_error &e) {
+            e.discard_as_unraisable(src.ptr());
+            return false;
+        }
+
         // Create a time_point with EXPLICIT microsecond duration to avoid overflow
         // DO NOT convert this to nanoseconds as it will overflow for dates > 2262
         using sys_clock = std::chrono::system_clock;

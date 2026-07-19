@@ -79,7 +79,17 @@ namespace hgraph
             {
                 throw std::logic_error("Any::from_python requires the python module's inference hook");
             }
-            boxed = reinterpret_cast<Value (*)(nb::handle)>(slot)(source);
+            Value inferred = reinterpret_cast<Value (*)(nb::handle)>(slot)(source);
+            // Schema-free Python inference may itself choose the public Any
+            // type (opaque objects and heterogeneous containers). The storage
+            // here is already the EMBEDDED value of an Any box, so retain its
+            // concrete content rather than creating Any<Any<T>>.
+            if (inferred.view().is_any())
+            {
+                const ValueView contained = inferred.as_any().get();
+                boxed = contained.valid() ? Value{contained} : Value{};
+            }
+            else { boxed = std::move(inferred); }
         }
 #endif
     }  // namespace

@@ -92,10 +92,7 @@ def test_to_data_frame_tsd_k_tsb():
     assert actual.equals(expected)
 
 
-@pytest.mark.skip(reason="deviation: upstream resolves the TSD key type from the FRAME column "
-                         "(int) via its resolvers, silently overriding the annotated TSD[str, ...]; "
-                         "hg_cpp honours the requested output type")
-def test_from_data_frame_tsd_k_tsb():
+def test_from_data_frame_rejects_explicit_tsd_key_mismatch():
 
     df = pa.table({
         "date": [MIN_ST, MIN_ST + MIN_TD, MIN_ST + MIN_TD, MIN_ST + 2 * MIN_TD, MIN_ST + 2 * MIN_TD],
@@ -103,8 +100,8 @@ def test_from_data_frame_tsd_k_tsb():
         "a": [1, 1, 2, 2, 3],
         "b": [4, 4, 5, 5, 6]})
 
-    result = eval_node(from_data_frame[TSD[str, TSB[ts_schema(a=TS[int], b=TS[int])]]], df=df)
-    assert result == [ {1: fd(a=1, b=4)}, {1: fd(a=1, b=4), 2: fd(a=2, b=5)}, {1: fd(a=2, b=5), 2: fd(a=3, b=6)} ]
+    with pytest.raises(RuntimeError, match=r"column 'key'.*int64.*expected 'string'.*native scalar 'str'"):
+        eval_node(from_data_frame[TSD[str, TSB[ts_schema(a=TS[int], b=TS[int])]]], df=df)
 
 
 def test_group_by_single():

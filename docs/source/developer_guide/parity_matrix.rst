@@ -38,7 +38,7 @@ Operator catalogue
 ------------------
 
 Of the **165** public operator definitions in ``hgraph/_operators``:
-**135 registered**, **0 declared-only**, **1 missing** — **29** further names
+**136 registered**, **0 declared-only**, **0 missing** — **29** further names
 are covered by equivalent C++/bridge APIs (snapshot regenerated 2026-07-15
 after closing the catalogue residue; the counts come from comparing
 ``operator_names()`` and the catalogue markers against the upstream scan).
@@ -58,10 +58,10 @@ after closing the catalogue residue; the counts come from comparing
      - 0
      - equiv-API: center_of_mass_to_alpha, span_to_alpha
    * - Apply / call (``apply``)
-     - 1
+     - 2
      - 0
-     - 1
-     - **apply**
+     - 0
+     - —
    * - Date & time (``date_operators``)
      - 4
      - 0
@@ -162,10 +162,9 @@ Notes on the residue:
 
 - ``dedup_builder`` / ``collect_builder`` are Python implementation-injection
   hooks, not user operators — the C++ overload registry covers the need
-  natively. ``apply`` consumes a dynamic ``TS[Callable]`` and has no native
-  scalar schema or statically resolvable invocation ABI; it is an accepted
-  design difference rather than a reason to add a Python-object runtime
-  (``call`` is registered). The ``table_shape`` helper trio projects the
+  natively. ``apply`` and ``call`` consume the native ``ValueCallable`` scalar;
+  Python callables are bridge backends for that C++ value rather than a second
+  operator implementation. The ``table_shape`` helper trio projects the
   native ``table_schema`` layout at Python wiring time.
 - ``downcast_`` performs checked narrowing from a graph-realized closed
   CompoundScalar Bundle union to a derived ``TS``. ``downcast_ref`` performs
@@ -188,10 +187,8 @@ Standing residue, each marked precisely in the test file:
   dense) and the ``hgraph.stream`` status library
   (``Base[COMPOUND_SCALAR]`` Python generics). TSS rebind-to-empty removal
   semantics now execute through the keyed structural-REF implementation.
-- **Recorded deviations** — naive-datetime handling (4 skips), the TSD key
-  type resolved from a frame column, python wiring-node signature
-  introspection, CompoundScalar string representation, ``convert`` from
-  ``TS[object]`` dispatching on the wiring-time schema, and
+- **Recorded deviations** — python wiring-node signature introspection,
+  CompoundScalar string representation, and
   ``test_to_table_dispatch`` (upstream ``_impl`` internals; behaviour covered
   through the public surface). Mapped children now publish the final validity
   of projected EMPTY-REF terminals and the corresponding test executes.

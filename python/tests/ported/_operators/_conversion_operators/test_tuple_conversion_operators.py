@@ -90,8 +90,7 @@ def test_convert_series_to_tuple():
     # compute and tests validate with pyarrow (never polars). Skipped until
     # the arrow Series type lands in the bridge.
     pa = pytest.importorskip("pyarrow")
-    pytest.skip("Series (arrow-backed) is not bridged yet - the arrow-native rewrite of this test "
-                "validates convert[TS[Tuple]] over Series once hgraph.Series lands")
+    pytest.skip("gap: native convert[TS[tuple]] over an Arrow Series has not landed")
 
 
 def test_combine_tuple():

@@ -15,6 +15,7 @@
 #include <hgraph/types/value/compact_storage.h>
 #include <hgraph/types/value/mutable_container_ops.h>
 #include <hgraph/types/value/value_ops.h>
+#include <hgraph/types/value/value_conversion.h>
 
 namespace hgraph
 {
@@ -37,6 +38,7 @@ namespace hgraph
         TypeRegistry &type_registry = TypeRegistry::instance();
 
         OperatorRegistry::instance().reset();
+        ValueConversionRegistry::instance().reset();
         clear_json_converters();   // interns by meta/binding pointer — must precede the lenders below
         ts_data_detail::clear_interned_empty_sets();   // OWNS Values — must precede the record clears
         clear_table_converters();  // same rule (also captures record_replay config keys)

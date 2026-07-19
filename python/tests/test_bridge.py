@@ -84,8 +84,31 @@ def test_value_conversion_round_trips():
         if isinstance(sample, (set, frozenset)):
             expected = frozenset(sample)
         elif isinstance(sample, tuple):
-            expected = list(sample)  # homogeneous sequences convert as lists
+            expected = sample  # tuple identity is preserved by variadic-tuple storage
         check(result == expected, f"round trip {sample!r} -> {result!r}")
+
+
+def test_aware_datetime_is_normalized_to_naive_utc():
+    import datetime
+
+    source = datetime.datetime(
+        2024, 1, 2, 12, 30, 0,
+        tzinfo=datetime.timezone(datetime.timedelta(hours=4)),
+    )
+    result = hg._roundtrip_value(source)
+    check(result == datetime.datetime(2024, 1, 2, 8, 30, 0), f"unexpected: {result!r}")
+    check(result.tzinfo is None, f"native datetime must be timezone-free: {result!r}")
+
+
+def test_aware_time_is_rejected_without_a_zoned_time_scalar():
+    import datetime
+
+    try:
+        hg._roundtrip_value(datetime.time(12, 30, tzinfo=datetime.timezone.utc))
+    except TypeError as error:
+        check("timezone-aware time" in str(error), f"unexpected error: {error}")
+    else:
+        raise AssertionError("timezone-aware time was accepted")
 
 
 def test_datetime_scalars_through_a_graph():

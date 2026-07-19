@@ -15,6 +15,7 @@
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/type_resolution.h>
 #include <hgraph/types/wired_fn.h>
+#include <hgraph/types/value/value_conversion.h>
 #include <hgraph/util/date_time.h>
 
 #include <limits>
@@ -531,6 +532,54 @@ namespace hgraph::stdlib
         static void eval(In<"ts", TS<DateTime>> ts, Out<TS<Date>> out)
         {
             out.set(Date{std::chrono::floor<std::chrono::days>(ts.value())});
+        }
+    };
+
+    /** Box a concrete scalar TS into the native Any value. */
+    struct convert_to_any_impl
+    {
+        static constexpr auto name = "convert_to_any";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            static_cast<void>(resolution);
+            const auto *in = time_series_schema_at(context, 0);
+            return in != nullptr && in->kind == TSTypeKind::TS &&
+                   in->value_schema != TypeRegistry::instance().any();
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TS<AnyValue>> out)
+        {
+            out.set(ts.base().value());
+        }
+    };
+
+    /** Convert the concrete value contained by Any using the native runtime
+        conversion table. */
+    struct convert_from_any_impl
+    {
+        static constexpr auto name = "convert_from_any";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *in = time_series_schema_at(context, 0);
+            const auto *out = ts_value_schema(resolution.find_ts("O"));
+            return in != nullptr && in->kind == TSTypeKind::TS &&
+                   in->value_schema == TypeRegistry::instance().any() &&
+                   out != nullptr && out != TypeRegistry::instance().any();
+        }
+
+        static void eval(In<"ts", TS<AnyValue>> ts, Out<TsVar<"O">> out)
+        {
+            const ValueView inner = ts.contained_value();
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            Value converted = ValueConversionRegistry::instance().convert(
+                inner, erased.schema()->value_schema);
+            auto mutation = erased.begin_mutation(erased.evaluation_time());
+            if (!mutation.move_value_from(std::move(converted)))
+            {
+                throw std::logic_error("convert from Any failed to apply the converted value");
+            }
         }
     };
 

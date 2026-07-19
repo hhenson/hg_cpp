@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import tomllib
 
+from packaging.version import Version
 from trove_classifiers import classifiers as valid_classifiers
 
 
@@ -12,6 +13,7 @@ PYARROW_REQUIREMENT = "pyarrow>=24,<25"
 SUPPORTED_PYTHON_MINIMUM = ">=3.12"
 STABLE_ABI_TAG = "cp312"
 DISTRIBUTION_NAME = "hg_cpp"
+RELEASE_CANDIDATE = Version("0.4.0rc1")
 
 
 def load_project():
@@ -46,27 +48,43 @@ def test_pypi_classifiers_are_valid():
 
 def test_release_metadata_is_consistent():
     project = load_project()["project"]
-    version = project["version"]
+    version = Version(project["version"])
 
     assert project["name"] == DISTRIBUTION_NAME
-    assert re.fullmatch(r"\d+\.\d+\.\d+", version)
-    assert tuple(map(int, version.split("."))) >= (0, 3, 0)
+    assert version == RELEASE_CANDIDATE
+    assert version.is_prerelease
 
     cmake = (ROOT / "CMakeLists.txt").read_text()
     cmake_version = re.search(r"project\(\s*hgraph\s+VERSION\s+(\d+\.\d+\.\d+)", cmake)
     assert cmake_version is not None
-    assert cmake_version.group(1) == version
+    assert Version(cmake_version.group(1)) == Version(version.base_version)
 
     sphinx = (ROOT / "docs/source/conf.py").read_text()
-    sphinx_version = re.search(r'^release = "(\d+\.\d+\.\d+)"$', sphinx, re.MULTILINE)
+    sphinx_version = re.search(r'^release = "([^"]+)"$', sphinx, re.MULTILINE)
     assert sphinx_version is not None
-    assert sphinx_version.group(1) == version
+    assert Version(sphinx_version.group(1)) == version
 
 
 def test_wheel_targets_the_python_312_stable_abi():
     scikit_build = load_project()["tool"]["scikit-build"]
 
     assert scikit_build["wheel"]["py-api"] == STABLE_ABI_TAG
+
+
+def test_source_distribution_excludes_private_release_evidence():
+    scikit_build = load_project()["tool"]["scikit-build"]
+    excluded = scikit_build["sdist"]["exclude"]
+
+    assert "reports/**" in excluded
+    assert "ext/**" in excluded
+    assert "benchmarks/.venv*/**" in excluded
+    assert "benchmarks/results/**" in excluded
+
+
+def test_full_suite_dependencies_include_the_dataframe_runtime():
+    test_dependencies = load_project()["project"]["optional-dependencies"]["test"]
+
+    assert "polars[rtcompat]>=1.32" in test_dependencies
 
 
 def test_release_workflow_targets_supported_platforms():
@@ -76,6 +94,12 @@ def test_release_workflow_targets_supported_platforms():
     assert "          - os: macos-26" in workflow
     assert "          - macos-26" in workflow
     assert "CMAKE_OSX_DEPLOYMENT_TARGET=15.0" in workflow
+    assert "quay.io/pypa/manylinux_2_28_x86_64:latest" in workflow
+    assert "Build manylinux 2.28 / GCC 14 wheel" in workflow
+    assert "--plat manylinux_2_28_x86_64" in workflow
+    assert "g++-13 --version" in workflow
+    assert "runs-on: ubuntu-24.04" in workflow
+    assert "Visual Studio 18 2026" in workflow
     assert 'python-version: "3.12"' in workflow
     assert '- "3.13"' in workflow
     assert '- "3.14"' in workflow
@@ -98,6 +122,8 @@ def main():
     test_pypi_classifiers_are_valid()
     test_release_metadata_is_consistent()
     test_wheel_targets_the_python_312_stable_abi()
+    test_source_distribution_excludes_private_release_evidence()
+    test_full_suite_dependencies_include_the_dataframe_runtime()
     test_release_workflow_targets_supported_platforms()
     test_release_workflow_reuses_tested_commit_artifacts()
     print("PASS test_pyarrow_build_and_runtime_requirements_share_the_supported_abi")
@@ -105,6 +131,8 @@ def main():
     print("PASS test_pypi_classifiers_are_valid")
     print("PASS test_release_metadata_is_consistent")
     print("PASS test_wheel_targets_the_python_312_stable_abi")
+    print("PASS test_source_distribution_excludes_private_release_evidence")
+    print("PASS test_full_suite_dependencies_include_the_dataframe_runtime")
     print("PASS test_release_workflow_targets_supported_platforms")
     print("PASS test_release_workflow_reuses_tested_commit_artifacts")
 

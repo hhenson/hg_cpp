@@ -626,6 +626,17 @@ over erased ports. Because it is just a scalar:
 - equal functions hash/compare equal, so nodes configured with the same
   function intern/dedup like any other scalar configuration.
 
+``ValueCallable`` is the separate **evaluation-time** callable scalar
+(``include/hgraph/types/value_callable.h``). ``WiredFn`` creates graph
+structure during wiring; ``ValueCallable`` consumes value views when a node
+evaluates. Native ``value_fn<F>()`` values retain a lifted kernel operation
+table, while a bridge backend owns its callable context and supplies the same
+``invoke`` operation. The ``apply`` and ``call`` graph overloads pack
+positional and keyword ports structurally, then delegate to native runtime
+nodes. Positional validity gates invocation; invalid keyword ports are omitted.
+The packed ABI carries the positional count explicitly, so user keyword names
+cannot be confused with internal structural field labels.
+
 Named arguments, defaults and ``**kwargs``
 ------------------------------------------
 

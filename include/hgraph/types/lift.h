@@ -7,6 +7,7 @@
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/types/wired_fn.h>
+#include <hgraph/types/value_callable.h>
 
 #include <array>
 #include <concepts>
@@ -595,6 +596,18 @@ namespace hgraph
             return fn();
         }
     };
+
+    /** Erase a native lifted scalar kernel for runtime value invocation. */
+    template <typename F, auto Identity = lift_detail::function_identity>
+    [[nodiscard]] ValueCallable value_fn()
+    {
+        const LiftedKernel *kernel = lift<F, Identity>::lifted_kernel();
+        return ValueCallable{
+            .identity = kernel->identity,
+            .lifted   = kernel,
+            .arity    = kernel->arity,
+        };
+    }
 }  // namespace hgraph
 
 #endif  // HGRAPH_TYPES_LIFT_H

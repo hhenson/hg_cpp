@@ -1,8 +1,4 @@
 # Ported from ext/main/hgraph_unit_tests/_wiring/test_component.py
-import pytest
-
-pytestmark = pytest.mark.wip
-
 from typing import Generic
 
 import pytest

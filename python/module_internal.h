@@ -11,6 +11,7 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/time_series/ts_delta.h>
+#include <hgraph/types/value_callable.h>
 #include <hgraph/types/value/specialized_views.h>
 #include <hgraph/types/value/value_builder.h>
 
@@ -122,7 +123,7 @@ namespace hgraph::static_schema_detail
     template <>
     struct scalar_name<hgraph::python_bridge::PyObj>
     {
-        static constexpr std::string_view value{"object"};
+        static constexpr std::string_view value{"py_object"};
     };
 }  // namespace hgraph::static_schema_detail
 

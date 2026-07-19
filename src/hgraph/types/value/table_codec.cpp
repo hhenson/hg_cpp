@@ -565,6 +565,19 @@ namespace hgraph
         else { array = chunked->chunk(0); }
         if (array->IsNull(row)) { return Value{}; }
         const LeafOps ops = leaf_ops_for(leaf);
+        const auto actual = array->type();
+        const bool compatible = actual->Equals(ops.type) ||
+                                (ops.type->id() == arrow::Type::STRING &&
+                                 actual->id() == arrow::Type::LARGE_STRING) ||
+                                (ops.type->id() == arrow::Type::BINARY &&
+                                 actual->id() == arrow::Type::LARGE_BINARY);
+        if (!compatible)
+        {
+            throw std::invalid_argument(fmt::format(
+                "table codec: frame column '{}' has Arrow type '{}', expected '{}' for native scalar '{}'",
+                column, actual->ToString(), ops.type->ToString(),
+                leaf != nullptr && !leaf->name().empty() ? leaf->name() : std::string_view{"?"}));
+        }
         const Column  temp{.name = std::string{column}, .leaf_meta = leaf, .type = ops.type};
         return ops.read(temp, *array, row);
     }

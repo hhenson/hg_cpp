@@ -3,7 +3,7 @@ from datetime import datetime
 project = "hgraph"
 author = "Howard Henson"
 copyright = f"{datetime.now().year}, {author}"
-release = "0.3.0"
+release = "0.4.0rc1"
 
 extensions = [
     "myst_parser",

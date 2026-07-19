@@ -7,6 +7,7 @@
 #include <hgraph/lib/std/operators/logical.h>
 #include <hgraph/lib/std/operators/collection.h>
 #include <hgraph/types/value/value_builder.h>
+#include <hgraph/types/value_callable.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>   // add_ / sub_ / mul_ / div_ / DivideByZero
 #include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
@@ -530,6 +531,60 @@ namespace hgraph::stdlib
                 ListBuilder builder{element_binding_of(meta->element_type)};
                 for (const ValueView &element : lhs.base().value().as_list()) { builder.push_back_copy(element.data()); }
                 for (const ValueView &element : rhs.base().value().as_list()) { builder.push_back_copy(element.data()); }
+                out.apply(builder.build().view());
+            }
+        };
+
+        /** Remove every homogeneous tuple/list element matching ``rhs``.
+            The optional runtime comparator supports heterogeneous rhs types;
+            an empty callable uses the element type's native equality ops. */
+        struct remove_list_items_impl
+        {
+            static constexpr auto name = "sub_list_item";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                const auto *lhs = ts_value_schema_at(context, 0);
+                const auto *rhs = ts_value_schema_at(context, 1);
+                if (lhs == nullptr || rhs == nullptr || lhs->value_kind() != ValueTypeKind::List ||
+                    lhs->element_type == nullptr)
+                {
+                    return false;
+                }
+                const auto *cmp = context.scalar_as<ValueCallable>("cmp");
+                return (cmp != nullptr && cmp->valid()) || lhs->element_type == rhs;
+            }
+
+            static std::vector<std::pair<std::string_view, Value>> defaults()
+            {
+                return {{"cmp", Value{ValueCallable{}}}};
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs,
+                             In<"rhs", TS<ScalarVar<"E">>> rhs,
+                             Scalar<"cmp", ValueCallable> cmp,
+                             Out<TS<ScalarVar<"T">>> out)
+            {
+                const ValueView rhs_value = rhs.base().value();
+                const ValueCallable &predicate = cmp.value();
+                ListBuilder builder{element_binding_of(lhs.base().value().schema()->element_type)};
+                for (const ValueView element : lhs.base().value().as_list())
+                {
+                    bool matches = false;
+                    if (predicate.valid())
+                    {
+                        const ValueCallArg args[]{ValueCallArg{element}, ValueCallArg{rhs_value}};
+                        const Value result = predicate.invoke(
+                            std::span<const ValueCallArg>{args}, scalar_descriptor<Bool>::value_meta());
+                        if (!result.has_value())
+                        {
+                            throw std::logic_error("tuple comparator did not return a value");
+                        }
+                        matches = result.view().checked_as<Bool>();
+                    }
+                    else { matches = element.equals(rhs_value); }
+                    if (!matches) { builder.push_back_copy(element.data()); }
+                }
                 out.apply(builder.build().view());
             }
         };
