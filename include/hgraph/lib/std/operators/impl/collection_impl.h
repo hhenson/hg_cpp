@@ -2341,9 +2341,11 @@ namespace hgraph::stdlib
                 const auto *flipped_inner = TypeRegistry::instance().map(meta->key_type, inner->element_type);
 
                 std::vector<std::pair<Value, MapBuilder>> groups;
-                for (const auto [outer_key, inner_value] : ts.base().value().as_map())
+                const auto outer_values = ts.base().value().as_map();
+                for (const auto [outer_key, inner_value] : outer_values)
                 {
-                    for (const auto [inner_key, item] : inner_value.as_map())
+                    const auto inner_values = inner_value.as_map();
+                    for (const auto [inner_key, item] : inner_values)
                     {
                         MapBuilder *group = nullptr;
                         for (auto &[seen, builder] : groups)
@@ -2400,9 +2402,11 @@ namespace hgraph::stdlib
                 const auto pair_binding = ValuePlanFactory::instance().type_for(pair);
 
                 auto builder = make_map_builder(pair, inner->element_type);
-                for (const auto [outer_key, inner_value] : ts.base().value().as_map())
+                const auto outer_values = ts.base().value().as_map();
+                for (const auto [outer_key, inner_value] : outer_values)
                 {
-                    for (const auto [inner_key, item] : inner_value.as_map())
+                    const auto inner_values = inner_value.as_map();
+                    for (const auto [inner_key, item] : inner_values)
                     {
                         BundleBuilder key_builder{pair_binding};
                         key_builder.set(0, Value{outer_key});
@@ -2447,7 +2451,8 @@ namespace hgraph::stdlib
                 const auto *inner_map  = TypeRegistry::instance().map(inner_key, meta->element_type);
 
                 std::vector<std::pair<Value, MapBuilder>> groups;
-                for (const auto [key, item] : ts.base().value().as_map())
+                const auto values = ts.base().value().as_map();
+                for (const auto [key, item] : values)
                 {
                     auto pair = key.as_indexed_view();
                     auto outer = pair.at(0);

@@ -1559,7 +1559,9 @@ namespace hgraph
         validate_same_cycle_pairs(build.index_of);
         build.graph_builder.type_realization(realization);
         build.graph_builder.global_state(std::move(impl_->global_state));  // carry wiring-time entries onto the graph
-        for (const auto [key, boxed] : impl_->traits.as_value().view().as_map())
+        const ValueView traits_value = impl_->traits.as_value().view();
+        const auto      traits_map   = traits_value.as_map();
+        for (const auto [key, boxed] : traits_map)
         {
             build.graph_builder.trait(key.checked_as<Str>(), boxed.as_any().get());
         }
@@ -1659,7 +1661,9 @@ namespace hgraph
         // GlobalContext. A compiled child must instead share its root graph's
         // runtime state, so discard that constructor-time seed here.
         build.graph_builder.global_state(GlobalState{});
-        for (const auto [key, boxed] : impl_->traits.as_value().view().as_map())
+        const ValueView traits_value = impl_->traits.as_value().view();
+        const auto      traits_map   = traits_value.as_map();
+        for (const auto [key, boxed] : traits_map)
         {
             build.graph_builder.trait(key.checked_as<Str>(), boxed.as_any().get());
         }

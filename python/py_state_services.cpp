@@ -93,7 +93,11 @@ namespace hgraph::python_bridge
              })
         .def("keys", [](GlobalState &self) {
             nb::list result;
-            for (const ValueView key : self.view().as_value().view().as_map().keys())
+            const GlobalStateView state = self.view();
+            const ValueView       value = state.as_value().view();
+            const auto            map   = value.as_map();
+            const auto            keys  = map.keys();
+            for (const ValueView key : keys)
             {
                 result.append(value_to_py(key));
             }
@@ -438,7 +442,11 @@ namespace hgraph::python_bridge
         })
         .def("keys", [](const PyRuntimeGlobalState &self) {
             nb::list result;
-            for (const ValueView key : self.checked().as_value().view().as_map().keys())
+            const GlobalStateView state = self.checked();
+            const ValueView       value = state.as_value().view();
+            const auto            map   = value.as_map();
+            const auto            keys  = map.keys();
+            for (const ValueView key : keys)
             {
                 result.append(value_to_py(key));
             }

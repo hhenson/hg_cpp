@@ -434,7 +434,8 @@ namespace hgraph::stdlib
             static_cast<void>(strict);
             Str  joined;
             bool first = true;
-            for (const ValueView &item : ts.base().value().as_list())
+            const auto values = ts.base().value().as_list();
+            for (const ValueView &item : values)
             {
                 if (!first) { joined += separator.value(); }
                 joined += item.checked_as<Str>();

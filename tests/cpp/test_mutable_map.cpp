@@ -116,7 +116,9 @@ TEST_CASE("mutable map: iteration over keys, values and entries; clear")
 
     std::int32_t key_sum = 0;
     std::int32_t val_sum = 0;
-    for (const auto &[key, value] : map.as_map().entries())
+    const auto map_view = map.as_map();
+    const auto entries  = map_view.entries();
+    for (const auto &[key, value] : entries)
     {
         key_sum += key.checked_as<std::int32_t>();
         val_sum += value.checked_as<std::int32_t>();

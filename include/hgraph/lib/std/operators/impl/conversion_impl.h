@@ -736,7 +736,8 @@ namespace hgraph::stdlib
                 return false;
             };
             std::vector<Value> stale;
-            for (const ValueView &element : mutation.view().values())
+            const auto mutation_view = mutation.view();
+            for (const ValueView &element : mutation_view.values())
             {
                 if (!contains_in_desired(element)) { stale.emplace_back(element); }
             }
@@ -817,7 +818,8 @@ namespace hgraph::stdlib
             // (equal values dedup before the write - READ-side compare, the
             // flip_keys lesson).
             std::vector<Value> stale;
-            for (const ValueView &key : mutation.view().keys())
+            const auto mutation_view = mutation.view();
+            for (const ValueView &key : mutation_view.keys())
             {
                 if (!map.contains(key)) { stale.emplace_back(key); }
             }
@@ -855,7 +857,8 @@ namespace hgraph::stdlib
             const auto  value  = ts.base().value();
             // Desired = {value}: remove everything else, insert the value.
             std::vector<Value> stale;
-            for (const ValueView &element : mutation.view().values())
+            const auto mutation_view = mutation.view();
+            for (const ValueView &element : mutation_view.values())
             {
                 if (!element.equals(value)) { stale.emplace_back(element); }
             }
@@ -935,7 +938,8 @@ namespace hgraph::stdlib
                 return false;
             };
             std::vector<Value> stale;
-            for (const ValueView &existing : mutation.view().keys())
+            const auto mutation_view = mutation.view();
+            for (const ValueView &existing : mutation_view.keys())
             {
                 if (!is_desired(existing)) { stale.emplace_back(existing); }
             }
@@ -1230,7 +1234,8 @@ namespace hgraph::stdlib
                 return false;
             };
             std::vector<Value> stale;
-            for (const ValueView &element : mutation.view().values())
+            const auto mutation_view = mutation.view();
+            for (const ValueView &element : mutation_view.values())
             {
                 if (!wanted(element)) { stale.emplace_back(element); }
             }
@@ -1349,7 +1354,8 @@ namespace hgraph::stdlib
                 return false;
             };
             std::vector<Value> stale;
-            for (const ValueView &existing : mutation.view().keys())
+            const auto mutation_view = mutation.view();
+            for (const ValueView &existing : mutation_view.keys())
             {
                 if (!wanted(existing)) { stale.emplace_back(existing); }
             }
@@ -1556,7 +1562,8 @@ namespace hgraph::stdlib
                                 ValuePlanFactory::instance().type_for(meta->element_type)};
             if (!fresh && erased.data_view().has_current_value())
             {
-                for (const auto [k, v] : erased.value().as_map()) { builder.set_item_copy(k.data(), v.data()); }
+                const auto current = erased.value().as_map();
+                for (const auto [k, v] : current) { builder.set_item_copy(k.data(), v.data()); }
             }
             if (ticked)
             {
@@ -1928,7 +1935,8 @@ namespace hgraph::stdlib
                                ValuePlanFactory::instance().type_for(meta->element_type)};
             if (!fresh && erased.data_view().has_current_value())
             {
-                for (const auto [k, v] : erased.value().as_map()) { builder.set_item_copy(k.data(), v.data()); }
+                const auto current = erased.value().as_map();
+                for (const auto [k, v] : current) { builder.set_item_copy(k.data(), v.data()); }
             }
             if (ticked)
             {
@@ -1981,7 +1989,8 @@ namespace hgraph::stdlib
             {
                 std::vector<Value> stale;
                 const auto key_value = key.base().value();
-                for (const ValueView &existing : mutation.view().keys())
+                const auto mutation_view = mutation.view();
+                for (const ValueView &existing : mutation_view.keys())
                 {
                     if (!(ticked && existing.equals(key_value))) { stale.emplace_back(existing); }
                 }
@@ -2039,7 +2048,8 @@ namespace hgraph::stdlib
             if (fresh)
             {
                 std::vector<Value> stale;
-                for (const ValueView &element : mutation.view().values()) { stale.emplace_back(element); }
+                const auto mutation_view = mutation.view();
+                for (const ValueView &element : mutation_view.values()) { stale.emplace_back(element); }
                 for (const Value &element : stale) { static_cast<void>(mutation.remove(element.view())); }
             }
             if (!ts.valid() || !ts.modified()) { return; }
@@ -2097,7 +2107,8 @@ namespace hgraph::stdlib
             auto        items   = ts.base().value().as_indexed_view();
 
             std::vector<Value> stale;
-            for (const ValueView &existing : mutation.view().keys())
+            const auto mutation_view = mutation.view();
+            for (const ValueView &existing : mutation_view.keys())
             {
                 if (existing.checked_as<Int>() >= static_cast<Int>(items.size()))
                 {
@@ -2169,7 +2180,8 @@ namespace hgraph::stdlib
                     return false;
                 };
                 std::vector<Value> stale;
-                for (const ValueView &existing : mutation.view().keys())
+                const auto mutation_view = mutation.view();
+                for (const ValueView &existing : mutation_view.keys())
                 {
                     if (!keeps(existing)) { stale.emplace_back(existing); }
                 }
@@ -2230,7 +2242,8 @@ namespace hgraph::stdlib
             if (fresh)
             {
                 std::vector<Value> stale;
-                for (const ValueView &existing : mutation.view().keys())
+                const auto mutation_view = mutation.view();
+                for (const ValueView &existing : mutation_view.keys())
                 {
                     if (!map.has_value() || !map->contains(existing)) { stale.emplace_back(existing); }
                 }
@@ -2298,14 +2311,16 @@ namespace hgraph::stdlib
             if (fresh)
             {
                 std::vector<Value> stale;
-                for (const ValueView &existing : mutation.view().keys()) { stale.emplace_back(existing); }
+                const auto mutation_view = mutation.view();
+                for (const ValueView &existing : mutation_view.keys()) { stale.emplace_back(existing); }
                 for (const Value &existing : stale) { static_cast<void>(mutation.erase(existing.view())); }
             }
             if (exclude.modified() && exclude.valid())
             {
                 const TSSInputView set_input{exclude.base().borrowed_ref()};
+                const auto         set_data = set_input.data_view();
                 std::vector<Value> stale;
-                for (const ValueView &added : set_input.data_view().added())
+                for (const ValueView &added : set_data.added())
                 {
                     if (mutation.view().contains(added)) { stale.emplace_back(added); }
                 }
@@ -2529,7 +2544,8 @@ namespace hgraph::stdlib
                 }
                 else
                 {
-                    for (const auto [key, value] : ts.base().value().as_map())
+                    const auto values = ts.base().value().as_map();
+                    for (const auto [key, value] : values)
                     {
                         current.buffer.emplace_back(key);
                         current.buffer.emplace_back(value);

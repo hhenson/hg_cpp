@@ -147,7 +147,8 @@ namespace hgraph::stdlib::json_tree
             case ValueTypeKind::List:
             case ValueTypeKind::Tuple: {
                 ListBuilder items{json_value_binding()};
-                for (const auto element : value.as_indexed_view())
+                const auto values = value.as_indexed_view();
+                for (const auto element : values)
                 {
                     Value node = to_node(element);
                     items.push_back_copy(node.view().data());
@@ -158,7 +159,8 @@ namespace hgraph::stdlib::json_tree
                 MapBuilder entries{ValuePlanFactory::instance().type_for(
                                        scalar_descriptor<Str>::value_meta()),
                                    json_value_binding()};
-                for (const auto [key, item] : value.as_map())
+                const auto values = value.as_map();
+                for (const auto [key, item] : values)
                 {
                     Value       key_text;
                     const auto *key_meta = key.schema();
@@ -276,7 +278,8 @@ namespace hgraph::stdlib::json_tree
         {
             out += '[';
             bool first = true;
-            for (const auto element : inner.as_list())
+            const auto values = inner.as_list();
+            for (const auto element : values)
             {
                 if (!first) { out += ", "; }
                 first = false;
@@ -289,7 +292,8 @@ namespace hgraph::stdlib::json_tree
         {
             out += '{';
             bool first = true;
-            for (const auto [key, item] : inner.as_map())
+            const auto values = inner.as_map();
+            for (const auto [key, item] : values)
             {
                 if (!first) { out += ", "; }
                 first = false;

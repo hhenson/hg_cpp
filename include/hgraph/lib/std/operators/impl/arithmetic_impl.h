@@ -529,8 +529,10 @@ namespace hgraph::stdlib
             {
                 const auto *meta = lhs.base().value().schema();
                 ListBuilder builder{element_binding_of(meta->element_type)};
-                for (const ValueView &element : lhs.base().value().as_list()) { builder.push_back_copy(element.data()); }
-                for (const ValueView &element : rhs.base().value().as_list()) { builder.push_back_copy(element.data()); }
+                const auto lhs_values = lhs.base().value().as_list();
+                const auto rhs_values = rhs.base().value().as_list();
+                for (const ValueView &element : lhs_values) { builder.push_back_copy(element.data()); }
+                for (const ValueView &element : rhs_values) { builder.push_back_copy(element.data()); }
                 out.apply(builder.build().view());
             }
         };
@@ -568,7 +570,8 @@ namespace hgraph::stdlib
                 const ValueView rhs_value = rhs.base().value();
                 const ValueCallable &predicate = cmp.value();
                 ListBuilder builder{element_binding_of(lhs.base().value().schema()->element_type)};
-                for (const ValueView element : lhs.base().value().as_list())
+                const auto lhs_values = lhs.base().value().as_list();
+                for (const ValueView element : lhs_values)
                 {
                     bool matches = false;
                     if (predicate.valid())
@@ -672,9 +675,10 @@ namespace hgraph::stdlib
                              Out<TS<ScalarVar<"T">>> out)
             {
                 const auto *meta = lhs.base().value().schema();
-                auto        rhs_map = rhs.base().value().as_map();
+                const auto  lhs_map = lhs.base().value().as_map();
+                const auto  rhs_map = rhs.base().value().as_map();
                 MapBuilder  builder{element_binding_of(meta->key_type), element_binding_of(meta->element_type)};
-                for (const auto [key, item] : lhs.base().value().as_map())
+                for (const auto [key, item] : lhs_map)
                 {
                     if (!rhs_map.contains(key)) { builder.set_item_copy(key.data(), item.data()); }
                 }
@@ -774,11 +778,13 @@ namespace hgraph::stdlib
             {
                 const auto *meta = lhs.base().value().schema();
                 MapBuilder  builder{element_binding_of(meta->key_type), element_binding_of(meta->element_type)};
-                for (const auto [key, item] : lhs.base().value().as_map())
+                const auto  lhs_map = lhs.base().value().as_map();
+                const auto  rhs_map = rhs.base().value().as_map();
+                for (const auto [key, item] : lhs_map)
                 {
                     builder.set_item_copy(key.data(), item.data());
                 }
-                for (const auto [key, item] : rhs.base().value().as_map())
+                for (const auto [key, item] : rhs_map)
                 {
                     builder.set_item_copy(key.data(), item.data());
                 }
@@ -852,15 +858,20 @@ namespace hgraph::stdlib
         {
             if constexpr (Kind == ValueTypeKind::Map)
             {
-                for (const ValueView &item : container.as_map().values()) { fn(item); }
+                const auto map_values = container.as_map();
+                const auto values     = map_values.values();
+                for (const ValueView &item : values) { fn(item); }
             }
             else if constexpr (Kind == ValueTypeKind::Set)
             {
-                for (const ValueView &item : container.as_set().values()) { fn(item); }
+                const auto set_values = container.as_set();
+                const auto values     = set_values.values();
+                for (const ValueView &item : values) { fn(item); }
             }
             else if constexpr (Kind == ValueTypeKind::List)
             {
-                for (const ValueView &item : container.as_list()) { fn(item); }
+                const auto values = container.as_list();
+                for (const ValueView &item : values) { fn(item); }
             }
             else { static_assert(Kind == ValueTypeKind::Map || Kind == ValueTypeKind::Set ||
                                  Kind == ValueTypeKind::List,
