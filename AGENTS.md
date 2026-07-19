@@ -64,7 +64,7 @@ uv build --wheel --python 3.12 --out-dir "$wheel_dir"
 uv venv --python 3.14 "$test_env"
 uv pip install --python "$test_env/bin/python" \
   "$wheel_dir"/*.whl "pytest>=8" "frozendict>=2.4" "tornado>=6.5" \
-  "polars>=1.32" trove-classifiers
+  "polars[rtcompat]>=1.32" trove-classifiers
 "$test_env/bin/python" -m pytest python/tests -q -m "not wip"
 ```
 

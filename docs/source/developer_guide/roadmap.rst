@@ -20,7 +20,7 @@ of truth.  It distinguishes four states deliberately:
    Behaviour intentionally differs from Python hgraph and must not quietly
    return as a second Python runtime implementation.
 
-Review Snapshot: 2026-07-15
+Review Snapshot: 2026-07-19
 ---------------------------
 
 This review is current through ``65bc05ec`` and the follow-ons described
@@ -346,8 +346,8 @@ results, accepted restrictions, and upstream revision are saved in
 
 **Accepted from this audit:** old ``GraphBuilder``/``WiringNodeInstance`` and
 peering/binding introspection are private; ``const_fn`` remains replaced by
-plain functions plus const-evaluable operators; Polars ``lower`` is not a
-runtime target; REF never exposes ``.output``; and unparameterized container
+plain functions plus const-evaluable operators; REF never exposes ``.output``;
+and unparameterized container
 outputs must either declare concrete element/value types or explicitly use
 ``TS[object]``.  Bare container inputs remain generic family patterns and
 specialize from their connected source.
@@ -592,7 +592,10 @@ The following are intentional unless separately re-opened:
 - Python ``NUMBER`` and ``NUMBER_2`` mean the native ``Int | Float`` scalar
   constraints. ``decimal.Decimal`` is not accepted until a native decimal
   scalar and its arithmetic operators exist.
-- Polars ``lower`` is not a runtime target; dataframe interop is Arrow-based.
+- ``lower`` is implemented in C++ over Arrow ``Frame`` values and the native
+  ``from_data_frame`` / ``to_data_frame`` operators. The Python facade is a
+  value adapter: PyArrow remains the default result and a Polars input selects
+  a Polars result without introducing a Polars runtime dependency.
 - ``GlobalState`` keeps C++ copy-in/copy-out ownership.  Python's thread-local
   seed and ``GlobalContext`` are authoring adapters, not alternate runtime
   global state.

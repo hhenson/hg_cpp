@@ -39,6 +39,7 @@ from ._node import (
     _Generator, _PushQueue, _PyNode, _make_py_node, compute_node, generator, lift, push_queue,
     sink_node
 )
+from ._lower import lower
 from ._graph import (
     _Component, _GraphFn, _ResolvedSize, _as_wired, _graph_auto_resolve, _wrap_graph_fn,
     component, graph
@@ -90,7 +91,7 @@ __all__ = [
     "compute_node", "compute_set_delta", "context", "convert", "dispatch", "dispatch_",
     "delayed_binding", "downcast_ref", "emit", "eval_node", "evaluate_const", "evaluate_graph", "feedback",
     "filter_by", "from_graph", "generator", "get_service_inputs", "graph", "impl_input",
-    "impl_output", "lift", "map_", "mesh_", "MeshWiringPort", "get_mesh", "no_key", "operator",
+    "impl_output", "lift", "lower", "map_", "mesh_", "MeshWiringPort", "get_mesh", "no_key", "operator",
     "operator_function", "pass_through", "passive", "push_queue", "record_replay_scope",
     "reduce", "reference_service", "register_adaptor", "register_service",
     "request_reply_service", "run_graph", "service_adaptor", "service_adaptor_impl",

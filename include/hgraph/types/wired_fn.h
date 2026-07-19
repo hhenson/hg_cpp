@@ -570,7 +570,10 @@ namespace hgraph
         template <typename X>
         [[nodiscard]] const TSValueTypeMetaData *input_schema_thunk(std::size_t index)
         {
-            static const auto schemas = [] {
+            // Schema descriptors are registry-owned. Recompute the interned
+            // pointers after a registry reset instead of retaining dangling
+            // pointers in function-static storage.
+            const auto schemas = [] {
                 std::array<const TSValueTypeMetaData *, arity_of<X>()> out{};
                 if constexpr (graph_wiring_detail::is_graph_def<X>)
                 {

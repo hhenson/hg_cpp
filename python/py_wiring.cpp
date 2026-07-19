@@ -517,5 +517,66 @@ namespace hgraph::python_bridge
         },
         nb::arg("state"), nb::arg("name"), nb::arg("args") = nb::tuple(), nb::arg("kwargs") = nb::dict(),
         nb::arg("output_type") = nb::none());
+
+    m.def(
+        "_lower",
+        [](GlobalState &state, const PyWiredFn &function, nb::list input_frames,
+           const std::string &date_column, const std::string &as_of_column,
+           bool no_as_of_support, std::optional<DateTime> start_time,
+           std::optional<DateTime> end_time, EvaluationTrace *trace) -> nb::object {
+            if (py_has_active_runtime_global_state())
+            {
+                throw std::logic_error(
+                    "lower cannot run while a runtime GlobalState is active");
+            }
+
+            std::vector<Frame> frames;
+            frames.reserve(nb::len(input_frames));
+            for (nb::handle object : input_frames)
+            {
+                Value converted = py_arrow_to_frame(object);
+                frames.push_back(converted.view().checked_as<Frame>());
+            }
+
+            GlobalContext context{state};
+            stdlib::LowerOptions options;
+            options.date_column      = date_column;
+            options.as_of_column     = as_of_column;
+            options.no_as_of_support = no_as_of_support;
+            options.start_time       = start_time.value_or(MIN_ST);
+            options.end_time         = end_time.value_or(MAX_ET);
+            options.observer         = trace;
+            stdlib::LowerExecution execution = stdlib::prepare_lower(
+                function.fn, std::span<const Frame>{frames.data(), frames.size()},
+                std::move(options));
+
+            auto guard = std::make_shared<PyTsGuard>();
+            nb::object runtime_state = nb::cast(PyRuntimeGlobalState{
+                execution.global_state(), guard});
+            nb::object runtime = nb::module_::import_("hgraph._wiring._state");
+            runtime.attr("_push_runtime_global_state")(runtime_state);
+            py_active_runtime_global_state = runtime_state.ptr();
+            py_active_runtime_guard() = guard;
+            auto clear_runtime_state = UnwindCleanupGuard([&] {
+                py_active_runtime_global_state = nullptr;
+                py_active_runtime_guard().reset();
+                guard->alive = false;
+                runtime.attr("_pop_runtime_global_state")();
+            });
+            {
+                nb::gil_scoped_release release;
+                execution.run();
+            }
+            clear_runtime_state.complete();
+            return execution.result().has_value()
+                       ? frame_to_py(*execution.result())
+                       : nb::none();
+        },
+        nb::arg("state"), nb::arg("function"), nb::arg("input_frames"),
+        nb::arg("date_column") = "date", nb::arg("as_of_column") = "as_of",
+        nb::arg("no_as_of_support") = true,
+        nb::arg("start_time").none() = nb::none(),
+        nb::arg("end_time").none() = nb::none(),
+        nb::arg("trace").none() = nb::none());
     }
 }  // namespace hgraph::python_bridge

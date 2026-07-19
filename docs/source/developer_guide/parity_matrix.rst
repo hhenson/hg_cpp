@@ -6,7 +6,7 @@ Python ``hgraph`` surface (the ``ext/main`` reference tree) offers, what the
 C++ runtime provides today, and precisely what is missing — so "done" for the
 Python bridge is measurable rather than discovered.
 
-**Snapshot: 2026-07-15.** Regenerate the operator section by scanning
+**Snapshot: 2026-07-19.** Regenerate the operator section by scanning
 ``ext/main/hgraph/_operators/*.py`` for public ``def`` names and comparing
 against ``lib/std``'s ``Operator<"name">`` markers and ``register_*``
 call sites (three states below). Update this page in the same change as any
@@ -257,9 +257,11 @@ model.
    * - ``test_lift.py``
      - 4
      - Basic lift, explicit output override, and ``dedup_output`` are covered;
-       the latter wires the native ``dedup`` operator. Old ``Hg*TypeMetaData``
-       signature assertions are private; Polars ``lower`` is an accepted
-       non-target because Arrow is the table substrate.
+       the latter wires the native ``dedup`` operator. ``lower`` is an
+       Arrow-native C++ execution path over ``from_data_frame`` /
+       ``to_data_frame``; the Python facade accepts PyArrow and preserves a
+       Polars boundary when its input is Polars. Old ``Hg*TypeMetaData``
+       signature assertions remain private.
    * - ``test_map.py``
      - 32
      - Public TSD/TSL mapping, key inference, explicit keys, broadcast and

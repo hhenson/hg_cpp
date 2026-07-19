@@ -17,6 +17,7 @@
  */
 
 #include <hgraph/lib/std/lifted_kernels.h>
+#include <hgraph/lib/std/lower.h>
 #include <hgraph/lib/std/operators/operators.h>
 #include <hgraph/lib/std/operators/registration.h>
 #include <hgraph/lib/std/operators/syntax.h>

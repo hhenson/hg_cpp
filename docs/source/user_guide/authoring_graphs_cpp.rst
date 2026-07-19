@@ -1210,6 +1210,56 @@ Contexts do not yet cross compiled sub-graph boundaries (``map_`` /
 roadmap, and the wiring surface will not change when it lands.
 
 
+Lowering a graph over Arrow frames
+----------------------------------
+
+``stdlib::lower`` turns a reactive graph into one ordinary Arrow-frame call.
+It wires each input ``Frame`` through the native ``from_data_frame`` source,
+invokes the graph through ``WiredFn``, snapshots output ticks with
+``to_data_frame``, and concatenates those snapshots into one result frame. No
+record/replay backend or process-global frame store is involved.
+
+Input frames follow the graph's time-series ``Port`` parameter order. Scalar
+``TS<T>`` uses ``date`` and ``value`` columns by default; ``TSD<K, TS<T>>``
+also uses ``key``; a ``TSB`` uses its field names. The same structural rules
+are used for the output. Standard operators must be registered before wiring,
+as for any other stdlib graph:
+
+.. code-block:: cpp
+
+   #include <hgraph/lib/std/lower.h>
+   #include <hgraph/lib/std/operators/registration.h>
+
+   struct AddFrames
+   {
+       static Port<TS<Int>> compose(
+           Wiring &w, NamedPort<"lhs", TS<Int>> lhs,
+           NamedPort<"rhs", TS<Int>> rhs)
+       {
+           return wire<stdlib::add_>(w, lhs, rhs).as<TS<Int>>();
+       }
+   };
+
+   stdlib::register_standard_operators();
+   std::array<Frame, 2> inputs{lhs_frame, rhs_frame};
+   std::optional<Frame> result = stdlib::lower<AddFrames>(inputs);
+
+A sink graph returns ``std::nullopt``. ``LowerOptions`` changes the
+``date_column``, ``key_column``, and ``value_column``, bounds execution with
+``start_time`` / ``end_time``, and accepts a lifecycle observer. As-of support
+is deliberately explicit: set ``no_as_of_support = false`` to require the
+configured as-of column on every input. Input versions after the invocation
+as-of are discarded and the latest visible row per ``(date, key)`` is replayed;
+unkeyed inputs group by date alone. The output includes that one fixed
+invocation as-of value (set ``as_of`` to choose it).
+
+``prepare_lower`` returns a move-only ``LowerExecution`` when an embedding
+needs to retain the prepared executor, inspect its graph-local
+``GlobalState``, or control when ``run`` occurs. An active ``GlobalContext`` is
+copied into the graph before execution and receives the final graph state after
+the run; the private collected frame never leaks into that state.
+
+
 Running a graph
 ---------------
 

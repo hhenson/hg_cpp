@@ -212,6 +212,14 @@ components:
 - ``lift(fn, inputs=..., output=...)`` wraps a plain scalar function as a
   compute node (scalar annotations become ``TS[...]``; time-series views
   unwrap to ``value if valid else None`` before the call);
+- ``lower(fn)`` performs the inverse boundary conversion through the native
+  C++ ``LowerExecution`` path. Each reactive input is supplied as an
+  Arrow-compatible frame and is replayed by ``from_data_frame``; output ticks
+  are captured by ``to_data_frame`` and concatenated in C++. Scalar graph
+  parameters remain wiring-time Python arguments. PyArrow is returned by
+  default; supplying a Polars frame selects a Polars result. Python user nodes
+  run under the same guarded runtime ``GlobalState`` projection as an ordinary
+  graph run, and final state is copied back to the selected Python seed;
 - the diagnostic sinks (``debug_print`` with ``sample=``, ``print_`` with
   python-style ``{}``/``{name}`` formatting and ``__std_out__``, the
   format-args ``assert_``) write through python's ``sys.stdout``/``stderr``

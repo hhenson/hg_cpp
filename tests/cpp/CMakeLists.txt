@@ -179,6 +179,7 @@ hgraph_add_test_objects(hgraph_stdlib_test_objects
     test_const_eval.cpp
     test_dispatch.cpp
     test_engine_control.cpp
+    test_lower.cpp
     test_map.cpp
     test_mesh.cpp
     test_reduce.cpp

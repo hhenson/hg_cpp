@@ -89,6 +89,7 @@ set(HGRAPH_WIRING_SOURCES
 )
 
 set(HGRAPH_STDLIB_SOURCES
+    hgraph/lib/std/lower.cpp
     hgraph/lib/std/operators/arithmetic_impl.cpp
     hgraph/lib/std/operators/collection_impl.cpp
     hgraph/lib/std/operators/comparison_impl.cpp
