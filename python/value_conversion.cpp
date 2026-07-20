@@ -811,13 +811,38 @@ namespace hgraph::python_bridge
             }
             case TSTypeKind::TSB: {
                 BundleBuilder builder{delta_binding(ts->delta_value_schema)};
-                const nb::dict fields = nb::cast<nb::dict>(object);
+                const bool is_mapping = nb::isinstance<nb::dict>(object);
+                nb::dict fields;
+                if (is_mapping)
+                {
+                    fields = nb::cast<nb::dict>(object);
+                }
+                else
+                {
+                    const auto mapped = tsb_compound_value_registry().find(ts);
+                    if (mapped == tsb_compound_value_registry().end())
+                    {
+                        throw nb::type_error(
+                            "a TSB delta must be a dict unless the TSB represents a CompoundScalar");
+                    }
+                    const auto info = bundle_class_info_registry().find(mapped->second);
+                    if (info == bundle_class_info_registry().end() ||
+                        !info->second.type.is_valid() ||
+                        !nb::isinstance(object, info->second.type))
+                    {
+                        throw nb::type_error(
+                            "a TSB CompoundScalar snapshot must be an instance of its registered class");
+                    }
+                }
                 for (std::size_t index = 0; index < ts->field_count(); ++index)
                 {
                     const auto &field = ts->fields()[index];
                     nb::str key{field.name};
-                    if (!fields.contains(key)) { continue; }
-                    nb::handle item = fields[key];
+                    if (is_mapping && !fields.contains(key)) { continue; }
+                    if (!is_mapping && !nb::hasattr(object, key)) { continue; }
+                    nb::object item = is_mapping
+                                          ? nb::borrow<nb::object>(fields[key])
+                                          : nb::getattr(object, key);
                     if (item.is_none()) { continue; }
                     builder.set(index, py_to_delta(item, field.type).view());
                 }

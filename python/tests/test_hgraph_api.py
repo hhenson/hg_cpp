@@ -738,6 +738,27 @@ def test_nested_compound_scalar_tsb_values_keep_their_python_types():
     check(construction_calls == [], f"value reads called __post_init__: {construction_calls}")
 
 
+def test_tsd_of_compound_scalar_tsb_accepts_snapshot_objects():
+    @dataclass(frozen=True)
+    class Price(CompoundScalar):
+        qty: float
+        unit: str
+
+    @graph
+    def selected_qty(prices: TSD[str, TSB[Price]]) -> TS[float]:
+        return prices["selected"].qty
+
+    out = eval_node(
+        selected_qty,
+        [
+            {"selected": Price(qty=12.5, unit="USD")},
+            {"selected": {"qty": 13.0}},
+        ],
+    )
+
+    check(out == [12.5, 13.0], f"compound scalar TSD snapshots: {out}")
+
+
 def test_time_series_view_api():
     # The full view surface: value/delta_value/modified/last_modified_time
     # plus the TSD conveniences (hgraph parity).
