@@ -38,6 +38,35 @@ struct AddOneG {
   }
 };
 
+struct MeshOverloadMarkerG {
+  static constexpr auto name = "mesh_overload_marker_g";
+  static Port<TS<Int>> compose(Wiring &, Port<TS<Int>> ts) { return ts; }
+};
+
+struct MeshTimesTenG {
+  static constexpr auto name = "mesh_times_ten_g";
+  static Port<TS<Int>> compose(Wiring &, Port<TS<Int>> ts) {
+    using namespace hgraph::stdlib::syntax;
+    return (ts * Int{10}).as<TS<Int>>();
+  }
+};
+
+struct MeshIdentitySpecialization {
+  static constexpr auto name = "mesh_identity_specialization";
+
+  static bool requires_(const ResolutionMap &, OperatorCallContext context) {
+    const WiredFn *func = context.scalar_as<WiredFn>("func");
+    return func != nullptr && *func == fn<MeshOverloadMarkerG>();
+  }
+
+  static Port<TSD<Str, TS<Int>>>
+  compose(Wiring &w, Scalar<"func", WiredFn>,
+          Port<TSD<Str, TS<Int>>> values) {
+    return wire<stdlib::map_>(w, fn<MeshTimesTenG>(), values)
+        .as<TSD<Str, TS<Int>>>();
+  }
+};
+
 // A key-consuming function (first parameter named "key", the Python rule).
 struct AddKeyG {
   static constexpr auto name = "mesh_add_key_g";
@@ -733,4 +762,22 @@ TEST_CASE("mesh_: a re-ticked link to a quiescent dependency re-reads its "
           values<Value>(dict_delta<Int, TS<Int>>({{1, 0}, {2, 1}}),
                         dict_delta<Int, TS<Int>>({{2, 1}})))),
       values<Value>(dict_delta<Int, TS<Int>>({{0, 0}, {1, 1}, {2, 3}}), none));
+}
+
+TEST_CASE("mesh_: a user overload may select on the wired function identity") {
+  using namespace hgraph;
+  stdlib::register_standard_operators();
+  register_graph_overload<stdlib::mesh_, MeshIdentitySpecialization>();
+
+  const auto input = values<Value>(
+      dict_delta<Str, TS<Int>>({{Str{"a"}, 1}, {Str{"b"}, 2}}));
+  CHECK_OUTPUT(
+      (eval_node<stdlib::mesh_, TSD<Str, TS<Int>>>(
+          fn<MeshOverloadMarkerG>(), input)),
+      values<Value>(dict_delta<Str, TS<Int>>(
+          {{Str{"a"}, 10}, {Str{"b"}, 20}})));
+  CHECK_OUTPUT(
+      (eval_node<stdlib::mesh_, TSD<Str, TS<Int>>>(fn<AddOneG>(), input)),
+      values<Value>(dict_delta<Str, TS<Int>>(
+          {{Str{"a"}, 2}, {Str{"b"}, 3}})));
 }

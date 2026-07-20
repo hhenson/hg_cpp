@@ -3,6 +3,8 @@ normalisation), @compute_node/@sink_node, lift, @generator, push_queue."""
 import inspect
 import typing
 import warnings
+from copy import copy
+from functools import partial
 
 import _hgraph
 
@@ -15,7 +17,8 @@ from ._markers import (LOGGER, STATE, _INJECTABLE_MARKERS, _MISSING,
                        _RecordableStateExpr, _StateExpr, _annotation_ts_kind,
                        _is_object_vt, _tsw_kind, _unbounded_tuple_kind)
 from ._operator import _register_overload, _run_requires
-from ._state import GlobalState, _GRAPH_LOGGER_KEY
+from ._state import (GlobalState, _GRAPH_LOGGER_FORMATTER_KEY,
+                     _GRAPH_LOGGER_KEY)
 
 
 def _warn_deprecated(name, deprecated):
@@ -578,7 +581,15 @@ class _PyNode:
 
                 logger = GlobalState.instance().get(
                     _GRAPH_LOGGER_KEY, logging.getLogger("hgraph"))
-                layout.append("s")   # process-wide logger: a plain object scalar
+                formatter = GlobalState.instance().get(
+                    _GRAPH_LOGGER_FORMATTER_KEY)
+                if formatter is not None:
+                    node_path = self.__name__
+                    logger = copy(logger.getChild(node_path))
+                    logger._log = partial(
+                        formatter, node_path=node_path,
+                        __orig_log__=logger._log)
+                layout.append("s")   # run logger: a plain object scalar
                 _note(param.name)
                 scalars.append(logger)
                 scalar_values[param.name] = logger
@@ -593,10 +604,10 @@ class _PyNode:
                     required, name = True, requirement.name
                 elif isinstance(requirement, str):
                     name = requirement
-                resolved = _resolve_context(param.annotation, name)
+                resolved = _resolve_context(param.annotation, name, scope)
                 if resolved is None:
                     where = f" with name {name}" if name else ""
-                    if required or name is not None:
+                    if required:
                         raise WiringError(
                             f"no context published for '{param.name}'{where} of '{self.__name__}'")
                     continue   # optional and absent: the fn sees its None default

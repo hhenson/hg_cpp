@@ -3,6 +3,7 @@ from datetime import timedelta, datetime
 from typing import Tuple
 
 import numpy as np
+import pyarrow as pa
 import pytest
 from frozendict import frozendict as fd
 
@@ -49,7 +50,7 @@ from hgraph import (
     WindowSize,
     Array,
     ts_schema,
-    WINDOW_SIZE, WINDOW_SIZE_MIN, set_delta
+    WINDOW_SIZE, WINDOW_SIZE_MIN, set_delta, Frame
 )
 from hgraph.stream import combine_status_messages
 from hgraph.stream.stream import register_status_message_pattern
@@ -594,20 +595,46 @@ def test_filter_tsl():
     ]
 
 
-def test_throttle():
+def test_throttle_falsey_int():
     @graph
     def g(ts: TS[int], period: timedelta) -> TS[int]:
         return throttle(ts, period)
 
-    assert eval_node(g, [1, 1, 2, 3, 5, 2, 1], 2 * MIN_TD, __end_time__=MIN_ST + 10 * MIN_TD) == [
+    assert eval_node(g, [1, 1, 2, 3, 0, 2, 1], 2 * MIN_TD, __end_time__=MIN_ST + 10 * MIN_TD) == [
         1,
         None,
         2,
         None,
-        5,
+        0,
         None,
         1,
     ]
+
+
+def test_throttle_falsey_str():
+    @graph
+    def g(ts: TS[str], period: timedelta) -> TS[str]:
+        return throttle(ts, period)
+
+    assert eval_node(
+        g, ["1", "1", "2", "3", "", "2", "1"], 2 * MIN_TD,
+        __end_time__=MIN_ST + 10 * MIN_TD,
+    ) == ["1", None, "2", None, "", None, "1"]
+
+
+def test_throttle_arrow_frame():
+    @graph
+    def g(ts: TS[Frame], period: timedelta) -> TS[Frame]:
+        return throttle(ts, period)
+
+    frames = [pa.table({"value": [value]}) for value in (1, 1, 2, 3, 5, 2, 1)]
+    result = eval_node(
+        g, frames, 2 * MIN_TD, __end_time__=MIN_ST + 10 * MIN_TD,
+    )
+    for actual, expected in zip(
+        result, [frames[0], None, frames[2], None, frames[4], None, frames[6]],
+    ):
+        assert actual is None if expected is None else actual.equals(expected)
 
 
 def test_throttle_tsd():

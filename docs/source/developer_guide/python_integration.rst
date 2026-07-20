@@ -225,13 +225,11 @@ components:
   format-args ``assert_``) write through python's ``sys.stdout``/``stderr``
   via the bridge's writer hook, so redirection and pytest capture behave as
   in hgraph; ``DebugContext`` is wiring-scope sugar over ``debug_print``,
-  and the ``LOGGER`` injectable resolves to the process ``hgraph`` logger
-  as a wiring-time object scalar. The native ``log_`` operator writes through
-  the C++ spdlog logger, not the Python writer hook; because spdlog's Windows
-  stdout sinks cache the raw OS handle when the logger is first built, tests
-  that redirect file descriptors per-test (pytest ``capfd``) must call
-  ``_hgraph.reset_logger()`` first so the sink rebinds to the active capture
-  (``log::reset_logger`` on the C++ side). Plain-value keyword arguments to
+  and the ``LOGGER`` injectable resolves to the configured Python graph logger
+  as a wiring-time object scalar. The executor owns a native spdlog logger for
+  the run; the bridge sink forwards native ``log_``, trace, and runner messages
+  to that same Python logger. ``logger_formatter`` receives node context for
+  both Python-authored and native nodes. Plain-value keyword arguments to
   ``**kwargs``-collecting operators auto-lift to ``const`` ports on a
   resolution retry;
 - ``@generator`` sources with captured scalar arguments, distinct state per
@@ -374,15 +372,20 @@ Recorded divergences / gaps (the morning-summary list):
   schema-directed on the sending thread and cross the sanctioned C++
   boundary. Wiring the decorated function returns its port.
 - ``GraphConfiguration`` exposes the upstream option names. ``run_mode``,
-  start/end time, logger selection, default logger level, and evaluation
-  tracing are honoured. ``trace=True`` or the upstream trace-options dictionary
-  installs the native ``EvaluationTrace`` on the executor; ``eval_node`` and
-  ``run_graph`` route ``__trace__`` through the same path. Profiling, wiring
-  tracing/observers, arbitrary Python lifecycle observers, custom logger
-  formatters, non-default traceback capture, and retaining a failed graph with
-  ``cleanup_on_error=False`` are not implemented; selecting one raises
-  ``NotImplementedError`` before wiring. No execution option is accepted and
-  silently discarded.
+  start/end time, logger selection, default logger level, evaluation
+  tracing/profiling, lifecycle observers, error capture, cleanup policy, and
+  custom logger formatting are honoured. ``trace=True``
+  or the upstream trace-options dictionary installs native ``EvaluationTrace``;
+  ``profile=True`` or a dictionary installs native ``EvaluationProfiler`` and
+  logs a formatted view of its owned snapshot. ``eval_node`` and ``run_graph``
+  route their observer options through the same path. Custom Python lifecycle
+  observers receive callback-scoped native ``Graph``/``Node`` views; retaining
+  a view past the callback raises ``RuntimeError``. ``trace_back_depth`` and
+  ``capture_values`` configure native uncaught-error diagnostics.
+  ``cleanup_on_error=False`` retains the failed executor with the raised
+  exception, deferring stop until that exception is released. Wiring tracing
+  and wiring observers remain unsupported and raise ``NotImplementedError``
+  before wiring. No execution option is accepted and silently discarded.
 - The decorator ``node_impl=`` parameter is present for signature compatibility
   but deliberately rejects non-``None`` values. It selects an implementation
   class from the retired Python runtime; Python authors must provide the node

@@ -20,13 +20,22 @@ of truth.  It distinguishes four states deliberately:
    Behaviour intentionally differs from Python hgraph and must not quietly
    return as a second Python runtime implementation.
 
-Review Snapshot: 2026-07-19
+Review Snapshot: 2026-07-20
 ---------------------------
 
-This review is current through ``65bc05ec`` and the follow-ons described
-below, including the completed mutable-output, structural-REF,
-constrained-generic, nested explicit-key map, logging, compiled-context,
-dynamic-reduce, bridge-residue, and node-self work.
+This historical review has been refreshed through ``f1f4b4ba`` against the
+adjacent Python hgraph checkout at ``a0deb32e``.  The completed evidence below
+is retained at the revisions where it was recorded.  The current findings and
+ordered implementation milestones are maintained in
+:doc:`replacement_gap_plan`.
+
+The first audit slices, R0 and R1, completed the recent upstream canaries,
+Python context/default-path adaptation, semantic callable identity for
+higher-order overloads, and the separate user-format operation in the erased
+value ABI.  The completed source passed 1,164 native tests and 1,431 Python
+tests on both macOS ARM64 and Ubuntu x86_64; the Python gates used a stable-ABI
+wheel built with Python 3.12 and installed under Python 3.14.6.  See the gap
+plan for exact platform and skip counts.
 Evidence came from the public implementation and tests, the commit history,
 :doc:`parity_matrix`, :doc:`python_integration`, :doc:`nested_graphs`, and
 :doc:`services`.
@@ -47,9 +56,9 @@ The important corrections to the previous roadmap are:
   Compare, have landed in both languages.  General process checkpointing is a
   different feature and is not required to preserve this compatibility
   surface.
-- All 48 upstream operator-test files are present under
+- All upstream operator families are represented under
   ``python/tests/ported/_operators``.  The wiring tier is only a selected port:
-  24 files are present under ``python/tests/ported/_wiring``.  It must not be
+  27 files are present under ``python/tests/ported/_wiring``.  It must not be
   described as the entire upstream wiring suite.
 - The current operator inventory is **136 registered**, **0 declared-only**,
   **0 missing**, and **29 equivalent APIs** out of the 165 upstream public
@@ -172,10 +181,10 @@ Replacement Readiness
 ---------------------
 
 The C++ engine already replaces the Python runtime for the surface exercised by
-the current package and compatibility suite.  The remaining work is not a
-foundational bridge rewrite.  It is a finite set of Python-authoring gaps,
-structural wiring cases, nested-boundary extensions, and additive catalogue
-work.
+the current package and compatibility suite, and both ``hg_oap`` and
+``hg_systematic`` now run against it.  The remaining work is not a foundational
+bridge rewrite.  It is the finite correctness, operational tooling, and
+catalogue work recorded in :doc:`replacement_gap_plan`.
 
 A broad claim that the Python engine can be replaced should wait until all of
 the following are true:
@@ -309,7 +318,7 @@ undeclared schema.
 Compatibility inventory
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-**Landed:** all 48 operator files and a selected 24-file wiring pack.  The
+**Landed:** all upstream operator families and a selected 27-file wiring pack.  The
 ported TSS union contract for retargeting to an empty reference now executes;
 its stale skip was removed after the keyed structural-REF implementation
 landed.  The upstream switch pack now covers output and all-sink branches,
@@ -402,8 +411,9 @@ Dynamic TSL mapping and reduction remain fully supported independently.
 
 **Remaining boundary mode:** push sources inside nested graphs if a concrete
 adaptor requires them. Service clients inside compiled ``map_``/``mesh_``
-children also need an explicit parent-service endpoint import; graph-boundary
-service clients and implementations are otherwise complete.
+children use the explicit parent-service endpoint import; the current audit
+found Python context-specialization residue around this landed path rather
+than a missing nested-service runtime.
 
 **Completed: Tornado web adaptors (2026-07-17).**  The upstream Python HTTP,
 WebSocket, and REST adaptor family has been ported onto the C++ service/adaptor
@@ -513,9 +523,13 @@ operator semantics.
 
 Native lifecycle observers, ``EngineControlView``, the C++ ``stop_engine``
 sink, and Python's guarded ``EvaluationEngineApi`` projection have landed and
-cover nested graphs through the root executor. Remaining observability work is
-evaluation tracing and profiling. These are additive unless a target
-application demonstrates that one is required for migration.
+cover nested graphs through the root executor. Native ``EvaluationTrace`` has
+also landed. Native aggregate ``EvaluationProfiler`` snapshots and run-owned
+logging now back Python profiling and mixed native/Python logging. Remaining
+observability work is wiring tracing and the inspector. Python lifecycle
+observers now adapt onto the same executor-owned native observer list with
+callback-scoped graph/node views; see
+:doc:`replacement_gap_plan`.
 
 Priority 4: Boundary Products
 -----------------------------
@@ -622,8 +636,10 @@ No unresolved product decision remains in the previously recorded residue:
 typed dataframe helpers infer unresolved keys without overriding explicit
 schemas; ``TS[object]`` is the native ``Any`` value with type-record dispatch;
 aware Python datetimes normalize to naive UTC; and tuple ``sub_(cmp=...)`` is a
-native callable overload. New residue must be recorded here with a focused
-test and an explicit decision owner.
+native callable overload. The current audit has identified implementation
+gaps, but no new architecture decision requiring a ruling; they are recorded
+in :doc:`replacement_gap_plan`. New residue must be recorded here with a
+focused test and an explicit decision owner.
 
 Implementation Standards
 ------------------------

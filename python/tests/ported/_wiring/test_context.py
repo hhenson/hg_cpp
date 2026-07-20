@@ -1,0 +1,206 @@
+from dataclasses import dataclass
+
+import pytest
+
+import hgraph as hg
+from hgraph.test import eval_node
+
+
+class _TestContext:
+    __instance__ = None
+
+    def __init__(self, msg: str = "non-default"):
+        self.msg = msg
+
+    @classmethod
+    def instance(cls):
+        if cls.__instance__ is None:
+            return cls("default")
+        return cls.__instance__
+
+    def __enter__(self):
+        _TestContext.__instance__ = self
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if _TestContext.__instance__ is not self:
+            raise ValueError("Exiting context not entered")
+        _TestContext.__instance__ = None
+
+
+def test_optional_named_context_uses_the_node_default_when_absent():
+    @hg.compute_node
+    def use_context(
+        ts: hg.TS[bool], context: hg.CONTEXT[_TestContext] = None,
+    ) -> hg.TS[str]:
+        return _TestContext.instance().msg
+
+    @hg.graph
+    def app(ts: hg.TS[bool]) -> hg.TS[str]:
+        return use_context(ts, context="missing")
+
+    assert eval_node(app, [True, None, False]) == ["default", None, "default"]
+
+
+def test_required_named_context_still_fails_when_absent():
+    @hg.compute_node
+    def use_context(
+        ts: hg.TS[bool], context: hg.CONTEXT[_TestContext] = None,
+    ) -> hg.TS[str]:
+        return _TestContext.instance().msg
+
+    @hg.graph
+    def app(ts: hg.TS[bool]) -> hg.TS[str]:
+        return use_context(ts, context=hg.REQUIRED["missing"])
+
+    with pytest.raises(hg.WiringError, match="with name missing"):
+        eval_node(app, [True])
+
+
+def test_generic_context_resolves_from_the_published_port():
+    @hg.compute_node
+    def read_context(
+        trigger: hg.TS[bool],
+        value: hg.CONTEXT[hg.TIME_SERIES_TYPE] = hg.REQUIRED["value"],
+    ) -> hg.TS[str]:
+        return f"{dict(value.value)} {trigger.value}"
+
+    @hg.graph
+    def app(
+        trigger: hg.TS[bool], values: hg.TSD[int, hg.TS[int]],
+    ) -> hg.TS[str]:
+        with values as value:
+            return read_context(trigger)
+
+    assert eval_node(app, [True, False], [{1: 2}, {2: 3}]) == [
+        "{1: 2} True",
+        "{1: 2, 2: 3} False",
+    ]
+
+
+def test_two_generic_contexts_resolve_by_name():
+    @hg.compute_node
+    def join_contexts(
+        lhs: hg.CONTEXT[hg.TIME_SERIES_TYPE] = "lhs",
+        rhs: hg.CONTEXT[hg.TIME_SERIES_TYPE] = "rhs",
+    ) -> hg.TS[str]:
+        return f"{lhs.value} {rhs.value}"
+
+    @hg.graph
+    def app(lhs_value: hg.TS[str], rhs_value: hg.TS[str]) -> hg.TS[str]:
+        with lhs_value as lhs, rhs_value as rhs:
+            return join_contexts()
+
+    assert eval_node(app, ["Hello", None], [None, "World"]) == [
+        None,
+        "Hello World",
+    ]
+
+
+def test_graph_context_parameters_resolve_before_composition():
+    @hg.graph
+    def join_contexts(
+        lhs: hg.CONTEXT[hg.TIME_SERIES_TYPE] = "lhs",
+        rhs: hg.CONTEXT[hg.TIME_SERIES_TYPE] = "rhs",
+    ) -> hg.TS[str]:
+        return hg.format_("{} {}", lhs, rhs, __strict__=False)
+
+    @hg.graph
+    def nested() -> hg.TS[str]:
+        return join_contexts()
+
+    @hg.graph
+    def app(lhs_value: hg.TS[str], rhs_value: hg.TS[str]) -> hg.TS[str]:
+        with lhs_value as lhs, rhs_value as rhs:
+            return nested()
+
+    assert eval_node(app, ["Hello", None], [None, "World"]) == [
+        "Hello None",
+        "Hello World",
+    ]
+
+
+def test_missing_optional_graph_context_is_an_invalid_output():
+    @hg.graph
+    def read_context(value: hg.CONTEXT[hg.TS[str]] = "value") -> hg.TS[str]:
+        return value
+
+    @hg.graph
+    def app(trigger: hg.TS[bool]) -> hg.TS[str]:
+        return read_context()
+
+    assert eval_node(app, [True]) is None
+
+
+def test_context_crosses_nested_map_and_switch_boundaries():
+    @hg.compute_node
+    def make_context(value: hg.TS[str]) -> hg.TS[_TestContext]:
+        return _TestContext(value.value)
+
+    @hg.compute_node
+    def read_context(
+        value: hg.TS[bool],
+        context: hg.CONTEXT[hg.TS[_TestContext]] = hg.REQUIRED,
+    ) -> hg.TS[str]:
+        return f"{_TestContext.instance().msg} {value.value}"
+
+    @hg.graph
+    def inner(value: hg.TS[bool], prefix: hg.TS[str]) -> hg.TS[str]:
+        with make_context(hg.format_("{}-", prefix)):
+            return hg.switch_(
+                value,
+                {
+                    True: lambda selected: read_context(selected),
+                    False: lambda selected: hg.format_("plain {}", selected),
+                },
+                value,
+            )
+
+    @hg.graph
+    def app(
+        values: hg.TSD[int, hg.TS[bool]],
+        prefixes: hg.TSD[int, hg.TS[str]],
+    ) -> hg.TSD[int, hg.TS[str]]:
+        return hg.map_(inner, values, prefixes)
+
+    assert eval_node(app, [{1: True, 2: False}], [{1: "one", 2: "two"}]) == [
+        {1: "one- True", 2: "plain False"}
+    ]
+
+
+def test_context_is_visible_inside_a_default_path_service():
+    @hg.reference_service
+    def value_service(path: str = "value") -> hg.TS[str]: ...
+
+    @hg.service_impl(interfaces=value_service)
+    def value_impl(path: str = "value") -> hg.TS[str]:
+        return hg.get_context[hg.TS[str]]("value_context")
+
+    @hg.graph
+    def app() -> hg.TS[str]:
+        with hg.const("context value") as value_context:
+            out = value_service()
+            hg.register_service(None, value_impl)
+            return out
+
+    assert eval_node(app, __elide__=True) == ["context value"]
+
+
+def test_compound_context_selects_a_compatible_base_type():
+    @dataclass(frozen=True)
+    class ContextValue(hg.CompoundScalar, _TestContext):
+        count: int
+        msg: str = "bundle"
+
+    @hg.compute_node(valid=("trigger", "context"))
+    def read_context(
+        trigger: hg.TS[bool], context: hg.CONTEXT[_TestContext] = None,
+    ) -> hg.TS[str]:
+        return _TestContext.instance().msg
+
+    @hg.graph
+    def app(trigger: hg.TS[bool]) -> hg.TS[str]:
+        with hg.combine[hg.TSB[ContextValue]](count=1, msg="bundle"):
+            return read_context(trigger)
+
+    assert eval_node(app, [True, None, False]) == ["bundle", None, "bundle"]

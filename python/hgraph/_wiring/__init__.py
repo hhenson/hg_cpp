@@ -59,12 +59,12 @@ from ._services import (
 )
 from ._callable_shape import callable_shape_key, equal_lambdas
 from ._runner import (
-    EvaluationMode, GraphConfiguration, _infer_ts_type, _times_for, eval_node, evaluate_graph,
+    EvaluationLifeCycleObserver, EvaluationMode, GraphConfiguration, _infer_ts_type, _times_for, eval_node, evaluate_graph,
     run_graph
 )
 
 __all__ = [
-    "CLOCK", "EvaluationClock", "callable_shape_key", "equal_lambdas", "get_context", "get_recorded_value", "get_recorder_api", "get_recording_label", "set_recorder_api", "set_recording_label", "utc_now", "TSW_OUT", "DebugContext", "EvaluationEngineApi", "EvaluationMode", "Feedback", "GlobalContext", "GlobalState",
+    "CLOCK", "EvaluationClock", "callable_shape_key", "equal_lambdas", "get_context", "get_recorded_value", "get_recorder_api", "get_recording_label", "set_recorder_api", "set_recording_label", "utc_now", "TSW_OUT", "DebugContext", "EvaluationEngineApi", "EvaluationLifeCycleObserver", "EvaluationMode", "Feedback", "GlobalContext", "GlobalState",
     "GraphConfiguration", "IncorrectTypeBinding", "LOGGER", "NODE", "Node", "ParseError", "RECORDABLE_STATE",
     "REMOVE", "REMOVE_IF_EXISTS", "RecordReplayContext", "RecordReplayEnum", "Removed",
     "RequirementsNotMetWiringError", "SCHEDULER", "STATE", "TSB_OUT", "TS_OUT", "WiringError",

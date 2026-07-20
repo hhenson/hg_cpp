@@ -412,17 +412,38 @@ WiringPort.__exit__ = _port_exit
 
 def _context_name_of(port, frame):
     """The `as` variable name: the frame local bound to this port."""
-    for var_name, value in frame.f_locals.items():
+    # The source parameter and the later ``as`` alias commonly point at the
+    # same WiringPort. Locals retain insertion order, so the alias is the last
+    # matching binding and is the public context name.
+    for var_name, value in reversed(tuple(frame.f_locals.items())):
         if value is port:
             return var_name
     return None
 
 
-def _resolve_context(ctx_expr, name=None):
-    """The most recent published context matching type (and name)."""
-    wanted = ctx_expr.ts.handle
+def _resolve_context(ctx_expr, name=None, resolution_scope=None):
+    """The most recent published context matching type (and name).
+
+    Generic annotations bind through the caller's native ResolutionScope so
+    repeated uses of one type variable remain consistent.
+    """
+    from .._types import (
+        _GenericTsExpr,
+        _TSB_SCHEMA_CLASSES,
+        _TypeVarSentinel,
+        _pattern_of,
+    )
+
+    wanted = getattr(ctx_expr.ts, "handle", None)
+    pattern = _pattern_of(ctx_expr.ts) if isinstance(
+        ctx_expr.ts, (_GenericTsExpr, _TypeVarSentinel)) else None
     for port, ts_type, frame in reversed(_published_contexts):
-        matches = ts_type == wanted
+        if name is not None and _context_name_of(port, frame) != name:
+            continue
+        matches = wanted is not None and ts_type == wanted
+        if not matches and pattern is not None:
+            scope = resolution_scope or _hgraph.ResolutionScope()
+            matches = scope.match(pattern, ts_type)
         if not matches:
             requested_class = getattr(ctx_expr.ts, "_py_class", None)
             published_class = None
@@ -431,17 +452,16 @@ def _resolve_context(ctx_expr, name=None):
                 published_class = _hgraph.python_type_for_value(
                     _hgraph.ts_value_vt(candidate))
             elif candidate.is_tsb:
-                from .._types import _TSB_SCHEMA_CLASSES
-
-                published_class = _TSB_SCHEMA_CLASSES.get(candidate)
+                published_class = _hgraph.python_type_for_value(
+                    _hgraph.tsb_value_vt(candidate))
+                if published_class is None:
+                    published_class = _TSB_SCHEMA_CLASSES.get(candidate)
             matches = (
                 isinstance(requested_class, type)
                 and isinstance(published_class, type)
                 and issubclass(published_class, requested_class)
             )
         if not matches:
-            continue
-        if name is not None and _context_name_of(port, frame) != name:
             continue
         return port
     return None

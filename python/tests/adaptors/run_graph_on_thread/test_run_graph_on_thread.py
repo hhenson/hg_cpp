@@ -8,7 +8,10 @@ from hgraph.adaptors.run_graph_on_thread import (
     run_graph_on_thread,
     run_graph_on_thread_impl,
 )
-from hgraph.adaptors.run_graph_on_thread.run_graph_on_thread import _typed_output
+from hgraph.adaptors.run_graph_on_thread.run_graph_on_thread import (
+    _OUTPUT_CALLBACK,
+    _typed_output,
+)
 
 
 @hg.graph
@@ -25,6 +28,21 @@ def test_typed_output_schema_can_be_used_by_eval_node():
         return _typed_output[hg.OUT : hg.TS[int]](raw)
 
     assert hg.eval_node(typed, [3, 4], resolution_dict={"raw": hg.TS[object]}) == [3, 4]
+
+
+def test_publish_output_can_publish_full_values_instead_of_deltas():
+    captured = []
+
+    @hg.graph
+    def app(values: hg.TSD[str, hg.TS[int]]):
+        publish_output(values, delta=False)
+
+    state = hg.GlobalState()
+    state[_OUTPUT_CALLBACK] = captured.append
+    with hg.GlobalContext(state):
+        assert hg.eval_node(app, [{"a": 1}, {"b": 2}]) is None
+
+    assert captured == [{"a": 1}, {"a": 1, "b": 2}]
 
 
 def test_run_graph_on_thread_simulation_mode():

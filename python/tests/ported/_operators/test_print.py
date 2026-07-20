@@ -100,67 +100,49 @@ def test_print_stderr(capsys):
     assert "Contents" in capsys.readouterr().err
 
 
-# The C++ LOGGER writes through spdlog's native stream, so these tests use
-# file-descriptor capture rather than replacing Python's sys.stdout object.
-def test_log_kwargs(capfd):
+# The native log node forwards through the run's Python logging handler.
+def test_log_kwargs(caplog):
     @graph
     def main(ts1: TS[str], ts2: TS[int]):
         log_("Error output {ts1} {ts2}", ts1=ts1, ts2=ts2, level=logging.ERROR)
         log_("Info output {ts1} {ts2}", ts1=ts1, ts2=ts2, level=logging.INFO)
 
-    eval_node(main, ["Test"], [1])
-    out = capfd.readouterr()
-    if out.err:
-        output = out.err
-    else:
-        output = out.out
-    assert "Error output Test 1" in output
-    # TODO: It seems the default logging level was raised so this does not come out at the moment
-    # assert "[INFO] Info output Test 1" in output
+    with caplog.at_level(logging.INFO, logger="hgraph"):
+        eval_node(main, ["Test"], [1])
+    assert "Error output Test 1" in caplog.text
+    assert "Info output Test 1" in caplog.text
 
 
-def test_log_args(capfd):
+def test_log_args(caplog):
     @graph
     def main(ts1: TS[str], ts2: TS[int]):
         log_("Error output {} {}", ts1, ts2, level=logging.ERROR)
 
-    eval_node(main, ["Test"], [1])
-    out = capfd.readouterr()
-    if out.err:
-        output = out.err
-    else:
-        output = out.out
-    assert "Error output Test 1" in output
+    with caplog.at_level(logging.ERROR, logger="hgraph"):
+        eval_node(main, ["Test"], [1])
+    assert "Error output Test 1" in caplog.text
 
 
-def test_log_no_args_or_kwargs(capfd):
+def test_log_no_args_or_kwargs(caplog):
     @graph
     def main():
         log_("Error output Test 1", level=logging.ERROR)
 
-    eval_node(main)
-    out = capfd.readouterr()
-    if out.err:
-        output = out.err
-    else:
-        output = out.out
-    assert "Error output Test 1" in output
+    with caplog.at_level(logging.ERROR, logger="hgraph"):
+        eval_node(main)
+    assert "Error output Test 1" in caplog.text
 
 
-def test_log_sample(capfd):
+def test_log_sample(caplog):
 
     @graph
     def g(ts: TS[str]):
         log_("Sample output {}", ts, sample_count=3, level=logging.ERROR)
 
-    eval_node(g, ["a", "b", "c", "d", "e"])
-    out = capfd.readouterr()
-    if out.err:
-        output = out.err
-    else:
-        output = out.out
-    assert "Sample output c" in output
-    assert "Sample output d" not in output
+    with caplog.at_level(logging.ERROR, logger="hgraph"):
+        eval_node(g, ["a", "b", "c", "d", "e"])
+    assert "Sample output c" in caplog.text
+    assert "Sample output d" not in caplog.text
 
 
 def test_debug_print_sample(capsys):

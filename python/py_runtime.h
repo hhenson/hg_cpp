@@ -284,6 +284,38 @@ namespace hgraph::python_bridge
         }
     };
 
+    [[nodiscard]] inline std::vector<std::size_t> py_graph_id(GraphView graph)
+    {
+        std::vector<std::size_t> result;
+        while (graph.valid() && graph.is_nested())
+        {
+            NodeView parent = graph.as_nested().parent_node();
+            result.push_back(parent.node_index());
+            graph = parent.graph();
+        }
+        std::ranges::reverse(result);
+        return result;
+    }
+
+    /** Callback-scoped Python projection over a native graph. */
+    struct PyGraph
+    {
+        GraphPtr  graph;
+        PyTsLease lease;
+
+        [[nodiscard]] GraphView checked() const
+        {
+            lease.require_alive("a Graph view was accessed outside its lifecycle callback");
+            if (!graph.has_value()) { throw std::logic_error("the active graph is unavailable"); }
+            return GraphView{graph};
+        }
+
+        [[nodiscard]] std::vector<std::size_t> graph_id() const
+        {
+            return py_graph_id(checked());
+        }
+    };
+
     /** Callback-scoped Python projection over the current native node. */
     struct PyNode
     {
@@ -301,15 +333,8 @@ namespace hgraph::python_bridge
         [[nodiscard]] std::vector<std::size_t> node_id() const
         {
             NodeView current = checked();
-            std::vector<std::size_t> result{current.node_index()};
-            GraphView graph = current.graph();
-            while (graph.is_nested())
-            {
-                NodeView parent = graph.as_nested().parent_node();
-                result.push_back(parent.node_index());
-                graph = parent.graph();
-            }
-            std::ranges::reverse(result);
+            std::vector<std::size_t> result = py_graph_id(current.graph());
+            result.push_back(current.node_index());
             return result;
         }
 

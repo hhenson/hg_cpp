@@ -290,6 +290,7 @@ namespace hgraph
         }
 
         [[nodiscard]] std::string to_string() const { return view().to_string(); }
+        [[nodiscard]] std::string format_string() const { return view().format_string(); }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         [[nodiscard]] nb::object to_python() const;

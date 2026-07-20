@@ -190,6 +190,8 @@ TEST_CASE("ValueOps: bool to_string and string round-trip use type-specific path
     bool f = false;
     REQUIRE(ops_for<bool>().to_string(&t) == "true");
     REQUIRE(ops_for<bool>().to_string(&f) == "false");
+    REQUIRE(ops_for<bool>().format_string(&t) == "True");
+    REQUIRE(ops_for<bool>().format_string(&f) == "False");
 
     std::string s{"hello"};
     REQUIRE(ops_for<std::string>().to_string(&s) == "hello");

@@ -147,12 +147,14 @@ namespace hgraph::stdlib
             {
                 if (!strict && !child.valid())
                 {
+                    if (index < positional_count) { values.positional.emplace_back("None"); }
+                    else { values.named.emplace_back(std::string{name}, "None"); }
                     ++index;
                     continue;
                 }
 
-                if (index < positional_count) { values.positional.push_back(child.value().to_string()); }
-                else { values.named.emplace_back(std::string{name}, child.value().to_string()); }
+                if (index < positional_count) { values.positional.push_back(child.value().format_string()); }
+                else { values.named.emplace_back(std::string{name}, child.value().format_string()); }
                 ++index;
             }
             return values;

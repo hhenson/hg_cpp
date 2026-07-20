@@ -58,6 +58,40 @@ namespace
         }
     };
 
+    struct MapOverloadMarkerG
+    {
+        static constexpr auto name = "map_overload_marker_g";
+        static Port<TS<Int>> compose(Wiring &, Port<TS<Int>> ts) { return ts; }
+    };
+
+    struct MapTimesTenG
+    {
+        static constexpr auto name = "map_times_ten_g";
+        static Port<TS<Int>> compose(Wiring &, Port<TS<Int>> ts)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (ts * Int{10}).as<TS<Int>>();
+        }
+    };
+
+    struct MapIdentitySpecialization
+    {
+        static constexpr auto name = "map_identity_specialization";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const WiredFn *func = context.scalar_as<WiredFn>("func");
+            return func != nullptr && *func == fn<MapOverloadMarkerG>();
+        }
+
+        static Port<TSD<Str, TS<Int>>> compose(
+            Wiring &w, Scalar<"func", WiredFn>, Port<TSD<Str, TS<Int>>> values)
+        {
+            return wire<stdlib::map_>(w, fn<MapTimesTenG>(), values)
+                .as<TSD<Str, TS<Int>>>();
+        }
+    };
+
     // Key-consuming functions are name-detected (the Python rule): the first
     // parameter must be named "key" (TSD maps / switch_) or "ndx" (TSL maps).
     struct AddKeyG
@@ -2250,4 +2284,23 @@ TEST_CASE("map_ publishes keyed nested-graph debugger navigation")
         found = true;
     }
     REQUIRE(found);
+}
+
+TEST_CASE("map_: a user overload may select on the wired function identity")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    register_graph_overload<stdlib::map_, MapIdentitySpecialization>();
+
+    const auto input = values<Value>(
+        dict_delta<Str, TS<Int>>({{Str{"a"}, 1}, {Str{"b"}, 2}}));
+    CHECK_OUTPUT(
+        (eval_node<stdlib::map_, TSD<Str, TS<Int>>>(
+            fn<MapOverloadMarkerG>(), input)),
+        values<Value>(dict_delta<Str, TS<Int>>(
+            {{Str{"a"}, 10}, {Str{"b"}, 20}})));
+    CHECK_OUTPUT(
+        (eval_node<stdlib::map_, TSD<Str, TS<Int>>>(fn<AddOneG>(), input)),
+        values<Value>(dict_delta<Str, TS<Int>>(
+            {{Str{"a"}, 2}, {Str{"b"}, 3}})));
 }

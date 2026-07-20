@@ -1,7 +1,9 @@
 set(HGRAPH_RUNTIME_SOURCES
     hgraph/version.cpp
     hgraph/runtime/context_node.cpp
+    hgraph/runtime/diagnostic_path.cpp
     hgraph/runtime/evaluation_clock.cpp
+    hgraph/runtime/evaluation_profiler.cpp
     hgraph/runtime/evaluation_trace.cpp
     hgraph/runtime/executor.cpp
     hgraph/runtime/feedback_node.cpp

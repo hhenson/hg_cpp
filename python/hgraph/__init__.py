@@ -27,7 +27,7 @@ from ._wiring import collect
 from ._wiring import emit
 from ._wiring import cast_, downcast_ref
 from ._wiring import ParseError, IncorrectTypeBinding, RequirementsNotMetWiringError
-from ._wiring import evaluate_graph, GraphConfiguration, TSB_OUT, operator, dispatch, dispatch_
+from ._wiring import evaluate_graph, EvaluationLifeCycleObserver, GraphConfiguration, TSB_OUT, operator, dispatch, dispatch_
 from ._wiring import RecordReplayContext, set_record_replay_model, RECORDABLE_STATE, TS_OUT
 from .nodes import pass_through_node
 from ._wiring import pass_through, no_key
@@ -35,6 +35,7 @@ from ._feature_switch import is_feature_enabled
 from ._signature import (WiringNodeType, WiringNodeSignature, extract_signature,
                          extract_kwargs)
 from ._wiring import _PyNode as WiringNodeClass
+from ._wiring import _PyNode as PythonWiringNodeClass  # upstream-parity name kept alongside PR #15's WiringNodeClass
 from ._wiring import _GraphFn as GraphWiringNodeClass
 from ._wiring import _Generator as PythonGeneratorWiringNodeClass
 from ._wiring import GlobalContext, GlobalState, set_record_replay_config, set_as_of, set_table_schema_date_key, set_table_schema_as_of_key, evaluate_const, utc_now, get_recorded_value, get_recorder_api, get_recording_label, set_recorder_api, set_recording_label, EvaluationClock, TSW_OUT, get_context, equal_lambdas, callable_shape_key
@@ -52,6 +53,7 @@ frame_store_contains = _hgraph.frame_store_contains
 frame_store_read = _hgraph.frame_store_read
 
 TimeSeries = _hgraph.TimeSeries
+Graph = _hgraph.Graph
 _hgraph._set_removed_sentinel(REMOVE)
 _hgraph._set_remove_if_exists_sentinel(REMOVE_IF_EXISTS)
 _hgraph._set_requirements_error(RequirementsNotMetWiringError)
@@ -108,8 +110,8 @@ __all__ = [
     "ParseError", "IncorrectTypeBinding", "RequirementsNotMetWiringError",
     "WiringNodeType", "WiringNodeSignature", "extract_signature", "extract_kwargs",
     "WiringGraphContext",
-    "WiringNodeClass", "GraphWiringNodeClass", "PythonGeneratorWiringNodeClass",
-    "evaluate_graph", "GraphConfiguration", "TSB_OUT", "operator",
+    "WiringNodeClass", "PythonWiringNodeClass", "GraphWiringNodeClass", "PythonGeneratorWiringNodeClass",
+    "evaluate_graph", "EvaluationLifeCycleObserver", "GraphConfiguration", "Graph", "TSB_OUT", "operator",
     "pass_through_node", "pass_through", "no_key", "downcast_ref",
     "reference_service", "subscription_service", "request_reply_service", "service_impl", "register_service",
     "adaptor", "adaptor_impl", "service_adaptor", "service_adaptor_impl", "register_adaptor",

@@ -20,6 +20,11 @@
 #include <string_view>
 #include <vector>
 
+namespace spdlog
+{
+    class logger;
+}
+
 namespace hgraph
 {
     class GraphBuilder;
@@ -154,6 +159,8 @@ struct HGRAPH_EXPORT GraphEdge
         LifecycleObserverList *(*lifecycle_observers_impl)(const void *context, const void *memory) noexcept = nullptr;
         const TypeRealizationSnapshot *(*type_realization_impl)(const void *context,
                                                                 const void *memory) noexcept = nullptr;
+        /** Cached borrowed pointer to the executor-owned run logger. */
+        spdlog::logger *(*logger_impl)(const void *context, const void *memory) noexcept = nullptr;
     };
 
     /** Borrowed type-erased view over graph runtime storage. */
@@ -220,6 +227,8 @@ struct HGRAPH_EXPORT GraphEdge
          * run. Cached at construction; O(1) regardless of nesting depth.
          */
         [[nodiscard]] LifecycleObserverList &lifecycle_observers() const;
+        /** Borrowed executor-owned logger, cached by root and nested graphs. */
+        [[nodiscard]] spdlog::logger *logger() const noexcept;
         /** Closed Bundle hierarchy snapshot used by this graph instance. */
         [[nodiscard]] const TypeRealizationSnapshot *type_realization() const noexcept;
 

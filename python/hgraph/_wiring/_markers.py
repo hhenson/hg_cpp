@@ -40,9 +40,8 @@ class CLOCK:
 
 
 class LOGGER:
-    """Injectable: a python logger for the node (the process 'hgraph'
-    logger). Resolved at WIRING time to a plain object scalar - loggers
-    are process-wide, so node identity stays stable."""
+    """Injectable: the Python logger configured for this graph run.
+    Resolved at wiring time from the copied-in GlobalState."""
 
 
 EvaluationEngineApi = _hgraph.EvaluationEngineApi
