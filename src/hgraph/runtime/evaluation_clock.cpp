@@ -1,6 +1,7 @@
 #include <hgraph/runtime/evaluation_clock.h>
 
 #include <hgraph/types/metadata/type_record_registry.h>
+#include <hgraph/util/scope.h>
 
 #include <stdexcept>
 
@@ -66,8 +67,10 @@ namespace hgraph
     bool ClockTypeRef::valid() const noexcept
     {
         if (record_ == nullptr) return false;
-        try { validate_clock_record(*record_); return true; }
-        catch (...) { return false; }
+        return fallback_on_exception(false, [&] {
+            validate_clock_record(*record_);
+            return true;
+        });
     }
 
     const EvaluationClockTypeMetaData *ClockTypeRef::schema() const noexcept

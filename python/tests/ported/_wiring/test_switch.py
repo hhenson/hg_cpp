@@ -50,6 +50,25 @@ def test_switch():
     assert eval_node(switch_test, ["add", "sub"], [1, 2], [3, 4]) == [4, -2]
 
 
+def test_switch_fixed_tuple_keys_use_the_key_port_schema():
+    @graph
+    def switch_test(key: TS[tuple[bool, bool]], value: TS[int]) -> TS[int]:
+        return switch_(
+            key,
+            {
+                (True, True): lambda ts: ts + 1,
+                (False, False): lambda ts: ts - 1,
+            },
+            value,
+        )
+
+    assert eval_node(
+        switch_test,
+        [(True, True), (False, False)],
+        [10, 20],
+    ) == [11, 19]
+
+
 def test_switch_with_graph():
     @graph
     def graph_1(value: SCALAR) -> TS[SCALAR]:

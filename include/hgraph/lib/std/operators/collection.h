@@ -108,6 +108,19 @@ namespace hgraph::stdlib
     {
     };
 
+    /** Build/update one keyed TSD entry from a key and arbitrary time-series value. */
+    struct make_tsd : Operator<"make_tsd", In<"key", TS<ScalarVar<"K">>>, In<"value", TsVar<"V">>,
+                               Out<TsVar<"O">>>
+    {
+    };
+
+    /** Three-input C++ wiring form with an explicit remove signal. */
+    struct make_tsd_with_remove
+        : Operator<"make_tsd", In<"key", TS<ScalarVar<"K">>>, In<"value", TsVar<"V">>,
+                   In<"remove_key", TS<Bool>>, Out<TsVar<"O">>>
+    {
+    };
+
     /** Packed-TSL kernels behind the LIST-valued min_/max_ overloads. */
     struct extremum_ts_list_marker : Operator<"min_ts_list", In<"tsl", TsVar<"S">>, Out<TsVar<"O">>>
     {

@@ -1051,8 +1051,10 @@ namespace hgraph
     bool NodeTypeRef::valid() const noexcept
     {
         if (record_ == nullptr) return false;
-        try { validate_node_record(*record_); return true; }
-        catch (...) { return false; }
+        return fallback_on_exception(false, [&] {
+            validate_node_record(*record_);
+            return true;
+        });
     }
 
     const NodeTypeMetaData *NodeTypeRef::schema() const noexcept

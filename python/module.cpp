@@ -100,14 +100,31 @@ NB_MODULE(_hgraph, m)
     // immortal map; lazily constructed by its accessor, cleared with the
     // registries).
     enum_to_python_slot() = [](const ValueTypeMetaData *meta, long long value) -> nb::object {
-        auto &registry = python_bridge::enum_class_registry();
-        if (const auto it = registry.find(meta); it != registry.end()) { return it->second(value); }
+        auto &registry = python_bridge::enum_to_python_registry();
+        if (const auto type = registry.find(meta); type != registry.end())
+        {
+            if (const auto member = type->second.find(value); member != type->second.end())
+            {
+                return member->second;
+            }
+        }
         throw std::logic_error(std::string{"enum '"} +
                                (meta->header.label ? meta->header.label : "?") +
-                               "' has no registered python class");
+                               "' has no registered python member");
     };
-    enum_from_python_slot() = [](const ValueTypeMetaData *, nb::handle source) -> long long {
-        return nb::cast<long long>(source.attr("value"));
+    enum_from_python_slot() = [](const ValueTypeMetaData *meta, nb::handle source) -> long long {
+        const std::string name = nb::cast<std::string>(source.attr("name"));
+        auto &registry = python_bridge::enum_from_python_registry();
+        if (const auto type = registry.find(meta); type != registry.end())
+        {
+            if (const auto member = type->second.find(name); member != type->second.end())
+            {
+                return member->second;
+            }
+        }
+        throw std::logic_error(std::string{"enum '"} +
+                               (meta->header.label ? meta->header.label : "?") +
+                               "' has no registered python member '" + name + "'");
     };
 
     // Route the diagnostic sinks (debug_print / print_) through python's
@@ -132,8 +149,11 @@ NB_MODULE(_hgraph, m)
     m.def("reset_logger", [] { hgraph::log::reset_logger(); });
     m.def("reset_registries", [] {
         python_bridge::enum_class_registry().clear();   // meta pointers are re-interned
+        python_bridge::enum_to_python_registry().clear();
+        python_bridge::enum_from_python_registry().clear();
         python_bridge::bundle_class_registry().clear();
         python_bridge::bundle_class_info_registry().clear();
+        python_bridge::tsb_compound_value_registry().clear();
         reset_all_registries();
         ++python_registry_generation;
         stdlib::register_standard_operators();

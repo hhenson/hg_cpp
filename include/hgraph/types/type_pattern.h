@@ -42,6 +42,8 @@ namespace hgraph
             FixedTuple,
             Set,
             Map,
+            Series,
+            Frame,
             Bundle
         };
 
@@ -109,6 +111,20 @@ namespace hgraph
             p.kind = Kind::Map;
             p.children.push_back(std::move(key));
             p.children.push_back(std::move(value));
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern series(ScalarPattern element)
+        {
+            ScalarPattern p;
+            p.kind = Kind::Series;
+            p.children.push_back(std::move(element));
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern frame(ScalarPattern schema)
+        {
+            ScalarPattern p;
+            p.kind = Kind::Frame;
+            p.children.push_back(std::move(schema));
             return p;
         }
         [[nodiscard]] static ScalarPattern bundle()
@@ -623,6 +639,24 @@ namespace hgraph
         [[nodiscard]] static ScalarPattern lower()
         {
             return ScalarPattern::map(to_scalar_pattern<TKey>(), to_scalar_pattern<TValue>());
+        }
+    };
+
+    template <typename TElement>
+    struct scalar_pattern_lower<SeriesOf<TElement>>
+    {
+        [[nodiscard]] static ScalarPattern lower()
+        {
+            return ScalarPattern::series(to_scalar_pattern<TElement>());
+        }
+    };
+
+    template <typename TSchema>
+    struct scalar_pattern_lower<FrameOf<TSchema>>
+    {
+        [[nodiscard]] static ScalarPattern lower()
+        {
+            return ScalarPattern::frame(to_scalar_pattern<TSchema>());
         }
     };
 }  // namespace hgraph

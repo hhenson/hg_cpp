@@ -41,6 +41,11 @@ class _Operator:
     def __getitem__(self, item):
         return self._delegate[item]
 
+    def overload(self, implementation):
+        """Add an existing decorated graph/node as an overload of this operator."""
+        _register_overload(self, implementation)
+        return self
+
 
 def operator(fn=None):
     """hgraph's @operator decorator."""
@@ -81,7 +86,6 @@ class _BindingsMap:
 
     def keys(self):
         return self._bindings.keys()
-
 
 def _run_requires(user_requires, bindings, scalar_values):
     """Evaluate a ``requires=lambda m[, <scalar names...>]`` predicate.
@@ -417,7 +421,7 @@ def _declared_dispatch_classes(annotation):
 
 
 def _dispatch_branch(op, impl, root_signature, branch_signature, scalar_arguments,
-                     dispatch_types):
+                     dispatch_types, expected_output=None):
     """Adapt base-typed switch inputs and re-enter registry dispatch.
 
     The runtime type key only chooses the closed switch branch. Once its
@@ -448,7 +452,12 @@ def _dispatch_branch(op, impl, root_signature, branch_signature, scalar_argument
             source = _unwrap(value).ts_type
             if source != target_type.handle:
                 bound.arguments[name] = wire("downcast_", value, output_type=target_type)
-        callable_ = op._delegate if registry_dispatch else impl
+        callable_ = (
+            op._delegate[expected_output]
+            if registry_dispatch and expected_output is not None
+            else op._delegate if registry_dispatch
+            else impl
+        )
         return callable_(*bound.args, **bound.kwargs)
 
     suffix = "_".join(cls.__name__ for cls in dispatch_types.values())
@@ -457,7 +466,7 @@ def _dispatch_branch(op, impl, root_signature, branch_signature, scalar_argument
     return _GraphFn(invoke)
 
 
-def dispatch_(overloaded, *args, __on__=None, **kwargs):
+def dispatch_(overloaded, *args, __on__=None, __output_type=None, **kwargs):
     """Dispatch to the overload matching the RUNTIME types of the dispatch
     arguments: key utility + enumerated switch_ (the recorded design)."""
     from ._compose import switch_
@@ -535,7 +544,7 @@ def dispatch_(overloaded, *args, __on__=None, **kwargs):
             key = tuple(classes) if len(classes) > 1 else classes[0]
             dispatch_map[key] = _dispatch_branch(
                 op, impl, sig, branch_signature, scalar_arguments,
-                dict(zip(dispatch_params, classes)),
+                dict(zip(dispatch_params, classes)), __output_type,
             )
     if not dispatch_map:
         raise WiringError(f"no dispatchable overloads found for {op.__name__}")
@@ -556,7 +565,7 @@ def dispatch_(overloaded, *args, __on__=None, **kwargs):
         erased = _hgraph.dispatch_cases(
             entries, [port_names.index(name) for name in names]
         )
-        return wire("dispatch_", erased, **port_kwargs)
+        return wire("dispatch_", erased, output_type=__output_type, **port_kwargs)
 
     # Python-object class dispatch has no native Bundle schema. Keep its
     # Python type key utility while CompoundScalar dispatch uses the native
@@ -575,18 +584,68 @@ def dispatch_(overloaded, *args, __on__=None, **kwargs):
 
 
 class _Dispatch(_Operator):
-    """@dispatch: an @operator whose CALL dispatches on runtime types; the
-    decorated body registers as the most-generic overload (the fallback)."""
+    """An operator whose call dispatches on runtime types.
+
+    ``@dispatch`` on a function registers that body as the generic fallback.
+    ``dispatch(operator(signature))`` creates an empty dispatch set to which
+    existing implementations can be added with :meth:`overload`.
+    """
 
     def __init__(self, fn, on=None):
         from ._graph import _GraphFn
 
-        super().__init__(fn)
+        declaration_only = isinstance(fn, _Operator)
+        super().__init__(fn.fn if declaration_only else fn)
         self._dispatch_on = ((on,) if isinstance(on, str) else tuple(on)) if on else None
-        _register_overload(self, _GraphFn(fn))
+        self._dispatch_fallback = None if declaration_only else _GraphFn(fn)
+        if self._dispatch_fallback is not None:
+            _register_overload(self, self._dispatch_fallback)
 
     def __call__(self, *args, **kwargs):
         return dispatch_(self, *args, __on__=self._dispatch_on, **kwargs)
+
+    def __getitem__(self, item):
+        from ._graph import _GraphFn
+        from ._node import _is_time_series_annotation
+        from .._types import AUTO_RESOLVE, _TsExpr
+
+        if not isinstance(item, _TsExpr):
+            return super().__getitem__(item)
+
+        signature = inspect.signature(self.fn)
+        ts_parameters = [
+            parameter for parameter in signature.parameters.values()
+            if _is_time_series_annotation(parameter.annotation)
+        ]
+        scalar_values = {}
+        import typing
+
+        for parameter in signature.parameters.values():
+            if parameter in ts_parameters:
+                continue
+            if (parameter.default is AUTO_RESOLVE
+                    and typing.get_origin(parameter.annotation) is type):
+                scalar_values[parameter.name] = item
+            elif parameter.default is not inspect.Parameter.empty:
+                scalar_values[parameter.name] = parameter.default
+            else:
+                raise TypeError(
+                    f"specialized dispatch '{self.__name__}' cannot erase required "
+                    f"scalar parameter '{parameter.name}'")
+
+        exposed = signature.replace(
+            parameters=ts_parameters, return_annotation=item)
+
+        def invoke(*args, **kwargs):
+            bound = exposed.bind(*args, **kwargs)
+            arguments = dict(scalar_values)
+            arguments.update(bound.arguments)
+            return dispatch_(
+                self, __on__=self._dispatch_on, __output_type=item, **arguments)
+
+        invoke.__name__ = f"__specialized_dispatch_{self.__name__}"
+        invoke.__signature__ = exposed
+        return _GraphFn(invoke)
 
 
 def dispatch(fn=None, *, on=None):

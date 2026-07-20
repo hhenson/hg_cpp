@@ -31,9 +31,16 @@ namespace hgraph::ts_data_plan_factory_detail
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_dynamic_list_plan(const TSValueTypeMetaData &schema);
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_window_plan(const TSValueTypeMetaData &schema);
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_plan(const TSValueTypeMetaData &schema);
+    [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_plan(
+        const TSValueTypeMetaData &schema,
+        ValueTypeRef key_binding);
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_tsd_plan(
         const TSValueTypeMetaData &schema,
         TSRoleTypeRef           element_type);
+    [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_tsd_plan(
+        const TSValueTypeMetaData &schema,
+        ValueTypeRef key_binding,
+        TSRoleTypeRef element_type);
 
     [[nodiscard]] TSRoleTypeRef embedded_ts_storage_type(const TSValueTypeMetaData      &schema,
                                                             TypeRole                         role,
@@ -75,10 +82,24 @@ namespace hgraph::ts_data_plan_factory_detail
                                                     std::size_t storage_offset,
                                                     TypeRole role = TypeRole::Data,
                                                     bool embedded = false);
+    [[nodiscard]] const TSDataOps &slot_ts_data_ops(const TSValueTypeMetaData      &schema,
+                                                    const MemoryUtils::StoragePlan &plan,
+                                                    std::size_t storage_offset,
+                                                    ValueTypeRef key_binding,
+                                                    TypeRole role,
+                                                    bool embedded = false);
     [[nodiscard]] const TSDataOps &slot_tsd_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                         const MemoryUtils::StoragePlan &plan,
                                                         std::size_t storage_offset,
                                                         TSRoleTypeRef                element_type,
+                                                        TypeRole role,
+                                                        bool embedded = false,
+                                                        bool composite = false);
+    [[nodiscard]] const TSDataOps &slot_tsd_ts_data_ops(const TSValueTypeMetaData      &schema,
+                                                        const MemoryUtils::StoragePlan &plan,
+                                                        std::size_t storage_offset,
+                                                        ValueTypeRef key_binding,
+                                                        TSRoleTypeRef element_type,
                                                         TypeRole role,
                                                         bool embedded = false,
                                                         bool composite = false);

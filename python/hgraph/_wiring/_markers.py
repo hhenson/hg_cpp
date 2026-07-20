@@ -10,8 +10,23 @@ from .._types import _GenericTsExpr, _TsExpr
 from ._state import GlobalState
 
 class STATE:
-    """Injectable: a per-node mutable namespace (attribute access), created
-    lazily and preserved across ticks. Annotate a parameter with STATE."""
+    """Injectable per-node state. ``STATE`` supplies a mutable namespace;
+    ``STATE[T]`` constructs and preserves one ``T`` instance."""
+
+    def __class_getitem__(cls, item):
+        return _StateExpr(item)
+
+
+class _StateExpr:
+    __slots__ = ("factory",)
+
+    def __init__(self, factory):
+        if not callable(factory):
+            raise TypeError("STATE[T] requires a callable state type or factory")
+        self.factory = factory
+
+    def __repr__(self):
+        return f"STATE[{self.factory!r}]"
 
 
 class SCHEDULER:

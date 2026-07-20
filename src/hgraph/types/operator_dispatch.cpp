@@ -796,7 +796,8 @@ namespace hgraph
         const TSValueTypeMetaData *expected_output,
         std::span<const std::size_t> size_hints,
         GlobalStateView global_state,
-        Wiring *wiring) const
+        Wiring *wiring,
+        const ResolutionMap *initial_resolution) const
     {
         auto it = overloads_.find(std::string{name});
         if (it == overloads_.end() || it->second.empty())
@@ -825,7 +826,9 @@ namespace hgraph
                 continue;
             }
 
-            ResolutionMap map;
+            ResolutionMap map = initial_resolution != nullptr
+                                    ? *initial_resolution
+                                    : ResolutionMap{};
             // Caller-pinned SIZE variables (op[SIZE: Size[4]]): bind the
             // impl's size vars positionally from the hints.
             if (!size_hints.empty())

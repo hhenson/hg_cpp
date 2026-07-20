@@ -262,7 +262,11 @@ namespace hgraph
         {
             if (!accepts_source(binding, source))
             {
-                throw std::invalid_argument("ValueOps::copy_assign_from received an incompatible source binding");
+                throw std::invalid_argument(
+                    "ValueOps::copy_assign_from received incompatible bindings: target " +
+                    std::string{binding && binding.schema() ? binding.schema()->name() : "<invalid>"} +
+                    ", source " +
+                    std::string{source && source.schema() ? source.schema()->name() : "<invalid>"});
             }
             if (copy_assign_from_impl != nullptr)
             {
@@ -276,7 +280,11 @@ namespace hgraph
         {
             if (!accepts_source(binding, source))
             {
-                throw std::invalid_argument("ValueOps::move_assign_from received an incompatible source binding");
+                throw std::invalid_argument(
+                    "ValueOps::move_assign_from received incompatible bindings: target " +
+                    std::string{binding && binding.schema() ? binding.schema()->name() : "<invalid>"} +
+                    ", source " +
+                    std::string{source && source.schema() ? source.schema()->name() : "<invalid>"});
             }
             if (move_assign_from_impl != nullptr)
             {

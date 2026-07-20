@@ -1,9 +1,9 @@
-from typing import Type
+from typing import Generic, Type, TypeVar
 
 import pytest
 
 import hgraph as hg
-from hgraph import NUMBER, NUMBER_2, TS, TSD, graph
+from hgraph import NUMBER, NUMBER_2, TS, TSB, TSD, TimeSeriesSchema, graph
 from hgraph.test import eval_node
 
 
@@ -54,6 +54,90 @@ def test_specialized_numeric_reference_services_share_one_interface_name():
     assert eval_node(float_client, [2.0]) == [2.5]
     with pytest.raises(TypeError, match="NUMBER must be one of int, float"):
         numeric_reference[NUMBER:str]
+
+
+def test_specialized_service_impl_receives_user_path_without_type_suffix():
+    @hg.reference_service
+    def numeric_reference(path: str) -> TS[NUMBER]: ...
+
+    integer_reference = numeric_reference[NUMBER:int]
+
+    @hg.service_impl(interfaces=integer_reference)
+    def integer_reference_impl(path: str) -> TS[int]:
+        return hg.const(1 if path == "numbers" else 0)
+
+    @graph
+    def client() -> TS[int]:
+        hg.register_service("numbers", integer_reference_impl)
+        return integer_reference(path="numbers")
+
+    assert eval_node(client) == [1]
+
+
+def test_single_service_type_variable_accepts_direct_specialization():
+    output = TypeVar("SERVICE_OUTPUT", bound=TS[object])
+
+    @hg.reference_service
+    def value() -> output: ...
+
+    specialized = value[TS[int]]
+
+    assert specialized.descriptor is not None
+    assert specialized._resolution.bindings["SERVICE_OUTPUT"] == TS[int].handle
+
+
+def test_reference_service_specializes_a_schema_type_variable():
+    class First(TimeSeriesSchema):
+        value: TS[int]
+
+    class Second(TimeSeriesSchema):
+        value: TS[str]
+
+    schema = TypeVar("SERVICE_SCHEMA", First, Second)
+
+    class State(TimeSeriesSchema, Generic[schema]):
+        current: TSB[schema]
+
+    @hg.reference_service
+    def states() -> TSD[str, TSB[State[schema]]]: ...
+
+    specialized = states[schema:First]
+
+    assert specialized.descriptor is not None
+    assert specialized._resolution.bindings["SERVICE_SCHEMA"] == TSB[First].handle
+
+
+def test_mixed_multi_service_interfaces_share_a_generic_specialization():
+    class First(TimeSeriesSchema):
+        value: TS[int]
+
+    class Second(TimeSeriesSchema):
+        value: TS[str]
+
+    schema = TypeVar("SHARED_SERVICE_SCHEMA", First, Second)
+
+    @hg.reference_service
+    def state() -> TSB[schema]: ...
+
+    @hg.request_reply_service
+    def echo(value: TS[int]) -> TS[int]: ...
+
+    @hg.service_impl(interfaces=(state, echo))
+    def impl(path: str):
+        state[schema:First].wire_impl_out_stub(
+            path, TSB[First].from_ts(value=hg.const(1)))
+        requests = echo.wire_impl_inputs_stub(path).value
+        echo.wire_impl_out_stub(path, hg.map_(lambda value: value, requests))
+
+    @graph
+    def client(value: TS[int]) -> TS[int]:
+        hg.register_service("shared", impl)
+        state[schema:First](path="shared")
+        return echo(value, path="shared")
+
+    assert eval_node(
+        client, [7], __end_time__=hg.MIN_ST + 4 * hg.MIN_TD,
+    )[-1] == 7
 
 
 def test_specialized_numeric_request_reply_services_use_native_exchange():
@@ -293,3 +377,21 @@ def test_subscription_client_samples_existing_value_when_key_becomes_valid():
         ["topic-2", None, None],
         [None, None, "topic-1"],
     ) == [None, {0: "topic-1", 1: "topic-2"}, {2: "topic-1"}]
+
+
+def test_subscription_client_const_lifts_a_plain_request_value():
+    @hg.subscription_service
+    def quote(symbol: TS[str]) -> TS[str]: ...
+
+    @hg.service_impl(interfaces=quote)
+    def quote_impl(symbols: hg.TSS[str]) -> TSD[str, TS[str]]:
+        return hg.map_(hg.pass_through_node, __keys__=symbols, __key_arg__="ts")
+
+    @graph
+    def client() -> TS[str]:
+        hg.register_service("quotes", quote_impl)
+        return quote("EURUSD", path="quotes")
+
+    assert eval_node(
+        client, __end_time__=hg.MIN_ST + 3 * hg.MIN_TD,
+    ) == [None, "EURUSD"]

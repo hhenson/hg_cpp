@@ -110,7 +110,7 @@ accessor returns a plain, comparable python/TS type:
 .. code-block:: python
 
    from hgraph.reflection import scalar_type, key_type, value_type, \
-       element_type, size, fields, dereference, is_bundle, is_reference
+       element_type, size, fields, resolved_type, dereference, is_bundle, is_reference
 
    scalar_type(TS[int])            # int
    key_type(TSD[str, TS[int]])     # str
@@ -118,6 +118,7 @@ accessor returns a plain, comparable python/TS type:
    element_type(TSL[TS[int], 3])   # TS[int]
    size(TSL[TS[int], 3])           # 3
    fields(MyBundle)                # {'a': TS[int], 'b': TS[str]}  (ordered)
+   resolved_type(m[OUT])           # public TS expression for a resolver binding
    dereference(REF[TS[int]])       # TS[int]
    is_reference(REF[TS[int]])      # True
    is_bundle(MyBundle)             # True
@@ -149,6 +150,7 @@ Upstream (``Hg*TypeMetaData``)                         hg_cpp
 ``m.key_tp`` / ``m.value_tp`` (TSD)                    ``reflection.key_type(t)`` / ``value_type(t)``
 ``m.element_type`` / ``m.size`` (TSL)                  ``reflection.element_type(t)`` / ``size(t)``
 ``m.meta_data_schema`` (TSB / compound scalar)         ``reflection.fields(t)``
+``m.py_type`` (resolved TS binding)                    ``reflection.resolved_type(t)``
 ``m.dereference()`` / ``m.has_references``             ``reflection.dereference(t)`` / ``is_reference(t)``
 ``isinstance(m, HgTSDTypeMetaData)``                   ``t.handle.is_tsd`` / ``reflection.is_tsd(t)``
 ``m.parse_value(v)`` / ``m.resolve(rd)``               no equivalent (C++ engine concern)

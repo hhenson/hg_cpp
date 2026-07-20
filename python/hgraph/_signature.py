@@ -33,15 +33,33 @@ class WiringNodeSignature:
 
 
 def _is_time_series(annotation):
-    from ._types import _TsExpr, _GenericTsExpr, _TypeVarSentinel
+    import typing
 
-    return isinstance(annotation, (_TsExpr, _GenericTsExpr, _TypeVarSentinel))
+    from ._types import (_GenericTsExpr, _TsExpr, _TypeVarSentinel,
+                         _type_var_is_scalar)
+
+    return (
+        isinstance(annotation, (_TsExpr, _GenericTsExpr))
+        or (
+            isinstance(annotation, (_TypeVarSentinel, typing.TypeVar))
+            and not _type_var_is_scalar(annotation)
+        )
+    )
 
 
 def _is_unresolved(annotation):
-    from ._types import _GenericTsExpr, _TypeVarSentinel
+    import typing
 
-    return isinstance(annotation, (_GenericTsExpr, _TypeVarSentinel))
+    from ._types import (_GenericTsExpr, _TypeVarSentinel,
+                         _type_var_is_scalar)
+
+    return (
+        isinstance(annotation, _GenericTsExpr)
+        or (
+            isinstance(annotation, (_TypeVarSentinel, typing.TypeVar))
+            and not _type_var_is_scalar(annotation)
+        )
+    )
 
 
 def extract_signature(fn, node_type) -> WiringNodeSignature:
@@ -54,7 +72,8 @@ def extract_signature(fn, node_type) -> WiringNodeSignature:
         args.append(name)
         if param.default is not inspect.Parameter.empty:
             defaults[name] = param.default
-        input_types[name] = annotation if annotation is not inspect.Parameter.empty else object
+        annotation = annotation if annotation is not inspect.Parameter.empty else object
+        input_types[name] = annotation
         if _is_time_series(annotation):
             time_series.add(name)
         if _is_unresolved(annotation):

@@ -354,7 +354,8 @@ namespace hgraph
     /** Erased variadic-operator dispatch (defined in operator_dispatch.h -
         wired_fn.h precedes the registry in the include order). */
     [[nodiscard]] WiringPortRef wire_erased_operator(Wiring &w, std::string_view name,
-                                                     std::span<const WiringPortRef> args, bool has_output);
+                                                     std::span<const WiringPortRef> args, bool has_output,
+                                                     const TSValueTypeMetaData *expected_output = nullptr);
 
     namespace wired_fn_detail
     {

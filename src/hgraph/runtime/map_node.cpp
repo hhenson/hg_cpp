@@ -321,7 +321,9 @@ namespace hgraph
             if (entry == nullptr) { return; }
 
             clear_entry_output_binding(view, context, *entry, evaluation_time);
-            if (entry->graph.has_value() && entry->graph.view().started()) { entry->graph.view().stop(); }
+            if (entry->graph.has_value() && entry->graph.view().started()) {
+                entry->graph.view().stop(evaluation_time);
+            }
             if (output_mutation != nullptr) { (void)output_mutation->erase(entry->key.view()); }
             if (error_mutation != nullptr && error_mutation->contains(entry->key.view()))
             {
@@ -355,7 +357,9 @@ namespace hgraph
             if (entry.graph.has_value() && entry.graph.view().started()) { return; }
             auto rollback = UnwindCleanupGuard([&] {
                 clear_entry_output_binding(view, context, entry, evaluation_time);
-                if (entry.graph.has_value() && entry.graph.view().started()) { entry.graph.view().stop(); }
+                if (entry.graph.has_value() && entry.graph.view().started()) {
+                    entry.graph.view().stop(evaluation_time);
+                }
                 if (output_mutation != nullptr) { (void)output_mutation->erase(entry.key.view()); }
                 if (existing == nullptr) { storage.entries.destroy_at(slot); }
             });

@@ -392,22 +392,51 @@ namespace hgraph
     TSOutputTypeRef TSDataPlanFactory::output_type_for(const TSValueTypeMetaData *schema,
                                                        TSRoleTypeRef element_type)
     {
-        if (schema == nullptr || schema->kind != TSTypeKind::TSD || !element_type ||
-            !time_series_schema_equivalent(schema->element_ts(), element_type.schema()))
+        if (schema == nullptr || schema->kind != TSTypeKind::TSD)
         {
             throw std::invalid_argument(
-                "realized TSD output_type_for requires a compatible element TS binding");
+                "realized TSD output_type_for requires a TSD schema");
+        }
+        return keyed_output_type_for(
+            schema, ValuePlanFactory::instance().type_for(schema->key_type()), element_type);
+    }
+
+    TSOutputTypeRef TSDataPlanFactory::keyed_output_type_for(
+        const TSValueTypeMetaData *schema,
+        ValueTypeRef key_binding,
+        TSRoleTypeRef element_type)
+    {
+        const bool is_tss = schema != nullptr && schema->kind == TSTypeKind::TSS;
+        const bool is_tsd = schema != nullptr && schema->kind == TSTypeKind::TSD;
+        const auto *key_schema = is_tss && schema->value_schema != nullptr
+                                     ? schema->value_schema->element_type
+                                     : is_tsd ? schema->key_type() : nullptr;
+        if ((!is_tss && !is_tsd) || !key_binding || key_binding.schema() != key_schema ||
+            (is_tsd && (!element_type ||
+                        !time_series_schema_equivalent(schema->element_ts(), element_type.schema()))) ||
+            (is_tss && element_type))
+        {
+            throw std::invalid_argument(
+                "realized keyed output_type_for requires compatible key and element bindings");
         }
 
-        const auto *plan = plan_detail::synthesise_slot_tsd_plan(*schema, element_type);
+        const auto *plan = is_tsd
+                               ? plan_detail::synthesise_slot_tsd_plan(
+                                     *schema, key_binding, element_type)
+                               : plan_detail::synthesise_slot_plan(*schema, key_binding);
         if (plan == nullptr)
         {
-            throw std::logic_error("realized TSD output_type_for could not resolve its slot plan");
+            throw std::logic_error("realized keyed output_type_for could not resolve its slot plan");
         }
-        const auto &ops = plan_detail::slot_tsd_ts_data_ops(
-            *schema, *plan, 0, element_type, TypeRole::Output);
+        const auto &ops = is_tsd
+                              ? plan_detail::slot_tsd_ts_data_ops(
+                                    *schema, *plan, 0, key_binding, element_type,
+                                    TypeRole::Output)
+                              : plan_detail::slot_ts_data_ops(
+                                    *schema, *plan, 0, key_binding, TypeRole::Output);
         return checked_ts_role_type(
-            intern_ts_type(*schema, TypeRole::Output, *plan, ops, "ts.tsd.output.root"),
+            intern_ts_type(*schema, TypeRole::Output, *plan, ops,
+                           is_tsd ? "ts.tsd.output.root" : "ts.tss.output.root"),
             std::integral_constant<TypeRole, TypeRole::Output>{});
     }
 

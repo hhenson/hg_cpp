@@ -16,6 +16,7 @@
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/subgraph_wiring.h>
@@ -35,6 +36,17 @@ namespace
 {
     using namespace hgraph;
     using namespace hgraph::testing;
+
+    [[nodiscard]] Value bool_pair(Bool first, Bool second)
+    {
+        const auto binding = ValuePlanFactory::instance().type_for(
+            scalar_descriptor<Tuple<Bool, Bool>>::value_meta());
+        Value value{binding};
+        auto tuple = value.as_tuple().begin_mutation();
+        tuple.at(0).checked_mutable_as<Bool>() = first;
+        tuple.at(1).checked_mutable_as<Bool>() = second;
+        return value;
+    }
 
     struct Doubler
     {
@@ -487,6 +499,20 @@ TEST_CASE("switch_: a branch may consume the key as its first argument (mixed ar
                      stdlib::switch_cases({{Value{Int{1}}, fn<AddKey>()}, {Value{Int{2}}, fn<Doubler>()}}),
                      values<Int>(10, 20, none)),
                  values<Int>(11, 21, 40));
+}
+
+TEST_CASE("switch_: fixed tuple keys select their matching branch")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        (eval_node<stdlib::switch_, TS<Tuple<Bool, Bool>>>(
+            values<Value>(bool_pair(true, true), bool_pair(false, false)),
+            stdlib::switch_cases({{bool_pair(true, true), fn<Doubler>()},
+                                  {bool_pair(false, false), fn<Negator>()}}),
+            values<Int>(3, 4))),
+        values<Int>(6, -4));
 }
 
 TEST_CASE("switch_: unnamed arity-plus-one branch does not consume the key")

@@ -98,7 +98,8 @@ namespace hgraph::python_bridge
 
         [[nodiscard]] nb::object wire(const std::string &name, nb::tuple args, nb::dict kwargs,
                                       std::optional<PyTsType> output_type,
-                                      std::optional<std::vector<std::size_t>> sizes = std::nullopt)
+                                      std::optional<std::vector<std::size_t>> sizes = std::nullopt,
+                                      PyResolutionScope *initial_resolution = nullptr)
         {
             ensure_open();
             // Target-directed scalar conversion: with an explicit output
@@ -142,7 +143,8 @@ namespace hgraph::python_bridge
                 name, std::span<const WiringArg>{wiring_args.data(), wiring_args.size()}, std::nullopt,
                 output_type.has_value() ? output_type->meta : nullptr,
                 std::span<const std::size_t>{size_hints.data(), size_hints.size()},
-                wiring_ref().operator_state(), &wiring_ref());
+                wiring_ref().operator_state(), &wiring_ref(),
+                initial_resolution != nullptr ? &initial_resolution->map : nullptr);
             OperatorWireResult result =
                 resolved.impl->wire(wiring_ref(), resolved.map, resolved.args, resolved.kwargs);
             if (!result.has_output) { return nb::none(); }

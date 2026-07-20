@@ -178,7 +178,8 @@ def _as_wired(func):
     if callable(func) and not isinstance(func, str):
         name = getattr(func, "__name__", None)
         if name is not None and name in _hgraph.operator_names():
-            return _hgraph.wired_op(name)
+            expected = getattr(func, "_output_type", None)
+            return _hgraph.wired_op(name, getattr(expected, "handle", None))
         if name == "<lambda>":
             return _wrap_graph_fn(func)
         raise TypeError(
@@ -334,6 +335,7 @@ class _GraphFn:
         self._signature = inspect.signature(fn)
         self.__name__ = fn.__name__
         self.__doc__ = fn.__doc__
+        self.__signature__ = self._signature
         self._resolvers = dict(resolvers) if resolvers else None
         self._requires = requires
         self._label = label

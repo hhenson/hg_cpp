@@ -1,9 +1,11 @@
 """The hgraph-shaped Python API over the C++ runtime."""
 import datetime
+from dataclasses import dataclass
 
 import hgraph as hg
 import pytest
-from hgraph import TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, graph, run_graph, eval_node
+from hgraph import (CompoundScalar, TS, TSS, TSD, TSL, TSB, Size,
+                    TimeSeriesSchema, graph, run_graph, eval_node)
 
 
 def check(condition, message):
@@ -630,6 +632,29 @@ def test_hgraph_context_compat():
     out = eval_node(g_no_context, [True])
     check(out == ["default True"], f"no context: {out}")
 
+    @dataclass(frozen=True)
+    class ContextStruct(CompoundScalar, _TestContext):
+        value: int
+        msg: str = "bundle"
+
+    @graph
+    def g_subclass_context(ts: TS[bool]) -> TS[str]:
+        with hg.const(ContextStruct(1), tp=TS[ContextStruct]):
+            return use_context(ts)
+
+    out = eval_node(g_subclass_context, [True, None, False])
+    check(out == ["bundle True", None, "bundle False"],
+          f"subclass context: {out}")
+
+    @graph
+    def g_structural_subclass_context(ts: TS[bool]) -> TS[str]:
+        with TSB[ContextStruct].from_ts(value=1, msg="structural"):
+            return use_context(ts)
+
+    out = eval_node(g_structural_subclass_context, [True, None, False])
+    check(out == ["structural True", None, "structural False"],
+          f"structural subclass context: {out}")
+
     @hg.compute_node
     def needs_context(ts: TS[bool], context: CONTEXT[TS[_TestContext]] = REQUIRED) -> TS[str]:
         return "x"
@@ -683,6 +708,34 @@ def test_arbitrary_object_scalars():
 
     out = eval_node(g, [Order(3), Order(5)])
     check(out == [6, 10], f"object scalars: {out}")
+
+
+def test_nested_compound_scalar_tsb_values_keep_their_python_types():
+    construction_calls = []
+
+    @dataclass(frozen=True)
+    class Amount(CompoundScalar):
+        value: int
+
+        def __post_init__(self):
+            construction_calls.append(self.value)
+
+    class Snapshot(TimeSeriesSchema):
+        amount: TSB[Amount]
+
+    observations = []
+
+    @hg.compute_node
+    def observe(ts: TSB[Snapshot], _output: hg.TSB_OUT[Snapshot] = None) -> TSB[Snapshot]:
+        prior = _output.amount.value if _output.amount.valid else None
+        observations.append((ts.value["amount"], prior))
+        return ts.delta_value
+
+    out = eval_node(observe, [{"amount": {"value": 1}}, {"amount": {"value": 2}}])
+    check(out == [{"amount": {"value": 1}}, {"amount": {"value": 2}}], f"output: {out}")
+    check(isinstance(observations[0][0], Amount), f"input value: {observations[0]}")
+    check(isinstance(observations[1][1], Amount), f"output value: {observations[1]}")
+    check(construction_calls == [], f"value reads called __post_init__: {construction_calls}")
 
 
 def test_time_series_view_api():
@@ -860,11 +913,16 @@ def test_mesh_from_python():
 
 
 def test_mesh_python_reference_surface():
+    class Pair(hg.TimeSeriesSchema):
+        value: TS[int]
+        other: TS[int]
+
     @graph
     def has_previous(key: TS[int]) -> TS[bool]:
         mesh = hg.mesh_("numbers")
         assert isinstance(mesh, hg.MeshWiringPort)
         assert mesh is not None
+        assert mesh
         return hg.contains_(mesh, key - 1)
 
     @graph
@@ -901,6 +959,24 @@ def test_mesh_python_reference_surface():
         return hg.mesh_(value_from_zero, __keys__=keys, __name__="constant-key")
 
     assert eval_node(lookup_constant_key, [{1}])[0][1] == 10
+
+    @graph
+    def pair_from_zero(key: TS[int]) -> hg.TSB[Pair]:
+        return hg.switch_(key, {
+            0: lambda _: hg.combine[hg.TSB[Pair]](value=10, other=20),
+            hg.DEFAULT: lambda _: hg.combine[hg.TSB[Pair]](
+                value=hg.mesh_("structured-key")[0].value,
+                other=hg.mesh_("structured-key")[0].other,
+            ),
+        }, key)
+
+    @graph
+    def lookup_structured_key(keys: hg.TSS[int]) -> hg.TSD[int, hg.TSB[Pair]]:
+        return hg.mesh_(pair_from_zero, __keys__=keys, __name__="structured-key")
+
+    assert eval_node(lookup_structured_key, [{1}]) == [
+        {0: {"value": 10, "other": 20}, 1: {"value": 10, "other": 20}}
+    ]
     assert hg.get_mesh(has_previous) is None
     assert not hasattr(hg, "mesh_ref")
 

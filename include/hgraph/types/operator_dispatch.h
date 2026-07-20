@@ -344,7 +344,8 @@ namespace hgraph
             const TSValueTypeMetaData *expected_output = nullptr,
             std::span<const std::size_t> size_hints = {},
             GlobalStateView global_state = {},
-            Wiring *wiring = nullptr) const;
+            Wiring *wiring = nullptr,
+            const ResolutionMap *initial_resolution = nullptr) const;
 
         /**
          * Resolve and EAGERLY evaluate a const-evaluable overload (the
@@ -1016,6 +1017,8 @@ namespace hgraph
                 case ScalarPattern::Kind::FixedTuple:
                 case ScalarPattern::Kind::Set:
                 case ScalarPattern::Kind::Map:
+                case ScalarPattern::Kind::Series:
+                case ScalarPattern::Kind::Frame:
                 case ScalarPattern::Kind::Bundle:
                     acc.structural += 1;
                     for (const ScalarPattern &child : pattern.children)
@@ -1619,7 +1622,8 @@ namespace hgraph
 
     /** The wired_fn.h hook: dispatch a VarIn-tailed operator over erased ports. */
     [[nodiscard]] inline WiringPortRef wire_erased_operator(Wiring &w, std::string_view name,
-                                                            std::span<const WiringPortRef> args, bool has_output)
+                                                            std::span<const WiringPortRef> args, bool has_output,
+                                                            const TSValueTypeMetaData *expected_output)
     {
         std::vector<WiringArg> wiring_args;
         wiring_args.reserve(args.size());
@@ -1630,7 +1634,8 @@ namespace hgraph
             arg.port = port;
             wiring_args.push_back(std::move(arg));
         }
-        auto result = wire_operator(w, name, {wiring_args.data(), wiring_args.size()}, has_output);
+        auto result = wire_operator(
+            w, name, {wiring_args.data(), wiring_args.size()}, has_output, expected_output);
         return has_output ? result.output.erased() : WiringPortRef{};
     }
 

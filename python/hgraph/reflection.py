@@ -23,6 +23,7 @@ upstream ``Hg*TypeMetaData``                     ``hgraph.reflection``
 ``m.key_tp`` / ``m.value_tp`` (TSD)              ``key_type(t)`` / ``value_type(t)``
 ``m.element_type`` / ``m.size`` (TSL)            ``element_type(t)`` / ``size(t)``
 ``m.meta_data_schema`` (TSB / compound scalar)   ``fields(t)``
+``m.py_type`` (resolved TS binding)              ``resolved_type(t)``
 ``m.dereference()`` / ``m.has_references``       ``dereference(t)`` / ``is_reference(t)``
 ``isinstance(m, HgTSDTypeMetaData)``             ``is_tsd(t)`` (and siblings)
 ===============================================  ==================================
@@ -39,6 +40,7 @@ from ._types import _TsExpr, _value_type
 
 __all__ = (
     "scalar_type",
+    "resolved_type",
     "key_type",
     "value_type",
     "element_type",
@@ -52,6 +54,7 @@ __all__ = (
     "is_tss",
     "is_bundle",
     "is_compound_scalar",
+    "operator_overloads",
 )
 
 # Atomic python scalar types, mapped from their value-type back to the python
@@ -78,6 +81,20 @@ def _handle(t):
     if h is None:
         raise TypeError(f"{t!r} is not a time-series type expression")
     return h
+
+
+def resolved_type(t):
+    """Return a resolved time-series binding as a public type expression.
+
+    This is the implementation-neutral replacement for reading ``.py_type``
+    from a resolution-map metadata object. Public annotations are returned
+    unchanged; C++ resolution handles are wrapped as comparable annotations.
+    """
+    if isinstance(t, _TsExpr):
+        return t
+    if isinstance(t, _m.TsType):
+        return _wrap(t)
+    raise TypeError(f"{t!r} is not a resolved time-series type")
 
 
 def _wrap(handle):
@@ -215,3 +232,18 @@ def is_bundle(t):
 def is_compound_scalar(t):
     """``True`` if ``t`` is a ``TS`` over a compound scalar."""
     return _handle(t).is_ts and getattr(t, "_cs_class", None) is not None
+
+
+def operator_overloads(operator):
+    """Return the decorated implementations registered for an operator.
+
+    The returned callables expose ordinary ``inspect.signature`` annotations.
+    A ``@dispatch`` definition's generic fallback is not an overload and is
+    therefore excluded.
+    """
+    entries = getattr(operator, "_overloads", None)
+    if entries is None:
+        raise TypeError(f"{operator!r} is not an hgraph operator")
+    fallback = getattr(operator, "_dispatch_fallback", None)
+    return tuple(implementation for implementation, _ in entries
+                 if implementation is not fallback)

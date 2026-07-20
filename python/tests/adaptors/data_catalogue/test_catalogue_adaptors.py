@@ -37,13 +37,15 @@ def _end_time():
 
 def test_catalogue_subscribe_routes_json_source(tmp_path):
     (tmp_path / "rows.json").write_text('[{"name":"a","value":1}]')
-    values = []
+    responses = []
     response_type = hg.TSB[hg.stream.Stream[hg.stream.Data[hg.Frame[_Row]]]]
 
     @hg.sink_node
     def capture(response: response_type, engine: hg.EvaluationEngineApi = None):
-        if response.status.value is StreamStatus.OK:
-            values.append(response["values"].value)
+        if response.status.modified:
+            responses.append((response.status.value, response.status_msg.value,
+                              response["values"].value))
+        if response.status.value in (StreamStatus.OK, StreamStatus.ERROR):
             engine.request_engine_stop()
 
     @hg.graph
@@ -56,7 +58,7 @@ def test_catalogue_subscribe_routes_json_source(tmp_path):
     environment.add_entry(DataEnvironmentEntry("json", str(tmp_path)))
     with hg.GlobalContext(hg.GlobalState()):
         with catalogue, environment:
-            DataCatalogueEntry(
+            DataCatalogueEntry[JsonDataSource](
                 _Row,
                 "rows",
                 frozendict(),
@@ -64,7 +66,8 @@ def test_catalogue_subscribe_routes_json_source(tmp_path):
             )
             hg.run_graph(app, run_mode=hg.EvaluationMode.REAL_TIME, end_time=_end_time())
 
-    assert values[0].equals(pa.table({"name": ["a"], "value": [1]}))
+    assert responses[0][0] is StreamStatus.OK, responses[0][1]
+    assert responses[0][2].equals(pa.table({"name": ["a"], "value": [1]}))
 
 
 def test_catalogue_publish_routes_all_matching_sinks():
@@ -95,7 +98,7 @@ def test_catalogue_publish_routes_all_matching_sinks():
     catalogue = DataCatalogue()
     with hg.GlobalContext(hg.GlobalState()):
         with catalogue:
-            DataCatalogueEntry(
+            DataCatalogueEntry[_Sink](
                 _Row,
                 "rows",
                 frozendict(),

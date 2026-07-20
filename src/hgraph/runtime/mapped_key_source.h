@@ -28,7 +28,9 @@ namespace hgraph::runtime_detail
             TSDataOps    ops{};
         };
 
-        [[nodiscard]] inline const Context &context_for(const TSValueTypeMetaData &schema)
+        [[nodiscard]] inline const Context &context_for(
+            const TSValueTypeMetaData &schema,
+            ValueTypeRef value_binding)
         {
             if (schema.kind != TSTypeKind::TS)
             {
@@ -42,12 +44,11 @@ namespace hgraph::runtime_detail
             static std::mutex mutex;
             static auto      *contexts = new std::vector<std::unique_ptr<Context>>;
 
-            const auto value_binding = ValuePlanFactory::instance().type_for(schema.value_schema);
-            const auto delta_binding = ValuePlanFactory::instance().type_for(schema.delta_value_schema);
-            if (!value_binding || !delta_binding)
+            if (!value_binding || value_binding.schema() != schema.value_schema)
             {
                 throw std::logic_error("mapped key source could not resolve value bindings");
             }
+            const auto delta_binding = value_binding;
 
             std::lock_guard lock{mutex};
             for (const auto &context : *contexts)
@@ -138,9 +139,11 @@ namespace hgraph::runtime_detail
             return *result;
         }
 
-        [[nodiscard]] inline TSOutputTypeRef type_for(const TSValueTypeMetaData &schema)
+        [[nodiscard]] inline TSOutputTypeRef type_for(
+            const TSValueTypeMetaData &schema,
+            ValueTypeRef value_binding)
         {
-            const Context &context = context_for(schema);
+            const Context &context = context_for(schema, value_binding);
             return checked_ts_role_type(
                 intern_ts_type(schema, TypeRole::Output, MemoryUtils::plan_for<MappedKeySourceStorage>(), context.ops),
                 std::integral_constant<TypeRole, TypeRole::Output>{});
@@ -172,7 +175,7 @@ namespace hgraph::runtime_detail
                 throw std::invalid_argument("mapped key source requires a concrete evaluation time");
             }
 
-            const TSOutputTypeRef type = mapped_key_source_detail::type_for(schema);
+            const TSOutputTypeRef type = mapped_key_source_detail::type_for(schema, key.binding());
             const auto           &ops = type.ops_ref();
             const auto           *layout = ops.layout_impl(ops.context);
             if (layout == nullptr || key.binding() != layout->value_binding)

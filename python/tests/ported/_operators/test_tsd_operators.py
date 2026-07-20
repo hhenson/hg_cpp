@@ -122,6 +122,15 @@ def test_tsd_get_item():
     ) == [None, 3, 4, None, -2]
 
 
+def test_tsd_get_item_follows_late_valid_mapped_slot():
+    @graph
+    def g(keys: TSS[int], values: TSD[int, TS[int]]) -> TS[int]:
+        mapped = map_(lambda value: value, values, __keys__=keys)
+        return mapped[1]
+
+    assert eval_node(g, [{1}, None], [None, {1: 42}]) == [None, 42]
+
+
 def test_tsd_get_items():
     assert eval_node(
         getitem_,

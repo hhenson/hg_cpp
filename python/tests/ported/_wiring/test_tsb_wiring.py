@@ -83,6 +83,28 @@ def test_tsb_splitting():
     assert eval_node(split_tester, [1, 2], ["a", "b"]) == [1, 2]
 
 
+def test_tsb_copy_with_replaces_ports_and_constants():
+    @graph
+    def replace_port(ts1: TS[int], ts2: TS[str], replacement: TS[str]) -> TSB[MyTsb]:
+        return TSB[MyTsb].from_ts(p1=ts1, p2=ts2).copy_with(p2=replacement)
+
+    @graph
+    def replace_constant(ts1: TS[int], ts2: TS[str]) -> TSB[MyTsb]:
+        return TSB[MyTsb].from_ts(p1=ts1, p2=ts2).copy_with(p2="fixed")
+
+    assert eval_node(replace_port, [1], ["old"], ["new"]) == [frozendict(p1=1, p2="new")]
+    assert eval_node(replace_constant, [1], ["old"]) == [frozendict(p1=1, p2="fixed")]
+
+
+def test_tsb_copy_with_rejects_unknown_fields():
+    @graph
+    def invalid(ts1: TS[int], ts2: TS[str]) -> TSB[MyTsb]:
+        return TSB[MyTsb].from_ts(p1=ts1, p2=ts2).copy_with(missing=1)
+
+    with pytest.raises(TypeError, match="unknown TSB field"):
+        eval_node(invalid, [1], ["value"])
+
+
 def test_tsb_from_ts_with_nothing_defaults():
 
     @graph
@@ -240,6 +262,15 @@ def test_tsb_kwargs():
         return values["p1"]
 
     assert eval_node(g, [{"p1": 1, "p2": "a"}, {"p1": 2}]) == [1, 2]
+
+
+def test_tsb_as_dict():
+
+    @graph
+    def g(tsb: TSB[MyTsb]) -> TS[str]:
+        return tsb.as_dict()["p2"]
+
+    assert eval_node(g, [{"p1": 1, "p2": "a"}, {"p2": "b"}]) == ["a", "b"]
 
 
 def test_tsb_integer_index():

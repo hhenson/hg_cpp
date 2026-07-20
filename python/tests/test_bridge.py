@@ -88,6 +88,16 @@ def test_value_conversion_round_trips():
         check(result == expected, f"round trip {sample!r} -> {result!r}")
 
 
+def test_dynamic_attributes_do_not_masquerade_as_datetime_values():
+    class DynamicAttributes:
+        def __getattr__(self, name):
+            return DynamicAttributes()
+
+    sample = DynamicAttributes()
+    result = hg._roundtrip_value(sample)
+    check(result is sample, "schema-free conversion must preserve opaque Python objects")
+
+
 def test_aware_datetime_is_normalized_to_naive_utc():
     import datetime
 

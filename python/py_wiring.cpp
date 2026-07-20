@@ -47,6 +47,7 @@ namespace
         std::size_t arity{0};
         bool variadic{false};
         bool has_output{false};
+        const TSValueTypeMetaData *expected_output{nullptr};
     };
 
     [[nodiscard]] std::unordered_map<std::string, RuntimeOperatorRecord *> &runtime_operator_registry()
@@ -59,7 +60,8 @@ namespace
                                                       std::span<const WiringPortRef> args)
     {
         const auto &record = *static_cast<const RuntimeOperatorRecord *>(context);
-        return wire_erased_operator(w, record.name, args, record.has_output);
+        return wire_erased_operator(
+            w, record.name, args, record.has_output, record.expected_output);
     }
 
     [[nodiscard]] CompiledSubGraph runtime_operator_compile(
@@ -93,24 +95,53 @@ namespace
                     record.name_views.data(), record.name_views.size()};
             },
             [](const void *, std::size_t) -> const TSValueTypeMetaData * { return nullptr; },
-            [](const void *) -> const TSValueTypeMetaData * { return nullptr; },
+            [](const void *context) -> const TSValueTypeMetaData * {
+                return static_cast<const RuntimeOperatorRecord *>(context)->expected_output;
+            },
         };
         return ops;
     }
 
-    [[nodiscard]] WiredFn runtime_operator_fn(const std::string &name)
+    [[nodiscard]] WiredFn runtime_operator_fn(
+        const std::string &name, const TSValueTypeMetaData *expected_output = nullptr)
     {
+        const auto shape = OperatorRegistry::instance().callable_shape(name);
+        if (!shape.has_value())
+        {
+            throw std::invalid_argument(
+                "operator '" + name +
+                "' has no single time-series-only callable shape for higher-order use");
+        }
+
+        if (expected_output != nullptr)
+        {
+            auto *record = new RuntimeOperatorRecord{};
+            record->name = name;
+            record->names = shape->parameter_names;
+            record->name_views.reserve(record->names.size());
+            for (const std::string &parameter : record->names)
+            {
+                record->name_views.push_back(parameter);
+            }
+            record->arity = shape->arity;
+            record->variadic = shape->variadic;
+            record->has_output = shape->has_output;
+            record->expected_output = expected_output;
+            return WiredFn{
+                .ops           = &runtime_operator_ops(),
+                .context       = record,
+                .identity      = &typeid(RuntimeOperatorRecord),
+                .operator_name = record->name,
+                .arity         = record->arity,
+                .variadic      = record->variadic,
+                .has_output    = record->has_output,
+            };
+        }
+
         auto &registry = runtime_operator_registry();
         auto  found    = registry.find(name);
         if (found == registry.end())
         {
-            const auto shape = OperatorRegistry::instance().callable_shape(name);
-            if (!shape.has_value())
-            {
-                throw std::invalid_argument(
-                    "operator '" + name +
-                    "' has no single time-series-only callable shape for higher-order use");
-            }
             auto *record = new RuntimeOperatorRecord{};
             record->name = name;
             record->names = shape->parameter_names;
@@ -369,9 +400,15 @@ namespace hgraph::python_bridge
             return delayed.binding.bound();
         });
 
-    m.def("switch_cases", [](nb::dict cases, bool reload) {
+    m.def("switch_cases", [](nb::dict cases, bool reload,
+                              std::optional<PyTsType> key_type) {
         stdlib::SwitchCases result;
         result.reload_on_ticked = reload;
+        const auto *key_schema = key_type.has_value()
+                                     ? TypeRegistry::instance()
+                                           .dereference(key_type->meta)
+                                           ->value_schema
+                                     : nullptr;
         for (auto [key, branch] : cases)
         {
             WiredFn fn;
@@ -384,10 +421,17 @@ namespace hgraph::python_bridge
                 fn = found->second;
             }
             if (key.is_none()) { result.default_branch = fn; }
-            else { result.cases.push_back(stdlib::SwitchCase{py_to_value(key), fn}); }
+            else
+            {
+                result.cases.push_back(stdlib::SwitchCase{
+                    key_schema != nullptr ? py_to_value_as(key, key_schema)
+                                          : py_to_value(key),
+                    fn});
+            }
         }
         return PySwitchCases{std::move(result)};
-    }, nb::arg("cases"), nb::arg("reload") = false);
+    }, nb::arg("cases"), nb::arg("reload") = false,
+       nb::arg("key_type") = nb::none());
     m.def("dispatch_cases", [](nb::list entries, nb::list on, nb::object default_branch) {
         const auto as_wired_fn = [](nb::handle branch) {
             if (nb::isinstance<PyWiredFn>(branch))
@@ -425,11 +469,16 @@ namespace hgraph::python_bridge
         if (!default_branch.is_none()) { result.default_branch = as_wired_fn(default_branch); }
         return PyDispatchCases{std::move(result)};
     }, nb::arg("entries"), nb::arg("on"), nb::arg("default_branch").none() = nb::none());
-    m.def("wired_op", [](const std::string &name) {
+    m.def("wired_op", [](const std::string &name, std::optional<PyTsType> expected_output) {
         const auto &table = wired_fn_table();
         const auto  found = table.find(name);
-        return PyWiredFn{found != table.end() ? found->second : runtime_operator_fn(name)};
-    });
+        if (found != table.end() && !expected_output.has_value())
+        {
+            return PyWiredFn{found->second};
+        }
+        return PyWiredFn{runtime_operator_fn(
+            name, expected_output.has_value() ? expected_output->meta : nullptr)};
+    }, nb::arg("name"), nb::arg("expected_output").none() = nb::none());
 
     // Conversion-layer round trip (test/debug aid): Python -> Value -> Python.
     m.def("_roundtrip_value", [](nb::handle object) { return value_to_py(py_to_value(object).view()); });
@@ -442,7 +491,7 @@ namespace hgraph::python_bridge
              nb::arg("capture_values") = false)
         .def("wire", &PyWiring::wire, nb::arg("name"), nb::arg("args") = nb::tuple(),
              nb::arg("kwargs") = nb::dict(), nb::arg("output_type") = nb::none(),
-             nb::arg("sizes") = nb::none())
+             nb::arg("sizes") = nb::none(), nb::arg("initial_resolution").none() = nb::none())
         .def("set_replay", &PyWiring::set_replay, nb::arg("key"), nb::arg("values"),
              nb::arg("ts_type") = nb::none())
         .def("feedback", &PyWiring::feedback, nb::arg("ts_type"), nb::arg("initial") = nb::none())

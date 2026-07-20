@@ -93,6 +93,20 @@ namespace hgraph {
         }
     }
 
+    /** Typed annotation boundary. Only ``Exception`` is intercepted, and the
+     *  caught value is provided to ``annotate``. If annotation returns, the
+     *  original exception continues to propagate. */
+    template <typename Exception, typename F, typename Annotate>
+    decltype(auto) annotate_on_exception(F &&f, Annotate &&annotate)
+    {
+        try {
+            return std::forward<F>(f)();
+        } catch (const Exception &error) {
+            std::forward<Annotate>(annotate)(error);
+            throw;
+        }
+    }
+
     template <typename Result, typename F>
     [[nodiscard]] Result fallback_on_exception(Result fallback, F &&f) noexcept
     {

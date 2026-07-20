@@ -29,6 +29,24 @@ namespace hgraph::python_bridge
         return *registry;
     }
 
+    std::unordered_map<const ValueTypeMetaData *,
+                       std::unordered_map<long long, nb::object>> &
+    enum_to_python_registry()
+    {
+        static auto *registry = new std::unordered_map<
+            const ValueTypeMetaData *, std::unordered_map<long long, nb::object>>{};
+        return *registry;
+    }
+
+    std::unordered_map<const ValueTypeMetaData *,
+                       std::unordered_map<std::string, long long>> &
+    enum_from_python_registry()
+    {
+        static auto *registry = new std::unordered_map<
+            const ValueTypeMetaData *, std::unordered_map<std::string, long long>>{};
+        return *registry;
+    }
+
     PyObj::PyObj(nb::object value) noexcept
         : object(value.release().ptr())
     {
@@ -143,15 +161,35 @@ namespace hgraph::python_bridge
             };
         }
 
-        [[nodiscard]] bool is_py_date(nb::handle object)
+        struct PythonDateTimeTypes
         {
-            return nb::hasattr(object, "year") && nb::hasattr(object, "month") && nb::hasattr(object, "day") &&
-                   !nb::hasattr(object, "hour");
-        }
+            nb::handle datetime;
+            nb::handle date;
+            nb::handle time;
+            nb::handle timedelta;
+        };
 
-        [[nodiscard]] bool is_py_time(nb::handle object)
+        [[nodiscard]] const PythonDateTimeTypes &python_datetime_types()
         {
-            return nb::hasattr(object, "hour") && nb::hasattr(object, "minute") && !nb::hasattr(object, "year");
+            // The bridge can be built against Python's limited API, where the
+            // datetime C API is unavailable. Keep borrowed handles backed by
+            // deliberately leaked type references, as nanobind does for its
+            // limited-API chrono caster.
+            static auto *types = [] {
+                nb::module_ module = nb::module_::import_("datetime");
+                const auto leak_type = [&](const char *name) {
+                    nb::object type = module.attr(name);
+                    return type.release();
+                };
+                auto *result = new PythonDateTimeTypes{
+                    .datetime  = leak_type("datetime"),
+                    .date      = leak_type("date"),
+                    .time      = leak_type("time"),
+                    .timedelta = leak_type("timedelta"),
+                };
+                return result;
+            }();
+            return *types;
         }
 
         [[nodiscard]] Value box_any(Value value)
@@ -165,6 +203,64 @@ namespace hgraph::python_bridge
         [[nodiscard]] Value box_python_object(nb::handle object)
         {
             return box_any(Value{PyObj{nb::borrow<nb::object>(object)}});
+        }
+
+        [[nodiscard]] std::optional<Value> try_python_bundle_value(nb::handle object)
+        {
+            const nb::object source_class = nb::getattr(object, "__class__");
+            std::vector<const ValueTypeMetaData *> candidates;
+            for (const auto &[schema, info] : bundle_class_info_registry())
+            {
+                if (info.type.is_valid() && source_class.is(info.type))
+                {
+                    candidates.push_back(static_cast<const ValueTypeMetaData *>(schema));
+                }
+            }
+            if (candidates.empty()) { return std::nullopt; }
+            if (candidates.size() == 1) { return py_to_value_as(object, candidates.front()); }
+
+            // Frozen dataclass generics cannot retain ``__orig_class__``. Rank
+            // their registered specialisations by exact field-value schemas;
+            // a tie remains opaque so overload resolution cannot depend on
+            // unordered registry iteration.
+            const ValueTypeMetaData *best = nullptr;
+            std::size_t best_score = 0;
+            bool ambiguous = false;
+            for (const auto *candidate : candidates)
+            {
+                std::size_t score = 0;
+                for (std::size_t index = 0; index < candidate->field_count; ++index)
+                {
+                    const ValueFieldMetaData &field = candidate->fields[index];
+                    if (field.name == nullptr || !nb::hasattr(object, field.name)) { continue; }
+                    nb::object field_value = nb::getattr(object, field.name);
+                    if (field_value.is_none() || field_value.ptr() == object.ptr()) { continue; }
+                    const Value inferred = py_to_value(field_value);
+                    if (inferred.schema() == field.type)
+                    {
+                        score += 2;
+                    }
+                    else if (inferred.schema() != nullptr && field.type != nullptr &&
+                             inferred.schema()->value_kind() == ValueTypeKind::Bundle &&
+                             field.type->value_kind() == ValueTypeKind::Bundle &&
+                             TypeRegistry::instance().bundle_is_a(inferred.schema(), field.type))
+                    {
+                        ++score;
+                    }
+                }
+                if (best == nullptr || score > best_score)
+                {
+                    best = candidate;
+                    best_score = score;
+                    ambiguous = false;
+                }
+                else if (score == best_score)
+                {
+                    ambiguous = true;
+                }
+            }
+            if (ambiguous) { return std::nullopt; }
+            return py_to_value_as(object, best);
         }
 
         [[nodiscard]] Value py_container_to_value(nb::handle object)
@@ -271,6 +367,17 @@ namespace hgraph::python_bridge
             auto raw = nb::cast<nb::bytes>(object);
             return Value{Bytes{std::string{raw.c_str(), raw.size()}}};
         }
+        // A Python Enum class is registered when its TS annotation is
+        // materialised. Preserve that nominal schema for plain enum values
+        // used in operator calls so the C++ auto-const path receives the
+        // same type as a connected TS[Enum] input.
+        for (const auto &[meta, python_type] : enum_class_registry())
+        {
+            if (python_type.is_valid() && nb::isinstance(object, python_type))
+            {
+                return py_to_value_as(object, meta);
+            }
+        }
         // Python classes are callable too, but are scalar data for dispatch,
         // context, and TS[object]. Only callable instances become runtime
         // callables during schema-free inference.
@@ -278,13 +385,23 @@ namespace hgraph::python_bridge
         {
             return Value{python_value_callable(object)};
         }
-        if (is_py_date(object))
+        const auto &date_time_types = python_datetime_types();
+        if (nb::isinstance(object, date_time_types.datetime))
+        {
+            DateTime when;
+            if (!nb::try_cast<DateTime>(object, when))
+            {
+                throw nb::type_error("invalid Python datetime value");
+            }
+            return Value{when};
+        }
+        if (nb::isinstance(object, date_time_types.date))
         {
             return Value{Date{std::chrono::year{nb::cast<int>(object.attr("year"))},
                               std::chrono::month{nb::cast<unsigned>(object.attr("month"))},
                               std::chrono::day{nb::cast<unsigned>(object.attr("day"))}}};
         }
-        if (is_py_time(object))
+        if (nb::isinstance(object, date_time_types.time))
         {
             nb::object offset = object.attr("utcoffset")();
             if (!offset.is_none())
@@ -298,11 +415,20 @@ namespace hgraph::python_bridge
                                         nb::cast<std::int64_t>(object.attr("microsecond"));
             return Value{Time{micros}};
         }
-        DateTime when;
-        if (nb::try_cast<DateTime>(object, when)) { return Value{when}; }
-        TimeDelta delta;
-        if (nb::try_cast<TimeDelta>(object, delta)) { return Value{delta}; }
-        if (nb::hasattr(object, "__arrow_c_stream__")) { return py_arrow_to_frame(object); }
+        if (nb::isinstance(object, date_time_types.timedelta))
+        {
+            TimeDelta delta;
+            if (!nb::try_cast<TimeDelta>(object, delta))
+            {
+                throw nb::type_error("invalid Python timedelta value");
+            }
+            return Value{delta};
+        }
+        if (nb::hasattr(object, "__arrow_c_stream__"))
+        {
+            nb::object arrow_stream = object.attr("__arrow_c_stream__");
+            if (PyCallable_Check(arrow_stream.ptr()) != 0) { return py_arrow_to_frame(object); }
+        }
         if (nb::isinstance<PyOpaqueRef>(object)) { return Value{nb::cast<PyOpaqueRef &>(object).value.view()}; }
         if (cmp_result_enum_slot().is_valid() && nb::isinstance(object, cmp_result_enum_slot()))
         {
@@ -312,6 +438,7 @@ namespace hgraph::python_bridge
         {
             return Value{static_cast<stdlib::DivideByZero>(nb::cast<std::int64_t>(object.attr("value")))};
         }
+        if (auto bundle = try_python_bundle_value(object)) { return std::move(*bundle); }
         if (nb::isinstance<nb::frozenset>(object) || nb::isinstance<nb::set>(object) ||
             nb::isinstance<nb::dict>(object) || nb::isinstance<nb::tuple>(object) ||
             nb::isinstance<nb::list>(object))

@@ -1,912 +1,1001 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/type_realization.h>
+#include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/utils/memory_utils.h>
-#include <hgraph/types/value/value.h>
 #include <hgraph/types/value/json_codec.h>
+#include <hgraph/types/value/value.h>
 
-#include <cstdint>
 #include <array>
+#include <cstdint>
 #include <string>
 #include <thread>
 
-namespace
-{
-    struct LabelScalarA
-    {
-        int value{};
-    };
+namespace {
+struct LabelScalarA {
+  int value{};
+};
 
-    struct LabelScalarB
-    {
-        int value{};
-    };
+struct LabelScalarB {
+  int value{};
+};
 
-    struct AnonymousLabelScalar
-    {
-        int value{};
-    };
+struct AnonymousLabelScalar {
+  int value{};
+};
+} // namespace
+
+TEST_CASE("TypeRegistry::register_scalar returns canonical metadata") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *a = registry.register_scalar<std::int32_t>("int32");
+  const auto *b = registry.register_scalar<std::int32_t>("int32");
+  REQUIRE(a == b);
+  REQUIRE(a != nullptr);
+  REQUIRE(a->value_kind() == ValueTypeKind::Atomic);
 }
 
-TEST_CASE("TypeRegistry::register_scalar returns canonical metadata")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *a        = registry.register_scalar<std::int32_t>("int32");
-    const auto *b        = registry.register_scalar<std::int32_t>("int32");
-    REQUIRE(a == b);
-    REQUIRE(a != nullptr);
-    REQUIRE(a->value_kind() == ValueTypeKind::Atomic);
+TEST_CASE("TypeRegistry::register_scalar populates the value_type alias") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *meta = registry.register_scalar<double>("double");
+  REQUIRE(registry.value_type("double") == meta);
 }
 
-TEST_CASE("TypeRegistry::register_scalar populates the value_type alias")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *meta     = registry.register_scalar<double>("double");
-    REQUIRE(registry.value_type("double") == meta);
+TEST_CASE("TypeRegistry aliases reject conflicting schema bindings") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *standard_int = registry.value_type("int");
+  REQUIRE(standard_int == registry.scalar_type<std::int64_t>().schema());
+
+  const auto *int32_meta = registry.register_scalar<std::int32_t>("int32");
+  REQUIRE(int32_meta != standard_int);
+  REQUIRE_THROWS_AS(registry.register_scalar<std::int32_t>("int"),
+                    std::invalid_argument);
+  REQUIRE_THROWS_AS(registry.register_value_type_alias("int", int32_meta),
+                    std::invalid_argument);
+  REQUIRE(registry.value_type("int") == standard_int);
+
+  const auto *standard_ts_int = registry.time_series_type("TS[int]");
+  REQUIRE(standard_ts_int == registry.ts(standard_int));
+  REQUIRE_THROWS_AS(registry.register_time_series_type_alias(
+                        "TS[int]", registry.ts(int32_meta)),
+                    std::invalid_argument);
+  REQUIRE(registry.time_series_type("TS[int]") == standard_ts_int);
 }
 
-TEST_CASE("TypeRegistry aliases reject conflicting schema bindings")
-{
-    using namespace hgraph;
-    auto       &registry     = TypeRegistry::instance();
-    const auto *standard_int = registry.value_type("int");
-    REQUIRE(standard_int == registry.scalar_type<std::int64_t>().schema());
-
-    const auto *int32_meta = registry.register_scalar<std::int32_t>("int32");
-    REQUIRE(int32_meta != standard_int);
-    REQUIRE_THROWS_AS(registry.register_scalar<std::int32_t>("int"), std::invalid_argument);
-    REQUIRE_THROWS_AS(registry.register_value_type_alias("int", int32_meta), std::invalid_argument);
-    REQUIRE(registry.value_type("int") == standard_int);
-
-    const auto *standard_ts_int = registry.time_series_type("TS[int]");
-    REQUIRE(standard_ts_int == registry.ts(standard_int));
-    REQUIRE_THROWS_AS(registry.register_time_series_type_alias("TS[int]", registry.ts(int32_meta)),
-                      std::invalid_argument);
-    REQUIRE(registry.time_series_type("TS[int]") == standard_ts_int);
+TEST_CASE("TypeRegistry::register_scalar wires the canonical plan into "
+          "ValuePlanFactory") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  auto &factory = ValuePlanFactory::instance();
+  const auto *meta = registry.register_scalar<long long>("long long");
+  REQUIRE(factory.find(meta) == &MemoryUtils::plan_for<long long>());
 }
 
-TEST_CASE("TypeRegistry::register_scalar wires the canonical plan into ValuePlanFactory")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    auto       &factory  = ValuePlanFactory::instance();
-    const auto *meta     = registry.register_scalar<long long>("long long");
-    REQUIRE(factory.find(meta) == &MemoryUtils::plan_for<long long>());
+TEST_CASE("TypeRegistry: different scalar types yield different metadata") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+  const auto *long_meta = registry.register_scalar<long>("long");
+  REQUIRE(int_meta != long_meta);
 }
 
-TEST_CASE("TypeRegistry: different scalar types yield different metadata")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *int_meta  = registry.register_scalar<std::int32_t>("int32");
-    const auto *long_meta = registry.register_scalar<long>("long");
-    REQUIRE(int_meta != long_meta);
+TEST_CASE("TypeRegistry::tuple interns by component identity and is "
+          "order-sensitive") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+  const auto *float_meta = registry.register_scalar<float>("float32");
+
+  const auto *t_if = registry.tuple({int_meta, float_meta});
+  const auto *t_if_again = registry.tuple({int_meta, float_meta});
+  const auto *t_fi = registry.tuple({float_meta, int_meta});
+
+  REQUIRE(t_if == t_if_again);
+  REQUIRE(t_if != t_fi);
+  REQUIRE(t_if->value_kind() == ValueTypeKind::Tuple);
+  REQUIRE(t_if->field_count == 2);
+  REQUIRE(t_if->fields[0].type == int_meta);
+  REQUIRE(t_if->fields[1].type == float_meta);
+  REQUIRE(t_if->fields[0].name == nullptr);
+  REQUIRE(t_if->fields[1].name == nullptr);
 }
 
-TEST_CASE("TypeRegistry::tuple interns by component identity and is order-sensitive")
-{
-    using namespace hgraph;
-    auto       &registry   = TypeRegistry::instance();
-    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
-    const auto *float_meta = registry.register_scalar<float>("float32");
+TEST_CASE("TypeRegistry::bundle interns by structural identity and registers "
+          "the alias") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+  const auto *str_meta = registry.register_scalar<std::string>("string");
+  const auto *bundle_meta =
+      registry.bundle("TestBundleA", {{"x", int_meta}, {"y", str_meta}});
 
-    const auto *t_if = registry.tuple({int_meta, float_meta});
-    const auto *t_if_again = registry.tuple({int_meta, float_meta});
-    const auto *t_fi = registry.tuple({float_meta, int_meta});
+  REQUIRE(bundle_meta != nullptr);
+  REQUIRE(bundle_meta->value_kind() == ValueTypeKind::Bundle);
+  REQUIRE(bundle_meta->field_count == 2);
+  REQUIRE(std::string(bundle_meta->fields[0].name) == "x");
+  REQUIRE(std::string(bundle_meta->fields[1].name) == "y");
 
-    REQUIRE(t_if == t_if_again);
-    REQUIRE(t_if != t_fi);
-    REQUIRE(t_if->value_kind() == ValueTypeKind::Tuple);
-    REQUIRE(t_if->field_count == 2);
-    REQUIRE(t_if->fields[0].type == int_meta);
-    REQUIRE(t_if->fields[1].type == float_meta);
-    REQUIRE(t_if->fields[0].name == nullptr);
-    REQUIRE(t_if->fields[1].name == nullptr);
+  REQUIRE(registry.bundle("TestBundleA", {{"x", int_meta}, {"y", str_meta}}) ==
+          bundle_meta);
+  REQUIRE(registry.value_type("TestBundleA") == bundle_meta);
 }
 
-TEST_CASE("TypeRegistry::bundle interns by structural identity and registers the alias")
-{
-    using namespace hgraph;
-    auto       &registry   = TypeRegistry::instance();
-    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
-    const auto *str_meta   = registry.register_scalar<std::string>("string");
-    const auto *bundle_meta = registry.bundle("TestBundleA", {{"x", int_meta}, {"y", str_meta}});
+TEST_CASE("TypeRegistry: un_named_bundle and bundle distinguish structural vs "
+          "nominal identity") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+  const auto *str_meta = registry.register_scalar<std::string>("string");
 
-    REQUIRE(bundle_meta != nullptr);
-    REQUIRE(bundle_meta->value_kind() == ValueTypeKind::Bundle);
-    REQUIRE(bundle_meta->field_count == 2);
-    REQUIRE(std::string(bundle_meta->fields[0].name) == "x");
-    REQUIRE(std::string(bundle_meta->fields[1].name) == "y");
+  const std::vector<std::pair<std::string, const ValueTypeMetaData *>> fields{
+      {"x", int_meta}, {"y", str_meta}};
 
-    REQUIRE(registry.bundle("TestBundleA", {{"x", int_meta}, {"y", str_meta}}) == bundle_meta);
-    REQUIRE(registry.value_type("TestBundleA") == bundle_meta);
+  // Two un_named_bundle calls with the same field list return the same
+  // canonical pointer.
+  const auto *u1 = registry.un_named_bundle(fields);
+  const auto *u2 = registry.un_named_bundle(fields);
+  REQUIRE(u1 == u2);
+  REQUIRE(u1->is_un_named_bundle());
+  REQUIRE_FALSE(u1->is_named_bundle());
+  REQUIRE(std::string{u1->name()} == "Bundle{x:int32,y:str}");
+  REQUIRE(u1->wrapped_un_named == nullptr);
+
+  // bundle(name, fields) wraps an un_named_bundle; same name + same fields →
+  // same pointer.
+  const auto *named_a1 = registry.bundle("BundleNamedA", fields);
+  const auto *named_a2 = registry.bundle("BundleNamedA", fields);
+  REQUIRE(named_a1 == named_a2);
+  REQUIRE(named_a1->is_named_bundle());
+  REQUIRE_FALSE(named_a1->is_un_named_bundle());
+  REQUIRE(named_a1->wrapped_un_named == u1); // wraps the un-named twin
+  REQUIRE(std::string(named_a1->name()) == std::string("BundleNamedA"));
+  REQUIRE(named_a1->fields == u1->fields); // shares the field array
+  REQUIRE(named_a1->field_count == u1->field_count);
+
+  // Different names with the same fields are DISTINCT named schemas (nominal
+  // identity).
+  const auto *named_b = registry.bundle("BundleNamedB", fields);
+  REQUIRE(named_b != named_a1);
+  REQUIRE(named_b->wrapped_un_named == u1); // both wrap the same un-named
+
+  // Named ≠ un-named, even though they share fields.
+  REQUIRE(named_a1 != u1);
+
+  // bundle(...) requires a non-empty name.
+  REQUIRE_THROWS_AS(registry.bundle("", fields), std::invalid_argument);
+
+  // named_bundle() lookup: returns the named meta, or nullptr when the
+  // name doesn't exist or doesn't resolve to a named bundle.
+  REQUIRE(registry.named_bundle("BundleNamedA") == named_a1);
+  REQUIRE(registry.named_bundle("BundleNamedB") == named_b);
+  REQUIRE(registry.named_bundle("DoesNotExist") == nullptr);
+  // The atomic "int" registered earlier shares the value-name space but is not
+  // a named bundle.
+  REQUIRE(registry.named_bundle("int") == nullptr);
+
+  // Bundle name namespace is unique: same name + same fields is idempotent,
+  // same name + different fields is rejected.
+  const std::vector<std::pair<std::string, const ValueTypeMetaData *>>
+      different_fields{{"x", int_meta}, {"z", int_meta}};
+  REQUIRE_NOTHROW(registry.bundle("BundleNamedA", fields)); // same shape -> OK
+  REQUIRE_THROWS_AS(
+      registry.bundle("BundleNamedA",
+                      different_fields), // different shape -> conflict
+      std::invalid_argument);
 }
 
-TEST_CASE("TypeRegistry: un_named_bundle and bundle distinguish structural vs nominal identity")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
-    const auto *str_meta = registry.register_scalar<std::string>("string");
+TEST_CASE("TypeRegistry gives named bundles qualified nominal identity") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  REQUIRE(integer != nullptr);
 
-    const std::vector<std::pair<std::string, const ValueTypeMetaData *>> fields{
-        {"x", int_meta}, {"y", str_meta}};
+  const auto *left =
+      registry.bundle("tests.alpha", "QualifiedThing", {{"value", integer}});
+  const auto *right =
+      registry.bundle("tests.beta", "QualifiedThing", {{"value", integer}});
 
-    // Two un_named_bundle calls with the same field list return the same canonical pointer.
-    const auto *u1 = registry.un_named_bundle(fields);
-    const auto *u2 = registry.un_named_bundle(fields);
-    REQUIRE(u1 == u2);
-    REQUIRE(u1->is_un_named_bundle());
-    REQUIRE_FALSE(u1->is_named_bundle());
-    REQUIRE(std::string{u1->name()} == "Bundle{x:int32,y:str}");
-    REQUIRE(u1->wrapped_un_named == nullptr);
-
-    // bundle(name, fields) wraps an un_named_bundle; same name + same fields → same pointer.
-    const auto *named_a1 = registry.bundle("BundleNamedA", fields);
-    const auto *named_a2 = registry.bundle("BundleNamedA", fields);
-    REQUIRE(named_a1 == named_a2);
-    REQUIRE(named_a1->is_named_bundle());
-    REQUIRE_FALSE(named_a1->is_un_named_bundle());
-    REQUIRE(named_a1->wrapped_un_named == u1);  // wraps the un-named twin
-    REQUIRE(std::string(named_a1->name()) == std::string("BundleNamedA"));
-    REQUIRE(named_a1->fields == u1->fields);     // shares the field array
-    REQUIRE(named_a1->field_count == u1->field_count);
-
-    // Different names with the same fields are DISTINCT named schemas (nominal identity).
-    const auto *named_b = registry.bundle("BundleNamedB", fields);
-    REQUIRE(named_b != named_a1);
-    REQUIRE(named_b->wrapped_un_named == u1);    // both wrap the same un-named
-
-    // Named ≠ un-named, even though they share fields.
-    REQUIRE(named_a1 != u1);
-
-    // bundle(...) requires a non-empty name.
-    REQUIRE_THROWS_AS(registry.bundle("", fields), std::invalid_argument);
-
-    // named_bundle() lookup: returns the named meta, or nullptr when the
-    // name doesn't exist or doesn't resolve to a named bundle.
-    REQUIRE(registry.named_bundle("BundleNamedA") == named_a1);
-    REQUIRE(registry.named_bundle("BundleNamedB") == named_b);
-    REQUIRE(registry.named_bundle("DoesNotExist") == nullptr);
-    // The atomic "int" registered earlier shares the value-name space but is not a named bundle.
-    REQUIRE(registry.named_bundle("int") == nullptr);
-
-    // Bundle name namespace is unique: same name + same fields is idempotent,
-    // same name + different fields is rejected.
-    const std::vector<std::pair<std::string, const ValueTypeMetaData *>> different_fields{
-        {"x", int_meta}, {"z", int_meta}};
-    REQUIRE_NOTHROW(registry.bundle("BundleNamedA", fields));            // same shape -> OK
-    REQUIRE_THROWS_AS(registry.bundle("BundleNamedA", different_fields), // different shape -> conflict
-                      std::invalid_argument);
+  REQUIRE(left != right);
+  REQUIRE(std::string{left->bundle_namespace()} == "tests.alpha");
+  REQUIRE(std::string{left->bundle_local_name()} == "QualifiedThing");
+  REQUIRE(std::string{left->name()} == "tests.alpha::QualifiedThing");
+  REQUIRE(registry.named_bundle("tests.alpha", "QualifiedThing") == left);
+  REQUIRE(registry.named_bundle("tests.beta", "QualifiedThing") == right);
+  REQUIRE(registry.bundle("tests.alpha::QualifiedThing",
+                          {{"value", integer}}) == left);
 }
 
-TEST_CASE("TypeRegistry gives named bundles qualified nominal identity")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-    const auto *integer = registry.value_type("int");
-    REQUIRE(integer != nullptr);
+TEST_CASE("TypeRegistry records invariant Bundle specializations") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  const auto *text = registry.value_type("str");
+  REQUIRE(integer != nullptr);
+  REQUIRE(text != nullptr);
 
-    const auto *left = registry.bundle("tests.alpha", "QualifiedThing", {{"value", integer}});
-    const auto *right = registry.bundle("tests.beta", "QualifiedThing", {{"value", integer}});
+  const auto *integer_box =
+      registry.bundle("tests.generic", "Box[int]", {{"value", integer}}, {},
+                      false, "__type__", {integer});
+  const auto *string_box =
+      registry.bundle("tests.generic", "Box[str]", {{"value", text}}, {}, false,
+                      "__type__", {text});
 
-    REQUIRE(left != right);
-    REQUIRE(std::string{left->bundle_namespace()} == "tests.alpha");
-    REQUIRE(std::string{left->bundle_local_name()} == "QualifiedThing");
-    REQUIRE(std::string{left->name()} == "tests.alpha::QualifiedThing");
-    REQUIRE(registry.named_bundle("tests.alpha", "QualifiedThing") == left);
-    REQUIRE(registry.named_bundle("tests.beta", "QualifiedThing") == right);
-    REQUIRE(registry.bundle("tests.alpha::QualifiedThing", {{"value", integer}}) == left);
+  REQUIRE(integer_box != string_box);
+  REQUIRE(integer_box->bundle_generic_arguments() ==
+          std::vector<const ValueTypeMetaData *>{integer});
+  REQUIRE(string_box->bundle_generic_arguments() ==
+          std::vector<const ValueTypeMetaData *>{text});
+  REQUIRE_THROWS_AS(registry.bundle("tests.generic", "Box[int]",
+                                    {{"value", integer}}, {}, false, "__type__",
+                                    {text}),
+                    std::invalid_argument);
 }
 
-TEST_CASE("TypeRegistry records invariant Bundle specializations")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-    const auto *integer = registry.value_type("int");
-    const auto *text = registry.value_type("str");
-    REQUIRE(integer != nullptr);
-    REQUIRE(text != nullptr);
+TEST_CASE(
+    "TypeRegistry records closed multiple-inheritance bundle hierarchies") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  const auto *text = registry.value_type("str");
+  REQUIRE(integer != nullptr);
+  REQUIRE(text != nullptr);
 
-    const auto *integer_box = registry.bundle(
-        "tests.generic", "Box[int]", {{"value", integer}}, {}, false, "__type__", {integer});
-    const auto *string_box = registry.bundle(
-        "tests.generic", "Box[str]", {{"value", text}}, {}, false, "__type__", {text});
+  const auto *order = registry.bundle("tests.orders", "HierarchyOrder",
+                                      {{"id", integer}}, {}, true);
+  const auto *priced = registry.bundle("tests.orders", "HierarchyPriced",
+                                       {{"price", integer}}, {}, true);
+  const auto *limit = registry.bundle(
+      "tests.orders", "HierarchyLimit",
+      {{"id", integer}, {"price", integer}, {"venue", text}}, {order, priced});
 
-    REQUIRE(integer_box != string_box);
-    REQUIRE(integer_box->bundle_generic_arguments() ==
-            std::vector<const ValueTypeMetaData *>{integer});
-    REQUIRE(string_box->bundle_generic_arguments() ==
-            std::vector<const ValueTypeMetaData *>{text});
-    REQUIRE_THROWS_AS(
-        registry.bundle(
-            "tests.generic", "Box[int]", {{"value", integer}}, {}, false, "__type__", {text}),
-        std::invalid_argument);
+  REQUIRE(order->is_abstract_bundle());
+  REQUIRE_FALSE(limit->is_abstract_bundle());
+  REQUIRE(registry.bundle_is_a(limit, order));
+  REQUIRE(registry.bundle_is_a(limit, priced));
+  REQUIRE_FALSE(registry.bundle_is_a(order, limit));
+  REQUIRE(order->bundle_hierarchy->children ==
+          std::vector<const ValueTypeMetaData *>{limit});
+  REQUIRE(limit->bundle_hierarchy->parents ==
+          std::vector<const ValueTypeMetaData *>{order, priced});
+
+  const auto descendants = registry.bundle_descendants(order);
+  REQUIRE(descendants == std::vector<const ValueTypeMetaData *>{limit});
+  const auto all_descendants = registry.bundle_descendants(order, true, true);
+  REQUIRE(all_descendants ==
+          std::vector<const ValueTypeMetaData *>{order, limit});
+
+  REQUIRE_THROWS_AS(registry.bundle("tests.orders", "HierarchyBroken",
+                                    {{"id", text}}, {order}),
+                    std::invalid_argument);
 }
 
-TEST_CASE("TypeRegistry records closed multiple-inheritance bundle hierarchies")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-    const auto *integer = registry.value_type("int");
-    const auto *text = registry.value_type("str");
-    REQUIRE(integer != nullptr);
-    REQUIRE(text != nullptr);
+TEST_CASE("self-recursive Bundles store one inline owner pointer and allocate "
+          "on demand") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  REQUIRE(integer != nullptr);
 
-    const auto *order = registry.bundle(
-        "tests.orders", "HierarchyOrder", {{"id", integer}}, {}, true);
-    const auto *priced = registry.bundle(
-        "tests.orders", "HierarchyPriced", {{"price", integer}}, {}, true);
-    const auto *limit = registry.bundle(
-        "tests.orders", "HierarchyLimit",
-        {{"id", integer}, {"price", integer}, {"venue", text}}, {order, priced});
+  const auto *recursive =
+      registry.recursive_bundle("tests.recursion", "RecursiveValue",
+                                {{"value", integer}, {"next", nullptr}});
+  REQUIRE(recursive->field_count == 2);
+  const auto *owned = recursive->fields[1].type;
+  REQUIRE(owned != nullptr);
+  REQUIRE(owned->is_owned());
+  REQUIRE(owned->element_type == recursive);
 
-    REQUIRE(order->is_abstract_bundle());
-    REQUIRE_FALSE(limit->is_abstract_bundle());
-    REQUIRE(registry.bundle_is_a(limit, order));
-    REQUIRE(registry.bundle_is_a(limit, priced));
-    REQUIRE_FALSE(registry.bundle_is_a(order, limit));
-    REQUIRE(order->bundle_hierarchy->children == std::vector<const ValueTypeMetaData *>{limit});
-    REQUIRE(limit->bundle_hierarchy->parents ==
-            std::vector<const ValueTypeMetaData *>{order, priced});
+  const auto owned_type = ValuePlanFactory::instance().type_for(owned);
+  REQUIRE(owned_type.checked_plan().layout.size == sizeof(void *));
+  REQUIRE(owned_type.checked_plan().layout.alignment == alignof(void *));
 
-    const auto descendants = registry.bundle_descendants(order);
-    REQUIRE(descendants == std::vector<const ValueTypeMetaData *>{limit});
-    const auto all_descendants = registry.bundle_descendants(order, true, true);
-    REQUIRE(all_descendants == std::vector<const ValueTypeMetaData *>{order, limit});
+  Value empty_root{ValuePlanFactory::instance().type_for(recursive)};
+  Value empty_owner{owned_type};
+  REQUIRE_FALSE(empty_root.view().equals(empty_owner.view()));
 
-    REQUIRE_THROWS_AS(
-        registry.bundle("tests.orders", "HierarchyBroken", {{"id", text}}, {order}),
-                      std::invalid_argument);
+  Value root{ValuePlanFactory::instance().type_for(recursive)};
+  auto root_fields = root.as_bundle().begin_mutation();
+  root_fields["value"].set(std::int64_t{1});
+  auto next_owner = root_fields["next"];
+  REQUIRE(next_owner.to_string() == "None");
+
+  auto next_fields = next_owner.as_bundle().begin_mutation();
+  next_fields["value"].set(std::int64_t{2});
+  REQUIRE(root.as_bundle()["next"].concrete().schema() == recursive);
+  REQUIRE(root.as_bundle()["next"]
+              .as_bundle()["value"]
+              .checked_as<std::int64_t>() == 2);
+
+  Value copy{root};
+  copy.as_bundle()
+      .begin_mutation()["next"]
+      .as_bundle()
+      .begin_mutation()["value"]
+      .set(std::int64_t{3});
+  REQUIRE(root.as_bundle()["next"]
+              .as_bundle()["value"]
+              .checked_as<std::int64_t>() == 2);
+  REQUIRE(copy.as_bundle()["next"]
+              .as_bundle()["value"]
+              .checked_as<std::int64_t>() == 3);
+
+  const std::string encoded = to_json_string(root.view());
+  Value decoded = from_json_string(recursive, encoded);
+  REQUIRE(decoded.as_bundle()["next"]
+              .as_bundle()["value"]
+              .checked_as<std::int64_t>() == 2);
 }
 
-TEST_CASE("self-recursive Bundles store one inline owner pointer and allocate on demand")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-    const auto *integer = registry.value_type("int");
-    REQUIRE(integer != nullptr);
+TEST_CASE("mutually recursive Bundles resolve owned edges across one "
+          "declaration batch") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  REQUIRE(integer != nullptr);
 
-    const auto *recursive = registry.recursive_bundle(
-        "tests.recursion", "RecursiveValue", {{"value", integer}, {"next", nullptr}});
-    REQUIRE(recursive->field_count == 2);
-    const auto *owned = recursive->fields[1].type;
-    REQUIRE(owned != nullptr);
-    REQUIRE(owned->is_owned());
-    REQUIRE(owned->element_type == recursive);
+  const auto schemas = registry.recursive_bundles({
+      RecursiveBundleDefinition{
+          .bundle_namespace = "tests.recursion",
+          .local_name = "MutualLeft",
+          .fields =
+              {
+                  {.name = "value", .type = integer},
+                  {.name = "right", .owned_target = 1},
+              },
+      },
+      RecursiveBundleDefinition{
+          .bundle_namespace = "tests.recursion",
+          .local_name = "MutualRight",
+          .fields =
+              {
+                  {.name = "value", .type = integer},
+                  {.name = "left", .owned_target = 0},
+              },
+      },
+  });
 
-    const auto owned_type = ValuePlanFactory::instance().type_for(owned);
-    REQUIRE(owned_type.checked_plan().layout.size == sizeof(void *));
-    REQUIRE(owned_type.checked_plan().layout.alignment == alignof(void *));
+  REQUIRE(schemas.size() == 2);
+  REQUIRE(schemas[0]->fields[1].type->is_owned());
+  REQUIRE(schemas[0]->fields[1].type->element_type == schemas[1]);
+  REQUIRE(schemas[1]->fields[1].type->is_owned());
+  REQUIRE(schemas[1]->fields[1].type->element_type == schemas[0]);
+  REQUIRE(ValuePlanFactory::instance()
+              .type_for(schemas[0]->fields[1].type)
+              .checked_plan()
+              .layout.size == sizeof(void *));
 
-    Value empty_root{ValuePlanFactory::instance().type_for(recursive)};
-    Value empty_owner{owned_type};
-    REQUIRE_FALSE(empty_root.view().equals(empty_owner.view()));
+  Value left{ValuePlanFactory::instance().type_for(schemas[0])};
+  auto fields = left.as_bundle().begin_mutation();
+  fields["value"].set(std::int64_t{1});
+  auto right = fields["right"].as_bundle().begin_mutation();
+  right["value"].set(std::int64_t{2});
+  right["left"].as_bundle().begin_mutation()["value"].set(std::int64_t{3});
 
-    Value root{ValuePlanFactory::instance().type_for(recursive)};
-    auto root_fields = root.as_bundle().begin_mutation();
-    root_fields["value"].set(std::int64_t{1});
-    auto next_owner = root_fields["next"];
-    REQUIRE(next_owner.to_string() == "None");
-
-    auto next_fields = next_owner.as_bundle().begin_mutation();
-    next_fields["value"].set(std::int64_t{2});
-    REQUIRE(root.as_bundle()["next"].concrete().schema() == recursive);
-    REQUIRE(root.as_bundle()["next"].as_bundle()["value"].checked_as<std::int64_t>() == 2);
-
-    Value copy{root};
-    copy.as_bundle().begin_mutation()["next"].as_bundle().begin_mutation()["value"].set(std::int64_t{3});
-    REQUIRE(root.as_bundle()["next"].as_bundle()["value"].checked_as<std::int64_t>() == 2);
-    REQUIRE(copy.as_bundle()["next"].as_bundle()["value"].checked_as<std::int64_t>() == 3);
-
-    const std::string encoded = to_json_string(root.view());
-    Value decoded = from_json_string(recursive, encoded);
-    REQUIRE(decoded.as_bundle()["next"].as_bundle()["value"].checked_as<std::int64_t>() == 2);
+  REQUIRE(left.as_bundle()["right"]
+              .as_bundle()["value"]
+              .checked_as<std::int64_t>() == 2);
+  REQUIRE(left.as_bundle()["right"]
+              .as_bundle()["left"]
+              .as_bundle()["value"]
+              .checked_as<std::int64_t>() == 3);
 }
 
-TEST_CASE("mutually recursive Bundles resolve owned edges across one declaration batch")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-    const auto *integer = registry.value_type("int");
-    REQUIRE(integer != nullptr);
+TEST_CASE("TypeRealizationSnapshot closes polymorphic Bundle storage without "
+          "taxing leaves") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  const auto *text = registry.value_type("str");
+  REQUIRE(integer != nullptr);
+  REQUIRE(text != nullptr);
 
-    const auto schemas = registry.recursive_bundles({
-        RecursiveBundleDefinition{
-            .bundle_namespace = "tests.recursion",
-            .local_name = "MutualLeft",
-            .fields = {
-                {.name = "value", .type = integer},
-                {.name = "right", .owned_target = 1},
-            },
-        },
-        RecursiveBundleDefinition{
-            .bundle_namespace = "tests.recursion",
-            .local_name = "MutualRight",
-            .fields = {
-                {.name = "value", .type = integer},
-                {.name = "left", .owned_target = 0},
-            },
-        },
+  const auto *base =
+      registry.bundle("tests.realization", "SnapshotBase", {{"id", integer}});
+  const auto *small = registry.bundle(
+      "tests.realization", "SnapshotSmall",
+      {{"id", integer}, {"quantity", integer}, {"label", text}}, {base});
+  const auto *holder =
+      registry.bundle("tests.realization", "SnapshotHolder", {{"item", base}});
+  const auto *list_of_base = registry.list(base);
+  const auto *fixed_list_of_base = registry.list(base, 2);
+  const auto *mutable_list_of_base = registry.mutable_list(base);
+
+  const auto first = TypeRealizationSnapshot::capture(registry);
+  REQUIRE(TypeRealizationSnapshot::capture(registry) == first);
+  const auto exact_small = ValuePlanFactory::instance().type_for(small);
+  const auto realized_small = first->type_for(small);
+  const auto realized_base = first->type_for(base);
+  Value concrete{exact_small};
+  concrete.as_bundle().begin_mutation()["label"].set(std::string{"small"});
+
+  REQUIRE(realized_small == exact_small);
+  REQUIRE(realized_base != ValuePlanFactory::instance().type_for(base));
+  REQUIRE(realized_base.checked_plan().layout.size >=
+          exact_small.checked_plan().layout.size + sizeof(const TypeRecord *));
+  REQUIRE(first->alternatives(base) ==
+          std::vector<const ValueTypeMetaData *>{base, small});
+
+  const auto exact_holder = ValuePlanFactory::instance().type_for(holder);
+  const auto realized_holder = first->type_for(holder);
+  REQUIRE(realized_holder != exact_holder);
+  REQUIRE(realized_holder.checked_plan().component("item").plan ==
+          realized_base.plan());
+
+  const auto realized_list = first->type_for(list_of_base);
+  REQUIRE(realized_list != ValuePlanFactory::instance().type_for(list_of_base));
+  REQUIRE_THROWS_AS(first->type_for(fixed_list_of_base), std::logic_error);
+  const auto realized_mutable_list = first->type_for(mutable_list_of_base);
+  REQUIRE(realized_mutable_list !=
+          ValuePlanFactory::instance().type_for(mutable_list_of_base));
+  Value mutable_list{realized_mutable_list};
+  auto mutable_values = mutable_list.as_list().begin_mutation();
+  mutable_values.push_back(concrete.view());
+  REQUIRE(mutable_values.at(0).concrete().schema() == small);
+
+  Value replacement{exact_small};
+  replacement.as_bundle().begin_mutation()["label"].set(
+      std::string{"replacement"});
+  mutable_values.set(0, replacement.view());
+  REQUIRE(mutable_values.at(0)
+              .concrete()
+              .as_bundle()["label"]
+              .checked_as<std::string>() == "replacement");
+  {
+    TypeRealizationScope scope{first.get()};
+    Value list = from_json_string(
+        list_of_base,
+        R"([{"__type__": "tests.realization::SnapshotSmall", "id": 1, "quantity": 2, "label": "one"}])");
+    REQUIRE(list.binding() == realized_list);
+    REQUIRE(list.view().as_list().at(0).concrete().schema() == small);
+  }
+
+  Value holder_value{realized_holder};
+  auto item = holder_value.as_bundle().begin_mutation()["item"];
+  realized_base.ops_ref().copy_assign_from(realized_base, item.mutable_data(),
+                                           exact_small, concrete.view().data());
+  REQUIRE(holder_value.as_bundle()["item"].concrete().schema() == small);
+
+  Value polymorphic{realized_base};
+  auto destination = polymorphic.begin_mutation();
+  realized_base.ops_ref().copy_assign_from(realized_base,
+                                           destination.mutable_data(),
+                                           exact_small, concrete.view().data());
+  const auto projected = polymorphic.view().concrete();
+  REQUIRE(projected.schema() == small);
+  REQUIRE(projected.binding() == exact_small);
+
+  const auto *large = registry.bundle(
+      "tests.realization", "SnapshotLarge",
+      {{"id", integer}, {"description", text}, {"quantity", integer}}, {base});
+  REQUIRE(first->alternatives(base) ==
+          std::vector<const ValueTypeMetaData *>{base, small});
+
+  const auto second = TypeRealizationSnapshot::capture(registry);
+  REQUIRE(second->alternatives(base) ==
+          std::vector<const ValueTypeMetaData *>{base, small, large});
+  REQUIRE(
+      second->type_for(base).checked_plan().layout.size >=
+      ValuePlanFactory::instance().type_for(large).checked_plan().layout.size +
+          sizeof(const TypeRecord *));
+
+  Value newer{second->type_for(base)};
+  auto newer_destination = newer.begin_mutation();
+  second->type_for(base).ops_ref().copy_assign_from(
+      second->type_for(base), newer_destination.mutable_data(),
+      polymorphic.binding(), polymorphic.view().data());
+  REQUIRE(newer.view().concrete().schema() == small);
+
+  Value newer_small{second->type_for(base)};
+  auto newer_small_destination = newer_small.begin_mutation();
+  second->type_for(base).ops_ref().copy_assign_from(
+      second->type_for(base), newer_small_destination.mutable_data(),
+      exact_small, concrete.view().data());
+  Value older_target{realized_base};
+  auto older_destination = older_target.begin_mutation();
+  auto newer_small_source = newer_small.begin_mutation();
+  realized_base.ops_ref().move_assign_from(
+      realized_base, older_destination.mutable_data(), newer_small.binding(),
+      newer_small_source.mutable_data());
+  REQUIRE(older_target.view()
+              .concrete()
+              .as_bundle()["label"]
+              .checked_as<std::string>() == "small");
+
+  Value large_value{ValuePlanFactory::instance().type_for(large)};
+  second->type_for(base).ops_ref().copy_assign_from(
+      second->type_for(base), newer_destination.mutable_data(),
+      large_value.binding(), large_value.view().data());
+  REQUIRE(newer.view().concrete().schema() == large);
+  REQUIRE_THROWS_AS(first->type_for(base).ops_ref().copy_assign_from(
+                        first->type_for(base), destination.mutable_data(),
+                        newer.binding(), newer.view().data()),
+                    std::invalid_argument);
+}
+
+TEST_CASE("abstract Bundle without a concrete alternative cannot be realized") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  REQUIRE(integer != nullptr);
+  const auto *abstract = registry.bundle("tests.realization", "UninhabitedBase",
+                                         {{"id", integer}}, {}, true);
+
+  const auto snapshot = TypeRealizationSnapshot::capture(registry);
+  REQUIRE(snapshot->is_polymorphic(abstract));
+  REQUIRE_THROWS_AS(snapshot->type_for(abstract), std::logic_error);
+}
+
+TEST_CASE(
+    "closed Bundle realization owns only an indirect recursive union edge") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  REQUIRE(integer != nullptr);
+
+  const auto *instrument = registry.bundle(
+      "tests.realization", "RecursiveInstrument", {{"id", integer}});
+  const auto *specification =
+      registry.bundle("tests.realization", "RecursiveSpecification",
+                      {{"underlying", instrument}});
+  const auto *series = registry.bundle("tests.realization", "RecursiveSeries",
+                                       {{"specification", specification}});
+  const auto *future =
+      registry.bundle("tests.realization", "RecursiveFuture",
+                      {{"id", integer}, {"series", series}}, {instrument});
+
+  const auto snapshot = TypeRealizationSnapshot::capture(registry);
+  const auto realized_instrument = snapshot->type_for(instrument);
+  const auto realized_future = snapshot->type_for(future);
+  REQUIRE(realized_instrument !=
+          ValuePlanFactory::instance().type_for(instrument));
+  REQUIRE(realized_future != ValuePlanFactory::instance().type_for(future));
+
+  Value value{realized_future};
+  auto future_fields = value.as_bundle().begin_mutation();
+  REQUIRE(future_fields.size() == 2);
+  auto series_fields = future_fields["series"].as_bundle().begin_mutation();
+  REQUIRE(series_fields.size() == 1);
+  auto specification_fields =
+      series_fields["specification"].as_bundle().begin_mutation();
+  REQUIRE(specification_fields.size() == 1);
+  auto underlying = specification_fields["underlying"];
+  REQUIRE(underlying.binding().schema()->is_owned());
+  REQUIRE(underlying.binding().schema()->element_type == instrument);
+  REQUIRE(underlying.binding().checked_plan().layout.size == sizeof(void *));
+
+  TypeRealizationScope scope{snapshot.get()};
+  auto underlying_fields = underlying.as_bundle().begin_mutation();
+  REQUIRE(underlying_fields.size() == 1);
+  underlying_fields["id"].set(std::int64_t{42});
+  REQUIRE(underlying.as_bundle()["id"].checked_as<std::int64_t>() == 42);
+}
+
+TEST_CASE(
+    "polymorphic Bundle JSON requires and consumes an external discriminator") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  REQUIRE(integer != nullptr);
+
+  const auto *base =
+      registry.bundle("tests.json", "JsonBase", {{"id", integer}}, {}, true);
+  const auto *child =
+      registry.bundle("tests.json", "JsonChild",
+                      {{"id", integer}, {"quantity", integer}}, {base});
+  const auto *holder =
+      registry.bundle("tests.json", "JsonHolder", {{"item", base}});
+  const auto snapshot = TypeRealizationSnapshot::capture(registry);
+  TypeRealizationScope scope{snapshot.get()};
+
+  REQUIRE_THROWS_AS(from_json_string(base, R"({"id": 1})"),
+                    std::invalid_argument);
+  Value value = from_json_string(
+      base, R"({"__type__": "tests.json::JsonChild", "id": 1, "quantity": 2})");
+  REQUIRE(value.binding() == snapshot->type_for(base));
+  REQUIRE(value.view().concrete().schema() == child);
+
+  const std::string encoded = to_json_string(value.view());
+  REQUIRE(encoded.find(R"("__type__": "tests.json::JsonChild")") !=
+          std::string::npos);
+  Value round_trip = from_json_string(base, encoded);
+  REQUIRE(round_trip.view().concrete().schema() == child);
+
+  Value nested = from_json_string(
+      holder,
+      R"({"item": {"__type__": "tests.json::JsonChild", "id": 3, "quantity": 4}})");
+  REQUIRE(nested.binding() == snapshot->type_for(holder));
+  REQUIRE(nested.as_bundle()["item"].concrete().schema() == child);
+  Value nested_round_trip =
+      from_json_string(holder, to_json_string(nested.view()));
+  REQUIRE(nested_round_trip.as_bundle()["item"].concrete().schema() == child);
+}
+
+TEST_CASE("TypeRegistry assigns exact stable canonical labels to every value "
+          "schema family") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *i = registry.register_scalar<LabelScalarA>("LabelInt");
+  const auto *s = registry.register_scalar<LabelScalarB>("LabelStr");
+  const auto *anonymous = registry.register_scalar<AnonymousLabelScalar>();
+  const auto label = [](const ValueTypeMetaData *meta) {
+    return std::string{meta->name()};
+  };
+
+  REQUIRE(label(i) == "LabelInt");
+  REQUIRE_FALSE(anonymous->name().empty());
+  REQUIRE(label(anonymous) == typeid(AnonymousLabelScalar).name());
+  REQUIRE(label(registry.tuple({i, s})) == "Tuple[LabelInt,LabelStr]");
+  REQUIRE(label(registry.un_named_bundle({{"field", i}, {"other", s}})) ==
+          "Bundle{field:LabelInt,other:LabelStr}");
+  REQUIRE(label(registry.bundle("LabelBundle", {{"field", i}})) ==
+          "LabelBundle");
+  REQUIRE(label(registry.list(i)) == "List[LabelInt]");
+  REQUIRE(label(registry.list(i, 4)) == "List[LabelInt,4]");
+  REQUIRE(label(registry.list(i, 0, true)) == "VariadicTuple[LabelInt]");
+  REQUIRE(label(registry.nullable_tuple(i)) == "NullableTuple[LabelInt]");
+  REQUIRE(label(registry.mutable_list(i)) == "MutableList[LabelInt]");
+  REQUIRE(label(registry.set(i)) == "Set[LabelInt]");
+  REQUIRE(label(registry.mutable_set(i)) == "MutableSet[LabelInt]");
+  REQUIRE(label(registry.map(i, s)) == "Map[LabelInt,LabelStr]");
+  REQUIRE(label(registry.mutable_map(i, s)) == "MutableMap[LabelInt,LabelStr]");
+  REQUIRE(label(registry.cyclic_buffer(i, 4)) == "CyclicBuffer[LabelInt,4]");
+  REQUIRE(label(registry.queue(i)) == "Queue[LabelInt]");
+  REQUIRE(label(registry.queue(i, 4)) == "Queue[LabelInt,4]");
+  const auto *typed_series = registry.series(i);
+  const auto *typed_frame =
+      registry.frame(registry.bundle("LabelFrameColumns", {{"field", i}}));
+  REQUIRE(label(typed_series) == "series[LabelInt]");
+  REQUIRE(label(typed_frame) == "frame[LabelFrameColumns]");
+  REQUIRE(registry.is_series(typed_series));
+  REQUIRE_FALSE(registry.is_frame(typed_series));
+  REQUIRE(registry.is_frame(typed_frame));
+  REQUIRE_FALSE(registry.is_series(typed_frame));
+  REQUIRE(label(registry.any()) == "Any");
+  REQUIRE(label(registry.json()) == "JSON");
+  REQUIRE(label(registry.list(nullptr)) == "List[<unresolved>]");
+
+  const char *canonical_label = i->schema_header().label;
+  registry.register_value_type_alias("LabelIntAlias", i);
+  REQUIRE(registry.value_type("LabelIntAlias") == i);
+  REQUIRE(i->schema_header().label == canonical_label);
+  REQUIRE(label(i) == "LabelInt");
+
+  const auto *structural = registry.un_named_bundle({{"field", i}});
+  const char *structural_label = structural->schema_header().label;
+  registry.register_value_type_alias("StructuralAlias", structural);
+  REQUIRE(structural->schema_header().label == structural_label);
+  REQUIRE(label(structural) == "Bundle{field:LabelInt}");
+  REQUIRE(structural->is_un_named_bundle());
+  REQUIRE_FALSE(structural->is_named_bundle());
+}
+
+TEST_CASE("TypeRegistry serializes concurrent equal schema requests") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *i = registry.register_scalar<LabelScalarA>("ConcurrentInt");
+  const auto *s = registry.register_scalar<LabelScalarB>("ConcurrentStr");
+
+  constexpr std::size_t thread_count = 8;
+  std::array<const ValueTypeMetaData *, thread_count> tuples{};
+  std::array<const ValueTypeMetaData *, thread_count> bundles{};
+  std::array<const ValueTypeMetaData *, thread_count> maps{};
+  std::array<std::thread, thread_count> threads;
+  for (std::size_t index = 0; index < thread_count; ++index) {
+    threads[index] = std::thread([&, index] {
+      for (int iteration = 0; iteration < 100; ++iteration) {
+        tuples[index] = registry.tuple({i, s});
+        bundles[index] =
+            registry.bundle("ConcurrentBundle", {{"i", i}, {"s", s}});
+        maps[index] = registry.map(i, s);
+      }
     });
+  }
+  for (auto &thread : threads) {
+    thread.join();
+  }
 
-    REQUIRE(schemas.size() == 2);
-    REQUIRE(schemas[0]->fields[1].type->is_owned());
-    REQUIRE(schemas[0]->fields[1].type->element_type == schemas[1]);
-    REQUIRE(schemas[1]->fields[1].type->is_owned());
-    REQUIRE(schemas[1]->fields[1].type->element_type == schemas[0]);
-    REQUIRE(ValuePlanFactory::instance().type_for(schemas[0]->fields[1].type)
-                .checked_plan().layout.size == sizeof(void *));
-
-    Value left{ValuePlanFactory::instance().type_for(schemas[0])};
-    auto fields = left.as_bundle().begin_mutation();
-    fields["value"].set(std::int64_t{1});
-    auto right = fields["right"].as_bundle().begin_mutation();
-    right["value"].set(std::int64_t{2});
-    right["left"].as_bundle().begin_mutation()["value"].set(std::int64_t{3});
-
-    REQUIRE(left.as_bundle()["right"].as_bundle()["value"].checked_as<std::int64_t>() == 2);
-    REQUIRE(left.as_bundle()["right"].as_bundle()["left"].as_bundle()["value"]
-                .checked_as<std::int64_t>() == 3);
+  for (std::size_t index = 1; index < thread_count; ++index) {
+    REQUIRE(tuples[index] == tuples[0]);
+    REQUIRE(bundles[index] == bundles[0]);
+    REQUIRE(maps[index] == maps[0]);
+  }
+  REQUIRE(std::string{tuples[0]->name()} ==
+          "Tuple[ConcurrentInt,ConcurrentStr]");
+  REQUIRE(std::string{bundles[0]->name()} == "ConcurrentBundle");
+  REQUIRE(std::string{maps[0]->name()} == "Map[ConcurrentInt,ConcurrentStr]");
 }
 
-TEST_CASE("TypeRealizationSnapshot closes polymorphic Bundle storage without taxing leaves")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-    const auto *integer = registry.value_type("int");
-    const auto *text = registry.value_type("str");
-    REQUIRE(integer != nullptr);
-    REQUIRE(text != nullptr);
+TEST_CASE("TypeRegistry::list distinguishes fixed and dynamic forms") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
-    const auto *base = registry.bundle(
-        "tests.realization", "SnapshotBase", {{"id", integer}});
-    const auto *small = registry.bundle(
-        "tests.realization", "SnapshotSmall",
-        {{"id", integer}, {"quantity", integer}, {"label", text}}, {base});
-    const auto *holder = registry.bundle(
-        "tests.realization", "SnapshotHolder", {{"item", base}});
-    const auto *list_of_base = registry.list(base);
-    const auto *fixed_list_of_base = registry.list(base, 2);
-    const auto *mutable_list_of_base = registry.mutable_list(base);
+  const auto *fixed = registry.list(int_meta, 4, false);
+  const auto *dynamic = registry.list(int_meta, 0, false);
+  const auto *fixed2 = registry.list(int_meta, 4, false);
 
-    const auto first = TypeRealizationSnapshot::capture(registry);
-    REQUIRE(TypeRealizationSnapshot::capture(registry) == first);
-    const auto exact_small = ValuePlanFactory::instance().type_for(small);
-    const auto realized_small = first->type_for(small);
-    const auto realized_base = first->type_for(base);
-    Value concrete{exact_small};
-    concrete.as_bundle().begin_mutation()["label"].set(std::string{"small"});
-
-    REQUIRE(realized_small == exact_small);
-    REQUIRE(realized_base != ValuePlanFactory::instance().type_for(base));
-    REQUIRE(realized_base.checked_plan().layout.size >=
-            exact_small.checked_plan().layout.size + sizeof(const TypeRecord *));
-    REQUIRE(first->alternatives(base) ==
-            std::vector<const ValueTypeMetaData *>{base, small});
-
-    const auto exact_holder = ValuePlanFactory::instance().type_for(holder);
-    const auto realized_holder = first->type_for(holder);
-    REQUIRE(realized_holder != exact_holder);
-    REQUIRE(realized_holder.checked_plan().component("item").plan == realized_base.plan());
-
-    const auto realized_list = first->type_for(list_of_base);
-    REQUIRE(realized_list != ValuePlanFactory::instance().type_for(list_of_base));
-    REQUIRE_THROWS_AS(first->type_for(fixed_list_of_base), std::logic_error);
-    const auto realized_mutable_list = first->type_for(mutable_list_of_base);
-    REQUIRE(realized_mutable_list != ValuePlanFactory::instance().type_for(mutable_list_of_base));
-    Value mutable_list{realized_mutable_list};
-    auto mutable_values = mutable_list.as_list().begin_mutation();
-    mutable_values.push_back(concrete.view());
-    REQUIRE(mutable_values.at(0).concrete().schema() == small);
-
-    Value replacement{exact_small};
-    replacement.as_bundle().begin_mutation()["label"].set(std::string{"replacement"});
-    mutable_values.set(0, replacement.view());
-    REQUIRE(mutable_values.at(0).concrete().as_bundle()["label"].checked_as<std::string>() ==
-            "replacement");
-    {
-        TypeRealizationScope scope{first.get()};
-        Value list = from_json_string(
-            list_of_base,
-            R"([{"__type__": "tests.realization::SnapshotSmall", "id": 1, "quantity": 2, "label": "one"}])");
-        REQUIRE(list.binding() == realized_list);
-        REQUIRE(list.view().as_list().at(0).concrete().schema() == small);
-    }
-
-    Value holder_value{realized_holder};
-    auto item = holder_value.as_bundle().begin_mutation()["item"];
-    realized_base.ops_ref().copy_assign_from(
-        realized_base, item.mutable_data(), exact_small, concrete.view().data());
-    REQUIRE(holder_value.as_bundle()["item"].concrete().schema() == small);
-
-    Value polymorphic{realized_base};
-    auto destination = polymorphic.begin_mutation();
-    realized_base.ops_ref().copy_assign_from(
-        realized_base, destination.mutable_data(), exact_small, concrete.view().data());
-    const auto projected = polymorphic.view().concrete();
-    REQUIRE(projected.schema() == small);
-    REQUIRE(projected.binding() == exact_small);
-
-    const auto *large = registry.bundle(
-        "tests.realization", "SnapshotLarge",
-        {{"id", integer}, {"description", text}, {"quantity", integer}}, {base});
-    REQUIRE(first->alternatives(base) ==
-            std::vector<const ValueTypeMetaData *>{base, small});
-
-    const auto second = TypeRealizationSnapshot::capture(registry);
-    REQUIRE(second->alternatives(base) ==
-            std::vector<const ValueTypeMetaData *>{base, small, large});
-    REQUIRE(second->type_for(base).checked_plan().layout.size >=
-            ValuePlanFactory::instance().type_for(large).checked_plan().layout.size +
-                sizeof(const TypeRecord *));
-
-    Value newer{second->type_for(base)};
-    auto newer_destination = newer.begin_mutation();
-    second->type_for(base).ops_ref().copy_assign_from(
-        second->type_for(base), newer_destination.mutable_data(),
-        polymorphic.binding(), polymorphic.view().data());
-    REQUIRE(newer.view().concrete().schema() == small);
-
-    Value newer_small{second->type_for(base)};
-    auto newer_small_destination = newer_small.begin_mutation();
-    second->type_for(base).ops_ref().copy_assign_from(
-        second->type_for(base), newer_small_destination.mutable_data(),
-        exact_small, concrete.view().data());
-    Value older_target{realized_base};
-    auto older_destination = older_target.begin_mutation();
-    auto newer_small_source = newer_small.begin_mutation();
-    realized_base.ops_ref().move_assign_from(
-        realized_base, older_destination.mutable_data(),
-        newer_small.binding(), newer_small_source.mutable_data());
-    REQUIRE(older_target.view().concrete().as_bundle()["label"].checked_as<std::string>() == "small");
-
-    Value large_value{ValuePlanFactory::instance().type_for(large)};
-    second->type_for(base).ops_ref().copy_assign_from(
-        second->type_for(base), newer_destination.mutable_data(),
-        large_value.binding(), large_value.view().data());
-    REQUIRE(newer.view().concrete().schema() == large);
-    REQUIRE_THROWS_AS(
-        first->type_for(base).ops_ref().copy_assign_from(
-            first->type_for(base), destination.mutable_data(),
-            newer.binding(), newer.view().data()),
-        std::invalid_argument);
+  REQUIRE(fixed != dynamic);
+  REQUIRE(fixed == fixed2);
+  REQUIRE(fixed->is_fixed_size());
+  REQUIRE(fixed->fixed_size == 4);
+  REQUIRE(!dynamic->is_fixed_size());
 }
 
-TEST_CASE("abstract Bundle without a concrete alternative cannot be realized")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-    const auto *integer = registry.value_type("int");
-    REQUIRE(integer != nullptr);
-    const auto *abstract = registry.bundle(
-        "tests.realization", "UninhabitedBase", {{"id", integer}}, {}, true);
+TEST_CASE("TypeRegistry: set, map, cyclic_buffer and queue intern correctly") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
-    const auto snapshot = TypeRealizationSnapshot::capture(registry);
-    REQUIRE(snapshot->is_polymorphic(abstract));
-    REQUIRE_THROWS_AS(snapshot->type_for(abstract), std::logic_error);
+  const auto *s = registry.set(int_meta);
+  REQUIRE(s->value_kind() == ValueTypeKind::Set);
+  REQUIRE(s == registry.set(int_meta));
+  REQUIRE(s->element_type == int_meta);
+
+  const auto *m = registry.map(int_meta, int_meta);
+  REQUIRE(m->value_kind() == ValueTypeKind::Map);
+  REQUIRE(m == registry.map(int_meta, int_meta));
+  REQUIRE(m->key_type == int_meta);
+  REQUIRE(m->element_type == int_meta);
+
+  const auto *cb = registry.cyclic_buffer(int_meta, 8);
+  REQUIRE(cb->value_kind() == ValueTypeKind::CyclicBuffer);
+  REQUIRE(cb->fixed_size == 8);
+  REQUIRE(cb->is_hashable());
+  REQUIRE(cb->is_equatable());
+  REQUIRE(cb->is_comparable());
+  REQUIRE(cb->is_buffer_compatible());
+  REQUIRE(cb == registry.cyclic_buffer(int_meta, 8));
+
+  const auto *q = registry.queue(int_meta, 16);
+  REQUIRE(q->value_kind() == ValueTypeKind::Queue);
+  REQUIRE(q->fixed_size == 16);
+  REQUIRE(q->is_hashable());
+  REQUIRE(q->is_equatable());
+  REQUIRE(q->is_comparable());
+  REQUIRE(q->is_buffer_compatible());
+  REQUIRE(q == registry.queue(int_meta, 16));
 }
 
-TEST_CASE("polymorphic Bundle JSON requires and consumes an external discriminator")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-    const auto *integer = registry.value_type("int");
-    REQUIRE(integer != nullptr);
+TEST_CASE("TypeRegistry::ts / tss / tsd / tsl / tsw intern correctly") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
-    const auto *base = registry.bundle(
-        "tests.json", "JsonBase", {{"id", integer}}, {}, true);
-    const auto *child = registry.bundle(
-        "tests.json", "JsonChild", {{"id", integer}, {"quantity", integer}}, {base});
-    const auto *holder = registry.bundle(
-        "tests.json", "JsonHolder", {{"item", base}});
-    const auto snapshot = TypeRealizationSnapshot::capture(registry);
-    TypeRealizationScope scope{snapshot.get()};
+  const auto *ts_int = registry.ts(int_meta);
+  REQUIRE(ts_int->kind == TSTypeKind::TS);
+  REQUIRE(ts_int == registry.ts(int_meta));
 
-    REQUIRE_THROWS_AS(from_json_string(base, R"({"id": 1})"), std::invalid_argument);
-    Value value = from_json_string(
-        base, R"({"__type__": "tests.json::JsonChild", "id": 1, "quantity": 2})");
-    REQUIRE(value.binding() == snapshot->type_for(base));
-    REQUIRE(value.view().concrete().schema() == child);
+  const auto *tss = registry.tss(int_meta);
+  REQUIRE(tss->kind == TSTypeKind::TSS);
+  REQUIRE(tss == registry.tss(int_meta));
 
-    const std::string encoded = to_json_string(value.view());
-    REQUIRE(encoded.find(R"("__type__": "tests.json::JsonChild")") != std::string::npos);
-    Value round_trip = from_json_string(base, encoded);
-    REQUIRE(round_trip.view().concrete().schema() == child);
+  const auto *tsd = registry.tsd(int_meta, ts_int);
+  REQUIRE(tsd->kind == TSTypeKind::TSD);
+  REQUIRE(tsd->key_type() == int_meta);
+  REQUIRE(tsd->element_ts() == ts_int);
 
-    Value nested = from_json_string(
-        holder,
-        R"({"item": {"__type__": "tests.json::JsonChild", "id": 3, "quantity": 4}})");
-    REQUIRE(nested.binding() == snapshot->type_for(holder));
-    REQUIRE(nested.as_bundle()["item"].concrete().schema() == child);
-    Value nested_round_trip = from_json_string(holder, to_json_string(nested.view()));
-    REQUIRE(nested_round_trip.as_bundle()["item"].concrete().schema() == child);
+  const auto *tsl_fixed = registry.tsl(ts_int, 4);
+  REQUIRE(tsl_fixed->kind == TSTypeKind::TSL);
+  REQUIRE(tsl_fixed->fixed_size() == 4);
+  REQUIRE(tsl_fixed->element_ts() == ts_int);
+
+  const auto *tsl_dynamic = registry.tsl(ts_int, 0);
+  REQUIRE(tsl_dynamic != tsl_fixed);
+  REQUIRE(tsl_dynamic->fixed_size() == 0);
+
+  const auto *tsw_tick = registry.tsw(int_meta, 10, 5);
+  REQUIRE(tsw_tick->kind == TSTypeKind::TSW);
+  REQUIRE(!tsw_tick->is_duration_based());
+  REQUIRE(tsw_tick->period() == 10);
+  REQUIRE(tsw_tick->min_period() == 5);
+
+  const auto *tsw_dur =
+      registry.tsw_duration(int_meta, TimeDelta{1000}, TimeDelta{500});
+  REQUIRE(tsw_dur->kind == TSTypeKind::TSW);
+  REQUIRE(tsw_dur->is_duration_based());
+  REQUIRE(tsw_dur->time_range() == TimeDelta{1000});
+  REQUIRE(tsw_dur->min_time_range() == TimeDelta{500});
+  REQUIRE(tsw_tick != tsw_dur);
 }
 
-TEST_CASE("TypeRegistry assigns exact stable canonical labels to every value schema family")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *i        = registry.register_scalar<LabelScalarA>("LabelInt");
-    const auto *s        = registry.register_scalar<LabelScalarB>("LabelStr");
-    const auto *anonymous = registry.register_scalar<AnonymousLabelScalar>();
-    const auto label = [](const ValueTypeMetaData *meta) { return std::string{meta->name()}; };
+TEST_CASE("TypeRegistry::tsb stores fields and registers the alias") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+  const auto *ts_int = registry.ts(int_meta);
 
-    REQUIRE(label(i) == "LabelInt");
-    REQUIRE_FALSE(anonymous->name().empty());
-    REQUIRE(label(anonymous) == typeid(AnonymousLabelScalar).name());
-    REQUIRE(label(registry.tuple({i, s})) == "Tuple[LabelInt,LabelStr]");
-    REQUIRE(label(registry.un_named_bundle({{"field", i}, {"other", s}})) ==
-            "Bundle{field:LabelInt,other:LabelStr}");
-    REQUIRE(label(registry.bundle("LabelBundle", {{"field", i}})) == "LabelBundle");
-    REQUIRE(label(registry.list(i)) == "List[LabelInt]");
-    REQUIRE(label(registry.list(i, 4)) == "List[LabelInt,4]");
-    REQUIRE(label(registry.list(i, 0, true)) == "VariadicTuple[LabelInt]");
-    REQUIRE(label(registry.nullable_tuple(i)) == "NullableTuple[LabelInt]");
-    REQUIRE(label(registry.mutable_list(i)) == "MutableList[LabelInt]");
-    REQUIRE(label(registry.set(i)) == "Set[LabelInt]");
-    REQUIRE(label(registry.mutable_set(i)) == "MutableSet[LabelInt]");
-    REQUIRE(label(registry.map(i, s)) == "Map[LabelInt,LabelStr]");
-    REQUIRE(label(registry.mutable_map(i, s)) == "MutableMap[LabelInt,LabelStr]");
-    REQUIRE(label(registry.cyclic_buffer(i, 4)) == "CyclicBuffer[LabelInt,4]");
-    REQUIRE(label(registry.queue(i)) == "Queue[LabelInt]");
-    REQUIRE(label(registry.queue(i, 4)) == "Queue[LabelInt,4]");
-    const auto *typed_series = registry.series(i);
-    const auto *typed_frame = registry.frame(registry.bundle("LabelFrameColumns", {{"field", i}}));
-    REQUIRE(label(typed_series) == "series[LabelInt]");
-    REQUIRE(label(typed_frame) == "frame[LabelFrameColumns]");
-    REQUIRE(registry.is_series(typed_series));
-    REQUIRE_FALSE(registry.is_frame(typed_series));
-    REQUIRE(registry.is_frame(typed_frame));
-    REQUIRE_FALSE(registry.is_series(typed_frame));
-    REQUIRE(label(registry.any()) == "Any");
-    REQUIRE(label(registry.json()) == "JSON");
-    REQUIRE(label(registry.list(nullptr)) == "List[<unresolved>]");
+  const auto *tsb =
+      registry.tsb("TestTSBundleA", {{"a", ts_int}, {"b", ts_int}});
+  REQUIRE(tsb->kind == TSTypeKind::TSB);
+  REQUIRE(tsb->field_count() == 2);
+  REQUIRE(std::string(tsb->fields()[0].name) == "a");
+  REQUIRE(std::string(tsb->fields()[1].name) == "b");
+  REQUIRE(tsb->fields()[0].type == ts_int);
 
-    const char *canonical_label = i->schema_header().label;
-    registry.register_value_type_alias("LabelIntAlias", i);
-    REQUIRE(registry.value_type("LabelIntAlias") == i);
-    REQUIRE(i->schema_header().label == canonical_label);
-    REQUIRE(label(i) == "LabelInt");
-
-    const auto *structural = registry.un_named_bundle({{"field", i}});
-    const char *structural_label = structural->schema_header().label;
-    registry.register_value_type_alias("StructuralAlias", structural);
-    REQUIRE(structural->schema_header().label == structural_label);
-    REQUIRE(label(structural) == "Bundle{field:LabelInt}");
-    REQUIRE(structural->is_un_named_bundle());
-    REQUIRE_FALSE(structural->is_named_bundle());
+  REQUIRE(registry.time_series_type("TestTSBundleA") == tsb);
+  REQUIRE(registry.tsb("TestTSBundleA", {{"a", ts_int}, {"b", ts_int}}) == tsb);
 }
 
-TEST_CASE("TypeRegistry serializes concurrent equal schema requests")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *i        = registry.register_scalar<LabelScalarA>("ConcurrentInt");
-    const auto *s        = registry.register_scalar<LabelScalarB>("ConcurrentStr");
+TEST_CASE("TypeRegistry::tsb reuses a qualified CompoundScalar value schema") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  REQUIRE(integer != nullptr);
+  const auto *bundle =
+      registry.bundle("tests.tsb", "QualifiedValue", {{"value", integer}});
+  const auto *tsb =
+      registry.tsb(bundle->name(), {{"value", registry.ts(integer)}});
 
-    constexpr std::size_t thread_count = 8;
-    std::array<const ValueTypeMetaData *, thread_count> tuples{};
-    std::array<const ValueTypeMetaData *, thread_count> bundles{};
-    std::array<const ValueTypeMetaData *, thread_count> maps{};
-    std::array<std::thread, thread_count> threads;
-    for (std::size_t index = 0; index < thread_count; ++index)
-    {
-        threads[index] = std::thread([&, index] {
-            for (int iteration = 0; iteration < 100; ++iteration)
-            {
-                tuples[index] = registry.tuple({i, s});
-                bundles[index] = registry.bundle("ConcurrentBundle", {{"i", i}, {"s", s}});
-                maps[index] = registry.map(i, s);
-            }
-        });
-    }
-    for (auto &thread : threads) { thread.join(); }
-
-    for (std::size_t index = 1; index < thread_count; ++index)
-    {
-        REQUIRE(tuples[index] == tuples[0]);
-        REQUIRE(bundles[index] == bundles[0]);
-        REQUIRE(maps[index] == maps[0]);
-    }
-    REQUIRE(std::string{tuples[0]->name()} == "Tuple[ConcurrentInt,ConcurrentStr]");
-    REQUIRE(std::string{bundles[0]->name()} == "ConcurrentBundle");
-    REQUIRE(std::string{maps[0]->name()} == "Map[ConcurrentInt,ConcurrentStr]");
+  REQUIRE(tsb->value_schema == bundle);
+  REQUIRE(std::string{tsb->name()} == std::string{bundle->name()});
 }
 
-TEST_CASE("TypeRegistry::list distinguishes fixed and dynamic forms")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+TEST_CASE("TypeRegistry: un_named_tsb and tsb distinguish structural vs "
+          "nominal identity") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+  const auto *ts_int = registry.ts(int_meta);
 
-    const auto *fixed   = registry.list(int_meta, 4, false);
-    const auto *dynamic = registry.list(int_meta, 0, false);
-    const auto *fixed2  = registry.list(int_meta, 4, false);
+  const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields{
+      {"a", ts_int}, {"b", ts_int}};
 
-    REQUIRE(fixed != dynamic);
-    REQUIRE(fixed == fixed2);
-    REQUIRE(fixed->is_fixed_size());
-    REQUIRE(fixed->fixed_size == 4);
-    REQUIRE(!dynamic->is_fixed_size());
+  // Same field list -> same canonical un-named TSB.
+  const auto *u1 = registry.un_named_tsb(fields);
+  const auto *u2 = registry.un_named_tsb(fields);
+  REQUIRE(u1 == u2);
+  REQUIRE(u1->is_un_named_tsb());
+  REQUIRE_FALSE(u1->is_named_tsb());
+  REQUIRE(u1->schema_header().valid());
+  REQUIRE_FALSE(u1->name().empty());
+  REQUIRE(u1->wrapped_un_named_tsb() == nullptr);
+  // The un-named TSB's value-side bundle is the matching un-named Bundle.
+  REQUIRE(u1->value_type != nullptr);
+  REQUIRE(u1->value_type->is_un_named_bundle());
+
+  // tsb(name, fields) wraps the un-named TSB.
+  const auto *named_x1 = registry.tsb("TSBNamedX", fields);
+  const auto *named_x2 = registry.tsb("TSBNamedX", fields);
+  REQUIRE(named_x1 == named_x2);
+  REQUIRE(named_x1->is_named_tsb());
+  REQUIRE(named_x1->wrapped_un_named_tsb() == u1);
+  REQUIRE(std::string(named_x1->name()) == std::string("TSBNamedX"));
+  // Field array shared with the un-named twin.
+  REQUIRE(named_x1->fields() == u1->fields());
+  REQUIRE(named_x1->field_count() == u1->field_count());
+  // Value-side bundle is the matching named Bundle (nominal identity flows
+  // through).
+  REQUIRE(named_x1->value_type != nullptr);
+  REQUIRE(named_x1->value_type->is_named_bundle());
+
+  // Different names with the same fields are distinct named TSBs.
+  const auto *named_y = registry.tsb("TSBNamedY", fields);
+  REQUIRE(named_y != named_x1);
+  REQUIRE(named_y->wrapped_un_named_tsb() == u1); // share the un-named twin
+  REQUIRE(named_y->value_type != named_x1->value_type);
+
+  // Named TSB ≠ un-named TSB.
+  REQUIRE(named_x1 != u1);
+
+  // tsb(...) requires a non-empty name.
+  REQUIRE_THROWS_AS(registry.tsb("", fields), std::invalid_argument);
+
+  // named_tsb() lookup.
+  REQUIRE(registry.named_tsb("TSBNamedX") == named_x1);
+  REQUIRE(registry.named_tsb("TSBNamedY") == named_y);
+  REQUIRE(registry.named_tsb("DoesNotExist") == nullptr);
+  // SIGNAL is registered in the TS name space but isn't a named TSB.
+  (void)registry.signal();
+  REQUIRE(registry.named_tsb("SIGNAL") == nullptr);
+
+  // TSB name namespace is unique: same name + same fields is idempotent,
+  // same name + different fields is rejected.
+  const std::vector<std::pair<std::string, const TSValueTypeMetaData *>>
+      different_fields{{"a", ts_int}, {"c", ts_int}};
+  REQUIRE_NOTHROW(registry.tsb("TSBNamedX", fields)); // same shape -> OK
+  REQUIRE_THROWS_AS(
+      registry.tsb("TSBNamedX",
+                   different_fields), // different shape -> conflict
+      std::invalid_argument);
 }
 
-TEST_CASE("TypeRegistry: set, map, cyclic_buffer and queue intern correctly")
-{
-    using namespace hgraph;
-    auto       &registry  = TypeRegistry::instance();
-    const auto *int_meta  = registry.register_scalar<std::int32_t>("int32");
-
-    const auto *s = registry.set(int_meta);
-    REQUIRE(s->value_kind() == ValueTypeKind::Set);
-    REQUIRE(s == registry.set(int_meta));
-    REQUIRE(s->element_type == int_meta);
-
-    const auto *m = registry.map(int_meta, int_meta);
-    REQUIRE(m->value_kind() == ValueTypeKind::Map);
-    REQUIRE(m == registry.map(int_meta, int_meta));
-    REQUIRE(m->key_type == int_meta);
-    REQUIRE(m->element_type == int_meta);
-
-    const auto *cb = registry.cyclic_buffer(int_meta, 8);
-    REQUIRE(cb->value_kind() == ValueTypeKind::CyclicBuffer);
-    REQUIRE(cb->fixed_size == 8);
-    REQUIRE(cb->is_hashable());
-    REQUIRE(cb->is_equatable());
-    REQUIRE(cb->is_comparable());
-    REQUIRE(cb->is_buffer_compatible());
-    REQUIRE(cb == registry.cyclic_buffer(int_meta, 8));
-
-    const auto *q = registry.queue(int_meta, 16);
-    REQUIRE(q->value_kind() == ValueTypeKind::Queue);
-    REQUIRE(q->fixed_size == 16);
-    REQUIRE(q->is_hashable());
-    REQUIRE(q->is_equatable());
-    REQUIRE(q->is_comparable());
-    REQUIRE(q->is_buffer_compatible());
-    REQUIRE(q == registry.queue(int_meta, 16));
+TEST_CASE("TypeRegistry::signal returns a single canonical instance") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *s1 = registry.signal();
+  const auto *s2 = registry.signal();
+  REQUIRE(s1 == s2);
+  REQUIRE(s1->kind == TSTypeKind::SIGNAL);
+  REQUIRE(registry.time_series_type("SIGNAL") == s1);
 }
 
-TEST_CASE("TypeRegistry::ts / tss / tsd / tsl / tsw intern correctly")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+TEST_CASE("TypeRegistry::ref creates the TimeSeriesReference singleton") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+  const auto *ts_int = registry.ts(int_meta);
 
-    const auto *ts_int = registry.ts(int_meta);
-    REQUIRE(ts_int->kind == TSTypeKind::TS);
-    REQUIRE(ts_int == registry.ts(int_meta));
-
-    const auto *tss = registry.tss(int_meta);
-    REQUIRE(tss->kind == TSTypeKind::TSS);
-    REQUIRE(tss == registry.tss(int_meta));
-
-    const auto *tsd = registry.tsd(int_meta, ts_int);
-    REQUIRE(tsd->kind == TSTypeKind::TSD);
-    REQUIRE(tsd->key_type() == int_meta);
-    REQUIRE(tsd->element_ts() == ts_int);
-
-    const auto *tsl_fixed = registry.tsl(ts_int, 4);
-    REQUIRE(tsl_fixed->kind == TSTypeKind::TSL);
-    REQUIRE(tsl_fixed->fixed_size() == 4);
-    REQUIRE(tsl_fixed->element_ts() == ts_int);
-
-    const auto *tsl_dynamic = registry.tsl(ts_int, 0);
-    REQUIRE(tsl_dynamic != tsl_fixed);
-    REQUIRE(tsl_dynamic->fixed_size() == 0);
-
-    const auto *tsw_tick = registry.tsw(int_meta, 10, 5);
-    REQUIRE(tsw_tick->kind == TSTypeKind::TSW);
-    REQUIRE(!tsw_tick->is_duration_based());
-    REQUIRE(tsw_tick->period() == 10);
-    REQUIRE(tsw_tick->min_period() == 5);
-
-    const auto *tsw_dur = registry.tsw_duration(
-        int_meta, TimeDelta{1000}, TimeDelta{500});
-    REQUIRE(tsw_dur->kind == TSTypeKind::TSW);
-    REQUIRE(tsw_dur->is_duration_based());
-    REQUIRE(tsw_dur->time_range() == TimeDelta{1000});
-    REQUIRE(tsw_dur->min_time_range() == TimeDelta{500});
-    REQUIRE(tsw_tick != tsw_dur);
+  const auto *r1 = registry.ref(ts_int);
+  const auto *r2 = registry.ref(ts_int);
+  REQUIRE(r1 == r2);
+  REQUIRE(r1->kind == TSTypeKind::REF);
+  REQUIRE(r1->referenced_ts() == ts_int);
+  REQUIRE(registry.ref(r1) == r1);
 }
 
-TEST_CASE("TypeRegistry::tsb stores fields and registers the alias")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
-    const auto *ts_int   = registry.ts(int_meta);
+TEST_CASE("TypeRegistry::contains_ref recurses through composite TS kinds") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+  const auto *ts_int = registry.ts(int_meta);
+  const auto *ref_int = registry.ref(ts_int);
 
-    const auto *tsb = registry.tsb("TestTSBundleA", {{"a", ts_int}, {"b", ts_int}});
-    REQUIRE(tsb->kind == TSTypeKind::TSB);
-    REQUIRE(tsb->field_count() == 2);
-    REQUIRE(std::string(tsb->fields()[0].name) == "a");
-    REQUIRE(std::string(tsb->fields()[1].name) == "b");
-    REQUIRE(tsb->fields()[0].type == ts_int);
+  REQUIRE(!TypeRegistry::contains_ref(ts_int));
+  REQUIRE(TypeRegistry::contains_ref(ref_int));
 
-    REQUIRE(registry.time_series_type("TestTSBundleA") == tsb);
-    REQUIRE(registry.tsb("TestTSBundleA", {{"a", ts_int}, {"b", ts_int}}) == tsb);
+  const auto *bundle_with_ref =
+      registry.tsb("TestRefBundleA", {{"r", ref_int}});
+  const auto *bundle_without_ref =
+      registry.tsb("TestRefBundleB", {{"v", ts_int}});
+  REQUIRE(TypeRegistry::contains_ref(bundle_with_ref));
+  REQUIRE(!TypeRegistry::contains_ref(bundle_without_ref));
+
+  const auto *list_of_refs = registry.tsl(ref_int);
+  REQUIRE(TypeRegistry::contains_ref(list_of_refs));
+
+  const auto *dict_with_ref = registry.tsd(int_meta, ref_int);
+  REQUIRE(TypeRegistry::contains_ref(dict_with_ref));
+
+  const auto *nested_list_dict_ref =
+      registry.tsl(registry.tsd(int_meta, ref_int));
+  REQUIRE(TypeRegistry::contains_ref(nested_list_dict_ref));
 }
 
-TEST_CASE("TypeRegistry::tsb reuses a qualified CompoundScalar value schema")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-    const auto *integer = registry.value_type("int");
-    REQUIRE(integer != nullptr);
-    const auto *bundle = registry.bundle(
-        "tests.tsb", "QualifiedValue", {{"value", integer}});
-    const auto *tsb = registry.tsb(
-        bundle->name(), {{"value", registry.ts(integer)}});
+TEST_CASE(
+    "TypeRegistry::dereference unwraps refs and recurses into containers") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+  const auto *ts_int = registry.ts(int_meta);
+  const auto *ref_int = registry.ref(ts_int);
 
-    REQUIRE(tsb->value_schema == bundle);
-    REQUIRE(std::string{tsb->name()} == std::string{bundle->name()});
+  REQUIRE(registry.dereference(ref_int) == ts_int);
+  REQUIRE(registry.dereference(ts_int) == ts_int);
+
+  const auto *list_of_refs = registry.tsl(ref_int);
+  const auto *list_deref = registry.dereference(list_of_refs);
+  REQUIRE(list_deref != list_of_refs);
+  REQUIRE(list_deref->kind == TSTypeKind::TSL);
+  REQUIRE(list_deref->element_ts() == ts_int);
+
+  const auto *list_of_ts = registry.tsl(ts_int);
+  REQUIRE(registry.dereference(list_of_ts) == list_of_ts);
 }
 
-TEST_CASE("TypeRegistry: un_named_tsb and tsb distinguish structural vs nominal identity")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
-    const auto *ts_int   = registry.ts(int_meta);
+TEST_CASE("TypeRegistry::synthetic_atomic interns by name") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
 
-    const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields{
-        {"a", ts_int}, {"b", ts_int}};
+  // Trigger ref() to indirectly create the synthetic TimeSeriesReference
+  // atomic.
+  const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+  const auto *ts_int = registry.ts(int_meta);
+  (void)registry.ref(ts_int);
 
-    // Same field list -> same canonical un-named TSB.
-    const auto *u1 = registry.un_named_tsb(fields);
-    const auto *u2 = registry.un_named_tsb(fields);
-    REQUIRE(u1 == u2);
-    REQUIRE(u1->is_un_named_tsb());
-    REQUIRE_FALSE(u1->is_named_tsb());
-    REQUIRE(u1->schema_header().valid());
-    REQUIRE_FALSE(u1->name().empty());
-    REQUIRE(u1->wrapped_un_named_tsb() == nullptr);
-    // The un-named TSB's value-side bundle is the matching un-named Bundle.
-    REQUIRE(u1->value_type != nullptr);
-    REQUIRE(u1->value_type->is_un_named_bundle());
-
-    // tsb(name, fields) wraps the un-named TSB.
-    const auto *named_x1 = registry.tsb("TSBNamedX", fields);
-    const auto *named_x2 = registry.tsb("TSBNamedX", fields);
-    REQUIRE(named_x1 == named_x2);
-    REQUIRE(named_x1->is_named_tsb());
-    REQUIRE(named_x1->wrapped_un_named_tsb() == u1);
-    REQUIRE(std::string(named_x1->name()) == std::string("TSBNamedX"));
-    // Field array shared with the un-named twin.
-    REQUIRE(named_x1->fields() == u1->fields());
-    REQUIRE(named_x1->field_count() == u1->field_count());
-    // Value-side bundle is the matching named Bundle (nominal identity flows through).
-    REQUIRE(named_x1->value_type != nullptr);
-    REQUIRE(named_x1->value_type->is_named_bundle());
-
-    // Different names with the same fields are distinct named TSBs.
-    const auto *named_y = registry.tsb("TSBNamedY", fields);
-    REQUIRE(named_y != named_x1);
-    REQUIRE(named_y->wrapped_un_named_tsb() == u1);  // share the un-named twin
-    REQUIRE(named_y->value_type != named_x1->value_type);
-
-    // Named TSB ≠ un-named TSB.
-    REQUIRE(named_x1 != u1);
-
-    // tsb(...) requires a non-empty name.
-    REQUIRE_THROWS_AS(registry.tsb("", fields), std::invalid_argument);
-
-    // named_tsb() lookup.
-    REQUIRE(registry.named_tsb("TSBNamedX") == named_x1);
-    REQUIRE(registry.named_tsb("TSBNamedY") == named_y);
-    REQUIRE(registry.named_tsb("DoesNotExist") == nullptr);
-    // SIGNAL is registered in the TS name space but isn't a named TSB.
-    (void)registry.signal();
-    REQUIRE(registry.named_tsb("SIGNAL") == nullptr);
-
-    // TSB name namespace is unique: same name + same fields is idempotent,
-    // same name + different fields is rejected.
-    const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> different_fields{
-        {"a", ts_int}, {"c", ts_int}};
-    REQUIRE_NOTHROW(registry.tsb("TSBNamedX", fields));            // same shape -> OK
-    REQUIRE_THROWS_AS(registry.tsb("TSBNamedX", different_fields), // different shape -> conflict
-                      std::invalid_argument);
+  const auto *synthetic = registry.value_type("TimeSeriesReference");
+  REQUIRE(synthetic != nullptr);
+  REQUIRE(synthetic->value_kind() == ValueTypeKind::Atomic);
+  REQUIRE(synthetic->is_hashable());
+  REQUIRE(synthetic->is_equatable());
 }
 
-TEST_CASE("TypeRegistry::signal returns a single canonical instance")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *s1       = registry.signal();
-    const auto *s2       = registry.signal();
-    REQUIRE(s1 == s2);
-    REQUIRE(s1->kind == TSTypeKind::SIGNAL);
-    REQUIRE(registry.time_series_type("SIGNAL") == s1);
-}
-
-TEST_CASE("TypeRegistry::ref creates the TimeSeriesReference singleton")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
-    const auto *ts_int   = registry.ts(int_meta);
-
-    const auto *r1 = registry.ref(ts_int);
-    const auto *r2 = registry.ref(ts_int);
-    REQUIRE(r1 == r2);
-    REQUIRE(r1->kind == TSTypeKind::REF);
-    REQUIRE(r1->referenced_ts() == ts_int);
-    REQUIRE(registry.ref(r1) == r1);
-}
-
-TEST_CASE("TypeRegistry::contains_ref recurses through composite TS kinds")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
-    const auto *ts_int   = registry.ts(int_meta);
-    const auto *ref_int  = registry.ref(ts_int);
-
-    REQUIRE(!TypeRegistry::contains_ref(ts_int));
-    REQUIRE(TypeRegistry::contains_ref(ref_int));
-
-    const auto *bundle_with_ref    = registry.tsb("TestRefBundleA", {{"r", ref_int}});
-    const auto *bundle_without_ref = registry.tsb("TestRefBundleB", {{"v", ts_int}});
-    REQUIRE(TypeRegistry::contains_ref(bundle_with_ref));
-    REQUIRE(!TypeRegistry::contains_ref(bundle_without_ref));
-
-    const auto *list_of_refs = registry.tsl(ref_int);
-    REQUIRE(TypeRegistry::contains_ref(list_of_refs));
-
-    const auto *dict_with_ref = registry.tsd(int_meta, ref_int);
-    REQUIRE(TypeRegistry::contains_ref(dict_with_ref));
-
-    const auto *nested_list_dict_ref = registry.tsl(registry.tsd(int_meta, ref_int));
-    REQUIRE(TypeRegistry::contains_ref(nested_list_dict_ref));
-}
-
-TEST_CASE("TypeRegistry::dereference unwraps refs and recurses into containers")
-{
-    using namespace hgraph;
-    auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
-    const auto *ts_int   = registry.ts(int_meta);
-    const auto *ref_int  = registry.ref(ts_int);
-
-    REQUIRE(registry.dereference(ref_int) == ts_int);
-    REQUIRE(registry.dereference(ts_int) == ts_int);
-
-    const auto *list_of_refs = registry.tsl(ref_int);
-    const auto *list_deref   = registry.dereference(list_of_refs);
-    REQUIRE(list_deref != list_of_refs);
-    REQUIRE(list_deref->kind == TSTypeKind::TSL);
-    REQUIRE(list_deref->element_ts() == ts_int);
-
-    const auto *list_of_ts  = registry.tsl(ts_int);
-    REQUIRE(registry.dereference(list_of_ts) == list_of_ts);
-}
-
-TEST_CASE("TypeRegistry::synthetic_atomic interns by name")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-
-    // Trigger ref() to indirectly create the synthetic TimeSeriesReference atomic.
-    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
-    const auto *ts_int   = registry.ts(int_meta);
-    (void)registry.ref(ts_int);
-
-    const auto *synthetic = registry.value_type("TimeSeriesReference");
-    REQUIRE(synthetic != nullptr);
-    REQUIRE(synthetic->value_kind() == ValueTypeKind::Atomic);
-    REQUIRE(synthetic->is_hashable());
-    REQUIRE(synthetic->is_equatable());
-}
-
-TEST_CASE("TypeRegistry: value_type and time_series_type return null for unknown names")
-{
-    using namespace hgraph;
-    auto &registry = TypeRegistry::instance();
-    REQUIRE(registry.value_type("nonexistent_value_type_xyzzy") == nullptr);
-    REQUIRE(registry.time_series_type("nonexistent_ts_type_xyzzy") == nullptr);
+TEST_CASE("TypeRegistry: value_type and time_series_type return null for "
+          "unknown names") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  REQUIRE(registry.value_type("nonexistent_value_type_xyzzy") == nullptr);
+  REQUIRE(registry.time_series_type("nonexistent_ts_type_xyzzy") == nullptr);
 }

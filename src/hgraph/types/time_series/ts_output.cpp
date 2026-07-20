@@ -13,261 +13,258 @@
 #include <stdexcept>
 #include <utility>
 
-namespace hgraph
-{
-    TSOutput::TSOutput() noexcept = default;
+namespace hgraph {
+namespace {
+[[nodiscard]] TSOutputTypeRef
+realized_output_type_for(const TSValueTypeMetaData *schema,
+                         const TypeRealizationSnapshot &snapshot) {
+  auto &factory = TSDataPlanFactory::instance();
+  if (schema == nullptr) {
+    return {};
+  }
 
-    TSOutput::TSOutput(TSOutputTypeRef type)
-        : data_(type)
-    {
-        attach_root_parent();
+  if (schema->value_schema != nullptr &&
+      (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::TSB)) {
+    const auto realized = snapshot.type_for(schema->value_schema);
+    if (realized !=
+        ValuePlanFactory::instance().type_for(schema->value_schema)) {
+      return factory.output_type_for(schema, realized);
     }
+  }
 
-    TSOutput::TSOutput(const TSValueTypeMetaData &schema)
-        : data_(checked_data_for(&schema))
-    {
-        attach_root_parent();
+  if (schema->kind == TSTypeKind::TSD && schema->element_ts() != nullptr) {
+    const auto realized_key = snapshot.type_for(schema->key_type());
+    const auto canonical_key =
+        ValuePlanFactory::instance().type_for(schema->key_type());
+    const auto realized_element =
+        realized_output_type_for(schema->element_ts(), snapshot);
+    const auto canonical_element =
+        factory.output_type_for(schema->element_ts());
+    if ((realized_key && realized_key != canonical_key) ||
+        (realized_element && realized_element != canonical_element)) {
+      return factory.keyed_output_type_for(
+          schema, realized_key, realized_element.as_role());
     }
+  }
 
-    TSOutput::TSOutput(const TSValueTypeMetaData *schema)
-        : data_(checked_data_for(schema))
-    {
-        attach_root_parent();
+  if (schema->kind == TSTypeKind::TSS && schema->value_schema != nullptr) {
+    const auto *key_schema = schema->value_schema->element_type;
+    const auto realized_key = snapshot.type_for(key_schema);
+    const auto canonical_key = ValuePlanFactory::instance().type_for(key_schema);
+    if (realized_key && realized_key != canonical_key) {
+      return factory.keyed_output_type_for(schema, realized_key);
     }
+  }
 
-    TSOutput::TSOutput(const TSEndpointSchema &endpoint_schema)
-        : data_(checked_data_for(endpoint_schema))
-    {
-        attach_root_parent();
-    }
+  return factory.output_type_for(schema);
+}
+} // namespace
 
-    TSOutput::~TSOutput() noexcept
-    {
-        invalidate_observers();
-    }
+TSOutput::TSOutput() noexcept = default;
 
-    TSOutput::TSOutput(const TSOutput &other)
-        : data_(copyable_data(other))
-    {
-        attach_root_parent();
-    }
+TSOutput::TSOutput(TSOutputTypeRef type) : data_(type) { attach_root_parent(); }
 
-    TSOutput &TSOutput::operator=(const TSOutput &other)
-    {
-        if (this != &other)
-        {
-            invalidate_observers();
-            alternatives_.reset();
-            data_ = other.data_;
-            attach_root_parent();
-        }
-        return *this;
-    }
+TSOutput::TSOutput(const TSValueTypeMetaData &schema)
+    : data_(checked_data_for(&schema)) {
+  attach_root_parent();
+}
 
-    TSOutput::TSOutput(TSOutput &&other) noexcept
-    {
-        other.invalidate_observers();
-        other.alternatives_.reset();
-        data_ = std::move(other.data_);
-        attach_root_parent();
-    }
+TSOutput::TSOutput(const TSValueTypeMetaData *schema)
+    : data_(checked_data_for(schema)) {
+  attach_root_parent();
+}
 
-    TSOutput &TSOutput::operator=(TSOutput &&other) noexcept
-    {
-        if (this != &other)
-        {
-            invalidate_observers();
-            other.invalidate_observers();
-            alternatives_.reset();
-            other.alternatives_.reset();
-            data_ = std::move(other.data_);
-            attach_root_parent();
-        }
-        return *this;
-    }
+TSOutput::TSOutput(const TSEndpointSchema &endpoint_schema)
+    : data_(checked_data_for(endpoint_schema)) {
+  attach_root_parent();
+}
 
-    bool TSOutput::has_value() const noexcept
-    {
-        return data_.has_value();
-    }
+TSOutput::~TSOutput() noexcept { invalidate_observers(); }
 
-    TSOutputTypeRef TSOutput::type_ref() const
-    {
-        const auto type = data_.type_ref();
-        return type ? TSOutputTypeRef::checked(type) : TSOutputTypeRef{};
-    }
+TSOutput::TSOutput(const TSOutput &other) : data_(copyable_data(other)) {
+  attach_root_parent();
+}
 
-    const TSValueTypeMetaData *TSOutput::schema() const noexcept
-    {
-        return data_.schema();
-    }
+TSOutput &TSOutput::operator=(const TSOutput &other) {
+  if (this != &other) {
+    invalidate_observers();
+    alternatives_.reset();
+    data_ = other.data_;
+    attach_root_parent();
+  }
+  return *this;
+}
 
-    TSDataView TSOutput::data_view()
-    {
-        return data_.view();
-    }
+TSOutput::TSOutput(TSOutput &&other) noexcept {
+  other.invalidate_observers();
+  other.alternatives_.reset();
+  data_ = std::move(other.data_);
+  attach_root_parent();
+}
 
-    TSDataView TSOutput::data_view() const
-    {
-        return data_.view();
-    }
+TSOutput &TSOutput::operator=(TSOutput &&other) noexcept {
+  if (this != &other) {
+    invalidate_observers();
+    other.invalidate_observers();
+    alternatives_.reset();
+    other.alternatives_.reset();
+    data_ = std::move(other.data_);
+    attach_root_parent();
+  }
+  return *this;
+}
 
-    void TSOutput::subscribe(Notifiable *observer)
-    {
-        if (!has_value()) { throw std::logic_error("TSOutput::subscribe requires a bound output"); }
-        data_view().subscribe(observer);
-    }
+bool TSOutput::has_value() const noexcept { return data_.has_value(); }
 
-    void TSOutput::unsubscribe(Notifiable *observer)
-    {
-        if (!has_value()) { throw std::logic_error("TSOutput::unsubscribe requires a bound output"); }
-        data_view().unsubscribe(observer);
-    }
+TSOutputTypeRef TSOutput::type_ref() const {
+  const auto type = data_.type_ref();
+  return type ? TSOutputTypeRef::checked(type) : TSOutputTypeRef{};
+}
 
-    TSOutputView TSOutput::view(DateTime evaluation_time)
-    {
-        return TSOutputView{this, data_view(), evaluation_time};
-    }
+const TSValueTypeMetaData *TSOutput::schema() const noexcept {
+  return data_.schema();
+}
 
-    TSOutputView TSOutput::view(DateTime evaluation_time) const
-    {
-        return TSOutputView{this, data_view(), evaluation_time};
-    }
+TSDataView TSOutput::data_view() { return data_.view(); }
 
-    TSOutputHandle TSOutput::binding_for(const TSOutputView &source,
-                                         const TSValueTypeMetaData &requested_schema) const
-    {
-        if (source.output() != this)
-        {
-            throw std::invalid_argument("TSOutput::binding_for requires a view owned by this output");
-        }
-        const auto *source_schema = source.schema();
-        if (source_schema == nullptr)
-        {
-            throw std::invalid_argument("TSOutput::binding_for requires a typed output view");
-        }
+TSDataView TSOutput::data_view() const { return data_.view(); }
 
-        if (time_series_schema_equivalent(source_schema, &requested_schema)) { return source.handle(); }
+void TSOutput::subscribe(Notifiable *observer) {
+  if (!has_value()) {
+    throw std::logic_error("TSOutput::subscribe requires a bound output");
+  }
+  data_view().subscribe(observer);
+}
 
-        auto &registry = TypeRegistry::instance();
-        const bool signal_from_reference =
-            requested_schema.kind == TSTypeKind::SIGNAL && source_schema->kind == TSTypeKind::REF;
-        if (!signal_from_reference &&
-            !time_series_schema_equivalent(registry.dereference(source_schema),
-                                           registry.dereference(&requested_schema)))
-        {
-            throw std::invalid_argument(
-                "TSOutput alternative binding requires dereference-compatible schemas: source '" +
-                std::string{source_schema->name()} + "', requested '" +
-                std::string{requested_schema.name()} + "'");
-        }
+void TSOutput::unsubscribe(Notifiable *observer) {
+  if (!has_value()) {
+    throw std::logic_error("TSOutput::unsubscribe requires a bound output");
+  }
+  data_view().unsubscribe(observer);
+}
 
-        if (!alternatives_) { alternatives_ = std::make_unique<detail::TSOutputAlternativeStore>(); }
-        return alternatives_->binding_for(source, requested_schema);
-    }
+TSOutputView TSOutput::view(DateTime evaluation_time) {
+  return TSOutputView{this, data_view(), evaluation_time};
+}
 
-    void TSOutput::release_alternative_subscriptions(DateTime release_time) const noexcept
-    {
-        if (alternatives_) { alternatives_->release_subscriptions(release_time); }
-    }
+TSOutputView TSOutput::view(DateTime evaluation_time) const {
+  return TSOutputView{this, data_view(), evaluation_time};
+}
 
-    TSData TSOutput::checked_data_for(const TSValueTypeMetaData *schema)
-    {
-        if (schema == nullptr) { throw std::invalid_argument("TSOutput requires a time-series schema"); }
-        if (const auto *snapshot = active_type_realization();
-            snapshot != nullptr && schema->value_schema != nullptr &&
-            (schema->kind == TSTypeKind::TS || schema->kind == TSTypeKind::TSB))
-        {
-            const auto realized = snapshot->type_for(schema->value_schema);
-            if (realized != ValuePlanFactory::instance().type_for(schema->value_schema))
-            {
-                return TSData{TSDataPlanFactory::instance().output_type_for(schema, realized)};
-            }
-        }
-        if (const auto *snapshot = active_type_realization();
-            snapshot != nullptr && schema->kind == TSTypeKind::TSD && schema->element_ts() != nullptr)
-        {
-            const auto *element_schema = schema->element_ts();
-            if (element_schema->kind == TSTypeKind::TS && element_schema->value_schema != nullptr)
-            {
-                const auto realized_value = snapshot->type_for(element_schema->value_schema);
-                if (realized_value != ValuePlanFactory::instance().type_for(element_schema->value_schema))
-                {
-                    const auto realized_element = TSDataPlanFactory::instance().output_type_for(
-                        element_schema, realized_value);
-                    return TSData{TSDataPlanFactory::instance().output_type_for(
-                        schema, TSRoleTypeRef{realized_element.as_role()})};
-                }
-            }
-        }
-        return TSData{TSDataPlanFactory::instance().output_type_for(schema)};
-    }
+TSOutputHandle
+TSOutput::binding_for(const TSOutputView &source,
+                      const TSValueTypeMetaData &requested_schema) const {
+  if (source.output() != this) {
+    throw std::invalid_argument(
+        "TSOutput::binding_for requires a view owned by this output");
+  }
+  const auto *source_schema = source.schema();
+  if (source_schema == nullptr) {
+    throw std::invalid_argument(
+        "TSOutput::binding_for requires a typed output view");
+  }
 
-    TSData TSOutput::checked_data_for(const TSEndpointSchema &endpoint_schema)
-    {
-        if (endpoint_schema.empty() || endpoint_schema.schema() == nullptr)
-        {
-            throw std::invalid_argument("TSOutput requires a non-empty output endpoint schema");
-        }
-        if (const auto *schema = endpoint_schema.schema(); endpoint_schema.is_owned())
-        {
-            return checked_data_for(schema);
-        }
-        const auto type = detail::output_data_storage_type_for(endpoint_schema);
-        if (!type) { throw std::logic_error("TSOutput could not resolve output endpoint storage"); }
-        return TSData{type};
-    }
+  if (time_series_schema_equivalent(source_schema, &requested_schema)) {
+    return source.handle();
+  }
 
-    const TSData &TSOutput::copyable_data(const TSOutput &other)
-    {
-        return other.data_;
-    }
+  auto &registry = TypeRegistry::instance();
+  const bool signal_from_reference =
+      requested_schema.kind == TSTypeKind::SIGNAL &&
+      source_schema->kind == TSTypeKind::REF;
+  if (!signal_from_reference &&
+      !time_series_schema_equivalent(registry.dereference(source_schema),
+                                     registry.dereference(&requested_schema))) {
+    throw std::invalid_argument("TSOutput alternative binding requires "
+                                "dereference-compatible schemas: source '" +
+                                std::string{source_schema->name()} +
+                                "', requested '" +
+                                std::string{requested_schema.name()} + "'");
+  }
 
-    void TSOutput::invalidate_observers() noexcept
-    {
-        if (!data_.has_value()) { return; }
-        detail::invalidate_owned_ts_data_tree(data_.view());
-    }
+  if (!alternatives_) {
+    alternatives_ = std::make_unique<detail::TSOutputAlternativeStore>();
+  }
+  return alternatives_->binding_for(source, requested_schema);
+}
 
-    void TSOutput::attach_root_parent()
-    {
-        if (has_value())
-        {
-            auto root = data_view();
-            root.bind_parent(*this, TS_DATA_NO_CHILD_ID);
-            detail::attach_owned_ts_data_parents(root.borrowed_ref());
-        }
-    }
+void TSOutput::release_alternative_subscriptions(
+    DateTime release_time) const noexcept {
+  if (alternatives_) {
+    alternatives_->release_subscriptions(release_time);
+  }
+}
 
-    void TSOutput::record_child_modified(std::size_t, DateTime)
-    {
-        // Root outputs have no parent to notify and no eager delta state to mark;
-        // delta visibility is read-gated and reclamation is lazy (next mutation).
-    }
+TSData TSOutput::checked_data_for(const TSValueTypeMetaData *schema) {
+  if (schema == nullptr) {
+    throw std::invalid_argument("TSOutput requires a time-series schema");
+  }
+  if (const auto *snapshot = active_type_realization(); snapshot != nullptr) {
+    return TSData{realized_output_type_for(schema, *snapshot)};
+  }
+  return TSData{TSDataPlanFactory::instance().output_type_for(schema)};
+}
 
-    NodeView TSOutput::owner_node() const
-    {
-        return has_value() ? data_view().owner_node() : NodeView{};
-    }
+TSData TSOutput::checked_data_for(const TSEndpointSchema &endpoint_schema) {
+  if (endpoint_schema.empty() || endpoint_schema.schema() == nullptr) {
+    throw std::invalid_argument(
+        "TSOutput requires a non-empty output endpoint schema");
+  }
+  if (const auto *schema = endpoint_schema.schema();
+      endpoint_schema.is_owned()) {
+    return checked_data_for(schema);
+  }
+  const auto type = detail::output_data_storage_type_for(endpoint_schema);
+  if (!type) {
+    throw std::logic_error(
+        "TSOutput could not resolve output endpoint storage");
+  }
+  return TSData{type};
+}
 
-    GraphView TSOutput::owner_graph() const
-    {
-        return has_value() ? data_view().owner_graph() : GraphView{};
-    }
+const TSData &TSOutput::copyable_data(const TSOutput &other) {
+  return other.data_;
+}
 
-    void TSOutput::bind_node_parent(const NodeView &node, TSEndpointOwnerPort port)
-    {
-        if (has_value()) { data_view().bind_parent(node, port); }
-    }
+void TSOutput::invalidate_observers() noexcept {
+  if (!data_.has_value()) {
+    return;
+  }
+  detail::invalidate_owned_ts_data_tree(data_.view());
+}
 
-    void TSOutput::clear_node_parent()
-    {
-        attach_root_parent();
-    }
+void TSOutput::attach_root_parent() {
+  if (has_value()) {
+    auto root = data_view();
+    root.bind_parent(*this, TS_DATA_NO_CHILD_ID);
+    detail::attach_owned_ts_data_parents(root.borrowed_ref());
+  }
+}
 
-    TSOutputMutationView TSOutput::begin_mutation(DateTime evaluation_time)
-    {
-        return TSOutputMutationView{*this, evaluation_time};
-    }
+void TSOutput::record_child_modified(std::size_t, DateTime) {
+  // Root outputs have no parent to notify and no eager delta state to mark;
+  // delta visibility is read-gated and reclamation is lazy (next mutation).
+}
 
-}  // namespace hgraph
+NodeView TSOutput::owner_node() const {
+  return has_value() ? data_view().owner_node() : NodeView{};
+}
+
+GraphView TSOutput::owner_graph() const {
+  return has_value() ? data_view().owner_graph() : GraphView{};
+}
+
+void TSOutput::bind_node_parent(const NodeView &node,
+                                TSEndpointOwnerPort port) {
+  if (has_value()) {
+    data_view().bind_parent(node, port);
+  }
+}
+
+void TSOutput::clear_node_parent() { attach_root_parent(); }
+
+TSOutputMutationView TSOutput::begin_mutation(DateTime evaluation_time) {
+  return TSOutputMutationView{*this, evaluation_time};
+}
+
+} // namespace hgraph

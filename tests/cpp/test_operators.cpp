@@ -120,6 +120,22 @@ namespace
         static void eval(In<"ts", TsVar<"S">> ts) { static_cast<void>(ts); }
     };
 
+    struct frame_identity_
+        : Operator<"frame_identity",
+                   In<"ts", TS<FrameOf<ScalarVar<"S">>>>,
+                   Out<TS<FrameOf<ScalarVar<"S">>>>>
+    {
+    };
+
+    struct frame_identity_impl
+    {
+        static void eval(In<"ts", TS<FrameOf<ScalarVar<"S">>>> ts,
+                         Out<TS<FrameOf<ScalarVar<"S">>>> out)
+        {
+            out.set(ts.value());
+        }
+    };
+
     struct route_shape_ : Operator<"route_shape", In<"condition", TS<Bool>>, In<"ts", TsVar<"S">>,
                                    In<"pulse", SIGNAL>>
     {
@@ -960,12 +976,87 @@ TEST_CASE("operators: generic Bundle patterns retain nominal origin and bind arg
     CHECK(adapted.is_peered_source());
 }
 
+TEST_CASE("operators: typed Series and Frame patterns preserve their scalar structure")
+{
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = scalar_type<Int>();
+    const auto *text = scalar_type<Str>();
+    const auto *row = registry.bundle("tests.pattern", "Row", {{"value", integer}});
+
+    const ScalarPattern series_pattern = to_scalar_pattern<SeriesOf<ScalarVar<"T">>>();
+    ResolutionMap series_map;
+    REQUIRE(scalar_pattern_match(series_pattern, registry.series(integer), series_map));
+    CHECK(series_map.find_scalar("T") == integer);
+    CHECK(scalar_pattern_resolve(series_pattern, series_map) == registry.series(integer));
+    CHECK_FALSE(scalar_pattern_match(series_pattern, registry.frame(row), series_map));
+    CHECK(scalar_pattern_to_string(series_pattern) == "Series[~T]");
+
+    const ScalarPattern frame_pattern = to_scalar_pattern<FrameOf<ScalarVar<"S">>>();
+    ResolutionMap frame_map;
+    REQUIRE(scalar_pattern_match(frame_pattern, registry.frame(row), frame_map));
+    CHECK(frame_map.find_scalar("S") == row);
+    CHECK(scalar_pattern_resolve(frame_pattern, frame_map) == registry.frame(row));
+    CHECK_FALSE(scalar_pattern_match(frame_pattern, registry.series(text), frame_map));
+    CHECK(scalar_pattern_to_string(frame_pattern) == "Frame[~S]");
+
+    CHECK(scalar_type<SeriesOf<Int>>() == registry.series(integer));
+    CHECK(scalar_type<FrameOf<Bundle<"tests.pattern::Row", Field<"value", Int>>>>() ==
+          registry.frame(registry.bundle("tests.pattern::Row", {{"value", integer}})));
+}
+
+TEST_CASE("operators: typed Frame generics are first-class C++ overloads")
+{
+    auto &registry = TypeRegistry::instance();
+    const auto *row = registry.bundle("tests.pattern", "FrameRow", {{"value", scalar_type<Int>()}});
+    const auto *frame_ts = registry.ts(registry.frame(row));
+
+    register_overload<frame_identity_, frame_identity_impl>();
+    std::array<WiringArg, 1> args{ts_arg(frame_ts)};
+    auto resolved = OperatorRegistry::instance().resolve(
+        "frame_identity", std::span<const WiringArg>{args});
+
+    REQUIRE(resolved.impl != nullptr);
+    CHECK(resolved.map.find_scalar("S") == row);
+    CHECK(ts_pattern_resolve(resolved.impl->output, resolved.map) == frame_ts);
+}
+
 TEST_CASE("operators: explicit output schemas participate in operator resolution")
 {
     // zero_int composes const_, so the conversion family supplies both.
     stdlib::register_conversion_operators();
 
     CHECK_OUTPUT((eval_node<stdlib::zero_, TS<Int>>(fn<stdlib::add_>())), values<Int>(0));
+}
+
+TEST_CASE("operators: caller-supplied type bindings seed resolution")
+{
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.value_type("int");
+    const auto *text = registry.value_type("str");
+
+    OperatorImpl impl;
+    impl.name = "explicit_type_binding";
+    impl.label = "explicit_type_binding";
+    impl.params.push_back(ParamPattern{
+        .kind = ParamPattern::Kind::Input,
+        .name = "value",
+        .ts = to_pattern<TS<ScalarVar<"IN">>>(),
+    });
+    impl.has_output = true;
+    impl.output = to_pattern<TS<ScalarVar<"OUT">>>();
+    impl.rank = operator_dispatch_detail::operator_rank(impl.params);
+    OperatorRegistry::instance().register_overload(std::move(impl));
+
+    ResolutionMap initial;
+    initial.bind_scalar("OUT", text);
+    std::array<WiringArg, 1> args{ts_arg(registry.ts(integer))};
+    const auto resolved = OperatorRegistry::instance().resolve(
+        "explicit_type_binding", std::span<const WiringArg>{args}, true,
+        nullptr, {}, {}, nullptr, &initial);
+
+    CHECK(resolved.map.find_scalar("IN") == integer);
+    CHECK(resolved.map.find_scalar("OUT") == text);
+    CHECK(ts_pattern_resolve(resolved.impl->output, resolved.map) == registry.ts(text));
 }
 
 TEST_CASE("operators: explicit collection output schema drives scalar auto-const matching")

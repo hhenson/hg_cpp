@@ -28,6 +28,8 @@ namespace hgraph::stdlib
         register_overload<combine, collection_impl_detail::combine_bundles_impl>();
         register_overload<combine_cs, collection_impl_detail::combine_cs_from_fields<true>>();
         register_overload<combine_cs, collection_impl_detail::combine_cs_from_fields<false>>();
+        register_overload<make_tsd, collection_impl_detail::make_tsd_impl>();
+        register_overload<make_tsd_with_remove, collection_impl_detail::make_tsd_with_remove_impl>();
         register_overload<mul_, collection_impl_detail::mul_tuple_int>();
         register_overload<getitem_, collection_impl_detail::getitem_ts_list>();
         register_overload<getitem_, collection_impl_detail::getitem_ts_fixed_tuple>();

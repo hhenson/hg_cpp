@@ -1,9 +1,9 @@
 """Dispatch coverage beyond the upstream ported wiring cases."""
-from typing import Union
+from typing import Type, Union
 
 import pytest
 
-from hgraph import CompoundScalar, TS, compute_node, dispatch, dispatch_, downcast_, downcast_ref, graph, operator
+from hgraph import AUTO_RESOLVE, OUT, CompoundScalar, TS, compute_node, const, dispatch, dispatch_, downcast_, downcast_ref, graph, operator
 from hgraph.test import eval_node
 
 
@@ -236,6 +236,26 @@ def test_dispatch_preserves_keyword_only_ts_parameters():
         return sound(animal, count=count)
 
     assert eval_node(app, [Dog()], [1]) == ["woof"]
+
+
+def test_compound_scalar_dispatch_propagates_specialized_output_to_overload():
+    class Animal(CompoundScalar): ...
+
+    class Dog(Animal): ...
+
+    @dispatch
+    @operator
+    def value(animal: TS[Animal]) -> OUT: ...
+
+    @graph(overloads=value)
+    def dog_value(animal: TS[Dog], tp: Type[OUT] = AUTO_RESOLVE) -> OUT:
+        return const(7, tp)
+
+    @graph
+    def app(animal: TS[Animal]) -> TS[int]:
+        return value[TS[int]](animal)
+
+    assert eval_node(app, [Dog()]) == [7]
 
 
 def test_compound_scalar_downcast_rejects_the_wrong_active_leaf():

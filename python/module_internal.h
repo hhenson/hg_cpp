@@ -100,6 +100,12 @@ namespace hgraph::python_bridge
     /** meta -> registered python Enum class (backs the core enum ops'
         python conversion; cleared on registry reset). */
     [[nodiscard]] std::unordered_map<const ValueTypeMetaData *, nb::object> &enum_class_registry();
+    [[nodiscard]] std::unordered_map<const ValueTypeMetaData *,
+                                     std::unordered_map<long long, nb::object>> &
+    enum_to_python_registry();
+    [[nodiscard]] std::unordered_map<const ValueTypeMetaData *,
+                                     std::unordered_map<std::string, long long>> &
+    enum_from_python_registry();
 
     [[nodiscard]] ValueTypeRef delta_binding(const ValueTypeMetaData *meta);
     [[nodiscard]] Value                   py_to_value_as(nb::handle object, const ValueTypeMetaData *meta);

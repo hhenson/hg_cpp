@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from hgraph import graph, TS, combine, CompoundScalar, TSB, convert
+from hgraph import graph, TS, combine, CompoundScalar, TSB, convert, if_
 from hgraph.test import eval_node
 
 
@@ -73,3 +73,15 @@ def test_convert_cs():
         return convert[TSB](x)
     
     assert eval_node(u, [None, AB(a=1, b="a")]) == [None, dict(a=1, b="a")]
+
+    @graph
+    def as_scalar(x: TSB[AB]) -> TS[AB]:
+        return x.as_scalar_ts()
+
+    assert eval_node(as_scalar, [dict(a=None, b="a"), dict(a=1)]) == [None, AB(a=1, b="a")]
+
+    @graph
+    def ref_as_scalar(x: TSB[AB]) -> TS[AB]:
+        return if_(True, x).true.as_scalar_ts()
+
+    assert eval_node(ref_as_scalar, [dict(a=1, b="a")]) == [AB(a=1, b="a")]

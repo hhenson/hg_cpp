@@ -8,7 +8,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from hgraph import TS, TSB, TSD, TSL, TSS, REF, CompoundScalar, TimeSeriesSchema
+from hgraph import (REF, TS, TSB, TSD, TSL, TSS, CompoundScalar,
+                    TimeSeriesSchema, compute_node, operator)
 from hgraph.reflection import (
     dereference,
     element_type,
@@ -21,6 +22,8 @@ from hgraph.reflection import (
     is_tsl,
     is_tss,
     key_type,
+    operator_overloads,
+    resolved_type,
     scalar_type,
     size,
     value_type,
@@ -32,6 +35,11 @@ def test_scalar_type_ts():
     assert scalar_type(TS[str]) == str
     assert scalar_type(TS[float]) == float
     assert scalar_type(TS[bool]) == bool
+
+
+def test_resolved_type_accepts_public_and_resolution_types():
+    assert resolved_type(TS[int]) == TS[int]
+    assert resolved_type(TS[int].handle) == TS[int]
 
 
 def test_scalar_type_tss():
@@ -145,3 +153,17 @@ def test_wrong_kind_raises():
 def test_not_a_type_expression_raises():
     with pytest.raises(TypeError):
         scalar_type(42)
+
+
+def test_operator_overloads_return_inspectable_implementations():
+    import inspect
+
+    @operator
+    def identity(ts: TS[int]) -> TS[int]: ...
+
+    @compute_node(overloads=identity)
+    def identity_impl(ts: TS[int]) -> TS[int]:
+        return ts.value
+
+    assert operator_overloads(identity) == (identity_impl,)
+    assert inspect.signature(operator_overloads(identity)[0]).parameters["ts"].annotation == TS[int]

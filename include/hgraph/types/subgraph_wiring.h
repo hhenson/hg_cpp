@@ -70,6 +70,18 @@ namespace hgraph
 
     namespace subgraph_wiring_detail
     {
+        [[nodiscard]] inline WiringPortRef materialize_external_service_input(
+            Wiring &w, NestedServiceInput input)
+        {
+            w.register_service_client_path(input.service_path, input.service_kind);
+            Value scalars = input.builder.scalars();
+            WiringPortRef source = w.add_node(
+                input.definition, std::move(input.builder), std::span<const WiringPortRef>{},
+                std::move(scalars));
+            source.arg_tag = input.arg_tag;
+            return source;
+        }
+
         // Interning identity for a nested_<G> node instance.
         template <typename G>
         struct nested_marker
@@ -333,12 +345,18 @@ namespace hgraph
                     std::forward_as_tuple(std::get<scalar_positions[S]>(arg_tuple)...));
             }(std::make_index_sequence<sig::scalar_count()>{});
 
-            inputs.reserve(inputs.size() + compiled.captured_inputs.size());
+            inputs.reserve(inputs.size() + compiled.captured_inputs.size() +
+                           compiled.external_service_inputs.size());
             for (WiringPortRef &captured : compiled.captured_inputs)
             {
                 inputs.push_back(std::move(captured));
             }
             compiled.captured_inputs.clear();
+            for (NestedServiceInput &external : compiled.external_service_inputs)
+            {
+                inputs.push_back(materialize_external_service_input(w, std::move(external)));
+            }
+            compiled.external_service_inputs.clear();
 
             // 3. The outer node's input TSB over the boundary args.
             const TSValueTypeMetaData *input_schema = nullptr;

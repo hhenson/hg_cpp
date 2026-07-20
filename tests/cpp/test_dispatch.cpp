@@ -307,6 +307,18 @@ namespace
             return wire<stdlib::dispatch_>(w, cases.value(), animal).as<TS<Str>>();
         }
     };
+
+    struct RefDispatchGraph
+    {
+        static constexpr auto name = "ref_dispatch_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Animal>> animal,
+                                     Scalar<"cases", stdlib::DispatchCases> cases)
+        {
+            auto source_ref = animal.template as<REF<TS<Animal>>>();
+            return wire<stdlib::dispatch_>(w, cases.value(), source_ref).as<TS<Str>>();
+        }
+    };
 }
 
 TEST_CASE("dispatch_: C++ wiring selects exact and inherited Bundle cases")
@@ -347,6 +359,23 @@ TEST_CASE("dispatch_: compiled branches import an enclosing context")
             testing::values<Str>(Str{"alpha"}, Str{"beta"}, testing::none),
             arg<"cases">(cases)),
         testing::values<Str>(Str{"alpha"}, Str{"beta"}, testing::none));
+}
+
+TEST_CASE("dispatch_: C++ wiring dereferences selected REF inputs")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    const auto types = register_dispatch_types();
+    const auto cases = stdlib::dispatch_cases({
+        stdlib::dispatch_case(types.dog, fn<Sound>()),
+        stdlib::dispatch_case(types.cat, fn<Sound>()),
+    });
+
+    CHECK_OUTPUT(
+        testing::eval_node<RefDispatchGraph>(
+            testing::values<Value>(dog_value(types, 1, "woof"), cat_value(types, 2)),
+            arg<"cases">(cases)),
+        testing::values<Str>(Str{"woof"}, Str{"meow"}));
 }
 
 TEST_CASE("downcast_ref: C++ wiring reads a registered derived Bundle without materializing it")

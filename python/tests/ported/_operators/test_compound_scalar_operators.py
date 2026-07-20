@@ -3,7 +3,7 @@ from typing import Tuple
 
 import pytest
 
-from hgraph import CompoundScalar, graph, TS, eq_, getattr_, type_, str_
+from hgraph import CompoundScalar, graph, TS, SCALAR, eq_, getattr_, type_, str_
 from hgraph.test import eval_node
 
 @dataclass
@@ -42,6 +42,40 @@ def test_getattr_cs():
         return ts.a
 
     assert eval_node(g, [_TestCS(a=1)]) == [1]
+
+
+def test_getattr_computed_compound_scalar_descriptor():
+    @dataclass(frozen=True)
+    class Computed(CompoundScalar):
+        value: int
+
+        @property
+        def doubled(self) -> int:
+            return self.value * 2
+
+    @graph
+    def g(ts: TS[Computed]) -> TS[int]:
+        return getattr_[SCALAR: int](ts, "doubled")
+
+    assert eval_node(g, [Computed(3), Computed(5)]) == [6, 10]
+
+
+def test_getattr_computed_descriptor_on_closed_union_leaf():
+    @dataclass(frozen=True)
+    class ComputedBase(CompoundScalar, abstract=True):
+        value: int
+
+    @dataclass(frozen=True)
+    class ComputedLeaf(ComputedBase):
+        @property
+        def doubled(self) -> int:
+            return self.value * 2
+
+    @graph
+    def g(ts: TS[ComputedBase]) -> TS[int]:
+        return getattr_[SCALAR: int](ts, "doubled")
+
+    assert eval_node(g, [ComputedLeaf(3), ComputedLeaf(5)]) == [6, 10]
 
 
 def test_getattr_cs_default():

@@ -34,8 +34,8 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] TSRoleTypeRef realized_output_type(const TSValueTypeMetaData &schema)
         {
             auto &factory = TSDataPlanFactory::instance();
-            if (const auto *snapshot = active_type_realization();
-                snapshot != nullptr && schema.value_schema != nullptr &&
+            const auto *snapshot = active_type_realization();
+            if (snapshot != nullptr && schema.value_schema != nullptr &&
                 (schema.kind == TSTypeKind::TS || schema.kind == TSTypeKind::TSB))
             {
                 const auto realized = snapshot->type_for(schema.value_schema);
@@ -43,6 +43,28 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (realized && realized != canonical)
                 {
                     return factory.output_type_for(&schema, realized).as_role();
+                }
+            }
+            if (snapshot != nullptr && schema.kind == TSTypeKind::TSD &&
+                schema.key_type() != nullptr && schema.element_ts() != nullptr)
+            {
+                const auto key = snapshot->type_for(schema.key_type());
+                const auto element = realized_output_type(*schema.element_ts());
+                const auto canonical_key = ValuePlanFactory::instance().type_for(schema.key_type());
+                const auto canonical_element = factory.output_type_for(schema.element_ts()).as_role();
+                if (key != canonical_key || element != canonical_element)
+                {
+                    return factory.keyed_output_type_for(&schema, key, element).as_role();
+                }
+            }
+            if (snapshot != nullptr && schema.kind == TSTypeKind::TSS &&
+                schema.value_schema != nullptr)
+            {
+                const auto *key_schema = schema.value_schema->element_type;
+                const auto key = snapshot->type_for(key_schema);
+                if (key != ValuePlanFactory::instance().type_for(key_schema))
+                {
+                    return factory.keyed_output_type_for(&schema, key).as_role();
                 }
             }
             return factory.output_type_for(&schema).as_role();
@@ -60,18 +82,31 @@ namespace hgraph::ts_data_plan_factory_detail
             }
             if (is_slot_ts_data(schema))
             {
-                if (role == TypeRole::Output && schema.kind == TSTypeKind::TSD)
+                if (role == TypeRole::Output)
                 {
-                    const auto *element_schema = schema.element_ts();
-                    if (element_schema == nullptr)
+                    const auto *key_schema = schema.kind == TSTypeKind::TSS
+                                                 ? schema.value_schema->element_type
+                                                 : schema.key_type();
+                    const auto key_binding = realized_value_binding(key_schema);
+                    if (schema.kind == TSTypeKind::TSD)
                     {
-                        throw std::logic_error("TSDataPlanFactory: TSD element schema is not resolved");
+                        const auto *element_schema = schema.element_ts();
+                        if (element_schema == nullptr)
+                        {
+                            throw std::logic_error("TSDataPlanFactory: TSD element schema is not resolved");
+                        }
+                        const auto *plan = synthesise_slot_tsd_plan(
+                            schema, key_binding, realized_output_type(*element_schema));
+                        if (plan == nullptr)
+                        {
+                            throw std::logic_error("TSDataPlanFactory: realized TSD auxiliary plan is not resolved");
+                        }
+                        return *plan;
                     }
-                    const auto *plan = synthesise_slot_tsd_plan(
-                        schema, realized_output_type(*element_schema));
+                    const auto *plan = synthesise_slot_plan(schema, key_binding);
                     if (plan == nullptr)
                     {
-                        throw std::logic_error("TSDataPlanFactory: realized TSD auxiliary plan is not resolved");
+                        throw std::logic_error("TSDataPlanFactory: realized TSS auxiliary plan is not resolved");
                     }
                     return *plan;
                 }
@@ -360,7 +395,13 @@ namespace hgraph::ts_data_plan_factory_detail
 
         if (is_slot_ts_data(schema))
         {
-            const auto *plan = synthesise_slot_plan(schema);
+            const auto *key_schema = schema.kind == TSTypeKind::TSS
+                                         ? schema.value_schema->element_type
+                                         : schema.key_type();
+            const auto key_binding = role == TypeRole::Output
+                                         ? realized_value_binding(key_schema)
+                                         : ValuePlanFactory::instance().type_for(key_schema);
+            const auto *plan = synthesise_slot_plan(schema, key_binding);
             if (plan == nullptr) throw std::logic_error("embedded keyed TSData plan is not resolved");
             if (role == TypeRole::Output && schema.kind == TSTypeKind::TSD)
             {
@@ -370,17 +411,18 @@ namespace hgraph::ts_data_plan_factory_detail
                     throw std::logic_error("embedded TSD element schema is not resolved");
                 }
                 const auto element_type = realized_output_type(*element_schema);
-                plan = synthesise_slot_tsd_plan(schema, element_type);
+                plan = synthesise_slot_tsd_plan(schema, key_binding, element_type);
                 if (plan == nullptr)
                 {
                     throw std::logic_error("embedded output TSD plan is not resolved");
                 }
                 const auto &ops = slot_tsd_ts_data_ops(
-                    schema, *plan, 0, element_type, role, true);
+                    schema, *plan, 0, key_binding, element_type, role, true);
                 return TSRoleTypeRef{intern_ts_type(
                     schema, role, *plan, ops, fixed_record_label(schema, role, false))};
             }
-            const auto &ops = slot_ts_data_ops(schema, *plan, 0, role, true);
+            const auto &ops = slot_ts_data_ops(
+                schema, *plan, 0, key_binding, role, true);
             return TSRoleTypeRef{intern_ts_type(
                 schema, role, *plan, ops, fixed_record_label(schema, role, false))};
         }

@@ -24,7 +24,7 @@ from hgraph.adaptors._async import KeyedAsyncState
 from hgraph.adaptors.executor import adaptor_executor
 from hgraph.stream import Data, Stream, StreamStatus
 
-from .catalogue import DataCatalogue, DataEnvironment, DataSource
+from .catalogue import DataCatalogue, DataCatalogueEntry, DataEnvironment, DataSource
 
 __all__ = (
     "FindDCEResult",
@@ -42,8 +42,8 @@ _RAW_STREAM = TSB[Stream[Data[Frame]]]
 
 @dataclass(frozen=True)
 class FindDCEResult(CompoundScalar):
-    dce: object
-    options: object
+    dce: DataCatalogueEntry[DataSource]
+    options: frozendict[str, object]
 
 
 @compute_node
@@ -58,8 +58,8 @@ def find_data_catalogue_entry(
 
 @dataclass(frozen=True)
 class _SubscribeRequest(CompoundScalar):
-    entry: object
-    options: object
+    entry: DataCatalogueEntry[DataSource]
+    options: frozendict[str, object]
     environment_path: str
 
 

@@ -53,15 +53,50 @@ namespace hgraph::stdlib
         {
             for (NestedServiceInput &input : external_inputs)
             {
-                w.register_service_client_path(input.service_path, input.service_kind);
-                Value scalars = input.builder.scalars();
-                WiringPortRef source = w.add_node(
-                    input.definition, std::move(input.builder), std::span<const WiringPortRef>{},
-                    std::move(scalars));
-                source.arg_tag = input.arg_tag;
+                WiringPortRef source = subgraph_wiring_detail::materialize_external_service_input(
+                    w, std::move(input));
                 schemas.push_back(source.schema);
                 arg_tags.push_back(static_cast<std::uint8_t>(source.arg_tag));
                 ports.push_back(std::move(source));
+            }
+        }
+
+        struct ExternalServiceSlot
+        {
+            NestedServiceInput input{};
+            std::size_t        slot{0};
+        };
+
+        [[nodiscard]] inline std::size_t external_service_slot(
+            NestedServiceInput input,
+            std::vector<ExternalServiceSlot> &external_services,
+            std::vector<WiringPortRef> &slots)
+        {
+            const auto existing = std::ranges::find_if(
+                external_services, [&](const ExternalServiceSlot &candidate) {
+                    return candidate.input.service_path == input.service_path &&
+                           candidate.input.service_kind == input.service_kind &&
+                           candidate.input.definition == input.definition &&
+                           candidate.input.source_schema == input.source_schema &&
+                           candidate.input.arg_tag == input.arg_tag &&
+                           candidate.input.builder.label() == input.builder.label();
+                });
+            if (existing != external_services.end()) { return existing->slot; }
+
+            const std::size_t slot = slots.size();
+            slots.push_back(WiringPortRef::null_source(input.source_schema));
+            external_services.push_back(ExternalServiceSlot{std::move(input), slot});
+            return slot;
+        }
+
+        inline void materialize_external_service_slots(
+            Wiring &w, std::vector<ExternalServiceSlot> external_services,
+            std::vector<WiringPortRef> &slots)
+        {
+            for (ExternalServiceSlot &external : external_services)
+            {
+                slots[external.slot] = subgraph_wiring_detail::materialize_external_service_input(
+                    w, std::move(external.input));
             }
         }
 
@@ -1104,7 +1139,8 @@ namespace hgraph::stdlib
             std::size_t positional_count,
             std::span<const std::pair<std::string, std::size_t>> named_slots,
             const TSValueTypeMetaData *&output_schema,
-            std::optional<bool> &branches_have_output)
+            std::optional<bool> &branches_have_output,
+            std::vector<ExternalServiceSlot> &external_services)
         {
             if (!branch.valid())
             {
@@ -1140,6 +1176,13 @@ namespace hgraph::stdlib
                     captured_slots.push_back(slot_sources.size());
                     slot_sources.push_back(captured);
                 }
+            }
+            std::vector<std::size_t> external_slots;
+            external_slots.reserve(compiled.external_service_inputs.size());
+            for (NestedServiceInput &external : compiled.external_service_inputs)
+            {
+                external_slots.push_back(external_service_slot(
+                    std::move(external), external_services, slot_sources));
             }
 
             const bool branch_has_output = compiled.output_schema != nullptr;
@@ -1185,12 +1228,18 @@ namespace hgraph::stdlib
                 const std::size_t ordinal = path[0];
                 if (ordinal >= declared_arity)
                 {
-                    const std::size_t capture_index = ordinal - declared_arity;
-                    if (capture_index >= captured_slots.size())
+                    const std::size_t appended_index = ordinal - declared_arity;
+                    if (appended_index < captured_slots.size())
                     {
-                        throw std::logic_error("switch_: captured boundary ordinal is out of range");
+                        path[0] = 1 + captured_slots[appended_index];
+                        return;
                     }
-                    path[0] = 1 + captured_slots[capture_index];
+                    const std::size_t external_index = appended_index - captured_slots.size();
+                    if (external_index >= external_slots.size())
+                    {
+                        throw std::logic_error("switch_: appended boundary ordinal is out of range");
+                    }
+                    path[0] = 1 + external_slots[external_index];
                     return;
                 }
                 if (bound_slots.takes_leading_key && ordinal == 0)
@@ -1343,6 +1392,7 @@ namespace hgraph::stdlib
             const TSValueTypeMetaData *output_schema = nullptr;
             std::optional<bool>        branches_have_output;
             SwitchNodeSpec             spec;
+            std::vector<ExternalServiceSlot> external_services;
             spec.reload_on_ticked = cases.reload_on_ticked;
             spec.branches.reserve(cases.cases.size());
             for (const SwitchCase &entry : cases.cases)
@@ -1352,7 +1402,7 @@ namespace hgraph::stdlib
                     .spec = compile_switch_branch(entry.branch, key_boundary,
                                                   ts, positional_count,
                                                   {named_slots.data(), named_slots.size()}, output_schema,
-                                                  branches_have_output),
+                                                  branches_have_output, external_services),
                 });
             }
             if (cases.default_branch.has_value())
@@ -1361,8 +1411,11 @@ namespace hgraph::stdlib
                                                             ts,
                                                             positional_count,
                                                             {named_slots.data(), named_slots.size()},
-                                                            output_schema, branches_have_output);
+                                                            output_schema, branches_have_output,
+                                                            external_services);
             }
+
+            materialize_external_service_slots(w, std::move(external_services), ts);
 
             if (!branches_have_output.has_value() || *branches_have_output != output_required)
             {
@@ -1432,10 +1485,11 @@ namespace hgraph::stdlib
             }
 
             std::optional<bool> branches_have_output;
+            std::vector<ExternalServiceSlot> external_services;
             (void)compile_switch_branch(*branch, key_source,
                                         slot_sources, positional_count,
                                         {named_slots.data(), named_slots.size()}, output_schema,
-                                        branches_have_output);
+                                        branches_have_output, external_services);
             return branches_have_output;
         }
 
@@ -1555,12 +1609,19 @@ namespace hgraph::stdlib
                 func, {schemas.data(), schemas.size()});
 
             std::vector<WiringPortRef> inputs = std::move(bound.ordered);
-            inputs.reserve(inputs.size() + compiled.captured_inputs.size());
+            inputs.reserve(inputs.size() + compiled.captured_inputs.size() +
+                           compiled.external_service_inputs.size());
             for (WiringPortRef &captured : compiled.captured_inputs)
             {
                 inputs.push_back(std::move(captured));
             }
             compiled.captured_inputs.clear();
+            for (NestedServiceInput &external : compiled.external_service_inputs)
+            {
+                inputs.push_back(subgraph_wiring_detail::materialize_external_service_input(
+                    w, std::move(external)));
+            }
+            compiled.external_service_inputs.clear();
             if (compiled.input_schemas.size() != inputs.size())
             {
                 throw std::logic_error(
@@ -1617,7 +1678,12 @@ namespace hgraph::stdlib
             OperatorCallContext context)
         {
             const WiredFn *func = context.scalar_as<WiredFn>("func");
-            if (func == nullptr || context.args.empty()) { return std::nullopt; }
+            if (func == nullptr) { return std::nullopt; }
+            if (const TSValueTypeMetaData *declared = func->output_schema(); declared != nullptr)
+            {
+                return try_except_output_schema(declared);
+            }
+            if (context.args.empty()) { return std::nullopt; }
 
             std::vector<const TSValueTypeMetaData *> positional;
             for (std::size_t index = 1; index < context.args.size(); ++index)
@@ -1708,6 +1774,30 @@ namespace hgraph::stdlib
             return strict;
         }
 
+        [[nodiscard]] inline const ValueTypeMetaData *dispatch_bundle_schema(
+            const TSValueTypeMetaData *schema) noexcept
+        {
+            const auto *value_schema = TypeRegistry::instance().dereference(schema);
+            return value_schema != nullptr && value_schema->kind == TSTypeKind::TS
+                       ? value_schema->value_schema
+                       : nullptr;
+        }
+
+        inline void present_dispatch_values(
+            std::span<WiringPortRef> slots,
+            std::span<const std::size_t> dispatch_slots)
+        {
+            auto &registry = TypeRegistry::instance();
+            for (const std::size_t slot : dispatch_slots)
+            {
+                if (slot >= slots.size())
+                {
+                    throw std::out_of_range("dispatch_: dispatch argument index is out of range");
+                }
+                slots[slot].schema = registry.dereference(slots[slot].schema);
+            }
+        }
+
         [[nodiscard]] inline DispatchSelectionPlan make_dispatch_selection_plan(
             const DispatchCases &cases,
             std::span<const TSValueTypeMetaData *const> slot_schemas)
@@ -1739,10 +1829,7 @@ namespace hgraph::stdlib
                 }
                 selected_slots[slot] = true;
 
-                const auto *schema = slot_schemas[slot];
-                const auto *declared = schema != nullptr && schema->kind == TSTypeKind::TS
-                                           ? schema->value_schema
-                                           : nullptr;
+                const auto *declared = dispatch_bundle_schema(slot_schemas[slot]);
                 if (declared == nullptr || !declared->is_named_bundle())
                 {
                     throw std::invalid_argument(
@@ -1778,7 +1865,8 @@ namespace hgraph::stdlib
                 for (std::size_t i = 0; i < entry.types.size(); ++i)
                 {
                     const auto *target = entry.types[i];
-                    const auto *declared = slot_schemas[cases.dispatch_args[i]]->value_schema;
+                    const auto *declared = dispatch_bundle_schema(
+                        slot_schemas[cases.dispatch_args[i]]);
                     if (target == nullptr || !target->is_named_bundle() ||
                         !TypeRegistry::instance().bundle_is_a(target, declared))
                     {
@@ -1987,7 +2075,8 @@ namespace hgraph::stdlib
             std::vector<WiringPortRef> &slot_sources,
             std::size_t positional_count,
             std::span<const std::pair<std::string, std::size_t>> named_slots,
-            const TSValueTypeMetaData *&output_schema)
+            const TSValueTypeMetaData *&output_schema,
+            std::vector<ExternalServiceSlot> &external_services)
         {
             if (!branch.valid())
             {
@@ -2052,6 +2141,13 @@ namespace hgraph::stdlib
                     slot_sources.push_back(captured);
                 }
             }
+            std::vector<std::size_t> external_slots;
+            external_slots.reserve(compiled.external_service_inputs.size());
+            for (NestedServiceInput &external : compiled.external_service_inputs)
+            {
+                external_slots.push_back(external_service_slot(
+                    std::move(external), external_services, slot_sources));
+            }
             if (compiled.output_schema == nullptr)
             {
                 throw std::invalid_argument("dispatch_: every branch must produce an output");
@@ -2087,12 +2183,18 @@ namespace hgraph::stdlib
                 const std::size_t ordinal = path[0];
                 if (ordinal >= declared_arity)
                 {
-                    const std::size_t capture_index = ordinal - declared_arity;
-                    if (capture_index >= captured_slots.size())
+                    const std::size_t appended_index = ordinal - declared_arity;
+                    if (appended_index < captured_slots.size())
                     {
-                        throw std::logic_error("dispatch_: captured boundary ordinal is out of range");
+                        path[0] = 1 + captured_slots[appended_index];
+                        return;
                     }
-                    path[0] = 1 + captured_slots[capture_index];
+                    const std::size_t external_index = appended_index - captured_slots.size();
+                    if (external_index >= external_slots.size())
+                    {
+                        throw std::logic_error("dispatch_: appended boundary ordinal is out of range");
+                    }
+                    path[0] = 1 + external_slots[external_index];
                     return;
                 }
                 if (ordinal >= bound_slots.ordered.size())
@@ -2139,11 +2241,16 @@ namespace hgraph::stdlib
                 ts.push_back(kwargs[i].second);
             }
 
+            present_dispatch_values(
+                {ts.data(), ts.size()},
+                {cases.dispatch_args.data(), cases.dispatch_args.size()});
+
             WiringPortRef key = wire_dispatch_key(
                 w, cases, std::span<const WiringPortRef>{ts.data(), ts.size()});
 
             const TSValueTypeMetaData *output_schema = nullptr;
             SwitchNodeSpec spec;
+            std::vector<ExternalServiceSlot> external_services;
             spec.branches.reserve(cases.cases.size());
             for (std::size_t i = 0; i < cases.cases.size(); ++i)
             {
@@ -2154,7 +2261,8 @@ namespace hgraph::stdlib
                         entry.branch, {entry.types.data(), entry.types.size()},
                         {cases.dispatch_args.data(), cases.dispatch_args.size()},
                         ts, positional_count,
-                        {named_slots.data(), named_slots.size()}, output_schema),
+                        {named_slots.data(), named_slots.size()}, output_schema,
+                        external_services),
                 });
             }
             if (cases.default_branch.has_value())
@@ -2163,8 +2271,10 @@ namespace hgraph::stdlib
                     *cases.default_branch, {},
                     {cases.dispatch_args.data(), cases.dispatch_args.size()},
                     ts, positional_count,
-                    {named_slots.data(), named_slots.size()}, output_schema);
+                    {named_slots.data(), named_slots.size()}, output_schema,
+                    external_services);
             }
+            materialize_external_service_slots(w, std::move(external_services), ts);
             spec.output_forwards_to_child_terminal =
                 std::any_of(spec.branches.begin(), spec.branches.end(),
                             [](const SwitchBranch &branch) {
@@ -2218,12 +2328,17 @@ namespace hgraph::stdlib
                 slot_sources.push_back(kw_arg.port);
             }
 
+            present_dispatch_values(
+                {slot_sources.data(), slot_sources.size()},
+                {cases->dispatch_args.data(), cases->dispatch_args.size()});
+
             (void)fallback_on_exception(false, [&] {
                 std::vector<const TSValueTypeMetaData *> slot_schemas;
                 slot_schemas.reserve(slot_sources.size());
                 for (const WiringPortRef &source : slot_sources) { slot_schemas.push_back(source.schema); }
                 (void)make_dispatch_selection_plan(*cases, {slot_schemas.data(), slot_schemas.size()});
                 const TSValueTypeMetaData *output_schema = nullptr;
+                std::vector<ExternalServiceSlot> external_services;
                 const auto types = entry != nullptr
                                        ? std::span<const ValueTypeMetaData *const>{
                                              entry->types.data(), entry->types.size()}
@@ -2232,7 +2347,8 @@ namespace hgraph::stdlib
                     *branch, types,
                     {cases->dispatch_args.data(), cases->dispatch_args.size()},
                     slot_sources, positional_count,
-                    {named_slots.data(), named_slots.size()}, output_schema);
+                    {named_slots.data(), named_slots.size()}, output_schema,
+                    external_services);
                 bind_graph_output(resolution, output_schema, "O");
                 return true;
             });
@@ -2678,9 +2794,14 @@ namespace hgraph::stdlib
                                .output.erased();
                 }
             }
-            if (registry.dereference(keys->schema) != registry.tss(classified.key_meta))
+            const auto *actual_keys_schema = registry.dereference(keys->schema);
+            const auto *expected_keys_schema = registry.tss(classified.key_meta);
+            if (actual_keys_schema != expected_keys_schema)
             {
-                throw std::invalid_argument("map_: '__keys__' must be a TSS of the mapped key type");
+                throw std::invalid_argument(fmt::format(
+                    "map_: '__keys__' must be a TSS of the mapped key type (got '{}', expected '{}')",
+                    actual_keys_schema != nullptr ? actual_keys_schema->name() : std::string_view{"<unbound>"},
+                    expected_keys_schema != nullptr ? expected_keys_schema->name() : std::string_view{"<unbound>"}));
             }
             spec.keys_input_index = ordered.size();
 
@@ -2852,9 +2973,14 @@ namespace hgraph::stdlib
                                .output.erased();
                 }
             }
-            if (registry.dereference(keys->schema) != registry.tss(output_schema->key_type()))
+            const auto *actual_keys_schema = registry.dereference(keys->schema);
+            const auto *expected_keys_schema = registry.tss(output_schema->key_type());
+            if (actual_keys_schema != expected_keys_schema)
             {
-                throw std::invalid_argument("mesh_: '__keys__' must be a TSS of the mapped key type");
+                throw std::invalid_argument(fmt::format(
+                    "mesh_: '__keys__' must be a TSS of the mapped key type (got '{}', expected '{}')",
+                    actual_keys_schema != nullptr ? actual_keys_schema->name() : std::string_view{"<unbound>"},
+                    expected_keys_schema != nullptr ? expected_keys_schema->name() : std::string_view{"<unbound>"}));
             }
 
             // Transcribe the map child spec into a mesh spec (a superset).

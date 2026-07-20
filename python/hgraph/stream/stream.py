@@ -7,7 +7,7 @@ from enum import Enum
 from itertools import chain
 from typing import Generic
 
-from hgraph import CompoundScalar, K, SCALAR, SIZE, TS, TSD, TSL, TimeSeriesSchema, compute_node
+from hgraph import COMPOUND_SCALAR, CompoundScalar, K, SCALAR, SIZE, TS, TSD, TSL, TimeSeriesSchema, compute_node
 from hgraph._types import _substitute_typevars
 from hgraph._wiring import _unwrap
 
@@ -65,11 +65,13 @@ class Stream:
             return cached
 
         origin = typing.get_origin(payload) or payload
-        if not isinstance(origin, type) or not issubclass(origin, CompoundScalar):
+        is_open_compound = payload is COMPOUND_SCALAR
+        if not is_open_compound and (
+                not isinstance(origin, type) or not issubclass(origin, CompoundScalar)):
             raise TypeError(
                 f"Stream[...] requires a CompoundScalar payload, got {payload!r}"
             )
-        parameters = tuple(getattr(origin, "__parameters__", ()))
+        parameters = tuple(getattr(origin, "__parameters__", ())) if not is_open_compound else ()
         arguments = tuple(typing.get_args(payload))
         if arguments and len(arguments) != len(parameters):
             raise TypeError(
@@ -81,10 +83,13 @@ class Stream:
             "status": TS[StreamStatus],
             "status_msg": TS[str],
         }
-        for item in fields(origin):
-            annotations[item.name] = TS[
-                _substitute_typevars(item.type, substitutions)
-            ]
+        if not is_open_compound:
+            resolved_annotations = typing.get_type_hints(origin)
+            for item in fields(origin):
+                annotations[item.name] = TS[
+                    _substitute_typevars(
+                        resolved_annotations.get(item.name, item.type), substitutions)
+                ]
 
         token = _schema_token(payload)
         name = f"Stream[{token}]"

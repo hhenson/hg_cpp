@@ -55,7 +55,7 @@ from ._services import (
     _ServiceStub, _bind_registered_impl, adaptor, adaptor_impl, context, from_graph, get_context,
     get_service_inputs, impl_input, impl_output, reference_service, register_adaptor,
     register_service, request_reply_service, service_adaptor, service_adaptor_impl,
-    service_impl, set_service_output, subscription_service, to_graph
+    service_impl, set_service_output, subscription_service, to_graph, WiringGraphContext
 )
 from ._callable_shape import callable_shape_key, equal_lambdas
 from ._runner import (
@@ -98,5 +98,5 @@ __all__ = [
     "service_impl", "set_as_of", "set_delta", "set_record_replay_config",
     "set_record_replay_model", "set_service_output", "set_table_schema_as_of_key",
     "set_table_schema_date_key", "sink_node", "subscription_service", "switch_", "to_graph",
-    "wire"
+    "wire", "WiringGraphContext"
 ]

@@ -17,6 +17,7 @@
 #include <hgraph/lib/std/operators/conversion.h>
 #include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/types/operator_type_resolution.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
 #include <hgraph/lib/std/operators/logical.h>
@@ -3296,7 +3297,10 @@ namespace hgraph::stdlib
         void combine_cs_from_fields_eval(const TSInputView &fields, const TSOutputView &erased)
         {
             const auto *target = erased.schema()->value_schema;
-            BundleBuilder builder{ValuePlanFactory::instance().type_for(target)};
+            const auto *snapshot = active_type_realization();
+            BundleBuilder builder{snapshot != nullptr
+                                      ? snapshot->type_for(target)
+                                      : ValuePlanFactory::instance().type_for(target)};
 
             const auto *input_schema = fields.schema();
             for (std::size_t index = 0; index < input_schema->field_count(); ++index)
@@ -3315,7 +3319,7 @@ namespace hgraph::stdlib
                     if (target->fields[target_index].name != nullptr &&
                         std::string_view{target->fields[target_index].name} == field_name)
                     {
-                        builder.set(target_index, Value{child.value()});
+                        builder.set(target_index, child.value());
                         break;
                     }
                 }
@@ -3350,6 +3354,80 @@ namespace hgraph::stdlib
                              Out<TsVar<"__out__">> out)
             {
                 combine_cs_from_fields_eval<false>(ts, static_cast<const TSOutputView &>(out));
+            }
+        };
+
+        inline void make_tsd_eval(const TSInputView &key, const TSInputView &value,
+                                  const TSInputView *remove_key, const TSOutputView &out)
+        {
+            const bool remove = remove_key != nullptr && remove_key->valid() &&
+                                remove_key->value().checked_as<Bool>() &&
+                                (remove_key->modified() || key.modified());
+            const bool publish = !remove && key.valid() && value.valid() &&
+                                 (key.modified() || value.modified());
+            if (!remove && !publish) { return; }
+
+            auto dict = out.as_dict();
+            auto mutation = dict.begin_mutation(out.evaluation_time());
+            const auto key_value = key.value();
+            if (remove)
+            {
+                if (dict.contains(key_value)) { static_cast<void>(mutation.erase(key_value)); }
+                return;
+            }
+
+            auto element = mutation.at(key_value);
+            TSOutputView child{out.output(), element, out.evaluation_time()};
+            if (key.modified() || !element.has_current_value())
+            {
+                apply_current_value(child, value.value());
+            }
+            else
+            {
+                const Value delta = capture_delta(value);
+                apply_delta(child, delta.view());
+            }
+        }
+
+        struct make_tsd_impl
+        {
+            static constexpr auto name = "make_tsd";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (output_bound(resolution)) { return; }
+                const auto *key = time_series_schema_at_as<AnyTS>(context, 0);
+                const auto *value = time_series_schema_at(context, 1);
+                if (key == nullptr || value == nullptr) { return; }
+                bind_output(resolution, TypeRegistry::instance().tsd(key->value_schema, value));
+            }
+
+            static void eval(In<"key", TS<ScalarVar<"K">>> key,
+                             In<"value", TsVar<"V">, InputValidity::Unchecked> value,
+                             Out<TsVar<"__out__">> out)
+            {
+                make_tsd_eval(key.base(), value.base(), nullptr,
+                              static_cast<const TSOutputView &>(out));
+            }
+        };
+
+        struct make_tsd_with_remove_impl
+        {
+            static constexpr auto name = "make_tsd_with_remove";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                make_tsd_impl::resolve_default_types(resolution, context);
+            }
+
+            static void eval(In<"key", TS<ScalarVar<"K">>> key,
+                             In<"value", TsVar<"V">, InputValidity::Unchecked> value,
+                             In<"remove_key", TS<Bool>, InputValidity::Unchecked> remove_key,
+                             Out<TsVar<"__out__">> out)
+            {
+                const auto &remove = remove_key.base();
+                make_tsd_eval(key.base(), value.base(), &remove,
+                              static_cast<const TSOutputView &>(out));
             }
         };
 

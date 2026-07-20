@@ -259,6 +259,20 @@ namespace hgraph
         using value_type = TValue;
     };
 
+    /** Arrow Series scalar qualified by its element schema. Runtime storage is ``Series``. */
+    template <typename TElement>
+    struct SeriesOf
+    {
+        using element_type = TElement;
+    };
+
+    /** Arrow Frame scalar qualified by its column Bundle schema. Runtime storage is ``Frame``. */
+    template <typename TSchema>
+    struct FrameOf
+    {
+        using schema_type = TSchema;
+    };
+
     // -----------------------------------------------------------------
     // Descriptor traits: bridge to the runtime registry
     // -----------------------------------------------------------------
@@ -462,6 +476,42 @@ namespace hgraph
             {
                 return nullptr;
             }
+        }
+    };
+
+    template <typename TElement>
+    struct scalar_descriptor<SeriesOf<TElement>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TElement>::is_concrete();
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                return TypeRegistry::instance().series(scalar_descriptor<TElement>::value_meta());
+            }
+            else { return nullptr; }
+        }
+    };
+
+    template <typename TSchema>
+    struct scalar_descriptor<FrameOf<TSchema>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TSchema>::is_concrete();
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                return TypeRegistry::instance().frame(scalar_descriptor<TSchema>::value_meta());
+            }
+            else { return nullptr; }
         }
     };
 

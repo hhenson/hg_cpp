@@ -1,8 +1,8 @@
 # Ported from ext/main/hgraph_unit_tests/_wiring/test_overloads.py
-import pytest
-
+from dataclasses import dataclass
 from typing import Tuple
 
+import pyarrow as pa
 import pytest
 
 from hgraph import (
@@ -18,6 +18,9 @@ from hgraph import (
     SCALAR_1,
     SCALAR_2,
     RequirementsNotMetWiringError,
+    CompoundScalar,
+    Frame,
+    cast_,
     operator,
 )
 from hgraph.test import eval_node
@@ -130,3 +133,43 @@ def test_requires_with_scalars():
     assert eval_node(clamp, [5, 15, 25], min_value=10, max_value=20) == [10, 15, 20]
     with pytest.raises(RequirementsNotMetWiringError):
         eval_node(clamp, [5, 15, 25], min_value=20, max_value=10)
+
+
+def test_native_compatibility_operator_accepts_python_overload():
+    @compute_node(overloads=cast_)
+    def cast_probe(tp: type[str], ts: TS[str]) -> TS[str]:
+        return f"probe:{ts.value}"
+
+    @graph
+    def app(ts: TS[str]) -> TS[str]:
+        return cast_(str, ts)
+
+    assert eval_node(app, ["value"]) == ["probe:value"]
+
+
+def test_generic_frame_overload_is_distinct_from_generic_scalar_overload():
+    @dataclass(frozen=True)
+    class Row(CompoundScalar):
+        value: int
+
+    @operator
+    def classify_value(ts: TS[SCALAR]) -> TS[str]: ...
+
+    @compute_node(overloads=classify_value)
+    def classify_scalar(ts: TS[SCALAR]) -> TS[str]:
+        return "scalar"
+
+    @compute_node(overloads=classify_value)
+    def classify_frame(ts: TS[Frame[SCALAR]]) -> TS[str]:
+        return "frame"
+
+    @graph
+    def scalar_app(ts: TS[int]) -> TS[str]:
+        return classify_value(ts)
+
+    @graph
+    def frame_app(ts: TS[Frame[Row]]) -> TS[str]:
+        return classify_value(ts)
+
+    assert eval_node(scalar_app, [1]) == ["scalar"]
+    assert eval_node(frame_app, [pa.table({"value": [1]})]) == ["frame"]

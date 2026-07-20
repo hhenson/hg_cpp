@@ -2,6 +2,7 @@
 
 #include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/time_series/ts_data/ops.h>
+#include <hgraph/util/scope.h>
 
 #include <stdexcept>
 
@@ -110,8 +111,10 @@ namespace hgraph
     bool TSRoleTypeRef::valid() const noexcept
     {
         if (record_ == nullptr) return false;
-        try { validate_ts_record(*record_); return true; }
-        catch (...) { return false; }
+        return fallback_on_exception(false, [&] {
+            validate_ts_record(*record_);
+            return true;
+        });
     }
 
     const MemoryUtils::StoragePlan &TSRoleTypeRef::checked_plan() const

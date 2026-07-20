@@ -180,6 +180,9 @@ namespace hgraph::python_bridge
     m.def("map_vt", [](PyValueType k, PyValueType v) {
         return PyValueType{TypeRegistry::instance().map(k.meta, v.meta)};
     });
+    m.def("owned_vt", [](PyValueType target) {
+        return PyValueType{TypeRegistry::instance().owned(target.meta)};
+    });
     m.def("tuple_vt", [](PyValueType e) {
         // A homogeneous variadic tuple (python's tuple[X, ...]).
         return PyValueType{TypeRegistry::instance().list(e.meta, 0, true)};
@@ -273,6 +276,16 @@ namespace hgraph::python_bridge
             table.emplace_back(nb::cast<std::string>(pair[0]), nb::cast<long long>(pair[1]));
         }
         const auto *meta = TypeRegistry::instance().enum_type(name, table);
+        nb::object python_members = cls.attr("__members__");
+        auto &to_python = python_bridge::enum_to_python_registry()[meta];
+        auto &from_python = python_bridge::enum_from_python_registry()[meta];
+        for (const auto &[member_name, value] : table)
+        {
+            nb::object member = nb::borrow<nb::object>(
+                python_members[nb::str(member_name.c_str())]);
+            to_python.emplace(value, std::move(member));
+            from_python.emplace(member_name, value);
+        }
         python_bridge::enum_class_registry()[meta] = std::move(cls);
         return PyValueType{meta};
     });
@@ -327,6 +340,12 @@ namespace hgraph::python_bridge
     });
     m.def("scalar_pattern_map", [](PyScalarPattern key, PyScalarPattern value) {
         return PyScalarPattern{ScalarPattern::map(std::move(key.pattern), std::move(value.pattern))};
+    });
+    m.def("scalar_pattern_series", [](PyScalarPattern element) {
+        return PyScalarPattern{ScalarPattern::series(std::move(element.pattern))};
+    });
+    m.def("scalar_pattern_frame", [](PyScalarPattern schema) {
+        return PyScalarPattern{ScalarPattern::frame(std::move(schema.pattern))};
     });
     m.def("scalar_pattern_bundle", [] {
         return PyScalarPattern{ScalarPattern::bundle()};

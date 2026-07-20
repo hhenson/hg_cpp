@@ -7,6 +7,8 @@
 #include <hgraph/runtime/node_scheduler.h>
 #include <hgraph/types/call_args.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/frame.h>
+#include <hgraph/types/series.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/type_resolution.h>
 #include <hgraph/types/time_series/ts_data/set_view.h>
@@ -594,6 +596,38 @@ namespace hgraph
         // modified() / valid() / delta_value() inherited from TSInputView.
     };
 
+    template <fixed_string Name, typename TElement, auto... TPolicies>
+    class In<Name, TS<SeriesOf<TElement>>, TPolicies...> : public TSInputView
+    {
+      public:
+        using schema                     = TS<SeriesOf<TElement>>;
+        using value_type                 = Series;
+        static constexpr auto field_name = Name;
+        static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
+
+        explicit In(TSInputView view) noexcept : TSInputView(std::move(view)) {}
+
+        [[nodiscard]] const Series &value() const { return TSInputView::value().template checked_as<Series>(); }
+        [[nodiscard]] const TSInputView &base() const noexcept { return *this; }
+    };
+
+    template <fixed_string Name, typename TSchema, auto... TPolicies>
+    class In<Name, TS<FrameOf<TSchema>>, TPolicies...> : public TSInputView
+    {
+      public:
+        using schema                     = TS<FrameOf<TSchema>>;
+        using value_type                 = Frame;
+        static constexpr auto field_name = Name;
+        static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
+
+        explicit In(TSInputView view) noexcept : TSInputView(std::move(view)) {}
+
+        [[nodiscard]] const Frame &value() const { return TSInputView::value().template checked_as<Frame>(); }
+        [[nodiscard]] const TSInputView &base() const noexcept { return *this; }
+    };
+
     /** ``TS<AnyValue>`` input: expose the contained erased value without
         pretending the Any box is an ordinary C++ atomic scalar. */
     template <fixed_string Name, auto... TPolicies>
@@ -1010,6 +1044,54 @@ namespace hgraph
             static_cast<void>(mutation.copy_value_from(value));
         }
         // modified() / valid() / evaluation_time() inherited from TSOutputView.
+    };
+
+    template <typename TElement>
+    class Out<TS<SeriesOf<TElement>>> : public TSOutputView
+    {
+      public:
+        using schema     = TS<SeriesOf<TElement>>;
+        using value_type = Series;
+
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
+
+        void set(Series value) const
+        {
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
+            auto destination = mutation.value();
+            const ValueView source{destination.binding(), static_cast<const void *>(&value)};
+            static_cast<void>(mutation.copy_value_from(source));
+        }
+
+        void apply(const ValueView &value) const
+        {
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
+            static_cast<void>(mutation.copy_value_from(value));
+        }
+    };
+
+    template <typename TSchema>
+    class Out<TS<FrameOf<TSchema>>> : public TSOutputView
+    {
+      public:
+        using schema     = TS<FrameOf<TSchema>>;
+        using value_type = Frame;
+
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
+
+        void set(Frame value) const
+        {
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
+            auto destination = mutation.value();
+            const ValueView source{destination.binding(), static_cast<const void *>(&value)};
+            static_cast<void>(mutation.copy_value_from(source));
+        }
+
+        void apply(const ValueView &value) const
+        {
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
+            static_cast<void>(mutation.copy_value_from(value));
+        }
     };
 
     /** ``TS<AnyValue>`` output: each write is boxed with its concrete native

@@ -605,8 +605,10 @@ namespace hgraph
     bool ExecutorTypeRef::valid() const noexcept
     {
         if (record_ == nullptr) return false;
-        try { validate_executor_record(*record_); return true; }
-        catch (...) { return false; }
+        return fallback_on_exception(false, [&] {
+            validate_executor_record(*record_);
+            return true;
+        });
     }
 
     const GraphExecutorTypeMetaData *ExecutorTypeRef::schema() const noexcept

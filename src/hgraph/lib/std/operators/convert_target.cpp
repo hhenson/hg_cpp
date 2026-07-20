@@ -401,6 +401,28 @@ namespace hgraph::stdlib
                 case ScalarPattern::Kind::FixedTuple: return registry.ts(infer_tuple_value_candidate(inputs));
                 case ScalarPattern::Kind::Set: return registry.ts(infer_set_value_candidate(inputs));
                 case ScalarPattern::Kind::Map: return registry.ts(infer_mapping_value_candidate(inputs));
+                case ScalarPattern::Kind::Series:
+                case ScalarPattern::Kind::Frame:
+                {
+                    const TSValueTypeMetaData *input = require_one_input(
+                        inputs, scalar_pattern_to_string(scalar_pattern));
+                    if (input->kind != TSTypeKind::TS || input->value_schema == nullptr)
+                    {
+                        throw std::invalid_argument(
+                            fmt::format("cannot infer {} target from {}",
+                                        scalar_pattern_to_string(scalar_pattern), schema_name(input)));
+                    }
+                    const bool matches = scalar_pattern.kind == ScalarPattern::Kind::Series
+                                             ? registry.is_series(input->value_schema)
+                                             : registry.is_frame(input->value_schema);
+                    if (!matches)
+                    {
+                        throw std::invalid_argument(
+                            fmt::format("cannot infer {} target from {}",
+                                        scalar_pattern_to_string(scalar_pattern), schema_name(input)));
+                    }
+                    return input;
+                }
                 case ScalarPattern::Kind::Bundle:
                 {
                     const TSValueTypeMetaData *input = require_one_input(inputs, "TS[CompoundScalar]");

@@ -3,6 +3,7 @@
 import datetime
 import threading
 import time
+from dataclasses import dataclass, field
 
 import hgraph as hg
 from hgraph import Size, TS, TSD, TSL, TSS, TSW, WindowSize, graph, eval_node, run_graph
@@ -338,6 +339,19 @@ def test_compute_state_clock_scheduler_and_output_view():
     check(eval_node(delayed_delta, [4]) == [4, 4], "state/scheduler/output injection")
 
 
+def test_compute_typed_state_constructs_the_declared_state_once():
+    @dataclass
+    class History:
+        values: list[int] = field(default_factory=list)
+
+    @hg.compute_node
+    def remember(value: TS[int], state: hg.STATE[History] = None) -> TS[int]:
+        state.values.append(value.value)
+        return sum(state.values)
+
+    check(eval_node(remember, [1, 2, 3]) == [1, 3, 6], "typed state")
+
+
 def test_mutable_output_view_set_operations():
     @hg.compute_node
     def mutate(trigger: TS[bool], _output: TSS[int] = None) -> TSS[int]:
@@ -560,6 +574,18 @@ def test_generators_capture_arguments_are_distinct_and_cleanup():
     check(run_graph(empty) == [], "empty generator")
 
 
+def test_generator_injects_engine_api_for_its_full_lifetime():
+    @hg.generator
+    def sequence(offset: int, *, _api: hg.EvaluationEngineApi) -> TS[datetime.datetime]:
+        yield datetime.timedelta(), _api.start_time + offset * hg.MIN_TD
+        yield hg.MIN_TD, _api.start_time + (offset + 1) * hg.MIN_TD
+
+    assert eval_node(sequence, offset=2) == [
+        hg.MIN_ST + 2 * hg.MIN_TD,
+        hg.MIN_ST + 3 * hg.MIN_TD,
+    ]
+
+
 def test_generator_rejects_duplicate_or_retrograde_times():
     @hg.generator
     def duplicate() -> TS[int]:
@@ -581,6 +607,16 @@ def test_generator_rejects_duplicate_or_retrograde_times():
         raise ValueError("generator failed")
 
     expect_raises(RuntimeError, lambda: run_graph(broken), "generator failed")
+
+
+def test_python_exception_is_translated_before_leaving_the_gil_scope():
+    @hg.compute_node
+    def broken(value: TS[int]) -> TS[int]:
+        raise ValueError(f"compute failed for {value.value}")
+
+    error = expect_raises(RuntimeError, lambda: eval_node(broken, [7]), "compute failed for 7")
+    check("node[" in str(error) and "evaluate failed" in str(error),
+          f"missing native node context: {error}")
 
 
 def test_python_graphs_work_as_native_higher_order_functions():

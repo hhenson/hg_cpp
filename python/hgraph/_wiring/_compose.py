@@ -51,6 +51,11 @@ class MeshWiringPort(WiringPort):
     def key_set(self):
         return WiringPort(self._port)
 
+    def __bool__(self):
+        # get_mesh returns None outside the named scope and a live handle
+        # inside it; existing clients use that distinction before indexing.
+        return True
+
     def __getitem__(self, item):
         return WiringPort(_hgraph.mesh_ref(
             _current_wiring(), _unwrap(item), self._mesh_name))
@@ -385,7 +390,8 @@ def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
         if has_scalar_args:
             branch = _bind_switch_scalar_args(branch, args, kwargs)
         prepared[case_key] = branch if isinstance(branch, str) else _as_wired(branch)
-    erased = _hgraph.switch_cases(prepared, reload=reload_on_ticked)
+    erased = _hgraph.switch_cases(
+        prepared, reload=reload_on_ticked, key_type=_unwrap(key).ts_type)
     return wire("switch_", key, erased, *ts_args, **ts_kwargs)
 
 
@@ -570,11 +576,31 @@ class _Emit:
 
 emit = _Emit()
 
-def cast_(tp, ts):
-    """hgraph's cast_: reinterpret/convert ``ts`` to type ``tp`` (a python
-    scalar type). Numeric casts route through the convert kernels."""
-    from .._types import TS
+from .._types import SCALAR, SCALAR_1, TS
+from ._operator import _Operator
 
+
+def cast_(tp: type[SCALAR], ts: TS[SCALAR_1]) -> TS[SCALAR]:
+    """Convert ``ts`` to ``tp`` through an overloadable operator family."""
+
+
+class _CastOperator(_Operator):
+    def __call__(self, tp, ts):
+        # The scalar carrier determines the requested output. Supplying that
+        # schema lets the C++ registry resolve output-only SCALAR.
+        return self._delegate(tp, ts, output_type=TS[tp])
+
+
+cast_ = _CastOperator(cast_)
+
+
+from ._graph import graph
+
+
+@graph(overloads=cast_)
+def _cast_default(tp: type[SCALAR], ts: TS[SCALAR_1]) -> TS[SCALAR]:
+    # This compatibility operator is only a wiring surface. Its default
+    # behavior is the native C++ conversion family.
     return convert(ts, to=TS[tp])
 
 

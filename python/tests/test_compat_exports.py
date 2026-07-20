@@ -2,6 +2,7 @@
 utc_now, equal_lambdas/callable_shape_key, EvaluationClock (as annotation
 injectable), get_recorded_value, get_context, TSW_OUT, is_feature_enabled."""
 import os
+from typing import TypeVar
 
 import _hgraph
 import hgraph as hg
@@ -12,6 +13,46 @@ from hgraph.test import eval_node
 def test_utc_now_is_naive():
     now = hg.utc_now()
     assert now.tzinfo is None
+
+
+def test_optional_wiring_annotations_and_parameterized_objects_are_accepted():
+    from typing import Generic
+
+    value_type = TypeVar("value_type")
+
+    class Box(Generic[value_type]):
+        pass
+
+    assert TS[Box[int]].handle.is_ts
+    assert (TS[int] | None) == TS[int]
+    assert hg.datetime is not None
+
+
+def test_state_accepts_documentary_state_type():
+    assert repr(hg.STATE[dict]).startswith("STATE[")
+
+
+def test_time_series_bounded_python_type_var_is_a_generic_service_output():
+    class Quote(hg.TimeSeriesSchema):
+        value: TS[float]
+
+    quote_type = TypeVar("quote_type", bound=hg.TSB[Quote])
+
+    @hg.subscription_service
+    def quote(key: TS[str], path: str = "quote") -> quote_type:
+        ...
+
+    assert quote.descriptor is None
+    assert quote[quote_type: hg.TSB[Quote]].descriptor is not None
+
+
+def test_wiring_graph_context_compatibility_boundary_is_available():
+    @graph
+    def identity(value: TS[int]) -> TS[int]:
+        hg.WiringGraphContext.instance().build_services()
+        return value
+
+    assert eval_node(identity, [1]) == [1]
 
 
 def test_equal_lambdas_shape_semantics():

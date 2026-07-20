@@ -20,6 +20,58 @@ namespace hgraph::python_bridge
         py_nodes.cpp. */
     void apply_py_result(nb::handle result, Out<TsVar<"O">> &out);
 
+    [[nodiscard]] inline nb::object materialize_tsb_value(
+        const TSValueTypeMetaData *schema,
+        nb::dict value)
+    {
+        const auto mapped = tsb_compound_value_registry().find(schema);
+        if (mapped == tsb_compound_value_registry().end()) { return value; }
+
+        const auto info = bundle_class_info_registry().find(mapped->second);
+        if (info == bundle_class_info_registry().end() || !info->second.type.is_valid())
+        {
+            throw std::logic_error("TSB CompoundScalar class registration is incomplete");
+        }
+
+        const auto &class_info = info->second;
+        nb::dict constructor_arguments;
+        nb::object result;
+        if (!class_info.requires_constructor)
+        {
+            result = nb::steal(class_info.allocator(
+                reinterpret_cast<PyTypeObject *>(class_info.type.ptr()), 0));
+            if (!result.is_valid()) { nb::raise_python_error(); }
+        }
+        for (std::size_t index = 0; index < class_info.field_names.size(); ++index)
+        {
+            const nb::handle key = class_info.field_names[index];
+            nb::object field_value = nb::borrow<nb::object>(value[key]);
+            if (class_info.requires_constructor)
+            {
+                if (class_info.constructor_fields[index])
+                {
+                    constructor_arguments[key] = field_value;
+                }
+            }
+            else if (class_info.field_overrides[index].is_valid())
+            {
+                class_info.field_overrides[index](result, field_value);
+            }
+            else if (PyObject_GenericSetAttr(result.ptr(), key.ptr(), field_value.ptr()) != 0)
+            {
+                nb::raise_python_error();
+            }
+        }
+        if (class_info.requires_constructor)
+        {
+            nb::tuple positional = nb::steal<nb::tuple>(PyTuple_New(0));
+            result = nb::steal(PyObject_Call(
+                class_info.type.ptr(), positional.ptr(), constructor_arguments.ptr()));
+            if (!result.is_valid()) { nb::raise_python_error(); }
+        }
+        return result;
+    }
+
     /**
      * ONE compute/sink operator for ANY arity (Howard's review: per-arity
      * stubs do not scale): the argument ports pack into a STRUCTURAL
@@ -68,6 +120,36 @@ namespace hgraph::python_bridge
         return nb::borrow(nb::handle(ref.ns));
     }
 
+    [[nodiscard]] inline nb::object py_state_namespace(PyStateRef &state)
+    {
+        if (state.ns == nullptr)
+        {
+            nb::object ns = nb::module_::import_("types").attr("SimpleNamespace")();
+            state.ns = ns.release().ptr();
+        }
+        return nb::borrow(nb::handle(state.ns));
+    }
+
+    [[nodiscard]] inline nb::object py_typed_state(PyStateRef &state,
+                                                    nb::handle factory)
+    {
+        if (state.ns == nullptr)
+        {
+            nb::object value = nb::borrow<nb::object>(factory)();
+            state.ns = value.release().ptr();
+        }
+        return nb::borrow(nb::handle(state.ns));
+    }
+
+    [[nodiscard]] inline nb::object py_typed_state(State<PyStateRef> &state,
+                                                    nb::handle factory)
+    {
+        PyStateRef ref = state.get();
+        nb::object value = py_typed_state(ref, factory);
+        state.set(ref);
+        return value;
+    }
+
     inline void py_release_state(State<PyStateRef> &state)
     {
         PyStateRef ref = state.get();
@@ -76,6 +158,16 @@ namespace hgraph::python_bridge
             nb::gil_scoped_acquire gil;
             nb::steal(nb::handle(ref.ns));   // drop the held reference
             state.set(PyStateRef{});
+        }
+    }
+
+    inline void py_release_state(PyStateRef &state)
+    {
+        if (state.ns != nullptr)
+        {
+            nb::gil_scoped_acquire gil;
+            nb::steal(nb::handle(state.ns));
+            state = PyStateRef{};
         }
     }
 
@@ -267,6 +359,19 @@ namespace hgraph::python_bridge
         {
             auto view = checked();
             if (!view.valid() || !view.data_view().has_current_value()) { return nb::none(); }
+            if (view.schema() != nullptr && view.schema()->kind == TSTypeKind::TSB)
+            {
+                nb::dict value;
+                auto bundle = view.as_bundle();
+                for (std::size_t index = 0; index < view.schema()->field_count(); ++index)
+                {
+                    const auto &field = view.schema()->fields()[index];
+                    auto child = bundle.at(index);
+                    value[nb::str{field.name}] =
+                        PyOutput{TSOutputHandle{child}, now, lease}.value();
+                }
+                return materialize_tsb_value(view.schema(), std::move(value));
+            }
             return value_to_py(view.data_view().value());
         }
 
@@ -534,6 +639,19 @@ namespace hgraph::python_bridge
                 // reference() reads the to-REF alternative's populated value
                 // (peered at the true upstream output).
                 return nb::cast(python_bridge::PyOpaqueRef{Value{v.reference()}, v.evaluation_time()});
+            }
+            if (schema != nullptr && schema->kind == TSTypeKind::TSB)
+            {
+                nb::dict result;
+                auto bundle = const_cast<TSInputView &>(v).as_bundle();
+                for (std::size_t index = 0; index < schema->field_count(); ++index)
+                {
+                    const auto &field = schema->fields()[index];
+                    auto child = bundle.at(index);
+                    result[nb::str{field.name}] =
+                        PyTimeSeries{std::move(child), lease}.value();
+                }
+                return materialize_tsb_value(schema, std::move(result));
             }
             nb::object result = data.value_to_python();
             if (schema != nullptr && schema->kind == TSTypeKind::TS && PySet_CheckExact(result.ptr()))

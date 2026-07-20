@@ -50,6 +50,31 @@ TEST_CASE("fallback_on_exception reports unknown exceptions")
     REQUIRE(message == "unknown error");
 }
 
+TEST_CASE("typed annotate_on_exception exposes and replaces the selected exception")
+{
+    std::string annotated_message;
+    REQUIRE_THROWS_AS(
+        hgraph::annotate_on_exception<std::out_of_range>(
+            []() -> int { throw std::out_of_range("bad index"); },
+            [&](const std::out_of_range &error) {
+                annotated_message = std::string{"path: "} + error.what();
+                throw std::invalid_argument(annotated_message);
+            }),
+        std::invalid_argument);
+    REQUIRE(annotated_message == "path: bad index");
+}
+
+TEST_CASE("typed annotate_on_exception leaves other exception types unchanged")
+{
+    bool annotated = false;
+    REQUIRE_THROWS_AS(
+        hgraph::annotate_on_exception<std::out_of_range>(
+            []() -> int { throw std::runtime_error("boom"); },
+            [&](const std::out_of_range &) { annotated = true; }),
+        std::runtime_error);
+    REQUIRE_FALSE(annotated);
+}
+
 TEST_CASE("scope_exit propagates cleanup exceptions by default")
 {
     REQUIRE_THROWS_AS(

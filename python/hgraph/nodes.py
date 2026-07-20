@@ -1,15 +1,32 @@
 """hgraph.nodes - helper nodes (hgraph parity; python impls as upstream)."""
-from ._wiring import compute_node, graph, wire, REMOVE_IF_EXISTS
-from ._types import TS, TSD, TSS, K, K_1
+from ._wiring import compute_node, graph, wire, REMOVE_IF_EXISTS, operator_function
+from ._types import TS, TSD, TSS, K, K_1, COMPOUND_SCALAR, SCALAR
 
 __all__ = ("make_tsd", "flatten_tsd", "extract_tsd", "keys_where_true", "where_true", "tsl_to_tsd")
 
 
-@compute_node(valid=("key", "value"))
-def make_tsd(key: TS[object], value: TS[object], remove_key: TS[bool] = None) -> TSD[object, TS[object]]:
-    if remove_key.valid and remove_key.modified and remove_key.value:
-        return {key.value: REMOVE_IF_EXISTS}
-    return {key.value: value.value}
+def _requires_python_descriptor(mapping, attr):
+    """Select the Python fallback only for non-storage attributes.
+
+    Stored CompoundScalar fields are native Bundle projections. A descriptor
+    such as hg_oap's ExprClass fields is evaluated on the reconstructed Python
+    object because it has no C++ storage field to project.
+    """
+    value_type = mapping[COMPOUND_SCALAR]
+    return attr not in {name for name, _ in value_type.fields}
+
+
+@compute_node(overloads="getattr_", requires=_requires_python_descriptor)
+def _getattr_compound_descriptor(
+        ts: TS[COMPOUND_SCALAR], attr: str,
+        default_value: TS[SCALAR] = None) -> TS[SCALAR]:
+    value = getattr(ts.value, attr, None)
+    if value is not None:
+        return value
+    return default_value.value if default_value.valid else None
+
+
+make_tsd = operator_function("make_tsd")
 
 
 @compute_node

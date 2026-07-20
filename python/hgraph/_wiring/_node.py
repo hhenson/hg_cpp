@@ -1,6 +1,7 @@
 """_PyNode: Python user-node wiring (signature binding + call
 normalisation), @compute_node/@sink_node, lift, @generator, push_queue."""
 import inspect
+import typing
 import warnings
 
 import _hgraph
@@ -11,7 +12,7 @@ from ._core import (IncorrectTypeBinding, RequirementsNotMetWiringError,
                     WiringError, WiringPort, _current_wiring,
                     _resolve_context, _unwrap, wire)
 from ._markers import (LOGGER, STATE, _INJECTABLE_MARKERS, _MISSING,
-                       _RecordableStateExpr, _annotation_ts_kind,
+                       _RecordableStateExpr, _StateExpr, _annotation_ts_kind,
                        _is_object_vt, _tsw_kind, _unbounded_tuple_kind)
 from ._operator import _register_overload, _run_requires
 from ._state import GlobalState, _GRAPH_LOGGER_KEY
@@ -28,7 +29,7 @@ def _is_time_series_annotation(annotation):
     return (
         isinstance(annotation, (_TsExpr, _ContextExpr, _GenericTsExpr))
         or (
-            isinstance(annotation, _TypeVarSentinel)
+            isinstance(annotation, (_TypeVarSentinel, typing.TypeVar))
             and not _type_var_is_scalar(annotation)
         )
     )
@@ -138,6 +139,7 @@ class _PyNode:
         # the default guarantees user code in a graph never supplies them.
         for param in self._params:
             is_injectable = (param.annotation in _INJECTABLE_MARKERS or
+                             isinstance(param.annotation, _StateExpr) or
                              isinstance(param.annotation, _RecordableStateExpr))
             if is_injectable and param.default is not None:
                 raise TypeError(
@@ -147,7 +149,9 @@ class _PyNode:
                for param in self._params) > 1:
             raise TypeError(f"'{self.__name__}' supports at most one RECORDABLE_STATE parameter")
         if self._recordable_state is not None and any(
-                param.annotation is STATE for param in self._params):
+                (param.annotation is STATE or
+                 isinstance(param.annotation, _StateExpr))
+                for param in self._params):
             raise TypeError(
                 f"'{self.__name__}' cannot combine STATE with RECORDABLE_STATE")
 
@@ -170,7 +174,8 @@ class _PyNode:
             raise TypeError(
                 f"@{self.__name__}.{phase} is not supported with RECORDABLE_STATE")
         for param in inspect.signature(fn).parameters.values():
-            if param.annotation in _INJECTABLE_MARKERS:
+            if (param.annotation in _INJECTABLE_MARKERS or
+                    isinstance(param.annotation, _StateExpr)):
                 if param.default is not None:
                     raise TypeError(
                         f"injectable parameter '{param.name}' of '{fn.__name__}' must default to None"
@@ -255,6 +260,28 @@ class _PyNode:
         if result is None:
             return None
         return frozenset(result)
+
+    @staticmethod
+    def _resolved_auto_value(scope, param):
+        """Project a C++ resolution-scope binding into a Python node scalar."""
+        import typing
+
+        from .._types import _TsExpr, _type_var_name
+
+        arguments = typing.get_args(param.annotation)
+        if typing.get_origin(param.annotation) is not type or not arguments:
+            raise WiringError(
+                f"AUTO_RESOLVE parameter '{param.name}' needs a type[TYPEVAR] annotation")
+        name = _type_var_name(arguments[0])
+        if (scalar := scope.find_scalar(name)) is not None:
+            return _hgraph.python_type_for_value(scalar)
+        if (ts := scope.find_ts(name)) is not None:
+            return _TsExpr(ts, f"resolved[{name}]")
+        if (size := scope.find_size(name)) is not None:
+            from ._graph import _ResolvedSize
+            return _ResolvedSize(size)
+        raise WiringError(
+            f"AUTO_RESOLVE could not resolve '{param.name}' ({arguments[0]!r}) from the wired arguments")
 
     def _check_binding(self, scope, param, value):
         """Match the wired port against the parameter's TYPE PATTERN,
@@ -400,7 +427,8 @@ class _PyNode:
         # evaluate before layout letters are chosen.
         for param in self._params:
             if (_is_time_series_annotation(param.annotation)
-                    or isinstance(param.annotation, _RecordableStateExpr)):
+                    or isinstance(param.annotation, (_RecordableStateExpr,
+                                                     _StateExpr))):
                 continue
             if param.annotation in _INJECTABLE_MARKERS or param.annotation is LOGGER:
                 continue
@@ -419,6 +447,10 @@ class _PyNode:
                 self._check_binding(scope, param, value)
         if self._resolvers:
             self._apply_resolvers(scope, scalar_values)
+        from .._types import AUTO_RESOLVE
+        for param in self._params:
+            if scalar_values.get(param.name, _MISSING) is AUTO_RESOLVE:
+                scalar_values[param.name] = self._resolved_auto_value(scope, param)
         active_policy = self._active
         valid_policy = self._valid
         all_valid_policy = self._all_valid
@@ -508,6 +540,14 @@ class _PyNode:
                 layout.append("R")
                 _note(param.name)
                 continue
+            if isinstance(param.annotation, _StateExpr):
+                if param.name in bound.arguments:
+                    raise TypeError(
+                        f"{self.__name__}: injectable '{param.name}' cannot be supplied")
+                layout.append("Q")
+                _note(param.name)
+                scalars.append(param.annotation.factory)
+                continue
             marker = _INJECTABLE_MARKERS.get(param.annotation)
             if marker is not None:
                 if param.name in bound.arguments:
@@ -565,6 +605,8 @@ class _PyNode:
                 if value is None and isinstance(param.annotation, (_TsExpr,)):
                     # unwired optional ts input: a never-ticking source
                     value = wire("nothing", output_type=param.annotation)
+            if value is AUTO_RESOLVE:
+                value = scalar_values[param.name]
             if not isinstance(value, WiringPort) and _is_time_series_annotation(
                     param.annotation) and value is not None \
                     and not (value is _MISSING):
@@ -630,6 +672,10 @@ class _PyNode:
             lifecycle_layout, lifecycle_scalars = [], []
             if lifecycle_fn is not None:
                 for param in inspect.signature(lifecycle_fn).parameters.values():
+                    if isinstance(param.annotation, _StateExpr):
+                        lifecycle_layout.append("Q")
+                        lifecycle_scalars.append(param.annotation.factory)
+                        continue
                     marker = _INJECTABLE_MARKERS.get(param.annotation)
                     if marker is not None:
                         lifecycle_layout.append(marker)
@@ -814,7 +860,15 @@ class _Generator:
 
     def __call__(self, *args, **kwargs):
         _warn_deprecated(self.__name__, self._deprecated)
-        bound_call = inspect.signature(self.fn).bind(*args, **kwargs)
+        signature = inspect.signature(self.fn)
+        user_parameters = [
+            parameter
+            for parameter in signature.parameters.values()
+            if (parameter.annotation not in _INJECTABLE_MARKERS and
+                not isinstance(parameter.annotation, _StateExpr))
+        ]
+        user_signature = signature.replace(parameters=user_parameters)
+        bound_call = user_signature.bind(*args, **kwargs)
         bound_call.apply_defaults()
         scalar_values = dict(bound_call.arguments)
         scope = _hgraph.ResolutionScope()
@@ -838,13 +892,32 @@ class _Generator:
                 out_tp = _TsExpr(resolved, f"resolved[{out_tp!r}]")
         if not isinstance(out_tp, _TsExpr):
             raise TypeError(f"@generator '{self.__name__}' needs a TS[...] return annotation")
-        fn, call_args, call_kwargs = self.fn, bound_call.args, bound_call.kwargs
-
-        def bound():
-            return fn(*call_args, **call_kwargs)
-
-        ref = _hgraph.node_ref(bound)
-        return wire("__py_generator", fn=ref, output_type=out_tp)
+        layout = []
+        scalars = []
+        keyword_names = []
+        for parameter in signature.parameters.values():
+            if isinstance(parameter.annotation, _StateExpr):
+                layout.append("Q")
+                scalars.append(parameter.annotation.factory)
+                continue
+            marker = _INJECTABLE_MARKERS.get(parameter.annotation)
+            if marker is not None:
+                layout.append(marker)
+            else:
+                layout.append("s")
+                scalars.append(bound_call.arguments[parameter.name])
+            if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+                keyword_names.append(parameter.name)
+        config = "".join(layout)
+        if keyword_names:
+            config += "|" + ",".join(keyword_names)
+        return wire(
+            "__py_generator",
+            fn=_hgraph.node_ref(self.fn),
+            config=config,
+            scalars=_hgraph.any_list(scalars),
+            output_type=out_tp,
+        )
 
 
 def generator(fn=None, overloads=None, resolvers=None, requires=None, label=None,

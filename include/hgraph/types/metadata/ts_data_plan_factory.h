@@ -73,6 +73,12 @@ namespace hgraph
         /** TSD output role using an explicitly realized child TS binding. */
         [[nodiscard]] TSOutputTypeRef output_type_for(const TSValueTypeMetaData *schema,
                                                       TSRoleTypeRef element_type);
+        /** TSS/TSD output role using a graph-realized key binding and, for
+            TSD, its graph-realized child TS binding. */
+        [[nodiscard]] TSOutputTypeRef keyed_output_type_for(
+            const TSValueTypeMetaData *schema,
+            ValueTypeRef key_binding,
+            TSRoleTypeRef element_type = {});
         [[nodiscard]] TSDataTypeRef find_data_type(const TSValueTypeMetaData *schema) const noexcept;
         [[nodiscard]] TSOutputTypeRef find_output_type(const TSValueTypeMetaData *schema) const noexcept;
 

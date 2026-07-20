@@ -1,7 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass, field
+from enum import Enum
 from typing import Generic, Optional, TypeVar
 
-from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, compute_node, from_json_builder, graph, to_json_builder
+import _hgraph
+from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, compute_node, const, from_json_builder, graph, operator, to_json_builder
 # White-box: these tests assert on the interned C++ value-type metadata
 # (qualified names, generic specialisation identity), which has no public
 # introspection surface — the module under test is imported directly.
@@ -52,6 +54,31 @@ def test_compound_scalar_generic_specializations_are_invariant():
     assert integer_box.name == "tests.generics::Box[int]"
     assert string_box.name == "tests.generics::Box[str]"
     assert _value_type(Box[int]) == integer_box
+
+
+def test_frozen_generic_compound_scalar_plain_argument_preserves_specialization():
+    value_type = TypeVar("value_type")
+
+    @dataclass(frozen=True)
+    class Box(CompoundScalar, Generic[value_type], namespace="tests.generic_scalar_argument"):
+        value: value_type
+
+    @operator
+    def read_box(box: Box[float], trigger: TS[bool]) -> TS[float]: ...
+
+    @graph(overloads=read_box)
+    def read_float_box(box: Box[float], trigger: TS[bool]) -> TS[float]:
+        return const(box.value, TS[float])
+
+    # Materialise another specialization first: selection must use the value
+    # fields, not registration order.
+    _value_type(Box[int])
+
+    @graph
+    def app(trigger: TS[bool]) -> TS[float]:
+        return read_box(Box[float](value=1.5), trigger)
+
+    assert eval_node(app, [True]) == [1.5]
 
 
 def test_concrete_generic_child_reuses_specialized_parent_fields():
@@ -143,6 +170,22 @@ def test_base_annotation_closes_over_defined_python_subclasses():
         return isinstance(value.value, Derived)
 
     assert eval_node(is_derived, [Derived(value=1, label="one")]) == [True]
+
+
+def test_eval_node_finalizes_subclasses_before_const_lifting():
+    @dataclass
+    class Base(CompoundScalar, namespace="tests.const_lift", abstract=True):
+        value: int
+
+    @dataclass
+    class Derived(Base):
+        label: str
+
+    @graph
+    def app() -> TS[Base]:
+        return const(Derived(value=1, label="one"), TS[Base])
+
+    assert eval_node(app) == [Derived(value=1, label="one")]
 
 
 def test_polymorphic_bundle_field_uses_the_graph_realization():
@@ -344,3 +387,161 @@ def test_compound_scalar_output_still_accepts_attribute_proxy():
         return Proxy(value.value, str(value.value))
 
     assert eval_node(build, [3]) == [Value(3, "3")]
+
+
+def test_inherited_field_replaced_by_init_var_remains_in_logical_schema():
+    @dataclass(frozen=True)
+    class Base(CompoundScalar, namespace="tests.computed", abstract=True):
+        name: str = ""
+
+    @dataclass(frozen=True)
+    class Derived(Base):
+        # ExprClass uses this shape for a computed inherited field: the
+        # InitVar removes the dataclass field while a hidden field stores an
+        # explicit override. The logical CompoundScalar field remains name.
+        name: InitVar[str] = "derived"
+        _override_name: str = field(
+            default="derived", init=False, metadata={"hidden": True})
+
+    @compute_node
+    def inspect(value: TS[Base]) -> TS[str]:
+        return value.value.name
+
+    meta = _value_type(Derived)
+    assert [name for name, _ in meta.fields] == ["name"]
+    assert eval_node(inspect, [Derived()]) == ["derived"]
+
+
+def test_computed_init_var_bundle_uses_public_constructor_on_readback():
+    class ReadOnlyComputed:
+        def __get__(self, instance, owner=None):
+            if instance is None:
+                return self
+            return instance.__dict__.get("_override_name", "computed")
+
+        def __set__(self, instance, value):
+            raise AttributeError("computed field is read-only")
+
+    computed = ReadOnlyComputed()
+
+    @dataclass(frozen=True)
+    class Base(CompoundScalar, namespace="tests.computed_readback", abstract=True):
+        name: str = ""
+
+    @dataclass(frozen=True)
+    class Derived(Base):
+        name: InitVar[str] = computed
+        _override_name: str = field(
+            default="computed", init=False, metadata={"hidden": True})
+
+        def __post_init__(self, name):
+            if name is not computed:
+                object.__setattr__(self, "_override_name", name)
+
+    @compute_node
+    def inspect(value: TS[Base]) -> TS[str]:
+        return value.value.name
+
+    assert eval_node(inspect, [Derived(name="overridden")]) == ["overridden"]
+
+
+def test_compound_scalar_with_custom_new_preserves_interned_identity():
+    from typing import ClassVar
+
+    @dataclass(frozen=True, init=False)
+    class Interned(CompoundScalar, namespace="tests.interned_readback"):
+        key: int
+        _instances: ClassVar[dict[int, "Interned"]] = {}
+
+        def __new__(cls, key):
+            if key in cls._instances:
+                return cls._instances[key]
+            value = super().__new__(cls)
+            object.__setattr__(value, "key", key)
+            cls._instances[key] = value
+            return value
+
+    @compute_node
+    def identity(value: TS[Interned]) -> TS[Interned]:
+        return value.value
+
+    value = Interned(7)
+    assert eval_node(identity, [value])[0] is value
+
+
+def test_optional_scalar_fields_use_unset_bundle_fields_for_none():
+    @dataclass(frozen=True)
+    class Value(CompoundScalar, namespace="tests.optional_fields"):
+        number: Optional[int] = None
+        labels: Optional[tuple[str, ...]] = None
+
+    @compute_node
+    def identity(value: TS[Value]) -> TS[Value]:
+        return value.value
+
+    values = [Value(), Value(number=7, labels=("seven",))]
+    assert eval_node(identity, values) == values
+
+
+def test_time_series_schema_can_be_lifted_from_compound_scalar():
+    @dataclass(frozen=True)
+    class Value(CompoundScalar, namespace="tests.schema_lift"):
+        number: int
+        label: str
+
+    schema = TimeSeriesSchema.from_scalar_schema(Value)
+
+    assert schema.scalar_type() is Value
+    assert schema.__annotations__ == {"number": TS[int], "label": TS[str]}
+    assert TSB[schema].handle.is_tsb
+
+
+def test_recursive_base_reference_inside_container_uses_owned_storage():
+    @dataclass(frozen=True)
+    class Base(CompoundScalar, namespace="tests.container_recursion", abstract=True):
+        name: str
+
+    @dataclass(frozen=True)
+    class Leaf(Base):
+        children: tuple[tuple[Base, int], ...] = ()
+
+    @compute_node
+    def identity(value: TS[Base]) -> TS[Base]:
+        return value.value
+
+    child = Leaf("child")
+    parent = Leaf("parent", ((child, 2),))
+    assert eval_node(identity, [parent]) == [parent]
+
+
+def test_string_valued_enum_field_uses_native_enum_storage():
+    class Method(Enum):
+        PHYSICAL = "physical"
+        FINANCIAL = "financial"
+
+    @dataclass(frozen=True)
+    class Settlement(CompoundScalar, namespace="tests.string_enum"):
+        method: Method
+
+    @compute_node
+    def identity(value: TS[Settlement]) -> TS[Settlement]:
+        return value.value
+
+    value = Settlement(Method.FINANCIAL)
+    assert eval_node(identity, [value]) == [value]
+
+
+def test_compound_scalar_tsb_ignores_dataclass_kw_only_marker():
+    from dataclasses import KW_ONLY
+    from typing import Generic, TypeVar
+
+    Value = TypeVar("Value")
+
+    @dataclass(frozen=True)
+    class Quoted(CompoundScalar, Generic[Value], namespace="tests.kw_only"):
+        _: KW_ONLY
+        value: Value
+
+    assert [name for name, _ in _value_type(Quoted[int]).fields] == ["value"]
+    assert [name for name, _ in _hgraph.ts_field_types(TSB[Quoted[int]].handle)] == ["value"]
+    assert TSB[Quoted].pattern.ts_kind == _hgraph.TS_KIND_TSB

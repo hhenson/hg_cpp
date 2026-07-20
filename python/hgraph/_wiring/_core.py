@@ -53,16 +53,33 @@ def wire(name, *args, __output_type__=None, **kwargs):
         out_type = out_type.handle if isinstance(out_type, _TsExpr) else out_type
     w = _current_wiring()
     sizes = kwargs.pop("__sizes__", None)
+    resolutions = kwargs.pop("__resolutions__", None)
+    resolution_scope = None
+    if resolutions:
+        from .._types import _value_type
+
+        resolution_scope = _hgraph.ResolutionScope()
+        for variable, resolved in resolutions.items():
+            if isinstance(resolved, _TsExpr):
+                resolution_scope.bind_ts(variable, resolved.handle)
+            elif isinstance(resolved, _hgraph.TsType):
+                resolution_scope.bind_ts(variable, resolved)
+            elif isinstance(resolved, int) and not isinstance(resolved, bool):
+                resolution_scope.bind_size(variable, resolved)
+            else:
+                resolution_scope.bind_scalar(variable, _value_type(resolved))
     unwrapped = tuple(_unwrap(a) for a in args)
     unwrapped_kw = {k: _unwrap(v) for k, v in kwargs.items()}
     try:
         # Plain-value kwargs falling to a **kwargs collector lift to const
         # sources inside the C++ call normalisation (the scalar-kwargs rule) -
         # no python-side retry.
+        wire_options = {"output_type": out_type}
         if sizes is not None:
-            result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type, sizes=sizes)
-        else:
-            result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type)
+            wire_options["sizes"] = sizes
+        if resolution_scope is not None:
+            wire_options["initial_resolution"] = resolution_scope
+        result = w.wire(name, unwrapped, unwrapped_kw, **wire_options)
     except (RuntimeError, ValueError) as error:
         # std::invalid_argument surfaces as ValueError; both are wiring-time.
         # (RequirementsNotMetWiringError arrives ALREADY typed - the C++
@@ -89,14 +106,16 @@ class _OperatorFunction:
     hgraph's SUBSCRIPT form ``op[TYPE](...)`` - the type becomes the
     requested output type of the call."""
 
-    __slots__ = ("__name__", "__qualname__", "_output_type", "_sizes", "_ts_hint")
+    __slots__ = ("__name__", "__qualname__", "_output_type", "_sizes", "_ts_hint",
+                 "_resolutions")
 
-    def __init__(self, name, output_type=None, sizes=None, ts_hint=None):
+    def __init__(self, name, output_type=None, sizes=None, ts_hint=None, resolutions=None):
         self.__name__ = name
         self.__qualname__ = name
         self._output_type = output_type
         self._sizes = sizes
         self._ts_hint = ts_hint
+        self._resolutions = resolutions
 
     def __call__(self, *args, **kwargs):
         if (self.__name__ == "apply" and args
@@ -109,6 +128,14 @@ class _OperatorFunction:
             result_type = inspect.signature(args[0]).return_annotation
             if result_type is not inspect.Signature.empty:
                 kwargs["output_type"] = TS[result_type]
+        # hgraph parity: a trailing ``None`` argument means "use the
+        # parameter's default" (upstream defaults optional scalars to None).
+        while args and args[-1] is None:
+            args = args[:-1]
+        # An explicit positional type is authoritative. Normalise it before
+        # schema inference so ``const(compound, TS[Base])`` does not retain
+        # the type expression as a second runtime argument.
+        args, kwargs = self._normalise_type_arguments(args, kwargs)
         if (self.__name__ == "const" and args
                 and "tp" not in kwargs and "output_type" not in kwargs):
             from .._compat import CompoundScalar
@@ -124,11 +151,8 @@ class _OperatorFunction:
             kwargs["output_type"] = self._output_type
         if self._sizes is not None:
             kwargs.setdefault("__sizes__", self._sizes)
-        # hgraph parity: a trailing ``None`` argument means "use the
-        # parameter's default" (upstream defaults optional scalars to None).
-        while args and args[-1] is None:
-            args = args[:-1]
-        args, kwargs = self._normalise_type_arguments(args, kwargs)
+        if self._resolutions is not None:
+            kwargs.setdefault("__resolutions__", self._resolutions)
         # Fixed-TSL integer access is a structural projection, not a runtime
         # node. Keep direct calls to getitem_ consistent with ``port[index]``;
         # other shapes and dynamic keys fall back to the registered operator.
@@ -145,11 +169,12 @@ class _OperatorFunction:
         # SLICES. ``op[OUT: X]`` names the requested OUTPUT type; other
         # typevar slices are dropped (resolution happens from the wired
         # inputs). A plain type subscript is the requested output type.
-        from .._types import OUT
+        from .._types import OUT, _type_var_name
 
         output_type = None
         sizes = []
         ts_hints = []
+        resolutions = {}
         for i in (item if isinstance(item, tuple) else (item,)):
             if isinstance(i, slice):
                 if i.start is OUT and output_type is None:
@@ -157,8 +182,9 @@ class _OperatorFunction:
                 elif isinstance(i.stop, int):
                     sizes.append(i.stop)   # op[SIZE: Size[4]] pins size vars
                 else:
-                    # op[TYPEVAR: TYPE, ...]: the resolutions also type the
-                    # eval_node input series positionally.
+                    # Keep the named binding for registry dispatch. The
+                    # positional hint remains for eval_node input seeding.
+                    resolutions[_type_var_name(i.start)] = i.stop
                     ts_hints.append(i.stop)
                 continue
             if output_type is None:
@@ -171,7 +197,7 @@ class _OperatorFunction:
             ts_hints.append(output_type)
             output_type = None
         return _OperatorFunction(self.__name__, output_type=output_type, sizes=sizes or None,
-                                 ts_hint=ts_hints or None)
+                                 ts_hint=ts_hints or None, resolutions=resolutions or None)
 
     def _normalise_type_arguments(self, args, kwargs):
         if "tp" in kwargs or "output_type" in kwargs:
@@ -264,8 +290,54 @@ def _port_iter(self):
     return (self[i] for i in range(len(self)))
 
 
+def _port_copy_with(self, **overrides):
+    """Rebuild a TSB from its projected fields with named replacements."""
+    names = _port_bundle_field_names(self)
+    if names is None:
+        raise TypeError("copy_with is only defined for TSB ports")
+    unknown = tuple(name for name in overrides if name not in names)
+    if unknown:
+        raise TypeError(f"unknown TSB field(s): {', '.join(unknown)}")
+
+    target = self._port.ts_type
+    if not target.is_tsb:
+        target = self._port.dereferenced.ts_type
+    from .._types import _TsExpr
+
+    fields = {name: getattr(self, name) for name in names}
+    fields.update(overrides)
+    return _TsExpr(target, repr(target)).from_ts(**fields)
+
+
+def _port_as_dict(self):
+    """Project a TSB (including REF[TSB]) to its named field ports."""
+    names = _port_bundle_field_names(self)
+    if names is None:
+        raise TypeError("as_dict is only defined for TSB ports")
+    raw = _unwrap(self)
+    source = self if raw.ts_type.is_tsb else WiringPort(raw.dereferenced)
+    return {name: getattr(source, name) for name in names}
+
+
+def _port_as_scalar_ts(self):
+    """Convert a lifted CompoundScalar TSB (or REF[TSB]) to its scalar TS."""
+    raw = _unwrap(self)
+    source = raw if raw.ts_type.is_tsb else raw.dereferenced
+    if source is None or not source.ts_type.is_tsb:
+        raise TypeError("as_scalar_ts is only defined for TSB ports")
+
+    from .._types import TS
+
+    value_type = _hgraph.ts_value_vt(source.ts_type)
+    scalar_type = _hgraph.python_type_for_value(value_type)
+    return wire("convert", WiringPort(source), output_type=TS[scalar_type])
+
+
 WiringPort.__len__ = _port_len
 WiringPort.__iter__ = _port_iter
+WiringPort.copy_with = _port_copy_with
+WiringPort.as_dict = _port_as_dict
+WiringPort.as_scalar_ts = _port_as_scalar_ts
 
 
 def _port_getattr(self, name):
@@ -350,7 +422,24 @@ def _resolve_context(ctx_expr, name=None):
     """The most recent published context matching type (and name)."""
     wanted = ctx_expr.ts.handle
     for port, ts_type, frame in reversed(_published_contexts):
-        if ts_type != wanted:
+        matches = ts_type == wanted
+        if not matches:
+            requested_class = getattr(ctx_expr.ts, "_py_class", None)
+            published_class = None
+            candidate = _hgraph.ref_target(ts_type) if ts_type.is_ref else ts_type
+            if candidate.is_ts:
+                published_class = _hgraph.python_type_for_value(
+                    _hgraph.ts_value_vt(candidate))
+            elif candidate.is_tsb:
+                from .._types import _TSB_SCHEMA_CLASSES
+
+                published_class = _TSB_SCHEMA_CLASSES.get(candidate)
+            matches = (
+                isinstance(requested_class, type)
+                and isinstance(published_class, type)
+                and issubclass(published_class, requested_class)
+            )
+        if not matches:
             continue
         if name is not None and _context_name_of(port, frame) != name:
             continue

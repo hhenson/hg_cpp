@@ -8,6 +8,7 @@ filter_, ...` all resolve through the C++ operator registry).
 Agreed divergences from Python hgraph are recorded in
 docs/source/developer_guide/parity_matrix.rst (e.g. REF is value-only)."""
 import _hgraph
+from datetime import date, datetime, time, timedelta
 
 from ._types import Series
 from ._types import (TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, CONTEXT, REQUIRED, SCALAR, SCALAR_1, SCALAR_2, TSW, KeyValue, AUTO_RESOLVE, with_signature,
@@ -37,7 +38,7 @@ from ._wiring import _PyNode as PythonWiringNodeClass
 from ._wiring import _GraphFn as GraphWiringNodeClass
 from ._wiring import _Generator as PythonGeneratorWiringNodeClass
 from ._wiring import GlobalContext, GlobalState, set_record_replay_config, set_as_of, set_table_schema_date_key, set_table_schema_as_of_key, evaluate_const, utc_now, get_recorded_value, get_recorder_api, get_recording_label, set_recorder_api, set_recording_label, EvaluationClock, TSW_OUT, get_context, equal_lambdas, callable_shape_key
-from ._wiring import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, mesh_, MeshWiringPort, get_mesh, REMOVE, REMOVE_IF_EXISTS, feedback, delayed_binding, switch_, passive, compute_node, sink_node, generator, lift, lower, STATE, SCHEDULER, CLOCK, EvaluationEngineApi, LOGGER, NODE, Node, DebugContext, component, record_replay_scope, RecordReplayEnum, comparison_summary, push_queue, EvaluationMode, context, WiringError, reference_service, subscription_service, request_reply_service, register_service, service_impl, adaptor, adaptor_impl, service_adaptor, service_adaptor_impl, register_adaptor, from_graph, to_graph, impl_input, impl_output, get_service_inputs, set_service_output
+from ._wiring import WiringPort, WiringGraphContext, graph, run_graph, eval_node, wire, operator_function, map_, reduce, mesh_, MeshWiringPort, get_mesh, REMOVE, REMOVE_IF_EXISTS, feedback, delayed_binding, switch_, passive, compute_node, sink_node, generator, lift, lower, STATE, SCHEDULER, CLOCK, EvaluationEngineApi, LOGGER, NODE, Node, DebugContext, component, record_replay_scope, RecordReplayEnum, comparison_summary, push_queue, EvaluationMode, context, WiringError, reference_service, subscription_service, request_reply_service, register_service, service_impl, adaptor, adaptor_impl, service_adaptor, service_adaptor_impl, register_adaptor, from_graph, to_graph, impl_input, impl_output, get_service_inputs, set_service_output
 
 MIN_ST = _hgraph.MIN_ST
 MIN_TD = _hgraph.MIN_TD
@@ -97,6 +98,7 @@ __all__ = [
     "WiringPort", "CmpResult", "DivideByZero", "NodeError", "exception_time_series", "try_except", "lift", "lower",
     "TryExceptResult", "TryExceptTsdMapResult", "OperatorWiringNodeClass", "graph", "run_graph", "eval_node", "wire", "map_", "reduce", "mesh_", "MeshWiringPort", "get_mesh", "REMOVE", "REMOVE_IF_EXISTS", "feedback", "delayed_binding", "switch_", "passive", "compute_node", "sink_node", "generator", "STATE", "SCHEDULER", "CLOCK", "EvaluationEngineApi", "NODE", "Node", "component", "record_replay_scope", "RecordReplayEnum", "comparison_summary", "push_queue", "EvaluationMode", "context",
     "MIN_ST", "MIN_TD", "MIN_DT", "MAX_DT", "MAX_ET", "IN_MEMORY", "IN_MEMORY_DENSE", "DATA_FRAME",
+    "date", "datetime", "time", "timedelta", "default_path",
     "utc_now", "get_recorded_value", "get_recorder_api", "get_recording_label", "set_recorder_api", "set_recording_label", "EvaluationClock", "TSW_OUT", "get_context", "equal_lambdas", "is_feature_enabled",
     "GlobalContext", "GlobalState", "set_as_of", "set_table_schema_date_key", "set_table_schema_as_of_key",
     "set_record_replay_config", "frame_store_contains", "frame_store_read", "evaluate_const",
@@ -105,6 +107,7 @@ __all__ = [
     "get_table_schema_date_key", "get_table_schema_as_of_key",
     "ParseError", "IncorrectTypeBinding", "RequirementsNotMetWiringError",
     "WiringNodeType", "WiringNodeSignature", "extract_signature", "extract_kwargs",
+    "WiringGraphContext",
     "PythonWiringNodeClass", "GraphWiringNodeClass", "PythonGeneratorWiringNodeClass",
     "evaluate_graph", "GraphConfiguration", "TSB_OUT", "operator",
     "pass_through_node", "pass_through", "no_key", "downcast_ref",

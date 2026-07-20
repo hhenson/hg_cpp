@@ -2,7 +2,7 @@
 import pytest
 
 from datetime import timedelta
-from hgraph import REF, TS, combine, generator, graph, TSL, Size, SCALAR, compute_node, SIZE, getitem_, const, TimeSeriesReference
+from hgraph import REF, TS, combine, generator, graph, TSL, Size, SCALAR, compute_node, SIZE, getitem_, const, if_, TimeSeriesReference
 from hgraph.nodes import flatten_tsl_values
 from hgraph.test import eval_node
 
@@ -73,6 +73,15 @@ def test_tsl_compatible_types():
         return tsl
 
     assert eval_node(tsl_test, ts1=[1, 2], ts2=[3, 4]) == [{0: 1, 1: 3}, {0: 2, 1: 4}]
+
+
+def test_tsl_from_ts_unifies_reference_and_direct_elements():
+    @graph
+    def app(condition: TS[bool], value: TS[int]) -> TSL[TS[int], Size[2]]:
+        selected, _ = if_(condition, value)
+        return TSL.from_ts(selected, value)
+
+    assert eval_node(app, [True], [7]) == [{0: 7, 1: 7}]
 
 
 def test_tsl_get_item():

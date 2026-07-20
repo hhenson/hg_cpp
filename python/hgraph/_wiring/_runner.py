@@ -229,6 +229,8 @@ def _operator_parameter_annotations(fn):
     generic input positions only. Concrete positions come directly from the
     C++ registry; Python must not assign these hints by call order.
     """
+    if not isinstance(fn, _OperatorFunction) and hasattr(fn, "_delegate"):
+        fn = fn._delegate
     if not isinstance(fn, _OperatorFunction):
         return (), False
     shape = _hgraph.operator_parameter_shape(fn.__name__)
@@ -277,7 +279,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             "the C++ eval_node harness does not yet support: " +
             ", ".join(unsupported))
     try:
-        fn_sig = inspect.signature(fn.fn if isinstance(fn, _GraphFn) else fn)
+        fn_sig = inspect.signature(
+            fn.fn if isinstance(fn, _GraphFn) or hasattr(fn, "_delegate") else fn)
         params = list(fn_sig.parameters.values())
     except (TypeError, ValueError):
         params = []
@@ -366,6 +369,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     operator_annotations, operator_variadic = _operator_parameter_annotations(fn)
     operator_annotations_by_name = dict(operator_annotations)
     trace = _make_evaluation_trace(__trace__)
+    from .._types import _finalize_compound_scalar_types
+    _finalize_compound_scalar_types()
     w = _hgraph.Wiring(GlobalState.instance()._impl)
     _wiring_stack.append(w)
     try:
@@ -486,6 +491,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
             w.set_replay(key, series, ts_type=handle)
         length = max((len(series) for i, series in enumerate(inputs)
                       if isinstance(series, (list, tuple)) and i not in scalar_positions), default=0)
+        _finalize_compound_scalar_types()
         if out is None:
             run = w.run(start_time=__start_time__, end_time=__end_time__, trace=trace)
             return None

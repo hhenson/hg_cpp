@@ -3,6 +3,7 @@
 
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/nested_bindings.h>
+#include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_schema.h>
 
@@ -140,6 +141,15 @@ namespace hgraph::runtime_detail
 
             auto target = walk_ts_path(child.node_at(binding.target.node).input(evaluation_time),
                                        binding.target.path);
+            if (source.bound() &&
+                !graph_wiring_detail::input_accepts_output_schema(target.schema(), source.schema()))
+            {
+                throw std::invalid_argument(
+                    "mapped child boundary source ordinal " + std::to_string(source_index) +
+                    " resolved through outer input " + std::to_string(arg.outer_index) +
+                    " as '" + std::string{source.schema()->name()} +
+                    "' for child input '" + std::string{target.schema()->name()} + "'");
+            }
             if (silent_repoint) { rebind_input_to_source_silent(std::move(target), source); }
             else { bind_input_to_source(std::move(target), source); }
         }

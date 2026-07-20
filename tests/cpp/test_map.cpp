@@ -171,6 +171,20 @@ namespace
         static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts) { return ts; }
     };
 
+    struct LookupLateMappedIdentityG
+    {
+        static constexpr auto name = "lookup_late_mapped_identity_g";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TSS<Str>> keys,
+                                     Port<TSD<Str, TS<Int>>> values)
+        {
+            auto mapped = wire<stdlib::map_>(w, fn<IdentityG>(), values,
+                                             arg<"__keys__">(keys))
+                              .as<TSD<Str, TS<Int>>>();
+            return wire<stdlib::getitem_>(w, mapped, Str{"key"}).as<TS<Int>>();
+        }
+    };
+
     using IfIntRefBundle = UnNamedTSB<Field<"true", REF<TS<Int>>>,
                                       Field<"false", REF<TS<Int>>>>;
 
@@ -1197,6 +1211,18 @@ TEST_CASE("map_: __keys__ creates children for keys missing from the multiplexed
     ex.view().run();
 
     CHECK(counts == std::vector<std::size_t>{1});
+}
+
+TEST_CASE("map_: keyed lookup follows a child that becomes valid after its slot is created")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        eval_node<LookupLateMappedIdentityG>(
+            values<Value>(set_delta<Str>({"key"s}, {}), none),
+            values<Value>(none, dict_delta<Str, TS<Int>>({{"key"s, 42}}))),
+        values<Int>(none, 42));
 }
 
 TEST_CASE("map_: multiplexed dict add and remove rebind existing explicit-key children")

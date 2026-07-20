@@ -184,7 +184,6 @@ class CompoundScalar:
         cls.__compound_options__ = dict(options)
         _COMPOUND_SCALAR_CLASSES.append(cls)
 
-
 @dataclass(frozen=True)
 class NodeError(CompoundScalar, namespace=""):
     """Structured error value emitted by native node and child-graph capture."""

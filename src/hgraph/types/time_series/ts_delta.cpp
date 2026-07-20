@@ -4,6 +4,7 @@
 
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_realization.h>
+#include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
@@ -85,6 +86,11 @@ namespace hgraph
                                                               const ValueTypeMetaData   &value_schema) noexcept
         {
             if (schema.value_schema == &value_schema) { return true; }
+            if (schema.value_schema != nullptr &&
+                TypeRegistry::instance().bundle_is_a(&value_schema, schema.value_schema))
+            {
+                return true;
+            }
             // Variadic tuple vs list: distinct schema identity, ONE layout
             // (same element type; flags differ only by VariadicTuple).
             const auto *target = schema.value_schema;
@@ -679,7 +685,11 @@ namespace hgraph
         const auto *value_schema = value.schema();
         if (value_schema == nullptr || !current_value_schema_compatible(schema, *value_schema))
         {
-            throw std::invalid_argument("apply_current_value source value schema does not match the output schema");
+            throw std::invalid_argument(fmt::format(
+                "apply_current_value cannot apply source value '{}' to output '{}' (time-series kind {})",
+                value_schema != nullptr ? value_schema->name() : std::string_view{"<unbound>"},
+                schema.value_schema != nullptr ? schema.value_schema->name() : std::string_view{"<unbound>"},
+                static_cast<std::size_t>(schema.kind)));
         }
 
         current_value_apply_for(schema.kind)(out, value);

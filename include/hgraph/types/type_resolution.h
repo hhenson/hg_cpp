@@ -171,6 +171,24 @@ namespace hgraph
         }
     };
 
+    template <typename TElement>
+    struct scalar_resolver<SeriesOf<TElement>>
+    {
+        [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &m)
+        {
+            return TypeRegistry::instance().series(scalar_resolver<TElement>::resolve(m));
+        }
+    };
+
+    template <typename TSchema>
+    struct scalar_resolver<FrameOf<TSchema>>
+    {
+        [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &m)
+        {
+            return TypeRegistry::instance().frame(scalar_resolver<TSchema>::resolve(m));
+        }
+    };
+
     template <auto TSize>
     struct size_resolver
     {
@@ -347,6 +365,34 @@ namespace hgraph
                 }
             }
             m.bind_scalar(Name.sv(), concrete);
+        }
+    };
+
+    template <typename TElement>
+    struct scalar_unifier<SeriesOf<TElement>>
+    {
+        static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
+        {
+            auto &registry = TypeRegistry::instance();
+            if (!registry.is_series(concrete) || concrete->element_type == nullptr)
+            {
+                throw std::logic_error("expected a typed Series scalar");
+            }
+            scalar_unifier<TElement>::unify(concrete->element_type, m);
+        }
+    };
+
+    template <typename TSchema>
+    struct scalar_unifier<FrameOf<TSchema>>
+    {
+        static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
+        {
+            auto &registry = TypeRegistry::instance();
+            if (!registry.is_frame(concrete) || concrete->element_type == nullptr)
+            {
+                throw std::logic_error("expected a typed Frame scalar");
+            }
+            scalar_unifier<TSchema>::unify(concrete->element_type, m);
         }
     };
 

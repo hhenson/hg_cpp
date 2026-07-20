@@ -55,7 +55,10 @@ def _client_implementation(message_type: type):
         request: requests_type,
         path: str = "websocket_client",
     ) -> responses_type:
-        queue_key = f"websocket_client_adaptor://{path}/queue"
+        queue_key = (
+            f"websocket_client_adaptor://{path}/"
+            f"{message_type.__module__}.{message_type.__qualname__}/queue"
+        )
 
         @push_queue(responses_type)
         def from_web(sender) -> None:

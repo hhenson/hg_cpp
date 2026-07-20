@@ -22,7 +22,7 @@ from hgraph.adaptors._async import KeyedAsyncState
 from hgraph.adaptors.executor import adaptor_executor
 from hgraph.stream import Data, Stream, StreamStatus
 
-from .catalogue import DataCatalogue, DataEnvironment, DataSink
+from .catalogue import DataCatalogue, DataCatalogueEntry, DataEnvironment, DataSink
 from .subscribe import _options_port
 
 __all__ = (
@@ -41,14 +41,14 @@ _TIME_STREAM = TSB[Stream[Data[datetime]]]
 
 @dataclass(frozen=True)
 class DataCatalogSinkResult(CompoundScalar):
-    dce: object
-    options: object
+    dce: DataCatalogueEntry[DataSink]
+    options: frozendict[str, object]
 
 
 @compute_node
 def find_data_catalogue_entries(
     dataset: TS[str], options: TS[object], schema: object
-) -> TS[object]:
+) -> TS[tuple[DataCatalogSinkResult, ...]]:
     return tuple(
         DataCatalogSinkResult(entry, resolved)
         for entry, resolved in DataCatalogue.instance().matching_entries(
@@ -59,14 +59,15 @@ def find_data_catalogue_entries(
 
 @dataclass(frozen=True)
 class _PublishRequest(CompoundScalar):
-    entries: object
+    entries: tuple[DataCatalogSinkResult, ...]
     data: Frame
-    environment_paths: object
+    environment_paths: frozendict[str, str]
 
 
 @compute_node
 def _make_request(
-    selections: TS[object], data: TS[Frame[COMPOUND_SCALAR]]
+    selections: TS[tuple[DataCatalogSinkResult, ...]],
+    data: TS[Frame[COMPOUND_SCALAR]],
 ) -> TS[_PublishRequest]:
     environment = DataEnvironment.current()
     paths = {}

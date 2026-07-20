@@ -126,7 +126,8 @@ struct HGRAPH_EXPORT GraphEdge
 
         void (*attach_nodes_impl)(const void *context, void *memory, GraphValue *graph) = nullptr;
         void (*start_impl)(const void *context, const GraphView &graph, DateTime start_time) = nullptr;
-        void (*stop_impl)(const void *context, const GraphView &graph) = nullptr;
+        void (*stop_impl)(const void *context, const GraphView &graph,
+                          DateTime stop_time) = nullptr;
         // Returns true when the graph completed the cycle, false when a node requested
         // a pause and the graph must be re-evaluated to resume from its cursor.
         bool (*evaluate_impl)(const void *context, const GraphView &graph, DateTime evaluation_time) = nullptr;
@@ -224,6 +225,7 @@ struct HGRAPH_EXPORT GraphEdge
 
         void start(DateTime start_time = MIN_ST) const;
         void stop() const;
+        void stop(DateTime stop_time) const;
         /// Returns true if the graph completed the cycle, false if it paused (resume by
         /// calling evaluate again at the same time; the cursor is held in graph state).
         bool evaluate(DateTime evaluation_time) const;
