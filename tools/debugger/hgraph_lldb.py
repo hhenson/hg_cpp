@@ -646,32 +646,58 @@ def runtime_wrapper_summary(value, _internal_dict, _options):
         return "{}{{<printer error: {}>}}".format(wrapper_name(value), exc)
 
 
+# Providers must build children LAZILY: recent lldbs (Xcode 26.5) instantiate
+# a child's synthetic provider as soon as ``SBValue.Clone`` materialises it, so
+# an eager ``__init__ -> update -> build_children -> add -> Clone`` chain
+# recurses across the (cyclic) type-record/descriptor/field graph until the
+# Python stack overflows and lldb aborts. Children are therefore built on
+# first access only, with a defensive depth cap for any formatter that walks
+# the synthetic tree eagerly.
+_MAX_BUILD_DEPTH = 8
+_build_depth = 0
+
+
 class SyntheticProvider:
     def __init__(self, value, _internal_dict):
         self.value = value
-        self.children = []
-        self.update()
+        self.children = None  # built lazily on first access
 
     def update(self):
-        self.children = self.build_children()
+        # Invalidate only; building here would recurse (see note above).
+        self.children = None
         return False
 
+    def _ensure_children(self):
+        global _build_depth
+        if self.children is None:
+            if _build_depth >= _MAX_BUILD_DEPTH:
+                return []
+            self.children = []  # breaks re-entry on this same provider
+            _build_depth += 1
+            try:
+                self.children = self.build_children()
+            finally:
+                _build_depth -= 1
+        return self.children
+
     def num_children(self):
-        return len(self.children)
+        return len(self._ensure_children())
 
     def get_child_at_index(self, index):
-        if index < 0 or index >= len(self.children):
+        children = self._ensure_children()
+        if index < 0 or index >= len(children):
             return lldb.SBValue()
-        return self.children[index][1]
+        return children[index][1]
 
     def get_child_index(self, name):
-        for index, (child_name, _) in enumerate(self.children):
+        for index, (child_name, _) in enumerate(self._ensure_children()):
             if child_name == name:
                 return index
         return -1
 
     def has_children(self):
-        return bool(self.children)
+        # Deliberately cheap: answering this must not force a build.
+        return True
 
     def build_children(self):
         return []
@@ -967,7 +993,7 @@ class RuntimeWrapperSyntheticProvider(SyntheticProvider):
                 "NodeView": {"graph", "state", "scalars"},
             }.get(kind, set())
             pointer_provider = TypePointerSyntheticProvider(primary, {})
-            for child_name, child_value in pointer_provider.children:
+            for child_name, child_value in pointer_provider._ensure_children():
                 if child_name in forwarded or (
                     kind in ("GraphView", "RootGraphView", "NestedGraphView")
                     and child_name.startswith("[")
@@ -1036,8 +1062,8 @@ def __lldb_init_module(debugger, _internal_dict):
         (r"^hgraph::DebugTimeSeriesLayout$", "hgraph_lldb.debug_time_series_layout_summary"),
         (r"^hgraph::AnyPtr$", "hgraph_lldb.type_pointer_summary"),
         (r"^hgraph::TypedPtr<.*>$", "hgraph_lldb.type_pointer_summary"),
-        (r"^hgraph::(?:ValueTypeRef|NodeTypeRef|GraphTypeRef|ExecutorTypeRef|ClockTypeRef|TSRoleTypeRef|BasicTSTypeRef<.*>)$", "hgraph_lldb.type_ref_summary"),
-        (r"^hgraph::(?:Value|ValueView|TSData|TSDataOwnedStorage|TSDataView|TSInput|TSOutput|TSInputView|TSOutputView|TSOutputHandle|NodeView|GraphView|RootGraphView|NestedGraphView)$", "hgraph_lldb.runtime_wrapper_summary"),
+        (r"^hgraph::(ValueTypeRef|NodeTypeRef|GraphTypeRef|ExecutorTypeRef|ClockTypeRef|TSRoleTypeRef|BasicTSTypeRef<.*>)$", "hgraph_lldb.type_ref_summary"),
+        (r"^hgraph::(Value|ValueView|TSData|TSDataOwnedStorage|TSDataView|TSInput|TSOutput|TSInputView|TSOutputView|TSOutputHandle|NodeView|GraphView|RootGraphView|NestedGraphView)$", "hgraph_lldb.runtime_wrapper_summary"),
     )
     synthetics = (
         (r"^hgraph::TypeRecord$", "hgraph_lldb.TypeRecordSyntheticProvider"),
@@ -1047,8 +1073,8 @@ def __lldb_init_module(debugger, _internal_dict):
         (r"^hgraph::DebugTimeSeriesLayout$", "hgraph_lldb.DebugTimeSeriesLayoutSyntheticProvider"),
         (r"^hgraph::AnyPtr$", "hgraph_lldb.TypePointerSyntheticProvider"),
         (r"^hgraph::TypedPtr<.*>$", "hgraph_lldb.TypePointerSyntheticProvider"),
-        (r"^hgraph::(?:ValueTypeRef|NodeTypeRef|GraphTypeRef|ExecutorTypeRef|ClockTypeRef|TSRoleTypeRef|BasicTSTypeRef<.*>)$", "hgraph_lldb.TypeRefSyntheticProvider"),
-        (r"^hgraph::(?:Value|ValueView|TSData|TSDataOwnedStorage|TSDataView|TSInput|TSOutput|TSInputView|TSOutputView|TSOutputHandle|NodeView|GraphView|RootGraphView|NestedGraphView)$", "hgraph_lldb.RuntimeWrapperSyntheticProvider"),
+        (r"^hgraph::(ValueTypeRef|NodeTypeRef|GraphTypeRef|ExecutorTypeRef|ClockTypeRef|TSRoleTypeRef|BasicTSTypeRef<.*>)$", "hgraph_lldb.TypeRefSyntheticProvider"),
+        (r"^hgraph::(Value|ValueView|TSData|TSDataOwnedStorage|TSDataView|TSInput|TSOutput|TSInputView|TSOutputView|TSOutputHandle|NodeView|GraphView|RootGraphView|NestedGraphView)$", "hgraph_lldb.RuntimeWrapperSyntheticProvider"),
     )
     for pattern, function in summaries:
         debugger.HandleCommand(
