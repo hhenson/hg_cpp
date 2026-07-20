@@ -158,6 +158,8 @@ struct GraphRuntimeBaseStorage {
       (root: from the root executor; nested: one hop to the parent graph's own
       cached pointer) so the hot path never walks the nested-parent chain. */
   LifecycleObserverList *lifecycle_observers{nullptr};
+  /** Borrowed from executor storage; nested graphs copy their parent's pointer. */
+  spdlog::logger *logger{nullptr};
   const TypeRealizationSnapshot *type_realization{nullptr};
 };
 
@@ -718,6 +720,9 @@ void start_impl(const void *context, const GraphView &graph,
     return;
   }
 
+  auto graph_start_failed = UnwindCleanupGuard([&] {
+    state.lifecycle_observers->notify_start_graph_failed(graph);
+  });
   state.lifecycle_observers->notify_before_start_graph(graph);
 
   state.evaluation_time = start_time;
@@ -726,13 +731,21 @@ void start_impl(const void *context, const GraphView &graph,
   auto rollback = UnwindCleanupGuard([&] {
     for (std::size_t index = started_nodes; index > 0; --index) {
       NodeView node_view = graph_node_view(runtime, graph.data(), index - 1);
+      bool notify_after = false;
+      auto after_notify = make_scope_exit<true>([&] {
+        if (notify_after) {
+          state.lifecycle_observers->notify_after_stop_node(node_view);
+        }
+      });
+      auto failed_notify = UnwindCleanupGuard([&] {
+        state.lifecycle_observers->notify_stop_node_failed(node_view);
+      });
       state.lifecycle_observers->notify_before_stop_node(node_view);
       // HideExceptions: a buggy observer must not mask the rollback itself,
       // nor terminate() by throwing a second exception during unwind.
-      auto after_notify = make_scope_exit<true>([&] {
-        state.lifecycle_observers->notify_after_stop_node(node_view);
-      });
+      notify_after = true;
       node_view.stop(state.evaluation_time);
+      failed_notify.release();
     }
     state.next_scheduled_time = MAX_DT;
     state.started = false;
@@ -752,6 +765,9 @@ void start_impl(const void *context, const GraphView &graph,
   // than the graph blanket-scheduling everything.
   for (std::size_t index = 0; index < runtime.layout.node_count; ++index) {
     NodeView node_view = graph_node_view(runtime, graph.data(), index);
+    auto node_start_failed = UnwindCleanupGuard([&] {
+      state.lifecycle_observers->notify_start_node_failed(node_view);
+    });
     state.lifecycle_observers->notify_before_start_node(node_view);
     // Plain sequential (no "after" on throw): a node that fails to start
     // never really started, so no matching after-start notification fires.
@@ -764,6 +780,7 @@ void start_impl(const void *context, const GraphView &graph,
       node_view.start(state.evaluation_time);
     }
     state.lifecycle_observers->notify_after_start_node(node_view);
+    node_start_failed.release();
     ++started_nodes;
   }
 
@@ -778,6 +795,7 @@ void start_impl(const void *context, const GraphView &graph,
   state.started = true;
   rollback.release();
   state.lifecycle_observers->notify_after_start_graph(graph);
+  graph_start_failed.release();
 }
 
 template <typename Storage>
@@ -792,20 +810,30 @@ void stop_impl(const void *context, const GraphView &graph, DateTime stop_time) 
   }
   state.evaluation_time = stop_time;
 
+  auto graph_stop_failed = UnwindCleanupGuard([&] {
+    state.lifecycle_observers->notify_stop_graph_failed(graph);
+  });
   state.lifecycle_observers->notify_before_stop_graph(graph);
 
   FirstExceptionRecorder exceptions;
   for (std::size_t index = runtime.layout.node_count; index > 0; --index) {
     exceptions.capture([&] {
       NodeView node_view = graph_node_view(runtime, graph.data(), index - 1);
+      bool notify_after = false;
+      auto after_notify = make_scope_exit<true>([&] {
+        if (notify_after) {
+          state.lifecycle_observers->notify_after_stop_node(node_view);
+        }
+      });
+      auto failed_notify = UnwindCleanupGuard([&] {
+        state.lifecycle_observers->notify_stop_node_failed(node_view);
+      });
       state.lifecycle_observers->notify_before_stop_node(node_view);
       // Best-effort: every node gets a stop attempt (FirstExceptionRecorder
       // defers the throw), so "after" fires even when stop() itself throws.
       // HideExceptions guards against a buggy observer masking that throw or
       // terminate()-ing during its unwind.
-      auto after_notify = make_scope_exit<true>([&] {
-        state.lifecycle_observers->notify_after_stop_node(node_view);
-      });
+      notify_after = true;
       if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>) {
         annotate_on_exception(
             [&] { node_view.stop(state.evaluation_time); },
@@ -813,6 +841,7 @@ void stop_impl(const void *context, const GraphView &graph, DateTime stop_time) 
       } else {
         node_view.stop(state.evaluation_time);
       }
+      failed_notify.release();
     });
   }
   // Tear down the edge subscriptions and alternative-store links
@@ -825,9 +854,13 @@ void stop_impl(const void *context, const GraphView &graph, DateTime stop_time) 
   release_alternative_subscriptions(runtime, graph.data(),
                                     state.evaluation_time);
   state.started = false;
+  if (exceptions.has_exception()) {
+    state.lifecycle_observers->notify_stop_graph_failed(graph);
+  }
   // Fires even when one or more nodes failed to stop: the graph as a whole
   // completed its (best-effort) stop attempt before the deferred throw below.
   state.lifecycle_observers->notify_after_stop_graph(graph);
+  graph_stop_failed.release();
   exceptions.rethrow_if_any();
 }
 
@@ -846,6 +879,13 @@ LifecycleObserverList *lifecycle_observers_impl(const void *context,
                                                 const void *memory) noexcept {
   const auto &runtime = graph_context(context);
   return graph_header<Storage>(runtime, memory).lifecycle_observers;
+}
+
+template <typename Storage>
+spdlog::logger *logger_impl(const void *context,
+                            const void *memory) noexcept {
+  const auto &runtime = graph_context(context);
+  return graph_header<Storage>(runtime, memory).logger;
 }
 
 template <typename Storage>
@@ -1078,6 +1118,7 @@ struct GraphRuntimeRegistry {
             &lifecycle_observers_impl<RootGraphRuntimeStorage>,
         .type_realization_impl =
             &type_realization_impl<RootGraphRuntimeStorage>,
+        .logger_impl = &logger_impl<RootGraphRuntimeStorage>,
     };
   }
 
@@ -1110,6 +1151,7 @@ struct GraphRuntimeRegistry {
             &lifecycle_observers_impl<NestedGraphRuntimeStorage>,
         .type_realization_impl =
             &type_realization_impl<NestedGraphRuntimeStorage>,
+        .logger_impl = &logger_impl<NestedGraphRuntimeStorage>,
     };
   }
 
@@ -1416,6 +1458,15 @@ LifecycleObserverList &GraphView::lifecycle_observers() const {
   return *list;
 }
 
+spdlog::logger *GraphView::logger() const noexcept {
+  if (!valid()) {
+    return nullptr;
+  }
+  const auto &table = ops();
+  return table.logger_impl != nullptr ? table.logger_impl(table.context, data())
+                                      : nullptr;
+}
+
 const TypeRealizationSnapshot *GraphView::type_realization() const noexcept {
   if (!valid()) {
     return nullptr;
@@ -1502,6 +1553,7 @@ GraphValue::GraphValue(const GraphBuilder &builder, ExecutorPtr root_executor) {
           state.root_executor_ptr = root_executor;
           state.lifecycle_observers =
               &GraphExecutorView{root_executor}.lifecycle_observers();
+          state.logger = GraphExecutorView{root_executor}.logger();
           state.type_realization = snapshot.get();
         });
   });
@@ -1530,6 +1582,7 @@ GraphValue::GraphValue(const GraphBuilder &builder, NodePtr parent_node) {
           // during its construction) — O(1) regardless of nesting depth.
           state.lifecycle_observers =
               &NodeView{parent_node}.graph().lifecycle_observers();
+          state.logger = NodeView{parent_node}.graph().logger();
           state.type_realization = effective_snapshot;
         });
   });
@@ -1570,6 +1623,7 @@ GraphValue::GraphValue(const GraphBuilder &builder, NodePtr parent_node,
         state.parent_node_ptr = parent_node;
         state.lifecycle_observers =
             &NodeView{parent_node}.graph().lifecycle_observers();
+        state.logger = NodeView{parent_node}.graph().logger();
         state.type_realization = effective_snapshot;
       });
   auto rollback =

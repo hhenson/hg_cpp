@@ -218,6 +218,11 @@ namespace hgraph {
             if (first_exception_ != nullptr) { std::rethrow_exception(first_exception_); }
         }
 
+        [[nodiscard]] bool has_exception() const noexcept
+        {
+            return first_exception_ != nullptr;
+        }
+
       private:
         std::exception_ptr first_exception_;
     };

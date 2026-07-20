@@ -7,12 +7,104 @@
 #include "py_wiring.h"
 #include "py_bindings.h"
 
+#include <spdlog/sinks/base_sink.h>
+
+#include <mutex>
+
 namespace nb = nanobind;
 using namespace hgraph;
 using namespace hgraph::python_bridge;
 
 namespace
 {
+    [[nodiscard]] spdlog::level::level_enum python_to_spd_level(int level) noexcept
+    {
+        if (level >= 50) { return spdlog::level::critical; }
+        if (level >= 40) { return spdlog::level::err; }
+        if (level >= 30) { return spdlog::level::warn; }
+        if (level >= 20) { return spdlog::level::info; }
+        if (level >= 10) { return spdlog::level::debug; }
+        return spdlog::level::trace;
+    }
+
+    [[nodiscard]] int spd_to_python_level(spdlog::level::level_enum level) noexcept
+    {
+        switch (level)
+        {
+        case spdlog::level::trace: return 5;
+        case spdlog::level::debug: return 10;
+        case spdlog::level::info: return 20;
+        case spdlog::level::warn: return 30;
+        case spdlog::level::err: return 40;
+        case spdlog::level::critical: return 50;
+        case spdlog::level::off: return 100;
+        case spdlog::level::n_levels: break;
+        }
+        return 20;
+    }
+
+    class PythonLoggingSink final : public spdlog::sinks::base_sink<std::mutex>
+    {
+      public:
+        PythonLoggingSink(nb::object logger, nb::object formatter)
+            : logger_(std::move(logger)), formatter_(std::move(formatter))
+        {
+        }
+
+        void log_with_context(spdlog::level::level_enum level,
+                              std::string_view message,
+                              std::string_view node_path)
+        {
+            nb::gil_scoped_acquire gil;
+            nb::object child = logger_.attr("getChild")(nb::str(node_path.data(), node_path.size()));
+            const int python_level = spd_to_python_level(level);
+            nb::str text{message.data(), message.size()};
+            if (formatter_.is_none())
+            {
+                child.attr("log")(python_level, text);
+                return;
+            }
+            formatter_(python_level, text, nb::tuple(),
+                       nb::arg("node_path") = nb::str(node_path.data(), node_path.size()),
+                       nb::arg("__orig_log__") = child.attr("_log"));
+        }
+
+      protected:
+        void sink_it_(const spdlog::details::log_msg &message) override
+        {
+            nb::gil_scoped_acquire gil;
+            logger_.attr("log")(
+                spd_to_python_level(message.level),
+                nb::str(message.payload.data(), message.payload.size()));
+        }
+
+        void flush_() override {}
+
+      private:
+        nb::object logger_;
+        nb::object formatter_;
+    };
+
+    class PythonRunLogger final : public spdlog::logger, public ContextualLogger
+    {
+      public:
+        explicit PythonRunLogger(std::shared_ptr<PythonLoggingSink> sink)
+            : spdlog::logger("hgraph.python.run", sink), sink_(std::move(sink))
+        {
+        }
+
+        void log_with_context(spdlog::level::level_enum level,
+                              std::string_view message,
+                              NodePtr node) override
+        {
+            sink_->log_with_context(level, message,
+                                    diagnostic::node_path(NodeView{node}));
+        }
+
+      private:
+        std::shared_ptr<PythonLoggingSink> sink_;
+    };
+
     /** Immortal per-function records (stable context pointers; keyed by the
         user function object per the identity ruling). */
     [[nodiscard]] std::unordered_map<PyObject *, PyGraphFnRecord *> &py_graph_fn_registry()
@@ -246,6 +338,20 @@ namespace
 
 namespace hgraph::python_bridge
 {
+    std::shared_ptr<spdlog::logger> make_python_run_logger(
+        nb::object logger, int python_level, nb::object formatter)
+    {
+        if (logger.is_none())
+        {
+            logger = nb::module_::import_("logging").attr("getLogger")("hgraph");
+        }
+        auto sink = std::make_shared<PythonLoggingSink>(std::move(logger),
+                                                        std::move(formatter));
+        auto result = std::make_shared<PythonRunLogger>(std::move(sink));
+        result->set_level(python_to_spd_level(python_level));
+        return result;
+    }
+
     [[nodiscard]] std::vector<WiringArg> build_args(nb::tuple args, nb::dict kwargs)
     {
         std::vector<WiringArg> out;
@@ -339,6 +445,36 @@ namespace hgraph::python_bridge
                     nb::arg("value"))
         .def_static("set_use_logger", &EvaluationTrace::set_use_logger,
                     nb::arg("value"));
+
+    nb::class_<EvaluationProfilePhase>(m, "EvaluationProfilePhase")
+        .def_ro("count", &EvaluationProfilePhase::count)
+        .def_ro("failures", &EvaluationProfilePhase::failures)
+        .def_ro("total_time", &EvaluationProfilePhase::total_time)
+        .def_ro("max_time", &EvaluationProfilePhase::max_time)
+        .def_ro("recent_time", &EvaluationProfilePhase::recent_time);
+    nb::class_<EvaluationProfileEntry>(m, "EvaluationProfileEntry")
+        .def_ro("path", &EvaluationProfileEntry::path)
+        .def_ro("label", &EvaluationProfileEntry::label)
+        .def_ro("graph", &EvaluationProfileEntry::graph)
+        .def_ro("start", &EvaluationProfileEntry::start)
+        .def_ro("evaluation", &EvaluationProfileEntry::evaluation)
+        .def_ro("stop", &EvaluationProfileEntry::stop);
+    nb::class_<EvaluationProfileSnapshot>(m, "EvaluationProfileSnapshot")
+        .def_ro("graph_cycles", &EvaluationProfileSnapshot::graph_cycles)
+        .def_ro("wall_time", &EvaluationProfileSnapshot::wall_time)
+        .def_ro("root_evaluation_time", &EvaluationProfileSnapshot::root_evaluation_time)
+        .def_ro("scheduling_lag_total", &EvaluationProfileSnapshot::scheduling_lag_total)
+        .def_ro("scheduling_lag_max", &EvaluationProfileSnapshot::scheduling_lag_max)
+        .def_ro("scheduling_lag_samples", &EvaluationProfileSnapshot::scheduling_lag_samples)
+        .def_ro("runtime_load", &EvaluationProfileSnapshot::runtime_load)
+        .def_ro("entries", &EvaluationProfileSnapshot::entries);
+    nb::class_<EvaluationProfiler>(m, "EvaluationProfiler")
+        .def(nb::init<bool, bool, bool, bool, bool, std::size_t>(),
+             nb::arg("start") = true, nb::arg("eval") = true,
+             nb::arg("stop") = true, nb::arg("node") = true,
+             nb::arg("graph") = true, nb::arg("recent_window") = 100)
+        .def("snapshot", &EvaluationProfiler::snapshot)
+        .def("reset", &EvaluationProfiler::reset);
 
     nb::class_<PyWiredFn>(m, "WiredFn")
         .def_prop_ro("arity", [](const PyWiredFn &self) { return self.fn.arity; })
@@ -518,7 +654,10 @@ namespace hgraph::python_bridge
              nb::arg("delayed"), nb::arg("port"))
         .def("_release_seed_context", &PyWiring::release_seed_context)
         .def("run", &PyWiring::run, nb::arg("start_time") = nb::none(), nb::arg("end_time") = nb::none(),
-             nb::arg("realtime") = false, nb::arg("trace").none() = nb::none())
+             nb::arg("realtime") = false, nb::arg("trace").none() = nb::none(),
+             nb::arg("profiler").none() = nb::none(),
+             nb::arg("logger").none() = nb::none(), nb::arg("logger_level") = 10,
+             nb::arg("logger_formatter").none() = nb::none())
         .def("push_source", &PyWiring::push_source, nb::arg("ts_type"), nb::arg("conflate") = false,
              nb::arg("on_start") = nb::none());
 

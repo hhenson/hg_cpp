@@ -524,8 +524,10 @@ operator semantics.
 Native lifecycle observers, ``EngineControlView``, the C++ ``stop_engine``
 sink, and Python's guarded ``EvaluationEngineApi`` projection have landed and
 cover nested graphs through the root executor. Native ``EvaluationTrace`` has
-also landed. Remaining observability work is profiling, wiring tracing, the
-inspector, and the Python lifecycle-observer adapter; see
+also landed. Native aggregate ``EvaluationProfiler`` snapshots and run-owned
+logging now back Python profiling and mixed native/Python logging. Remaining
+observability work is wiring tracing, the inspector, and the Python
+lifecycle-observer adapter; see
 :doc:`replacement_gap_plan`.
 
 Priority 4: Boundary Products

@@ -11,6 +11,7 @@ from ._sentinels import REMOVE, Removed, _SetDelta
 _global_state_local = threading.local()
 _GLOBAL_MISSING = object()
 _GRAPH_LOGGER_KEY = "__hgraph_graph_logger__"
+_GRAPH_LOGGER_FORMATTER_KEY = "__hgraph_graph_logger_formatter__"
 _RECORDER_API_KEY = "__recorder_api__"
 _RECORDER_LABEL_KEY = "__recorder_api__label__"
 

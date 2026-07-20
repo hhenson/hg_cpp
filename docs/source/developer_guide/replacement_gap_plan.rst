@@ -24,9 +24,9 @@ non-targets.
 
 The package is close to application replacement, but it is not yet
 operationally complete.  The largest missing area is diagnostics rather than
-execution: native evaluation tracing exists, while profiling, wiring tracing,
-and the inspector do not.  The authoring mismatches found by this audit were
-completed in milestones R0 and R1 on 2026-07-20.
+execution: native evaluation tracing and profiling exist, while wiring
+tracing and the inspector do not.  The authoring mismatches found by this
+audit were completed in milestones R0 and R1 on 2026-07-20.
 
 Completed Authoring Work
 ------------------------
@@ -112,48 +112,63 @@ Both wheel builds used ``-O3``.  The Linux Python run used
 Operational Gaps
 ----------------
 
-Evaluation profiler
-~~~~~~~~~~~~~~~~~~~
+Milestone R2: profiler and run logging
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``EvaluationTrace`` and the native lifecycle-observer protocol have landed,
-but ``EvaluationProfiler`` and ``GraphConfiguration(profile=...)`` have not.
-The profiler must be native and should expose structured measurements rather
-than make log text its only result.
+The native ``EvaluationProfiler`` now records graph cycles, wall/evaluation
+time, real-time scheduling lag and load, plus per-path start/evaluation/stop
+count, failures, total, maximum, and recent-window time. Snapshots own paths
+and labels; copies of a profiler share its state so the Python handle remains
+readable while the run owns its observer. Explicit lifecycle failure events
+finalize start/stop timers without changing the propagated exception.
 
-The first implementation should collect:
+Graph and node identities are cached during start. Steady evaluation performs
+pointer lookups rather than rebuilding paths, and the recent window is a
+pre-grown circular vector. With no profiler registered, the observer list is
+empty and the runtime performs no profiling clock reads or Python calls.
+Process RSS sampling was intentionally not added: it is process-wide and too
+expensive at node granularity. Planned graph storage and tracked slot capacity
+remain the better input for the later inspector memory view.
 
-- graph cycles, wall time, scheduling lag, and runtime load;
-- per-graph and per-node evaluation count, total time, maximum time, and
-  recent-window time;
-- start, evaluation, and stop failures without losing the original exception;
-  and
-- optional process-level memory samples at graph or sample-window boundaries.
+``hgraph.test.EvaluationProfiler`` is the bound native observer;
+``GraphConfiguration(profile=...)`` accepts an instance, ``True``, or the
+upstream options dictionary. Human-readable profile logs format the immutable
+snapshot rather than serving as its storage model.
 
-Use a monotonic clock for elapsed time.  Per-node RSS sampling should not be
-the default: it is expensive, process-wide, and ``ru_maxrss`` is a peak rather
-than current memory on Linux.  Planned static storage and tracked dynamic slot
-capacity are more useful native memory metrics where available.  Disabled
-profiling must not call Python, allocate per evaluation, or read clocks.
+The executor now owns the run's shared spdlog logger. Root and nested graphs
+cache the same borrowed pointer, and ``LoggerView`` no longer reads a process
+global on the tick path. The Python bridge sink forwards native node, trace,
+and runner messages to the configured Python ``graph_logger``; Python-authored
+``LOGGER`` parameters use the same object from copied-in ``GlobalState``.
+``default_log_level`` and ``logger_formatter`` apply to mixed graphs, with
+node paths supplied through the optional native ``ContextualLogger`` contract.
 
-The Python bridge should provide ``hgraph.test.EvaluationProfiler`` as a view
-of the native profiler and accept the upstream boolean/dictionary profile
-configuration.  Human-readable logging is a formatter over the snapshot, not
-the storage model.
+The allocation/timing guard lives in ``hgraph_type_erasure_perf`` as the
+``evaluation_profiler_disabled_cycle`` and
+``evaluation_profiler_enabled_cycle`` workloads. Both require zero
+steady-state allocations. Exact macOS and Linux measurements are recorded in
+the R2 validation record below.
 
-Run logging and logger ownership
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+R2 Validation Record
+~~~~~~~~~~~~~~~~~~~~
 
-The Python runner currently configures a Python logger for Python-authored
-nodes, while native ``log_`` uses the process spdlog logger.  It also omits the
-upstream wiring duration, run start/finish, and failure messages.  This split
-becomes visible in mixed graphs.
+The completed R2 source was validated on 2026-07-20 with clean Release
+builds:
 
-Introduce a run-owned native logger interface configured from the copied-in
-``GlobalState`` / runner configuration.  The normal C++ implementation should
-use spdlog; the optional bridge may attach a Python logging sink.  Native
-nodes, Python nodes, the executor, trace, and profiler must all resolve the
-same run logger.  ``default_log_level`` and formatting policy belong to this
-run configuration rather than an unrelated process global.
+- macOS ARM64 native build: 1,170 of 1,170 C++ tests passed;
+- macOS ``cp312-abi3`` wheel installed under Python 3.14.6: 1,434 passed and
+  16 skipped;
+- Ubuntu 24.04 x86_64, GCC 13.3, warnings-as-errors: 1,170 of 1,170 C++ tests
+  passed, including the public-header and ABI-boundary targets; and
+- Linux ``cp312-abi3`` wheel installed under Python 3.14.6: 1,434 passed and
+  16 skipped.
+
+The profiler timing guard used seven samples of 20,000 cycles.  The median
+macOS ARM64 cost was 40.094 ns per disabled cycle and 165.331 ns per enabled
+cycle.  The median Linux x86_64 cost was 78.764 ns per disabled cycle and
+243.382 ns per enabled cycle.  All four measurements reported zero
+steady-state allocations.  These are regression baselines, not a
+cross-platform speed comparison.
 
 Lifecycle observers and error policy
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -270,11 +285,11 @@ The implementation details and validation counts are recorded above.
 Milestone R2: native profiler and unified run logging
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Implement the aggregate profiler, immutable snapshots, runner phase logging,
-and run-owned logger.  Wire ``profile``, ``graph_logger``,
-``default_log_level``, and ``logger_formatter`` through the C++ runner.  Add a
-benchmark guard for disabled and enabled profiler overhead and record macOS
-and Linux results.
+**Completed 2026-07-20.** Aggregate snapshots, runner phase logging,
+run-owned logging, ``profile``, ``graph_logger``, ``default_log_level``,
+``logger_formatter``, and the native benchmark guard have paired native and
+Python coverage.  The clean macOS/Linux acceptance and performance evidence
+is recorded above.
 
 Milestone R3: lifecycle and error configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

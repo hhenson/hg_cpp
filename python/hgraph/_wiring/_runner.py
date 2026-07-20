@@ -2,6 +2,7 @@
 eval_node test harness."""
 import inspect
 import logging
+import time
 from datetime import timedelta
 
 import _hgraph
@@ -13,7 +14,8 @@ from ._core import (WiringPort, _OperatorFunction, _unwrap, _wiring_stack,
 from ._graph import _GraphFn
 from ._node import _PyNode
 from ._sentinels import _simplify_delta
-from ._state import GlobalState, _GRAPH_LOGGER_KEY, utc_now
+from ._state import (GlobalState, _GRAPH_LOGGER_FORMATTER_KEY,
+                     _GRAPH_LOGGER_KEY, utc_now)
 
 class EvaluationMode:
     SIMULATION = "simulation"
@@ -72,8 +74,9 @@ class GraphConfiguration:
                 "GraphConfiguration.run_mode must be EvaluationMode.SIMULATION or "
                 "EvaluationMode.REAL_TIME")
         _make_evaluation_trace(self.trace)
+        _make_evaluation_profiler(self.profile)
         unsupported = []
-        for name in ("profile", "trace_wiring", "capture_values"):
+        for name in ("trace_wiring", "capture_values"):
             if getattr(self, name):
                 unsupported.append(name)
         for name in ("life_cycle_observers", "wiring_observers"):
@@ -81,16 +84,17 @@ class GraphConfiguration:
                 unsupported.append(name)
         if self.trace_back_depth != 1:
             unsupported.append("trace_back_depth")
-        if self.logger_formatter is not None:
-            unsupported.append("logger_formatter")
         if not self.cleanup_on_error:
             unsupported.append("cleanup_on_error=False")
         if unsupported:
             rendered = ", ".join(unsupported)
             raise NotImplementedError(
                 f"the C++ graph runner does not yet support: {rendered}")
-        if not hasattr(self.graph_logger, "setLevel"):
+        if not all(hasattr(self.graph_logger, name)
+                   for name in ("setLevel", "log", "getChild")):
             raise TypeError("GraphConfiguration.graph_logger must be a logging.Logger-like object")
+        if self.logger_formatter is not None and not callable(self.logger_formatter):
+            raise TypeError("GraphConfiguration.logger_formatter must be callable or None")
 
 
 def _make_evaluation_trace(trace):
@@ -104,6 +108,38 @@ def _make_evaluation_trace(trace):
     if type(trace) is dict:
         return _hgraph.EvaluationTrace(**trace)
     raise TypeError("trace must be a bool, dict, or EvaluationTrace")
+
+
+def _make_evaluation_profiler(profile):
+    """Adapt the Python ``bool | dict`` profile option to the native observer."""
+    if not profile:
+        return None
+    if isinstance(profile, _hgraph.EvaluationProfiler):
+        return profile
+    if profile is True:
+        return _hgraph.EvaluationProfiler()
+    if type(profile) is dict:
+        return _hgraph.EvaluationProfiler(**profile)
+    raise TypeError("profile must be a bool, dict, or EvaluationProfiler")
+
+
+def _log_evaluation_profile(logger, snapshot):
+    logger.info(
+        "Graph profile: cycles=%d wall=%.6fs eval=%.6fs load=%.2f%%",
+        snapshot.graph_cycles,
+        snapshot.wall_time.total_seconds(),
+        snapshot.root_evaluation_time.total_seconds(),
+        snapshot.runtime_load * 100.0,
+    )
+    for entry in snapshot.entries:
+        phase = entry.evaluation
+        if phase.count:
+            logger.debug(
+                "Profile %s: count=%d failures=%d total=%.6fs max=%.6fs recent=%.6fs",
+                entry.path, phase.count, phase.failures,
+                phase.total_time.total_seconds(), phase.max_time.total_seconds(),
+                phase.recent_time.total_seconds(),
+            )
 
 
 def evaluate_graph(fn, config=None, *args, **kwargs):
@@ -165,14 +201,22 @@ def run_graph(
 def _evaluate_graph(graph_fn, config, args, kwargs):
     config._validate()
     trace = _make_evaluation_trace(config.trace)
+    profiler = _make_evaluation_profiler(config.profile)
     state = GlobalState.instance()
     missing = object()
     previous_logger = state.get(_GRAPH_LOGGER_KEY, missing)
+    previous_formatter = state.get(_GRAPH_LOGGER_FORMATTER_KEY, missing)
     state[_GRAPH_LOGGER_KEY] = config.graph_logger
+    if config.logger_formatter is None:
+        state.pop(_GRAPH_LOGGER_FORMATTER_KEY, None)
+    else:
+        state[_GRAPH_LOGGER_FORMATTER_KEY] = config.logger_formatter
     config.graph_logger.setLevel(config.default_log_level)
     w = _hgraph.Wiring(state._impl)
     _wiring_stack.append(w)
     try:
+        wiring_started = time.perf_counter()
+        config.graph_logger.debug("Wiring graph: %s", getattr(graph_fn, "__name__", graph_fn))
         out = graph_fn(*args, **kwargs)
         if out is not None:
             w.wire(
@@ -180,9 +224,16 @@ def _evaluate_graph(graph_fn, config, args, kwargs):
                 (_unwrap(out).dereferenced, "__run_graph__"),
                 {"sparse": True},
             )
+        config.graph_logger.debug(
+            "Graph wiring completed in %.2f seconds",
+            time.perf_counter() - wiring_started,
+        )
         run = w.run(start_time=config.start_time, end_time=config.end_time,
                     realtime=config.run_mode == EvaluationMode.REAL_TIME,
-                    trace=trace)
+                    trace=trace, profiler=profiler,
+                    logger=config.graph_logger,
+                    logger_level=config.default_log_level,
+                    logger_formatter=config.logger_formatter)
     finally:
         w._release_seed_context()
         _wiring_stack.pop()
@@ -190,6 +241,12 @@ def _evaluate_graph(graph_fn, config, args, kwargs):
             state.pop(_GRAPH_LOGGER_KEY, None)
         else:
             state[_GRAPH_LOGGER_KEY] = previous_logger
+        if previous_formatter is missing:
+            state.pop(_GRAPH_LOGGER_FORMATTER_KEY, None)
+        else:
+            state[_GRAPH_LOGGER_FORMATTER_KEY] = previous_formatter
+    if profiler is not None:
+        _log_evaluation_profile(config.graph_logger, profiler.snapshot())
     if out is None:
         return None
     return _times_for_sparse(run.recorded("__run_graph__", sparse=True))

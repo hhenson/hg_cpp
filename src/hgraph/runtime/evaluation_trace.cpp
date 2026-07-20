@@ -1,16 +1,15 @@
 #include <hgraph/runtime/evaluation_trace.h>
 
+#include <hgraph/runtime/diagnostic_path.h>
 #include <hgraph/runtime/graph.h>
 #include <hgraph/runtime/logger.h>
 #include <hgraph/runtime/node.h>
 
-#include <algorithm>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <utility>
-#include <vector>
 
 namespace hgraph
 {
@@ -39,28 +38,6 @@ namespace hgraph
             const auto micros = duration_cast<microseconds>(time.subseconds()).count();
             if (micros != 0) { out << '.' << std::setw(6) << micros; }
             return out.str();
-        }
-
-        [[nodiscard]] std::string graph_label(const GraphView &graph)
-        {
-            const auto *schema = graph.schema();
-            if (schema == nullptr || schema->name().empty()) { return "graph"; }
-            return std::string{schema->name()};
-        }
-
-        [[nodiscard]] std::string node_label(const NodeView &node)
-        {
-            const auto *schema = node.schema();
-            std::string name = schema != nullptr && !schema->name().empty()
-                                   ? std::string{schema->name()}
-                                   : std::string{"node"};
-            const std::string_view label = node.label();
-            if (!label.empty() && label != name)
-            {
-                name += ':';
-                name += label;
-            }
-            return name;
         }
 
         [[nodiscard]] std::string schema_name(const TSValueTypeMetaData *schema)
@@ -130,35 +107,19 @@ namespace hgraph
 
     std::string EvaluationTrace::graph_name(const GraphView &graph) const
     {
-        std::vector<std::string> components;
-        GraphView current{graph.pointer()};
-        while (current.valid() && current.is_nested())
-        {
-            NodeView parent = current.as_nested().parent_node();
-            components.push_back(node_label(parent) + '<' + std::to_string(parent.node_index()) + '>');
-            current = parent.graph();
-        }
-        std::reverse(components.begin(), components.end());
-
-        std::string result{"["};
-        for (std::size_t index = 0; index < components.size(); ++index)
-        {
-            if (index != 0) { result += "::"; }
-            result += components[index];
-        }
-        result += ']';
-        return result;
+        return diagnostic::graph_path(graph);
     }
 
     std::string EvaluationTrace::node_name(const NodeView &node) const
     {
-        return graph_name(node.graph()) + '.' + node_label(node) + '<' + std::to_string(node.node_index()) + '>';
+        return diagnostic::node_path(node);
     }
 
     bool EvaluationTrace::should_log_graph(const GraphView &graph) const
     {
         if (!options_.filter.has_value()) { return true; }
-        return graph_name(graph).contains(*options_.filter) || graph_label(graph).contains(*options_.filter);
+        return graph_name(graph).contains(*options_.filter) ||
+               diagnostic::graph_label(graph).contains(*options_.filter);
     }
 
     bool EvaluationTrace::should_log_node(const NodeView &node) const
@@ -166,7 +127,8 @@ namespace hgraph
         return !options_.filter.has_value() || node_name(node).contains(*options_.filter);
     }
 
-    void EvaluationTrace::emit(DateTime evaluation_time, std::string message) const
+    void EvaluationTrace::emit(DateTime evaluation_time, spdlog::logger *logger,
+                               std::string message) const
     {
         std::string line = '[' + format_time(evaluation_time) + "] " + std::move(message);
         if (output_)
@@ -176,7 +138,7 @@ namespace hgraph
         }
         if (use_logger_.load(std::memory_order_relaxed))
         {
-            log::logger().info("{}", line);
+            LoggerView{logger}.info("{}", line);
             return;
         }
         std::cout << line << '\n' << std::flush;
@@ -184,7 +146,8 @@ namespace hgraph
 
     void EvaluationTrace::print_graph(const GraphView &graph, std::string message) const
     {
-        emit(graph.evaluation_time(), graph_name(graph) + ' ' + std::move(message));
+        emit(graph.evaluation_time(), graph.logger(),
+             graph_name(graph) + ' ' + std::move(message));
     }
 
     void EvaluationTrace::print_node(const NodeView &node, std::string_view message,
@@ -225,14 +188,17 @@ namespace hgraph
                 signature += " SCHED[" + format_time(when) + ']';
             }
         }
-        emit(node.graph().evaluation_time(), std::move(signature));
+        GraphView graph = node.graph();
+        emit(graph.evaluation_time(), graph.logger(), std::move(signature));
     }
 
     void EvaluationTrace::on_before_start_graph(const GraphView &graph)
     {
         if (options_.start && options_.graph && should_log_graph(graph))
         {
-            print_graph(graph, ">> ............... Starting Graph " + graph_label(graph) + " ...............");
+            print_graph(graph, ">> ............... Starting Graph " +
+                                   diagnostic::graph_label(graph) +
+                                   " ...............");
         }
     }
 
@@ -248,7 +214,7 @@ namespace hgraph
     {
         if (!options_.start || !options_.node || !should_log_node(node)) { return; }
         const auto *schema = node.schema();
-        std::string signature = node_label(node) + '(';
+        std::string signature = diagnostic::node_label(node) + '(';
         if (schema != nullptr && schema->input_schema != nullptr)
         {
             signature += schema_name(schema->input_schema);
@@ -258,7 +224,9 @@ namespace hgraph
         {
             signature += " -> " + schema_name(schema->output_schema);
         }
-        emit(node.graph().evaluation_time(), graph_name(node.graph()) + " Starting: " + signature);
+        GraphView graph = node.graph();
+        emit(graph.evaluation_time(), graph.logger(),
+             graph_name(graph) + " Starting: " + signature);
     }
 
     void EvaluationTrace::on_after_start_node(const NodeView &node)
@@ -277,7 +245,9 @@ namespace hgraph
     {
         if (options_.eval && options_.graph && should_log_graph(graph))
         {
-            print_graph(graph, ">>>>>>>>>>>>>>>>>>>> Eval Start " + graph_label(graph) + " >>>>>>>>>>>>>>>>>>>>");
+            print_graph(graph, ">>>>>>>>>>>>>>>>>>>> Eval Start " +
+                                   diagnostic::graph_label(graph) +
+                                   " >>>>>>>>>>>>>>>>>>>>");
         }
     }
 

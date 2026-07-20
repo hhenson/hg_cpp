@@ -677,8 +677,8 @@ A node can ask for runtime services by listing them as parameters, exactly as
 Python injects ``_clock`` / ``_scheduler``. Injectables are **not** part of the
 node's data contract — they add no input, output, scalar or state, and do not
 affect node-kind inference; the node simply receives them at evaluation.
-``GlobalStateView``, ``EvaluationClockView``, ``EngineControlView`` and
-``NodeScheduler`` are implemented:
+``GlobalStateView``, ``EvaluationClockView``, ``EngineControlView``,
+``LoggerView`` and ``NodeScheduler`` are implemented:
 
 .. list-table::
    :header-rows: 1
@@ -705,6 +705,9 @@ affect node-kind inference; the node simply receives them at evaluation.
    * - engine control
      - ``EngineControlView`` *(available)*
      - ``_engine: EvaluationEngineApi``
+   * - run logger
+     - ``LoggerView`` *(available)*
+     - ``logger: LOGGER``
 
 ``EvaluationClockView`` is a borrowed read-only view over the active evaluation
 clock. It exposes ``evaluation_time()``, ``now()``, ``cycle_time()`` and
@@ -715,6 +718,11 @@ injectable for ``clock.evaluation_time()``.
 exposes the evaluation mode, start/end bounds, evaluation clock, stop state,
 and ``request_stop()``. The registered C++ ``stop_engine`` sink uses this view;
 a request completes the current evaluation cycle before ending the run.
+
+``LoggerView`` borrows the executor-owned spdlog logger. Configure it with
+``GraphExecutorBuilder::logger``; the executor retains shared ownership while
+root and nested graphs cache only the raw pointer. Injecting or writing a log
+does not add node storage or perform reference counting on the evaluation path.
 
 ``GlobalStateView`` is a borrowing **view** over the graph's shared, mutable
 ``string -> value`` store. The root graph owns the run-time state, initialized by

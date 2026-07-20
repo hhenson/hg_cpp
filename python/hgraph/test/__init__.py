@@ -1,7 +1,7 @@
 """hgraph.test - the test utilities (hgraph-compatible import path)."""
 from contextlib import contextmanager
 
-from _hgraph import EvaluationTrace
+from _hgraph import EvaluationProfiler, EvaluationProfileEntry, EvaluationProfilePhase, EvaluationProfileSnapshot, EvaluationTrace
 
 from .._wiring import eval_node
 
@@ -21,4 +21,8 @@ def use_wiring(wiring):
     finally:
         _wiring_stack.pop()
 
-__all__ = ["eval_node", "EvaluationTrace", "use_wiring"]
+__all__ = [
+    "eval_node", "EvaluationProfiler", "EvaluationProfileEntry",
+    "EvaluationProfilePhase", "EvaluationProfileSnapshot", "EvaluationTrace",
+    "use_wiring",
+]

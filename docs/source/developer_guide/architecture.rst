@@ -342,8 +342,10 @@ overrides only what it needs.
    {
        virtual void on_before_start_graph(const GraphView &);
        virtual void on_after_start_graph(const GraphView &);
+       virtual void on_start_graph_failed(const GraphView &);
        virtual void on_before_start_node(const NodeView &);
        virtual void on_after_start_node(const NodeView &);
+       virtual void on_start_node_failed(const NodeView &);
 
        virtual void on_before_graph_evaluation(const GraphView &);
        virtual void on_after_graph_evaluation(const GraphView &);
@@ -352,8 +354,10 @@ overrides only what it needs.
 
        virtual void on_before_stop_node(const NodeView &);
        virtual void on_after_stop_node(const NodeView &);
+       virtual void on_stop_node_failed(const NodeView &);
        virtual void on_before_stop_graph(const GraphView &);
        virtual void on_after_stop_graph(const GraphView &);
+       virtual void on_stop_graph_failed(const GraphView &);
    };
 
 There is exactly **one** ``LifecycleObserverList`` per executor run — it lives
@@ -416,6 +420,12 @@ before/after pair for every attempt, not just successful ones:
   it; nodes that failed to start are rolled back through the normal stop
   path (and so do get before/after-stop notifications for that rollback).
 
+The explicit ``*_failed`` callbacks are outcome notifications, not replacements
+for ``after``. They fire only when start or stop propagates an exception and
+let diagnostic observers finalize timers without inferring failure from an
+unfinished phase. They run from ``UnwindCleanupGuard`` boundaries and never
+replace the original exception.
+
 An observer's own exception during a best-effort "after" notification is
 swallowed rather than allowed to propagate — otherwise a buggy observer could
 either mask the real failure it was firing on, or terminate the process
@@ -423,6 +433,23 @@ outright (a second exception escaping a destructor while the first is still
 unwinding calls ``std::terminate``). Observers should treat their own
 notification methods as diagnostic/logging code, not as a place to signal
 failure back into the runtime.
+
+Run Logger Ownership
+~~~~~~~~~~~~~~~~~~~~
+
+``GraphExecutorBuilder::logger`` configures a ``shared_ptr<spdlog::logger>``
+owned by the executor storage. The root graph caches a borrowed pointer during
+construction; nested graphs copy their parent's cached pointer. Consequently
+``LoggerView`` injection is O(1), refcount-free, and independent of process
+global state. The process ``log::logger()`` is only the default used when a
+builder does not supply a run logger.
+
+The optional Python bridge constructs a spdlog logger whose sink owns the
+configured Python ``graph_logger``. ``ContextualLogger`` lets ``LoggerView``
+include a node path only when the destination supports it; ordinary spdlog
+loggers retain the compact path. Executor phase logs are enabled when an
+explicit run logger is configured, avoiding unsolicited diagnostics for pure
+C++ tests that use the process default.
 
 Expected Runtime Phases
 -----------------------

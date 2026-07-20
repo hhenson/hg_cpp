@@ -36,8 +36,10 @@ namespace hgraph
 
         virtual void on_before_start_graph(const GraphView &) {}
         virtual void on_after_start_graph(const GraphView &) {}
+        virtual void on_start_graph_failed(const GraphView &) {}
         virtual void on_before_start_node(const NodeView &) {}
         virtual void on_after_start_node(const NodeView &) {}
+        virtual void on_start_node_failed(const NodeView &) {}
 
         virtual void on_before_graph_evaluation(const GraphView &) {}
         virtual void on_after_graph_evaluation(const GraphView &) {}
@@ -46,8 +48,10 @@ namespace hgraph
 
         virtual void on_before_stop_node(const NodeView &) {}
         virtual void on_after_stop_node(const NodeView &) {}
+        virtual void on_stop_node_failed(const NodeView &) {}
         virtual void on_before_stop_graph(const GraphView &) {}
         virtual void on_after_stop_graph(const GraphView &) {}
+        virtual void on_stop_graph_failed(const GraphView &) {}
     };
 
     /**
@@ -120,6 +124,19 @@ namespace hgraph
             }
         }
 
+        void notify_start_graph_failed(const GraphView &graph) const
+        {
+            NotifyGuard guard{*this};
+            const auto limit = m_observers.size();
+            for (std::size_t index = 0; index < limit; ++index)
+            {
+                if (auto *observer = m_observers[index]; observer != nullptr)
+                {
+                    observer->on_start_graph_failed(graph);
+                }
+            }
+        }
+
         void notify_before_start_node(const NodeView &node) const
         {
             NotifyGuard guard{*this};
@@ -137,6 +154,19 @@ namespace hgraph
             for (std::size_t index = 0; index < limit; ++index)
             {
                 if (auto *observer = m_observers[index]; observer != nullptr) { observer->on_after_start_node(node); }
+            }
+        }
+
+        void notify_start_node_failed(const NodeView &node) const
+        {
+            NotifyGuard guard{*this};
+            const auto limit = m_observers.size();
+            for (std::size_t index = 0; index < limit; ++index)
+            {
+                if (auto *observer = m_observers[index]; observer != nullptr)
+                {
+                    observer->on_start_node_failed(node);
+                }
             }
         }
 
@@ -200,6 +230,19 @@ namespace hgraph
             }
         }
 
+        void notify_stop_node_failed(const NodeView &node) const
+        {
+            NotifyGuard guard{*this};
+            const auto limit = m_observers.size();
+            for (std::size_t index = 0; index < limit; ++index)
+            {
+                if (auto *observer = m_observers[index]; observer != nullptr)
+                {
+                    observer->on_stop_node_failed(node);
+                }
+            }
+        }
+
         void notify_before_stop_graph(const GraphView &graph) const
         {
             NotifyGuard guard{*this};
@@ -217,6 +260,19 @@ namespace hgraph
             for (std::size_t index = 0; index < limit; ++index)
             {
                 if (auto *observer = m_observers[index]; observer != nullptr) { observer->on_after_stop_graph(graph); }
+            }
+        }
+
+        void notify_stop_graph_failed(const GraphView &graph) const
+        {
+            NotifyGuard guard{*this};
+            const auto limit = m_observers.size();
+            for (std::size_t index = 0; index < limit; ++index)
+            {
+                if (auto *observer = m_observers[index]; observer != nullptr)
+                {
+                    observer->on_stop_graph_failed(graph);
+                }
             }
         }
 

@@ -58,7 +58,7 @@ def test_compute_node_all_valid_uses_native_structural_validity():
     assert hg.eval_node(all_children, [{0: 1}, {1: 2}]) == [None, True]
 
 
-def test_graph_configuration_honours_run_mode_and_logger():
+def test_graph_configuration_honours_run_mode_and_logger(caplog):
     observed = []
 
     @hg.compute_node
@@ -71,25 +71,29 @@ def test_graph_configuration_honours_run_mode_and_logger():
 
     @hg.graph
     def app() -> hg.TS[str]:
-        return inspect_run(hg.const(1))
+        value = hg.const(1)
+        hg.log_("native run logger {}", value, level=logging.WARNING)
+        return inspect_run(value)
 
     logger = logging.getLogger("hgraph.signature-compatibility")
     start_time = datetime.now(timezone.utc).replace(tzinfo=None)
     end_time = start_time + timedelta(seconds=0.25)
-    result = hg.evaluate_graph(
-        app,
-        hg.GraphConfiguration(
-            run_mode=hg.EvaluationMode.REAL_TIME,
-            start_time=start_time,
-            end_time=end_time,
-            graph_logger=logger,
-            default_log_level=logging.WARNING,
-        ),
-    )
+    with caplog.at_level(logging.WARNING):
+        result = hg.evaluate_graph(
+            app,
+            hg.GraphConfiguration(
+                run_mode=hg.EvaluationMode.REAL_TIME,
+                start_time=start_time,
+                end_time=end_time,
+                graph_logger=logger,
+                default_log_level=logging.WARNING,
+            ),
+        )
 
     assert [value for _, value in result] == [hg.EvaluationMode.REAL_TIME]
     assert observed == [logger]
     assert logger.level == logging.WARNING
+    assert "native run logger 1" in caplog.text
 
 
 def test_graph_configuration_resolves_relative_end_time():
@@ -110,15 +114,99 @@ def test_graph_configuration_resolves_relative_end_time():
     assert real_time.end_time <= after + timedelta(seconds=2)
 
 
+def test_graph_configuration_applies_logger_formatter_to_python_and_native_nodes(caplog):
+    formatted = []
+
+    def formatter(level, message, args, exc_info=None, extra=None,
+                  stack_info=False, stacklevel=1, node_path=None,
+                  __orig_log__=None):
+        formatted.append((node_path, message))
+        return __orig_log__(
+            level, f"{node_path}: {message}", args, exc_info, extra,
+            stack_info, stacklevel)
+
+    @hg.compute_node
+    def python_log(value: hg.TS[int], logger: hg.LOGGER = None) -> hg.TS[int]:
+        logger.warning("python contextual log")
+        return value.value
+
+    @hg.graph
+    def app() -> hg.TS[int]:
+        value = python_log(hg.const(1))
+        hg.log_("native contextual log {}", value, level=logging.WARNING)
+        return value
+
+    logger = logging.getLogger("hgraph.contextual-logger")
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        result = hg.evaluate_graph(
+            app,
+            hg.GraphConfiguration(
+                graph_logger=logger,
+                default_log_level=logging.WARNING,
+                logger_formatter=formatter,
+            ),
+        )
+
+    assert [value for _, value in result] == [1]
+    assert any(path == "python_log" and "python contextual" in message
+               for path, message in formatted)
+    assert any(path != "python_log" and "native contextual" in message
+               for path, message in formatted)
+    assert "python contextual log" in caplog.text
+    assert "native contextual log 1" in caplog.text
+
+
 def test_graph_configuration_rejects_unimplemented_options_explicitly():
     @hg.graph
     def app() -> hg.TS[int]:
         return hg.const(1)
 
-    with pytest.raises(NotImplementedError, match="profile"):
-        hg.evaluate_graph(app, hg.GraphConfiguration(trace=True, profile=True))
+    with pytest.raises(NotImplementedError, match="trace_wiring"):
+        hg.evaluate_graph(app, hg.GraphConfiguration(trace_wiring=True))
     with pytest.raises(TypeError):
         hg.GraphConfiguration(unknown_option=True)
+
+
+def test_graph_configuration_uses_the_native_evaluation_profiler(caplog):
+    from hgraph.test import EvaluationProfiler
+
+    @hg.compute_node
+    def add_one(value: hg.TS[int]) -> hg.TS[int]:
+        return value.value + 1
+
+    @hg.graph
+    def app() -> hg.TS[int]:
+        return add_one(hg.const(1))
+
+    logger = logging.getLogger("hgraph.profile-test")
+    profiler = EvaluationProfiler(recent_window=4)
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        result = hg.evaluate_graph(
+            app,
+            hg.GraphConfiguration(profile=profiler, graph_logger=logger),
+        )
+
+    assert [value for _, value in result] == [2]
+    snapshot = profiler.snapshot()
+    assert snapshot.graph_cycles == 1
+    assert snapshot.wall_time >= timedelta(0)
+    assert snapshot.root_evaluation_time >= timedelta(0)
+    assert any("__py_compute" in entry.path and entry.evaluation.count == 1
+               for entry in snapshot.entries)
+    assert "Graph profile: cycles=1" in caplog.text
+
+
+def test_graph_configuration_accepts_boolean_and_dict_profile_options():
+    @hg.graph
+    def app() -> hg.TS[int]:
+        return hg.const(1)
+
+    assert [value for _, value in hg.evaluate_graph(
+        app, hg.GraphConfiguration(profile=True)
+    )] == [1]
+    assert [value for _, value in hg.evaluate_graph(
+        app, hg.GraphConfiguration(profile={"start": False, "stop": False})
+    )] == [1]
 
 
 def test_graph_generator_and_component_resolvers():

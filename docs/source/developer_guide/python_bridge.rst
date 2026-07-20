@@ -258,10 +258,10 @@ Value and reference crossings
 Platform notes
 --------------
 
-- **Windows log capture**: the native ``log_`` writes through spdlog, whose
-  Windows stdout sinks cache the raw OS handle at construction —
-  fd-redirecting tests call ``_hgraph.reset_logger()`` first (see
-  :doc:`python_integration`, *LOGGER* bullet).
+- **Run log capture**: Python graph runs install a native spdlog sink that
+  forwards to ``GraphConfiguration.graph_logger``. Use ``caplog`` for mixed
+  native/Python graph logs. ``_hgraph.reset_logger()`` remains only for tests
+  that exercise the process-default C++ logger directly.
 - **Windows DLLs**: there is no rpath on Windows; the build copies Arrow (and
   pyarrow-support) DLLs beside the extension so ``import _hgraph`` works
   before ``pyarrow`` is imported (``python/CMakeLists.txt``).
@@ -279,7 +279,7 @@ Symptom                                               Intentional cause
 Leak reports for registries / records at exit         Immortality rule: registries outlive everything.
 ``nb::set_leak_warnings(false)``                      Same — silences the intentional immortal records.
 Operator missing from ``dir(hgraph)``                 PEP 562 lazy surface; it appears on first access.
-Empty ``capfd`` output for ``log_`` on Windows        spdlog cached-handle; call ``_hgraph.reset_logger()``.
+Missing Python graph ``log_`` output                  Capture/configure ``GraphConfiguration.graph_logger``.
 Python node gets ``None`` for an input                Unwired optional input: the null-source contract.
 ``frozenset`` set-delta replaced the whole TSS        Full-value vs ``_SetDelta`` class-identity shaping.
 Ugly ``__pyop__…_1f3a`` registry names                Deliberate: process-global registry, id disambiguates.

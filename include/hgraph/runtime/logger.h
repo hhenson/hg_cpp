@@ -13,6 +13,16 @@
 
 namespace hgraph
 {
+    /** Optional extension implemented by run loggers that consume node context. */
+    class HGRAPH_EXPORT ContextualLogger
+    {
+      public:
+        virtual ~ContextualLogger() = default;
+        virtual void log_with_context(spdlog::level::level_enum level,
+                                      std::string_view message,
+                                      NodePtr node) = 0;
+    };
+
     /**
      * The LOGGER injectable (ruling 2026-07-04: LOGGER is a C++-native
      * logger — spdlog, built against the project fmt). Declare a
@@ -27,17 +37,18 @@ namespace hgraph
      *
      * A transparent, stateless injectable (the ``SingleShotScheduler``
      * pattern): no signature footprint, no per-node slot. The view BORROWS
-     * the process logger (``log::logger()``) — no reference counting on the
-     * per-tick path. Configure the destination once with
-     * ``log::set_logger`` (configuration-time; a ``shared_ptr`` there is
-     * sanctioned — the hot path only ever sees the borrowed pointer).
-     * Formatting is skipped when the target level is disabled.
+     * the executor-owned run logger, inherited by nested graphs in O(1), so
+     * no reference counting or process-global lookup occurs on the per-tick
+     * path. Formatting is skipped when the target level is disabled.
      */
     class HGRAPH_EXPORT LoggerView
     {
       public:
         LoggerView() noexcept = default;
-        explicit LoggerView(spdlog::logger *logger) noexcept : logger_(logger) {}
+        explicit LoggerView(spdlog::logger *logger, NodePtr node = {}) noexcept
+            : logger_(logger), node_(node)
+        {
+        }
 
         template <typename... Args>
         void trace(fmt::format_string<Args...> format, Args &&...args) const
@@ -87,7 +98,7 @@ namespace hgraph
             if (logger_ == nullptr) { return; }
             const auto spd_level = clamp_level(level);
             if (!logger_->should_log(spd_level)) { return; }
-            logger_->log(spdlog::source_loc{}, spd_level, spdlog::string_view_t{message.data(), message.size()});
+            emit(spd_level, message);
         }
 
         [[nodiscard]] spdlog::logger *raw() const noexcept { return logger_; }
@@ -103,10 +114,25 @@ namespace hgraph
         {
             if (logger_ == nullptr || !logger_->should_log(level)) { return; }
             const auto message = fmt::format(format, std::forward<Args>(args)...);
-            logger_->log(spdlog::source_loc{}, level, spdlog::string_view_t{message.data(), message.size()});
+            emit(level, message);
         }
 
-        spdlog::logger *logger_{nullptr};   // borrowed from log::logger()
+        void emit(spdlog::level::level_enum level, std::string_view message) const
+        {
+            if (node_.has_value())
+            {
+                if (auto *contextual = dynamic_cast<ContextualLogger *>(logger_))
+                {
+                    contextual->log_with_context(level, message, node_);
+                    return;
+                }
+            }
+            logger_->log(spdlog::source_loc{}, level,
+                         spdlog::string_view_t{message.data(), message.size()});
+        }
+
+        spdlog::logger *logger_{nullptr};   // borrowed from executor storage
+        NodePtr         node_{};
     };
 
     namespace log
@@ -114,10 +140,12 @@ namespace hgraph
         /** The process hgraph logger (created on demand: a colour stdout logger named "hgraph"). */
         [[nodiscard]] HGRAPH_EXPORT spdlog::logger &logger();
 
+        /** Shared ownership of the process logger for seeding a run logger. */
+        [[nodiscard]] HGRAPH_EXPORT std::shared_ptr<spdlog::logger> shared_logger();
+
         /**
-         * Replace the process logger (configuration-time; the injectable
-         * borrows whatever is set here). Passing ``nullptr`` restores the
-         * default.
+         * Replace the process default used by executors whose builder does
+         * not provide a logger. Passing ``nullptr`` restores the default.
          */
         HGRAPH_EXPORT void set_logger(std::shared_ptr<spdlog::logger> logger);
 
@@ -138,7 +166,10 @@ namespace hgraph
         template <>
         struct arg_provider<LoggerView>
         {
-            static LoggerView get(const NodeView &, DateTime) { return LoggerView{&log::logger()}; }
+            static LoggerView get(const NodeView &node, DateTime)
+            {
+                return LoggerView{node.graph().logger(), node.pointer()};
+            }
         };
     }  // namespace static_node_detail
 }  // namespace hgraph

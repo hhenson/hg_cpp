@@ -1,6 +1,7 @@
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
+#include <hgraph/runtime/diagnostic_path.h>
 #include <hgraph/runtime/logger.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -12,6 +13,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 // The LOGGER injectable (ruling 2026-07-04: spdlog behind LoggerView) and
 // the log_ operator over it.
@@ -51,6 +53,40 @@ namespace
             log.warn("tick value {}", ts.value());
             out.set(ts.value());
         }
+    };
+
+    struct LoggerRunGraph
+    {
+        static constexpr auto name = "logger_run_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto source = wire<stdlib::const_>(w, Int{7}).as<TS<Int>>();
+            auto output = wire<LoggingNode>(w, source);
+            static_cast<void>(wire<stdlib::null_sink>(w, output));
+        }
+    };
+
+    class CapturedContextLogger final : public spdlog::logger, public ContextualLogger
+    {
+      public:
+        explicit CapturedContextLogger(
+            const std::shared_ptr<spdlog::sinks::ringbuffer_sink_mt> &sink)
+            : spdlog::logger("hgraph-run-test", sink)
+        {
+        }
+
+        void log_with_context(spdlog::level::level_enum level,
+                              std::string_view message,
+                              NodePtr node) override
+        {
+            paths.push_back(diagnostic::node_path(NodeView{node}));
+            spdlog::logger::log(
+                spdlog::source_loc{}, level,
+                spdlog::string_view_t{message.data(), message.size()});
+        }
+
+        std::vector<std::string> paths;
     };
 
     struct QuietLogGraph
@@ -131,6 +167,42 @@ TEST_CASE("logger: the LoggerView injectable logs from start and eval hooks")
     CHECK_THAT(all, Catch::Matchers::ContainsSubstring("logging node started"));
     CHECK_THAT(all, Catch::Matchers::ContainsSubstring("tick value 7"));
     CHECK_THAT(all, Catch::Matchers::ContainsSubstring("tick value 9"));
+}
+
+TEST_CASE("logger: an executor-owned logger is inherited by root and nested graphs")
+{
+    stdlib::register_standard_operators();
+    CapturedLog process_log;
+
+    auto run_sink = std::make_shared<spdlog::sinks::ringbuffer_sink_mt>(32);
+    auto run_logger = std::make_shared<CapturedContextLogger>(run_sink);
+    run_logger->set_level(spdlog::level::debug);
+
+    GraphExecutorBuilder builder;
+    builder.graph_builder(build_graph<LoggerRunGraph>())
+        .logger(run_logger)
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{10});
+    GraphExecutorValue executor = builder.make_executor();
+    GraphView root = executor.view().graph();
+
+    CHECK(executor.view().logger() == run_logger.get());
+    CHECK(root.logger() == run_logger.get());
+    GraphBuilder child_builder;
+    GraphValue child = child_builder.make_nested_graph(root.node_at(0).pointer());
+    CHECK(child.view().logger() == run_logger.get());
+
+    executor.view().run();
+
+    std::string run_output;
+    for (const auto &line : run_sink->last_formatted()) { run_output += line; }
+    CHECK_THAT(run_output, Catch::Matchers::ContainsSubstring("Starting graph run"));
+    CHECK_THAT(run_output, Catch::Matchers::ContainsSubstring("logging node started"));
+    CHECK_THAT(run_output, Catch::Matchers::ContainsSubstring("tick value 7"));
+    CHECK_THAT(run_output, Catch::Matchers::ContainsSubstring("Finished graph run"));
+    REQUIRE_FALSE(run_logger->paths.empty());
+    CHECK_THAT(run_logger->paths.front(), Catch::Matchers::ContainsSubstring("logging_node"));
+    CHECK_THAT(process_log.joined(), !Catch::Matchers::ContainsSubstring("tick value 7"));
 }
 
 TEST_CASE("logger: the log_ operator formats and logs through the injectable")

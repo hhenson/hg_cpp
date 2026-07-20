@@ -123,6 +123,37 @@ uses defaults; a dictionary accepts ``filter``, ``start``, ``eval``, ``stop``,
 ``node``, and ``graph``. ``hgraph.test.EvaluationTrace`` is the bound native
 class, including ``set_print_all_values`` and ``set_use_logger``.
 
+Evaluation profiling
+--------------------
+
+``hgraph/runtime/evaluation_profiler.h`` provides the native aggregate
+``EvaluationProfiler``. Register it exactly like ``EvaluationTrace`` and read
+an owned ``EvaluationProfileSnapshot`` after or during the run. Snapshot paths
+and labels do not borrow graph or node memory, so keyed nested graph erase is
+safe. Copies of a profiler share the measurement state; this is how the Python
+object remains readable while the run owns its observer copy.
+
+The profiler uses a monotonic clock and caches graph/node identities during
+start. Steady evaluation updates perform pointer lookup, timing, and aggregate
+updates without rebuilding paths. The recent window is a pre-grown circular
+vector, so it allocates only on its first sample and not while rotating.
+Without a registered profiler the observer list is empty and evaluation does
+not read a clock or call Python.
+
+The canonical native overhead workloads are
+``evaluation_profiler_disabled_cycle`` and
+``evaluation_profiler_enabled_cycle`` in ``hgraph_type_erasure_perf``. Run
+them with:
+
+.. code-block:: bash
+
+   HGRAPH_TYPE_ERASURE_PERF_FILTER=evaluation_profiler \
+     cmake-build-cpp/tests/cpp/hgraph_type_erasure_perf
+
+Both workloads must report zero steady-state allocations. Timing comparisons
+are recorded on the controlled Linux host; macOS runs are useful development
+evidence but not a release performance baseline.
+
 Python Compatibility Tests
 --------------------------
 

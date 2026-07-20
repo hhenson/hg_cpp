@@ -11,6 +11,11 @@
 #include <string>
 #include <string_view>
 
+namespace spdlog
+{
+    class logger;
+}
+
 namespace hgraph
 {
     /** Select which lifecycle events an :cpp:class:`EvaluationTrace` emits. */
@@ -33,7 +38,8 @@ namespace hgraph
      * schedule state directly from the C++ runtime. The optional sink is useful
      * for tests and embedding; it is called synchronously and must copy the
      * supplied view if it retains the line. Without a sink, output goes through
-     * the process hgraph logger, or stdout when ``set_use_logger(false)`` is set.
+     * the executor-owned run logger, or stdout when ``set_use_logger(false)``
+     * is set.
      */
     class HGRAPH_EXPORT EvaluationTrace final : public LifecycleObserver
     {
@@ -60,7 +66,7 @@ namespace hgraph
 
         /** Include values for valid, unticked inputs as well as modified inputs. */
         static void set_print_all_values(bool value) noexcept;
-        /** Use the process hgraph logger when true; stdout when false. */
+        /** Use the executor-owned run logger when true; stdout when false. */
         static void set_use_logger(bool value) noexcept;
 
       private:
@@ -69,7 +75,8 @@ namespace hgraph
         [[nodiscard]] std::string graph_name(const GraphView &graph) const;
         [[nodiscard]] std::string node_name(const NodeView &node) const;
 
-        void emit(DateTime evaluation_time, std::string message) const;
+        void emit(DateTime evaluation_time, spdlog::logger *logger,
+                  std::string message) const;
         void print_graph(const GraphView &graph, std::string message) const;
         void print_node(const NodeView &node, std::string_view message,
                         bool add_input = false, bool add_output = false,

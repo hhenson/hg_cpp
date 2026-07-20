@@ -821,6 +821,57 @@ int main()
             }
         });
 
+    MockGraphExecutor unprofiled_executor{graph_builder, MIN_ST, MAX_ET};
+    auto unprofiled_graph = unprofiled_executor.view().graph();
+    unprofiled_graph.start(MIN_ST);
+    std::uint64_t unprofiled_cycle = 0;
+    run_benchmark(
+        "evaluation_profiler_disabled_cycle", 20000, samples, warmup,
+        [&] {
+            const DateTime evaluation_time =
+                MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(++unprofiled_cycle)};
+            unprofiled_executor.set_evaluation_time(evaluation_time);
+            unprofiled_graph.schedule_node(0, evaluation_time);
+            if (!unprofiled_graph.evaluate(evaluation_time))
+            {
+                throw std::runtime_error("unprofiled graph evaluation paused");
+            }
+            return std::uint64_t{1};
+        },
+        [](std::uint64_t value) {
+            if (value != 1) { throw std::runtime_error("unprofiled graph evaluation failed"); }
+        });
+    unprofiled_graph.stop();
+
+    EvaluationProfiler profiler;
+    MockGraphExecutor profiled_executor{graph_builder, MIN_ST, MAX_ET};
+    profiled_executor.view().lifecycle_observers().add(&profiler);
+    auto profiled_graph = profiled_executor.view().graph();
+    profiled_graph.start(MIN_ST);
+    std::uint64_t profiled_cycle = 0;
+    run_benchmark(
+        "evaluation_profiler_enabled_cycle", 20000, samples, warmup,
+        [&] {
+            const DateTime evaluation_time =
+                MIN_ST + TimeDelta{static_cast<TimeDelta::rep>(++profiled_cycle)};
+            profiled_executor.set_evaluation_time(evaluation_time);
+            profiled_graph.schedule_node(0, evaluation_time);
+            if (!profiled_graph.evaluate(evaluation_time))
+            {
+                throw std::runtime_error("profiled graph evaluation paused");
+            }
+            return std::uint64_t{1};
+        },
+        [](std::uint64_t value) {
+            if (value != 1) { throw std::runtime_error("profiled graph evaluation failed"); }
+        });
+    profiled_graph.stop();
+    const auto profile = profiler.snapshot();
+    if (profile.graph_cycles == 0 || profile.entries.size() != 2)
+    {
+        throw std::runtime_error("evaluation profiler benchmark produced no measurements");
+    }
+
     Wiring nested_wiring;
     auto nested_source = wire<stdlib::const_, TSD<Str, TS<Int>>>(
         nested_wiring,

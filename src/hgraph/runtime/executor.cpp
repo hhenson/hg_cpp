@@ -1,5 +1,6 @@
 #include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/lifecycle_observer.h>
+#include <hgraph/runtime/logger.h>
 #include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/util/scope.h>
 
@@ -27,11 +28,14 @@ namespace hgraph
             SimulationExecutorStorage(const GraphExecutorBuilder &builder,
                                       ExecutorTypeRef type,
                                       void *executor_memory)
-                : graph(builder.graph_builder().make_root_graph(type.writable(executor_memory))),
+                : logger(builder.logger() != nullptr ? builder.logger()
+                                                     : log::shared_logger()),
+                  graph(builder.graph_builder().make_root_graph(type.writable(executor_memory))),
                   start_time(builder.start_time()),
                   end_time(builder.end_time()),
                   evaluation_time(builder.start_time()),
-                  cycle_wall_start(current_wall_time())
+                  cycle_wall_start(current_wall_time()),
+                  run_logging_enabled(builder.logger() != nullptr)
             {
                 for (LifecycleObserver *observer : builder.lifecycle_observers()) { lifecycle_observers.add(observer); }
             }
@@ -43,12 +47,14 @@ namespace hgraph
             }
 
             LifecycleObserverList lifecycle_observers{}; // declared first so it is constructed before graph
+            std::shared_ptr<spdlog::logger> logger{};
             GraphValue       graph{};
             DateTime         start_time{MIN_ST};
             DateTime         end_time{MAX_ET};
             DateTime         evaluation_time{MIN_ST};
             DateTime         cycle_wall_start{current_wall_time()};
             std::atomic_bool stop_requested{false};
+            bool             run_logging_enabled{false};
         };
 
         struct RealTimeExecutorStorage
@@ -56,10 +62,13 @@ namespace hgraph
             RealTimeExecutorStorage(const GraphExecutorBuilder &builder,
                                     ExecutorTypeRef type,
                                     void *executor_memory)
-                : graph(builder.graph_builder().make_root_graph(type.writable(executor_memory))),
+                : logger(builder.logger() != nullptr ? builder.logger()
+                                                     : log::shared_logger()),
+                  graph(builder.graph_builder().make_root_graph(type.writable(executor_memory))),
                   start_time(builder.start_time()),
                   end_time(builder.end_time()),
-                  evaluation_time(builder.start_time())
+                  evaluation_time(builder.start_time()),
+                  run_logging_enabled(builder.logger() != nullptr)
             {
                 for (LifecycleObserver *observer : builder.lifecycle_observers()) { lifecycle_observers.add(observer); }
             }
@@ -70,6 +79,7 @@ namespace hgraph
             }
 
             LifecycleObserverList lifecycle_observers{}; // declared first so it is constructed before graph
+            std::shared_ptr<spdlog::logger> logger{};
             GraphValue                   graph{};
             DateTime                     start_time{MIN_ST};
             DateTime                     end_time{MAX_ET};
@@ -81,6 +91,7 @@ namespace hgraph
             std::atomic_bool             stop_requested{false};
             bool                         push_update_pending{false};
             bool                         ready_to_push{false};
+            bool                         run_logging_enabled{false};
         };
 
         [[nodiscard]] SimulationExecutorStorage &simulation_storage(void *memory)
@@ -430,6 +441,28 @@ namespace hgraph
             return &realtime_storage(memory).lifecycle_observers;
         }
 
+        spdlog::logger *simulation_logger_impl(const void *, void *memory) noexcept
+        {
+            return simulation_storage(memory).logger.get();
+        }
+
+        spdlog::logger *realtime_logger_impl(const void *, void *memory) noexcept
+        {
+            return realtime_storage(memory).logger.get();
+        }
+
+        bool simulation_run_logging_enabled_impl(const void *,
+                                                 const void *memory) noexcept
+        {
+            return simulation_storage(memory).run_logging_enabled;
+        }
+
+        bool realtime_run_logging_enabled_impl(const void *,
+                                               const void *memory) noexcept
+        {
+            return realtime_storage(memory).run_logging_enabled;
+        }
+
         [[nodiscard]] GraphExecutorOps simulation_executor_ops(const ExecutorRuntimeContext *context)
         {
             return GraphExecutorOps{
@@ -445,6 +478,8 @@ namespace hgraph
                 .is_push_update_pending_impl = &simulation_is_push_update_pending_impl,
                 .reset_push_update_pending_impl = &simulation_reset_push_update_pending_impl,
                 .lifecycle_observers_impl = &simulation_lifecycle_observers_impl,
+                .logger_impl = &simulation_logger_impl,
+                .run_logging_enabled_impl = &simulation_run_logging_enabled_impl,
             };
         }
 
@@ -463,6 +498,8 @@ namespace hgraph
                 .is_push_update_pending_impl = &realtime_is_push_update_pending_impl,
                 .reset_push_update_pending_impl = &realtime_reset_push_update_pending_impl,
                 .lifecycle_observers_impl = &realtime_lifecycle_observers_impl,
+                .logger_impl = &realtime_logger_impl,
+                .run_logging_enabled_impl = &realtime_run_logging_enabled_impl,
             };
         }
 
@@ -550,7 +587,9 @@ namespace hgraph
             }
             if (record.ops_abi_version != EXECUTOR_OPS_ABI_VERSION || record.ops == nullptr)
             {
-                throw std::invalid_argument("ExecutorTypeRef requires executor ops ABI version 1");
+                throw std::invalid_argument(
+                    "ExecutorTypeRef requires executor ops ABI version " +
+                    std::to_string(EXECUTOR_OPS_ABI_VERSION));
             }
             if (record.capabilities != executor_type_capabilities(*record.plan))
             {
@@ -792,10 +831,33 @@ namespace hgraph
         return *list;
     }
 
+    spdlog::logger *GraphExecutorView::logger() const noexcept
+    {
+        return valid() && ops().logger_impl != nullptr
+                   ? ops().logger_impl(ops().context, data())
+                   : nullptr;
+    }
+
+    bool GraphExecutorView::run_logging_enabled() const noexcept
+    {
+        return valid() && ops().run_logging_enabled_impl != nullptr &&
+               ops().run_logging_enabled_impl(ops().context, data());
+    }
+
     void GraphExecutorView::run() const
     {
         if (!valid()) { throw std::logic_error("GraphExecutorView::run requires a live executor"); }
+        const bool log_run = run_logging_enabled();
+        LoggerView run_log{log_run ? logger() : nullptr};
+        run_log.debug("Starting graph run");
+        auto finished = make_scope_exit<true>([&] {
+            run_log.debug("Finished graph run");
+        });
+        auto failed = UnwindCleanupGuard([&] {
+            run_log.error("Graph run failed");
+        });
         ops().run_impl(ops().context, *this);
+        failed.release();
     }
 
     void GraphExecutorView::request_stop() const noexcept
@@ -881,6 +943,12 @@ namespace hgraph
         return *this;
     }
 
+    GraphExecutorBuilder &GraphExecutorBuilder::logger(std::shared_ptr<spdlog::logger> logger)
+    {
+        logger_ = std::move(logger);
+        return *this;
+    }
+
     GraphExecutorBuilder &GraphExecutorBuilder::add_lifecycle_observer(LifecycleObserver *observer)
     {
         if (observer != nullptr) { lifecycle_observers_.push_back(observer); }
@@ -910,6 +978,11 @@ namespace hgraph
     DateTime GraphExecutorBuilder::end_time() const noexcept
     {
         return end_time_;
+    }
+
+    const std::shared_ptr<spdlog::logger> &GraphExecutorBuilder::logger() const noexcept
+    {
+        return logger_;
     }
 
     const std::vector<LifecycleObserver *> &GraphExecutorBuilder::lifecycle_observers() const noexcept

@@ -11,6 +11,9 @@
 
 namespace hgraph::python_bridge
 {
+    [[nodiscard]] std::shared_ptr<spdlog::logger> make_python_run_logger(
+        nb::object logger, int python_level, nb::object formatter);
+
     /** Erased WiringArg assembly for the by-name wire path (defined in
         py_wiring.cpp). */
     [[nodiscard]] std::vector<WiringArg> build_args(nb::tuple args, nb::dict kwargs);
@@ -18,8 +21,9 @@ namespace hgraph::python_bridge
     struct PyRun
     {
         // Declared before the executor so destruction tears the executor down
-        // while its registered observer is still alive.
+        // while its registered observers are still alive.
         std::unique_ptr<EvaluationTrace> trace{};
+        std::unique_ptr<EvaluationProfiler> profiler{};
         GraphExecutorValue executor;
 
         /** Recorded read-back. DENSE (default): per-cycle values, None = no
@@ -188,8 +192,11 @@ namespace hgraph::python_bridge
             testing::set_replay_deltas(wiring_ref().global_state(), key, deltas);
         }
 
-        [[nodiscard]] std::unique_ptr<PyRun> run(std::optional<DateTime> start_time, std::optional<DateTime> end_time,
-                                                 bool realtime, const EvaluationTrace *trace)
+        [[nodiscard]] std::unique_ptr<PyRun> run(
+            std::optional<DateTime> start_time, std::optional<DateTime> end_time,
+            bool realtime, const EvaluationTrace *trace,
+            const EvaluationProfiler *profiler, nb::object logger,
+            int logger_level, nb::object logger_formatter)
         {
             ensure_open();
             if (owned == nullptr) { throw std::logic_error("a borrowed Wiring cannot be run"); }
@@ -200,10 +207,17 @@ namespace hgraph::python_bridge
             eb.graph_builder(std::move(builder))
                 .start_time(start_time.value_or(MIN_ST))
                 .end_time(end_time.value_or(MAX_ET))
-                .mode(realtime ? GraphExecutorMode::RealTime : GraphExecutorMode::Simulation);
+                .mode(realtime ? GraphExecutorMode::RealTime : GraphExecutorMode::Simulation)
+                .logger(make_python_run_logger(std::move(logger), logger_level,
+                                               std::move(logger_formatter)));
             auto owned_trace = trace != nullptr ? std::make_unique<EvaluationTrace>(*trace) : nullptr;
             if (owned_trace != nullptr) { eb.add_lifecycle_observer(owned_trace.get()); }
-            auto run = std::make_unique<PyRun>(PyRun{std::move(owned_trace), eb.make_executor()});
+            auto owned_profiler = profiler != nullptr
+                                      ? std::make_unique<EvaluationProfiler>(*profiler)
+                                      : nullptr;
+            if (owned_profiler != nullptr) { eb.add_lifecycle_observer(owned_profiler.get()); }
+            auto run = std::make_unique<PyRun>(PyRun{
+                std::move(owned_trace), std::move(owned_profiler), eb.make_executor()});
 
             if (py_has_active_runtime_global_state())
             {

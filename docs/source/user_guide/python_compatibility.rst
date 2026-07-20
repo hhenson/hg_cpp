@@ -20,6 +20,30 @@ Python-authored compute, sink, generator, graph, service, adaptor, component,
 and push-source code executes in the C++ runtime. Python adapts values and
 callables; it does not implement a second graph engine.
 
+Run diagnostics
+---------------
+
+``GraphConfiguration(trace=True)`` installs the native evaluation tracer.
+``profile=True`` installs the native aggregate profiler; a dictionary may set
+``start``, ``eval``, ``stop``, ``node``, ``graph``, and ``recent_window``.
+Pass an explicit ``hgraph.test.EvaluationProfiler`` when code needs the owned
+snapshot after the run:
+
+.. code-block:: python
+
+   from hgraph import GraphConfiguration, evaluate_graph
+   from hgraph.test import EvaluationProfiler
+
+   profiler = EvaluationProfiler(recent_window=50)
+   evaluate_graph(app, GraphConfiguration(profile=profiler))
+   snapshot = profiler.snapshot()
+
+The snapshot reports graph cycles, wall/evaluation time, real-time scheduling
+lag, runtime load, and per-path start/evaluation/stop aggregates. Native
+``log_`` nodes, Python ``LOGGER`` injectables, trace output, and runner messages
+all use ``graph_logger`` for that run. ``default_log_level`` and
+``logger_formatter`` therefore apply consistently to mixed graphs.
+
 Runtime callables
 -----------------
 

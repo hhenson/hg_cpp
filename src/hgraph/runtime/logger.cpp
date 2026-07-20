@@ -22,8 +22,13 @@ namespace hgraph::log
 
     spdlog::logger &logger()
     {
+        return *shared_logger();
+    }
+
+    std::shared_ptr<spdlog::logger> shared_logger()
+    {
         if (g_logger == nullptr) { g_logger = make_default_logger(); }
-        return *g_logger;
+        return g_logger;
     }
 
     void set_logger(std::shared_ptr<spdlog::logger> logger)
