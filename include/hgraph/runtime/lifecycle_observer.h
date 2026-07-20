@@ -45,6 +45,7 @@ namespace hgraph
         virtual void on_after_graph_evaluation(const GraphView &) {}
         virtual void on_before_node_evaluation(const NodeView &) {}
         virtual void on_after_node_evaluation(const NodeView &) {}
+        virtual void on_after_graph_push_nodes_evaluation(const GraphView &) {}
 
         virtual void on_before_stop_node(const NodeView &) {}
         virtual void on_after_stop_node(const NodeView &) {}
@@ -207,6 +208,19 @@ namespace hgraph
             for (std::size_t index = 0; index < limit; ++index)
             {
                 if (auto *observer = m_observers[index]; observer != nullptr) { observer->on_after_node_evaluation(node); }
+            }
+        }
+
+        void notify_after_graph_push_nodes_evaluation(const GraphView &graph) const
+        {
+            NotifyGuard guard{*this};
+            const auto limit = m_observers.size();
+            for (std::size_t index = 0; index < limit; ++index)
+            {
+                if (auto *observer = m_observers[index]; observer != nullptr)
+                {
+                    observer->on_after_graph_push_nodes_evaluation(graph);
+                }
             }
         }
 

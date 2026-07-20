@@ -85,6 +85,20 @@ best-effort because portable C++23 does not provide a usable stack trace on all
 supported compilers; a Python exception's formatted traceback is retained in
 ``error_msg`` by nanobind. The field structure remains identical to Python.
 
+For an exception that escapes the root graph,
+``GraphExecutorBuilder::error_capture_options`` applies the same bounded native
+walk before the runtime rethrows an annotated ``std::runtime_error``. Python
+``GraphConfiguration(trace_back_depth=..., capture_values=...)`` configures
+that executor policy directly; it is not a second Python traceback
+implementation.
+
+The executor also owns the cleanup decision. ``cleanup_on_error=True`` stops
+the graph while propagating the exception. With ``False``, the Python exception
+retains the failed executor so node stop hooks have not run while the exception
+is being handled. Releasing the exception releases the executor and performs
+the normal final stop; graph ownership and unsubscribe/destruction invariants
+still apply.
+
 
 Per-node capture and activation
 -------------------------------

@@ -578,12 +578,15 @@ Wiring and node-authoring surface
        Python ``NODE`` exposes a callback-scoped projection over the same
        native node, including nested node/graph identity and notification.
    * - Lifecycle observers, evaluation trace/profiling
-     - Full (built-ins)
+     - Full
      - ``EvaluationTrace`` is a public C++ observer and backs Python
        ``GraphConfiguration(trace=...)`` / ``__trace__``.
        ``EvaluationProfiler`` provides owned aggregate snapshots and backs
        ``profile=True`` / the upstream profile-options dictionary. Custom
-       Python lifecycle observers remain a separate compatibility task.
+       Python observers adapt to the same native observer list through guarded,
+       callback-scoped graph/node views; ``eval_node(__observers__=...)`` uses
+       that path too. Run-wide traceback/value capture and cleanup policy are
+       native executor options.
    * - Graph recovery (start-from-state)
      - Missing
      - Note: restart of a stopped instance is out of contract by design;

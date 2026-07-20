@@ -22,6 +22,32 @@ class EvaluationMode:
     REAL_TIME = "real_time"
 
 
+class EvaluationLifeCycleObserver:
+    """Optional callbacks delivered by the native graph executor.
+
+    Graph and node arguments are callback-scoped native views. Retaining and
+    using one after its callback returns raises ``RuntimeError``.
+    """
+
+    def on_before_start_graph(self, graph): pass
+    def on_after_start_graph(self, graph): pass
+    def on_start_graph_failed(self, graph): pass
+    def on_before_start_node(self, node): pass
+    def on_after_start_node(self, node): pass
+    def on_start_node_failed(self, node): pass
+    def on_before_graph_evaluation(self, graph): pass
+    def on_after_graph_evaluation(self, graph): pass
+    def on_before_node_evaluation(self, node): pass
+    def on_after_node_evaluation(self, node): pass
+    def on_after_graph_push_nodes_evaluation(self, graph): pass
+    def on_before_stop_node(self, node): pass
+    def on_after_stop_node(self, node): pass
+    def on_stop_node_failed(self, node): pass
+    def on_before_stop_graph(self, graph): pass
+    def on_after_stop_graph(self, graph): pass
+    def on_stop_graph_failed(self, graph): pass
+
+
 class GraphConfiguration:
     """Configuration for one native graph execution.
 
@@ -75,17 +101,15 @@ class GraphConfiguration:
                 "EvaluationMode.REAL_TIME")
         _make_evaluation_trace(self.trace)
         _make_evaluation_profiler(self.profile)
+        if not isinstance(self.trace_back_depth, int) or self.trace_back_depth < 0:
+            raise ValueError("GraphConfiguration.trace_back_depth must be a non-negative integer")
         unsupported = []
-        for name in ("trace_wiring", "capture_values"):
+        for name in ("trace_wiring",):
             if getattr(self, name):
                 unsupported.append(name)
-        for name in ("life_cycle_observers", "wiring_observers"):
+        for name in ("wiring_observers",):
             if getattr(self, name):
                 unsupported.append(name)
-        if self.trace_back_depth != 1:
-            unsupported.append("trace_back_depth")
-        if not self.cleanup_on_error:
-            unsupported.append("cleanup_on_error=False")
         if unsupported:
             rendered = ", ".join(unsupported)
             raise NotImplementedError(
@@ -233,7 +257,11 @@ def _evaluate_graph(graph_fn, config, args, kwargs):
                     trace=trace, profiler=profiler,
                     logger=config.graph_logger,
                     logger_level=config.default_log_level,
-                    logger_formatter=config.logger_formatter)
+                    logger_formatter=config.logger_formatter,
+                    observers=config.life_cycle_observers,
+                    trace_back_depth=config.trace_back_depth,
+                    capture_values=config.capture_values,
+                    cleanup_on_error=config.cleanup_on_error)
     finally:
         w._release_seed_context()
         _wiring_stack.pop()
@@ -329,8 +357,6 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     unsupported = []
     if __trace_wiring__:
         unsupported.append("__trace_wiring__")
-    if __observers__:
-        unsupported.append("__observers__")
     if unsupported:
         raise NotImplementedError(
             "the C++ eval_node harness does not yet support: " +
@@ -550,7 +576,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                       if isinstance(series, (list, tuple)) and i not in scalar_positions), default=0)
         _finalize_compound_scalar_types()
         if out is None:
-            run = w.run(start_time=__start_time__, end_time=__end_time__, trace=trace)
+            run = w.run(start_time=__start_time__, end_time=__end_time__, trace=trace,
+                        observers=tuple(__observers__ or ()))
             return None
         # hgraph parity: a REF graph output records its DEREFERENCED values.
         # A TSB with REF fields records a STRUCTURAL bundle of per-field
@@ -571,7 +598,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                 [_hgraph.tsl_element(raw, i).dereferenced for i in range(raw.ts_type.fixed_size)]
             )
         w.wire("__harness_record", (record_port, "eval_node::out"), record_kwargs)
-        run = w.run(start_time=__start_time__, end_time=__end_time__, trace=trace)
+        run = w.run(start_time=__start_time__, end_time=__end_time__, trace=trace,
+                    observers=tuple(__observers__ or ()))
     finally:
         w._release_seed_context()
         _wiring_stack.pop()

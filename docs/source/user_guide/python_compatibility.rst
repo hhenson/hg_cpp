@@ -44,6 +44,18 @@ lag, runtime load, and per-path start/evaluation/stop aggregates. Native
 all use ``graph_logger`` for that run. ``default_log_level`` and
 ``logger_formatter`` therefore apply consistently to mixed graphs.
 
+Custom observers may subclass ``EvaluationLifeCycleObserver`` and pass an
+instance through ``GraphConfiguration(life_cycle_observers=(observer,))`` or
+``eval_node(..., __observers__=[observer])``. Callback arguments are guarded
+views over native runtime objects: inspect them inside the callback and retain
+ordinary values such as ``graph_id`` or ``label``, not the view itself.
+
+``trace_back_depth`` bounds the native activation trace attached to an
+uncaught run error; ``capture_values=True`` includes current input values.
+``cleanup_on_error=False`` defers node stop while the raised exception remains
+alive. Once the exception is released, executor destruction performs the
+mandatory final teardown.
+
 Runtime callables
 -----------------
 

@@ -526,8 +526,9 @@ sink, and Python's guarded ``EvaluationEngineApi`` projection have landed and
 cover nested graphs through the root executor. Native ``EvaluationTrace`` has
 also landed. Native aggregate ``EvaluationProfiler`` snapshots and run-owned
 logging now back Python profiling and mixed native/Python logging. Remaining
-observability work is wiring tracing, the inspector, and the Python
-lifecycle-observer adapter; see
+observability work is wiring tracing and the inspector. Python lifecycle
+observers now adapt onto the same executor-owned native observer list with
+callback-scoped graph/node views; see
 :doc:`replacement_gap_plan`.
 
 Priority 4: Boundary Products

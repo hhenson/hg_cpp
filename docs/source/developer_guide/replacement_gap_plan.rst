@@ -173,18 +173,38 @@ cross-platform speed comparison.
 Lifecycle observers and error policy
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The native executor can already host lifecycle observers, but
-``GraphConfiguration.life_cycle_observers`` and
-``eval_node(__observers__=...)`` cannot install them from Python.  Add a
-bridge adapter with callback-scoped graph/node views and explicit lifetime
-guards.  Built-in trace and profiler observers remain entirely native; a
-custom Python observer is the slower compatibility path.
+The executor now owns run-wide ``ErrorCaptureOptions`` and cleanup policy.
+Uncaught root errors use the same bounded native activation trace as captured
+``NodeError`` values. Immediate stop is optional during propagation, but C++
+executor destruction remains the mandatory final teardown boundary.
 
-Run-wide ``trace_back_depth`` and ``capture_values`` should configure the
-existing native error-capture path.  ``cleanup_on_error=False`` needs an
-explicit executor policy and tests for node, nested graph, and observer
-failures.  It must not be approximated by swallowing stop exceptions in
-Python.
+``GraphConfiguration.life_cycle_observers`` and
+``eval_node(__observers__=...)`` install observers on the executor's single
+native list. Built-in trace/profiler instances stay native; arbitrary Python
+observers use an owned adapter and guarded callback-scoped graph/node views.
+Root and keyed nested graph lifetimes, push-phase gating, callback expiry,
+reentrant native removal, and start/evaluate/stop failure paths have explicit
+coverage.
+
+R3 Validation Record
+~~~~~~~~~~~~~~~~~~~~
+
+The completed R3 source was validated on 2026-07-20 with clean Release
+builds:
+
+- macOS ARM64 native build: 1,173 of 1,173 C++ tests passed;
+- macOS ``cp312-abi3`` wheel installed under Python 3.14.6: 1,440 passed and
+  16 skipped;
+- Ubuntu 24.04 x86_64, GCC 13.3, warnings-as-errors: 1,173 of 1,173 C++ tests
+  passed; and
+- Linux ``cp312-abi3`` wheel installed under Python 3.14.6: 1,448 passed and
+  17 skipped.
+
+Both wheel builds used Release optimisation. The Linux Python environment used
+``polars[rtcompat]`` because the x86_64 OrbStack VM does not expose AVX/AVX2.
+The six Python lifecycle/error ownership cases also passed against a Linux
+Debug extension instrumented with AddressSanitizer; leak detection was disabled
+to exclude process-wide Python shutdown state.
 
 Wiring trace
 ~~~~~~~~~~~~
@@ -294,10 +314,11 @@ is recorded above.
 Milestone R3: lifecycle and error configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Expose native lifecycle observers through ``GraphConfiguration`` and
-``eval_node``; then connect run-wide error capture and cleanup policy.  Test
-root and keyed nested graph lifetimes, observer removal/reentrancy, callback
-view expiry, and failure during start/evaluate/stop.
+**Completed 2026-07-20.** Native lifecycle adapters now back
+``GraphConfiguration`` and ``eval_node``; executor-owned error detail and
+cleanup policy cover root and nested execution. Callback views expire at the
+callback boundary, and failed Python runs with cleanup disabled are retained
+by the raised exception until safe final teardown.
 
 Milestone R4: wiring diagnostics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

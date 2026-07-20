@@ -372,17 +372,20 @@ Recorded divergences / gaps (the morning-summary list):
   schema-directed on the sending thread and cross the sanctioned C++
   boundary. Wiring the decorated function returns its port.
 - ``GraphConfiguration`` exposes the upstream option names. ``run_mode``,
-  start/end time, logger selection, default logger level, and evaluation
-  tracing, profiling, and custom logger formatting are honoured. ``trace=True``
+  start/end time, logger selection, default logger level, evaluation
+  tracing/profiling, lifecycle observers, error capture, cleanup policy, and
+  custom logger formatting are honoured. ``trace=True``
   or the upstream trace-options dictionary installs native ``EvaluationTrace``;
   ``profile=True`` or a dictionary installs native ``EvaluationProfiler`` and
   logs a formatted view of its owned snapshot. ``eval_node`` and ``run_graph``
-  route their trace/profile options through the same path. Wiring
-  tracing/observers, arbitrary Python lifecycle observers, non-default
-  traceback capture, and retaining a failed graph with
-  ``cleanup_on_error=False`` are not implemented; selecting one raises
-  ``NotImplementedError`` before wiring. No execution option is accepted and
-  silently discarded.
+  route their observer options through the same path. Custom Python lifecycle
+  observers receive callback-scoped native ``Graph``/``Node`` views; retaining
+  a view past the callback raises ``RuntimeError``. ``trace_back_depth`` and
+  ``capture_values`` configure native uncaught-error diagnostics.
+  ``cleanup_on_error=False`` retains the failed executor with the raised
+  exception, deferring stop until that exception is released. Wiring tracing
+  and wiring observers remain unsupported and raise ``NotImplementedError``
+  before wiring. No execution option is accepted and silently discarded.
 - The decorator ``node_impl=`` parameter is present for signature compatibility
   but deliberately rejects non-``None`` values. It selects an implementation
   class from the retired Python runtime; Python authors must provide the node

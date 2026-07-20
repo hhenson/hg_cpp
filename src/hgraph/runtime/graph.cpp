@@ -65,7 +65,19 @@ constexpr std::size_t invalid_cursor = std::numeric_limits<std::size_t>::max();
   try {
     throw;
   } catch (const std::exception &e) {
-    throw std::runtime_error(prefix + e.what());
+    std::string message = prefix + e.what();
+    static_cast<void>(fallback_on_exception(false, [&] {
+      const ErrorCaptureOptions options =
+          node.graph().root().executor().error_capture_options();
+      const NodeErrorFields details = capture_node_error(
+          node, node.graph().evaluation_time(), e.what(), options);
+      if (!details.activation_back_trace.empty()) {
+        message += "\nActivation Back Trace:\n";
+        message += details.activation_back_trace;
+      }
+      return true;
+    }));
+    throw std::runtime_error(message);
   } catch (...) {
     throw std::runtime_error(prefix + "unknown error");
   }
@@ -944,10 +956,12 @@ bool evaluate_impl(const void *context, const GraphView &graph,
         PushQueueEngineView push_queue =
             graph.root().executor().push_queue_engine();
         const bool push_update_pending = push_queue.reset_push_update_pending();
+        bool push_phase_evaluated = push_update_pending;
         for (std::size_t index = 0; index < first_normal_node; ++index) {
           auto &scheduled = graph_schedule(runtime, graph.data(), index);
           const bool scheduled_now = scheduled == evaluation_time;
           if (push_update_pending || scheduled_now) {
+            push_phase_evaluated = true;
             if (scheduled_now) {
               scheduled = MIN_DT;
             }
@@ -970,6 +984,10 @@ bool evaluate_impl(const void *context, const GraphView &graph,
               scheduled < state.next_scheduled_time) {
             state.next_scheduled_time = scheduled;
           }
+        }
+        if (push_phase_evaluated) {
+          state.lifecycle_observers
+              ->notify_after_graph_push_nodes_evaluation(graph);
         }
       }
     }

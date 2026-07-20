@@ -167,6 +167,17 @@ namespace
         }
     };
 
+    struct UncaughtErrorGraph
+    {
+        static constexpr auto name = "uncaught_error_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto value = wire<stdlib::replay_impl, TS<Int>>(w, Str{"input"});
+            static_cast<void>(wire<ThrowOnNegative>(w, value));
+        }
+    };
+
     struct ErrorMsgG
     {
         static constexpr auto name = "error_msg_g";
@@ -443,6 +454,46 @@ namespace
         }
     };
 }  // namespace
+
+TEST_CASE("uncaught errors use the executor diagnostic policy")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+
+    stdlib::register_standard_operators();
+    GraphBuilder graph = build_graph<UncaughtErrorGraph>();
+    set_replay_values<Int>(graph.global_state(), "input", values<Int>(-3));
+
+    GraphExecutorBuilder builder;
+    builder.graph_builder(std::move(graph))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2})
+        .error_capture_options(ErrorCaptureOptions{
+            .trace_back_depth = 2,
+            .capture_values = true,
+        });
+
+    GraphExecutorValue executor = builder.make_executor();
+    const ErrorCaptureOptions expected_options{
+        .trace_back_depth = 2,
+        .capture_values = true,
+    };
+    CHECK(executor.view().error_capture_options() == expected_options);
+    try
+    {
+        executor.view().run();
+        FAIL("the throwing node did not fail the graph run");
+    }
+    catch (const std::runtime_error &error)
+    {
+        const std::string message{error.what()};
+        CHECK(message.find("negative input") != std::string::npos);
+        CHECK(message.find("Activation Back Trace") != std::string::npos);
+        CHECK(message.find("throw_on_negative") != std::string::npos);
+        CHECK(message.find("value=-3") != std::string::npos);
+        CHECK(message.find("replay") != std::string::npos);
+    }
+}
 
 TEST_CASE("NodeError: a value-layer bundle with the reference fields")
 {

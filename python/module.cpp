@@ -8,6 +8,7 @@
  */
 #include "module_internal.h"
 #include "py_bindings.h"
+#include "py_wiring.h"
 
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/types/time_series/ts_output/alternative.h>
@@ -83,6 +84,16 @@ NB_MODULE(_hgraph, m)
             nb::object &cls = requirements_error_slot();
             if (cls.is_valid()) { PyErr_SetObject(cls.ptr(), nb::str(error.what()).ptr()); }
             else { PyErr_SetString(PyExc_RuntimeError, error.what()); }
+        }
+    });
+    nb::register_exception_translator([](const std::exception_ptr &p, void *) {
+        try
+        {
+            std::rethrow_exception(p);
+        }
+        catch (const RetainedGraphRunError &error)
+        {
+            translate_retained_graph_run_error(error);
         }
     });
     m.def("_set_requirements_error", [](nb::object cls) { requirements_error_slot() = std::move(cls); });

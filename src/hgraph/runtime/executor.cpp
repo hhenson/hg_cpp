@@ -9,6 +9,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -35,6 +36,8 @@ namespace hgraph
                   end_time(builder.end_time()),
                   evaluation_time(builder.start_time()),
                   cycle_wall_start(current_wall_time()),
+                  error_capture_options(builder.error_capture_options()),
+                  cleanup_on_error(builder.cleanup_on_error()),
                   run_logging_enabled(builder.logger() != nullptr)
             {
                 for (LifecycleObserver *observer : builder.lifecycle_observers()) { lifecycle_observers.add(observer); }
@@ -53,7 +56,9 @@ namespace hgraph
             DateTime         end_time{MAX_ET};
             DateTime         evaluation_time{MIN_ST};
             DateTime         cycle_wall_start{current_wall_time()};
+            ErrorCaptureOptions error_capture_options{};
             std::atomic_bool stop_requested{false};
+            bool             cleanup_on_error{true};
             bool             run_logging_enabled{false};
         };
 
@@ -68,6 +73,8 @@ namespace hgraph
                   start_time(builder.start_time()),
                   end_time(builder.end_time()),
                   evaluation_time(builder.start_time()),
+                  error_capture_options(builder.error_capture_options()),
+                  cleanup_on_error(builder.cleanup_on_error()),
                   run_logging_enabled(builder.logger() != nullptr)
             {
                 for (LifecycleObserver *observer : builder.lifecycle_observers()) { lifecycle_observers.add(observer); }
@@ -85,6 +92,8 @@ namespace hgraph
             DateTime                     end_time{MAX_ET};
             DateTime                     evaluation_time{MIN_ST};
             DateTime                     last_time_allowed_push{MIN_DT};
+            ErrorCaptureOptions          error_capture_options{};
+            bool                         cleanup_on_error{true};
 
             mutable std::mutex           mutex{};
             std::condition_variable      condition{};
@@ -331,7 +340,12 @@ namespace hgraph
 
             auto graph = state.graph.view();
             graph.start(state.start_time);
-            auto stop_graph = UnwindCleanupGuard([&] { graph.stop(); });
+            auto stop_graph = UnwindCleanupGuard([&] {
+                if (state.cleanup_on_error || std::uncaught_exceptions() == 0)
+                {
+                    graph.stop();
+                }
+            });
 
             while (!state.stop_requested.load(std::memory_order_acquire))
             {
@@ -463,6 +477,30 @@ namespace hgraph
             return realtime_storage(memory).run_logging_enabled;
         }
 
+        ErrorCaptureOptions simulation_error_capture_options_impl(
+            const void *, const void *memory) noexcept
+        {
+            return simulation_storage(memory).error_capture_options;
+        }
+
+        ErrorCaptureOptions realtime_error_capture_options_impl(
+            const void *, const void *memory) noexcept
+        {
+            return realtime_storage(memory).error_capture_options;
+        }
+
+        bool simulation_cleanup_on_error_impl(const void *,
+                                              const void *memory) noexcept
+        {
+            return simulation_storage(memory).cleanup_on_error;
+        }
+
+        bool realtime_cleanup_on_error_impl(const void *,
+                                            const void *memory) noexcept
+        {
+            return realtime_storage(memory).cleanup_on_error;
+        }
+
         [[nodiscard]] GraphExecutorOps simulation_executor_ops(const ExecutorRuntimeContext *context)
         {
             return GraphExecutorOps{
@@ -480,6 +518,8 @@ namespace hgraph
                 .lifecycle_observers_impl = &simulation_lifecycle_observers_impl,
                 .logger_impl = &simulation_logger_impl,
                 .run_logging_enabled_impl = &simulation_run_logging_enabled_impl,
+                .error_capture_options_impl = &simulation_error_capture_options_impl,
+                .cleanup_on_error_impl = &simulation_cleanup_on_error_impl,
             };
         }
 
@@ -500,6 +540,8 @@ namespace hgraph
                 .lifecycle_observers_impl = &realtime_lifecycle_observers_impl,
                 .logger_impl = &realtime_logger_impl,
                 .run_logging_enabled_impl = &realtime_run_logging_enabled_impl,
+                .error_capture_options_impl = &realtime_error_capture_options_impl,
+                .cleanup_on_error_impl = &realtime_cleanup_on_error_impl,
             };
         }
 
@@ -844,6 +886,19 @@ namespace hgraph
                ops().run_logging_enabled_impl(ops().context, data());
     }
 
+    ErrorCaptureOptions GraphExecutorView::error_capture_options() const noexcept
+    {
+        return valid() && ops().error_capture_options_impl != nullptr
+                   ? ops().error_capture_options_impl(ops().context, data())
+                   : ErrorCaptureOptions{};
+    }
+
+    bool GraphExecutorView::cleanup_on_error() const noexcept
+    {
+        return !valid() || ops().cleanup_on_error_impl == nullptr ||
+               ops().cleanup_on_error_impl(ops().context, data());
+    }
+
     void GraphExecutorView::run() const
     {
         if (!valid()) { throw std::logic_error("GraphExecutorView::run requires a live executor"); }
@@ -949,6 +1004,19 @@ namespace hgraph
         return *this;
     }
 
+    GraphExecutorBuilder &GraphExecutorBuilder::error_capture_options(
+        ErrorCaptureOptions options) noexcept
+    {
+        error_capture_options_ = options;
+        return *this;
+    }
+
+    GraphExecutorBuilder &GraphExecutorBuilder::cleanup_on_error(bool value) noexcept
+    {
+        cleanup_on_error_ = value;
+        return *this;
+    }
+
     GraphExecutorBuilder &GraphExecutorBuilder::add_lifecycle_observer(LifecycleObserver *observer)
     {
         if (observer != nullptr) { lifecycle_observers_.push_back(observer); }
@@ -983,6 +1051,16 @@ namespace hgraph
     const std::shared_ptr<spdlog::logger> &GraphExecutorBuilder::logger() const noexcept
     {
         return logger_;
+    }
+
+    ErrorCaptureOptions GraphExecutorBuilder::error_capture_options() const noexcept
+    {
+        return error_capture_options_;
+    }
+
+    bool GraphExecutorBuilder::cleanup_on_error() const noexcept
+    {
+        return cleanup_on_error_;
     }
 
     const std::vector<LifecycleObserver *> &GraphExecutorBuilder::lifecycle_observers() const noexcept

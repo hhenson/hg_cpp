@@ -10,6 +10,7 @@
 
 #include <hgraph/runtime/executor_type_ref.h>
 #include <hgraph/runtime/graph.h>
+#include <hgraph/runtime/node_error.h>
 
 #include <memory>
 
@@ -66,6 +67,10 @@ namespace hgraph
         spdlog::logger *(*logger_impl)(const void *context, void *memory) noexcept = nullptr;
         bool (*run_logging_enabled_impl)(const void *context,
                                          const void *memory) noexcept = nullptr;
+        ErrorCaptureOptions (*error_capture_options_impl)(
+            const void *context, const void *memory) noexcept = nullptr;
+        bool (*cleanup_on_error_impl)(const void *context,
+                                      const void *memory) noexcept = nullptr;
     };
 
     /** Real-time push queue projection over the root graph executor. */
@@ -156,6 +161,10 @@ namespace hgraph
         /** Borrowed logger configured for this run. */
         [[nodiscard]] spdlog::logger *logger() const noexcept;
         [[nodiscard]] bool run_logging_enabled() const noexcept;
+        /** Detail included when a node exception escapes the root graph. */
+        [[nodiscard]] ErrorCaptureOptions error_capture_options() const noexcept;
+        /** Whether a failed run stops the graph before propagating its error. */
+        [[nodiscard]] bool cleanup_on_error() const noexcept;
 
         void run() const;
         void request_stop() const noexcept;
@@ -201,6 +210,8 @@ namespace hgraph
         GraphExecutorBuilder &start_time(DateTime start_time) noexcept;
         GraphExecutorBuilder &end_time(DateTime end_time) noexcept;
         GraphExecutorBuilder &logger(std::shared_ptr<spdlog::logger> logger);
+        GraphExecutorBuilder &error_capture_options(ErrorCaptureOptions options) noexcept;
+        GraphExecutorBuilder &cleanup_on_error(bool value) noexcept;
         /** Register a lifecycle observer for this executor's run (see ``LifecycleObserver``). */
         GraphExecutorBuilder &add_lifecycle_observer(LifecycleObserver *observer);
 
@@ -210,6 +221,8 @@ namespace hgraph
         [[nodiscard]] DateTime start_time() const noexcept;
         [[nodiscard]] DateTime end_time() const noexcept;
         [[nodiscard]] const std::shared_ptr<spdlog::logger> &logger() const noexcept;
+        [[nodiscard]] ErrorCaptureOptions error_capture_options() const noexcept;
+        [[nodiscard]] bool cleanup_on_error() const noexcept;
         [[nodiscard]] const std::vector<LifecycleObserver *> &lifecycle_observers() const noexcept;
         [[nodiscard]] GraphTypeRef graph_type() const;
         [[nodiscard]] ExecutorTypeRef type() const;
@@ -224,6 +237,8 @@ namespace hgraph
         DateTime                        end_time_{MAX_ET};
         GraphExecutorMode               mode_{GraphExecutorMode::Simulation};
         std::shared_ptr<spdlog::logger>  logger_{};
+        ErrorCaptureOptions             error_capture_options_{};
+        bool                            cleanup_on_error_{true};
         std::vector<LifecycleObserver *> lifecycle_observers_{};
         mutable ExecutorTypeRef          type_{};
     };

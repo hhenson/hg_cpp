@@ -579,6 +579,54 @@ namespace hgraph::python_bridge
         .value("PULL_SOURCE", NodeKind::PullSource)
         .value("SINK", NodeKind::Sink)
         .value("NESTED", NodeKind::Nested);
+    nb::class_<PyGraph>(m, "Graph")
+        .def_prop_ro("graph_id", [](const PyGraph &self) {
+            const auto id = self.graph_id();
+            nb::tuple result = nb::steal<nb::tuple>(
+                PyTuple_New(static_cast<Py_ssize_t>(id.size())));
+            for (std::size_t index = 0; index < id.size(); ++index)
+            {
+                if (PyTuple_SetItem(result.ptr(), static_cast<Py_ssize_t>(index),
+                                    nb::cast(id[index]).release().ptr()) != 0)
+                {
+                    throw nb::python_error();
+                }
+            }
+            return result;
+        })
+        .def_prop_ro("label", [](const PyGraph &self) {
+            const GraphView graph = self.checked();
+            const auto *schema = graph.schema();
+            return schema != nullptr && schema->display_name != nullptr
+                       ? std::string{schema->display_name}
+                       : std::string{};
+        })
+        .def_prop_ro("started", [](const PyGraph &self) {
+            return self.checked().started();
+        })
+        .def_prop_ro("evaluating", [](const PyGraph &self) {
+            return self.checked().evaluating();
+        })
+        .def_prop_ro("evaluation_clock", [](const PyGraph &self) {
+            return PyEvalClock{self.checked().executor().evaluation_clock()};
+        })
+        .def_prop_ro("parent_node", [](const PyGraph &self) -> nb::object {
+            const GraphView graph = self.checked();
+            if (!graph.is_nested()) { return nb::none(); }
+            const NodeView parent = graph.as_nested().parent_node();
+            return nb::cast(PyNode{parent.pointer(), NodeScheduler{}, self.lease});
+        })
+        .def_prop_ro("nodes", [](const PyGraph &self) {
+            const GraphView graph = self.checked();
+            nb::list result;
+            for (std::size_t index = 0; index < graph.node_count(); ++index)
+            {
+                const NodeView node = graph.node_at(index);
+                result.append(nb::cast(
+                    PyNode{node.pointer(), NodeScheduler{}, self.lease}));
+            }
+            return result;
+        });
     nb::class_<PyNode>(m, "Node")
         .def_prop_ro("node_ndx", [](const PyNode &self) { return self.checked().node_index(); })
         .def_prop_ro("node_index", [](const PyNode &self) { return self.checked().node_index(); })
@@ -610,6 +658,10 @@ namespace hgraph::python_bridge
             return result;
         })
         .def_prop_ro("label", [](const PyNode &self) { return std::string{self.checked().label()}; })
+        .def_prop_ro("graph", [](const PyNode &self) {
+            const GraphView graph = self.checked().graph();
+            return PyGraph{graph.pointer(), self.lease};
+        })
         .def_prop_ro("node_type", [](const PyNode &self) { return self.checked().node_kind(); })
         .def_prop_ro("started", [](const PyNode &self) { return self.checked().started(); })
         .def_prop_ro("has_input", [](const PyNode &self) { return self.checked().has_input(); })

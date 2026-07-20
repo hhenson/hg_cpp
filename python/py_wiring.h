@@ -13,6 +13,10 @@ namespace hgraph::python_bridge
 {
     [[nodiscard]] std::shared_ptr<spdlog::logger> make_python_run_logger(
         nb::object logger, int python_level, nb::object formatter);
+    void add_python_lifecycle_observers(
+        GraphExecutorBuilder &builder,
+        std::vector<std::unique_ptr<LifecycleObserver>> &owned,
+        nb::tuple observers);
 
     /** Erased WiringArg assembly for the by-name wire path (defined in
         py_wiring.cpp). */
@@ -24,6 +28,7 @@ namespace hgraph::python_bridge
         // while its registered observers are still alive.
         std::unique_ptr<EvaluationTrace> trace{};
         std::unique_ptr<EvaluationProfiler> profiler{};
+        std::vector<std::unique_ptr<LifecycleObserver>> observers{};
         GraphExecutorValue executor;
 
         /** Recorded read-back. DENSE (default): per-cycle values, None = no
@@ -48,6 +53,24 @@ namespace hgraph::python_bridge
             return result;
         }
     };
+
+    /** Keeps a failed, non-cleaned executor alive for the Python exception's lifetime. */
+    class RetainedGraphRunError final : public std::runtime_error
+    {
+      public:
+        RetainedGraphRunError(std::exception_ptr error,
+                              std::shared_ptr<PyRun> run);
+
+        [[nodiscard]] const std::shared_ptr<PyRun> &run() const noexcept
+        {
+            return run_;
+        }
+
+      private:
+        std::shared_ptr<PyRun> run_;
+    };
+
+    void translate_retained_graph_run_error(const RetainedGraphRunError &error);
 
     struct PyWiring
     {
@@ -196,10 +219,18 @@ namespace hgraph::python_bridge
             std::optional<DateTime> start_time, std::optional<DateTime> end_time,
             bool realtime, const EvaluationTrace *trace,
             const EvaluationProfiler *profiler, nb::object logger,
-            int logger_level, nb::object logger_formatter)
+            int logger_level, nb::object logger_formatter,
+            nb::tuple observers, std::int64_t trace_back_depth,
+            bool capture_values,
+            bool cleanup_on_error)
         {
             ensure_open();
             if (owned == nullptr) { throw std::logic_error("a borrowed Wiring cannot be run"); }
+            if (trace_back_depth < 0)
+            {
+                throw std::invalid_argument(
+                    "trace_back_depth must be non-negative");
+            }
             finished = true;
             GraphBuilder builder = std::move(*owned).finish();
 
@@ -209,15 +240,26 @@ namespace hgraph::python_bridge
                 .end_time(end_time.value_or(MAX_ET))
                 .mode(realtime ? GraphExecutorMode::RealTime : GraphExecutorMode::Simulation)
                 .logger(make_python_run_logger(std::move(logger), logger_level,
-                                               std::move(logger_formatter)));
-            auto owned_trace = trace != nullptr ? std::make_unique<EvaluationTrace>(*trace) : nullptr;
-            if (owned_trace != nullptr) { eb.add_lifecycle_observer(owned_trace.get()); }
-            auto owned_profiler = profiler != nullptr
-                                      ? std::make_unique<EvaluationProfiler>(*profiler)
-                                      : nullptr;
-            if (owned_profiler != nullptr) { eb.add_lifecycle_observer(owned_profiler.get()); }
-            auto run = std::make_unique<PyRun>(PyRun{
-                std::move(owned_trace), std::move(owned_profiler), eb.make_executor()});
+                                               std::move(logger_formatter)))
+                .error_capture_options(ErrorCaptureOptions{
+                    .trace_back_depth = static_cast<std::size_t>(trace_back_depth),
+                    .capture_values = capture_values,
+                })
+                .cleanup_on_error(cleanup_on_error);
+            auto run = std::make_unique<PyRun>();
+            add_python_lifecycle_observers(eb, run->observers, observers);
+            run->trace = trace != nullptr
+                             ? std::make_unique<EvaluationTrace>(*trace)
+                             : nullptr;
+            if (run->trace != nullptr) { eb.add_lifecycle_observer(run->trace.get()); }
+            run->profiler = profiler != nullptr
+                                ? std::make_unique<EvaluationProfiler>(*profiler)
+                                : nullptr;
+            if (run->profiler != nullptr)
+            {
+                eb.add_lifecycle_observer(run->profiler.get());
+            }
+            run->executor = eb.make_executor();
 
             if (py_has_active_runtime_global_state())
             {
@@ -236,17 +278,31 @@ namespace hgraph::python_bridge
                 guard->alive = false;
                 runtime.attr("_pop_runtime_global_state")();
             });
-            {
-                // Ruling: the GIL is released the instant we enter the run
-                // loop; python user nodes re-acquire it per call.
-                nb::gil_scoped_release release;
-                run->executor.view().run();
-            }
+            auto copy_runtime_state = UnwindCleanupGuard([&] {
+                if (python_state != nullptr)
+                {
+                    python_state->view().copy_from(
+                        run->executor.view().graph().global_state());
+                }
+            });
+            annotate_on_exception(
+                [&] {
+                    // Ruling: the GIL is released the instant we enter the run
+                    // loop; python user nodes re-acquire it per call.
+                    nb::gil_scoped_release release;
+                    run->executor.view().run();
+                },
+                [&] {
+                    if (!cleanup_on_error)
+                    {
+                        copy_runtime_state.complete();
+                        throw RetainedGraphRunError{
+                            std::current_exception(),
+                            std::shared_ptr<PyRun>{std::move(run)}};
+                    }
+                });
             clear_runtime_state.complete();
-            if (python_state != nullptr)
-            {
-                python_state->view().copy_from(run->executor.view().graph().global_state());
-            }
+            copy_runtime_state.complete();
             return run;
         }
 

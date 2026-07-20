@@ -351,6 +351,7 @@ overrides only what it needs.
        virtual void on_after_graph_evaluation(const GraphView &);
        virtual void on_before_node_evaluation(const NodeView &);
        virtual void on_after_node_evaluation(const NodeView &);
+       virtual void on_after_graph_push_nodes_evaluation(const GraphView &);
 
        virtual void on_before_stop_node(const NodeView &);
        virtual void on_after_stop_node(const NodeView &);
@@ -386,6 +387,18 @@ unregistering it before either side is destroyed. Two registration points:
   directly at any point before or during the run. Removal is safe from within
   an observer's own callback (deferred compaction while a notification is in
   progress, matching ``SlotObserverList``'s reentrancy guard).
+
+``on_after_graph_push_nodes_evaluation`` is emitted only when the root graph
+actually processes a pending or scheduled push-source phase. Merely having a
+push-source node in the graph does not produce a notification on every cycle.
+Nested graphs do not own a push queue and therefore do not emit this event.
+
+The Python bridge owns adapter observers in the run handle and registers their
+native base pointers through the same builder API. Each callback receives a
+guarded ``Graph`` or ``Node`` projection; the projection is invalidated as
+soon as that callback returns. ``EvaluationTrace`` and
+``EvaluationProfiler`` are recognized separately and remain native observers,
+so they do not cross the Python boundary per event.
 
 Observer And Callback Draining
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -433,6 +446,22 @@ outright (a second exception escaping a destructor while the first is still
 unwinding calls ``std::terminate``). Observers should treat their own
 notification methods as diagnostic/logging code, not as a place to signal
 failure back into the runtime.
+
+Executor Error Policy
+~~~~~~~~~~~~~~~~~~~~~
+
+``GraphExecutorBuilder::error_capture_options`` installs the run-wide
+``trace_back_depth`` and ``capture_values`` policy used when an uncaught node
+exception leaves the root graph. The values live in executor storage and are
+available through ``GraphExecutorView``; nested failures therefore use the
+same policy when they eventually reach the root boundary.
+
+``GraphExecutorBuilder::cleanup_on_error`` controls immediate stop during
+exception propagation. With the default ``true``, the executor stops the
+graph before rethrowing. With ``false``, the failed executor remains started
+while an owner deliberately retains it. Destruction is still the final
+ownership boundary and always performs safe graph teardown; this option must
+not be implemented by leaking storage or bypassing stop/unsubscribe rules.
 
 Run Logger Ownership
 ~~~~~~~~~~~~~~~~~~~~

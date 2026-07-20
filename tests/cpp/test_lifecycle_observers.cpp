@@ -80,6 +80,10 @@ namespace
         }
         void on_before_node_evaluation(const NodeView &node) override { record("before_node_evaluation", node_id(node)); }
         void on_after_node_evaluation(const NodeView &node) override { record("after_node_evaluation", node_id(node)); }
+        void on_after_graph_push_nodes_evaluation(const GraphView &graph) override
+        {
+            record("after_graph_push_nodes_evaluation", graph_id(graph));
+        }
 
         void on_before_stop_node(const NodeView &node) override { record("before_stop_node", node_id(node)); }
         void on_after_stop_node(const NodeView &node) override { record("after_stop_node", node_id(node)); }
@@ -207,6 +211,57 @@ namespace
             wire<stdlib::dense_record_impl>(w, out, Str{"out"});
         }
     };
+
+    NodeBuilder throwing_source(int &stop_calls)
+    {
+        NodeTypeMetaData schema;
+        schema.display_name = "throwing_source";
+        schema.node_kind = NodeKind::PullSource;
+        schema.schedule_on_start = true;
+
+        NodeCallbacks callbacks;
+        callbacks.evaluate = [](const NodeView &, DateTime) {
+            throw std::runtime_error("evaluation failed");
+        };
+        callbacks.stop = [&stop_calls](const NodeView &, DateTime) {
+            ++stop_calls;
+        };
+        return NodeBuilder::native(std::move(schema), std::move(callbacks));
+    }
+
+    NodeBuilder scheduled_push_source(int &evaluation_calls)
+    {
+        NodeTypeMetaData schema;
+        schema.display_name      = "scheduled_push_source";
+        schema.node_kind         = NodeKind::PushSource;
+        schema.schedule_on_start = true;
+
+        NodeCallbacks callbacks;
+        callbacks.evaluate = [&evaluation_calls](const NodeView &, DateTime) {
+            ++evaluation_calls;
+        };
+        return NodeBuilder::native(std::move(schema), std::move(callbacks));
+    }
+
+    NodeBuilder two_cycle_pull_source(int &evaluation_calls)
+    {
+        NodeTypeMetaData schema;
+        schema.display_name      = "two_cycle_pull_source";
+        schema.node_kind         = NodeKind::PullSource;
+        schema.schedule_on_start = true;
+
+        NodeCallbacks callbacks;
+        callbacks.evaluate = [&evaluation_calls](const NodeView &node,
+                                                  DateTime evaluation_time) {
+            ++evaluation_calls;
+            if (evaluation_calls == 1)
+            {
+                node.graph_value()->schedule_node(
+                    node.node_index(), evaluation_time + MIN_TD);
+            }
+        };
+        return NodeBuilder::native(std::move(schema), std::move(callbacks));
+    }
 }  // namespace
 
 TEST_CASE("lifecycle observers: registration order and start/stop/evaluate sequencing")
@@ -542,4 +597,67 @@ TEST_CASE("lifecycle observers: a single executor-level registration observes ne
     // Start/stop notifications reached the nested graph too, not just evaluation.
     CHECK(count_events(log, "before_start_graph") >= 2);
     CHECK(count_events(log, "before_stop_graph") >= 2);
+}
+
+TEST_CASE("graph executor cleanup policy controls stop during evaluation failure")
+{
+    using namespace hgraph;
+
+    const auto run = [](bool cleanup_on_error, int &stop_calls) {
+        GraphBuilder graph;
+        graph.add_node(throwing_source(stop_calls));
+
+        GraphExecutorBuilder builder;
+        builder.graph_builder(std::move(graph))
+            .start_time(MIN_ST)
+            .end_time(MIN_ST + TimeDelta{2})
+            .cleanup_on_error(cleanup_on_error);
+
+        GraphExecutorValue executor = builder.make_executor();
+        CHECK(executor.view().cleanup_on_error() == cleanup_on_error);
+        CHECK_THROWS(executor.view().run());
+        CHECK(executor.view().graph().started() == !cleanup_on_error);
+        CHECK(stop_calls == (cleanup_on_error ? 1 : 0));
+    };
+
+    int cleaned_stop_calls = 0;
+    run(true, cleaned_stop_calls);
+    CHECK(cleaned_stop_calls == 1);
+
+    int retained_stop_calls = 0;
+    run(false, retained_stop_calls);
+    // Executor destruction remains the final ownership boundary even when
+    // immediate error cleanup is disabled.
+    CHECK(retained_stop_calls == 1);
+}
+
+TEST_CASE("lifecycle observers: push phase notification requires an evaluated push phase")
+{
+    using namespace hgraph;
+
+    int push_evaluations = 0;
+    int pull_evaluations = 0;
+    GraphBuilder graph;
+    graph.add_node(scheduled_push_source(push_evaluations));
+    graph.add_node(two_cycle_pull_source(pull_evaluations));
+
+    std::vector<LogEntry> log;
+    RecordingObserver observer{"observer", log};
+    GraphExecutorBuilder builder;
+    builder.graph_builder(std::move(graph))
+        .mode(GraphExecutorMode::RealTime)
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{3})
+        .add_lifecycle_observer(&observer);
+
+    GraphExecutorValue executor = builder.make_executor();
+    GraphView graph_view = executor.view().graph();
+    graph_view.start(MIN_ST);
+    REQUIRE(graph_view.evaluate(MIN_ST));
+    REQUIRE(graph_view.evaluate(MIN_ST + MIN_TD));
+    graph_view.stop();
+
+    CHECK(push_evaluations == 1);
+    CHECK(pull_evaluations == 2);
+    CHECK(count_events(log, "after_graph_push_nodes_evaluation") == 1);
 }
