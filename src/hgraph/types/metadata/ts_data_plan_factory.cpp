@@ -1,5 +1,6 @@
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
 
 #include <hgraph/types/metadata/value_plan_factory.h>
@@ -220,6 +221,7 @@ namespace hgraph
     void TSDataPlanFactory::reset() noexcept
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        clear_debug_descriptors(TypeFamily::TimeSeries);
         cache_.clear();
         data_type_cache_.clear();
         output_type_cache_.clear();
