@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Generic, Type, TypeVar
 
 import pytest
@@ -240,6 +241,32 @@ def test_higher_order_child_calls_outer_request_reply_service(higher_order):
     ) == [{}, None, {1: 12, 2: 22}]
 
 
+def test_mapped_subscription_result_uses_the_declared_value_schema():
+    @hg.subscription_service
+    def price(key: TS[str]) -> TS[float]: ...
+
+    @hg.service_impl(interfaces=price)
+    def price_impl(keys: hg.TSS[str]) -> TSD[str, TS[float]]:
+        return hg.map_(lambda key: hg.const(3.0), __keys__=keys)
+
+    @graph
+    def lookup(key: TS[str]) -> TS[float]:
+        return price(key)
+
+    @graph
+    def client(key: TS[str]) -> TS[float]:
+        hg.register_service(hg.default_path, price_impl)
+        keys = hg.convert[hg.TSS](key)
+        prices = hg.map_(lookup, __keys__=keys)
+        return hg.reduce(hg.add_, prices, 0.0)
+
+    assert eval_node(
+        client,
+        ["instrument"],
+        __end_time__=hg.MIN_ST + 5 * hg.MIN_TD,
+    ) == [None, 3.0]
+
+
 def test_mapped_request_reply_service_can_call_itself_recursively():
     @hg.request_reply_service
     def add_one(path: str, value: TS[int]) -> TS[int]: ...
@@ -377,6 +404,43 @@ def test_subscription_client_samples_existing_value_when_key_becomes_valid():
         ["topic-2", None, None],
         [None, None, "topic-1"],
     ) == [None, {0: "topic-1", 1: "topic-2"}, {2: "topic-1"}]
+
+
+def test_subscription_client_follows_a_late_mapped_bundle_value():
+    @dataclass
+    class Result(hg.TimeSeriesSchema):
+        value: TS[int]
+
+    @hg.subscription_service
+    def lookup(key: TS[str]) -> hg.TSB[Result]: ...
+
+    @hg.compute_node
+    def as_reference(value: hg.REF[TS[int]]) -> hg.REF[TS[int]]:
+        return value.value
+
+    @graph
+    def delayed_value(key: TS[str]) -> hg.TSB[Result]:
+        return hg.TSB[Result].from_ts(
+            value=as_reference(hg.lag(hg.len_(key), hg.MIN_TD))
+        )
+
+    @hg.service_impl(interfaces=lookup)
+    def lookup_impl(keys: hg.TSS[str]) -> TSD[str, hg.TSB[Result]]:
+        # Keep the mapped callable unannotated: its inferred structural REF
+        # terminal is private to the child graph and must not leak through the
+        # service's declared TSB value schema.
+        return hg.map_(lambda key: delayed_value(key), __keys__=keys)
+
+    @graph
+    def client(key: TS[str]) -> TS[int]:
+        hg.register_service(hg.default_path, lookup_impl)
+        return lookup(key).value
+
+    assert eval_node(
+        client,
+        ["abc"],
+        __end_time__=hg.MIN_ST + 8 * hg.MIN_TD,
+    ) == [None, None, 3]
 
 
 def test_subscription_client_const_lifts_a_plain_request_value():

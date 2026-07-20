@@ -1,5 +1,6 @@
 # Ported from ext/main/hgraph_unit_tests/_wiring/test_tsb_wiring.py
 import pytest
+from datetime import date
 
 from dataclasses import dataclass
 from datetime import timedelta
@@ -71,6 +72,21 @@ def split_my_tsb(tsb: TSB[MyTsb]) -> TS[int]:
 def test_tsb_output(ts1, ts2, expected):
 
     assert eval_node(create_my_tsb, ts1, ts2) == expected
+
+
+def test_eval_node_replays_a_tsb_with_a_set_child():
+    class Calendar(TimeSeriesSchema):
+        holidays: TSS[date]
+        start_of_week: TS[int]
+
+    @graph
+    def start(calendar: TSB[Calendar]) -> TS[int]:
+        return calendar.start_of_week
+
+    assert eval_node(start, [{
+        "holidays": frozenset({date(2025, 1, 1)}),
+        "start_of_week": 2,
+    }]) == [2]
 
 
 def test_tsb_splitting():

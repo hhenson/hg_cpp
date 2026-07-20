@@ -252,6 +252,8 @@ namespace
     };
 
     using ContainerAccessBundle = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Str>>>;
+    using NamedContainerAccessBundle =
+        TSB<"NamedContainerAccessBundle", Field<"a", TS<Int>>, Field<"b", TS<Str>>>;
     using HandlerOutputBundle =
         UnNamedTSB<Field<"response", TS<Int>>, Field<"audit", TS<Str>>>;
     using NumericTsbBundle      = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Float>>>;
@@ -457,6 +459,41 @@ namespace
         {
             auto ts = stdlib::to_tsb<ContainerAccessBundle>(w, a, b);
             return wire<stdlib::dedup>(w, ts).as<ContainerAccessBundle>();
+        }
+    };
+
+    struct NamedTsbDedupGraph
+    {
+        static constexpr auto name = "named_tsb_dedup_graph";
+
+        static Port<NamedContainerAccessBundle> compose(
+            Wiring &w, Port<TS<Int>> a, Port<TS<Str>> b)
+        {
+            auto ts = stdlib::to_tsb<NamedContainerAccessBundle>(w, a, b);
+            auto out = wire<stdlib::dedup>(w, ts);
+            if (out.erased().schema != ts_type<NamedContainerAccessBundle>())
+            {
+                throw std::logic_error("dedup did not preserve the named TSB schema");
+            }
+            return out.as<NamedContainerAccessBundle>();
+        }
+    };
+
+    struct RefNamedTsbDedupGraph
+    {
+        static constexpr auto name = "ref_named_tsb_dedup_graph";
+
+        static Port<NamedContainerAccessBundle> compose(
+            Wiring &w, Port<TS<Int>> a, Port<TS<Str>> b)
+        {
+            auto ts = stdlib::to_tsb<NamedContainerAccessBundle>(w, a, b);
+            auto selected = wire<stdlib::default_>(w, ts, ts);
+            if (selected.erased().schema == nullptr ||
+                selected.erased().schema->kind != TSTypeKind::REF)
+            {
+                throw std::logic_error("default did not expose its reference output");
+            }
+            return wire<stdlib::dedup>(w, selected).as<NamedContainerAccessBundle>();
         }
     };
 
@@ -1421,6 +1458,10 @@ TEST_CASE("std operators: collection container operators support TSS TSD and fix
     CHECK_OUTPUT((eval_node<stdlib::contains_, TSS<Int>>(values<Value>(set_delta<Int>({1, 2, 3}, {})),
                                                          values<Int>(1, 4))),
                  values<Bool>(true, false));
+    CHECK_OUTPUT((eval_node<stdlib::contains_, TSS<Int>>(
+                     values<Value>(none, set_delta<Int>({1}, {})),
+                     values<Int>(1, 1))),
+                 values<Bool>(none, true));
     CHECK_OUTPUT((eval_node<stdlib::contains_, TSS<Int>, TSS<Int>>(
                      values<Value>(set_delta<Int>({1, 2, 3}, {})),
                      values<Value>(set_delta<Int>({1, 2}, {}), set_delta<Int>({4}, {1, 2})))),
@@ -1573,6 +1614,28 @@ TEST_CASE("std operators: dedup suppresses unchanged TSB fields independently")
                                tsb_delta<ContainerAccessBundle>(std::nullopt, Str{"y"}),
                                tsb_delta<ContainerAccessBundle>(Int{2}, std::nullopt),
                                none));
+}
+
+TEST_CASE("std operators: dedup preserves a named TSB schema")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<NamedTsbDedupGraph>(values<Int>(1, 1, 2),
+                                               values<Str>(Str{"x"}, Str{"y"}, Str{"y"})),
+                 values<Value>(tsb_delta<NamedContainerAccessBundle>(Int{1}, Str{"x"}),
+                               tsb_delta<NamedContainerAccessBundle>(std::nullopt, Str{"y"}),
+                               tsb_delta<NamedContainerAccessBundle>(Int{2}, std::nullopt)));
+}
+
+TEST_CASE("std operators: dedup projects a named TSB through REF")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<RefNamedTsbDedupGraph>(values<Int>(1, 1, 2),
+                                                  values<Str>("x", "x", "y")),
+                 values<Value>(tsb_delta<NamedContainerAccessBundle>(Int{1}, Str{"x"}),
+                               none,
+                               tsb_delta<NamedContainerAccessBundle>(Int{2}, Str{"y"})));
 }
 
 TEST_CASE("std operators: TSB itemwise bitwise and analytics reuse field operator resolution")

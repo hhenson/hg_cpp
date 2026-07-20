@@ -1,10 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/types/service_wiring.h>
 #include <hgraph/types/static_node.h>
+#include <hgraph/types/value/value_builder.h>
 
 #include <stdexcept>
 #include <string>
@@ -20,6 +22,52 @@ namespace
         using key_type     = Int;
         using value_schema = TS<Int>;
     };
+
+    struct DerivedPricesService
+    {
+        static constexpr std::string_view name{"derived_prices"};
+        using key_type     = Int;
+        using value_schema = TS<Int>;
+    };
+
+    using StructuredPrice =
+        TSB<"StructuredPrice", Field<"base", TS<Int>>, Field<"offset", TS<Int>>>;
+
+    struct StructuredPricesService
+    {
+        static constexpr std::string_view name{"structured_prices"};
+        using key_type     = Int;
+        using value_schema = StructuredPrice;
+    };
+
+    using BaseSubscriptionRequest =
+        Bundle<"tests.service::BaseSubscriptionRequest", Field<"id", Int>>;
+
+    struct BundlePricesService
+    {
+        static constexpr std::string_view name{"bundle_prices"};
+        using key_type     = BaseSubscriptionRequest;
+        using value_schema = TS<Int>;
+    };
+
+    const ValueTypeMetaData *register_derived_subscription_request()
+    {
+        auto &registry = TypeRegistry::instance();
+        return registry.bundle(
+            "tests.service", "DerivedSubscriptionRequest",
+            {{"id", scalar_descriptor<Int>::value_meta()},
+             {"multiplier", scalar_descriptor<Int>::value_meta()}},
+            {scalar_descriptor<BaseSubscriptionRequest>::value_meta()});
+    }
+
+    Value derived_subscription_request(
+        const ValueTypeMetaData *schema, Int id, Int multiplier)
+    {
+        BundleBuilder builder{ValuePlanFactory::instance().type_for(schema)};
+        builder.set("id", Value{id}.view());
+        builder.set("multiplier", Value{multiplier}.view());
+        return builder.build();
+    }
 
     struct ReferencePricesService
     {
@@ -195,6 +243,33 @@ namespace
                 Value price{key * Int{10}};
                 mutation.set(key_value.view(), price.view());
             }
+        }
+    };
+
+    struct BundlePriceForKeyNode
+    {
+        static constexpr auto name = "bundle_price_for_key_node";
+
+        static void eval(In<"key", TS<BaseSubscriptionRequest>> key,
+                         Out<TS<Int>> out)
+        {
+            const Int id = static_cast<const TSInputView &>(key)
+                               .value()
+                               .as_bundle()
+                               .field("id")
+                               .checked_as<Int>();
+            out.set(id * Int{10});
+        }
+    };
+
+    struct BundlePriceForKeyGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "bundle_price_for_key_graph";
+
+        static Port<TS<Int>> compose(
+            Wiring &w, NamedPort<"key", TS<BaseSubscriptionRequest>> key)
+        {
+            return wire<BundlePriceForKeyNode>(w, key);
         }
     };
 
@@ -550,6 +625,19 @@ namespace
         }
     };
 
+    struct BundlePricesImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "bundle_prices_impl";
+
+        static Port<TSD<BaseSubscriptionRequest, TS<Int>>> compose(
+            Wiring &w, Port<TSS<BaseSubscriptionRequest>> keys)
+        {
+            return wire<stdlib::map_>(w, fn<BundlePriceForKeyGraph>(),
+                                      arg<"__keys__">(keys))
+                .as<TSD<BaseSubscriptionRequest, TS<Int>>>();
+        }
+    };
+
     struct ReferencePricesImpl
     {
         [[maybe_unused]] static constexpr auto name = "reference_prices_impl";
@@ -663,6 +751,189 @@ namespace
         }
     };
 
+    struct BundlePriceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "bundle_price_client_graph";
+
+        static Port<TS<Int>> compose(
+            Wiring &w, Port<TS<BaseSubscriptionRequest>> request)
+        {
+            service::register_subscription_service<BundlePricesService, BundlePricesImpl>(w);
+            return wire<BundlePricesService>(w, request);
+        }
+    };
+
+    struct PriceForKeyGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "price_for_key_graph";
+
+        static Port<TS<Int>> compose(Wiring &, NamedPort<"key", TS<Int>> key)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (key * Int{10}).as<TS<Int>>();
+        }
+    };
+
+    struct StructuredPriceForKeyGraph
+    {
+        [[maybe_unused]] static constexpr auto name =
+            "structured_price_for_key_graph";
+
+        static Port<StructuredPrice> compose(
+            Wiring &w, NamedPort<"key", TS<Int>> key)
+        {
+            using namespace hgraph::stdlib::syntax;
+            auto offset = (key * Int{10}).as<TS<Int>>();
+            return wire<stdlib::pass_through_node>(
+                       w, stdlib::to_tsb<StructuredPrice>(w, key, offset))
+                .as<StructuredPrice>();
+        }
+    };
+
+    struct StructuredPriceReferenceForKeyGraph
+    {
+        [[maybe_unused]] static constexpr auto name =
+            "structured_price_reference_for_key_graph";
+
+        struct AsReference
+        {
+            [[maybe_unused]] static constexpr auto name =
+                "structured_price_as_reference";
+
+            static Port<REF<StructuredPrice>> compose(
+                Wiring &, Port<REF<StructuredPrice>> price)
+            {
+                return price;
+            }
+        };
+
+        static Port<StructuredPrice> compose(
+            Wiring &w, NamedPort<"key", TS<Int>> key)
+        {
+            using namespace hgraph::stdlib::syntax;
+            auto offset = wire<PricesService>(w, service::path("base_prices"), key);
+            auto routed = wire<stdlib::if_, IfIntRefBundle>(
+                              w, key == key, offset)
+                              .as<IfIntRefBundle>();
+            auto offset_ref = wire<stdlib::getitem_>(w, routed, Str{"true"});
+            auto price = stdlib::to_tsb<StructuredPrice>(w, key, offset_ref);
+            return wire<AsReference>(w, price).as<StructuredPrice>();
+        }
+    };
+
+    struct StructuredPricesImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "structured_prices_impl";
+
+        static Port<TSD<Int, StructuredPrice>> compose(
+            Wiring &w, Port<TSS<Int>> keys)
+        {
+            return wire<stdlib::map_>(w, fn<StructuredPriceForKeyGraph>(),
+                                      arg<"__keys__">(keys))
+                .as<TSD<Int, StructuredPrice>>();
+        }
+    };
+
+    struct StructuredReferencePricesImpl
+    {
+        [[maybe_unused]] static constexpr auto name =
+            "structured_reference_prices_impl";
+
+        static Port<void> compose(
+            Wiring &w, Port<TSS<Int>> keys)
+        {
+            return wire<stdlib::map_>(w, fn<StructuredPriceReferenceForKeyGraph>(),
+                                      arg<"__keys__">(keys));
+        }
+    };
+
+    struct MappedPricesImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "mapped_prices_impl";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TSS<Int>> keys)
+        {
+            return wire<stdlib::map_>(w, fn<PriceForKeyGraph>(),
+                                      arg<"__keys__">(keys))
+                .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct DerivedPriceForKeyGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "derived_price_for_key_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, NamedPort<"key", TS<Int>> key)
+        {
+            using namespace hgraph::stdlib::syntax;
+            auto price = wire<StructuredPricesService>(w, service::path("base"), key);
+            auto offset = wire<stdlib::getitem_>(w, price, Str{"offset"}).as<TS<Int>>();
+            return (offset + Int{1}).as<TS<Int>>();
+        }
+    };
+
+    struct DerivedPricesImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "derived_prices_impl";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TSS<Int>> keys)
+        {
+            return wire<stdlib::map_>(w, fn<DerivedPriceForKeyGraph>(),
+                                      arg<"__keys__">(keys))
+                .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct NestedSubscriptionClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "nested_subscription_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
+        {
+            service::register_subscription_service<PricesService, MappedPricesImpl>(
+                w, service::path("base_prices"));
+            service::register_subscription_service<StructuredPricesService, StructuredReferencePricesImpl>(
+                w, service::path("base"));
+            service::register_subscription_service<DerivedPricesService, DerivedPricesImpl>(w);
+            return wire<DerivedPricesService>(w, instrument);
+        }
+    };
+
+    struct MappedPriceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "mapped_price_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
+        {
+            service::register_subscription_service<PricesService, MappedPricesImpl>(w);
+            return wire<PricesService>(w, instrument);
+        }
+    };
+
+    struct PriceServiceForKeyGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "price_service_for_key_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, NamedPort<"key", TS<Int>> key)
+        {
+            return wire<PricesService>(w, key);
+        }
+    };
+
+    struct MappedPriceReductionClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "mapped_price_reduction_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TSS<Int>> instruments)
+        {
+            service::register_subscription_service<PricesService, MappedPricesImpl>(w);
+            auto prices = wire<stdlib::map_>(
+                w, fn<PriceServiceForKeyGraph>(), arg<"__keys__">(instruments));
+            return wire<stdlib::reduce_>(w, fn<stdlib::add_>(), prices, Int{0})
+                .as<TS<Int>>();
+        }
+    };
+
     struct LateDuplicatePriceClientGraph
     {
         [[maybe_unused]] static constexpr auto name = "late_duplicate_price_client_graph";
@@ -694,6 +965,53 @@ namespace
         {
             service::register_subscription_service<PricesService, PricesImpl>(w);
             return wire<PricesService>(w, instrument);
+        }
+    };
+
+    struct AddStructuredBroadcastPriceGraph
+    {
+        [[maybe_unused]] static constexpr auto name =
+            "add_structured_broadcast_price_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> value,
+                                     Port<StructuredPrice> price)
+        {
+            using namespace hgraph::stdlib::syntax;
+            auto offset = wire<stdlib::getitem_>(w, price, Str{"offset"})
+                              .as<TS<Int>>();
+            return (value + offset).as<TS<Int>>();
+        }
+    };
+
+    struct StructuredSubscriptionBroadcastMapClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name =
+            "structured_subscription_broadcast_map_client_graph";
+
+        static Port<TSD<Int, TS<Int>>> compose(
+            Wiring &w, Port<TS<Int>> instrument, Port<TSS<Int>> keys,
+            Port<TSD<Int, TS<Int>>> values)
+        {
+            service::register_subscription_service<StructuredPricesService,
+                                                   StructuredPricesImpl>(w);
+            auto price = wire<StructuredPricesService>(w, instrument);
+            return wire<stdlib::map_>(w, fn<AddStructuredBroadcastPriceGraph>(),
+                                      values, price, arg<"__keys__">(keys))
+                .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct StructuredPriceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name =
+            "structured_price_client_graph";
+
+        static Port<StructuredPrice> compose(Wiring &w,
+                                              Port<TS<Int>> instrument)
+        {
+            service::register_subscription_service<StructuredPricesService,
+                                                   StructuredPricesImpl>(w);
+            return wire<StructuredPricesService>(w, instrument);
         }
     };
 
@@ -1129,6 +1447,43 @@ TEST_CASE("service wiring: subscription client reads implementation output by re
                  values<Int>(none, 70, none, 80));
 }
 
+TEST_CASE("service wiring: subscription keys preserve registered derived Bundles")
+{
+    hgraph::stdlib::register_standard_operators();
+    const auto *derived = register_derived_subscription_request();
+    const Value request = derived_subscription_request(derived, Int{7}, Int{3});
+
+    CHECK_OUTPUT(eval_node<BundlePriceClientGraph>(values<Value>(request)),
+                 values<Int>(none, 70));
+}
+
+TEST_CASE("service wiring: subscription implementation may terminate in map_")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<MappedPriceClientGraph>(values<Int>(7)),
+                 values<Int>(none, 70));
+}
+
+TEST_CASE("service wiring: mapped subscription implementation can call another subscription service")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    const auto result = eval_node<NestedSubscriptionClientGraph>(values<Int>(7));
+    REQUIRE_FALSE(result.empty());
+    REQUIRE(result.back().has_value());
+    CHECK(*result.back() == Int{71});
+}
+
+TEST_CASE("service wiring: mapped subscription results retain their declared value schema")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<MappedPriceReductionClientGraph>(
+                     values<Value>(set_delta<Int>({7}, {}))),
+                 values<Int>(none, 70));
+}
+
 TEST_CASE("service wiring: late duplicate subscription samples the existing value")
 {
     hgraph::stdlib::register_standard_operators();
@@ -1136,6 +1491,27 @@ TEST_CASE("service wiring: late duplicate subscription samples the existing valu
     CHECK_OUTPUT(eval_node<LateDuplicatePriceClientGraph>(
                      values<Int>(7, none, none), values<Int>(none, none, 7)),
                  values<Int>(none, none, 70));
+}
+
+TEST_CASE("service wiring: a late structured subscription reply samples existing mapped children")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<StructuredSubscriptionBroadcastMapClientGraph>(
+                     values<Int>(7),
+                     values<Value>(set_delta<Int>({1, 2}, {})),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}}))),
+                 values<Value>(dict_delta<Int, TS<Int>>({}),
+                               dict_delta<Int, TS<Int>>({{1, 80}, {2, 90}})));
+}
+
+TEST_CASE("service wiring: structured subscription replies publish their bundle")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<StructuredPriceClientGraph>(values<Int>(7)),
+                 values<Value>(none,
+                               tsb_delta<StructuredPrice>(Int{7}, Int{70})));
 }
 
 TEST_CASE("service wiring: subscription service supports explicit paths")

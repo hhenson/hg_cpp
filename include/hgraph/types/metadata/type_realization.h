@@ -31,6 +31,8 @@ namespace hgraph
         [[nodiscard]] bool is_polymorphic(const ValueTypeMetaData *schema) const noexcept;
         [[nodiscard]] std::vector<const ValueTypeMetaData *>
         alternatives(const ValueTypeMetaData *schema) const;
+        /** Realize one exact schema without replacing it by its closed union. */
+        [[nodiscard]] ValueTypeRef exact_type_for(const ValueTypeMetaData *schema) const;
         [[nodiscard]] ValueTypeRef type_for(const ValueTypeMetaData *schema) const;
 
       private:

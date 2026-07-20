@@ -175,6 +175,14 @@ def _as_wired(func):
         return func
     if isinstance(func, (_GraphFn, _PyNode)):
         return _wrap_graph_fn(func)
+    from ._operator import _Dispatch, _Operator
+
+    if isinstance(func, _Dispatch):
+        return _wrap_graph_fn(func)
+    if isinstance(func, _Operator):
+        output = inspect.signature(func.fn).return_annotation
+        output_handle = output.handle if isinstance(output, _TsExpr) else None
+        return _hgraph.wired_op(func._registry_name, output_handle)
     if callable(func) and not isinstance(func, str):
         name = getattr(func, "__name__", None)
         if name is not None and name in _hgraph.operator_names():
@@ -261,11 +269,7 @@ def _graph_auto_resolve(signature, arguments, resolvers=None, requires=None,
             continue
         scalar = scope.find_scalar(_type_var_name(sentinel))
         if scalar is not None:
-            # Like _ResolvedSize, this is a wiring-time type carrier. The
-            # type-expression frontend accepts ValueType directly, avoiding a
-            # lossy round trip from an interned C++ scalar back to a Python
-            # class (which is not defined for every runtime scalar family).
-            resolved[name] = scalar
+            resolved[name] = _hgraph.python_type_for_value(scalar)
             continue
         raise WiringError(
             f"AUTO_RESOLVE could not resolve '{name}' ({sentinel!r}) from the wired arguments")
@@ -421,6 +425,22 @@ class _GraphFn:
             if param.annotation is GlobalState and param.name not in bound.arguments:
                 bound.arguments[param.name] = GlobalState.instance()
             value = bound.arguments.get(param.name)
+            if (param.name in bound.arguments and
+                    param.kind in (inspect.Parameter.VAR_POSITIONAL,
+                                   inspect.Parameter.VAR_KEYWORD) and
+                    _is_time_series_annotation(param.annotation)):
+                def lift_variadic(item):
+                    return item if item is None or isinstance(item, WiringPort) \
+                        else wire("const", item)
+
+                if param.kind is inspect.Parameter.VAR_POSITIONAL:
+                    bound.arguments[param.name] = tuple(
+                        lift_variadic(item) for item in value)
+                else:
+                    bound.arguments[param.name] = {
+                        key: lift_variadic(item) for key, item in value.items()
+                    }
+                continue
             if (param.name in bound.arguments and value is not None
                     and not isinstance(value, WiringPort)
                     and _is_time_series_annotation(param.annotation)):

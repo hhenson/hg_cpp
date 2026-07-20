@@ -10,7 +10,22 @@ import _hgraph
 from .._types import _ContextExpr, _TsExpr, _type_var_name
 from ._core import (WiringError, WiringPort, _OperatorFunction, _unwrap,
                     _wiring_stack, wire)
-from ._markers import _INJECTABLE_MARKERS, _is_object_vt
+from ._markers import (LOGGER, _INJECTABLE_MARKERS, _RecordableStateExpr,
+                       _StateExpr, _is_object_vt)
+
+
+def _is_hidden_node_parameter(parameter):
+    """Whether a node parameter is supplied by the runtime, not its caller."""
+    annotation = parameter.annotation
+    return (
+        parameter.name == "_output"
+        or annotation in _INJECTABLE_MARKERS
+        or annotation is LOGGER
+        or isinstance(
+            annotation,
+            (_ContextExpr, _StateExpr, _RecordableStateExpr),
+        )
+    )
 
 class _Operator:
     """hgraph's @operator: an overloadable signature root. Implementations
@@ -153,8 +168,7 @@ def _overload_wire_trampoline(impl):
     call_parameters = [
         parameter
         for parameter in signature.parameters.values()
-        if parameter.annotation not in _INJECTABLE_MARKERS
-        and not isinstance(parameter.annotation, _ContextExpr)
+        if not _is_hidden_node_parameter(parameter)
         and parameter.kind is not inspect.Parameter.VAR_KEYWORD
     ]
     has_variadic = any(
@@ -242,7 +256,7 @@ def _register_overload(target, impl, requires=None):
     positional = None
     for parameter in sig.parameters.values():
         annotation = parameter.annotation
-        if annotation in _INJECTABLE_MARKERS or isinstance(annotation, _ContextExpr):
+        if _is_hidden_node_parameter(parameter):
             continue
         if parameter.kind is inspect.Parameter.VAR_KEYWORD:
             has_kwargs = True
@@ -288,10 +302,12 @@ def _register_overload(target, impl, requires=None):
                     patterns = (_hgraph.scalar_pattern_var(
                         f"__type_arg__{id(impl):x}__{parameter.name}"
                     ),)
+                elif annotation in (inspect.Parameter.empty, object):
+                    patterns = (_hgraph.scalar_pattern_var(
+                        f"__any_scalar__{id(impl):x}__{parameter.name}"
+                    ),)
                 else:
-                    patterns = (
-                        _scalar_pattern(annotation if annotation is not inspect.Parameter.empty else object),
-                    )
+                    patterns = (_scalar_pattern(annotation),)
         if parameter.default is inspect.Parameter.empty:
             param_options.append(tuple((parameter.name, pattern) for pattern in patterns))
         else:
@@ -478,6 +494,8 @@ def dispatch_(overloaded, *args, __on__=None, __output_type=None, **kwargs):
     if not op._overloads:
         raise WiringError(f"{op.__name__} has no overloads to dispatch to")
     sig = inspect.signature(op.fn)
+    if __output_type is None and isinstance(sig.return_annotation, _TsExpr):
+        __output_type = sig.return_annotation
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
     call_kwargs = dict(bound.arguments)

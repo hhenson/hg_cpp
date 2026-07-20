@@ -179,7 +179,14 @@ namespace
         const auto &record = *static_cast<const PyGraphFnRecord *>(context);
         nb::gil_scoped_acquire gil;
         nb::list ports;
-        for (const WiringPortRef &arg : args) { ports.append(nb::cast(PyPort{arg})); }
+        for (std::size_t index = 0; index < args.size(); ++index)
+        {
+            const auto *expected = index < record.input_schemas.size()
+                                       ? record.input_schemas[index]
+                                       : nullptr;
+            ports.append(nb::cast(PyPort{
+                graph_wiring_detail::adapt_source_for_input(w, expected, args[index])}));
+        }
         nb::object borrowed = nb::cast(PyWiring::borrow(w));
         nb::object result   = record.wrapper(borrowed, nb::tuple(ports));
         if (result.is_none()) { return {}; }
@@ -246,7 +253,14 @@ namespace hgraph::python_bridge
         const auto push = [&](nb::handle object, std::string name) {
             WiringArg arg;
             arg.name = std::move(name);
-            if (nb::isinstance<PyPort>(object))
+            if (object.is_none())
+            {
+                // None is an absent wiring-time scalar. The overload matcher
+                // deliberately permits it for scalar variables without
+                // binding their type, then forwards it to Python as None.
+                arg.kind = WiringArg::Kind::Scalar;
+            }
+            else if (nb::isinstance<PyPort>(object))
             {
                 arg.kind = WiringArg::Kind::TimeSeries;
                 arg.port = nb::cast<PyPort &>(object).ref;

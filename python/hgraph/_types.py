@@ -99,8 +99,18 @@ def _finalize_compound_scalar_types():
 
 
 def _substitute_typevars(tp, substitutions):
-    if tp in substitutions:
-        return substitutions[tp]
+    # ``Callable[[A, B], R]`` stores its parameter list as a real list in
+    # ``typing.get_args``. Preserve that structure while substituting its
+    # members; a list is neither hashable nor reconstructible as a type.
+    if isinstance(tp, list):
+        return [_substitute_typevars(arg, substitutions) for arg in tp]
+    try:
+        if tp in substitutions:
+            return substitutions[tp]
+    except TypeError:
+        # Some typing aliases, notably Callable with a concrete parameter
+        # list, inherit that list's unhashability.
+        pass
     import typing
 
     origin = typing.get_origin(tp)
@@ -381,10 +391,17 @@ def _compound_field_value_type(annotation, scalar, substitutions):
     that base, even through a tuple/set/map, therefore forms a storage-plan
     cycle and must contribute one owner pointer at the point of recursion.
     """
+    import collections.abc as abc
     import types
     import typing
 
     annotation = _substitute_typevars(annotation, substitutions)
+    if (annotation in (typing.Callable, abc.Callable)
+            or typing.get_origin(annotation) is abc.Callable):
+        # A Callable used as a graph scalar denotes a wiring-time WiredFn.
+        # Inside a CompoundScalar it is data and must therefore use the
+        # evaluation-time ValueCallable representation, as TS[Callable] does.
+        return _hgraph.value_type("callable")
     target = _forward_compound_target(annotation, scalar, substitutions)
     if target is not None:
         if target is scalar:

@@ -131,6 +131,24 @@ def test_tsd_get_item_follows_late_valid_mapped_slot():
     assert eval_node(g, [{1}, None], [None, {1: 42}]) == [None, 42]
 
 
+def test_map_late_explicit_key_samples_structured_element():
+    class BundleWithSet(TimeSeriesSchema):
+        values: TSS[int]
+
+    @graph
+    def materialize(values: TSS[int]) -> TSB[BundleWithSet]:
+        return TSB[BundleWithSet].from_ts(values=values)
+
+    @graph
+    def g(values: TSD[str, TSS[int]], keys: TSS[str]) -> TSD[str, TSB[BundleWithSet]]:
+        return map_(materialize, values, __keys__=keys)
+
+    assert eval_node(g, [{"a": {1, 2}}, None], [None, {"a"}]) == [
+        None,
+        {"a": {"values": {1, 2}}},
+    ]
+
+
 def test_tsd_get_items():
     assert eval_node(
         getitem_,

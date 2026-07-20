@@ -9,6 +9,7 @@
 #include <hgraph/types/time_series_reference.h>
 #include <hgraph/types/value/value.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <mutex>
@@ -16,6 +17,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace hgraph::detail
 {
@@ -485,8 +487,54 @@ namespace hgraph::detail
             {
                 throw std::logic_error("TSOutput from-REF cannot project a child from this output schema");
             }
-            auto child = parent.indexed_child_at(index);
-            if (!child.bound()) { throw std::logic_error("TSOutput from-REF output child projection failed"); }
+            auto structural_parent = parent.borrowed_ref();
+            std::vector<TSOutputHandle> forwarding_path;
+            while (structural_parent.forwarding() && structural_parent.forwarding_bound())
+            {
+                auto target = structural_parent.forwarding_target();
+                if (std::ranges::any_of(forwarding_path, [&](const TSOutputHandle &visited) {
+                        return visited.same_as(target);
+                    }))
+                {
+                    throw std::logic_error("TSOutput from-REF output child projection encountered a forwarding cycle");
+                }
+                forwarding_path.push_back(target);
+                structural_parent = target.view(parent.evaluation_time());
+            }
+
+            TSOutputView child;
+            if (has_input_children(structural_parent.data_view()))
+            {
+                auto projection = input_child_projection(structural_parent.data_view(), index);
+                auto child_data = projection.target_link.valid()
+                                      ? std::move(projection.target_link)
+                                      : std::move(projection.visible);
+                child = TSOutputView{structural_parent.output(), child_data, parent.evaluation_time()};
+            }
+            else
+            {
+                child = structural_parent.indexed_child_at(index);
+            }
+            if (!child.bound())
+            {
+                const auto child_type = child.data_view().storage_type();
+                throw std::logic_error(
+                    "TSOutput from-REF output child projection failed for schema '" +
+                    std::string{parent_schema.name()} + "' at child " + std::to_string(index) +
+                    " from storage '" +
+                    (parent.data_view().storage_type().record() != nullptr
+                         ? std::string{parent.data_view().storage_type().record()->implementation_name()}
+                         : std::string{"<unbound>"}) +
+                    "' (input children: " +
+                    (has_input_children(parent.data_view()) ? std::string{"yes"} : std::string{"no"}) +
+                    ", child type: '" +
+                    (child_type.record() != nullptr
+                         ? std::string{child_type.record()->implementation_name()}
+                         : std::string{"<unbound>"}) +
+                    "', child memory: " +
+                    (child.data_view().data() != nullptr ? std::string{"present"} : std::string{"null"}) +
+                    ")");
+            }
             return child;
         }
 
@@ -666,12 +714,44 @@ namespace hgraph::detail
             if (reference.is_peered())
             {
                 const auto &output = TSOutputAlternativeStore::peered_reference_target(reference);
-                apply_output_to_from_ref_data(target, endpoint_schema, output.view(modified_time), modified_time);
+                auto output_view = output.view(modified_time);
+                if (endpoint_schema.role() == TSEndpointRole::NonPeered &&
+                    output_view.forwarding() && !output_view.forwarding_bound())
+                {
+                    unbind_from_ref_data(target, endpoint_schema, modified_time);
+                    return;
+                }
+                apply_output_to_from_ref_data(target, endpoint_schema, output_view, modified_time);
                 return;
             }
 
             from_ref_role_ops_for(endpoint_schema.role()).apply_non_peered_reference(target, endpoint_schema, reference,
                                                                                     modified_time);
+        }
+
+        void collect_forwarding_reference_sources(const TimeSeriesReference &reference,
+                                                  DateTime modified_time,
+                                                  std::vector<TSOutputHandle> &sources)
+        {
+            if (reference.is_peered())
+            {
+                const auto &source = TSOutputAlternativeStore::peered_reference_target(reference);
+                if (!source.bound()) { return; }
+                auto view = source.view(modified_time);
+                if (!view.forwarding()) { return; }
+                if (std::ranges::none_of(sources, [&](const TSOutputHandle &existing) {
+                        return existing.same_as(source);
+                    }))
+                {
+                    sources.push_back(source);
+                }
+                return;
+            }
+            if (!reference.is_non_peered()) { return; }
+            for (const auto &item : reference.items())
+            {
+                collect_forwarding_reference_sources(item, modified_time, sources);
+            }
         }
 
         // ----- interior from-REF (keyed / structural inverse conversion) -----
@@ -1284,13 +1364,8 @@ namespace hgraph::detail
 
         ~RefLinkAlternativeState() noexcept
         {
-            if (!source.bound()) { return; }
-            // Teardown may outlive the source observer registration; rebind keeps strict cleanup.
-            static_cast<void>(fallback_on_exception(false, [&] {
-                auto view = source.data_view();
-                if (view.valid() && view.tracking().observers.contains(&notifier)) { view.unsubscribe(&notifier); }
-                return true;
-            }));
+            unsubscribe_reference_sources(false);
+            unsubscribe_source(false);
         }
 
         const TSValueTypeMetaData *requested_schema{nullptr};
@@ -1298,6 +1373,7 @@ namespace hgraph::detail
         TSData                     data{};
         TSOutputHandle             source{};
         SourceNotifier             notifier;
+        std::vector<TSOutputHandle> reference_sources{};
 
         [[nodiscard]] TSOutputHandle handle(const TSOutput *output) noexcept
         {
@@ -1324,6 +1400,7 @@ namespace hgraph::detail
          */
         void release_subscriptions(DateTime release_time) noexcept
         {
+            unsubscribe_reference_sources(false);
             unsubscribe_source(false);
             source.reset();
             static_cast<void>(fallback_on_exception(false, [&] {
@@ -1352,6 +1429,33 @@ namespace hgraph::detail
             }));
         }
 
+        void unsubscribe_reference_sources(bool strict = true) noexcept
+        {
+            for (const auto &observed : reference_sources)
+            {
+                if (!observed.bound()) { continue; }
+                static_cast<void>(fallback_on_exception(false, [&] {
+                    auto view = observed.data_view();
+                    if (strict || (view.valid() && view.tracking().observers.contains(&notifier)))
+                    {
+                        view.unsubscribe(&notifier);
+                    }
+                    return true;
+                }));
+            }
+            reference_sources.clear();
+        }
+
+        void replace_reference_sources(std::vector<TSOutputHandle> next)
+        {
+            unsubscribe_reference_sources();
+            reference_sources = std::move(next);
+            for (const auto &observed : reference_sources)
+            {
+                if (observed.bound()) { observed.data_view().subscribe(&notifier); }
+            }
+        }
+
         void refresh(DateTime modified_time)
         {
             if (modified_time == MIN_DT || requested_schema == nullptr || !source.bound()) { return; }
@@ -1361,12 +1465,16 @@ namespace hgraph::detail
             if (!source_view.valid())
             {
                 unbind_from_ref_data(target, endpoint_schema, modified_time);
+                replace_reference_sources({});
                 return;
             }
 
             const auto  source_value = source_view.value();
             const auto &reference = source_value.checked_as<TimeSeriesReference>();
+            std::vector<TSOutputHandle> next_reference_sources;
+            collect_forwarding_reference_sources(reference, modified_time, next_reference_sources);
             apply_reference_to_from_ref_data(target, endpoint_schema, reference, modified_time);
+            replace_reference_sources(std::move(next_reference_sources));
         }
     };
 

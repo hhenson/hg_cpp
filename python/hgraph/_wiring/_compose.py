@@ -219,7 +219,7 @@ def combine(*args, __output_type__=None, **kwargs):
     generic target (bare TSD/TSS/TS[Tuple]/...) resolves through the C++
     type-pattern machinery (resolve_combine_target) and the RESOLVED type's
     ``from_ts`` picks the wiring - no type-name inspection anywhere."""
-    from .._types import _TsExpr
+    from .._types import TSB, _TsExpr
 
     if args and isinstance(args[0], tuple) and len(args) > 1 and all(
             isinstance(a, WiringPort) for a in args[1:]):
@@ -259,6 +259,18 @@ def combine(*args, __output_type__=None, **kwargs):
             else wire("const", value)
             for name, value in kwargs.items()
         }
+    if target is TSB and not args:
+        strict = kwargs.pop("__strict__", False)
+        if not all(isinstance(value, WiringPort) for value in kwargs.values()):
+            raise TypeError("combine[TSB] requires time-series or liftable scalar fields")
+        fields = [(name, _unwrap(value).ts_type) for name, value in kwargs.items()]
+        tsb_type = _hgraph.un_named_tsb_type(fields)
+        structural = WiringPort(
+            _hgraph.tsb_port(
+                tsb_type, {name: _unwrap(value) for name, value in kwargs.items()}))
+        if strict:
+            return wire("combine", structural, __strict__=True)
+        return structural
     ports = [a for a in args if isinstance(a, WiringPort)] or [
         v for k, v in kwargs.items() if k != "__strict__" and isinstance(v, WiringPort)]
     if ports or not isinstance(target, _TsExpr):

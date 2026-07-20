@@ -440,7 +440,7 @@ namespace hgraph
                 storage.key_to_leaf.reserve(dict.size());
                 for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
                 {
-                    if (!dict.slot_live(slot)) { continue; }
+                    if (!dict.slot_live(slot) || !dict.at_slot(slot).valid()) { continue; }
                     Value key{dict.key_at_slot(slot)};
                     storage.key_to_leaf.emplace(key, storage.dense_to_key.size());
                     storage.dense_to_key.push_back(std::move(key));
@@ -482,6 +482,8 @@ namespace hgraph
             for (std::size_t slot = dict.next_added_slot(); slot != TS_DATA_NO_CHILD_ID;
                  slot = dict.next_added_slot(slot))
             {
+                auto child = dict.at_slot(slot);
+                if (!child.valid()) { continue; }
                 Value typed_key{dict.key_at_slot(slot)};
                 if (storage.key_to_leaf.find(typed_key) != storage.key_to_leaf.end()) { continue; }
                 storage.structural_leaves.push_back(storage.dense_to_key.size());
@@ -490,6 +492,37 @@ namespace hgraph
                 storage.dense_to_source_slot.push_back(slot);
                 storage.dense_to_source_handle.emplace_back();
                 structural = true;
+            }
+
+            for (std::size_t slot = dict.next_modified_slot(); slot != TS_DATA_NO_CHILD_ID;
+                 slot = dict.next_modified_slot(slot))
+            {
+                if (!dict.slot_live(slot)) { continue; }
+                const ValueView key = dict.key_at_slot(slot);
+                const auto found = storage.key_to_leaf.find(key);
+                auto child = dict.at_slot(slot);
+                if (!child.valid())
+                {
+                    if (found != storage.key_to_leaf.end())
+                    {
+                        record_removed_leaf_paths(storage, found->second);
+                        remove_leaf_at(storage, found->second);
+                        structural = true;
+                    }
+                    continue;
+                }
+
+                if (found == storage.key_to_leaf.end())
+                {
+                    const std::size_t leaf = storage.dense_to_key.size();
+                    storage.structural_leaves.push_back(leaf);
+                    Value typed_key{key};
+                    storage.key_to_leaf.emplace(typed_key, leaf);
+                    storage.dense_to_key.push_back(std::move(typed_key));
+                    storage.dense_to_source_slot.push_back(slot);
+                    storage.dense_to_source_handle.emplace_back();
+                    structural = true;
+                }
             }
 
             return structural;
@@ -587,8 +620,9 @@ namespace hgraph
             return structural;
         }
 
-        [[nodiscard]] bool reconcile_dict_collection(ReduceNodeStorage &storage, TSInputView &, bool full)
+        [[nodiscard]] bool reconcile_dict_collection(ReduceNodeStorage &storage, TSInputView &input, bool full)
         {
+            static_cast<void>(input);
             auto data = storage.collection_source.data_view();
             auto dict = data.as_dict();
             return reconcile_leaf_state(storage, dict, full);

@@ -250,10 +250,40 @@ namespace hgraph
             {
                 TSOutputHandle target = source.forwarding_target();
                 if (!target.bound() || target.same_as(current)) { break; }
+                const auto *source_schema = source.schema();
+                const auto *target_schema = target.schema();
+                if (source_schema == nullptr || target_schema == nullptr ||
+                    source_schema->kind != target_schema->kind ||
+                    source.storage_type().ops_ref().kind != target.storage_type().ops_ref().kind)
+                {
+                    break;
+                }
                 current = target;
                 source = target.view(source.evaluation_time());
             }
             return current;
+        }
+
+        [[nodiscard]] TSDDataView checked_dict_view(TSDataView data,
+                                                    std::string_view stage,
+                                                    std::size_t source_index)
+        {
+            if (!data.valid() || data.storage_type().ops_ref().kind != TSTypeKind::TSD)
+            {
+                const auto *schema = data.schema();
+                const auto storage_type = data.storage_type();
+                const auto storage_name = storage_type.record() != nullptr
+                                              ? storage_type.record()->implementation_name()
+                                              : std::string_view{};
+                throw std::logic_error(
+                    "map_: " + std::string{stage} + " source[" +
+                    std::to_string(source_index) + "] with schema '" +
+                    (schema != nullptr ? std::string{schema->name()} : std::string{"<untyped>"}) +
+                    "' uses storage '" +
+                    (storage_name.empty() ? std::string{"<unbound>"} : std::string{storage_name}) +
+                    "', not TSD storage");
+            }
+            return data.as_dict();
         }
 
         [[nodiscard]] std::optional<TSDDataMutationView> begin_map_output_mutation(
@@ -384,7 +414,8 @@ namespace hgraph
                                                 ? entry.key_source.view(evaluation_time)
                                                 : TSOutputView{};
             runtime_detail::bind_mapped_child_inputs(view, entry.graph.view(), evaluation_time,
-                                                     spec.child, spec.args, entry.key.view(), key_source);
+                                                     spec.child, spec.args, entry.key.view(), key_source,
+                                                     std::nullopt, false, true);
             runtime_detail::bind_mapped_child_output(view, entry.graph.view(), evaluation_time,
                                                      spec.child.output_binding, spec.args, entry.key.view(),
                                                      key_source,
@@ -481,8 +512,9 @@ namespace hgraph
                 {
                     auto mux_input = root_input.indexed_child_at(mux_index);
                     if (!mux_input.valid() || !mux_input.modified()) { continue; }
-                    auto dict = mux_input.as_dict();
-                    for (const ValueView &key : dict.modified_keys())
+                    auto dict = checked_dict_view(mux_input.data_view().borrowed_ref(),
+                                                  "selective multiplexed input", mux_index);
+                    for (const ValueView &key : dict.modified_keys(evaluation_time))
                     {
                         storage.repoint_modified_keys.emplace_back(key);
                     }
@@ -500,8 +532,8 @@ namespace hgraph
                 if (!source.bound()) { continue; }
 
                 auto source_data = source.data_view();
-                auto dict = source_data.as_dict();
-                if (!dict.key_set().modified(evaluation_time)) { continue; }
+                auto dict = checked_dict_view(std::move(source_data), "membership source", mux_index);
+                if (!dict.modified(evaluation_time)) { continue; }
 
                 for (std::size_t slot = dict.next_added_slot(); slot != TS_DATA_NO_CHILD_ID;
                      slot = dict.next_added_slot(slot))
@@ -693,6 +725,17 @@ namespace hgraph
                 {
                     input_event = true;
                     full_scan = true;
+                    const auto *schema = input.schema();
+                    if (schema != nullptr &&
+                        (schema->kind == TSTypeKind::TSB ||
+                         schema->kind == TSTypeKind::TSL))
+                    {
+                        // A structured forwarding boundary can keep its root
+                        // handle while a REF resolution changes the projected
+                        // field endpoints. Existing children must follow those
+                        // new leaf routes before they evaluate.
+                        storage.refresh_all_bindings = true;
+                    }
                 }
             }
 
@@ -715,7 +758,7 @@ namespace hgraph
                     const TSOutputHandle &source = storage.outer_sources[mux_index];
                     if (!source.bound()) { continue; }
                     auto source_data = source.data_view();
-                    auto dict = source_data.as_dict();
+                    auto dict = checked_dict_view(std::move(source_data), "modified source", mux_index);
                     if (!dict.modified(evaluation_time)) { continue; }
                     const bool shares_key_slots =
                         dict.key_set().base().storage_ref().data() == keys_storage;
@@ -849,12 +892,9 @@ namespace hgraph
                         storage.resume_position_plus_one = position + 1;
                         return false;
                     }
-                    if (spec.output_binding_mode ==
-                        MapOutputBindingMode::OutputElementForwardsToChildTerminal)
-                    {
-                        runtime_detail::finalize_mapped_child_output(
-                            view, evaluation_time, spec.child.output_binding, entry->key.view());
-                    }
+                    runtime_detail::finalize_mapped_child_output(
+                        view, evaluation_time, spec.child.output_binding,
+                        entry->key.view());
                 }
                 if (const DateTime next = child.next_scheduled_time(); next != MAX_DT && next > evaluation_time)
                 {
@@ -876,12 +916,12 @@ namespace hgraph
             auto  map_view = view.as<MapNodeView>();
             auto &storage  = *MemoryUtils::cast<MapNodeStorage>(map_view.internal_storage());
 
-            auto output_mutation = begin_map_output_mutation(view, evaluation_time);
-            auto error_mutation  = begin_map_error_mutation(view, evaluation_time);
             const auto &context  = *static_cast<const MapNodeContext *>(map_view.internal_context());
-            remove_all_entries(view, context, storage,
-                               output_mutation ? &*output_mutation : nullptr,
-                               error_mutation ? &*error_mutation : nullptr, evaluation_time);
+            // Graph shutdown is not a logical key removal and must not
+            // publish erases. The terminal output may already have been
+            // detached by its owning service or parent graph.
+            remove_all_entries(view, context, storage, nullptr, nullptr,
+                               evaluation_time);
             storage.unsubscribe_keys_noexcept();
             storage.primed = false;
             storage.refresh_all_bindings = false;

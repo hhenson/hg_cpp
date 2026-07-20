@@ -31,12 +31,13 @@ upstream ``Hg*TypeMetaData``                     ``hgraph.reflection``
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import dataclasses
 from datetime import date, datetime, time, timedelta
 
 import _hgraph as _m
 
-from ._types import _TsExpr, _value_type
+from ._types import _TsExpr, _compound_python_field_types, _value_type
 
 __all__ = (
     "scalar_type",
@@ -77,6 +78,9 @@ _VT_TO_PY = _atomic_reverse()
 
 def _handle(t):
     """The ``_hgraph.TsType`` for a time-series type expression."""
+    output_type = getattr(t, "output_type", None)
+    if output_type is not None:
+        t = output_type
     h = getattr(t, "handle", None)
     if h is None:
         raise TypeError(f"{t!r} is not a time-series type expression")
@@ -90,6 +94,9 @@ def resolved_type(t):
     from a resolution-map metadata object. Public annotations are returned
     unchanged; C++ resolution handles are wrapped as comparable annotations.
     """
+    output_type = getattr(t, "output_type", None)
+    if output_type is not None:
+        t = output_type
     if isinstance(t, _TsExpr):
         return t
     if isinstance(t, _m.TsType):
@@ -176,15 +183,28 @@ def fields(t):
     types (``{'a': TS[int]}``); for a compound-scalar *class* they are the field
     scalar types (``{'a': int}``).
     """
+    if isinstance(t, Mapping):
+        return {name: resolved_type(value) for name, value in t.items()}
     # A compound-scalar class (dataclass) passed directly: its scalar fields.
     if isinstance(t, type) and dataclasses.is_dataclass(t):
-        return {f.name: f.type for f in dataclasses.fields(t)}
+        return dict(_compound_python_field_types(t))
+    if isinstance(t, _m.ValueType):
+        python_type = _m.python_type_for_value(t)
+        if python_type is not t and isinstance(python_type, type):
+            return fields(python_type)
+        value_fields = tuple(t.fields)
+        if value_fields:
+            return {
+                name: _m.python_type_for_value(field_type)
+                for name, field_type in value_fields
+            }
+        raise TypeError(f"fields expects a bundle value type, got {t!r}")
     h = _handle(t)
     if h.is_tsb:
         return {name: _wrap(field) for name, field in _m.ts_field_types(h)}
     cs = getattr(t, "_cs_class", None)
     if cs is not None:
-        return {f.name: f.type for f in dataclasses.fields(cs)}
+        return dict(_compound_python_field_types(cs))
     raise TypeError(f"fields expects a TSB or compound-scalar type, got {t!r}")
 
 

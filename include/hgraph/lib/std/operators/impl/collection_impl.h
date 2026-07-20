@@ -3299,7 +3299,7 @@ namespace hgraph::stdlib
             const auto *target = erased.schema()->value_schema;
             const auto *snapshot = active_type_realization();
             BundleBuilder builder{snapshot != nullptr
-                                      ? snapshot->type_for(target)
+                                      ? snapshot->exact_type_for(target)
                                       : ValuePlanFactory::instance().type_for(target)};
 
             const auto *input_schema = fields.schema();

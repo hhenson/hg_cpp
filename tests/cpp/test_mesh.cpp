@@ -176,6 +176,16 @@ struct SwitchWithMeshRefG {
 
 using MeshBundle = UnNamedTSB<Field<"value", TS<Int>>, Field<"other", TS<Int>>>;
 
+struct MeshBundleFromValueG {
+  static constexpr auto name = "mesh_bundle_from_value_g";
+  static Port<MeshBundle> compose(Wiring &w, Port<TS<Int>> value) {
+    using namespace hgraph::stdlib::syntax;
+    auto bundle =
+        stdlib::to_tsb<MeshBundle>(w, value, (value + Int{10}).as<TS<Int>>());
+    return wire<stdlib::pass_through_node>(w, bundle).as<MeshBundle>();
+  }
+};
+
 struct MeshBundleZeroG {
   static constexpr auto name = "mesh_bundle_zero_g";
   static Port<MeshBundle> compose(Wiring &w, Port<TS<Int>>) {
@@ -532,6 +542,22 @@ TEST_CASE("mesh_: structured mesh_ref outputs expose stable field endpoints") {
                values<Value>(dict_delta<Int, MeshBundle>(
                    {{0, tsb_delta<MeshBundle>(Int{10}, Int{20})},
                     {1, tsb_delta<MeshBundle>(Int{10}, Int{20})}})));
+}
+
+TEST_CASE("mesh_: forwarded structured child outputs publish later updates") {
+  using namespace hgraph;
+  stdlib::register_standard_operators();
+
+  CHECK_OUTPUT(
+      (eval_node<stdlib::mesh_, TSD<Str, TS<Int>>>(
+          fn<MeshBundleFromValueG>(),
+          values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}}),
+                        dict_delta<Str, TS<Int>>({{"a"s, 2}})))),
+      values<Value>(
+          dict_delta<Str, MeshBundle>(
+              {{"a"s, tsb_delta<MeshBundle>(Int{1}, Int{11})}}),
+          dict_delta<Str, MeshBundle>(
+              {{"a"s, tsb_delta<MeshBundle>(Int{2}, Int{12})}})));
 }
 
 TEST_CASE(

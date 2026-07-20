@@ -1,10 +1,10 @@
 from dataclasses import InitVar, dataclass, field
 from enum import Enum
-from typing import Generic, Optional, TypeVar
+from typing import Callable, Generic, Optional, TypeVar
 
 import _hgraph
 import pytest
-from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, compute_node, const, from_json_builder, graph, operator, to_json_builder
+from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, combine, compute_node, const, from_json_builder, graph, operator, to_json_builder
 # White-box: these tests assert on the interned C++ value-type metadata
 # (qualified names, generic specialisation identity), which has no public
 # introspection surface — the module under test is imported directly.
@@ -55,6 +55,52 @@ def test_compound_scalar_generic_specializations_are_invariant():
     assert integer_box.name == "tests.generics::Box[int]"
     assert string_box.name == "tests.generics::Box[str]"
     assert _value_type(Box[int]) == integer_box
+
+
+def test_compound_scalar_callable_field_preserves_callable_signature():
+    @dataclass(frozen=True)
+    class CallbackConfig(CompoundScalar):
+        callback: Callable[[str, int], str]
+
+    @compute_node
+    def invoke(config: TS[CallbackConfig]) -> TS[str]:
+        return config.value.callback("value", 2)
+
+    config = CallbackConfig(callback=lambda value, count: value * count)
+    assert eval_node(invoke, [config]) == ["valuevalue"]
+
+
+def test_combine_constructs_the_declared_concrete_base_alternative():
+    @dataclass(frozen=True)
+    class Base(CompoundScalar):
+        value: int
+
+    @dataclass(frozen=True)
+    class Derived(Base):
+        label: str
+
+    @graph
+    def build(value: TS[int]) -> TS[Base]:
+        return combine[TS[Base]](value=value)
+
+    assert eval_node(build, [3]) == [Base(value=3)]
+
+
+def test_tsd_base_key_accepts_a_derived_key_port():
+    @dataclass(frozen=True)
+    class BaseKey(CompoundScalar):
+        key: str
+
+    @dataclass(frozen=True)
+    class DerivedKey(BaseKey):
+        qualifier: int
+
+    @graph
+    def lookup(values: TSD[BaseKey, TS[int]], key: TS[DerivedKey]) -> TS[int]:
+        return values[key]
+
+    key = DerivedKey(key="value", qualifier=1)
+    assert eval_node(lookup, [{key: 7}], [key]) == [7]
 
 
 def test_frozen_generic_compound_scalar_plain_argument_preserves_specialization():

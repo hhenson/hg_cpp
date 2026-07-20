@@ -46,6 +46,14 @@ def test_combine_unnamed_tsb():
     assert eval_node(g, [None, 1], "a") == [dict(b="a"), dict(a=1)]
 
 
+def test_combine_bare_tsb_infers_unnamed_schema():
+    @graph
+    def g(a: TS[int], b: TS[str]) -> TIME_SERIES_TYPE:
+        return combine[TSB](a=a, b=b)
+
+    assert eval_node(g, [None, 1], "a") == [dict(b="a"), dict(a=1)]
+
+
 def test_combine_unnamed_tsb_strict():
     @graph
     def g(a: TS[int], b: TS[str]) -> TIME_SERIES_TYPE:

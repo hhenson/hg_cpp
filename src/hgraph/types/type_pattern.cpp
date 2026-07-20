@@ -70,6 +70,24 @@ namespace hgraph
         {
             return !pattern.children.empty() ? scalar_pattern_resolve(pattern.children[0], map) : nullptr;
         }
+
+        [[nodiscard]] bool input_scalar_pattern_match(
+            const ScalarPattern &pattern,
+            const ValueTypeMetaData *concrete,
+            ResolutionMap &map)
+        {
+            if (pattern.kind == ScalarPattern::Kind::Var)
+            {
+                if (const auto *bound = map.find_scalar(pattern.name);
+                    bound != nullptr && bound->is_named_bundle() && concrete != nullptr &&
+                    concrete->is_named_bundle() &&
+                    TypeRegistry::instance().bundle_is_a(concrete, bound))
+                {
+                    return true;
+                }
+            }
+            return scalar_pattern_match(pattern, concrete, map);
+        }
     }  // namespace
 
     bool scalar_pattern_match(const ScalarPattern &pattern, const ValueTypeMetaData *concrete, ResolutionMap &map)
@@ -254,8 +272,10 @@ namespace hgraph
                 return input_ts_pattern_match(pattern.children[0],
                                               concrete->kind == TSTypeKind::REF ? concrete->referenced_ts() : concrete,
                                               map);
-            case TypePattern::Kind::Var:
             case TypePattern::Kind::TS:
+                return concrete->kind == TSTypeKind::TS &&
+                       input_scalar_pattern_match(pattern.scalar, concrete->value_schema, map);
+            case TypePattern::Kind::Var:
             case TypePattern::Kind::TSS:
             case TypePattern::Kind::TSW:
             case TypePattern::Kind::Signal:

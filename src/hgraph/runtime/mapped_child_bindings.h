@@ -114,7 +114,8 @@ namespace hgraph::runtime_detail
         const ValueView &key,
         const TSOutputView &key_source,
         std::optional<MappedChildSourceOverride> source_override = std::nullopt,
-        bool silent_repoint = false)
+        bool silent_repoint = false,
+        bool sampled = false)
     {
         if (spec.input_bindings.empty()) { return; }
 
@@ -150,8 +151,19 @@ namespace hgraph::runtime_detail
                     " as '" + std::string{source.schema()->name()} +
                     "' for child input '" + std::string{target.schema()->name()} + "'");
             }
-            if (silent_repoint) { rebind_input_to_source_silent(std::move(target), source); }
-            else { bind_input_to_source(std::move(target), source); }
+            if (sampled)
+            {
+                bind_sampled_input_to_source(std::move(target), source,
+                                             evaluation_time);
+            }
+            else if (silent_repoint)
+            {
+                rebind_input_to_source_silent(std::move(target), source);
+            }
+            else
+            {
+                bind_input_to_source(std::move(target), source);
+            }
         }
     }
 
@@ -208,14 +220,8 @@ namespace hgraph::runtime_detail
                 // flattening its current forwarding chain. Projected outputs
                 // can retarget while the child evaluates; subscribing to the
                 // terminal lets that transition propagate to the map element.
-                if (!element.forwarding())
-                {
-                    throw std::logic_error("mapped output element must be a forwarding endpoint");
-                }
-                if (!element.forwarding_target().same_as(child_terminal.handle()))
-                {
-                    element.bind_forwarding_target(child_terminal);
-                }
+                static_cast<void>(bind_forwarding_output_tree_to_source(
+                    element.borrowed_ref(), child_terminal));
                 break;
             case MapOutputBindingMode::OutputElementForwardsToParentSource:
                 throw std::logic_error("mapped child child-output binding cannot use parent-source mode");
@@ -242,6 +248,41 @@ namespace hgraph::runtime_detail
      * intentionally deduplicated for that cycle, but the owning container
      * still needs to see the terminal's final validity.
      */
+    [[nodiscard]] inline bool mapped_output_data_tree_modified(
+        const TSDataView &data,
+        const TSValueTypeMetaData *schema,
+        DateTime evaluation_time)
+    {
+        if (!data.valid()) { return false; }
+        if (data.modified(evaluation_time)) { return true; }
+
+        const std::size_t child_count =
+            schema != nullptr && schema->kind == TSTypeKind::TSB
+                ? schema->field_count()
+            : schema != nullptr && schema->kind == TSTypeKind::TSL
+                ? schema->fixed_size()
+                : 0;
+        for (std::size_t index = 0; index < child_count; ++index)
+        {
+            TSDataView child;
+            if (detail::has_input_children(data))
+            {
+                auto projection = detail::input_child_projection(data, index);
+                child = std::move(projection.visible);
+            }
+            else
+            {
+                child = data.indexed_child_at(index);
+            }
+            if (mapped_output_data_tree_modified(child, child.schema(),
+                                                 evaluation_time))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     inline void finalize_mapped_child_output(
         const NodeView &parent,
         DateTime evaluation_time,
@@ -251,8 +292,24 @@ namespace hgraph::runtime_detail
         if (!output_binding.has_value()) { return; }
 
         auto element = mapped_output_element(parent, evaluation_time, key);
-        if (!element.bound() || !element.modified()) { return; }
-        element.data_view().tracking().parent.notify_child_modified(evaluation_time);
+        if (!element.bound() ||
+            !mapped_output_data_tree_modified(element.data_view(),
+                                              element.schema(),
+                                              evaluation_time))
+        {
+            return;
+        }
+
+        auto data = element.data_view().borrowed_ref();
+        const auto &ops = data.ops();
+        auto *tracking = ops.mutable_tracking_impl(ops.context, data.mutable_data());
+        if (tracking == nullptr)
+        {
+            throw std::logic_error(
+                "mapped child output element has no mutable tracking");
+        }
+        static_cast<void>(tracking->record_modified(evaluation_time));
+        tracking->parent.notify_child_modified(evaluation_time);
     }
 }  // namespace hgraph::runtime_detail
 

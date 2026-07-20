@@ -524,6 +524,49 @@ struct OuterCaptureCollector {
   }
 };
 
+[[nodiscard]] std::optional<std::size_t> structural_boundary_ordinal(
+    const WiringPortRef &source, const OuterCaptureCollector &captures) {
+  std::optional<std::size_t> ordinal;
+  std::vector<std::size_t> expected_path;
+
+  const auto matches_boundary = [&](this const auto &self,
+                                    const WiringPortRef &part) -> bool {
+    if (part.is_null_source()) {
+      return true;
+    }
+    if (part.is_boundary_source()) {
+      if (part.boundary_path() != expected_path) {
+        return false;
+      }
+      const std::size_t part_ordinal = captures.boundary_ordinal(part);
+      if (ordinal.has_value() && *ordinal != part_ordinal) {
+        return false;
+      }
+      ordinal = part_ordinal;
+      return true;
+    }
+    if (!part.is_structural_source()) {
+      return false;
+    }
+
+    const auto &children = part.structural_children();
+    for (std::size_t index = 0; index < children.size(); ++index) {
+      expected_path.push_back(index);
+      const bool matches = self(children[index]);
+      expected_path.pop_back();
+      if (!matches) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  if (!source.is_structural_source() || !matches_boundary(source)) {
+    return std::nullopt;
+  }
+  return ordinal;
+}
+
 void collect_outer_captures(
     const WiringPortRef &source,
     const std::unordered_set<const WiringInstance *> &owned,
@@ -1716,6 +1759,23 @@ CompiledSubGraph Wiring::finish_subgraph(
         throw std::logic_error(
             "external service transport source has no output schema");
       }
+      std::vector<NestedServiceRank> ranks;
+      for (const auto &rank : impl_->service_client_ranks) {
+        if (rank.node != &instance) {
+          continue;
+        }
+        const auto duplicate = std::ranges::find_if(
+            ranks, [&](const NestedServiceRank &existing) {
+              return existing.path == rank.path && existing.receive == rank.receive;
+            });
+        if (duplicate == ranks.end()) {
+          ranks.push_back(NestedServiceRank{
+              .path = rank.path,
+              .kind = rank.kind,
+              .receive = rank.receive,
+          });
+        }
+      }
       compiled.external_service_inputs.push_back(NestedServiceInput{
           .service_path = service_path,
           .service_kind = service_kind,
@@ -1723,6 +1783,7 @@ CompiledSubGraph Wiring::finish_subgraph(
           .builder = instance.builder,
           .source_schema = source_schema,
           .arg_tag = endpoint->arg_tag,
+          .ranks = std::move(ranks),
       });
       external_instances.push_back(&instance);
     }
@@ -1819,13 +1880,28 @@ CompiledSubGraph Wiring::finish_subgraph(
                                             .path = output->peered_path()},
           };
           compiled.output_schema = output->schema;
+          compiled.output_is_structural_reference =
+              output->peered_path().empty() &&
+              output->peered_node()->definition ==
+                  std::type_index(typeid(StructuralRefNodeTag));
         }
       }
+    } else if (const auto ordinal =
+                   structural_boundary_ordinal(*output, captures);
+               ordinal.has_value() && *ordinal < compiled.input_schemas.size() &&
+               compiled.input_schemas[*ordinal] == output->schema) {
+      // A fixed TSB/TSL argument is represented by a structural root whose
+      // leaves are boundary projections. Returning that argument directly is
+      // the structural form of an ordinary parent-input pass-through.
+      compiled.output_binding = NestedGraphOutputBinding{
+          .kind = NestedGraphOutputBinding::Kind::ParentInput,
+          .parent_source_path = {*ordinal},
+      };
+      compiled.output_schema = output->schema;
     } else {
       throw std::invalid_argument(
           "Wiring::finish_subgraph: the sub-graph output must be a node output "
-          "or a boundary input "
-          "(structural outputs are not supported)");
+          "or an unchanged boundary input");
     }
   }
 

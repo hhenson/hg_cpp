@@ -9,6 +9,7 @@
 
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/container_ops.h>
@@ -2284,6 +2285,46 @@ namespace hgraph
 
         TSRoleTypeRef output_data_storage_type_for(const TSEndpointSchema &endpoint_schema)
         {
+            const auto *schema = endpoint_schema.schema();
+            if (schema != nullptr && schema->kind == TSTypeKind::TSD &&
+                endpoint_schema.is_non_peered())
+            {
+                if (endpoint_schema.child_count() != 1)
+                {
+                    throw std::logic_error(
+                        "TSOutput non-peered TSD storage requires one element annotation");
+                }
+
+                const auto &child_schema = endpoint_schema.child(0);
+                const auto &child_plan = ::hgraph::input_storage_plan(child_schema);
+                const auto element_type = ::hgraph::input_storage_type_for(
+                    child_schema, child_plan, 0, true, TypeRole::Output);
+                if (!element_type)
+                {
+                    throw std::logic_error(
+                        "TSOutput non-peered TSD element type is not resolved");
+                }
+
+                const auto *key_schema = schema->key_type();
+                const auto *snapshot = active_type_realization();
+                const ValueTypeRef key_binding = snapshot != nullptr
+                                                     ? snapshot->type_for(key_schema)
+                                                     : ValuePlanFactory::instance().type_for(key_schema);
+                const auto *plan = ts_data_plan_factory_detail::synthesise_slot_tsd_plan(
+                    *schema, key_binding, element_type);
+                if (plan == nullptr)
+                {
+                    throw std::logic_error(
+                        "TSOutput non-peered TSD storage plan is not resolved");
+                }
+                const auto &ops = ts_data_plan_factory_detail::slot_tsd_ts_data_ops(
+                    *schema, *plan, 0, key_binding, element_type,
+                    TypeRole::Output, false, true);
+                return intern_ts_type(
+                    *schema, TypeRole::Output, *plan, ops,
+                    "ts.tsd.output.root");
+            }
+
             const auto &root_plan = ::hgraph::input_storage_plan(endpoint_schema);
             return ::hgraph::input_storage_type_for(
                 endpoint_schema, root_plan, 0, true, TypeRole::Output);

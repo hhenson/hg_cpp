@@ -809,6 +809,20 @@ namespace hgraph::python_bridge
                 }
                 return builder.build();
             }
+            case TSTypeKind::TSB: {
+                BundleBuilder builder{delta_binding(ts->delta_value_schema)};
+                const nb::dict fields = nb::cast<nb::dict>(object);
+                for (std::size_t index = 0; index < ts->field_count(); ++index)
+                {
+                    const auto &field = ts->fields()[index];
+                    nb::str key{field.name};
+                    if (!fields.contains(key)) { continue; }
+                    nb::handle item = fields[key];
+                    if (item.is_none()) { continue; }
+                    builder.set(index, py_to_delta(item, field.type).view());
+                }
+                return builder.build();
+            }
             default:
                 return py_to_value_as(object, ts->delta_value_schema);
         }

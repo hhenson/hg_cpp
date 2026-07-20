@@ -89,6 +89,23 @@ namespace
         }
     };
 
+    struct accept_any_scalar_
+        : Operator<"accept_any_scalar", In<"ts", TS<Int>>,
+                   Scalar<"option", ScalarVar<"O">>, Out<TS<Int>>>
+    {
+    };
+
+    struct accept_any_scalar_impl
+    {
+        static void eval(In<"ts", TS<Int>> ts,
+                         Scalar<"option", ScalarVar<"O">> option,
+                         Out<TS<Int>> out)
+        {
+            static_cast<void>(option);
+            out.set(ts.value());
+        }
+    };
+
     // --- a requires_-gated operator: the gate vetoes the specific overload ---
     struct gated_ : Operator<"gated", In<"in", TsVar<"S">>, Out<TsVar<"S">>>
     {
@@ -453,6 +470,22 @@ TEST_CASE("operators: a scalar argument is coerced and forwarded to the resolved
 
     // The int32 factor is a wiring-time scalar argument; the resolved node coerces it to Int.
     CHECK_OUTPUT(eval_node<scale_>(values<Int>(1, 2, 3), std::int32_t{3}), values<Int>(3, 6, 9));
+}
+
+TEST_CASE("operators: an unconstrained scalar accepts concrete and absent values")
+{
+    register_overload<accept_any_scalar_, accept_any_scalar_impl>();
+
+    CHECK_OUTPUT(eval_node<accept_any_scalar_>(values<Int>(1, 2), Int{7}),
+                 values<Int>(1, 2));
+
+    WiringArg absent;
+    absent.kind = WiringArg::Kind::Scalar;
+    std::array<WiringArg, 2> args{ts_arg(ts_type<TS<Int>>()), std::move(absent)};
+    const auto resolved = OperatorRegistry::instance().resolve(
+        "accept_any_scalar", std::span<const WiringArg>{args});
+    REQUIRE(resolved.impl != nullptr);
+    CHECK(resolved.map.find_scalar("O") == nullptr);
 }
 
 TEST_CASE("operators: a requires_ predicate that passes keeps the specific overload")

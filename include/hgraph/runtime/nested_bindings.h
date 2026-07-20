@@ -213,8 +213,16 @@ inline void bind_nested_input_to_source(TSInputView target, TSInputView source,
   if (source_schema == nullptr || target_schema == nullptr ||
       source_schema->kind != target_schema->kind ||
       source_children != target_children || target.is_bindable()) {
-    throw std::logic_error("Nested structural input binding requires matching "
-                           "non-peered fixed structures");
+    throw std::logic_error(
+        "Nested structural input binding requires matching non-peered fixed "
+        "structures (source '" +
+        (source_schema != nullptr ? std::string{source_schema->name()}
+                                  : std::string{"<untyped>"}) +
+        "', " + (source.is_bindable() ? "peered" : "non-peered") +
+        "; target '" +
+        (target_schema != nullptr ? std::string{target_schema->name()}
+                                  : std::string{"<untyped>"}) +
+        "', " + (target.is_bindable() ? "peered" : "non-peered") + ")");
   }
 
   for (std::size_t index = 0; index < source_children; ++index) {
@@ -438,6 +446,15 @@ walk_source_to_output(TSInputView root, std::span<const std::size_t> path) {
                      .bound_output();
     if (!bound.bound()) {
       return {};
+    }
+    if (bound.schema() != nullptr &&
+        bound.schema()->kind == TSTypeKind::REF) {
+      const auto *target = TypeRegistry::instance().dereference(bound.schema());
+      if (target == nullptr || target->kind != TSTypeKind::TSD) {
+        throw std::logic_error(
+            "Nested graph key-set source must resolve to a TSD");
+      }
+      bound = bound.binding_for(*target).view(bound.evaluation_time());
     }
     return bound.as_dict().key_set();
   }

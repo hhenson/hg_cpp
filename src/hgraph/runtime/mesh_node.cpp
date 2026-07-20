@@ -442,14 +442,15 @@ void remove_requester_edges(MeshNodeStorage &storage,
 // ---- instance lifecycle ----
 
 void bind_instance_inputs(const NodeView &view, const MeshNodeContext &context,
-                          MeshEntry &entry, DateTime evaluation_time) {
+                          MeshEntry &entry, DateTime evaluation_time,
+                          bool sampled = false) {
   const MeshNodeSpec &spec = context.spec;
   const TSOutputView key_source = entry.key_source.bound()
                                       ? entry.key_source.view(evaluation_time)
                                       : TSOutputView{};
   runtime_detail::bind_mapped_child_inputs(
       view, entry.graph.view(), evaluation_time, spec.child, spec.args,
-      entry.key.view(), key_source, std::nullopt);
+      entry.key.view(), key_source, std::nullopt, false, sampled);
 }
 
 void bind_instance_output(const NodeView &view, const MeshNodeContext &context,
@@ -552,7 +553,7 @@ MeshEntry &create_instance(const NodeView &view, const MeshNodeContext &context,
 
   (void)output_mutation[key_view];
 
-  bind_instance_inputs(view, context, entry, evaluation_time);
+  bind_instance_inputs(view, context, entry, evaluation_time, true);
   bind_instance_output(view, context, entry, evaluation_time);
   entry.graph.view().start(evaluation_time);
   schedule_sampled_input_consumers(entry.graph.view(), evaluation_time,
@@ -818,6 +819,9 @@ bool mesh_evaluate_impl(const void *, const NodeView &view,
       entry->paused = false;
       if (child.evaluate(evaluation_time)) {
         entry->settled_time = evaluation_time;
+        runtime_detail::finalize_mapped_child_output(
+            view, evaluation_time, spec.child.output_binding,
+            entry->key.view());
       } else {
         entry->paused = true;
       } // a dependency was created / ranked; re-scan

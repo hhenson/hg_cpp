@@ -1,4 +1,5 @@
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/time_series/ts_output.h>
@@ -888,6 +889,41 @@ TEST_CASE("forwarding TSS outputs preserve slot observer remove and erase protoc
     link_data = link.data_view().borrowed_ref();
     link_set = link_data.as_set();
     link_set.unsubscribe_slot_observer(&observer);
+}
+
+TEST_CASE("TSOutput non-peered TSD realizes closed-union keys")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *base = registry.bundle(
+        "tests.output", "ForwardingBaseKey", {{"id", int_meta}});
+    const auto *derived = registry.bundle(
+        "tests.output", "ForwardingDerivedKey",
+        {{"id", int_meta}, {"priority", int_meta}}, {base});
+    const auto *ts_int = registry.ts(int_meta);
+    const auto *tsd = registry.tsd(base, ts_int);
+
+    BundleBuilder key_builder{ValuePlanFactory::instance().type_for(derived)};
+    key_builder.set("id", Value{std::int32_t{7}}.view());
+    key_builder.set("priority", Value{std::int32_t{3}}.view());
+    Value key = key_builder.build();
+
+    const auto snapshot = TypeRealizationSnapshot::capture(registry);
+    TypeRealizationScope realization_scope{snapshot.get()};
+    TSOutput output{
+        TSEndpointSchema::non_peered_dict(tsd, TSEndpointSchema::peered(ts_int))};
+
+    auto output_data = output.data_view();
+    auto output_dict = output_data.as_dict();
+    REQUIRE(output_dict.layout().key_binding == snapshot->type_for(base));
+    auto output_view = output.view(MIN_ST);
+    auto mutation = output_view.as_dict().begin_mutation(MIN_ST);
+    auto element = mutation.at(key.view());
+    REQUIRE(element.valid());
+    auto current_view = output.view(MIN_ST);
+    REQUIRE(current_view.as_dict().contains(key.view()));
 }
 
 TEST_CASE("TSOutput root parent is reattached after copy and move")

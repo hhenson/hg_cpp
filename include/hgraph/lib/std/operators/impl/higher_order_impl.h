@@ -1153,13 +1153,22 @@ namespace hgraph::stdlib
             const auto bound_slots = bind_wired_fn_args<std::size_t>(
                 "switch_", branch, {positional_slots.data(), positional_slots.size()}, named_slots);
 
-            std::vector<const TSValueTypeMetaData *> schemas;
-            schemas.reserve(branch.arity);
-            if (bound_slots.takes_leading_key) { schemas.push_back(key_source.schema); }
-            for (const std::size_t slot : bound_slots.ordered) { schemas.push_back(slot_sources[slot].schema); }
+            std::vector<WiringPortRef> boundary_shapes;
+            boundary_shapes.reserve(branch.arity);
+            if (bound_slots.takes_leading_key)
+            {
+                boundary_shapes.push_back(subgraph_wiring_detail::boundary_shape(
+                    key_source, boundary_shapes.size(), {}));
+            }
+            for (const std::size_t slot : bound_slots.ordered)
+            {
+                boundary_shapes.push_back(subgraph_wiring_detail::boundary_shape(
+                    slot_sources[slot], boundary_shapes.size(), {}));
+            }
 
-            CompiledSubGraph compiled = branch.compile({schemas.data(), schemas.size()});
-            const std::size_t declared_arity = schemas.size();
+            CompiledSubGraph compiled = branch.compile(
+                std::span<const WiringPortRef>{boundary_shapes.data(), boundary_shapes.size()});
+            const std::size_t declared_arity = boundary_shapes.size();
             std::vector<std::size_t> captured_slots;
             captured_slots.reserve(compiled.captured_inputs.size());
             for (const WiringPortRef &captured : compiled.captured_inputs)
@@ -1484,6 +1493,19 @@ namespace hgraph::stdlib
                 slot_sources.push_back(kw_arg.port);
             }
 
+            std::vector<std::size_t> positional_slots(positional_count);
+            for (std::size_t i = 0; i < positional_count; ++i) { positional_slots[i] = i; }
+            (void)bind_wired_fn_args<std::size_t>(
+                "switch_", *branch,
+                {positional_slots.data(), positional_slots.size()},
+                {named_slots.data(), named_slots.size()});
+
+            if (const auto *declared_output = branch->output_schema())
+            {
+                output_schema = declared_output;
+                return true;
+            }
+
             std::optional<bool> branches_have_output;
             std::vector<ExternalServiceSlot> external_services;
             (void)compile_switch_branch(*branch, key_source,
@@ -1503,15 +1525,12 @@ namespace hgraph::stdlib
         {
             if (resolution.find_ts("__out__") != nullptr) { return; }
 
-            // A resolution probe: leave unresolved on failure — the real
-            // wiring path reports the error.
-            (void)fallback_on_exception(false, [&] {
-                const TSValueTypeMetaData *output_schema = nullptr;
-                const auto mode = probe_switch_output_mode(context, output_schema);
-                if (!mode.value_or(false)) { return false; }
+            const TSValueTypeMetaData *output_schema = nullptr;
+            const auto mode = probe_switch_output_mode(context, output_schema);
+            if (mode.value_or(false))
+            {
                 bind_graph_output(resolution, output_schema, "O");
-                return true;
-            });
+            }
         }
 
         /** ``switch_(key, cases, *ts, **kwargs)`` — keywords resolve per branch. */
@@ -2513,10 +2532,44 @@ namespace hgraph::stdlib
             }
             if (child_has_output)
             {
+                const auto *element_schema = compiled.output_schema;
+                if (compiled.output_is_structural_reference)
+                {
+                    // A structural return needs one internal REF terminal so
+                    // the child graph has a peered endpoint. That terminal is
+                    // an implementation detail even when a dynamic callable
+                    // (for example an unannotated Python lambda) cannot report
+                    // a declared output schema before it is compiled.
+                    element_schema = registry.dereference(compiled.output_schema);
+                }
+                if (const auto *declared = func.output_schema(); declared != nullptr)
+                {
+                    const bool exact_match = time_series_schema_equivalent(
+                        declared, compiled.output_schema);
+                    const bool ref_transparent_match =
+                        time_series_schema_equivalent(
+                            registry.dereference(declared),
+                            registry.dereference(compiled.output_schema));
+                    if (!exact_match && !ref_transparent_match)
+                    {
+                        throw std::invalid_argument(
+                            "map_: the function's wired output is incompatible with its declared output schema");
+                    }
+                    if (exact_match || declared->kind == TSTypeKind::REF ||
+                        compiled.output_is_structural_reference)
+                    {
+                        // A structural graph return compiles through an
+                        // internal REF terminal; that implementation detail
+                        // collapses back to its declared TSB/TSL shape. A REF
+                        // produced by an actual operator such as switch_
+                        // remains the child's public output identity.
+                        element_schema = declared;
+                    }
+                }
                 // TSD / dynamic-TSL elements embed since the storage-stability
                 // ruling (938a125): slot-backed TSData is construct-only in
                 // stable slots, so container children never relocate.
-                output_schema = registry.tsd(classified.key_meta, compiled.output_schema);
+                output_schema = registry.tsd(classified.key_meta, element_schema);
             }
             else
             {
@@ -2552,7 +2605,7 @@ namespace hgraph::stdlib
                     // endpoint that the map node points at the parent element. No copy.
                     NodeBuilder &terminal =
                         spec.child.graph_builder.node_at(spec.child.output_binding->source.node);
-                    const auto *out = compiled.output_schema;
+                    const auto *out = output_schema->element_ts();
                     const TSEndpointSchema &terminal_override = terminal.output_endpoint();
                     const NodeTypeMetaData *terminal_meta = terminal.type().schema();
                     const TSEndpointSchema &terminal_declared =
@@ -2809,7 +2862,11 @@ namespace hgraph::stdlib
             fields.reserve(ts_schemas.size() + 1);
             for (std::size_t i = 0; i < ts_schemas.size(); ++i)
             {
-                fields.emplace_back(std::to_string(i), ts_schemas[i]);
+                const auto *input_schema =
+                    i < classified.is_multiplexed.size() && classified.is_multiplexed[i]
+                        ? registry.dereference(ts_schemas[i])
+                        : ts_schemas[i];
+                fields.emplace_back(std::to_string(i), input_schema);
             }
             fields.emplace_back("__keys__", keys->schema);
             const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
@@ -2999,7 +3056,11 @@ namespace hgraph::stdlib
             fields.reserve(ts_schemas.size() + 1);
             for (std::size_t i = 0; i < ts_schemas.size(); ++i)
             {
-                fields.emplace_back(std::to_string(i), ts_schemas[i]);
+                const auto *input_schema =
+                    i < classified.is_multiplexed.size() && classified.is_multiplexed[i]
+                        ? registry.dereference(ts_schemas[i])
+                        : ts_schemas[i];
+                fields.emplace_back(std::to_string(i), input_schema);
             }
             fields.emplace_back("__keys__", keys->schema);
             const auto *input_schema = registry.un_named_tsb(fields);

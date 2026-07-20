@@ -185,6 +185,47 @@ namespace
         }
     };
 
+    struct ChainedLateMappedIdentityG
+    {
+        static constexpr auto name = "chained_late_mapped_identity_g";
+
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TSS<Str>> keys,
+                                                Port<TSD<Str, TS<Int>>> values)
+        {
+            auto first = wire<stdlib::map_>(w, fn<IdentityG>(), values,
+                                            arg<"__keys__">(keys))
+                             .as<TSD<Str, TS<Int>>>();
+            return wire<stdlib::map_>(w, fn<AddOneG>(), first,
+                                      arg<"__keys__">(keys))
+                .as<TSD<Str, TS<Int>>>();
+        }
+    };
+
+    struct ReducedChainedLateMappedIdentityG
+    {
+        static constexpr auto name = "reduced_chained_late_mapped_identity_g";
+
+        struct SumG
+        {
+            static constexpr auto name = "reduced_chained_late_mapped_sum_g";
+
+            static Port<TS<Int>> compose(Wiring &, Port<TS<Int>> lhs,
+                                         Port<TS<Int>> rhs)
+            {
+                using namespace hgraph::stdlib::syntax;
+                return (lhs + rhs).as<TS<Int>>();
+            }
+        };
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TSS<Str>> keys,
+                                     Port<TSD<Str, TS<Int>>> values)
+        {
+            auto mapped = ChainedLateMappedIdentityG::compose(w, keys, values);
+            return wire<stdlib::reduce_>(w, fn<SumG>(), mapped, Int{0})
+                .as<TS<Int>>();
+        }
+    };
+
     using IfIntRefBundle = UnNamedTSB<Field<"true", REF<TS<Int>>>,
                                       Field<"false", REF<TS<Int>>>>;
 
@@ -1225,6 +1266,31 @@ TEST_CASE("map_: keyed lookup follows a child that becomes valid after its slot 
         values<Int>(none, 42));
 }
 
+TEST_CASE("map_: a downstream map binds when an upstream phantom slot becomes valid")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        eval_node<ChainedLateMappedIdentityG>(
+            values<Value>(set_delta<Str>({"key"s}, {}), none),
+            values<Value>(none, dict_delta<Str, TS<Int>>({{"key"s, 42}}))),
+        values<Value>(dict_delta<Str, TS<Int>>({}),
+                      dict_delta<Str, TS<Int>>({{"key"s, 43}})));
+}
+
+TEST_CASE("map_: reduce observes a chained map phantom slot becoming valid")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(
+        eval_node<ReducedChainedLateMappedIdentityG>(
+            values<Value>(set_delta<Str>({"key"s}, {}), none),
+            values<Value>(none, dict_delta<Str, TS<Int>>({{"key"s, 42}}))),
+        values<Int>(none, 43));
+}
+
 TEST_CASE("map_: multiplexed dict add and remove rebind existing explicit-key children")
 {
     using namespace hgraph;
@@ -1532,6 +1598,34 @@ namespace
         {
             return wire<stdlib::map_>(w, fn<IdentityG>(), value, arg<"__keys__">(keys))
                 .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    using DelayedMappedSetBundle =
+        TSB<"DelayedMappedSetBundle", Field<"values", TSS<Int>>>;
+
+    struct MaterializeMappedSetG
+    {
+        static constexpr auto name = "materialize_mapped_set_g";
+        static Port<DelayedMappedSetBundle> compose(Wiring &w,
+                                                    Port<TSS<Int>> values)
+        {
+            return wire<stdlib::pass_through_node>(
+                       w, stdlib::to_tsb<DelayedMappedSetBundle>(w, values))
+                .as<DelayedMappedSetBundle>();
+        }
+    };
+
+    struct MapDelayedStructuredElementG
+    {
+        static constexpr auto name = "map_delayed_structured_element_g";
+        static Port<TSD<Str, DelayedMappedSetBundle>>
+        compose(Wiring &w, Port<TSD<Str, TSS<Int>>> values,
+                Port<TSS<Str>> keys)
+        {
+            return wire<stdlib::map_>(w, fn<MaterializeMappedSetG>(), values,
+                                      arg<"__keys__">(keys))
+                .as<TSD<Str, DelayedMappedSetBundle>>();
         }
     };
 
@@ -1872,6 +1966,19 @@ TEST_CASE("map_: pass_through binds a TSD whole to every child")
                  values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 4}, {"b"s, 5}})));
 }
 
+TEST_CASE("map_: a broadcast TSD update reaches every existing child")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MapPassThroughDictG>(
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}), none),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"p"s, 10}, {"q"s, 20}, {"r"s, 30}}),
+                                   dict_delta<Str, TS<Int>>({{"s"s, 40}})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 4}, {"b"s, 5}}),
+                               dict_delta<Str, TS<Int>>({{"a"s, 5}, {"b"s, 6}})));
+}
+
 TEST_CASE("map_: no_key demultiplexes but is excluded from key inference")
 {
     using namespace hgraph;
@@ -1916,6 +2023,23 @@ TEST_CASE("map_: explicit __keys__ drives children whose inputs are all broadcas
                      values<Value>(set_delta<Int>({0, 1}, {}), none))),
                  values<Value>(dict_delta<Int, TS<Int>>({{0, 7}, {1, 7}}),
                                dict_delta<Int, TS<Int>>({{0, 8}, {1, 8}})));
+}
+
+TEST_CASE("map_: a late explicit key samples a structured element")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MapDelayedStructuredElementG>(
+                     values<Value>(dict_delta<Str, TSS<Int>>(
+                                       {{"a"s, set_delta<Int>({1, 2}, {})}}),
+                                   none),
+                     values<Value>(none, set_delta<Str>({"a"s}, {})))),
+                 values<Value>(
+                     none,
+                     dict_delta<Str, DelayedMappedSetBundle>(
+                         {{"a"s, tsb_delta<DelayedMappedSetBundle>(
+                                      set_delta<Int>({1, 2}, {}))}})));
 }
 
 TEST_CASE("map_: nested explicit-key maps resolve and execute through public wiring")

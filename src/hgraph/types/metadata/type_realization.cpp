@@ -873,6 +873,15 @@ TypeRealizationSnapshot::alternatives(const ValueTypeMetaData *schema) const {
 }
 
 ValueTypeRef
+TypeRealizationSnapshot::exact_type_for(const ValueTypeMetaData *schema) const {
+  if (schema == nullptr) {
+    return {};
+  }
+  std::lock_guard lock(impl_->mutex);
+  return impl_->exact_type_for_locked(schema);
+}
+
+ValueTypeRef
 TypeRealizationSnapshot::type_for(const ValueTypeMetaData *schema) const {
   if (schema == nullptr) {
     return {};

@@ -263,7 +263,8 @@ select_branch(const SwitchNodeContext &context, const Value &key) {
 }
 
 void switch_teardown(const NodeView &view, const SwitchNodeContext &context,
-                     SwitchNodeStorage &storage, DateTime evaluation_time) {
+                     SwitchNodeStorage &storage, DateTime evaluation_time,
+                     bool reset_output = true) {
   GraphValue *active = storage.active_graph();
   if (active == nullptr || !active->has_value()) {
     return;
@@ -271,8 +272,10 @@ void switch_teardown(const NodeView &view, const SwitchNodeContext &context,
   if (storage.active_spec != nullptr) {
     clear_branch_output(view, context, *storage.active_spec, evaluation_time);
   }
-  active->view().stop();
-  reset_switch_output(view, evaluation_time);
+  active->view().stop(evaluation_time);
+  if (reset_output) {
+    reset_switch_output(view, evaluation_time);
+  }
   storage.previous_slot = storage.active_slot;
   storage.active_slot.reset();
   storage.active_key = Value{};
@@ -310,7 +313,7 @@ void activate_branch(const NodeView &view, const SwitchNodeContext &context,
     GraphValue *active = storage.active_graph();
     bind_branch_output(view, context, spec, next, evaluation_time, true);
     if (active != nullptr && active->has_value()) {
-      active->view().stop();
+      active->view().stop(evaluation_time);
     }
     storage.previous_slot = storage.active_slot;
     storage.active_slot.reset();
@@ -396,7 +399,7 @@ void switch_node_stop(const NodeView &view, DateTime evaluation_time) {
       *static_cast<const SwitchNodeContext *>(switch_view.internal_context());
   auto &storage =
       *MemoryUtils::cast<SwitchNodeStorage>(switch_view.internal_storage());
-  switch_teardown(view, context, storage, evaluation_time);
+  switch_teardown(view, context, storage, evaluation_time, false);
 }
 } // namespace
 

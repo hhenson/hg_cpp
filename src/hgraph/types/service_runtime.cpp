@@ -184,6 +184,27 @@ namespace hgraph
             }
             return impl.wire(w, inputs);
         }
+
+        [[nodiscard]] WiringPortRef describe_service_output(
+            const RuntimeServiceDescriptor &descriptor,
+            const TSValueTypeMetaData *expected,
+            WiringPortRef output)
+        {
+            if (expected == nullptr || output.schema == nullptr ||
+                !graph_wiring_detail::input_accepts_output_schema(expected, output.schema))
+            {
+                throw std::invalid_argument(
+                    "service '" + descriptor.name +
+                    "' implementation output does not match the interface schema");
+            }
+            // Match the typed service path's Port::as<InterfaceOutput>(). The
+            // implementation may expose a REF-transparent storage shape (for
+            // example map_ of a structural child), but that representation is
+            // private to the implementation and must not leak through the
+            // declared service boundary.
+            output.schema = expected;
+            return output;
+        }
     }  // namespace
 
     const RuntimeServiceDescriptor &intern_service_descriptor(RuntimeServiceDescriptor descriptor)
@@ -254,10 +275,12 @@ namespace hgraph
         WiringPortRef shared = shared_output_source_node(
             w, std::type_index(typeid(service::detail::reference_output_source_marker)),
             descriptor.output_schema, base);
-        WiringPortRef output = wire_impl(w, descriptor, impl, {});
+        WiringPortRef output = describe_service_output(
+            descriptor, descriptor.output_schema,
+            wire_impl(w, descriptor, impl, {}));
         const WiringInstance *capture = shared_output_capture_node(
             w, std::type_index(typeid(service::detail::reference_output_capture_marker)),
-            output.schema != nullptr ? output.schema : descriptor.output_schema, base, output, shared);
+            descriptor.output_schema, base, output, shared);
         w.register_service_rank_anchor(base, capture);
     }
 
@@ -291,8 +314,13 @@ namespace hgraph
         w.register_service_rank_anchor(subs_path, subscriptions.peered_node());
         w.register_service_client_rank(out_path, "subscription service", shared.peered_node(), true);
 
+        // Subscription keys use the same input adaptation as request/reply
+        // payloads. In particular, a concrete Bundle leaf is materialized in
+        // the service interface's closed base union before capture.
+        WiringPortRef adapted_key = graph_wiring_detail::adapt_source_for_input(
+            w, TypeRegistry::instance().ts(descriptor.key_type), key);
         // The subscription capture schedules the source for the next cycle.
-        std::array<WiringPortRef, 2>  sources{key, subscriptions};
+        std::array<WiringPortRef, 2>  sources{adapted_key, subscriptions};
         std::array<WiringInputRef, 2> inputs{{
             WiringInputRef{.source = sources[0]},
             WiringInputRef{.source = sources[1], .rank_dependency = false},
@@ -315,11 +343,14 @@ namespace hgraph
         dict_arg.port = dict;
         WiringArg key_arg;
         key_arg.kind = WiringArg::Kind::TimeSeries;
-        key_arg.port = key;
+        key_arg.port = adapted_key;
         std::array<WiringArg, 2> item_args{dict_arg, key_arg};
         ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
             "getitem_", std::span<const WiringArg>{item_args.data(), item_args.size()});
-        return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs).output;
+        WiringPortRef output =
+            resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs).output;
+        output.schema = descriptor.value_schema;
+        return output;
     }
 
     void register_subscription_service_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
@@ -347,10 +378,12 @@ namespace hgraph
         w.register_service_rank_anchor(subs_path, subscriptions.peered_node());
 
         std::array<WiringPortRef, 1> impl_inputs{subscriptions};
-        WiringPortRef output = wire_impl(w, descriptor, impl, impl_inputs);
+        WiringPortRef output = describe_service_output(
+            descriptor, dict_meta,
+            wire_impl(w, descriptor, impl, impl_inputs));
         const WiringInstance *capture = shared_output_capture_node(
             w, std::type_index(typeid(service::detail::shared_output_capture_marker)),
-            output.schema != nullptr ? output.schema : dict_meta, out_path, output, shared);
+            dict_meta, out_path, output, shared);
         w.register_service_rank_anchor(out_path, capture);
     }
 
@@ -450,7 +483,10 @@ namespace hgraph
         std::array<WiringArg, 2> item_args{dict_arg, id_arg};
         ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
             "getitem_", std::span<const WiringArg>{item_args.data(), item_args.size()});
-        return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs).output;
+        WiringPortRef output =
+            resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs).output;
+        output.schema = descriptor.response_schema;
+        return output;
     }
 
     void register_request_reply_service_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
@@ -480,6 +516,7 @@ namespace hgraph
         WiringPortRef replies = reply_output_source_node(w, descriptor, replies_path);
         const auto *dict_meta = TypeRegistry::instance().tsd(scalar_descriptor<Int>::value_meta(),
                                                              descriptor.response_schema);
+        output = describe_service_output(descriptor, dict_meta, std::move(output));
         output = service::detail::request_reply_response_feedback(w, std::move(output), *dict_meta);
         const WiringInstance *capture = shared_output_capture_node(
             w, std::type_index(typeid(service::detail::request_reply_output_capture_marker)),
@@ -861,7 +898,10 @@ namespace hgraph
         std::array<WiringArg, 2> item_args{dict_arg, id_arg};
         ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
             "getitem_", std::span<const WiringArg>{item_args.data(), item_args.size()});
-        return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs).output;
+        WiringPortRef output =
+            resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs).output;
+        output.schema = descriptor.output_schema;
+        return output;
     }
 
     void register_service_adaptor_impl(Wiring &w,

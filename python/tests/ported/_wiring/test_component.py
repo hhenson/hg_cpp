@@ -176,3 +176,21 @@ def test_recorded_state():
         return de_dup_simple(ts, __recordable_id__="de_dup_1")
 
     assert eval_node(simple_de_dup_component, [1, 2, 3, 3, 4]) == [1, 2, 3, None, 4]
+
+
+def test_recordable_state_can_be_initialized_in_start():
+
+    class RunningState(TimeSeriesSchema):
+        value: TS[int]
+
+    @compute_node
+    def running_total(ts: TS[int], _state: RECORDABLE_STATE[RunningState] = None) -> TS[int]:
+        value = _state.value.value + ts.value
+        _state.value.value = value
+        return value
+
+    @running_total.start
+    def running_total_start(initial: int, _state: RECORDABLE_STATE[RunningState] = None):
+        _state.value.value = initial
+
+    assert eval_node(running_total, [1, 2], initial=10) == [11, 13]

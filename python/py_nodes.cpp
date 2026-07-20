@@ -647,7 +647,9 @@ struct PyFastComputeStateRef {
 
 template <typename TState>
 void py_assemble_lifecycle_args(std::string_view layout,
-                                const ValueView &scalars, TState &state,
+                                const ValueView &scalars, TState *state,
+                                TSOutputView *recordable_state,
+                                DateTime now,
                                 NodeScheduler scheduler,
                                 const nb::object &runtime_global_state,
                                 EngineControlView engine,
@@ -667,18 +669,30 @@ void py_assemble_lifecycle_args(std::string_view layout,
           value_to_py((*scalar_list)[scalar_index++].as_any().get()));
       break;
     case 'S':
-      call_args.append(py_state_namespace(state));
+      if (state == nullptr) {
+        throw std::logic_error(
+            "python lifecycle callback: local STATE is unavailable");
+      }
+      call_args.append(py_state_namespace(*state));
       break;
     case 'Q': {
-      if (!scalar_list.has_value()) {
+      if (state == nullptr || !scalar_list.has_value()) {
         throw std::logic_error(
             "python lifecycle callback: missing typed STATE factory");
       }
       nb::object factory =
           value_to_py((*scalar_list)[scalar_index++].as_any().get());
-      call_args.append(py_typed_state(state, factory));
+      call_args.append(py_typed_state(*state, factory));
       break;
     }
+    case 'R':
+      if (recordable_state == nullptr) {
+        throw std::logic_error(
+            "python lifecycle callback: RECORDABLE_STATE is unavailable");
+      }
+      call_args.append(nb::cast(PyRecordableState{
+          recordable_state->handle(), now, lease}));
+      break;
     case 'c':
       call_args.append(nb::cast(PyEvalClock{engine.evaluation_clock()}));
       break;
@@ -807,8 +821,10 @@ void py_call_lifecycle(const PyNodeRef &fn, bool enabled,
     auto invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
     nb::object runtime_state =
         py_runtime_global_state_for_call(global_state, lease.guard);
-    py_assemble_lifecycle_args(config, scalars, state, scheduler, runtime_state,
-                               engine, lease, node, call_args);
+    py_assemble_lifecycle_args(config, scalars, &state, nullptr,
+                               engine.evaluation_clock().evaluation_time(),
+                               scheduler, runtime_state, engine, lease, node,
+                               call_args);
     (void)py_call_with_contexts(fn.record->fn, call_args, context_values,
                                 runtime_state);
     invalid.release();
@@ -1086,10 +1102,39 @@ struct py_compute_recordable_node {
   static void
   start(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive>
             args,
-        Scalar<"config", Str> eval_config, SingleShotScheduler initial_sample) {
+        Scalar<"config", Str> eval_config,
+        Scalar<"start_fn", PyNodeRef> fn,
+        Scalar<"start_enabled", Bool> enabled,
+        Scalar<"start_config", Str> config,
+        Scalar<"start_scalars", ScalarVar<"SSV">> scalars,
+        RecordableState<TsVar<"RS">> state, NodeScheduler scheduler,
+        SingleShotScheduler initial_sample, GlobalStateView global_state,
+        EngineControlView engine, NodeView node) {
     const auto layout = parse_py_call_shape(eval_config.value()).layout;
     py_apply_input_activity(layout, args.base());
     py_schedule_initial_reference_sample(layout, args.base(), initial_sample);
+    if (!enabled.value()) {
+      return;
+    }
+    nb::gil_scoped_acquire gil;
+    translate_python_error([&] {
+      nb::list call_args;
+      auto lease = py_ts_lease_for_call();
+      auto invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
+      TSOutputView state_view =
+          static_cast<const TSOutputView &>(state).borrowed_ref();
+      nb::object runtime_state =
+          py_runtime_global_state_for_call(global_state, lease.guard);
+      py_assemble_lifecycle_args(
+          config.value(), scalars.value(),
+          static_cast<PyStateRef *>(nullptr), &state_view,
+          state.evaluation_time(), scheduler, runtime_state, engine, lease,
+          node, call_args);
+      (void)py_call_with_contexts(fn.value().record->fn, call_args,
+                                  std::nullopt, runtime_state);
+      invalid.release();
+      lease.invalidate();
+    });
   }
 
   static void
@@ -1131,9 +1176,37 @@ struct py_compute_recordable_node {
   static void
   stop(In<"args", TsVar<"A">, InputValidity::Unchecked, InputActivity::Passive>
            args,
-       Scalar<"config", Str> eval_config) {
+       Scalar<"config", Str> eval_config,
+       Scalar<"stop_fn", PyNodeRef> fn,
+       Scalar<"stop_enabled", Bool> enabled,
+       Scalar<"stop_config", Str> config,
+       Scalar<"stop_scalars", ScalarVar<"XSV">> scalars,
+       RecordableState<TsVar<"RS">> state, NodeScheduler scheduler,
+       GlobalStateView global_state, EngineControlView engine, NodeView node) {
     py_clear_input_activity(parse_py_call_shape(eval_config.value()).layout,
                             args.base());
+    if (!enabled.value()) {
+      return;
+    }
+    nb::gil_scoped_acquire gil;
+    translate_python_error([&] {
+      nb::list call_args;
+      auto lease = py_ts_lease_for_call();
+      auto invalid = UnwindCleanupGuard([&] { lease.invalidate(); });
+      TSOutputView state_view =
+          static_cast<const TSOutputView &>(state).borrowed_ref();
+      nb::object runtime_state =
+          py_runtime_global_state_for_call(global_state, lease.guard);
+      py_assemble_lifecycle_args(
+          config.value(), scalars.value(),
+          static_cast<PyStateRef *>(nullptr), &state_view,
+          state.evaluation_time(), scheduler, runtime_state, engine, lease,
+          node, call_args);
+      (void)py_call_with_contexts(fn.value().record->fn, call_args,
+                                  std::nullopt, runtime_state);
+      invalid.release();
+      lease.invalidate();
+    });
   }
 };
 
@@ -1296,9 +1369,10 @@ struct py_generator_node {
       nb::list call_args;
       nb::object runtime_state =
           py_runtime_global_state_for_call(global_state, handle->lease.guard);
-      py_assemble_lifecycle_args(shape.layout, scalars.value(),
-                                 handle->local_state, sched, runtime_state,
-                                 engine, handle->lease, node, call_args);
+      py_assemble_lifecycle_args(
+          shape.layout, scalars.value(), &handle->local_state, nullptr,
+          engine.evaluation_clock().evaluation_time(), sched, runtime_state,
+          engine, handle->lease, node, call_args);
       auto call_kwargs = py_peel_kwargs(call_args, shape.kw_names);
       nb::object iterable =
           py_call_with_contexts(fn.value().record->fn, call_args, std::nullopt,

@@ -174,10 +174,9 @@ struct is_empty_tss {
 };
 
 struct contains_tss_item {
-  static void eval(In<"ts", TSS<ScalarVar<"K">>, InputValidity::Unchecked> ts,
+  static void eval(In<"ts", TSS<ScalarVar<"K">>> ts,
                    In<"item", TS<ScalarVar<"K">>> item, Out<TS<Bool>> out) {
-    const Bool value =
-        ts.valid() && ts.base().as_set().contains(item.base().value());
+    const Bool value = ts.base().as_set().contains(item.base().value());
     // hgraph parity: an ITEM tick always re-publishes (upstream
     // re-samples the per-item contains output on rebind); a SET tick
     // only publishes a membership change.
@@ -895,7 +894,6 @@ struct getitem_tsd_by_key {
     const auto *schema =
         TypeRegistry::instance().dereference(ts.base().schema());
     const auto *target = schema != nullptr ? schema->element_ts() : nullptr;
-
     TimeSeriesReference reference{target};
     auto &dict = static_cast<TSDInputView &>(ts);
     const std::size_t slot = dict.find_slot(key.base().value());
@@ -1175,6 +1173,25 @@ struct tsb_ref_field_node {
     TimeSeriesReference result = TimeSeriesReference::empty(field_type);
     if (reference.is_peered() && reference.has_output()) {
       auto target = reference.target_output().view(erased.evaluation_time());
+      auto slow = target.handle();
+      auto fast = slow;
+      const auto advance_forwarding = [evaluation_time = erased.evaluation_time()](TSOutputHandle handle) {
+        if (!handle.bound()) {
+          return TSOutputHandle{};
+        }
+        auto view = handle.view(evaluation_time);
+        return view.forwarding() && view.forwarding_bound()
+                   ? view.forwarding_target()
+                   : TSOutputHandle{};
+      };
+      while (target.forwarding() && target.forwarding_bound()) {
+        target = target.forwarding_target().view(erased.evaluation_time());
+        slow = advance_forwarding(std::move(slow));
+        fast = advance_forwarding(advance_forwarding(std::move(fast)));
+        if (slow.bound() && fast.bound() && slow.same_as(fast)) {
+          throw std::logic_error("getattr_: REF[TSB] forwarding cycle");
+        }
+      }
       const auto *data_schema = target.data_view().schema();
       if (data_schema != nullptr && data_schema->kind == TSTypeKind::REF) {
         // A descriptive-schema reference: the surface says TSB but
@@ -1217,7 +1234,10 @@ struct tsb_ref_field_node {
             "' exposes " + std::to_string(child_count) + " children");
       }
       try {
-        result = TimeSeriesReference::peered(target.indexed_child_at(*index));
+        auto child = target.indexed_child_at(*index);
+        if (child.bound()) {
+          result = TimeSeriesReference::peered(child);
+        }
       } catch (const std::out_of_range &error) {
         const std::string field_label = [&] {
           if constexpr (std::same_as<KeyT, Str>) {

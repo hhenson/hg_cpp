@@ -2010,7 +2010,8 @@ namespace hgraph
                 {
                     static_assert(statically_accepts_output_v<typename P::schema, typename A::schema>,
                                   "wire<G>: input port schema does not match the sub-graph's time-series input");
-                    return P{w, arg.erased()};
+                    const auto *expected = schema_descriptor<typename P::schema>::ts_meta();
+                    return P{w, adapt_source_for_input(w, expected, arg.erased())};
                 }
             }
             else

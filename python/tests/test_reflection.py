@@ -8,8 +8,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from hgraph import (REF, TS, TSB, TSD, TSL, TSS, CompoundScalar,
-                    TimeSeriesSchema, compute_node, operator)
+from hgraph import (REF, TS, TSB, TSD, TSL, TSS, TS_SCHEMA, CompoundScalar,
+                    TimeSeriesSchema, compute_node, graph, operator)
 from hgraph.reflection import (
     dereference,
     element_type,
@@ -28,6 +28,7 @@ from hgraph.reflection import (
     size,
     value_type,
 )
+from hgraph.test import eval_node
 
 
 def test_scalar_type_ts():
@@ -81,6 +82,22 @@ def test_fields_tsb():
     f = fields(TSB[MyB])
     assert f == {"a": TS[int], "b": TS[str]}
     assert list(f) == ["a", "b"]  # ordered
+
+
+def test_fields_accepts_variadic_wiring_values():
+    observed = {}
+
+    @graph
+    def reflect_kwargs(**kwargs: TSB[TS_SCHEMA]) -> TS[int]:
+        observed.update(fields(kwargs))
+        return kwargs["value"]
+
+    @graph
+    def invoke(value: TS[int]) -> TS[int]:
+        return reflect_kwargs(value=value)
+
+    assert eval_node(invoke, 1) == [1]
+    assert observed == {"value": TS[int]}
 
 
 def test_fields_compound_scalar_class():

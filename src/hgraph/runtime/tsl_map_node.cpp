@@ -178,7 +178,8 @@ namespace hgraph
             const TSOutputView index_source =
                 entry.index_source.bound() ? entry.index_source.view(evaluation_time) : TSOutputView{};
             runtime_detail::bind_mapped_child_inputs(view, entry.graph.view(), evaluation_time, spec.child, spec.args,
-                                                     entry.index.view(), index_source);
+                                                     entry.index.view(), index_source,
+                                                     std::nullopt, false, true);
             runtime_detail::bind_mapped_child_output(view, entry.graph.view(), evaluation_time, spec.child.output_binding,
                                                      spec.args, entry.index.view(), index_source,
                                                      MapOutputBindingMode::ChildTerminalWritesElement);

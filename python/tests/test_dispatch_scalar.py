@@ -3,7 +3,7 @@ from typing import Type, Union
 
 import pytest
 
-from hgraph import AUTO_RESOLVE, OUT, CompoundScalar, TS, compute_node, const, dispatch, dispatch_, downcast_, downcast_ref, graph, operator
+from hgraph import AUTO_RESOLVE, OUT, CompoundScalar, TS, TSB, TimeSeriesSchema, compute_node, const, dispatch, dispatch_, downcast_, downcast_ref, graph, operator, switch_
 from hgraph.test import eval_node
 
 
@@ -94,6 +94,29 @@ def test_compound_scalar_dispatch_to_compute_node_overload():
         return dispatch_(sound, animal)
 
     assert eval_node(app, [Dog(), Puppy()]) == ["Dog", "Puppy"]
+
+
+def test_dispatch_uses_declared_concrete_output_schema():
+    class Animal(CompoundScalar): ...
+
+    class Dog(Animal): ...
+
+    class Result(TimeSeriesSchema):
+        sound: TS[str]
+
+    @dispatch
+    @operator
+    def sound(animal: TS[Animal]) -> TSB[Result]: ...
+
+    @graph(overloads=sound)
+    def dog_sound(animal: TS[Dog]) -> TSB[Result]:
+        return TSB[Result].from_ts(sound="woof")
+
+    @graph
+    def app(animal: TS[Animal]) -> TSB[Result]:
+        return sound(animal)
+
+    assert eval_node(app, [Dog()]) == [{"sound": "woof"}]
 
 
 def test_union_overload_is_registered_for_direct_operator_dispatch():
@@ -256,6 +279,26 @@ def test_compound_scalar_dispatch_propagates_specialized_output_to_overload():
         return value[TS[int]](animal)
 
     assert eval_node(app, [Dog()]) == [7]
+
+
+def test_compound_scalar_dispatch_can_be_a_switch_branch():
+    class Animal(CompoundScalar): ...
+
+    class Dog(Animal): ...
+
+    @dispatch
+    def sound(animal: TS[Animal]) -> TS[str]:
+        return "default"
+
+    @graph(overloads=sound)
+    def dog_sound(animal: TS[Dog]) -> TS[str]:
+        return "woof"
+
+    @graph
+    def app(enabled: TS[bool], animal: TS[Dog]) -> TS[str]:
+        return switch_(enabled, {True: sound, False: sound}, animal)
+
+    assert eval_node(app, [True], [Dog()]) == ["woof"]
 
 
 def test_compound_scalar_downcast_rejects_the_wrong_active_leaf():

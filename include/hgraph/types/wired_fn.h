@@ -209,6 +209,36 @@ namespace hgraph
             return ops->compile(context, input_schemas);
         }
 
+        /**
+         * Compile against explicit child-boundary shapes. Unlike the schema-only
+         * overload, this preserves a structurally assembled fixed TSB/TSL so a
+         * nested branch receives non-peered children instead of inventing a
+         * peered root that cannot be bound at runtime.
+         */
+        [[nodiscard]] CompiledSubGraph compile(std::span<const WiringPortRef> boundary_shapes) const
+        {
+            if (!valid()) { throw std::logic_error("WiredFn::compile called on an empty function value"); }
+
+            Wiring child{WiringKind::SubGraph};
+            std::vector<const TSValueTypeMetaData *> schemas;
+            schemas.reserve(boundary_shapes.size());
+            for (const WiringPortRef &shape : boundary_shapes)
+            {
+                if (shape.schema == nullptr)
+                {
+                    throw std::invalid_argument("WiredFn::compile boundary shape must be typed");
+                }
+                schemas.push_back(shape.schema);
+            }
+
+            WiringPortRef out = wire(child, boundary_shapes);
+            if (out.schema != nullptr)
+            {
+                return std::move(child).finish_subgraph(out, std::move(schemas));
+            }
+            return std::move(child).finish_subgraph(std::nullopt, std::move(schemas));
+        }
+
         [[nodiscard]] bool operator==(const WiredFn &other) const noexcept
         {
             if (context != other.context) { return false; }

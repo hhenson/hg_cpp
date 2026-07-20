@@ -1,6 +1,7 @@
 # Ported from ext/main/hgraph_unit_tests/_wiring/test_overloads.py
 from dataclasses import dataclass
-from typing import Tuple
+from datetime import timedelta
+from typing import Tuple, TypeVar
 
 import pyarrow as pa
 import pytest
@@ -22,6 +23,7 @@ from hgraph import (
     Frame,
     cast_,
     operator,
+    STATE,
 )
 from hgraph.test import eval_node
 
@@ -145,6 +147,73 @@ def test_native_compatibility_operator_accepts_python_overload():
         return cast_(str, ts)
 
     assert eval_node(app, ["value"]) == ["probe:value"]
+
+
+def test_overload_excludes_typed_state_and_output_injections():
+    @operator
+    def accumulate(ts: TS[int]) -> TS[int]: ...
+
+    @dataclass
+    class AccumulatorState:
+        total: int = 0
+
+    @compute_node(overloads=accumulate)
+    def accumulate_impl(
+        ts: TS[int],
+        _state: STATE[AccumulatorState] = None,
+        _output: TS[int] = None,
+    ) -> TS[int]:
+        _state.total += ts.value
+        previous = _output.value if _output.valid else 0
+        return _state.total + previous
+
+    @graph
+    def app(ts: TS[int]) -> TS[int]:
+        return accumulate(ts)
+
+    assert eval_node(app, [1, 2]) == [1, 4]
+
+
+def test_overload_accepts_explicit_none_for_a_constrained_scalar():
+    window_type = TypeVar("window_type", int, timedelta)
+
+    @operator
+    def sample_window(ts: TS[int], window: window_type = None) -> TS[int]: ...
+
+    @compute_node(
+        overloads=sample_window,
+        requires=lambda m, window: window is None,
+    )
+    def sample_without_window(
+        ts: TS[int], window: window_type = None,
+    ) -> TS[int]:
+        return ts.value
+
+    @graph
+    def app(ts: TS[int]) -> TS[int]:
+        return sample_window(ts, window=None)
+
+    assert eval_node(app, [1, 2]) == [1, 2]
+
+
+def test_object_scalar_parameter_accepts_none_and_concrete_values():
+    @operator
+    def add_option(ts: TS[int], option: object = None) -> TS[int]: ...
+
+    @compute_node(overloads=add_option)
+    def add_option_impl(ts: TS[int], option: object = None) -> TS[int]:
+        return ts.value if option is None else ts.value + option
+
+    @graph
+    def without_option(ts: TS[int]) -> TS[int]:
+        return add_option(ts, None)
+
+    @graph
+    def with_option(ts: TS[int]) -> TS[int]:
+        return add_option(ts, 3)
+
+    assert eval_node(without_option, [1, 2]) == [1, 2]
+    assert eval_node(with_option, [1, 2]) == [4, 5]
 
 
 def test_generic_frame_overload_is_distinct_from_generic_scalar_overload():

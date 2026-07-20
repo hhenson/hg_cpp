@@ -553,6 +553,15 @@ namespace hgraph::python_bridge
         [[nodiscard]] nb::object value() const
         {
             auto view = checked();
+            if (view.schema()->kind == TSTypeKind::TSB)
+            {
+                auto bundle = view.as_bundle();
+                if (bundle.has_field("value"))
+                {
+                    auto child = bundle.field("value");
+                    return nb::cast(PyRecordableState{child.handle(), now, lease});
+                }
+            }
             return view.valid() && view.data_view().has_current_value()
                        ? value_to_py(view.data_view().value())
                        : nb::none();
@@ -561,6 +570,16 @@ namespace hgraph::python_bridge
         void set_value(nb::handle value) const
         {
             auto  view  = checked();
+            if (view.schema()->kind == TSTypeKind::TSB)
+            {
+                auto bundle = view.as_bundle();
+                if (bundle.has_field("value"))
+                {
+                    auto child = bundle.field("value");
+                    PyRecordableState{child.handle(), now, lease}.set_value(value);
+                    return;
+                }
+            }
             Value delta = py_to_delta(value, view.schema());
             apply_delta(view, delta.view());
         }

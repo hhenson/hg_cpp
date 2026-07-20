@@ -273,9 +273,16 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (!key.has_value()) { throw std::invalid_argument("slot TSData requires a live key"); }
                 if (key.binding() == key_binding_) { return key.data(); }
                 const auto &ops = key_binding_.ops_ref();
-                ops.copy_assign_from(
-                    key_binding_, const_cast<void *>(normalized_key_.view().data()),
-                    key.binding(), key.data());
+                annotate_on_exception<std::invalid_argument>(
+                    [&] {
+                        ops.copy_assign_from(
+                            key_binding_, const_cast<void *>(normalized_key_.view().data()),
+                            key.binding(), key.data());
+                    },
+                    [&](const std::invalid_argument &error) {
+                        throw std::invalid_argument(
+                            "TSS key normalization failed: " + std::string{error.what()});
+                    });
                 return normalized_key_.view().data();
             }
 
@@ -586,9 +593,16 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (!key.has_value()) { throw std::invalid_argument("TSD TSData requires a live key"); }
                 if (key.binding() == key_binding_) { return key.data(); }
                 const auto &ops = key_binding_.ops_ref();
-                ops.copy_assign_from(
-                    key_binding_, const_cast<void *>(normalized_key_.view().data()),
-                    key.binding(), key.data());
+                annotate_on_exception<std::invalid_argument>(
+                    [&] {
+                        ops.copy_assign_from(
+                            key_binding_, const_cast<void *>(normalized_key_.view().data()),
+                            key.binding(), key.data());
+                    },
+                    [&](const std::invalid_argument &error) {
+                        throw std::invalid_argument(
+                            "TSD key normalization failed: " + std::string{error.what()});
+                    });
                 return normalized_key_.view().data();
             }
 
@@ -2890,7 +2904,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 std::size_t result = 0;
                 for (const auto [key, value] : map_kv_range<Surface>(context, memory))
                 {
-                    result ^= combine_hash(key_ops.hash(key.data()), value_ops.hash(value.data()));
+                    const auto value_hash = value.has_value() ? value_ops.hash(value.data()) : std::size_t{0};
+                    result ^= combine_hash(key_ops.hash(key.data()), value_hash);
                 }
                 return result;
             }
@@ -2905,7 +2920,13 @@ namespace hgraph::ts_data_plan_factory_detail
                     const auto &value_ops = value_binding.ops_ref();
                     for (const auto [key, value] : map_kv_range<Surface>(context, lhs))
                     {
+                        if (!map_contains<Surface>(context, rhs, key.data())) { return false; }
                         const auto *rhs_value = map_value_at<Surface>(context, rhs, key.data());
+                        if (!value.has_value())
+                        {
+                            if (rhs_value != nullptr) { return false; }
+                            continue;
+                        }
                         if (rhs_value == nullptr || !value_ops.equals(value.data(), rhs_value)) { return false; }
                     }
                     return true;
@@ -2941,7 +2962,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     first = false;
                     fmt::format_to(std::back_inserter(out), "{}: {}",
                                    key_ops.to_string(key.data()),
-                                   value_ops.to_string(value.data()));
+                                   value.has_value() ? value_ops.to_string(value.data()) : std::string{"<unset>"});
                 }
                 fmt::format_to(std::back_inserter(out), "}}");
                 return fmt::to_string(out);
@@ -2958,7 +2979,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 nb::dict result;
                 for (const auto [key, value] : map_kv_range<Surface>(context, memory))
                 {
-                    result[key_ops.to_python(key.data())] = value_ops.to_python(value.data());
+                    result[key_ops.to_python(key.data())] =
+                        value.has_value() ? value_ops.to_python(value.data()) : nb::none();
                 }
                 return result;
             }

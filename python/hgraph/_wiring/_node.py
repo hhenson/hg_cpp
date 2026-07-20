@@ -170,15 +170,18 @@ class _PyNode:
         return result
 
     def _set_lifecycle(self, phase, fn):
-        if self._recordable_state is not None:
-            raise TypeError(
-                f"@{self.__name__}.{phase} is not supported with RECORDABLE_STATE")
         for param in inspect.signature(fn).parameters.values():
             if (param.annotation in _INJECTABLE_MARKERS or
-                    isinstance(param.annotation, _StateExpr)):
+                    isinstance(param.annotation, (_StateExpr, _RecordableStateExpr))):
                 if param.default is not None:
                     raise TypeError(
                         f"injectable parameter '{param.name}' of '{fn.__name__}' must default to None"
+                    )
+                if (isinstance(param.annotation, _RecordableStateExpr)
+                        and self._recordable_state is None):
+                    raise TypeError(
+                        f"@{self.__name__}.{phase} cannot inject RECORDABLE_STATE "
+                        "when the node does not declare one"
                     )
                 continue
             if isinstance(param.annotation, (_TsExpr, _ContextExpr)) or param.name == "_output":
@@ -413,6 +416,19 @@ class _PyNode:
 
         _warn_deprecated(self.__name__, self._deprecated)
         kwargs.pop("__recordable_id__", None)
+        lifecycle_scalar_values = {}
+        for phase in ("start", "stop"):
+            lifecycle_fn = getattr(self, f"_{phase}_fn")
+            if lifecycle_fn is None:
+                continue
+            for param in inspect.signature(lifecycle_fn).parameters.values():
+                injectable = (
+                    param.annotation in _INJECTABLE_MARKERS
+                    or isinstance(param.annotation, (_StateExpr, _RecordableStateExpr))
+                )
+                if (not injectable and param.name not in self._signature.parameters
+                        and param.name in kwargs):
+                    lifecycle_scalar_values[param.name] = kwargs.pop(param.name)
         ref = _hgraph.node_ref(self.fn)
         layout, ports, scalars, reference_shapes = [], [], [], []
         # The wiring-time RESOLUTION SCOPE: the C++ type-variable map. Every
@@ -422,7 +438,7 @@ class _PyNode:
         for name, resolved in self._pins.items():
             self._bind_resolved(scope, name, resolved)
         bound = self._signature.bind_partial(*args, **kwargs)
-        scalar_values = {}
+        scalar_values = dict(lifecycle_scalar_values)
         # Pre-collect scalar values so callable active=/valid= policies can
         # evaluate before layout letters are chosen.
         for param in self._params:
@@ -672,6 +688,9 @@ class _PyNode:
             lifecycle_layout, lifecycle_scalars = [], []
             if lifecycle_fn is not None:
                 for param in inspect.signature(lifecycle_fn).parameters.values():
+                    if isinstance(param.annotation, _RecordableStateExpr):
+                        lifecycle_layout.append("R")
+                        continue
                     if isinstance(param.annotation, _StateExpr):
                         lifecycle_layout.append("Q")
                         lifecycle_scalars.append(param.annotation.factory)

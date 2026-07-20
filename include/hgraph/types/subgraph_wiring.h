@@ -22,6 +22,13 @@
 
 namespace hgraph
 {
+    struct NestedServiceRank
+    {
+        std::string path{};
+        std::string kind{};
+        bool        receive{true};
+    };
+
     /**
      * A service transport source used by a compiled child but implemented by
      * an enclosing graph. The exact wiring identity and builder are retained
@@ -37,6 +44,7 @@ namespace hgraph
         NodeBuilder                        builder{};
         const TSValueTypeMetaData         *source_schema{nullptr};
         WiringPortRef::ArgTag              arg_tag{WiringPortRef::ArgTag::None};
+        std::vector<NestedServiceRank>      ranks{};
     };
 
     /**
@@ -56,6 +64,10 @@ namespace hgraph
         /** Boundary time-series input schemas, in compose ``Port`` parameter order. */
         std::vector<const TSValueTypeMetaData *> input_schemas{};
         const TSValueTypeMetaData               *output_schema{nullptr};
+        /** The output endpoint was synthesized from a structural TSB/TSL source.
+            Higher-order containers expose its referenced schema while preserving
+            explicitly authored REF outputs. */
+        bool output_is_structural_reference{false};
         /**
          * Outer-port CAPTURES (nested_graphs.rst): OUTER-wiring ports the
          * compose body referenced (closure capture). One per boundary index
@@ -78,6 +90,11 @@ namespace hgraph
             WiringPortRef source = w.add_node(
                 input.definition, std::move(input.builder), std::span<const WiringPortRef>{},
                 std::move(scalars));
+            for (NestedServiceRank &rank : input.ranks)
+            {
+                w.register_service_client_rank(
+                    std::move(rank.path), rank.kind, source.peered_node(), rank.receive);
+            }
             source.arg_tag = input.arg_tag;
             return source;
         }
