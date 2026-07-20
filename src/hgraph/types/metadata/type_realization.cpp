@@ -535,10 +535,12 @@ struct TypeRealizationSnapshot::Impl {
         throw std::invalid_argument(
             "polymorphic Bundle discriminator names no valid alternative");
       }
+      const nb::object source_module = nb::getattr(source_class, "__module__");
+      const nb::object source_qualname =
+          nb::getattr(source_class, "__qualname__");
       const std::string source_name =
-          nb::cast<std::string>(nb::str(source_class.attr("__module__"))) +
-          "." +
-          nb::cast<std::string>(nb::str(source_class.attr("__qualname__")));
+          nb::cast<std::string>(source_module) + "." +
+          nb::cast<std::string>(source_qualname);
       throw std::invalid_argument("value of Python type '" + source_name +
                                   "' is not an instance of closed Bundle '" +
                                   std::string{declared->name()} + "'");

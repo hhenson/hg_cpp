@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Generic, Optional, TypeVar
 
 import _hgraph
+import pytest
 from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, compute_node, const, from_json_builder, graph, operator, to_json_builder
 # White-box: these tests assert on the interned C++ value-type metadata
 # (qualified names, generic specialisation identity), which has no public
@@ -170,6 +171,30 @@ def test_base_annotation_closes_over_defined_python_subclasses():
         return isinstance(value.value, Derived)
 
     assert eval_node(is_derived, [Derived(value=1, label="one")]) == [True]
+
+
+def test_closed_bundle_output_rejects_an_unrelated_compound_scalar():
+    @dataclass
+    class Base(CompoundScalar, namespace="tests.closed_error", abstract=True):
+        value: int
+
+    @dataclass
+    class Derived(Base):
+        label: str
+
+    @dataclass
+    class Unrelated(CompoundScalar, namespace="tests.closed_error"):
+        value: int
+
+    @compute_node
+    def invalid_output(value: TS[int]) -> TS[Base]:
+        return Unrelated(value.value)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Python type '.*\.Unrelated' is not an instance of closed Bundle",
+    ):
+        eval_node(invalid_output, [1])
 
 
 def test_eval_node_finalizes_subclasses_before_const_lifting():
