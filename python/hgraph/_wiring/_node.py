@@ -66,7 +66,7 @@ class _PyNode:
         var_params = [p for p in self._wiring_signature.parameters.values()
                       if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
         if var_params:
-            # hgraph parity (upstream PythonWiringNodeClass): star params
+            # hgraph parity (upstream WiringNodeClass): star params
             # receive ONE packed time-series (a TSL/TSB view), so the code
             # object is rewritten to make every parameter keyword-only.
             import types

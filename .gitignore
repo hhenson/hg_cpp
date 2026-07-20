@@ -13,3 +13,5 @@
 benchmarks/.venv-upstream*/
 benchmarks/.venv-hg-cpp*/
 /reports/
+
+python/_hgraph.abi3.so

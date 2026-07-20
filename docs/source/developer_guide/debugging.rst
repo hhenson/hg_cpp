@@ -22,10 +22,76 @@ When installed through CMake, the scripts are copied to
 The printers cover the common ``SchemaHeader`` and ``TypeRecord`` structures,
 ``AnyPtr``, and every ``TypedPtr<Family, Role>`` specialization (including the
 public value, time-series, node, graph, executor, and clock pointer aliases).
-A pointer summary shows its live/typed-null/unbound state, access mode,
-family/role/kind, semantic label, implementation label, record address, and
-data address. Expanding it exposes the canonical record and then its schema,
-plan, ops, and optional debug descriptor pointers.
+Pointer and type-reference summaries use the same compact notation as public
+views, for example ``ValuePtr{int value=42}``, ``TSOutputPtr{TS[int]}``, and
+``ValueTypeRef{int}``. Typed null and unbound carriers append ``null`` and
+``unbound``. Expanding a pointer exposes the canonical record, where family,
+role, implementation, ABI, plan, ops, debug descriptor, and addresses remain
+available when low-level representation details are needed.
+
+The public authoring/debugging wrappers are covered as well: ``Value`` and
+``ValueView``; value and time-series type references; ``TSData``, ``TSInput``,
+``TSOutput`` and their views; and ``NodeView`` / ``GraphView``.  Time-series
+summaries show their current scalar value and raw last-modified microsecond
+count when available.  Output views also expose an atomic delta at the view's
+evaluation time.  Nodes expand to their input, output, state, and scalar
+storage, while graphs expand to nodes and per-node schedule entries. Registered
+``std::string`` scalars display their contents through an explicit string debug
+kind. Time-series outputs expose their current ``subscriber[N]`` observer
+pointers; these are borrowed ``Notifiable*`` links and may represent nodes or
+internal routing observers. GDB resolves their runtime type, and ``hg-p``
+shallowly dereferences the selected subscriber so its concrete routing or node
+fields can be inspected without recursively printing the graph::
+
+   (gdb) hg-p out subscriber[0]
+   (gdb) hg-p out subscriber[0] notifies
+   (gdb) hg-p out subscriber[0] notifies node
+
+``subscriber[N]`` is the immediate observer. ``notifies`` follows an input
+routing observer's scheduling notifier to its eventual runtime recipient. If
+that recipient is node runtime storage, ``node`` selects the concrete graph
+node and ``graph`` selects its graph handle. ``notification_target`` is an
+alias for ``notifies``.
+
+The same names are synthetic children in GDB's normal pretty-printer tree.
+IDE variable inspectors can therefore expand ``out -> subscriber[N] ->
+notifies -> node`` (or ``graph``) without enabling recursive printing or using
+the command line. Expanding that node exposes its ``input`` and ``output``
+endpoints when present in the node schema.
+
+Public wrapper summaries are intentionally compact. For example,
+``TSOutputView{TS[int] value=11 modified=1us}`` leaves family, role, record,
+implementation, and address details on its expandable ``data`` child. TS data
+also exposes its TS parent or owning node from the stable parent-link metadata;
+the node exposes its owning graph, and the graph exposes nodes and schedules.
+For a bound input, ``source_data`` is the resolved output-side TS data cursor,
+so the normal navigation path is ``TSInputView -> source_data -> owner_node ->
+graph -> nodes``.
+
+GDB shallow navigation
+----------------------
+
+Use ``hg-p`` when normal recursive ``print`` either expands the whole graph or
+hides the link of interest behind ``set print max-depth``. It resolves a path
+and prints only the selected object plus one level of links::
+
+   (gdb) hg-p out owning_node graph nodes 4 output
+
+``nodes N`` selects graph child ``N`` and ``schedule N`` selects its schedule
+entry. Common aliases include ``owning_node``/``owner_node`` and
+``source``/``source_data``. Quoted GDB expressions can be used as the first
+argument when the expression itself contains spaces.
+
+``hg-v`` stores the selected real debugger value in a GDB convenience
+variable, allowing a long prefix to be retained and explored repeatedly::
+
+   (gdb) hg-v $g out owning_node graph
+   $g = AnyPtr{...debugger_graph...}
+   (gdb) hg-p $g nodes 6
+
+Omit ``$g`` to use the default variable ``$hg``. The command form is
+``hg-v $g ...`` rather than ``set $g = hg-v ...`` because GDB commands do not
+return expression values.
 
 They only inspect debug-info fields and memory; they do not call methods in the
 stopped process. Records carrying a stable data-only debug descriptor expose
@@ -40,8 +106,16 @@ nodes expose retained child graph owners. Slot navigation reads the stable
 pointer table and ``SlotBitmap`` state, so erased slots are omitted while
 constructed stopped entries remain inspectable.
 
-Opaque atomic storage, nullable dynamic-list/compact-map validity, and node
-endpoint owners remain explicitly opaque. The printers do not infer a payload
+Structured summaries include ``fields=N`` for bundles and ``size=N`` for
+sequences, sets, and dictionaries. Structured time series retain an expandable
+``value`` child. TSB promotes named child TSData objects directly (the scalar
+bundle remains under ``value``), while TSS promotes ``[N]`` elements and TSD
+promotes ``key[N]`` / ``value[N]`` pairs.
+Their ``last_modified`` child and compact ``modified=Nus`` summary come from
+the TS tracking record rather than the value-layer container.
+
+Opaque atomic storage and nullable dynamic-list/compact-map validity remain
+explicitly opaque. The printers do not infer a payload
 layout from semantic labels, C++ template names, or private container fields.
 
 Build with debug information enabled for reliable output. Optimized builds may

@@ -56,6 +56,7 @@ def atomic_descriptor(**overrides):
         "key_type": 0,
         "element_type": 0,
         "dynamic_layout": 0,
+        "time_series_layout": 0,
     }
     snapshot.update(overrides)
     return snapshot
@@ -130,6 +131,22 @@ class CommonDebuggerFormattingTest(unittest.TestCase):
         self.assertIn("AnyPtr{malformed", malformed)
         self.assertIn("access=invalid(3)", malformed)
 
+    def test_compact_pointer_summaries_keep_only_carrier_type_and_value(self):
+        record = node_record()
+        self.assertEqual(
+            common.compact_pointer_summary("NodePtr", 0x3000, 0x4000, 0, record),
+            "NodePtr{compute[int]}",
+        )
+        self.assertEqual(common.typed_pointer_name(record), "NodePtr")
+        self.assertEqual(
+            common.compact_pointer_summary("ValuePtr", 0x3000, 0x4000, 0, {
+                **record,
+                "role": 1,
+                "schema": {**record["schema"], "family": 1, "label": "int"},
+            }, 42),
+            "ValuePtr{int value=42}",
+        )
+
     def test_family_specific_kinds_do_not_overlap_in_output(self):
         self.assertEqual(common.kind_text(1, 0), "Atomic(0)")
         self.assertEqual(common.kind_text(2, 0), "TS(0)")
@@ -142,7 +159,7 @@ class CommonDebuggerFormattingTest(unittest.TestCase):
         self.assertTrue(common.debug_descriptor_valid(descriptor))
         summary = common.debug_descriptor_summary(descriptor)
         self.assertIn("valid layout=Atomic atomic=SignedInteger", summary)
-        self.assertFalse(common.debug_descriptor_valid(atomic_descriptor(abi_version=2)))
+        self.assertFalse(common.debug_descriptor_valid(atomic_descriptor(abi_version=4)))
         self.assertFalse(common.debug_descriptor_valid(atomic_descriptor(flags=4)))
         self.assertTrue(
             common.debug_descriptor_valid(
@@ -164,6 +181,19 @@ class CommonDebuggerFormattingTest(unittest.TestCase):
         self.assertEqual(common.decode_atomic(3, b"\x01\x00", "big"), 256)
         self.assertAlmostEqual(common.decode_atomic(4, b"\x00\x00\xc0\x3f", "little"), 1.5)
         self.assertIs(common.decode_atomic(2, b"\x00" * 3, "little"), common._MISSING)
+
+    def test_time_series_descriptor_requires_family_layout(self):
+        descriptor = atomic_descriptor(
+            layout=7,
+            atomic_kind=0,
+            time_series_layout=0x6000,
+        )
+        self.assertTrue(common.debug_descriptor_valid(descriptor))
+        self.assertFalse(
+            common.debug_descriptor_valid(
+                atomic_descriptor(layout=7, atomic_kind=0, time_series_layout=0)
+            )
+        )
 
     def test_fixed_field_validity_uses_word_and_bit_indices(self):
         words = (1 | (1 << 63)).to_bytes(8, "little") + (1 << 1).to_bytes(8, "little")

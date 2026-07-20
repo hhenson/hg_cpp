@@ -25,7 +25,7 @@ namespace hgraph
         static_assert(CommonErasedOwner::debug_state_offset() == DEBUG_OWNER_STATE_OFFSET);
         static_assert(CommonErasedOwner::debug_storage_offset() == DEBUG_OWNER_STORAGE_OFFSET);
         inline constexpr std::uint32_t KNOWN_DESCRIPTOR_FLAGS = 1u;
-        inline constexpr std::uint32_t KNOWN_FIELD_FLAGS = (1u << 3u) - 1u;
+        inline constexpr std::uint32_t KNOWN_FIELD_FLAGS = (1u << 4u) - 1u;
         inline constexpr std::uint32_t KNOWN_DYNAMIC_FLAGS = (1u << 10u) - 1u;
         inline constexpr std::uint32_t VALIDITY_WORD_SIZE = sizeof(std::uint64_t);
 
@@ -33,6 +33,7 @@ namespace hgraph
         {
             const SchemaHeader *schema{nullptr};
             const MemoryUtils::StoragePlan *plan{nullptr};
+            const void *representation{nullptr};
 
             [[nodiscard]] bool operator==(const DescriptorKey &) const noexcept = default;
         };
@@ -43,7 +44,9 @@ namespace hgraph
             {
                 const auto schema_hash = std::hash<const SchemaHeader *>{}(key.schema);
                 const auto plan_hash = std::hash<const MemoryUtils::StoragePlan *>{}(key.plan);
-                return schema_hash ^ (plan_hash + 0x9e3779b9u + (schema_hash << 6u) + (schema_hash >> 2u));
+                const auto representation_hash = std::hash<const void *>{}(key.representation);
+                const auto combined = schema_hash ^ (plan_hash + 0x9e3779b9u + (schema_hash << 6u) + (schema_hash >> 2u));
+                return combined ^ (representation_hash + 0x9e3779b9u + (combined << 6u) + (combined >> 2u));
             }
         };
 
@@ -52,6 +55,7 @@ namespace hgraph
             std::vector<std::unique_ptr<std::string>> field_names{};
             std::vector<DebugField> fields{};
             DebugDynamicLayout dynamic_layout{};
+            DebugTimeSeriesLayout time_series_layout{};
             DebugDescriptor descriptor{};
 
             void bind_fields() noexcept
@@ -142,7 +146,8 @@ namespace hgraph
                                                                  DebugLayoutKind layout,
                                                                  const TypeRecord *key_type,
                                                                  const TypeRecord *element_type,
-                                                                 DebugDynamicLayout dynamic_layout)
+                                                                 DebugDynamicLayout dynamic_layout,
+                                                                 const void *representation)
             {
                 if (layout != DebugLayoutKind::Sequence && layout != DebugLayoutKind::KeyedSlots)
                     throw std::invalid_argument("dynamic debug descriptor requires sequence or keyed-slots layout");
@@ -169,7 +174,7 @@ namespace hgraph
                     .element_type = element_type,
                     .dynamic_layout = &entry->dynamic_layout,
                 };
-                return intern(DescriptorKey{&schema, &plan}, std::move(entry));
+                return intern(DescriptorKey{&schema, &plan, representation}, std::move(entry));
             }
 
             [[nodiscard]] const DebugDescriptor &intern_structured(const SchemaHeader &schema,
@@ -206,6 +211,37 @@ namespace hgraph
                 return intern(DescriptorKey{&schema, &plan}, std::move(entry));
             }
 
+            [[nodiscard]] const DebugDescriptor &intern_time_series(
+                const SchemaHeader &schema, const MemoryUtils::StoragePlan &plan,
+                const TypeRecord &value_type, const TypeRecord &delta_type,
+                std::size_t value_offset, std::size_t tracking_offset,
+                std::size_t last_modified_offset, std::size_t parent_offset, std::size_t observers_offset,
+                bool delta_aliases_value, const DebugField *fields, std::size_t field_count,
+                const void *representation)
+            {
+                auto entry = std::make_unique<DescriptorEntry>();
+                if (field_count != 0) { entry->fields.assign(fields, fields + field_count); }
+                entry->own_field_names();
+                entry->time_series_layout = DebugTimeSeriesLayout{
+                    .value_type = &value_type,
+                    .delta_type = &delta_type,
+                    .value_offset = value_offset,
+                    .tracking_offset = tracking_offset,
+                    .last_modified_offset = last_modified_offset,
+                    .parent_offset = parent_offset,
+                    .observers_offset = observers_offset,
+                    .delta_aliases_value = delta_aliases_value,
+                };
+                entry->descriptor = DebugDescriptor{
+                    .magic = DEBUG_DESCRIPTOR_MAGIC,
+                    .abi_version = DEBUG_DESCRIPTOR_ABI_VERSION,
+                    .layout = DebugLayoutKind::TimeSeries,
+                    .time_series_layout = &entry->time_series_layout,
+                };
+                entry->bind_fields();
+                return intern(DescriptorKey{&schema, &plan, representation}, std::move(entry));
+            }
+
             [[nodiscard]] const DebugDescriptor *find(const ValueTypeMetaData &schema,
                                                       const MemoryUtils::StoragePlan &plan) const noexcept
             {
@@ -239,6 +275,10 @@ namespace hgraph
                         ((existing.dynamic_layout == nullptr) != (candidate->descriptor.dynamic_layout == nullptr)) ||
                         (existing.dynamic_layout != nullptr &&
                          *existing.dynamic_layout != *candidate->descriptor.dynamic_layout) ||
+                        ((existing.time_series_layout == nullptr) !=
+                         (candidate->descriptor.time_series_layout == nullptr)) ||
+                        (existing.time_series_layout != nullptr &&
+                         *existing.time_series_layout != *candidate->descriptor.time_series_layout) ||
                         existing.field_count != candidate->descriptor.field_count)
                     {
                         throw std::logic_error("debug descriptor conflicts with the canonical "
@@ -281,8 +321,8 @@ namespace hgraph
         const auto layout_value = static_cast<std::uint8_t>(layout);
         const auto atomic_value = static_cast<std::uint8_t>(atomic_kind);
         if (magic != DEBUG_DESCRIPTOR_MAGIC || abi_version != DEBUG_DESCRIPTOR_ABI_VERSION ||
-            layout_value > static_cast<std::uint8_t>(DebugLayoutKind::Graph) ||
-            atomic_value > static_cast<std::uint8_t>(DebugAtomicKind::FloatingPoint) || reserved0 != 0 ||
+            layout_value > static_cast<std::uint8_t>(DebugLayoutKind::TimeSeries) ||
+            atomic_value > static_cast<std::uint8_t>(DebugAtomicKind::String) || reserved0 != 0 ||
             (static_cast<std::uint32_t>(flags) & ~KNOWN_DESCRIPTOR_FLAGS) != 0 ||
             (field_count == 0) != (fields == nullptr))
         {
@@ -301,11 +341,16 @@ namespace hgraph
         {
             const DebugField &field = fields[index];
             if ((field.type == nullptr && !has_flag(field.flags, DebugFieldFlags::EmbeddedOwner) &&
-                 !has_flag(field.flags, DebugFieldFlags::EmbeddedPointer)) ||
+                 !has_flag(field.flags, DebugFieldFlags::EmbeddedPointer) &&
+                 !has_flag(field.flags, DebugFieldFlags::IndirectEmbeddedPointer)) ||
                 (static_cast<std::uint32_t>(field.flags) & ~KNOWN_FIELD_FLAGS) != 0)
                 return false;
             if (has_flag(field.flags, DebugFieldFlags::EmbeddedOwner) &&
                 has_flag(field.flags, DebugFieldFlags::EmbeddedPointer))
+                return false;
+            if (has_flag(field.flags, DebugFieldFlags::IndirectEmbeddedPointer) &&
+                (has_flag(field.flags, DebugFieldFlags::EmbeddedOwner) ||
+                 has_flag(field.flags, DebugFieldFlags::EmbeddedPointer)))
                 return false;
         }
         const bool requires_dynamic = layout == DebugLayoutKind::Sequence || layout == DebugLayoutKind::KeyedSlots;
@@ -313,7 +358,16 @@ namespace hgraph
         if ((requires_dynamic && dynamic_layout == nullptr) || (!permits_dynamic && dynamic_layout != nullptr)) return false;
         if (dynamic_layout != nullptr && element_type == nullptr) return false;
         if (dynamic_layout != nullptr && !dynamic_layout->valid()) return false;
+        if ((layout == DebugLayoutKind::TimeSeries) != (time_series_layout != nullptr)) return false;
+        if (time_series_layout != nullptr && !time_series_layout->valid()) return false;
         return true;
+    }
+
+    bool DebugTimeSeriesLayout::valid() const noexcept
+    {
+        return value_type != nullptr && delta_type != nullptr &&
+               last_modified_offset >= tracking_offset && parent_offset >= tracking_offset &&
+               observers_offset >= tracking_offset;
     }
 
     bool DebugDynamicLayout::valid() const noexcept
@@ -357,9 +411,11 @@ namespace hgraph
                                                            DebugLayoutKind layout,
                                                            const TypeRecord *key_type,
                                                            const TypeRecord *element_type,
-                                                           DebugDynamicLayout dynamic_layout)
+                                                           DebugDynamicLayout dynamic_layout,
+                                                           const void *representation)
     {
-        return descriptor_registry().intern_dynamic(schema, plan, layout, key_type, element_type, dynamic_layout);
+        return descriptor_registry().intern_dynamic(
+            schema, plan, layout, key_type, element_type, dynamic_layout, representation);
     }
 
     const DebugDescriptor &intern_structured_debug_descriptor(const SchemaHeader &schema,
@@ -373,6 +429,20 @@ namespace hgraph
     {
         return descriptor_registry().intern_structured(schema, plan, layout, fields, field_count, key_type,
                                                        element_type, dynamic_layout);
+    }
+
+    const DebugDescriptor &intern_time_series_debug_descriptor(
+        const SchemaHeader &schema, const MemoryUtils::StoragePlan &plan,
+        const TypeRecord &value_type, const TypeRecord &delta_type,
+        std::size_t value_offset, std::size_t tracking_offset,
+        std::size_t last_modified_offset, std::size_t parent_offset, std::size_t observers_offset,
+        bool delta_aliases_value, const DebugField *fields, std::size_t field_count,
+        const void *representation)
+    {
+        return descriptor_registry().intern_time_series(
+            schema, plan, value_type, delta_type, value_offset, tracking_offset,
+            last_modified_offset, parent_offset, observers_offset, delta_aliases_value,
+            fields, field_count, representation);
     }
 
     const DebugDescriptor *find_value_debug_descriptor(const ValueTypeMetaData &schema,

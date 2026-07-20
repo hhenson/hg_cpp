@@ -1277,6 +1277,28 @@ namespace hgraph::detail
                                          std::size_t storage_offset,
                                          const TSDataLayout &regular_layout)
         {
+            if (schema.kind == TSTypeKind::TSB)
+            {
+                auto context = std::make_unique<TargetLinkContextFor<FixedTSBDataLayout, IndexedTSDataOps>>();
+                initialise_target_link_context(*context, schema, storage_offset);
+                context->layout = static_cast<const FixedTSBDataLayout &>(regular_layout);
+                context->layout.tracking_offset = storage_offset;
+                context->ops = IndexedTSDataOps{};
+                static_cast<TSDataOps &>(context->ops) = target_link_base_ops(*context);
+                static_cast<TSDataOps &>(context->ops).indexed_child_count_impl = &target_link_indexed_size;
+                static_cast<TSDataOps &>(context->ops).indexed_child_binding_impl = &target_link_indexed_element_binding;
+                static_cast<TSDataOps &>(context->ops).indexed_child_memory_impl = &target_link_indexed_element_memory;
+                static_cast<TSDataOps &>(context->ops).mutable_indexed_child_memory_impl =
+                    &target_link_indexed_mutable_element_memory;
+                context->ops.size_impl = &target_link_indexed_size;
+                context->ops.element_binding_impl = &target_link_indexed_element_binding;
+                context->ops.element_memory_impl = &target_link_indexed_element_memory;
+                context->ops.mutable_element_memory_impl = &target_link_indexed_mutable_element_memory;
+                context->indexed_access = &target_link_bundle_access;
+                context->active_layout = &context->layout;
+                context->active_ops = &context->ops;
+                return context;
+            }
             auto context = std::make_unique<TargetLinkContextFor<TSDataLayout, IndexedTSDataOps>>();
             initialise_target_link_context(*context, schema, storage_offset);
             context->layout = regular_layout;

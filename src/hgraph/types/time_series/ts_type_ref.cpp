@@ -1,10 +1,12 @@
 #include <hgraph/types/time_series/ts_type_ref.h>
 
 #include <hgraph/types/metadata/type_record_registry.h>
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/time_series/ts_data/ops.h>
 #include <hgraph/util/scope.h>
 
 #include <stdexcept>
+#include <vector>
 
 namespace hgraph
 {
@@ -87,8 +89,44 @@ namespace hgraph
         {
             throw std::invalid_argument("intern_ts_type requires ops kind matching the schema");
         }
+        const TSDataLayout *layout = ops.layout_impl != nullptr ? ops.layout_impl(ops.context) : nullptr;
+        const DebugDescriptor *debug = nullptr;
+        if (layout != nullptr && layout->value_binding && layout->delta_binding)
+        {
+            std::vector<DebugField> debug_fields;
+            if (schema.kind == TSTypeKind::TSB)
+            {
+                const auto &bundle = static_cast<const FixedTSBDataLayout &>(*layout);
+                debug_fields.reserve(bundle.fields.size());
+                for (std::size_t index = 0; index < bundle.fields.size(); ++index)
+                {
+                    debug_fields.push_back(DebugField{
+                        .name = schema.fields()[index].name,
+                        .offset = bundle.fields[index].data_offset,
+                        .type = bundle.fields[index].type.record(),
+                    });
+                }
+            }
+            const TSDataTracking tracking_sample{};
+            const auto *tracking_base = reinterpret_cast<const std::byte *>(&tracking_sample);
+            const auto last_modified_in_tracking = static_cast<std::size_t>(
+                reinterpret_cast<const std::byte *>(&tracking_sample.last_modified_time) - tracking_base);
+            const auto parent_in_tracking = static_cast<std::size_t>(
+                reinterpret_cast<const std::byte *>(&tracking_sample.parent) - tracking_base);
+            const auto observers_in_tracking = static_cast<std::size_t>(
+                reinterpret_cast<const std::byte *>(&tracking_sample.observers) - tracking_base);
+            debug = &intern_time_series_debug_descriptor(
+                schema.header, plan, *layout->value_binding.record(), *layout->delta_binding.record(),
+                layout->value_offset, layout->tracking_offset,
+                layout->tracking_offset + last_modified_in_tracking,
+                layout->tracking_offset + parent_in_tracking,
+                layout->tracking_offset + observers_in_tracking,
+                schema.kind == TSTypeKind::TS || schema.kind == TSTypeKind::SIGNAL,
+                debug_fields.data(), debug_fields.size(),
+                &ops);
+        }
         const TypeRecordDefinition definition{
-            .key = TypeRecordKey{.schema = &schema.header, .role = role, .plan = &plan, .ops = &ops, .debug = nullptr},
+            .key = TypeRecordKey{.schema = &schema.header, .role = role, .plan = &plan, .ops = &ops, .debug = debug},
             .ops_abi_version = TS_DATA_OPS_ABI_VERSION,
             .capabilities = ts_type_capabilities(role, plan, ops),
             .implementation_label = implementation_label,
