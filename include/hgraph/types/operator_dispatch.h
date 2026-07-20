@@ -1499,8 +1499,9 @@ namespace hgraph
             // Normalized args layout: [prefix…, keyword-only…, variadic tail…]
             // (the candidate's param order). Compose order interleaves the
             // VarIn between prefix and keyword-only — map positions back.
-            return [&]<std::size_t... I, std::size_t... J>(std::index_sequence<I...>,
-                                                           std::index_sequence<J...>) -> OperatorWireResult {
+            auto compose = [&]() -> OperatorWireResult {
+                return [&]<std::size_t... I, std::size_t... J>(std::index_sequence<I...>,
+                                                              std::index_sequence<J...>) -> OperatorWireResult {
                 auto invoke = [&](auto &&...rest) -> OperatorWireResult {
                     if constexpr (operator_dispatch_detail::compose_is_noreturn<Impl>())
                     {
@@ -1576,7 +1577,19 @@ namespace hgraph
                     return invoke_kwonly_then_kwargs(std::move(tail));
                 }
                 else { return invoke_kwonly_then_kwargs(); }
-            }(std::make_index_sequence<lay::prefix_count>{}, std::make_index_sequence<lay::kwonly_count>{});
+                }(std::make_index_sequence<lay::prefix_count>{},
+                  std::make_index_sequence<lay::kwonly_count>{});
+            };
+            if (!w.has_wiring_observers()) { return compose(); }
+
+            const std::string label = static_node_detail::diagnostic_name<Impl>();
+            return w.observe(
+                WiringScopeEvent{
+                    .kind = WiringScopeKind::NestedGraph,
+                    .label = label,
+                    .signature = label,
+                },
+                compose);
         };
         return impl;
     }

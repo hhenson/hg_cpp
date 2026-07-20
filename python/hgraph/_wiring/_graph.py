@@ -55,8 +55,17 @@ def _wrap_graph_fn(gfn, *, input_names=None, scalar_bindings=None):
                     call_args.append(value)
                 else:
                     call_kwargs[parameter.name] = value
-            out = gfn(*call_args, **call_kwargs) if isinstance(
-                gfn, (_GraphFn, _PyNode)) else user_fn(*call_args, **call_kwargs)
+            label = getattr(gfn, "_label", None) or getattr(
+                gfn, "__name__", "<python-graph>")
+            with borrowed_wiring._graph_wiring_scope(label):
+                if isinstance(gfn, _GraphFn):
+                    # The wrapper owns this nested scope. Calling __call__
+                    # would emit the same graph scope a second time.
+                    out = gfn._call(*call_args, **call_kwargs)
+                elif isinstance(gfn, _PyNode):
+                    out = gfn(*call_args, **call_kwargs)
+                else:
+                    out = user_fn(*call_args, **call_kwargs)
             if out is None:
                 return None
             if not isinstance(out, WiringPort):
@@ -419,6 +428,18 @@ class _GraphFn:
         return resolved
 
     def __call__(self, *args, **kwargs):
+        from contextlib import nullcontext
+
+        wiring = _current_wiring()
+        scope_factory = getattr(wiring, "_graph_wiring_scope", None)
+        scope = (
+            scope_factory(self._label or self.__name__)
+            if scope_factory is not None else nullcontext()
+        )
+        with scope:
+            return self._call(*args, **kwargs)
+
+    def _call(self, *args, **kwargs):
         _warn_deprecated(self.__name__, self._deprecated)
         bound = self._signature.bind_partial(*args, **kwargs)
         context_scope = _hgraph.ResolutionScope()

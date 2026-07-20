@@ -974,10 +974,18 @@ void graph_wiring_detail::pop_context_source() noexcept {
   OperatorRegistry::instance().pop_context_scope();
 }
 
+struct WiringObserverRegistry {
+  std::vector<WiringObserver *> observers{};
+};
+
 struct Wiring::Impl {
   std::unordered_set<std::string> component_ids; // claimed recordable ids
 
-  explicit Impl(WiringKind wiring_kind) : kind(wiring_kind) {
+  explicit Impl(WiringKind wiring_kind,
+                std::shared_ptr<WiringObserverRegistry> observer_registry = {},
+                std::vector<std::string> observer_path = {})
+      : observers(std::move(observer_registry)),
+        wiring_path(std::move(observer_path)), kind(wiring_kind) {
     if (kind == WiringKind::TopLevel) {
       if (const GlobalState *state = GlobalContext::active_state()) {
         global_state = *state;
@@ -1017,10 +1025,161 @@ struct Wiring::Impl {
   GlobalState traits{}; // value-layer Map<string, Any>
   std::vector<ServiceImplementationScopeState> implementation_scopes{};
   GlobalState global_state{};
+  std::shared_ptr<WiringObserverRegistry> observers{};
+  std::vector<std::string> wiring_path{};
   WiringKind kind{WiringKind::TopLevel};
 };
 
 Wiring::Wiring(WiringKind kind) : impl_(std::make_unique<Impl>(kind)) {}
+Wiring::Wiring(WiringKind kind,
+               std::shared_ptr<WiringObserverRegistry> observers,
+               std::vector<std::string> path)
+    : impl_(std::make_unique<Impl>(kind, std::move(observers),
+                                  std::move(path))) {}
+
+WiringObservationScope::WiringObservationScope(Wiring &wiring,
+                                               WiringScopeEvent event) {
+  if (!wiring.has_wiring_observers()) {
+    return;
+  }
+  wiring_ = &wiring;
+  event_ = wiring.begin_observation(std::move(event));
+  active_ = true;
+}
+
+WiringObservationScope::WiringObservationScope(
+    WiringObservationScope &&other) noexcept
+    : wiring_(std::exchange(other.wiring_, nullptr)),
+      event_(std::move(other.event_)),
+      active_(std::exchange(other.active_, false)) {}
+
+WiringObservationScope &WiringObservationScope::operator=(
+    WiringObservationScope &&other) noexcept {
+  if (this == &other) {
+    return *this;
+  }
+  cancel_noexcept();
+  wiring_ = std::exchange(other.wiring_, nullptr);
+  event_ = std::move(other.event_);
+  active_ = std::exchange(other.active_, false);
+  return *this;
+}
+
+WiringObservationScope::~WiringObservationScope() noexcept { cancel_noexcept(); }
+
+void WiringObservationScope::complete() {
+  if (!active_) {
+    return;
+  }
+  active_ = false;
+  wiring_->end_observation(event_, {});
+}
+
+void WiringObservationScope::fail(std::string_view error) {
+  if (!active_) {
+    return;
+  }
+  active_ = false;
+  wiring_->end_observation(event_, error);
+}
+
+void WiringObservationScope::cancel_noexcept() noexcept {
+  if (!active_) {
+    return;
+  }
+  active_ = false;
+  static_cast<void>(fallback_on_exception(false, [&] {
+    wiring_->end_observation(event_, "wiring scope abandoned");
+    return true;
+  }));
+}
+
+void Wiring::add_wiring_observer(WiringObserver *observer) {
+  if (observer == nullptr) {
+    throw std::invalid_argument("wiring observer cannot be null");
+  }
+  if (impl_->observers == nullptr) {
+    impl_->observers = std::make_shared<WiringObserverRegistry>();
+  }
+  auto &observers = impl_->observers->observers;
+  if (std::find(observers.begin(), observers.end(), observer) == observers.end()) {
+    observers.push_back(observer);
+  }
+}
+
+bool Wiring::has_wiring_observers() const noexcept {
+  return impl_->observers != nullptr && !impl_->observers->observers.empty();
+}
+
+Wiring Wiring::child_wiring() const {
+  return Wiring{WiringKind::SubGraph, impl_->observers, impl_->wiring_path};
+}
+
+std::vector<std::string> Wiring::current_wiring_path() const {
+  return impl_->wiring_path;
+}
+
+WiringScopeEvent Wiring::begin_observation(WiringScopeEvent event) {
+  impl_->wiring_path.push_back(event.label.empty() ? "<unnamed>" : event.label);
+  event.path = impl_->wiring_path;
+  auto rollback_path = make_scope_exit([&] { impl_->wiring_path.pop_back(); });
+  const auto observers = impl_->observers->observers;
+  for (WiringObserver *observer : observers) {
+    if (observer == nullptr) {
+      continue;
+    }
+    switch (event.kind) {
+    case WiringScopeKind::Graph:
+      observer->on_enter_graph_wiring(event);
+      break;
+    case WiringScopeKind::NestedGraph:
+      observer->on_enter_nested_graph_wiring(event);
+      break;
+    case WiringScopeKind::Node:
+      observer->on_enter_node_wiring(event);
+      break;
+    }
+  }
+  rollback_path.release();
+  return event;
+}
+
+void Wiring::end_observation(const WiringScopeEvent &event,
+                             std::string_view error) {
+  auto pop_path = make_scope_exit([&] {
+    if (!impl_->wiring_path.empty()) {
+      impl_->wiring_path.pop_back();
+    }
+  });
+  const auto observers = impl_->observers->observers;
+  for (WiringObserver *observer : observers) {
+    if (observer == nullptr) {
+      continue;
+    }
+    switch (event.kind) {
+    case WiringScopeKind::Graph:
+      observer->on_exit_graph_wiring(event, error);
+      break;
+    case WiringScopeKind::NestedGraph:
+      observer->on_exit_nested_graph_wiring(event, error);
+      break;
+    case WiringScopeKind::Node:
+      observer->on_exit_node_wiring(event, error);
+      break;
+    }
+  }
+}
+
+void Wiring::notify_overload_resolution(
+    const WiringResolutionEvent &event) const {
+  const auto observers = impl_->observers->observers;
+  for (WiringObserver *observer : observers) {
+    if (observer != nullptr) {
+      observer->on_overload_resolution(event);
+    }
+  }
+}
+
 void Wiring::claim_component_id(std::string_view fq_recordable_id) {
   if (!impl_->component_ids.emplace(std::string{fq_recordable_id}).second) {
     throw std::invalid_argument("component: duplicate recordable id '" +
@@ -1152,9 +1311,45 @@ WiringPortRef Wiring::capture_outer_source(WiringPortRef source) {
   return captured_shape(impl_->captured_inputs.back(), index);
 }
 
+namespace {
+WiringScopeEvent make_node_wiring_event(
+    std::type_index def, const NodeBuilder &builder,
+    std::span<const WiringInputRef> inputs) {
+  const NodeTypeMetaData *node_type = builder.type().schema();
+  std::vector<WiringTypeHandle> input_types;
+  std::vector<std::string> input_schemas;
+  input_types.reserve(inputs.size());
+  input_schemas.reserve(inputs.size());
+  for (const WiringInputRef &input : inputs) {
+    input_types.emplace_back(input.source.schema);
+    input_schemas.push_back(input.source.schema != nullptr
+                                ? std::string{input.source.schema->name()}
+                                : std::string{"<unwired>"});
+  }
+  const TSValueTypeMetaData *output_type =
+      node_type != nullptr ? node_type->output_schema : nullptr;
+  return WiringScopeEvent{
+      .kind = WiringScopeKind::Node,
+      .label = !builder.label().empty()
+                   ? std::string{builder.label()}
+                   : (node_type != nullptr ? std::string{node_type->name()}
+                                           : std::string{def.name()}),
+      .signature = node_type != nullptr ? std::string{node_type->name()}
+                                        : std::string{def.name()},
+      .input_types = std::move(input_types),
+      .input_schemas = std::move(input_schemas),
+      .output_type = WiringTypeHandle{output_type},
+      .output_schema = output_type != nullptr
+                           ? std::string{output_type->name()}
+                           : std::string{},
+  };
+}
+} // namespace
+
 WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder,
                                std::span<const WiringInputRef> inputs,
                                Value scalars) {
+  auto add = [&]() -> WiringPortRef {
   // The passive marker (Python's ``passive(ts)``): a Passive-tagged
   // source removes the receiving slot from THIS node's active list.
   // Adjusted before schema resolution so node identity reflects it.
@@ -1200,6 +1395,11 @@ WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder,
 
   return WiringPortRef::peered_source(&instance, {},
                                       output_schema_of(instance));
+  };
+  if (!has_wiring_observers()) {
+    return add();
+  }
+  return observe(make_node_wiring_event(def, builder, inputs), add);
 }
 
 WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder,
@@ -1219,15 +1419,21 @@ WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder,
 WiringPortRef Wiring::add_unique_node(std::type_index def, NodeBuilder builder,
                                       std::span<const WiringInputRef> inputs,
                                       Value scalars) {
-  builder.scalars(std::move(scalars));
+  auto add = [&]() -> WiringPortRef {
+    builder.scalars(std::move(scalars));
 
-  WiringInstance &instance = impl_->instances.emplace_back();
-  instance.definition = def;
-  instance.builder = std::move(builder);
-  instance.inputs.assign(inputs.begin(), inputs.end());
+    WiringInstance &instance = impl_->instances.emplace_back();
+    instance.definition = def;
+    instance.builder = std::move(builder);
+    instance.inputs.assign(inputs.begin(), inputs.end());
 
-  return WiringPortRef::peered_source(&instance, {},
-                                      output_schema_of(instance));
+    return WiringPortRef::peered_source(&instance, {},
+                                        output_schema_of(instance));
+  };
+  if (!has_wiring_observers()) {
+    return add();
+  }
+  return observe(make_node_wiring_event(def, builder, inputs), add);
 }
 
 WiringPortRef Wiring::add_unique_node(std::type_index def, NodeBuilder builder,
@@ -1553,30 +1759,58 @@ WiringPortRef Wiring::add_node(std::type_index def,
                                std::span<const WiringInputRef> inputs,
                                Value scalars,
                                std::function<NodeBuilder()> make_builder) {
-  const bool interns = schema.output != nullptr;
-  InstanceKey key = make_key(def, schema, inputs, scalars);
-  if (interns) {
-    if (auto it = impl_->interned.find(key); it != impl_->interned.end()) {
-      const WiringInstance *existing = it->second;
-      return WiringPortRef::peered_source(existing, {},
-                                          output_schema_of(*existing));
+  auto add = [&]() -> WiringPortRef {
+    const bool interns = schema.output != nullptr;
+    InstanceKey key = make_key(def, schema, inputs, scalars);
+    if (interns) {
+      if (auto it = impl_->interned.find(key); it != impl_->interned.end()) {
+        const WiringInstance *existing = it->second;
+        return WiringPortRef::peered_source(existing, {},
+                                            output_schema_of(*existing));
+      }
     }
+
+    NodeBuilder builder = make_builder(); // intern miss: only now pay for (and
+                                          // register) the builder
+    builder.scalars(std::move(scalars));
+
+    WiringInstance &instance = impl_->instances.emplace_back();
+    instance.definition = def;
+    instance.builder = std::move(builder);
+    instance.inputs.assign(inputs.begin(), inputs.end());
+    if (interns) {
+      impl_->interned.emplace(std::move(key), &instance);
+    }
+
+    return WiringPortRef::peered_source(&instance, {},
+                                        output_schema_of(instance));
+  };
+  if (!has_wiring_observers()) {
+    return add();
   }
 
-  NodeBuilder builder = make_builder(); // intern miss: only now pay for (and
-                                        // register) the builder
-  builder.scalars(std::move(scalars));
-
-  WiringInstance &instance = impl_->instances.emplace_back();
-  instance.definition = def;
-  instance.builder = std::move(builder);
-  instance.inputs.assign(inputs.begin(), inputs.end());
-  if (interns) {
-    impl_->interned.emplace(std::move(key), &instance);
+  std::vector<WiringTypeHandle> input_types;
+  std::vector<std::string> input_schemas;
+  input_types.reserve(inputs.size());
+  input_schemas.reserve(inputs.size());
+  for (const WiringInputRef &input : inputs) {
+    input_types.emplace_back(input.source.schema);
+    input_schemas.push_back(input.source.schema != nullptr
+                                ? std::string{input.source.schema->name()}
+                                : std::string{"<unwired>"});
   }
-
-  return WiringPortRef::peered_source(&instance, {},
-                                      output_schema_of(instance));
+  WiringScopeEvent event{
+      .kind = WiringScopeKind::Node,
+      .label = std::string{def.name()},
+      .signature = std::string{def.name()},
+      .input_types = std::move(input_types),
+      .input_schemas = std::move(input_schemas),
+      .output_type = WiringTypeHandle{schema.output},
+      .output_schema = schema.output != nullptr
+                           ? std::string{schema.output->name()}
+                           : std::string{},
+  };
+  return observe(std::move(event), add);
 }
 
 WiringPortRef Wiring::add_node(std::type_index def,
@@ -1663,7 +1897,7 @@ void Wiring::apply_service_rank_dependencies() {
   }
 }
 
-GraphBuilder Wiring::finish() && {
+GraphBuilder Wiring::finish_top_level(bool consume_state) {
   if (!impl_->implementation_scopes.empty()) {
     throw std::logic_error("Wiring::finish encountered an unterminated "
                            "service/adaptor implementation scope");
@@ -1675,15 +1909,19 @@ GraphBuilder Wiring::finish() && {
     }
   }
 
-  apply_service_rank_dependencies();
+  apply_service_rank_dependencies(); // add_rank_dependency de-dupes: idempotent
   const auto realization =
       TypeRealizationSnapshot::capture(TypeRegistry::instance());
   TypeRealizationScope realization_scope{realization.get()};
   RankedGraphBuild build = build_ranked_graph(impl_->instances, nullptr);
   validate_same_cycle_pairs(build.index_of);
   build.graph_builder.type_realization(realization);
-  build.graph_builder.global_state(std::move(
-      impl_->global_state)); // carry wiring-time entries onto the graph
+  // Carry wiring-time entries onto the graph: moved on the consuming
+  // finish() path, copied on the snapshot() path so the wiring stays live
+  // (GlobalState is copy-in/copy-out by contract).
+  build.graph_builder.global_state(consume_state
+                                       ? std::move(impl_->global_state)
+                                       : GlobalState{impl_->global_state});
   const ValueView traits_value = impl_->traits.as_value().view();
   const auto traits_map = traits_value.as_map();
   for (const auto [key, boxed] : traits_map) {
@@ -1691,6 +1929,10 @@ GraphBuilder Wiring::finish() && {
   }
   return std::move(build.graph_builder);
 }
+
+GraphBuilder Wiring::finish() && { return finish_top_level(true); }
+
+GraphBuilder Wiring::snapshot() & { return finish_top_level(false); }
 
 CompiledSubGraph Wiring::finish_subgraph(
     std::optional<WiringPortRef> output,

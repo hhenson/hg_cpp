@@ -2102,6 +2102,22 @@ namespace hgraph
         template <typename T> concept has_stop      = requires { &T::stop; };
         template <typename T> concept has_name      = requires { T::name; };
         template <typename T> concept has_implementation_label = requires { T::implementation_label; };
+
+        template <typename T>
+            requires has_name<T>
+        [[nodiscard]] constexpr std::string_view name_view() noexcept
+        {
+            if constexpr (requires { T::name.sv(); }) { return T::name.sv(); }
+            else { return std::string_view{T::name}; }
+        }
+
+        template <typename T>
+        [[nodiscard]] std::string diagnostic_name()
+        {
+            if constexpr (has_name<T>) { return std::string{name_view<T>()}; }
+            else { return typeid(T).name(); }
+        }
+
         template <typename T, typename = void>
         struct signature_args_of
         {

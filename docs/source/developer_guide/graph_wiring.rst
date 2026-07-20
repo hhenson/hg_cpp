@@ -369,6 +369,34 @@ Python wiring drives the **same core**:
   signature reflection ignores, so the logical signatures line up.
 
 
+Wiring diagnostics
+------------------
+
+``WiringObserver`` is the native observation point for graph construction. A
+top-level C++ graph installs borrowed observers with
+``build_graph_with_observers<G>(observers, ...)``; code that constructs a
+``Wiring`` directly uses ``Wiring::add_wiring_observer``. The observer must
+outlive the wiring operation.
+
+Graph, nested-graph, and node callbacks receive ``WiringScopeEvent``. Overload
+selection receives ``WiringResolutionEvent`` with the selected candidate,
+rejected and ambiguous candidates, effective ranks, implementation source, and
+rejection reasons. Paths and labels are owned strings. ``WiringTypeHandle``
+refers only to registry-interned schema metadata, so a copied event remains safe
+to inspect after the temporary ``Wiring`` and completed graph build are gone; no
+``WiringInstance`` or runtime graph pointer crosses this API.
+
+Child-graph compilation calls ``Wiring::child_wiring()``. This explicitly shares
+the observer registry and copies the current path into the child, covering
+``switch_``, ``map_``, ``mesh_``, ``reduce``, and other compiled callables
+without a process global or thread-local observer stack. Callbacks are
+synchronous and observer exceptions abort wiring. ``WiringTracer`` is the
+built-in native formatter and accepts path, graph-event, and node-event filters.
+The observer and event interfaces are C++ APIs. Python may configure the bound
+native ``WiringTracer``, but cannot implement an observer or receive the event
+records through Python callbacks.
+
+
 Status and roadmap
 ------------------
 

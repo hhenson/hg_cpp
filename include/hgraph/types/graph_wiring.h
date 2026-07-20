@@ -11,6 +11,8 @@
 #include <hgraph/types/time_series/endpoint_schema.h>   // time_series_schema_equivalent
 #include <hgraph/types/type_resolution.h>               // ResolutionMap, ts_resolver, unifiers, ts_type
 #include <hgraph/types/value/value.h>                   // Value (scalar configuration)
+#include <hgraph/types/wiring_observer.h>
+#include <hgraph/util/scope.h>
 
 #include <algorithm>
 #include <array>
@@ -737,6 +739,30 @@ namespace hgraph
         SubGraph,
     };
 
+    struct WiringObserverRegistry;
+
+    class HGRAPH_EXPORT WiringObservationScope
+    {
+      public:
+        WiringObservationScope() noexcept = default;
+        WiringObservationScope(Wiring &wiring, WiringScopeEvent event);
+        WiringObservationScope(const WiringObservationScope &) = delete;
+        WiringObservationScope &operator=(const WiringObservationScope &) = delete;
+        WiringObservationScope(WiringObservationScope &&other) noexcept;
+        WiringObservationScope &operator=(WiringObservationScope &&other) noexcept;
+        ~WiringObservationScope() noexcept;
+
+        void complete();
+        void fail(std::string_view error);
+
+      private:
+        void cancel_noexcept() noexcept;
+
+        Wiring         *wiring_{nullptr};
+        WiringScopeEvent event_{};
+        bool            active_{false};
+    };
+
     /**
      * Shared runtime wiring core: accumulates interned ``WiringInstance``s and, on
      * ``finish``, topologically sorts + ranks them into a ``GraphBuilder``. (The
@@ -908,8 +934,63 @@ namespace hgraph
         /** State visible to operator resolution; sub-graphs read the active root seed. */
         [[nodiscard]] GlobalStateView operator_state() noexcept;
 
+        /** Add a borrowed wiring observer. It must outlive this wiring and its children. */
+        void add_wiring_observer(WiringObserver *observer);
+        [[nodiscard]] bool has_wiring_observers() const noexcept;
+        /** Fresh child wiring carrying the same observer registry and current path. */
+        [[nodiscard]] Wiring child_wiring() const;
+        [[nodiscard]] std::vector<std::string> current_wiring_path() const;
+        void notify_overload_resolution(const WiringResolutionEvent &event) const;
+
+        [[nodiscard]] WiringObservationScope observation_scope(WiringScopeEvent event)
+        {
+            return WiringObservationScope{*this, std::move(event)};
+        }
+
+        template <typename Fn>
+        decltype(auto) observe(WiringScopeEvent event, Fn &&fn)
+        {
+            if (!has_wiring_observers())
+            {
+                return std::invoke(std::forward<Fn>(fn));
+            }
+
+            WiringObservationScope scope{*this, std::move(event)};
+            return annotate_on_exception<std::exception>(
+                [&]() -> decltype(auto) {
+                if constexpr (std::is_void_v<std::invoke_result_t<Fn>>)
+                {
+                    std::invoke(std::forward<Fn>(fn));
+                    scope.complete();
+                    return;
+                }
+                else
+                {
+                    decltype(auto) result = std::invoke(std::forward<Fn>(fn));
+                    scope.complete();
+                    return result;
+                }
+                },
+                [&](const std::exception &error) {
+                    static_cast<void>(fallback_on_exception(false, [&] {
+                        scope.fail(error.what());
+                        return true;
+                    }));
+                });
+        }
+
         /** Topologically sort + rank the wired nodes into a rank-ordered GraphBuilder. */
         [[nodiscard]] GraphBuilder finish() &&;
+
+        /**
+         * Build a runnable graph from the wiring **as it currently stands**,
+         * leaving the wiring open for further wiring (interactive/notebook
+         * sessions — design record ``developer_guide/notebook.rst``). Same
+         * validation as ``finish()``; the wiring ``GlobalState`` is COPIED
+         * onto the builder rather than moved. Repeated snapshots are safe:
+         * rank-dependency application de-duplicates.
+         */
+        [[nodiscard]] GraphBuilder snapshot() &;
 
         /**
          * Compile this wiring as a **sub-graph**: rank the nodes into a child
@@ -932,7 +1013,17 @@ namespace hgraph
         void claim_component_id(std::string_view fq_recordable_id);
 
       private:
+        friend class WiringObservationScope;
+
+        Wiring(WiringKind kind,
+               std::shared_ptr<WiringObserverRegistry> observers,
+               std::vector<std::string> path);
+        [[nodiscard]] WiringScopeEvent begin_observation(WiringScopeEvent event);
+        void end_observation(const WiringScopeEvent &event, std::string_view error);
         void apply_service_rank_dependencies();
+        /** Shared body of finish()/snapshot(): validate + rank + build; the
+            wiring GlobalState is moved when consuming, copied otherwise. */
+        [[nodiscard]] GraphBuilder finish_top_level(bool consume_state);
         void validate_same_cycle_pairs(
             const std::unordered_map<const WiringInstance *, std::size_t> &index_of) const;
 
@@ -2969,10 +3060,25 @@ namespace hgraph
             auto arg_tuple    = std::forward_as_tuple(args...);
             auto default_args = call_args_detail::default_args_for<X>();
             call_args_detail::validate_call_args<typename sig::param_types>("wire<G>", arg_tuple, default_args);
-            return [&]<std::size_t... I>(std::index_sequence<I...>) {
-                return X::compose(w, graph_wiring_detail::make_bound_compose_arg<I, typename sig::param_types>(
-                                         w, arg_tuple, default_args)...);
-            }(std::make_index_sequence<sig::param_count()>{});
+            auto compose = [&]() -> decltype(auto) {
+                return [&]<std::size_t... I>(std::index_sequence<I...>) -> decltype(auto) {
+                    return X::compose(
+                        w,
+                        graph_wiring_detail::make_bound_compose_arg<
+                            I, typename sig::param_types>(w, arg_tuple,
+                                                          default_args)...);
+                }(std::make_index_sequence<sig::param_count()>{});
+            };
+            if (!w.has_wiring_observers()) { return compose(); }
+
+            const std::string label = static_node_detail::diagnostic_name<X>();
+            return w.observe(
+                WiringScopeEvent{
+                    .kind = WiringScopeKind::NestedGraph,
+                    .label = label,
+                    .signature = label,
+                },
+                compose);
         }
         else if constexpr (std::is_base_of_v<operator_tag, X>)
         {
@@ -3130,7 +3236,8 @@ namespace hgraph
      * ``Scalar<>`` parameters and forwarded to ``compose``.
      */
     template <typename G, typename... Args>
-    [[nodiscard]] GraphBuilder build_graph(Args &&...args)
+    [[nodiscard]] GraphBuilder build_graph_with_observers(
+        std::span<WiringObserver *const> observers, Args &&...args)
     {
         using sig    = StaticGraphSignature<G>;
         using params = typename sig::param_types;
@@ -3144,16 +3251,41 @@ namespace hgraph
                       "build_graph<G>: every compose parameter after Wiring& must be Scalar<>");
 
         Wiring w;
+        for (WiringObserver *observer : observers) { w.add_wiring_observer(observer); }
         auto   arg_tuple    = std::forward_as_tuple(std::forward<Args>(args)...);
         auto   default_args = call_args_detail::default_args_for<G>();
         call_args_detail::validate_call_args<params>("build_graph<G>", arg_tuple, default_args, "scalar parameter");
-        [&]<std::size_t... I>(std::index_sequence<I...>) {
-            G::compose(w, graph_wiring_detail::make_bound_scalar_param<I, params>(arg_tuple, default_args)...);
-        }(std::make_index_sequence<sig::param_count()>{});
-
-        GraphBuilder graph_builder = std::move(w).finish();
-        if constexpr (static_node_detail::has_name<G>) { graph_builder.label(std::string{G::name}); }
+        auto build = [&] {
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                G::compose(
+                    w,
+                    graph_wiring_detail::make_bound_scalar_param<I, params>(
+                        arg_tuple, default_args)...);
+            }(std::make_index_sequence<sig::param_count()>{});
+            return std::move(w).finish();
+        };
+        GraphBuilder graph_builder = [&] {
+            if (!w.has_wiring_observers()) { return build(); }
+            const std::string label = static_node_detail::diagnostic_name<G>();
+            return w.observe(
+                WiringScopeEvent{
+                    .kind = WiringScopeKind::Graph,
+                    .label = label,
+                    .signature = label,
+                },
+                build);
+        }();
+        if constexpr (static_node_detail::has_name<G>) {
+            graph_builder.label(std::string{static_node_detail::name_view<G>()});
+        }
         return graph_builder;
+    }
+
+    template <typename G, typename... Args>
+    [[nodiscard]] GraphBuilder build_graph(Args &&...args)
+    {
+        return build_graph_with_observers<G>(
+            std::span<WiringObserver *const>{}, std::forward<Args>(args)...);
     }
 
 }  // namespace hgraph

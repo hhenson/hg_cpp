@@ -202,3 +202,52 @@ TEST_CASE("erased wiring: resolution failures surface as OperatorResolutionError
     // Arity/type mismatch on a known name is also a resolution error.
     CHECK_THROWS_AS(call_operator(w, "add_", {}), OperatorResolutionError);
 }
+
+TEST_CASE("wiring snapshot: build and run the graph-so-far, keep wiring (notebook contract)")
+{
+    // Design record: developer_guide/notebook.rst. snapshot() builds a
+    // runnable graph from the CURRENT wiring state without consuming it -
+    // the wiring keeps accepting nodes and can snapshot again, and the
+    // consuming finish() contract is unchanged afterwards.
+    hgraph::stdlib::register_standard_operators();
+    const auto metas = runtime_metas();
+
+    Wiring w;
+    use_dense_recording(w);
+
+    const auto run_snapshot = [&](std::string_view key) {
+        GraphBuilder gb = w.snapshot();
+        GraphExecutorBuilder eb;
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
+        GraphExecutorValue executor = eb.make_executor();
+        auto               view     = executor.view();
+        view.run();
+        return testing::get_recorded_deltas(view.graph().global_state(), key);
+    };
+
+    // "cell 1": a recorded source; snapshot-run evaluates it.
+    auto first = call_operator(w, "const", {scalar_arg(Value{Int{42}}, metas.int_meta)}, true, metas.ts_int);
+    REQUIRE(first.has_output);
+    static_cast<void>(call_operator(
+        w, "record",
+        {ts_arg(first.output.erased()), scalar_arg(Value{Str{"snap::first"}}, metas.str_meta)}, false));
+    auto ticks = run_snapshot("snap::first");
+    REQUIRE(ticks.size() == 1);
+    CHECK(ticks[0].value().view().checked_as<Int>() == 42);
+
+    // "cell 2": the SAME wiring keeps accepting nodes; a second snapshot
+    // evaluates the grown graph.
+    auto second = call_operator(w, "const", {scalar_arg(Value{Int{7}}, metas.int_meta)}, true, metas.ts_int);
+    REQUIRE(second.has_output);
+    static_cast<void>(call_operator(
+        w, "record",
+        {ts_arg(second.output.erased()), scalar_arg(Value{Str{"snap::second"}}, metas.str_meta)}, false));
+    ticks = run_snapshot("snap::second");
+    REQUIRE(ticks.size() == 1);
+    CHECK(ticks[0].value().view().checked_as<Int>() == 7);
+
+    // The consuming finish() path is untouched and still runs afterwards.
+    auto final_ticks = run_and_read(std::move(w), "snap::first");
+    REQUIRE(final_ticks.size() == 1);
+    CHECK(final_ticks[0].value().view().checked_as<Int>() == 42);
+}

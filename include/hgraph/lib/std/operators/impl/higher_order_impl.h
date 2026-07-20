@@ -562,7 +562,8 @@ namespace hgraph::stdlib
             auto       &registry = TypeRegistry::instance();
 
             const std::array<const TSValueTypeMetaData *, 2> schemas{element, element};
-            CompiledSubGraph combiner_graph = combiner.compile({schemas.data(), schemas.size()});
+            CompiledSubGraph combiner_graph = combiner.compile(
+                w, {schemas.data(), schemas.size()});
             if (!combiner_graph.captured_inputs.empty())
             {
                 throw std::invalid_argument(
@@ -656,7 +657,8 @@ namespace hgraph::stdlib
             }
             const auto *element = tsd_schema != nullptr ? tsd_schema->element_ts() : tsl_schema->element_ts();
             const std::array<const TSValueTypeMetaData *, 2> schemas{zero.schema, element};
-            CompiledSubGraph combiner_graph = combiner.compile({schemas.data(), schemas.size()});
+            CompiledSubGraph combiner_graph = combiner.compile(
+                w, {schemas.data(), schemas.size()});
             if (!combiner_graph.captured_inputs.empty())
             {
                 throw std::invalid_argument("ordered reduce does not support combiner captures");
@@ -1154,7 +1156,8 @@ namespace hgraph::stdlib
             std::span<const std::pair<std::string, std::size_t>> named_slots,
             const TSValueTypeMetaData *&output_schema,
             std::optional<bool> &branches_have_output,
-            std::vector<ExternalServiceSlot> &external_services)
+            std::vector<ExternalServiceSlot> &external_services,
+            Wiring *parent = nullptr)
         {
             if (!branch.valid())
             {
@@ -1180,8 +1183,11 @@ namespace hgraph::stdlib
                     slot_sources[slot], boundary_shapes.size(), {}));
             }
 
-            CompiledSubGraph compiled = branch.compile(
-                std::span<const WiringPortRef>{boundary_shapes.data(), boundary_shapes.size()});
+            const auto shapes = std::span<const WiringPortRef>{
+                boundary_shapes.data(), boundary_shapes.size()};
+            CompiledSubGraph compiled = parent != nullptr
+                                            ? branch.compile(*parent, shapes)
+                                            : branch.compile(shapes);
             const std::size_t declared_arity = boundary_shapes.size();
             std::vector<std::size_t> captured_slots;
             captured_slots.reserve(compiled.captured_inputs.size());
@@ -1436,7 +1442,7 @@ namespace hgraph::stdlib
                     .spec = compile_switch_branch(entry.branch, key_boundary,
                                                   ts, positional_count,
                                                   {named_slots.data(), named_slots.size()}, output_schema,
-                                                  branches_have_output, external_services),
+                                                  branches_have_output, external_services, &w),
                 });
             }
             if (cases.default_branch.has_value())
@@ -1446,7 +1452,7 @@ namespace hgraph::stdlib
                                                             positional_count,
                                                             {named_slots.data(), named_slots.size()},
                                                             output_schema, branches_have_output,
-                                                            external_services);
+                                                            external_services, &w);
             }
 
             materialize_external_service_slots(w, std::move(external_services), ts);
@@ -1619,13 +1625,16 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline CompiledSubGraph compile_try_except_child(
             const WiredFn &func,
-            std::span<const TSValueTypeMetaData *const> schemas)
+            std::span<const TSValueTypeMetaData *const> schemas,
+            Wiring *parent = nullptr)
         {
             if (!func.valid())
             {
                 throw std::invalid_argument("try_except: 'func' must be a wirable function");
             }
-            CompiledSubGraph compiled = func.compile(schemas);
+            CompiledSubGraph compiled = parent != nullptr
+                                            ? func.compile(*parent, schemas)
+                                            : func.compile(schemas);
             if (compiled.output_binding.has_value() != (compiled.output_schema != nullptr))
             {
                 throw std::invalid_argument(
@@ -1650,7 +1659,7 @@ namespace hgraph::stdlib
             for (const WiringPortRef &port : bound.ordered) { schemas.push_back(port.schema); }
 
             CompiledSubGraph compiled = compile_try_except_child(
-                func, {schemas.data(), schemas.size()});
+                func, {schemas.data(), schemas.size()}, &w);
 
             std::vector<WiringPortRef> inputs = std::move(bound.ordered);
             inputs.reserve(inputs.size() + compiled.captured_inputs.size() +
@@ -2523,7 +2532,8 @@ namespace hgraph::stdlib
                                                            const TSValueTypeMetaData *&output_schema,
                                                            std::vector<WiringPortRef> *captured = nullptr,
                                                            const ValueTypeMetaData *fallback_key_meta = nullptr,
-                                                           std::vector<NestedServiceInput> *external_services = nullptr)
+                                                           std::vector<NestedServiceInput> *external_services = nullptr,
+                                                           Wiring *parent = nullptr)
         {
             if (!func.valid())
             {
@@ -2550,7 +2560,11 @@ namespace hgraph::stdlib
             if (takes_key) { schemas.push_back(key_ts); }
             schemas.insert(schemas.end(), classified.child_schemas.begin(), classified.child_schemas.end());
 
-            CompiledSubGraph compiled = func.compile({schemas.data(), schemas.size()});
+            const auto child_schemas = std::span<const TSValueTypeMetaData *const>{
+                schemas.data(), schemas.size()};
+            CompiledSubGraph compiled = parent != nullptr
+                                            ? func.compile(*parent, child_schemas)
+                                            : func.compile(child_schemas);
             const bool child_has_output = compiled.output_schema != nullptr;
             if (compiled.output_binding.has_value() != child_has_output)
             {
@@ -2817,7 +2831,7 @@ namespace hgraph::stdlib
             std::vector<NestedServiceInput> external_services;
             MapNodeSpec spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
                                                  {arg_tags.data(), arg_tags.size()}, output_schema, &captured,
-                                                 explicit_key_meta, &external_services);
+                                                 explicit_key_meta, &external_services, &w);
             if ((output_schema != nullptr) != output_required)
             {
                 throw std::invalid_argument(output_required
@@ -3001,13 +3015,13 @@ namespace hgraph::stdlib
                 auto pop = make_scope_exit([] noexcept { OperatorRegistry::instance().pop_mesh_scope(); });
                 map_spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
                                              {arg_tags.data(), arg_tags.size()}, output_schema, &captured,
-                                             explicit_key_meta, &external_services);
+                                             explicit_key_meta, &external_services, &w);
             }
             else
             {
                 map_spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
                                              {arg_tags.data(), arg_tags.size()}, output_schema, &captured,
-                                             explicit_key_meta, &external_services);
+                                             explicit_key_meta, &external_services, &w);
                 const auto *inferred = time_series_schema_as<AnyTSD>(output_schema);
                 if (inferred == nullptr)
                 {
@@ -3854,7 +3868,8 @@ namespace hgraph::stdlib
                                                                           std::span<const std::uint8_t>               arg_tags,
                                                                           const TSValueTypeMetaData                 *&output_schema,
                                                                           std::vector<WiringPortRef>                 &captured,
-                                                                          std::vector<NestedServiceInput>            &external_services) {
+                                                                          std::vector<NestedServiceInput>            &external_services,
+                                                                          Wiring *parent = nullptr) {
             if (!func.valid()) { throw std::invalid_argument("map_: 'func' must be a wirable function (fn<X>())"); }
 
             auto       &registry = TypeRegistry::instance();
@@ -3879,7 +3894,11 @@ namespace hgraph::stdlib
             }
             if (!found_dynamic_tsl) { throw std::invalid_argument("map_: at least one input must be a dynamic TSL"); }
 
-            CompiledSubGraph compiled         = func.compile({child_schemas.data(), child_schemas.size()});
+            const auto schemas = std::span<const TSValueTypeMetaData *const>{
+                child_schemas.data(), child_schemas.size()};
+            CompiledSubGraph compiled = parent != nullptr
+                                            ? func.compile(*parent, schemas)
+                                            : func.compile(schemas);
             const bool       child_has_output = compiled.output_schema != nullptr;
             if (compiled.output_binding.has_value() != child_has_output) {
                 throw std::invalid_argument("map_: the function output schema and nested "
@@ -3971,7 +3990,7 @@ namespace hgraph::stdlib
             std::vector<NestedServiceInput> external_services;
             TslMapNodeSpec spec = compile_dynamic_tsl_map_child(func, takes_index, {ts_schemas.data(), ts_schemas.size()},
                                                                 {arg_tags.data(), arg_tags.size()}, output_schema, captured,
-                                                                external_services);
+                                                                external_services, &w);
             if ((output_schema != nullptr) != output_required) {
                 throw std::invalid_argument(output_required ? "map_: 'func' must produce an output"
                                                             : "map_sink_: 'func' must be a sink");

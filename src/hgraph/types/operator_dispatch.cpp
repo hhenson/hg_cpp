@@ -799,10 +799,54 @@ namespace hgraph
         Wiring *wiring,
         const ResolutionMap *initial_resolution) const
     {
+        const bool diagnostics_enabled =
+            wiring != nullptr && wiring->has_wiring_observers();
+        WiringResolutionEvent diagnostic{};
+        if (diagnostics_enabled)
+        {
+            diagnostic.path = wiring->current_wiring_path();
+            diagnostic.operator_name = name;
+            diagnostic.argument_types.reserve(args.size());
+            diagnostic.argument_schemas.reserve(args.size());
+            for (const WiringArg &arg : args)
+            {
+                if (arg.kind == WiringArg::Kind::TimeSeries)
+                {
+                    diagnostic.argument_types.emplace_back(arg.port.schema);
+                    diagnostic.argument_schemas.push_back(
+                        arg.port.schema != nullptr
+                            ? std::string{arg.port.schema->name()}
+                            : std::string{"<unwired>"});
+                }
+                else
+                {
+                    diagnostic.argument_types.emplace_back(arg.scalar_meta);
+                    diagnostic.argument_schemas.push_back(
+                        arg.scalar_meta != nullptr
+                            ? std::string{arg.scalar_meta->name()}
+                            : std::string{"<scalar>"});
+                }
+            }
+        }
+        const auto emit_diagnostic = [&] {
+            if (diagnostics_enabled) { wiring->notify_overload_resolution(diagnostic); }
+        };
+        const auto candidate_source = [](const OperatorImpl &impl) {
+            return impl.source == OperatorImpl::Source::Cpp
+                       ? WiringCandidateSource::Cpp
+                       : WiringCandidateSource::Python;
+        };
+
         auto it = overloads_.find(std::string{name});
         if (it == overloads_.end() || it->second.empty())
         {
-            throw OperatorResolutionError(fmt::format("no operator '{}' is registered", name));
+            std::string message = fmt::format("no operator '{}' is registered", name);
+            if (diagnostics_enabled)
+            {
+                diagnostic.error = message;
+                emit_diagnostic();
+            }
+            throw OperatorResolutionError(std::move(message));
         }
 
         struct Survivor
@@ -823,6 +867,15 @@ namespace hgraph
             if (!normalize_call(impl, args, call, why))
             {
                 rejected.push_back(fmt::format("  {} [rank {}]: {}", impl.label, impl.rank, why));
+                if (diagnostics_enabled)
+                {
+                    diagnostic.rejected.push_back(WiringCandidateDiagnostic{
+                        .label = impl.label,
+                        .rank = impl.rank,
+                        .source = candidate_source(impl),
+                        .rejection_reason = why,
+                    });
+                }
                 continue;
             }
 
@@ -852,7 +905,20 @@ namespace hgraph
             {
                 survivors.push_back({&impl, std::move(map), std::move(call), impl.rank + rank_adjustment});
             }
-            else { rejected.push_back(fmt::format("  {} [rank {}]: {}", impl.label, impl.rank, why)); }
+            else
+            {
+                const int effective_rank = impl.rank + rank_adjustment;
+                rejected.push_back(fmt::format("  {} [rank {}]: {}", impl.label, effective_rank, why));
+                if (diagnostics_enabled)
+                {
+                    diagnostic.rejected.push_back(WiringCandidateDiagnostic{
+                        .label = impl.label,
+                        .rank = effective_rank,
+                        .source = candidate_source(impl),
+                        .rejection_reason = why,
+                    });
+                }
+            }
         }
 
         if (survivors.empty())
@@ -860,6 +926,11 @@ namespace hgraph
             std::string message =
                 fmt::format("no matching overload for operator '{}' with {} argument(s)\nrejected candidates:\n{}", name,
                             args.size(), fmt::join(rejected, "\n"));
+            if (diagnostics_enabled)
+            {
+                diagnostic.error = message;
+                emit_diagnostic();
+            }
             // A structured signal, not an error-text convention: at least one
             // candidate matched types but failed its requires predicate.
             if (any_requires_rejected) { throw OperatorRequirementsError(std::move(message)); }
@@ -878,16 +949,40 @@ namespace hgraph
                 if (s.rank == survivors[0].rank)
                 {
                     tied.push_back(fmt::format("  {} [rank {}]", s.impl->label, s.rank));
+                    if (diagnostics_enabled)
+                    {
+                        diagnostic.ambiguous.push_back(WiringCandidateDiagnostic{
+                            .label = s.impl->label,
+                            .rank = s.rank,
+                            .source = candidate_source(*s.impl),
+                        });
+                    }
                 }
             }
-            throw OperatorResolutionError(
-                fmt::format("ambiguous overloads for operator '{}':\n{}", name, fmt::join(tied, "\n")));
+            std::string message = fmt::format(
+                "ambiguous overloads for operator '{}':\n{}", name,
+                fmt::join(tied, "\n"));
+            if (diagnostics_enabled)
+            {
+                diagnostic.error = message;
+                emit_diagnostic();
+            }
+            throw OperatorResolutionError(std::move(message));
         }
 
         // Materialise the winner's kwargs: ports pass through; plain VALUES
         // lift to const sources (Python's scalar-kwargs rule). Only the
         // winning candidate wires nodes - losers never touch the graph.
         Survivor &winner = survivors[0];
+        if (diagnostics_enabled)
+        {
+            diagnostic.selected = WiringCandidateDiagnostic{
+                .label = winner.impl->label,
+                .rank = winner.rank,
+                .source = candidate_source(*winner.impl),
+            };
+            emit_diagnostic();
+        }
         std::vector<std::pair<std::string, WiringPortRef>> kwargs;
         kwargs.reserve(winner.call.kwargs.size());
         for (auto &[kw_name, kw_arg] : winner.call.kwargs)

@@ -51,9 +51,8 @@ class EvaluationLifeCycleObserver:
 class GraphConfiguration:
     """Configuration for one native graph execution.
 
-    The public shape matches Python hgraph. Options which do not yet have a
-    native implementation are retained and rejected when the configuration is
-    used; they are never silently ignored.
+    The public shape matches Python hgraph and adapts each option to the native
+    wiring and execution engines.
     """
 
     def __init__(
@@ -103,17 +102,6 @@ class GraphConfiguration:
         _make_evaluation_profiler(self.profile)
         if not isinstance(self.trace_back_depth, int) or self.trace_back_depth < 0:
             raise ValueError("GraphConfiguration.trace_back_depth must be a non-negative integer")
-        unsupported = []
-        for name in ("trace_wiring",):
-            if getattr(self, name):
-                unsupported.append(name)
-        for name in ("wiring_observers",):
-            if getattr(self, name):
-                unsupported.append(name)
-        if unsupported:
-            rendered = ", ".join(unsupported)
-            raise NotImplementedError(
-                f"the C++ graph runner does not yet support: {rendered}")
         if not all(hasattr(self.graph_logger, name)
                    for name in ("setLevel", "log", "getChild")):
             raise TypeError("GraphConfiguration.graph_logger must be a logging.Logger-like object")
@@ -236,9 +224,14 @@ def _evaluate_graph(graph_fn, config, args, kwargs):
     else:
         state[_GRAPH_LOGGER_FORMATTER_KEY] = config.logger_formatter
     config.graph_logger.setLevel(config.default_log_level)
-    w = _hgraph.Wiring(state._impl)
-    _wiring_stack.append(w)
+    w = None
+    wiring_pushed = False
     try:
+        w = _hgraph.Wiring(state._impl)
+        w.configure_wiring_observers(
+            config.trace_wiring, config.wiring_observers)
+        _wiring_stack.append(w)
+        wiring_pushed = True
         wiring_started = time.perf_counter()
         config.graph_logger.debug("Wiring graph: %s", getattr(graph_fn, "__name__", graph_fn))
         out = graph_fn(*args, **kwargs)
@@ -263,8 +256,12 @@ def _evaluate_graph(graph_fn, config, args, kwargs):
                     capture_values=config.capture_values,
                     cleanup_on_error=config.cleanup_on_error)
     finally:
-        w._release_seed_context()
-        _wiring_stack.pop()
+        if w is not None:
+            for line in w.wiring_trace_lines():
+                print(line)
+            w._release_seed_context()
+        if wiring_pushed:
+            _wiring_stack.pop()
         if previous_logger is missing:
             state.pop(_GRAPH_LOGGER_KEY, None)
         else:
@@ -354,13 +351,6 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     scheduled. ``__end_time__`` (Python-hgraph parity) bounds a run
     explicitly; a test that cannot quiesce (e.g. a bound feedback loop
     until per-edge passive support lands) must set it and say why."""
-    unsupported = []
-    if __trace_wiring__:
-        unsupported.append("__trace_wiring__")
-    if unsupported:
-        raise NotImplementedError(
-            "the C++ eval_node harness does not yet support: " +
-            ", ".join(unsupported))
     try:
         fn_sig = inspect.signature(
             fn.fn if isinstance(fn, _GraphFn) or hasattr(fn, "_delegate") else fn)
@@ -457,6 +447,7 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     w = _hgraph.Wiring(GlobalState.instance()._impl)
     _wiring_stack.append(w)
     try:
+        w.configure_wiring_observers(__trace_wiring__, ())
         def _producer_annotation(annotation):
             """eval_node samples are values of the producer behind REF[T]."""
             if isinstance(annotation, _TsExpr) and annotation.handle.is_ref:
@@ -601,6 +592,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         run = w.run(start_time=__start_time__, end_time=__end_time__, trace=trace,
                     observers=tuple(__observers__ or ()))
     finally:
+        for line in w.wiring_trace_lines():
+            print(line)
         w._release_seed_context()
         _wiring_stack.pop()
     if __elide__:

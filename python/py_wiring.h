@@ -17,6 +17,12 @@ namespace hgraph::python_bridge
         GraphExecutorBuilder &builder,
         std::vector<std::unique_ptr<LifecycleObserver>> &owned,
         nb::tuple observers);
+    void configure_python_wiring_observers(
+        Wiring &wiring,
+        std::vector<nb::object> &borrowed,
+        std::unique_ptr<WiringTracer> &tracer,
+        nb::object trace_wiring,
+        nb::tuple observers);
 
     /** Erased WiringArg assembly for the by-name wire path (defined in
         py_wiring.cpp). */
@@ -78,6 +84,8 @@ namespace hgraph::python_bridge
         // against a Wiring the C++ side owns - e.g. a sub-graph compile)
         // aliases without ownership and cannot be run/finished.
         std::unique_ptr<GlobalContext> seed_context{};
+        std::vector<nb::object>        borrowed_wiring_observers{};
+        std::unique_ptr<WiringTracer> wiring_tracer{};
         std::unique_ptr<Wiring>        owned{};
         Wiring                        *raw{nullptr};
         GlobalState                   *python_state{nullptr};
@@ -121,6 +129,42 @@ namespace hgraph::python_bridge
         {
             if (raw == nullptr) { throw std::logic_error("Wiring is no longer available"); }
             return *raw;
+        }
+
+        void configure_wiring_observers(nb::object trace_wiring,
+                                        nb::tuple observers)
+        {
+            ensure_open();
+            configure_python_wiring_observers(
+                wiring_ref(), borrowed_wiring_observers, wiring_tracer,
+                std::move(trace_wiring), std::move(observers));
+        }
+
+        [[nodiscard]] nb::list wiring_trace_lines() const
+        {
+            nb::list result;
+            if (wiring_tracer != nullptr)
+            {
+                for (const std::string &line : wiring_tracer->lines())
+                {
+                    result.append(line);
+                }
+            }
+            return result;
+        }
+
+        [[nodiscard]] WiringObservationScope graph_wiring_scope(
+            std::string label)
+        {
+            Wiring &wiring = wiring_ref();
+            if (!wiring.has_wiring_observers()) { return {}; }
+            const WiringScopeKind kind = wiring.current_wiring_path().empty()
+                                             ? WiringScopeKind::Graph
+                                             : WiringScopeKind::NestedGraph;
+            WiringScopeEvent event{.kind = kind};
+            event.label = std::move(label);
+            event.signature = event.label;
+            return wiring.observation_scope(std::move(event));
         }
 
         [[nodiscard]] nb::object wire(const std::string &name, nb::tuple args, nb::dict kwargs,
@@ -222,7 +266,8 @@ namespace hgraph::python_bridge
             int logger_level, nb::object logger_formatter,
             nb::tuple observers, std::int64_t trace_back_depth,
             bool capture_values,
-            bool cleanup_on_error)
+            bool cleanup_on_error,
+            bool snapshot)
         {
             ensure_open();
             if (owned == nullptr) { throw std::logic_error("a borrowed Wiring cannot be run"); }
@@ -231,8 +276,12 @@ namespace hgraph::python_bridge
                 throw std::invalid_argument(
                     "trace_back_depth must be non-negative");
             }
-            finished = true;
-            GraphBuilder builder = std::move(*owned).finish();
+            // snapshot=true builds from the wiring AS IT STANDS and leaves it
+            // open for further wiring (interactive/notebook sessions —
+            // developer_guide/notebook.rst); the default consumes the wiring.
+            GraphBuilder builder = snapshot
+                                       ? owned->snapshot()
+                                       : (finished = true, std::move(*owned).finish());
 
             GraphExecutorBuilder eb;
             eb.graph_builder(std::move(builder))
