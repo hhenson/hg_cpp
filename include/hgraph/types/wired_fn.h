@@ -120,10 +120,12 @@ namespace hgraph
     struct WiredFnOps
     {
         WiringPortRef (*wire)(const void *context, Wiring &, std::span<const WiringPortRef>){nullptr};
-        CompiledSubGraph (*compile)(const void *context, std::span<const TSValueTypeMetaData *const>){nullptr};
+        CompiledSubGraph (*compile)(const void *context, Wiring *parent,
+                                    std::span<const TSValueTypeMetaData *const>){nullptr};
         std::span<const std::string_view> (*param_names)(const void *context){nullptr};
         const TSValueTypeMetaData *(*input_schema)(const void *context, std::size_t index){nullptr};
         const TSValueTypeMetaData *(*output_schema)(const void *context){nullptr};
+        std::string_view (*diagnostic_label)(const void *context){nullptr};
     };
 
     struct WiredFn
@@ -181,6 +183,17 @@ namespace hgraph
                                                                  : std::span<const std::string_view>{};
         }
 
+        [[nodiscard]] std::string_view diagnostic_label() const noexcept
+        {
+            if (ops != nullptr && ops->diagnostic_label != nullptr)
+            {
+                return ops->diagnostic_label(context);
+            }
+            if (!operator_name.empty()) { return operator_name; }
+            return identity != nullptr ? std::string_view{identity->name()}
+                                       : std::string_view{"<wired-fn>"};
+        }
+
         [[nodiscard]] bool valid() const noexcept
         {
             return ops != nullptr && ops->wire != nullptr && identity != nullptr;
@@ -206,7 +219,18 @@ namespace hgraph
             {
                 throw std::logic_error("WiredFn::compile called on an empty function value");
             }
-            return ops->compile(context, input_schemas);
+            return ops->compile(context, nullptr, input_schemas);
+        }
+
+        [[nodiscard]] CompiledSubGraph compile(
+            Wiring &parent,
+            std::span<const TSValueTypeMetaData *const> input_schemas) const
+        {
+            if (ops == nullptr || ops->compile == nullptr)
+            {
+                throw std::logic_error("WiredFn::compile called on an empty function value");
+            }
+            return ops->compile(context, &parent, input_schemas);
         }
 
         /**
@@ -217,9 +241,23 @@ namespace hgraph
          */
         [[nodiscard]] CompiledSubGraph compile(std::span<const WiringPortRef> boundary_shapes) const
         {
+            return compile_boundary_shapes(nullptr, boundary_shapes);
+        }
+
+        [[nodiscard]] CompiledSubGraph compile(
+            Wiring &parent, std::span<const WiringPortRef> boundary_shapes) const
+        {
+            return compile_boundary_shapes(&parent, boundary_shapes);
+        }
+
+      private:
+        [[nodiscard]] CompiledSubGraph compile_boundary_shapes(
+            Wiring *parent, std::span<const WiringPortRef> boundary_shapes) const
+        {
             if (!valid()) { throw std::logic_error("WiredFn::compile called on an empty function value"); }
 
-            Wiring child{WiringKind::SubGraph};
+            Wiring child = parent != nullptr ? parent->child_wiring()
+                                             : Wiring{WiringKind::SubGraph};
             std::vector<const TSValueTypeMetaData *> schemas;
             schemas.reserve(boundary_shapes.size());
             for (const WiringPortRef &shape : boundary_shapes)
@@ -231,13 +269,29 @@ namespace hgraph
                 schemas.push_back(shape.schema);
             }
 
-            WiringPortRef out = wire(child, boundary_shapes);
-            if (out.schema != nullptr)
-            {
-                return std::move(child).finish_subgraph(out, std::move(schemas));
-            }
-            return std::move(child).finish_subgraph(std::nullopt, std::move(schemas));
+            auto compile = [&] {
+                WiringPortRef out = wire(child, boundary_shapes);
+                if (out.schema != nullptr)
+                {
+                    return std::move(child).finish_subgraph(
+                        out, std::move(schemas));
+                }
+                return std::move(child).finish_subgraph(
+                    std::nullopt, std::move(schemas));
+            };
+            if (!child.has_wiring_observers()) { return compile(); }
+
+            const std::string label{diagnostic_label()};
+            return child.observe(
+                WiringScopeEvent{
+                    .kind = WiringScopeKind::NestedGraph,
+                    .label = label,
+                    .signature = label,
+                },
+                compile);
         }
+
+      public:
 
         [[nodiscard]] bool operator==(const WiredFn &other) const noexcept
         {
@@ -486,7 +540,9 @@ namespace hgraph
         // wired through the same wire<X> dispatch (node / operator / sub-graph),
         // then converted to binding specs by finish_subgraph.
         template <typename X>
-        [[nodiscard]] CompiledSubGraph compile_thunk(std::span<const TSValueTypeMetaData *const> input_schemas)
+        [[nodiscard]] CompiledSubGraph compile_thunk(
+            Wiring *parent,
+            std::span<const TSValueTypeMetaData *const> input_schemas)
         {
             constexpr std::size_t arity = arity_of<X>();
             if constexpr (variadic_of<X>())
@@ -496,7 +552,8 @@ namespace hgraph
                     throw std::invalid_argument(
                         "fn<X>: compiled input schema count does not match the function's inputs");
                 }
-                Wiring                                   w{WiringKind::SubGraph};
+                Wiring w = parent != nullptr ? parent->child_wiring()
+                                             : Wiring{WiringKind::SubGraph};
                 std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
                 std::vector<WiringPortRef>               ports;
                 ports.reserve(input_schemas.size());
@@ -504,14 +561,33 @@ namespace hgraph
                 {
                     ports.push_back(WiringPortRef::boundary_source(index, {}, input_schemas[index]));
                 }
-                auto out = wire_thunk<X>(w, {ports.data(), ports.size()});
-                if constexpr (has_output_of<X>())
+                auto compile = [&] {
+                    auto out = wire_thunk<X>(w, {ports.data(), ports.size()});
+                    if constexpr (has_output_of<X>())
+                    {
+                        return std::move(w).finish_subgraph(out, std::move(schemas));
+                    }
+                    else
+                    {
+                        return std::move(w).finish_subgraph(std::nullopt,
+                                                            std::move(schemas));
+                    }
+                };
+                if constexpr (graph_wiring_detail::is_graph_def<X>)
                 {
-                    return std::move(w).finish_subgraph(out, std::move(schemas));
+                    return compile();
                 }
                 else
                 {
-                    return std::move(w).finish_subgraph(std::nullopt, std::move(schemas));
+                    if (!w.has_wiring_observers()) { return compile(); }
+                    const std::string label = static_node_detail::diagnostic_name<X>();
+                    return w.observe(
+                        WiringScopeEvent{
+                            .kind = WiringScopeKind::NestedGraph,
+                            .label = label,
+                            .signature = label,
+                        },
+                        compile);
                 }
             }
             if (input_schemas.size() != arity)
@@ -519,20 +595,44 @@ namespace hgraph
                 throw std::invalid_argument("fn<X>: compiled input schema count does not match the function's inputs");
             }
 
-            Wiring w{WiringKind::SubGraph};
+            Wiring w = parent != nullptr ? parent->child_wiring()
+                                         : Wiring{WiringKind::SubGraph};
             std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
-            return [&]<std::size_t... I>(std::index_sequence<I...>) -> CompiledSubGraph {
-                if constexpr (has_output_of<X>())
-                {
-                    auto out = wire<X>(w, Port<void>{w, WiringPortRef::boundary_source(I, {}, input_schemas[I])}...);
-                    return std::move(w).finish_subgraph(out.erased(), std::move(schemas));
-                }
-                else
-                {
-                    wire<X>(w, Port<void>{w, WiringPortRef::boundary_source(I, {}, input_schemas[I])}...);
-                    return std::move(w).finish_subgraph(std::nullopt, std::move(schemas));
-                }
-            }(std::make_index_sequence<arity>{});
+            auto compile = [&] {
+                return [&]<std::size_t... I>(std::index_sequence<I...>) -> CompiledSubGraph {
+                    if constexpr (has_output_of<X>())
+                    {
+                        auto out = wire<X>(
+                            w, Port<void>{w, WiringPortRef::boundary_source(
+                                                   I, {}, input_schemas[I])}...);
+                        return std::move(w).finish_subgraph(
+                            out.erased(), std::move(schemas));
+                    }
+                    else
+                    {
+                        wire<X>(w, Port<void>{w, WiringPortRef::boundary_source(
+                                                   I, {}, input_schemas[I])}...);
+                        return std::move(w).finish_subgraph(
+                            std::nullopt, std::move(schemas));
+                    }
+                }(std::make_index_sequence<arity>{});
+            };
+            if constexpr (graph_wiring_detail::is_graph_def<X>)
+            {
+                return compile();
+            }
+            else
+            {
+                if (!w.has_wiring_observers()) { return compile(); }
+                const std::string label = static_node_detail::diagnostic_name<X>();
+                return w.observe(
+                    WiringScopeEvent{
+                        .kind = WiringScopeKind::NestedGraph,
+                        .label = label,
+                        .signature = label,
+                    },
+                    compile);
+            }
         }
         template <typename X>
         [[nodiscard]] std::span<const std::string_view> param_names_thunk()
@@ -680,12 +780,19 @@ namespace hgraph
         {
             static constexpr WiredFnOps ops{
                 [](const void *, Wiring &w, std::span<const WiringPortRef> args) { return wire_thunk<X>(w, args); },
-                [](const void *, std::span<const TSValueTypeMetaData *const> schemas) {
-                    return compile_thunk<X>(schemas);
+                [](const void *, Wiring *parent,
+                   std::span<const TSValueTypeMetaData *const> schemas) {
+                    return compile_thunk<X>(parent, schemas);
                 },
                 [](const void *) { return param_names_thunk<X>(); },
                 [](const void *, std::size_t index) { return input_schema_thunk<X>(index); },
                 [](const void *) { return output_schema_thunk<X>(); },
+                [](const void *) -> std::string_view {
+                    if constexpr (static_node_detail::has_name<X>) {
+                        return static_node_detail::name_view<X>();
+                    }
+                    else { return typeid(X).name(); }
+                },
             };
             return ops;
         }

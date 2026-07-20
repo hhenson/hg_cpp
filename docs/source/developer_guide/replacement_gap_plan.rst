@@ -209,17 +209,15 @@ to exclude process-wide Python shutdown state.
 Wiring trace
 ~~~~~~~~~~~~
 
-There is no native equivalent of ``WiringObserver`` / ``WiringTracer`` or
-``GraphConfiguration(trace_wiring=...)``.  Add a C++ wiring-observer protocol
-at the graph composer and operator registry.  Events should carry stable
-graph paths, labels, schema/type handles, selected candidates, ranks, and
-rejection reasons.  They must not expose the rejected Python
-``WiringNodeInstance`` representation.
-
-The built-in tracer should consume those events natively.  Python observer
-objects may consume immutable bridge records because wiring is not a runtime
-hot path.  This protocol will also make overload and generic-resolution bugs
-substantially easier to diagnose.
+**Completed.** ``WiringObserver`` and ``WiringTracer`` are native C++ APIs at
+the graph composer and operator registry. Events carry stable graph paths,
+labels, interned schema handles, selected candidates, effective ranks, and
+rejection reasons without exposing Python ``WiringNodeInstance`` objects.
+Explicit child-wiring propagation covers higher-order nested compilation.
+Observer implementations and event records remain C++-only.
+``GraphConfiguration(trace_wiring=...)`` and ``eval_node(__trace_wiring__=...)``
+use the native tracer; Python may retain a bound tracer to inspect its formatted
+lines but cannot implement an observer callback.
 
 Inspector
 ~~~~~~~~~
@@ -323,9 +321,10 @@ by the raised exception until safe final teardown.
 Milestone R4: wiring diagnostics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Add the native wiring observer event model and ``WiringTracer``.  Use it in
-operator-resolution tests so selected and rejected overloads can be inspected
-without debugger knowledge of erased implementation objects.
+**Completed.** The native event model and ``WiringTracer`` cover graph, nested
+graph, node, and operator-resolution wiring. Public C++ tests inspect selected,
+rejected, and ambiguous overloads without debugger knowledge of erased
+implementation objects; Python tests cover only the configured native tracer.
 
 Milestone R5: native inspector
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -50,6 +50,26 @@ instance through ``GraphConfiguration(life_cycle_observers=(observer,))`` or
 views over native runtime objects: inspect them inside the callback and retain
 ordinary values such as ``graph_id`` or ``label``, not the view itself.
 
+Wiring diagnostics are separate from runtime lifecycle diagnostics.
+``GraphConfiguration(trace_wiring=True)`` prints the native wiring trace; a
+dictionary accepts ``filter``, ``graph``, and ``node`` options. ``eval_node``
+uses the same path through ``__trace_wiring__``. The native
+``hgraph.test.WiringTracer`` may be supplied through ``wiring_observers`` when
+its collected ``lines`` are needed programmatically:
+
+.. code-block:: python
+
+   from hgraph import GraphConfiguration, evaluate_graph
+   from hgraph.test import WiringTracer
+
+   tracer = WiringTracer(filter="orders")
+   evaluate_graph(app, GraphConfiguration(wiring_observers=(tracer,)))
+   print("\n".join(tracer.lines))
+
+Python-authored wiring observers are deliberately unsupported. The observer
+interface and its event records are C++ diagnostics APIs; Python configuration
+currently accepts only the bound native ``WiringTracer``.
+
 ``trace_back_depth`` bounds the native activation trace attached to an
 uncaught run error; ``capture_values=True`` includes current input values.
 ``cleanup_on_error=False`` defers node stop while the raised exception remains

@@ -587,6 +587,14 @@ Wiring and node-authoring surface
        callback-scoped graph/node views; ``eval_node(__observers__=...)`` uses
        that path too. Run-wide traceback/value capture and cleanup policy are
        native executor options.
+   * - Wiring observers and wiring trace
+     - Full
+     - Native ``WiringObserver`` events cover top-level graphs, nested graph
+       compilation, nodes, and the operator registry. Records own diagnostic
+       text and retain only interned schema handles. ``WiringTracer`` backs
+       ``GraphConfiguration(trace_wiring=...)`` and
+       ``eval_node(__trace_wiring__=...)``. Python may supply that bound native
+       tracer, but observer implementations and event records remain C++-only.
    * - Graph recovery (start-from-state)
      - Missing
      - Note: restart of a stopped instance is out of contract by design;

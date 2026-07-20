@@ -161,8 +161,9 @@ def test_graph_configuration_rejects_unimplemented_options_explicitly():
     def app() -> hg.TS[int]:
         return hg.const(1)
 
-    with pytest.raises(NotImplementedError, match="trace_wiring"):
-        hg.evaluate_graph(app, hg.GraphConfiguration(trace_wiring=True))
+    assert [value for _, value in hg.evaluate_graph(
+        app, hg.GraphConfiguration(trace_wiring={"graph": True, "node": False})
+    )] == [1]
     with pytest.raises(TypeError):
         hg.GraphConfiguration(unknown_option=True)
 

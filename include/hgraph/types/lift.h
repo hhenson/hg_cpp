@@ -474,7 +474,9 @@ namespace hgraph
         }
 
         template <typename F, auto Identity>
-        [[nodiscard]] CompiledSubGraph compile_lifted(std::span<const TSValueTypeMetaData *const> input_schemas)
+        [[nodiscard]] CompiledSubGraph compile_lifted(
+            std::span<const TSValueTypeMetaData *const> input_schemas,
+            Wiring *parent = nullptr)
         {
             const LiftedKernel &k = kernel<F, Identity>();
             if (input_schemas.size() != k.arity)
@@ -482,7 +484,8 @@ namespace hgraph
                 throw std::invalid_argument("lift<F>: compiled input schema count does not match the function arity");
             }
 
-            Wiring w{WiringKind::SubGraph};
+            Wiring w = parent != nullptr ? parent->child_wiring()
+                                         : Wiring{WiringKind::SubGraph};
             std::vector<WiringPortRef> args;
             args.reserve(input_schemas.size());
             std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
@@ -502,9 +505,11 @@ namespace hgraph
         }
 
         template <typename F, auto Identity>
-        [[nodiscard]] CompiledSubGraph compile_thunk(std::span<const TSValueTypeMetaData *const> input_schemas)
+        [[nodiscard]] CompiledSubGraph compile_thunk(
+            Wiring *parent,
+            std::span<const TSValueTypeMetaData *const> input_schemas)
         {
-            return compile_lifted<F, Identity>(input_schemas);
+            return compile_lifted<F, Identity>(input_schemas, parent);
         }
     }  // namespace lift_detail
 
@@ -542,12 +547,18 @@ namespace hgraph
                 [](const void *, Wiring &w, std::span<const WiringPortRef> args) {
                     return lift_detail::wire_thunk<F, Identity>(w, args);
                 },
-                [](const void *, std::span<const TSValueTypeMetaData *const> schemas) {
-                    return lift_detail::compile_thunk<F, Identity>(schemas);
+                [](const void *, Wiring *parent,
+                   std::span<const TSValueTypeMetaData *const> schemas) {
+                    return lift_detail::compile_thunk<F, Identity>(parent, schemas);
                 },
                 [](const void *) { return lift_detail::param_names<F>(); },
                 nullptr,
                 nullptr,
+                [](const void *) -> std::string_view {
+                    const char *name = lift_detail::kernel<F, Identity>().name;
+                    return name != nullptr ? std::string_view{name}
+                                           : std::string_view{"lift"};
+                },
             };
             return ops;
         }

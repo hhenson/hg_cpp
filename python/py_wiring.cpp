@@ -315,9 +315,11 @@ namespace
     }
 
     [[nodiscard]] CompiledSubGraph runtime_operator_compile(
-        const void *context, std::span<const TSValueTypeMetaData *const> input_schemas)
+        const void *context, Wiring *parent,
+        std::span<const TSValueTypeMetaData *const> input_schemas)
     {
-        Wiring child{WiringKind::SubGraph};
+        Wiring child = parent != nullptr ? parent->child_wiring()
+                                         : Wiring{WiringKind::SubGraph};
         std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
         std::vector<WiringPortRef> boundary;
         boundary.reserve(input_schemas.size());
@@ -325,13 +327,24 @@ namespace
         {
             boundary.push_back(WiringPortRef::boundary_source(index, {}, input_schemas[index]));
         }
-        WiringPortRef out = runtime_operator_wire(context, child, boundary);
         const auto &record = *static_cast<const RuntimeOperatorRecord *>(context);
-        if (record.has_output)
-        {
-            return std::move(child).finish_subgraph(out, std::move(schemas));
-        }
-        return std::move(child).finish_subgraph(std::nullopt, std::move(schemas));
+        auto compile = [&] {
+            WiringPortRef out = runtime_operator_wire(context, child, boundary);
+            if (record.has_output)
+            {
+                return std::move(child).finish_subgraph(out, std::move(schemas));
+            }
+            return std::move(child).finish_subgraph(std::nullopt,
+                                                    std::move(schemas));
+        };
+        if (!child.has_wiring_observers()) { return compile(); }
+        return child.observe(
+            WiringScopeEvent{
+                .kind = WiringScopeKind::NestedGraph,
+                .label = record.name,
+                .signature = record.name,
+            },
+            compile);
     }
 
     [[nodiscard]] const WiredFnOps &runtime_operator_ops()
@@ -347,6 +360,9 @@ namespace
             [](const void *, std::size_t) -> const TSValueTypeMetaData * { return nullptr; },
             [](const void *context) -> const TSValueTypeMetaData * {
                 return static_cast<const RuntimeOperatorRecord *>(context)->expected_output;
+            },
+            [](const void *context) -> std::string_view {
+                return static_cast<const RuntimeOperatorRecord *>(context)->name;
             },
         };
         return ops;
@@ -444,6 +460,7 @@ namespace
     }
 
     [[nodiscard]] CompiledSubGraph py_graph_fn_compile(const void *context,
+                                                       Wiring *parent,
                                                        std::span<const TSValueTypeMetaData *const> input_schemas)
     {
         const auto &record = *static_cast<const PyGraphFnRecord *>(context);
@@ -451,7 +468,8 @@ namespace
         {
             throw std::invalid_argument("python graph fn: compiled input schema count does not match its inputs");
         }
-        Wiring child{WiringKind::SubGraph};
+        Wiring child = parent != nullptr ? parent->child_wiring()
+                                         : Wiring{WiringKind::SubGraph};
         std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
         std::vector<WiringPortRef> boundary;
         boundary.reserve(input_schemas.size());
@@ -459,16 +477,17 @@ namespace
         {
             boundary.push_back(WiringPortRef::boundary_source(index, {}, input_schemas[index]));
         }
-        WiringPortRef out =
-            py_graph_fn_wire(context, child, {boundary.data(), boundary.size()});
-        // The call result is authoritative. An unannotated lambda is
-        // provisionally output-producing for generic inference, but may
-        // compile to an actual sink.
+        WiringPortRef out = py_graph_fn_wire(
+            context, child, {boundary.data(), boundary.size()});
+        // The Python wrapper emits the nested graph scope while invoking the
+        // callable. The call result is authoritative: an unannotated lambda
+        // is provisionally output-producing but may compile to an actual sink.
         if (out.schema != nullptr)
         {
             return std::move(child).finish_subgraph(out, std::move(schemas));
         }
-        return std::move(child).finish_subgraph(std::nullopt, std::move(schemas));
+        return std::move(child).finish_subgraph(std::nullopt,
+                                                std::move(schemas));
     }
 
     [[nodiscard]] const WiredFnOps &py_graph_fn_ops()
@@ -488,6 +507,9 @@ namespace
                 // Known when the python fn carries a TS return annotation
                 // (mesh_ learns its element type this way); else null.
                 return static_cast<const PyGraphFnRecord *>(context)->output_schema;
+            },
+            [](const void *context) -> std::string_view {
+                return static_cast<const PyGraphFnRecord *>(context)->diagnostic_label;
             },
         };
         return ops;
@@ -579,6 +601,65 @@ namespace hgraph::python_bridge
                     nb::borrow<nb::object>(observer)));
             }
             builder.add_lifecycle_observer(owned.back().get());
+        }
+    }
+
+    void configure_python_wiring_observers(
+        Wiring &wiring,
+        std::vector<nb::object> &borrowed,
+        std::unique_ptr<WiringTracer> &tracer,
+        nb::object trace_wiring,
+        nb::tuple observers)
+    {
+        if (tracer != nullptr || !borrowed.empty())
+        {
+            throw std::logic_error("wiring observers are already configured");
+        }
+
+        if (!trace_wiring.is_none())
+        {
+            if (nb::isinstance<nb::bool_>(trace_wiring))
+            {
+                if (nb::cast<bool>(trace_wiring))
+                {
+                    tracer = std::make_unique<WiringTracer>();
+                }
+            }
+            else if (nb::isinstance<nb::dict>(trace_wiring))
+            {
+                nb::dict options = nb::cast<nb::dict>(trace_wiring);
+                const std::string filter = options.contains("filter") &&
+                                                   !options["filter"].is_none()
+                                               ? nb::cast<std::string>(options["filter"])
+                                               : std::string{};
+                const bool graph = !options.contains("graph") ||
+                                   nb::cast<bool>(options["graph"]);
+                const bool node = !options.contains("node") ||
+                                  nb::cast<bool>(options["node"]);
+                tracer = std::make_unique<WiringTracer>(filter, graph, node);
+            }
+            else
+            {
+                throw nb::type_error(
+                    "trace_wiring must be bool, dict, or None");
+            }
+            if (tracer != nullptr) { wiring.add_wiring_observer(tracer.get()); }
+        }
+
+        borrowed.reserve(nb::len(observers));
+        for (nb::handle observer : observers)
+        {
+            if (observer.is_none())
+            {
+                throw nb::type_error("wiring_observers cannot contain None");
+            }
+            if (!nb::isinstance<WiringTracer>(observer))
+            {
+                throw nb::type_error(
+                    "wiring_observers currently accepts native WiringTracer instances only");
+            }
+            borrowed.push_back(nb::borrow<nb::object>(observer));
+            wiring.add_wiring_observer(nb::cast<WiringTracer *>(observer));
         }
     }
 
@@ -706,6 +787,26 @@ namespace hgraph::python_bridge
         .def("snapshot", &EvaluationProfiler::snapshot)
         .def("reset", &EvaluationProfiler::reset);
 
+    nb::class_<WiringTracer>(m, "WiringTracer")
+        .def(nb::init<std::string, bool, bool>(), nb::arg("filter") = "",
+             nb::arg("graph") = true, nb::arg("node") = true)
+        .def_prop_ro("lines", [](const WiringTracer &tracer) {
+            return std::vector<std::string>{tracer.lines().begin(),
+                                            tracer.lines().end()};
+        })
+        .def("clear", &WiringTracer::clear);
+    nb::class_<WiringObservationScope>(m, "_WiringObservationScope")
+        .def("__enter__", [](WiringObservationScope &self) -> WiringObservationScope & {
+            return self;
+        }, nb::rv_policy::reference_internal)
+        .def("__exit__", [](WiringObservationScope &self, nb::object,
+                            nb::object error, nb::object) {
+            if (error.is_none()) { self.complete(); }
+            else { self.fail(nb::cast<std::string>(nb::str(error))); }
+            return false;
+        }, nb::arg("exception_type").none(), nb::arg("exception").none(),
+           nb::arg("traceback").none());
+
     nb::class_<PyWiredFn>(m, "WiredFn")
         .def_prop_ro("arity", [](const PyWiredFn &self) { return self.fn.arity; })
         .def_prop_ro("variadic", [](const PyWiredFn &self) { return self.fn.variadic; })
@@ -744,6 +845,13 @@ namespace hgraph::python_bridge
             record->wrapper    = wrapper;
             record->user_fn    = user_callable.is_none() ? identity : user_callable;
             record->identity   = identity;
+            const nb::handle diagnostic_source = user_callable.is_none()
+                                                     ? nb::handle{identity}
+                                                     : nb::handle{user_callable};
+            record->diagnostic_label = nb::hasattr(diagnostic_source, "__name__")
+                                           ? nb::cast<std::string>(
+                                                 diagnostic_source.attr("__name__"))
+                                           : std::string{"<python-graph>"};
             record->has_output = has_output;
             record->arity      = nb::len(param_names);
             if (output_type.has_value()) { record->output_schema = output_type->meta; }
@@ -882,6 +990,13 @@ namespace hgraph::python_bridge
         .def("delayed_binding", &PyWiring::delayed_binding, nb::arg("ts_type"))
         .def("delayed_binding_bind", &PyWiring::delayed_binding_bind,
              nb::arg("delayed"), nb::arg("port"))
+        .def("configure_wiring_observers",
+             &PyWiring::configure_wiring_observers,
+             nb::arg("trace_wiring") = false,
+             nb::arg("observers") = nb::tuple())
+        .def("wiring_trace_lines", &PyWiring::wiring_trace_lines)
+        .def("_graph_wiring_scope", &PyWiring::graph_wiring_scope,
+             nb::arg("label"))
         .def("_release_seed_context", &PyWiring::release_seed_context)
         .def("run", &PyWiring::run, nb::arg("start_time") = nb::none(), nb::arg("end_time") = nb::none(),
              nb::arg("realtime") = false, nb::arg("trace").none() = nb::none(),

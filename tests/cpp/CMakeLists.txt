@@ -172,6 +172,7 @@ hgraph_add_test_objects(hgraph_wiring_test_objects
     test_service_wiring.cpp
     test_static_node.cpp
     test_type_resolution.cpp
+    test_wiring_observers.cpp
 )
 
 hgraph_add_test_objects(hgraph_stdlib_test_objects

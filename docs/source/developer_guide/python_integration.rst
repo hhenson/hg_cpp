@@ -383,9 +383,12 @@ Recorded divergences / gaps (the morning-summary list):
   a view past the callback raises ``RuntimeError``. ``trace_back_depth`` and
   ``capture_values`` configure native uncaught-error diagnostics.
   ``cleanup_on_error=False`` retains the failed executor with the raised
-  exception, deferring stop until that exception is released. Wiring tracing
-  and wiring observers remain unsupported and raise ``NotImplementedError``
-  before wiring. No execution option is accepted and silently discarded.
+  exception, deferring stop until that exception is released.
+  ``trace_wiring=True`` or its ``filter``/``graph``/``node`` options dictionary
+  installs the native ``WiringTracer``. ``wiring_observers`` currently accepts
+  only that bound native tracer; Python-authored callback observers and the
+  native event records are deliberately not exposed. No execution option is
+  accepted and silently discarded.
 - The decorator ``node_impl=`` parameter is present for signature compatibility
   but deliberately rejects non-``None`` values. It selects an implementation
   class from the retired Python runtime; Python authors must provide the node

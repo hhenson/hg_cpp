@@ -89,6 +89,7 @@ set(HGRAPH_WIRING_SOURCES
     hgraph/types/registry_reset.cpp
     hgraph/types/service_runtime.cpp
     hgraph/types/type_pattern.cpp
+    hgraph/types/wiring_observer.cpp
 )
 
 set(HGRAPH_STDLIB_SOURCES
