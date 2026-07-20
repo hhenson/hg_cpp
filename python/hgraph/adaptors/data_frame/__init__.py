@@ -8,18 +8,22 @@ optional producer only: values are converted to Arrow at the boundary.
 from ._data_frame_source import *
 from ._data_source_generators import *
 from ._data_frame_record_replay import *
+from ._data_frame_operators import *
 from ._to_frame_converters import register_to_frame_converters  # noqa: F401 — import registers the frame convert targets
 
 
-def group_by(ts, keys):
-    """Partition a Frame-valued TS by one or more columns."""
-    from hgraph import operator_function
-
-    return operator_function("group_by")(ts, keys)
-
-
 __all__ = [
+    "join",
+    "filter_frame",
+    "filter_cs",
+    "filter_exp",
+    "filter_exp_ts",
+    "filter_exp_seq",
     "group_by",
+    "ungroup",
+    "sorted_",
+    "concat",
+    "with_columns",
     "DataFrameSource",
     "ArrowDataFrameSource",
     "PolarsDataFrameSource",
