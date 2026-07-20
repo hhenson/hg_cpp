@@ -1462,7 +1462,9 @@ class _ContextExpr:
 
 class _CONTEXTMeta(type):
     def __getitem__(cls, item):
-        if isinstance(item, _TsExpr):
+        if isinstance(item, (_TsExpr, _GenericTsExpr)):
+            return _ContextExpr(item)
+        if isinstance(item, (_TypeVarSentinel, _typing.TypeVar)) and not _type_var_is_scalar(item):
             return _ContextExpr(item)
         # CONTEXT[SomeScalar] means CONTEXT[TS[SomeScalar]] (hgraph parity).
         return _ContextExpr(TS[item])

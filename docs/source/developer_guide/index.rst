@@ -10,6 +10,7 @@ The developer guide describes the internal design of the C++ implementation. The
    debugging
    documentation_conventions
    roadmap
+   replacement_gap_plan
    release_readiness
    architecture
    binding_vocabulary

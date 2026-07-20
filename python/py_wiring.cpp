@@ -367,15 +367,17 @@ namespace hgraph::python_bridge
         return PyNodeHandle{found->second};
     });
 
-    m.def("graph_fn", [](nb::object wrapper, nb::object user_fn, nb::list param_names, bool has_output,
-                         std::optional<PyTsType> output_type, nb::list input_types) {
+    m.def("graph_fn", [](nb::object wrapper, nb::object identity, nb::list param_names, bool has_output,
+                         std::optional<PyTsType> output_type, nb::list input_types,
+                         nb::object user_callable) {
         auto &registry = py_graph_fn_registry();
-        auto  found    = registry.find(user_fn.ptr());
+        auto  found    = registry.find(identity.ptr());
         if (found == registry.end())
         {
             auto *record = new PyGraphFnRecord{};   // immortal: WiredFn contexts must outlive every value
             record->wrapper    = wrapper;
-            record->user_fn    = user_fn;
+            record->user_fn    = user_callable.is_none() ? identity : user_callable;
+            record->identity   = identity;
             record->has_output = has_output;
             record->arity      = nb::len(param_names);
             if (output_type.has_value()) { record->output_schema = output_type->meta; }
@@ -388,7 +390,7 @@ namespace hgraph::python_bridge
             record->name_storage.reserve(record->arity);
             for (nb::handle name : param_names) { record->name_storage.push_back(nb::cast<std::string>(name)); }
             for (const auto &name : record->name_storage) { record->names.emplace_back(name); }
-            found = registry.emplace(user_fn.ptr(), record).first;
+            found = registry.emplace(identity.ptr(), record).first;
         }
         const PyGraphFnRecord *record = found->second;
         return PyWiredFn{WiredFn{
@@ -398,8 +400,9 @@ namespace hgraph::python_bridge
             .arity      = record->arity,
             .has_output = record->has_output,
         }};
-    }, nb::arg("wrapper"), nb::arg("user_fn"), nb::arg("param_names"), nb::arg("has_output"),
-       nb::arg("output_type") = nb::none(), nb::arg("input_types") = nb::list());
+    }, nb::arg("wrapper"), nb::arg("identity"), nb::arg("param_names"), nb::arg("has_output"),
+       nb::arg("output_type") = nb::none(), nb::arg("input_types") = nb::list(),
+       nb::arg("user_callable") = nb::none());
 
     nb::class_<PySwitchCases>(m, "SwitchCases");
     nb::class_<PyDispatchCases>(m, "DispatchCases");

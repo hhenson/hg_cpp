@@ -175,6 +175,11 @@ def _overload_wire_trampoline(impl):
         parameter.kind is inspect.Parameter.VAR_POSITIONAL
         for parameter in call_parameters
     )
+    has_keyword_collector = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+    accepted_keywords = set(signature.parameters)
 
     def _wire(borrowed_wiring, args, kwargs, resolution_scope):
         _wiring_stack.append(borrowed_wiring)
@@ -204,7 +209,10 @@ def _overload_wire_trampoline(impl):
                 if resolved is not None:
                     from ._graph import _ResolvedSize
                     values[index] = _ResolvedSize(resolved)
-            call_kwargs = {key: wrap(value) for key, value in kwargs.items()}
+            call_kwargs = {
+                key: wrap(value) for key, value in kwargs.items()
+                if has_keyword_collector or key in accepted_keywords
+            }
             if has_variadic:
                 call_args = values
             else:
@@ -314,6 +322,13 @@ def _register_overload(target, impl, requires=None):
             param_options.append(
                 tuple((parameter.name, pattern, parameter.default) for pattern in patterns)
             )
+    if name == "mesh_" and "__name__" not in sig.parameters:
+        # ``mesh_`` supplies its scope name as a private native control. It is
+        # not part of a user overload's callable signature, but it must not
+        # prevent that overload from participating in registry selection.
+        if positional is None:
+            positional = len(param_options)
+        param_options.append((("__name__", _scalar_pattern(str), ""),))
     output = None
     out_tp = sig.return_annotation
     if out_tp not in (inspect.Signature.empty, None):

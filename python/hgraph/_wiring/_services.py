@@ -35,6 +35,8 @@ def _is_ts_annotation(annotation):
 
 
 def _resolved_service_path(stub, path):
+    if path is None:
+        path = getattr(stub, "_default_path", "")
     resolver = getattr(stub, "_resolved_path", None)
     return resolver(path) if resolver is not None else path
 
@@ -197,17 +199,44 @@ class _GetContext:
     published port carries its own type and the subscript is not needed for
     resolution."""
 
+    __slots__ = ("_tp",)
+
+    def __init__(self, tp=None):
+        self._tp = tp
+
     def __getitem__(self, tp):
-        return self
+        return _GetContext(tp)
 
     def __call__(self, name, tp_=None, required=False):
-        if not context.has(name):
+        if context.has(name):
+            return context.get(name)
+
+        # ``with port as name`` is the Python spelling of a published
+        # context. It predates the explicit C++ context helper, but both must
+        # resolve to the same source, including while a nested service graph
+        # is being compiled.
+        expected = tp_ or self._tp
+        published = None
+        if expected is not None:
+            from .._types import _ContextExpr, _TsExpr, TS
+            from ._core import _resolve_context
+
+            ts_type = expected if isinstance(expected, _TsExpr) else TS[expected]
+            published = _resolve_context(_ContextExpr(ts_type), name)
+        else:
+            from ._core import _context_name_of, _published_contexts
+
+            for port, _, frame in reversed(_published_contexts):
+                if _context_name_of(port, frame) == name:
+                    published = port
+                    break
+        if published is None:
             if required:
                 from ._core import WiringError
 
                 raise WiringError(f"Context variable for {name} is required but not found")
             return None
-        return context.get(name)
+        return published
 
 
 get_context = _GetContext()
@@ -259,6 +288,7 @@ class _ServiceStub:
         )
         if specialization:
             default_path = f"{default_path}[{specialization}]"
+        self._default_path = default_path
         kwargs = {
             "name": fn.__name__,
             "flavour": flavour,
@@ -486,6 +516,7 @@ class _AdaptorStub:
         )
         if specialization:
             default_path = f"{default_path}[{specialization}]"
+        self._default_path = default_path
         kwargs = {
             "name": fn.__name__,
             "flavour": "adaptor",
@@ -580,6 +611,7 @@ class _ServiceAdaptorStub:
         )
         if specialization:
             default_path = f"{default_path}[{specialization}]"
+        self._default_path = default_path
         request = _resolve_annotation(params[0].annotation, resolution)
         output = _resolve_annotation(sig.return_annotation, resolution)
         self.descriptor = None if request is None or output is None else _hgraph.service_descriptor(
@@ -715,7 +747,8 @@ def register_adaptor(path, implementation, resolution_dict=None, **kwargs):
         return
     stub = implementation.interfaces[0]
     resolved_path = _resolved_service_path(stub, path)
-    impl_fn = _bind_registered_impl(implementation, path, kwargs)
+    user_path = getattr(stub, "_default_path", "") if path is None else path
+    impl_fn = _bind_registered_impl(implementation, user_path, kwargs)
     if stub.flavour == "service_adaptor":
         _hgraph.register_service_adaptor_impl(
             _current_wiring(), stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
@@ -1248,7 +1281,8 @@ def _register_resolved_service(path, implementation, kwargs, *, wiring=None):
         return
     stub = implementation.interfaces[0]
     resolved_path = _resolved_service_path(stub, path)
-    impl_fn = _bind_registered_impl(implementation, path, kwargs)
+    user_path = getattr(stub, "_default_path", "") if path is None else path
+    impl_fn = _bind_registered_impl(implementation, user_path, kwargs)
     _hgraph.register_service_impl(
         wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
 

@@ -7,7 +7,7 @@ import _hgraph
 from .._types import (_ContextExpr, _GenericTsExpr, _TsExpr,
                       _TypeVarSentinel, _type_var_name)
 from ._core import (ParseError, WiringError, WiringPort, _current_wiring,
-                    _unwrap, _wiring_stack, wire)
+                    _resolve_context, _unwrap, _wiring_stack, wire)
 from ._markers import _INJECTABLE_MARKERS
 from ._node import (_PyNode, _is_time_series_annotation,
                     _lift_time_series_argument, _warn_deprecated)
@@ -95,7 +95,7 @@ def _wrap_graph_fn(gfn, *, input_names=None, scalar_bindings=None):
     identity = wrapper if input_names is not None or scalar_bindings else gfn
     return _hgraph.graph_fn(
         wrapper, identity, names, has_output, output_type=out_handle,
-        input_types=input_handles)
+        input_types=input_handles, user_callable=gfn)
 
 
 def _prepare_higher_order_call(func, args, kwargs, *, default_key_arg):
@@ -421,10 +421,45 @@ class _GraphFn:
     def __call__(self, *args, **kwargs):
         _warn_deprecated(self.__name__, self._deprecated)
         bound = self._signature.bind_partial(*args, **kwargs)
+        context_scope = _hgraph.ResolutionScope()
         for param in self._signature.parameters.values():
             if param.annotation is GlobalState and param.name not in bound.arguments:
                 bound.arguments[param.name] = GlobalState.instance()
             value = bound.arguments.get(param.name)
+            if isinstance(param.annotation, _ContextExpr):
+                requirement = value if param.name in bound.arguments else param.default
+                if isinstance(requirement, WiringPort):
+                    continue
+                from .._types import _Required, _pattern_of
+
+                name = None
+                required = False
+                if isinstance(requirement, _Required):
+                    required, name = True, requirement.name
+                elif isinstance(requirement, str):
+                    name = requirement
+                resolved = _resolve_context(
+                    param.annotation, name, context_scope)
+                if resolved is not None:
+                    bound.arguments[param.name] = resolved
+                    continue
+                if required:
+                    where = f" with name {name}" if name else ""
+                    raise WiringError(
+                        f"no context published for '{param.name}'{where} of '{self.__name__}'")
+                resolved_type = getattr(param.annotation.ts, "handle", None)
+                if resolved_type is None:
+                    resolved_type = context_scope.resolve_ts(
+                        _pattern_of(param.annotation.ts))
+                bound.arguments[param.name] = (
+                    wire(
+                        "nothing",
+                        output_type=_TsExpr(
+                            resolved_type, f"resolved[{param.annotation.ts!r}]"),
+                    )
+                    if resolved_type is not None else None
+                )
+                continue
             if (param.name in bound.arguments and
                     param.kind in (inspect.Parameter.VAR_POSITIONAL,
                                    inspect.Parameter.VAR_KEYWORD) and

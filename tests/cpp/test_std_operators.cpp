@@ -223,6 +223,15 @@ namespace
         }
     };
 
+    struct FormatBoolGraph
+    {
+        static constexpr auto name = "format_bool_graph";
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Bool>> value)
+        {
+            return wire<stdlib::format_>(w, Str{"value={}"}, value).as<TS<Str>>();
+        }
+    };
+
     struct FormatKwargsGraph
     {
         static constexpr auto name = "format_kwargs_graph";
@@ -1425,6 +1434,8 @@ TEST_CASE("std operators: string operators support replace substr and container 
                  values<Str>(Str{"1 is a test a"}, Str{"2 is a test b"}));
     CHECK_OUTPUT(eval_node<FormatNoArgsGraph>(values<Str>(Str{"plain"}, Str{"escaped {{brace}}"})),
                  values<Str>(Str{"plain"}, Str{"escaped {brace}"}));
+    CHECK_OUTPUT(eval_node<FormatBoolGraph>(values<Bool>(true, false)),
+                 values<Str>(Str{"value=True"}, Str{"value=False"}));
     CHECK_OUTPUT(eval_node<FormatKwargsGraph>(values<Str>(Str{"{ts1} is a test {ts2}"}, none),
                                               values<Int>(1, 2),
                                               values<Str>(Str{"a"}, Str{"b"})),
@@ -1767,6 +1778,17 @@ TEST_CASE("std operators: stream operators cover sampling filtering slicing and 
                                                                none,
                                                                none)),
                  values<Int>(1, none, 3, none, 5));
+    CHECK_OUTPUT(eval_node<stdlib::throttle>(values<Int>(1, 2, 0, 4, 0),
+                                             values<TimeDelta>(MIN_TD * 2,
+                                                               none,
+                                                               none,
+                                                               none,
+                                                               none)),
+                 values<Int>(1, none, 0, none, 0));
+    CHECK_OUTPUT(eval_node<stdlib::throttle>(
+                     values<Str>(Str{"1"}, Str{"2"}, Str{}, Str{"4"}, Str{}),
+                     values<TimeDelta>(MIN_TD * 2, none, none, none, none)),
+                 values<Str>(Str{"1"}, none, Str{}, none, Str{}));
 
     CHECK_OUTPUT(eval_node<stdlib::take>(values<Int>(1, 2, 3, 4, 5), Int{3}),
                  values<Int>(1, 2, 3, none, none));

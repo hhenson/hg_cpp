@@ -174,7 +174,8 @@ namespace hgraph::python_bridge
     struct PyGraphFnRecord
     {
         nb::object                    wrapper;   ///< package-side: wrapper(borrowed_wiring, ports) -> port|None
-        nb::object                    user_fn;   ///< identity anchor + keepalive
+        nb::object                    user_fn;   ///< semantic callable exposed to requires/resolvers
+        nb::object                    identity;  ///< registry identity anchor + keepalive
         std::vector<std::string>      name_storage;
         std::vector<std::string_view> names;
         std::vector<const TSValueTypeMetaData *> input_schemas;

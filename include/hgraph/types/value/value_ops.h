@@ -49,7 +49,7 @@ namespace hgraph
     };
 
     static_assert(sizeof(ValueOpsKind) == 1);
-    inline constexpr std::uint16_t VALUE_OPS_ABI_VERSION = 2;
+    inline constexpr std::uint16_t VALUE_OPS_ABI_VERSION = 3;
 
     struct ValueOps;
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -107,6 +107,8 @@ namespace hgraph
      *   ``std::partial_ordering::equivalent``.
      * - ``to_string(memory)`` — diagnostic string. Non-streamable types
      *   may return the type name.
+     * - ``format_string(memory)`` — user-facing scalar text. It falls back
+     *   to the diagnostic string unless the type supplies a distinct form.
      */
     struct ValueOps
     {
@@ -140,6 +142,7 @@ namespace hgraph
                                            const void *memory) noexcept = nullptr;
         const void *(*concrete_memory_impl)(const void *context, const void *memory) noexcept = nullptr;
         void *(*mutable_concrete_memory_impl)(const void *context, void *memory) noexcept = nullptr;
+        std::string (*format_string_impl)(const void *context, const void *memory) = nullptr;
 
         [[nodiscard]] std::size_t hash(const void *memory) const
         {
@@ -173,6 +176,13 @@ namespace hgraph
         [[nodiscard]] std::string to_string(const void *memory) const
         {
             return to_string_impl != nullptr ? to_string_impl(context, memory) : std::string{};
+        }
+
+        [[nodiscard]] std::string format_string(const void *memory) const
+        {
+            return format_string_impl != nullptr
+                       ? format_string_impl(context, memory)
+                       : to_string(memory);
         }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -449,6 +459,16 @@ namespace hgraph
                 result.push_back('>');
                 return result;
             }
+        }
+
+        template <typename T>
+        std::string format_string_thunk(const void *context, const void *memory)
+        {
+            if constexpr (std::is_same_v<T, bool>)
+            {
+                return *static_cast<const bool *>(memory) ? "True" : "False";
+            }
+            return to_string_thunk<T>(context, memory);
         }
 
     }  // namespace value_ops_detail
@@ -741,18 +761,19 @@ namespace hgraph
     [[nodiscard]] inline const ValueOps &ops_for() noexcept
     {
         static const ValueOps ops{
-            ValueOpsKind::Base,
-            nullptr,
-            true,
-            value_ops_detail::hash_impl_for<T>(),
-            value_ops_detail::equals_impl_for<T>(),
-            value_ops_detail::compare_impl_for<T>(),
-            &value_ops_detail::to_string_thunk<T>,
+            .kind = ValueOpsKind::Base,
+            .context = nullptr,
+            .allows_mutation = true,
+            .hash_impl = value_ops_detail::hash_impl_for<T>(),
+            .equals_impl = value_ops_detail::equals_impl_for<T>(),
+            .compare_impl = value_ops_detail::compare_impl_for<T>(),
+            .to_string_impl = &value_ops_detail::to_string_thunk<T>,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
-            &value_ops_detail::to_python_thunk<T>,
-            &value_ops_detail::from_python_thunk<T>,
-            &value_ops_detail::to_python_buffer_thunk<T>,
+            .to_python_impl = &value_ops_detail::to_python_thunk<T>,
+            .from_python_impl = &value_ops_detail::from_python_thunk<T>,
+            .to_python_buffer_impl = &value_ops_detail::to_python_buffer_thunk<T>,
 #endif
+            .format_string_impl = &value_ops_detail::format_string_thunk<T>,
         };
         return ops;
     }

@@ -55,6 +55,12 @@ namespace hgraph
             return value.has_value() ? value.to_string() : std::string{"None"};
         }
 
+        std::string any_format_string(const void *, const void *memory)
+        {
+            const Value &value = *static_cast<const Value *>(memory);
+            return value.has_value() ? value.format_string() : std::string{"None"};
+        }
+
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         nb::object any_to_python(const void *, const void *memory)
         {
@@ -97,20 +103,19 @@ namespace hgraph
     const ValueOps &any_ops() noexcept
     {
         static const ValueOps ops{
-            ValueOpsKind::Base,
-            nullptr,  // context
-            true,     // allows_mutation
-            &any_hash,
-            &any_equals,
-            &any_compare,
-            &any_to_string,
+            .kind = ValueOpsKind::Base,
+            .context = nullptr,
+            .allows_mutation = true,
+            .hash_impl = &any_hash,
+            .equals_impl = &any_equals,
+            .compare_impl = &any_compare,
+            .to_string_impl = &any_to_string,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
-            &any_to_python,
-            &any_from_python,
-            nullptr,  // to_python_buffer
+            .to_python_impl = &any_to_python,
+            .from_python_impl = &any_from_python,
+            .to_python_buffer_impl = nullptr,
 #endif
-            // copy_construct_view / copy_assign_view / owning_binding default to
-            // nullptr: the storage plan's lifecycle copies the embedded Value.
+            .format_string_impl = &any_format_string,
         };
         return ops;
     }

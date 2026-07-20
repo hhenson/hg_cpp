@@ -357,6 +357,12 @@ namespace hgraph
             return type().ops_ref().to_string(data());
         }
 
+        [[nodiscard]] std::string format_string() const
+        {
+            if (!valid()) { return std::string{}; }
+            return type().ops_ref().format_string(data());
+        }
+
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         [[nodiscard]] nb::object to_python() const;
         void from_python(nb::handle source);

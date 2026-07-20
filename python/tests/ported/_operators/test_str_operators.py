@@ -157,6 +157,14 @@ def test_format_sampled():
     assert eval_node(format_test, [f_str], ts1, ts2) == expected
 
 
+def test_format_uses_python_boolean_spelling():
+    @graph
+    def app(value: TS[bool]) -> TS[str]:
+        return format_("value={}", value)
+
+    assert eval_node(app, [True, False]) == ["value=True", "value=False"]
+
+
 def test_substr():
     assert eval_node(substr, ["abcdef"], [0], [3]) == ["abc"]
     assert eval_node(substr, ["abcdef"], [2], [4]) == ["cd"]

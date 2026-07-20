@@ -593,10 +593,10 @@ class _PyNode:
                     required, name = True, requirement.name
                 elif isinstance(requirement, str):
                     name = requirement
-                resolved = _resolve_context(param.annotation, name)
+                resolved = _resolve_context(param.annotation, name, scope)
                 if resolved is None:
                     where = f" with name {name}" if name else ""
-                    if required or name is not None:
+                    if required:
                         raise WiringError(
                             f"no context published for '{param.name}'{where} of '{self.__name__}'")
                     continue   # optional and absent: the fn sees its None default
