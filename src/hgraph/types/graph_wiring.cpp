@@ -529,7 +529,7 @@ struct OuterCaptureCollector {
   std::optional<std::size_t> ordinal;
   std::vector<std::size_t> expected_path;
 
-  const auto matches_boundary = [&](this const auto &self,
+  const auto matches_boundary = [&](const auto &self,
                                     const WiringPortRef &part) -> bool {
     if (part.is_null_source()) {
       return true;
@@ -552,7 +552,7 @@ struct OuterCaptureCollector {
     const auto &children = part.structural_children();
     for (std::size_t index = 0; index < children.size(); ++index) {
       expected_path.push_back(index);
-      const bool matches = self(children[index]);
+      const bool matches = self(self, children[index]);
       expected_path.pop_back();
       if (!matches) {
         return false;
@@ -561,7 +561,8 @@ struct OuterCaptureCollector {
     return true;
   };
 
-  if (!source.is_structural_source() || !matches_boundary(source)) {
+  if (!source.is_structural_source() ||
+      !matches_boundary(matches_boundary, source)) {
     return std::nullopt;
   }
   return ordinal;

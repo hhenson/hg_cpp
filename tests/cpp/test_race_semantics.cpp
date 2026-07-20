@@ -156,6 +156,81 @@ namespace
             return Port<void>{w, raced.output.erased()}.as<PairBundle>();
         }
     };
+
+    struct RaceDirectBundleTsdGraph
+    {
+        static constexpr auto name = "race_direct_bundle_tsd_graph";
+        using PairBundle = RaceTsbRevokeGraph::PairBundle;
+
+        static Port<PairBundle> compose(Wiring &w, Port<TSD<Int, PairBundle>> tsd)
+        {
+            return wire<stdlib::reduce_tsd_of_bundles_with_race>(w, tsd).template as<PairBundle>();
+        }
+    };
+
+    using RaceSourceBundle =
+        UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Int>>, Field<"active", TS<Bool>>>;
+
+    struct RaceStructuralBundleTerminal
+    {
+        static Port<RaceTsbRevokeGraph::PairBundle> compose(
+            Wiring &, Port<REF<RaceTsbRevokeGraph::PairBundle>> bundle)
+        {
+            return bundle.template as<RaceTsbRevokeGraph::PairBundle>();
+        }
+    };
+
+    struct RaceLiveBundleBranch
+    {
+        static Port<RaceTsbRevokeGraph::PairBundle> compose(
+            Wiring &w, Port<TS<Int>> a, Port<TS<Int>> b, Port<TS<Bool>>)
+        {
+            auto bundle = stdlib::to_tsb<RaceTsbRevokeGraph::PairBundle>(w, a, b);
+            return wire<RaceStructuralBundleTerminal>(w, bundle);
+        }
+    };
+
+    struct RaceInvalidBundleBranch
+    {
+        static Port<RaceTsbRevokeGraph::PairBundle> compose(
+            Wiring &w, Port<TS<Int>> a, Port<TS<Int>> b, Port<TS<Bool>> active)
+        {
+            auto bundle = stdlib::to_tsb<RaceTsbRevokeGraph::PairBundle>(w, a, b);
+            return wire<stdlib::filter_>(w, active, bundle)
+                .template as<RaceTsbRevokeGraph::PairBundle>();
+        }
+    };
+
+    struct RaceMappedSwitchBody
+    {
+        static Port<RaceTsbRevokeGraph::PairBundle> compose(
+            Wiring &w, Port<RaceSourceBundle> source)
+        {
+            auto a = wire<stdlib::getitem_>(w, source, Str{"a"}).template as<TS<Int>>();
+            auto b = wire<stdlib::getitem_>(w, source, Str{"b"}).template as<TS<Int>>();
+            auto active = wire<stdlib::getitem_>(w, source, Str{"active"}).template as<TS<Bool>>();
+            return wire<stdlib::switch_>(
+                       w, active,
+                       stdlib::switch_cases(
+                           {{Value{true}, fn<RaceLiveBundleBranch>()},
+                            {Value{false}, fn<RaceInvalidBundleBranch>()}})
+                           .reload(),
+                       a, b, active)
+                .template as<RaceTsbRevokeGraph::PairBundle>();
+        }
+    };
+
+    struct RaceMappedSwitchGraph
+    {
+        static Port<RaceTsbRevokeGraph::PairBundle> compose(
+            Wiring &w, Port<TSD<Int, RaceSourceBundle>> source)
+        {
+            auto mapped = wire<stdlib::map_>(w, fn<RaceMappedSwitchBody>(), source)
+                              .template as<TSD<Int, RaceTsbRevokeGraph::PairBundle>>();
+            return wire<stdlib::reduce_tsd_of_bundles_with_race>(w, mapped)
+                .template as<RaceTsbRevokeGraph::PairBundle>();
+        }
+    };
 }  // namespace
 
 TEST_CASE("race over TSBs delivers the re-raced winner's values")
@@ -171,4 +246,37 @@ TEST_CASE("race over TSBs delivers the re-raced winner's values")
     };
     CHECK_OUTPUT(eval_node<RaceTsbRevokeGraph>(values<Bool>(false, true)),
                  values<Value>(pair_delta(11, 12), pair_delta(21, 22)));
+}
+
+TEST_CASE("race over a TSD of direct bundles exposes bundle references")
+{
+    stdlib::register_standard_operators();
+    using namespace hgraph::testing;
+    using PairBundle = RaceDirectBundleTsdGraph::PairBundle;
+
+    CHECK_OUTPUT(
+        eval_node<RaceDirectBundleTsdGraph>(
+            values<Value>(dict_delta<Int, PairBundle>(
+                              {{1, tsb_delta<PairBundle>(Int{11}, Int{12})},
+                               {2, tsb_delta<PairBundle>(Int{21}, Int{22})}}),
+                          dict_delta<Int, PairBundle>({}, {1}))),
+        values<Value>(tsb_delta<PairBundle>(Int{11}, Int{12}),
+                      tsb_delta<PairBundle>(Int{21}, Int{22})));
+}
+
+TEST_CASE("race over mapped switches falls back when the winning bundle becomes invalid")
+{
+    stdlib::register_standard_operators();
+    using namespace hgraph::testing;
+    using PairBundle = RaceTsbRevokeGraph::PairBundle;
+
+    CHECK_OUTPUT(
+        eval_node<RaceMappedSwitchGraph>(values<Value>(
+            dict_delta<Int, RaceSourceBundle>(
+                {{1, tsb_delta<RaceSourceBundle>(Int{11}, Int{12}, true)},
+                 {2, tsb_delta<RaceSourceBundle>(Int{21}, Int{22}, true)}}),
+            dict_delta<Int, RaceSourceBundle>(
+                {{1, tsb_delta<RaceSourceBundle>(none, none, false)}}))),
+        values<Value>(tsb_delta<PairBundle>(Int{11}, Int{12}),
+                      tsb_delta<PairBundle>(Int{21}, Int{22})));
 }

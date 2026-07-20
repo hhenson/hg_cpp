@@ -174,20 +174,9 @@ void bind_branch_output(const NodeView &view, const SwitchNodeContext &context,
   }
 
   if (context.spec.output_forwards_to_child_terminal) {
-    if (!switch_output.forwarding()) {
-      throw std::logic_error("switch_ output must be forwarding when "
-                             "preserving a branch terminal");
-    }
-    // Keep the stable terminal in the chain rather than flattening
-    // its current forwarding target. Dynamic terminals such as
-    // mesh_subscribe may re-point while the branch evaluates.
-    if (!switch_output.forwarding_target().same_as(branch_terminal.handle())) {
-      if (sampled) {
-        switch_output.bind_forwarding_target_sampled(branch_terminal);
-      } else {
-        switch_output.bind_forwarding_target(branch_terminal);
-      }
-    }
+    static_cast<void>(bind_forwarding_output_tree_to_source(
+        std::move(switch_output), branch_terminal, sampled,
+        ForwardingSourceMode::PreserveEndpoint));
     return;
   }
 
@@ -209,9 +198,7 @@ void clear_branch_output(const NodeView &view, const SwitchNodeContext &context,
   if (context.spec.output_forwards_to_child_terminal) {
     auto output =
         walk_ts_path(view.output(evaluation_time), binding.target_path);
-    if (output.forwarding() && output.forwarding_bound()) {
-      output.clear_forwarding_target();
-    }
+    static_cast<void>(clear_forwarding_output_tree(std::move(output)));
     return;
   }
 
@@ -480,10 +467,11 @@ NodeBuilder switch_node(NodeTypeMetaData meta, SwitchNodeSpec spec) {
 
   meta.node_kind = NodeKind::Nested;
   if (meta.output_schema != nullptr) {
-    meta.output_endpoint_schema =
-        spec.output_forwards_to_child_terminal
-            ? TSEndpointSchema::peered(meta.output_schema)
-            : TSEndpointSchema::owned(meta.output_schema);
+    meta.output_endpoint_schema = spec.output_forwards_to_child_terminal
+                                      ? forwarding_output_endpoint_schema(
+                                            meta.output_schema)
+                                      : TSEndpointSchema::owned(
+                                            meta.output_schema);
   }
 
   NodeTypeDescriptor descriptor;

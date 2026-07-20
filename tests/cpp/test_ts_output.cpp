@@ -891,6 +891,34 @@ TEST_CASE("forwarding TSS outputs preserve slot observer remove and erase protoc
     link_set.unsubscribe_slot_observer(&observer);
 }
 
+TEST_CASE("sampled forwarding rebind publishes a valid-to-invalid transition")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts       = registry.ts(int_meta);
+
+    TSOutput valid_source{*ts};
+    TSOutput invalid_source{*ts};
+    TSOutput forwarding{TSEndpointSchema::peered(ts)};
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + TimeDelta{1};
+
+    Value value{11};
+    REQUIRE(valid_source.begin_mutation(t1).copy_value_from(value.view()));
+    forwarding.view(t1).bind_forwarding_target(valid_source.view(t1));
+    REQUIRE(forwarding.view(t1).valid());
+
+    RecordingNotifiable observer;
+    forwarding.data_view().subscribe(&observer);
+    forwarding.view(t2).bind_forwarding_target_sampled(invalid_source.view(t2));
+
+    REQUIRE_FALSE(forwarding.view(t2).valid());
+    REQUIRE(observer.notified == std::vector<DateTime>{t2});
+    forwarding.data_view().unsubscribe(&observer);
+}
+
 TEST_CASE("TSOutput non-peered TSD realizes closed-union keys")
 {
     using namespace hgraph;

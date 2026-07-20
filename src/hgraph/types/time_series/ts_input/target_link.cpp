@@ -536,6 +536,8 @@ namespace hgraph::detail
         }
 
         const bool structural = schema.kind == TSTypeKind::TSS || schema.kind == TSTypeKind::TSD;
+        const bool previous_was_valid =
+            sampled && state_.target.bound() && state_.target.view(modified_time).valid();
         const bool previous_has_published_key =
             sampled && structural && state_.target.bound() &&
             has_published_structural_key(state_.target.data_view(), modified_time);
@@ -560,7 +562,8 @@ namespace hgraph::detail
         subscribe_key_set_tracking();
         subscribe_slot_observers();
         resubscribe_active_target(schema);
-        const bool publish_sampled_transition = sampled && (output.valid() || previous_has_published_key);
+        const bool publish_sampled_transition =
+            sampled && (output.valid() || previous_was_valid || previous_has_published_key);
         if (publish_sampled_transition)
         {
             if (structural)

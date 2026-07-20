@@ -221,6 +221,14 @@ namespace
         }
     };
 
+    struct StructuralBundleReference
+    {
+        static Port<SwitchSignalBundle> compose(Wiring &, Port<REF<SwitchSignalBundle>> bundle)
+        {
+            return bundle.as<SwitchSignalBundle>();
+        }
+    };
+
     struct ConstantBundleBranch
     {
         static constexpr auto name = "constant_bundle_branch";
@@ -230,7 +238,7 @@ namespace
             auto p1 = wire<stdlib::const_, TS<Int>>(w, Int{1});
             auto p2 = wire<stdlib::const_, TS<Str>>(w, Str{"fixed"});
             auto bundle = stdlib::to_tsb<SwitchSignalBundle>(w, p1, p2);
-            return wire<stdlib::pass_through_node>(w, bundle).as<SwitchSignalBundle>();
+            return wire<StructuralBundleReference>(w, bundle);
         }
     };
 
@@ -244,6 +252,14 @@ namespace
         }
     };
 
+    struct StructuralListReference
+    {
+        static Port<SwitchIntList> compose(Wiring &, Port<REF<SwitchIntList>> list)
+        {
+            return list.as<SwitchIntList>();
+        }
+    };
+
     struct ConstantListBranch
     {
         static constexpr auto name = "constant_list_branch";
@@ -252,8 +268,8 @@ namespace
         {
             auto first = wire<stdlib::const_, TS<Int>>(w, Int{1});
             auto second = wire<stdlib::const_, TS<Int>>(w, Int{2});
-            auto list = stdlib::to_tsl<SwitchIntList>(w, first, second);
-            return wire<stdlib::pass_through_node>(w, list).as<SwitchIntList>();
+            auto list = stdlib::to_tsl<SwitchIntList>(w, first, second).as<SwitchIntList>();
+            return wire<StructuralListReference>(w, list);
         }
     };
 

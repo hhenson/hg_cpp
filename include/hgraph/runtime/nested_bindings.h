@@ -365,9 +365,17 @@ inline bool clear_forwarding_output_tree(TSOutputView target,
 }
 
 /** Bind every forwarding leaf in a fixed structural output tree. */
+enum class ForwardingSourceMode
+{
+  ResolveCurrentTarget,
+  PreserveEndpoint,
+};
+
 inline bool bind_forwarding_output_tree_to_source(TSOutputView target,
                                                   const TSOutputView &source,
-                                                  bool sampled = false) {
+                                                  bool sampled = false,
+                                                  ForwardingSourceMode source_mode =
+                                                      ForwardingSourceMode::ResolveCurrentTarget) {
   TSOutputView effective_source = source.borrowed_ref();
   if (source.bound() && source.schema() != nullptr &&
       source.schema()->kind == TSTypeKind::REF && target.schema() != nullptr &&
@@ -379,20 +387,22 @@ inline bool bind_forwarding_output_tree_to_source(TSOutputView target,
   }
 
   if (target.forwarding()) {
-    TSOutputView resolved_source =
-        resolve_forwarding_source(std::move(effective_source));
-    if (!resolved_source.bound()) {
+    TSOutputView binding_source =
+        source_mode == ForwardingSourceMode::ResolveCurrentTarget
+            ? resolve_forwarding_source(std::move(effective_source))
+            : std::move(effective_source);
+    if (!binding_source.bound()) {
       return clear_forwarding_output_tree(std::move(target), sampled);
     }
 
     const TSOutputHandle before = target.forwarding_target();
-    if (before.same_as(resolved_source.handle())) {
+    if (before.same_as(binding_source.handle())) {
       return false;
     }
     if (sampled) {
-      target.bind_forwarding_target_sampled(resolved_source);
+      target.bind_forwarding_target_sampled(binding_source);
     } else {
-      target.bind_forwarding_target(resolved_source);
+      target.bind_forwarding_target(binding_source);
     }
     return true;
   }
@@ -427,8 +437,8 @@ inline bool bind_forwarding_output_tree_to_source(TSOutputView target,
   bool changed = false;
   for (std::size_t index = 0; index < child_count; ++index) {
     changed = bind_forwarding_output_tree_to_source(
-                  target.indexed_child_at(index),
-                  effective_source.indexed_child_at(index), sampled) ||
+                  target.indexed_child_at(index), effective_source.indexed_child_at(index),
+                  sampled, source_mode) ||
               changed;
   }
   return changed;

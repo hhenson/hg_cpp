@@ -512,9 +512,8 @@ namespace hgraph
                 {
                     auto mux_input = root_input.indexed_child_at(mux_index);
                     if (!mux_input.valid() || !mux_input.modified()) { continue; }
-                    auto dict = checked_dict_view(mux_input.data_view().borrowed_ref(),
-                                                  "selective multiplexed input", mux_index);
-                    for (const ValueView &key : dict.modified_keys(evaluation_time))
+                    auto dict = mux_input.as_dict();
+                    for (const ValueView &key : dict.modified_keys())
                     {
                         storage.repoint_modified_keys.emplace_back(key);
                     }

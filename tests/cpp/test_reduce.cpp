@@ -930,6 +930,28 @@ TEST_CASE("reduce over TSD: a collection combiner wires a three-argument map")
                       dict_delta<Int, TS<Int>>({{2, 6}}, {3})));
 }
 
+TEST_CASE("reduce over TSD: compacting a generic map combiner samples surviving leaves")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    std::map<Int, Value> initial;
+    for (Int index = 0; index < 17; ++index)
+    {
+        initial.emplace(index, dict_delta<Int, TS<Int>>(
+                                   {{0, index + 1}, {1, index + 2}}));
+    }
+    std::vector<Int> removed;
+    for (Int index = 0; index < 11; ++index) { removed.push_back(index); }
+
+    CHECK_OUTPUT(
+        (eval_node<ReduceNestedIntDicts>(values<Value>(
+            static_node_detail::build_dict_delta<Int, TSD<Int, TS<Int>>>(initial, {}),
+            dict_delta<Int, TSD<Int, TS<Int>>>({}, removed)))),
+        values<Value>(dict_delta<Int, TS<Int>>({{0, 153}, {1, 170}}),
+                      dict_delta<Int, TS<Int>>({{0, 87}, {1, 93}})));
+}
+
 TEST_CASE("reduce over TSD: a switched keyed result removes through a downstream map")
 {
     using namespace hgraph;

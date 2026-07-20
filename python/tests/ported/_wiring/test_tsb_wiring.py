@@ -13,6 +13,7 @@ from hgraph import (
     TSB,
     TSB_OUT,
     TSL,
+    TSS,
     TimeSeriesSchema,
     TS,
     combine,

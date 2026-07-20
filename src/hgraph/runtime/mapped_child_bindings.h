@@ -221,7 +221,8 @@ namespace hgraph::runtime_detail
                 // can retarget while the child evaluates; subscribing to the
                 // terminal lets that transition propagate to the map element.
                 static_cast<void>(bind_forwarding_output_tree_to_source(
-                    element.borrowed_ref(), child_terminal));
+                    element.borrowed_ref(), child_terminal, false,
+                    ForwardingSourceMode::PreserveEndpoint));
                 break;
             case MapOutputBindingMode::OutputElementForwardsToParentSource:
                 throw std::logic_error("mapped child child-output binding cannot use parent-source mode");

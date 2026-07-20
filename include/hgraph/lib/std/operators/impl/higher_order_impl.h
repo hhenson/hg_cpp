@@ -1074,7 +1074,8 @@ namespace hgraph::stdlib
         }
 
         [[nodiscard]] inline bool switch_branch_requires_preserved_terminal(
-            const SingleNestedGraphNodeSpec &spec)
+            const SingleNestedGraphNodeSpec &spec,
+            const TSValueTypeMetaData *switch_output_schema)
         {
             if (!spec.output_binding.has_value() ||
                 spec.output_binding->kind != NestedGraphOutputBinding::Kind::ChildOutput)
@@ -1092,6 +1093,19 @@ namespace hgraph::stdlib
                 terminal_meta != nullptr ? terminal_meta->output_endpoint_schema : terminal_override;
             const TSEndpointSchema &terminal_endpoint =
                 !terminal_override.empty() ? terminal_override : terminal_declared;
+            const auto *terminal_schema =
+                terminal_meta != nullptr ? terminal_meta->output_schema : nullptr;
+            const auto *branch_output_schema =
+                switch_branch_output_schema_at(terminal_schema, source.path);
+            if (switch_output_schema != nullptr &&
+                switch_output_schema->kind != TSTypeKind::REF &&
+                branch_output_schema->kind == TSTypeKind::REF &&
+                time_series_schema_equivalent(
+                    TypeRegistry::instance().dereference(branch_output_schema),
+                    switch_output_schema))
+            {
+                return true;
+            }
             return !terminal_endpoint.empty() &&
                    (terminal_endpoint.is_peered() || terminal_endpoint.is_non_peered());
         }
@@ -1195,15 +1209,26 @@ namespace hgraph::stdlib
             }
 
             const bool branch_has_output = compiled.output_schema != nullptr;
+            const auto *branch_output_schema = compiled.output_schema;
+            if (compiled.output_is_structural_reference)
+            {
+                // A structural TSB/TSL return is given a synthetic REF
+                // terminal so the child graph has one peered endpoint. That
+                // REF is a child-graph implementation detail, not the public
+                // result type of switch_. Explicitly authored REF outputs do
+                // not carry this flag and retain their REF identity.
+                branch_output_schema =
+                    TypeRegistry::instance().dereference(branch_output_schema);
+            }
             if (!branches_have_output.has_value()) { branches_have_output = branch_has_output; }
             else if (*branches_have_output != branch_has_output)
             {
                 throw std::invalid_argument(
                     "switch_: branches must either all produce an output or all be sinks");
             }
-            if (branch_has_output && output_schema == nullptr) { output_schema = compiled.output_schema; }
+            if (branch_has_output && output_schema == nullptr) { output_schema = branch_output_schema; }
             else if (branch_has_output &&
-                     !time_series_schema_equivalent(output_schema, compiled.output_schema))
+                     !time_series_schema_equivalent(output_schema, branch_output_schema))
             {
                 // Branches may differ only in REF-ness (one produces the
                 // value, another the reference - hgraph parity): the switch
@@ -1211,9 +1236,9 @@ namespace hgraph::stdlib
                 // the boundary binding.
                 auto &registry = TypeRegistry::instance();
                 if (time_series_schema_equivalent(registry.dereference(output_schema),
-                                                  registry.dereference(compiled.output_schema)))
+                                                  registry.dereference(branch_output_schema)))
                 {
-                    if (compiled.output_schema->kind == TSTypeKind::REF) { output_schema = compiled.output_schema; }
+                    if (branch_output_schema->kind == TSTypeKind::REF) { output_schema = branch_output_schema; }
                 }
                 else
                 {
@@ -1434,8 +1459,8 @@ namespace hgraph::stdlib
             }
             if (output_required)
             {
-                const auto requires_preserved_terminal = [](const SingleNestedGraphNodeSpec &branch) {
-                    return switch_branch_requires_preserved_terminal(branch);
+                const auto requires_preserved_terminal = [output_schema](const SingleNestedGraphNodeSpec &branch) {
+                    return switch_branch_requires_preserved_terminal(branch, output_schema);
                 };
                 spec.output_forwards_to_child_terminal =
                     std::any_of(spec.branches.begin(), spec.branches.end(),
@@ -2296,11 +2321,13 @@ namespace hgraph::stdlib
             materialize_external_service_slots(w, std::move(external_services), ts);
             spec.output_forwards_to_child_terminal =
                 std::any_of(spec.branches.begin(), spec.branches.end(),
-                            [](const SwitchBranch &branch) {
-                                return switch_branch_requires_preserved_terminal(branch.spec);
+                            [output_schema](const SwitchBranch &branch) {
+                                return switch_branch_requires_preserved_terminal(
+                                    branch.spec, output_schema);
                             }) ||
                 (spec.default_branch.has_value() &&
-                 switch_branch_requires_preserved_terminal(*spec.default_branch));
+                 switch_branch_requires_preserved_terminal(
+                     *spec.default_branch, output_schema));
             for (SwitchBranch &branch : spec.branches)
             {
                 configure_switch_branch_output(
