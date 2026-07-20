@@ -45,6 +45,14 @@ namespace hgraph
             bool          starting{false};
         };
 
+        [[nodiscard]] std::size_t node_runtime_graph_offset(const NodeTypeMetaData &schema)
+        {
+            const NodeRuntimeStorage sample{schema, {}};
+            return static_cast<std::size_t>(
+                reinterpret_cast<const std::byte *>(&sample.graph) -
+                reinterpret_cast<const std::byte *>(&sample));
+        }
+
         void schedule_node_from_storage(GraphValue *graph, std::size_t node_index, DateTime modified_time)
         {
             if (graph == nullptr) { return; }
@@ -1006,6 +1014,14 @@ namespace hgraph
             throw std::invalid_argument("intern_node_type requires a valid node schema header");
         }
         std::vector<DebugField> debug_fields;
+        const auto *runtime_storage = plan.find_component("runtime_storage");
+        if (runtime_storage == nullptr)
+            throw std::logic_error("node debug descriptor could not resolve runtime storage");
+        debug_fields.push_back(DebugField{
+            .name = "graph",
+            .offset = runtime_storage->offset + node_runtime_graph_offset(schema),
+            .flags = DebugFieldFlags::IndirectEmbeddedPointer,
+        });
         const auto append_value_owner = [&](const char *name, const ValueTypeMetaData *value_schema) {
             if (value_schema == nullptr) { return; }
             const auto *component = plan.find_component(name);

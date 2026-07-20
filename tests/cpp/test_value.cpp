@@ -58,7 +58,7 @@ TEST_CASE("Value TypeRecords carry atomic and fixed-composite debug descriptors"
     REQUIRE(int_type.record()->debug->layout == DebugLayoutKind::Atomic);
     REQUIRE(int_type.record()->debug->atomic_kind == DebugAtomicKind::SignedInteger);
     REQUIRE(bool_type.record()->debug->atomic_kind == DebugAtomicKind::Boolean);
-    REQUIRE(string_type.record()->debug->atomic_kind == DebugAtomicKind::Opaque);
+    REQUIRE(string_type.record()->debug->atomic_kind == DebugAtomicKind::String);
 
     const auto *bundle_schema = registry.bundle(
         "DebugDescriptorPair", {{"number", int_schema}, {"enabled", bool_schema}});

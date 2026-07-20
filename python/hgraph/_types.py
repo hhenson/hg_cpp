@@ -1559,13 +1559,14 @@ TIME_SERIES_TYPE_2 = _TypeVarSentinel("TIME_SERIES_TYPE_2")
 OUT = _TypeVarSentinel("OUT")
 K_1 = _TypeVarSentinel("K_1", is_scalar=True)
 SIZE = _typing.TypeVar("SIZE")
-V = _TypeVarSentinel("V", is_scalar=True)
+V = _TypeVarSentinel("V")
 K = _TypeVarSentinel("K", is_scalar=True)
 WINDOW_SIZE = _TypeVarSentinel("WINDOW_SIZE", is_scalar=True)
 ENUM = _TypeVarSentinel("ENUM", is_scalar=True)
 WINDOW_SIZE_MIN = _TypeVarSentinel("WINDOW_SIZE_MIN", is_scalar=True)
 TABLE = _TypeVarSentinel("TABLE", is_scalar=True)
 COMPOUND_SCALAR = _TypeVarSentinel("COMPOUND_SCALAR", is_scalar=True)
+COMPOUND_SCALAR_1 = _TypeVarSentinel("COMPOUND_SCALAR", is_scalar=True)
 
 
 def with_signature(fn=None, *, annotations=None, args=None, kwargs=None, defaults=None,

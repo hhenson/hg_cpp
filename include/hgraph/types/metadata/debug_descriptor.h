@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <type_traits>
 
 namespace hgraph
@@ -15,9 +16,10 @@ namespace hgraph
     struct TypeRecord;
     struct ValueTypeMetaData;
     struct DebugDynamicLayout;
+    struct DebugTimeSeriesLayout;
 
     inline constexpr std::uint32_t DEBUG_DESCRIPTOR_MAGIC = 0x48474444u;
-    inline constexpr std::uint16_t DEBUG_DESCRIPTOR_ABI_VERSION = 1;
+    inline constexpr std::uint16_t DEBUG_DESCRIPTOR_ABI_VERSION = 3;
     inline constexpr std::uint32_t DEBUG_DYNAMIC_LAYOUT_MAGIC = 0x4847444cu;
     inline constexpr std::uint16_t DEBUG_DYNAMIC_LAYOUT_ABI_VERSION = 1;
     inline constexpr std::size_t DEBUG_OWNER_IDENTITY_OFFSET = 0;
@@ -37,6 +39,7 @@ namespace hgraph
         KeyedSlots = 4,
         Node = 5,
         Graph = 6,
+        TimeSeries = 7,
     };
 
     enum class DebugAtomicKind : std::uint8_t
@@ -46,6 +49,7 @@ namespace hgraph
         SignedInteger = 2,
         UnsignedInteger = 3,
         FloatingPoint = 4,
+        String = 5,
     };
 
     enum class DebugDescriptorFlags : std::uint32_t
@@ -60,6 +64,7 @@ namespace hgraph
         Optional = 1u << 0u,
         EmbeddedOwner = 1u << 1u,
         EmbeddedPointer = 1u << 2u,
+        IndirectEmbeddedPointer = 1u << 3u,
     };
 
     enum class DebugDynamicKind : std::uint8_t
@@ -163,8 +168,25 @@ namespace hgraph
         const TypeRecord *key_type{nullptr};
         const TypeRecord *element_type{nullptr};
         const DebugDynamicLayout *dynamic_layout{nullptr};
+        const DebugTimeSeriesLayout *time_series_layout{nullptr};
 
         [[nodiscard]] bool valid() const noexcept;
+    };
+
+    /** Stable, data-only navigation for one TSData allocation. */
+    struct HGRAPH_EXPORT DebugTimeSeriesLayout
+    {
+        const TypeRecord *value_type{nullptr};
+        const TypeRecord *delta_type{nullptr};
+        std::size_t value_offset{0};
+        std::size_t tracking_offset{0};
+        std::size_t last_modified_offset{0};
+        std::size_t parent_offset{0};
+        std::size_t observers_offset{0};
+        bool delta_aliases_value{false};
+
+        [[nodiscard]] bool valid() const noexcept;
+        [[nodiscard]] constexpr bool operator==(const DebugTimeSeriesLayout &) const noexcept = default;
     };
 
     template <typename T> [[nodiscard]] consteval DebugAtomicKind debug_atomic_kind_for() noexcept
@@ -178,6 +200,8 @@ namespace hgraph
             return DebugAtomicKind::UnsignedInteger;
         else if constexpr (std::is_floating_point_v<Value>)
             return DebugAtomicKind::FloatingPoint;
+        else if constexpr (std::is_same_v<Value, std::string>)
+            return DebugAtomicKind::String;
         else
             return DebugAtomicKind::Opaque;
     }
@@ -190,12 +214,21 @@ namespace hgraph
 
     [[nodiscard]] HGRAPH_EXPORT const DebugDescriptor &intern_dynamic_debug_descriptor(
         const SchemaHeader &schema, const MemoryUtils::StoragePlan &plan, DebugLayoutKind layout,
-        const TypeRecord *key_type, const TypeRecord *element_type, DebugDynamicLayout dynamic_layout);
+        const TypeRecord *key_type, const TypeRecord *element_type, DebugDynamicLayout dynamic_layout,
+        const void *representation = nullptr);
 
     [[nodiscard]] HGRAPH_EXPORT const DebugDescriptor &intern_structured_debug_descriptor(
         const SchemaHeader &schema, const MemoryUtils::StoragePlan &plan, DebugLayoutKind layout,
         const DebugField *fields, std::size_t field_count, const TypeRecord *key_type = nullptr,
         const TypeRecord *element_type = nullptr, const DebugDynamicLayout *dynamic_layout = nullptr);
+
+    [[nodiscard]] HGRAPH_EXPORT const DebugDescriptor &intern_time_series_debug_descriptor(
+        const SchemaHeader &schema, const MemoryUtils::StoragePlan &plan,
+        const TypeRecord &value_type, const TypeRecord &delta_type,
+        std::size_t value_offset, std::size_t tracking_offset,
+        std::size_t last_modified_offset, std::size_t parent_offset, std::size_t observers_offset,
+        bool delta_aliases_value, const DebugField *fields, std::size_t field_count,
+        const void *representation);
 
     [[nodiscard]] HGRAPH_EXPORT const DebugDescriptor *find_value_debug_descriptor(
         const ValueTypeMetaData &schema, const MemoryUtils::StoragePlan &plan) noexcept;
@@ -212,7 +245,7 @@ namespace hgraph
     static_assert(offsetof(DebugField, type) == 2 * sizeof(void *));
     static_assert(offsetof(DebugField, validity_bit) == 3 * sizeof(void *));
 
-    static_assert(sizeof(DebugDescriptor) == 8 * sizeof(void *));
+    static_assert(sizeof(DebugDescriptor) == 9 * sizeof(void *));
     static_assert(alignof(DebugDescriptor) == alignof(void *));
     static_assert(std::is_standard_layout_v<DebugDescriptor>);
     static_assert(std::is_trivially_copyable_v<DebugDescriptor>);
@@ -221,6 +254,7 @@ namespace hgraph
     static_assert(offsetof(DebugDescriptor, validity_offset) == 3 * sizeof(void *));
     static_assert(offsetof(DebugDescriptor, key_type) == 5 * sizeof(void *));
     static_assert(offsetof(DebugDescriptor, dynamic_layout) == 7 * sizeof(void *));
+    static_assert(offsetof(DebugDescriptor, time_series_layout) == 8 * sizeof(void *));
 
     static_assert(sizeof(DebugDynamicLayout) == 11 * sizeof(void *));
     static_assert(alignof(DebugDynamicLayout) == alignof(void *));

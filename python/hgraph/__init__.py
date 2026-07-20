@@ -34,7 +34,7 @@ from ._wiring import pass_through, no_key
 from ._feature_switch import is_feature_enabled
 from ._signature import (WiringNodeType, WiringNodeSignature, extract_signature,
                          extract_kwargs)
-from ._wiring import _PyNode as PythonWiringNodeClass
+from ._wiring import _PyNode as WiringNodeClass
 from ._wiring import _GraphFn as GraphWiringNodeClass
 from ._wiring import _Generator as PythonGeneratorWiringNodeClass
 from ._wiring import GlobalContext, GlobalState, set_record_replay_config, set_as_of, set_table_schema_date_key, set_table_schema_as_of_key, evaluate_const, utc_now, get_recorded_value, get_recorder_api, get_recording_label, set_recorder_api, set_recording_label, EvaluationClock, TSW_OUT, get_context, equal_lambdas, callable_shape_key
@@ -65,7 +65,7 @@ _hgraph._set_divide_by_zero_enum(DivideByZero)
 from ._wiring import _Combine as _CombineClass
 combine = _CombineClass()
 
-from ._types import Frame, TABLE, COMPOUND_SCALAR, compound_scalar
+from ._types import Frame, TABLE, COMPOUND_SCALAR, COMPOUND_SCALAR_1, compound_scalar
 from ._table import (ToTableMode, TableSchema, make_table_schema, table_schema,
                      table_shape, table_shape_from_schema, shape_of_table_type,
                      get_table_schema_date_key, get_table_schema_as_of_key)
@@ -102,13 +102,13 @@ __all__ = [
     "utc_now", "get_recorded_value", "get_recorder_api", "get_recording_label", "set_recorder_api", "set_recording_label", "EvaluationClock", "TSW_OUT", "get_context", "equal_lambdas", "is_feature_enabled",
     "GlobalContext", "GlobalState", "set_as_of", "set_table_schema_date_key", "set_table_schema_as_of_key",
     "set_record_replay_config", "frame_store_contains", "frame_store_read", "evaluate_const",
-    "Frame", "TABLE", "COMPOUND_SCALAR", "ToTableMode", "TableSchema", "make_table_schema", "table_schema",
+    "Frame", "TABLE", "COMPOUND_SCALAR", "COMPOUND_SCALAR_1", "ToTableMode", "TableSchema", "make_table_schema", "table_schema",
     "table_shape", "table_shape_from_schema", "shape_of_table_type", "drop_dups",
     "get_table_schema_date_key", "get_table_schema_as_of_key",
     "ParseError", "IncorrectTypeBinding", "RequirementsNotMetWiringError",
     "WiringNodeType", "WiringNodeSignature", "extract_signature", "extract_kwargs",
     "WiringGraphContext",
-    "PythonWiringNodeClass", "GraphWiringNodeClass", "PythonGeneratorWiringNodeClass",
+    "WiringNodeClass", "GraphWiringNodeClass", "PythonGeneratorWiringNodeClass",
     "evaluate_graph", "GraphConfiguration", "TSB_OUT", "operator",
     "pass_through_node", "pass_through", "no_key", "downcast_ref",
     "reference_service", "subscription_service", "request_reply_service", "service_impl", "register_service",

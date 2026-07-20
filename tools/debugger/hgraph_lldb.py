@@ -134,6 +134,18 @@ def dynamic_layout_at(value, address):
     )
 
 
+def time_series_layout_at(value, address):
+    if address == 0:
+        return lldb.SBValue()
+    target = raw(value).GetTarget()
+    layout_type = target.FindFirstType("hgraph::DebugTimeSeriesLayout")
+    if not layout_type.IsValid():
+        return lldb.SBValue()
+    return target.CreateValueFromAddress(
+        "time_series_layout", target.ResolveLoadAddress(address), layout_type
+    )
+
+
 def descriptor_snapshot(value):
     return {
         "magic": integer(child(value, "magic")),
@@ -149,6 +161,7 @@ def descriptor_snapshot(value):
         "key_type": pointer(child(value, "key_type")),
         "element_type": pointer(child(value, "element_type")),
         "dynamic_layout": pointer(child(value, "dynamic_layout")),
+        "time_series_layout": pointer(child(value, "time_series_layout")),
     }
 
 
@@ -239,6 +252,30 @@ def atomic_value(record_value, data_address):
         return common._MISSING
 
 
+def pointer_payload(record_value, data_address):
+    payload = atomic_value(record_value, data_address)
+    if payload is not common._MISSING:
+        return payload, None
+    try:
+        descriptor = descriptor_at(record_value, pointer(child(record_value, "debug")))
+        snapshot = descriptor_snapshot(descriptor)
+        if snapshot["layout"] != 7:
+            return common._MISSING, None
+        layout = time_series_layout_at(record_value, snapshot["time_series_layout"])
+        value_record = record_at(record_value, pointer(child(layout, "value_type")))
+        value = atomic_value(
+            value_record, data_address + integer(child(layout, "value_offset"))
+        )
+        raw_time = read_unsigned(
+            record_value, data_address + integer(child(layout, "last_modified_offset")), 8
+        )
+        if raw_time is not None and raw_time & (1 << 63):
+            raw_time -= 1 << 64
+        return value, raw_time
+    except Exception:
+        return common._MISSING, None
+
+
 def make_any_pointer(value, name, record_address, data_address, access):
     target = value.GetTarget()
     pointer_size = target.GetAddressByteSize()
@@ -287,6 +324,25 @@ def make_embedded_pointer(value, name, pointer_address, fallback_record=0):
     if record_address == 0:
         record_address = fallback_record
     return make_any_pointer(value, name, record_address, data_address, access if data_address else 0)
+
+
+def make_indirect_embedded_pointer(value, name, pointer_address, fallback_record=0):
+    object_address = read_unsigned(value, pointer_address)
+    if not object_address:
+        return lldb.SBValue()
+    return make_embedded_pointer(value, name, object_address, fallback_record)
+
+
+def make_ts_parent_pointer(value, data_address, layout, name):
+    parent_address = data_address + integer(child(layout, "parent_offset"))
+    tagged_record = read_unsigned(value, parent_address)
+    parent_data = read_unsigned(value, parent_address + raw(value).GetTarget().GetAddressByteSize())
+    if tagged_record is None or parent_data is None:
+        return lldb.SBValue(), None
+    kind = tagged_record & 0x7
+    if kind not in (1, 4) or parent_data == 0:
+        return lldb.SBValue(), kind
+    return make_any_pointer(value, name, tagged_record & ~0x7, parent_data, 0), kind
 
 
 def dynamic_child_addresses(value, data_address, layout):
@@ -409,21 +465,185 @@ def debug_dynamic_layout_summary(value, _internal_dict, _options):
         return "DebugDynamicLayout{<printer error: %s>}" % exc
 
 
+def debug_time_series_layout_summary(value, _internal_dict, _options):
+    return "DebugTimeSeriesLayout{{value_offset={} tracking_offset={}}}".format(
+        integer(child(value, "value_offset")), integer(child(value, "tracking_offset"))
+    )
+
+
 def type_pointer_summary(value, _internal_dict, _options):
     try:
         record_address, data_address, access = pointer_state(value)
         record_value = record_at(value, record_address)
         snapshot = record_snapshot(record_value) if valid(record_value) else None
-        payload = (
-            atomic_value(record_value, data_address)
+        payload, last_modified = (
+            pointer_payload(record_value, data_address)
             if valid(record_value) and data_address
-            else common._MISSING
+            else (common._MISSING, None)
         )
-        return common.pointer_summary(
-            display_type_name(value), record_address, data_address, access, snapshot, payload
+        carrier = display_type_name(value)
+        if carrier == "TypedPtr":
+            carrier = common.typed_pointer_name(snapshot)
+        summary = common.compact_pointer_summary(
+            carrier, record_address, data_address, access, snapshot, payload
         )
+        if last_modified is not None:
+            summary = summary[:-1] + " last_modified_us={}".format(last_modified) + "}"
+        return summary
     except Exception as exc:
         return "TypePointer{<printer error: %s>}" % exc
+
+
+def type_ref_record(value):
+    return pointer(child(value, "record_"))
+
+
+def ts_storage_pointer(value, name="pointer"):
+    return make_any_pointer(
+        value, name, type_ref_record(child(value, "type_")), pointer(child(value, "data_")), 0
+    )
+
+
+def ts_view_pointer(value, name="pointer"):
+    return ts_storage_pointer(child(value, "storage_"), name)
+
+
+def ts_owner_pointer(value, name="pointer"):
+    return make_any_pointer(
+        value, name, type_ref_record(child(value, "type_")), pointer(child(value, "data_")), 0
+    )
+
+
+def value_at_address(value, type_name, address, name):
+    target = raw(value).GetTarget()
+    value_type = target.FindFirstType(type_name)
+    if not value_type.IsValid():
+        return lldb.SBValue()
+    return target.CreateValueFromAddress(name, target.ResolveLoadAddress(address), value_type)
+
+
+def plan_component(value, pointer_value, component_name):
+    record_address, data_address, _ = pointer_state(pointer_value)
+    record = record_at(value, record_address)
+    plan = dereference(child(record, "plan"))
+    state_address = pointer(child(plan, "lifecycle_context"))
+    target = raw(value).GetTarget()
+    state_type = target.FindFirstType("hgraph::MemoryUtils::CompositeState")
+    component_type = target.FindFirstType("hgraph::MemoryUtils::CompositeComponent")
+    state = value_at_address(value, "hgraph::MemoryUtils::CompositeState", state_address, "state")
+    alignment = component_type.GetByteAlign()
+    first = state_address + ((state_type.GetByteSize() + alignment - 1) // alignment) * alignment
+    for index in range(integer(child(state, "component_count"))):
+        component = value_at_address(
+            value,
+            "hgraph::MemoryUtils::CompositeComponent",
+            first + index * component_type.GetByteSize(),
+            "component",
+        )
+        if c_string(child(component, "name")) == component_name:
+            return component, data_address + integer(child(component, "offset"))
+    return lldb.SBValue(), 0
+
+
+def node_component(value, component_name, type_name):
+    _, address = plan_component(value, child(value, "pointer_"), component_name)
+    return value_at_address(value, type_name, address, component_name) if address else lldb.SBValue()
+
+
+def wrapper_name(value):
+    type_name = raw(value).GetType().GetCanonicalType().GetName() or value.GetTypeName() or "hgraph"
+    return type_name.split("::")[-1]
+
+
+def runtime_wrapper_pointer(value, name="pointer"):
+    kind = wrapper_name(value)
+    if kind == "Value":
+        return make_owner_pointer(value, name, pointer(child(value, "storage_")), 0, 0)
+    if kind == "ValueView":
+        return child(value, "pointer_").Clone(name)
+    if kind in ("NodeView", "GraphView", "RootGraphView", "NestedGraphView"):
+        return child(value, "pointer_").Clone(name)
+    if kind == "TSDataView":
+        return ts_view_pointer(value, name)
+    if kind in ("TSData", "TSDataOwnedStorage"):
+        return ts_owner_pointer(value if kind == "TSDataOwnedStorage" else child(value, "storage_"), name)
+    if kind in ("TSInput", "TSOutput"):
+        return ts_owner_pointer(child(child(value, "data_"), "storage_"), name)
+    if kind == "TSOutputView":
+        return ts_view_pointer(child(value, "data_"), name)
+    if kind == "TSOutputHandle":
+        return ts_storage_pointer(child(value, "data_"), name)
+    if kind == "TSInputView":
+        return ts_view_pointer(child(child(value, "data_"), "value_data"), name)
+    return lldb.SBValue()
+
+
+def date_time_count(value):
+    duration = child(value, "__d")
+    return integer(child(duration, "__r")) if valid(duration) else integer(value)
+
+
+def ts_delta_pointer(value, ts_pointer, evaluation_time, name="delta"):
+    record_address, data_address, access = pointer_state(ts_pointer)
+    record = record_at(value, record_address)
+    descriptor = descriptor_at(value, pointer(child(record, "debug")))
+    snapshot = descriptor_snapshot(descriptor)
+    if snapshot["layout"] != 7:
+        return lldb.SBValue()
+    layout = time_series_layout_at(value, snapshot["time_series_layout"])
+    if not integer(child(layout, "delta_aliases_value")):
+        return lldb.SBValue()
+    raw_time = read_unsigned(
+        value, data_address + integer(child(layout, "last_modified_offset")), 8
+    )
+    if raw_time is not None and raw_time & (1 << 63):
+        raw_time -= 1 << 64
+    live = raw_time == date_time_count(evaluation_time)
+    return make_any_pointer(
+        value,
+        name,
+        pointer(child(layout, "delta_type")),
+        data_address + integer(child(layout, "value_offset")) if live else 0,
+        access if live else 0,
+    )
+
+
+def relabel_pointer_summary(summary, label):
+    opening = summary.find("{")
+    return label + summary[opening:] if opening >= 0 else label + "{" + summary + "}"
+
+
+def concise_wrapper_summary(value, label):
+    try:
+        record_address, data_address, _ = pointer_state(value)
+        record = record_at(value, record_address)
+        snapshot = record_snapshot(record)
+        semantic = snapshot["schema"]["label"]
+        payload, last_modified = (
+            pointer_payload(record, data_address)
+            if data_address
+            else (common._MISSING, None)
+        )
+        parts = [semantic]
+        if payload is not common._MISSING:
+            parts.append("value={!r}".format(payload))
+        if last_modified is not None:
+            parts.append("modified={}us".format(last_modified))
+        return "{}{{{}}}".format(label, " ".join(parts))
+    except Exception:
+        return relabel_pointer_summary(type_pointer_summary(value, {}, {}), label)
+
+
+def type_ref_summary(value, _internal_dict, _options):
+    pointer_value = make_any_pointer(value, "pointer", type_ref_record(value), 0, 0)
+    return concise_wrapper_summary(pointer_value, wrapper_name(value))
+
+
+def runtime_wrapper_summary(value, _internal_dict, _options):
+    try:
+        return concise_wrapper_summary(runtime_wrapper_pointer(value), wrapper_name(value))
+    except Exception as exc:
+        return "{}{{<printer error: {}>}}".format(wrapper_name(value), exc)
 
 
 class SyntheticProvider:
@@ -502,6 +722,11 @@ class DebugDescriptorSyntheticProvider(SyntheticProvider):
             "dynamic_layout_value",
             dynamic_layout_at(self.value, snapshot["dynamic_layout"]),
         )
+        self.add(
+            values,
+            "time_series_layout_value",
+            time_series_layout_at(self.value, snapshot["time_series_layout"]),
+        )
         for name in (
             "layout",
             "atomic_kind",
@@ -511,6 +736,7 @@ class DebugDescriptorSyntheticProvider(SyntheticProvider):
             "key_type",
             "element_type",
             "dynamic_layout",
+            "time_series_layout",
             "magic",
             "abi_version",
         ):
@@ -549,6 +775,14 @@ class DebugFieldSyntheticProvider(SyntheticProvider):
         return values
 
 
+class DebugTimeSeriesLayoutSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        for name in ("value_type", "delta_type", "value_offset", "tracking_offset", "last_modified_offset", "parent_offset", "observers_offset", "delta_aliases_value"):
+            self.add(values, name, child(self.value, name))
+        return values
+
+
 class TypePointerSyntheticProvider(SyntheticProvider):
     def build_children(self):
         values = []
@@ -570,6 +804,43 @@ class TypePointerSyntheticProvider(SyntheticProvider):
                 return values
             snapshot = descriptor_snapshot(descriptor_value)
             if not common.debug_descriptor_valid(snapshot):
+                return values
+            if snapshot["layout"] == 7:
+                ts_layout = time_series_layout_at(self.value, snapshot["time_series_layout"])
+                if not valid(ts_layout):
+                    return values
+                self.add(
+                    values,
+                    "value",
+                    make_any_pointer(
+                        self.value,
+                        "value",
+                        pointer(child(ts_layout, "value_type")),
+                        data_address + integer(child(ts_layout, "value_offset")),
+                        access,
+                    ),
+                )
+                dt_type = raw(self.value).GetTarget().FindFirstType("hgraph::DateTime")
+                if dt_type.IsValid():
+                    self.add(
+                        values,
+                        "last_modified",
+                        raw(self.value).GetTarget().CreateValueFromAddress(
+                            "last_modified",
+                            raw(self.value).GetTarget().ResolveLoadAddress(
+                                data_address + integer(child(ts_layout, "last_modified_offset"))
+                            ),
+                            dt_type,
+                        ),
+                    )
+                parent, parent_kind = make_ts_parent_pointer(
+                    self.value, data_address, ts_layout, "parent"
+                )
+                self.add(
+                    values,
+                    "owner_node" if parent_kind == 4 else "parent",
+                    parent,
+                )
                 return values
             if snapshot["layout"] in (2, 5, 6):
                 validity = None
@@ -601,6 +872,13 @@ class TypePointerSyntheticProvider(SyntheticProvider):
                         )
                     elif field_snapshot["flags"] & common.DEBUG_FIELD_EMBEDDED_POINTER:
                         pointer_value = make_embedded_pointer(
+                            self.value,
+                            name,
+                            data_address + field_snapshot["offset"],
+                            field_snapshot["type"],
+                        )
+                    elif field_snapshot["flags"] & common.DEBUG_FIELD_INDIRECT_EMBEDDED_POINTER:
+                        pointer_value = make_indirect_embedded_pointer(
                             self.value,
                             name,
                             data_address + field_snapshot["offset"],
@@ -660,6 +938,94 @@ class TypePointerSyntheticProvider(SyntheticProvider):
         return values
 
 
+class TypeRefSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        self.add(values, "record", record_at(self.value, type_ref_record(self.value)))
+        return values
+
+
+class RuntimeWrapperSyntheticProvider(SyntheticProvider):
+    def build_children(self):
+        values = []
+        try:
+            kind = wrapper_name(self.value)
+            primary = runtime_wrapper_pointer(self.value)
+            primary_name = {
+                "TSInputView": "source_data",
+                "TSOutputView": "data",
+                "TSDataView": "data",
+            }.get(kind, "pointer")
+            self.add(values, primary_name, primary)
+            forwarded = {
+                "TSData": {"value", "parent", "owner_node"},
+                "TSDataView": {"value", "parent", "owner_node"},
+                "TSInput": {"value", "parent", "owner_node"},
+                "TSInputView": {"value", "parent", "owner_node"},
+                "TSOutput": {"value", "parent", "owner_node"},
+                "TSOutputView": {"value", "parent", "owner_node"},
+                "NodeView": {"graph", "state", "scalars"},
+            }.get(kind, set())
+            pointer_provider = TypePointerSyntheticProvider(primary, {})
+            for child_name, child_value in pointer_provider.children:
+                if child_name in forwarded or (
+                    kind in ("GraphView", "RootGraphView", "NestedGraphView")
+                    and child_name.startswith("[")
+                ):
+                    self.add(values, child_name, child_value)
+            if kind == "TSInputView":
+                cursor = child(self.value, "data_")
+                self.add(values, "value_data", ts_view_pointer(child(cursor, "value_data"), "value_data"))
+                self.add(values, "raw_data", ts_view_pointer(child(cursor, "raw_data"), "raw_data"))
+                self.add(values, "consumer", child(self.value, "input_"))
+                self.add(values, "evaluation_time", child(self.value, "evaluation_time_"))
+            elif kind == "TSOutputView":
+                self.add(values, "owner", child(self.value, "output_"))
+                self.add(values, "evaluation_time", child(self.value, "evaluation_time_"))
+                self.add(
+                    values,
+                    "delta",
+                    ts_delta_pointer(
+                        self.value,
+                        runtime_wrapper_pointer(self.value),
+                        child(self.value, "evaluation_time_"),
+                    ),
+                )
+            elif kind == "TSOutputHandle":
+                self.add(values, "owner", child(self.value, "output_"))
+            elif kind == "NodeView":
+                self.add(values, "input", node_component(self.value, "input", "hgraph::TSInput"))
+                self.add(values, "output", node_component(self.value, "output", "hgraph::TSOutput"))
+            elif kind in ("GraphView", "RootGraphView", "NestedGraphView"):
+                component, address = plan_component(
+                    self.value, runtime_wrapper_pointer(self.value), "schedule"
+                )
+                if valid(component):
+                    schedule_plan = dereference(child(component, "plan"))
+                    array_state = value_at_address(
+                        self.value,
+                        "hgraph::MemoryUtils::ArrayState",
+                        pointer(child(schedule_plan, "lifecycle_context")),
+                        "array_state",
+                    )
+                    count = integer(child(array_state, "element_count"))
+                    stride = integer(child(array_state, "element_stride"))
+                    for index in range(count):
+                        self.add(
+                            values,
+                            "schedule[{}]".format(index),
+                            value_at_address(
+                                self.value,
+                                "hgraph::DateTime",
+                                address + index * stride,
+                                "schedule[{}]".format(index),
+                            ),
+                        )
+        except Exception:
+            pass
+        return values
+
+
 def __lldb_init_module(debugger, _internal_dict):
     summaries = (
         (r"^hgraph::SchemaHeader$", "hgraph_lldb.schema_header_summary"),
@@ -667,16 +1033,22 @@ def __lldb_init_module(debugger, _internal_dict):
         (r"^hgraph::DebugDescriptor$", "hgraph_lldb.debug_descriptor_summary"),
         (r"^hgraph::DebugField$", "hgraph_lldb.debug_field_summary"),
         (r"^hgraph::DebugDynamicLayout$", "hgraph_lldb.debug_dynamic_layout_summary"),
+        (r"^hgraph::DebugTimeSeriesLayout$", "hgraph_lldb.debug_time_series_layout_summary"),
         (r"^hgraph::AnyPtr$", "hgraph_lldb.type_pointer_summary"),
         (r"^hgraph::TypedPtr<.*>$", "hgraph_lldb.type_pointer_summary"),
+        (r"^hgraph::(?:ValueTypeRef|NodeTypeRef|GraphTypeRef|ExecutorTypeRef|ClockTypeRef|TSRoleTypeRef|BasicTSTypeRef<.*>)$", "hgraph_lldb.type_ref_summary"),
+        (r"^hgraph::(?:Value|ValueView|TSData|TSDataOwnedStorage|TSDataView|TSInput|TSOutput|TSInputView|TSOutputView|TSOutputHandle|NodeView|GraphView|RootGraphView|NestedGraphView)$", "hgraph_lldb.runtime_wrapper_summary"),
     )
     synthetics = (
         (r"^hgraph::TypeRecord$", "hgraph_lldb.TypeRecordSyntheticProvider"),
         (r"^hgraph::DebugDescriptor$", "hgraph_lldb.DebugDescriptorSyntheticProvider"),
         (r"^hgraph::DebugField$", "hgraph_lldb.DebugFieldSyntheticProvider"),
         (r"^hgraph::DebugDynamicLayout$", "hgraph_lldb.DebugDynamicLayoutSyntheticProvider"),
+        (r"^hgraph::DebugTimeSeriesLayout$", "hgraph_lldb.DebugTimeSeriesLayoutSyntheticProvider"),
         (r"^hgraph::AnyPtr$", "hgraph_lldb.TypePointerSyntheticProvider"),
         (r"^hgraph::TypedPtr<.*>$", "hgraph_lldb.TypePointerSyntheticProvider"),
+        (r"^hgraph::(?:ValueTypeRef|NodeTypeRef|GraphTypeRef|ExecutorTypeRef|ClockTypeRef|TSRoleTypeRef|BasicTSTypeRef<.*>)$", "hgraph_lldb.TypeRefSyntheticProvider"),
+        (r"^hgraph::(?:Value|ValueView|TSData|TSDataOwnedStorage|TSDataView|TSInput|TSOutput|TSInputView|TSOutputView|TSOutputHandle|NodeView|GraphView|RootGraphView|NestedGraphView)$", "hgraph_lldb.RuntimeWrapperSyntheticProvider"),
     )
     for pattern, function in summaries:
         debugger.HandleCommand(

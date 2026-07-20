@@ -27,22 +27,53 @@
 
 using namespace hgraph;
 
+struct FixtureDerivedOutputView : TSOutputView
+{
+    FixtureDerivedOutputView() = default;
+    explicit FixtureDerivedOutputView(TSOutputView view) : TSOutputView(std::move(view)) {}
+};
+
+struct FixtureSubscriber : Notifiable
+{
+    void notify(DateTime) override {}
+};
+
+FixtureSubscriber fixture_subscriber{};
+
 Value fixture_atomic_value{};
+Value fixture_string_value{};
 Value fixture_bundle_value{};
 Value fixture_list_value{};
+Value fixture_set_value{};
 Value fixture_map_value{};
+TSOutput fixture_tss_output{};
+TSOutput fixture_tsd_output{};
+TSOutput fixture_tsb_output{};
 NodeValue fixture_node_value{};
 std::unique_ptr<testing::MockRootGraph> fixture_root_graph{};
 AnyPtr fixture_atomic_pointer{};
+AnyPtr fixture_string_pointer{};
 AnyPtr fixture_bundle_pointer{};
 AnyPtr fixture_list_pointer{};
+AnyPtr fixture_set_pointer{};
 AnyPtr fixture_map_pointer{};
+TSOutputView fixture_tss_view{};
+TSOutputView fixture_tsd_view{};
+TSOutputView fixture_tsb_view{};
 AnyPtr fixture_node_pointer{};
 AnyPtr fixture_graph_pointer{};
 AnyPtr fixture_nested_graph_pointer{};
 AnyPtr fixture_switch_node_pointer{};
 AnyPtr fixture_map_node_pointer{};
 AnyPtr fixture_mesh_node_pointer{};
+ValueView fixture_value_view{};
+ValueTypeRef fixture_value_type{};
+TSDataView fixture_ts_data_view{};
+TSInputView fixture_ts_input_view{};
+TSOutputView fixture_ts_output_view{};
+FixtureDerivedOutputView fixture_derived_output_view{};
+NodeView fixture_node_view{};
+GraphView fixture_graph_view{};
 AnyPtr fixture_typed_null_pointer{};
 AnyPtr fixture_malformed_pointer{};
 std::unique_ptr<TypeRecord> fixture_invalid_record_owner{};
@@ -98,8 +129,13 @@ int main()
     const auto *bool_schema = registry.register_scalar<bool>("bool");
 
     fixture_atomic_value = Value{std::int32_t{42}};
+    fixture_string_value = Value{Str{"debugger string"}};
     auto atomic_view = fixture_atomic_value.view();
+    fixture_value_view = fixture_atomic_value.view();
+    fixture_value_type = fixture_atomic_value.type();
     fixture_atomic_pointer = AnyPtr::read_only(*atomic_view.record(), atomic_view.data());
+    auto string_view = fixture_string_value.view();
+    fixture_string_pointer = AnyPtr::read_only(*string_view.record(), string_view.data());
     fixture_typed_null_pointer = AnyPtr::typed_null(*atomic_view.record());
     fixture_invalid_record_owner = std::make_unique<TypeRecord>(*atomic_view.record());
     fixture_invalid_record = fixture_invalid_record_owner.get();
@@ -127,6 +163,15 @@ int main()
     auto list_view = fixture_list_value.view();
     fixture_list_pointer = AnyPtr::read_only(*list_view.record(), list_view.data());
 
+    fixture_set_value = Value{ValuePlanFactory::instance().type_for(registry.mutable_set(int_schema))};
+    {
+        auto mutation = fixture_set_value.as_set().begin_mutation();
+        static_cast<void>(mutation.add(Value{std::int32_t{7}}.view()));
+        static_cast<void>(mutation.add(Value{std::int32_t{9}}.view()));
+    }
+    auto set_view = fixture_set_value.view();
+    fixture_set_pointer = AnyPtr::read_only(*set_view.record(), set_view.data());
+
     const auto *map_schema = registry.mutable_map(int_schema, int_schema);
     fixture_map_value = Value{ValuePlanFactory::instance().type_for(map_schema)};
     auto map_mutation = fixture_map_value.as_map().begin_mutation();
@@ -135,6 +180,38 @@ int main()
     static_cast<void>(map_mutation.remove(Value{std::int32_t{2}}.view()));
     auto map_view = fixture_map_value.view();
     fixture_map_pointer = AnyPtr::read_only(*map_view.record(), map_view.data());
+
+    const auto *ts_int = registry.ts(int_schema);
+    fixture_tss_output = TSOutput{*registry.tss(int_schema)};
+    {
+        auto data = fixture_tss_output.data_view();
+        auto mutation = data.as_set().begin_mutation(MIN_ST);
+        static_cast<void>(mutation.add(Value{std::int32_t{7}}.view()));
+        static_cast<void>(mutation.add(Value{std::int32_t{9}}.view()));
+    }
+    fixture_tss_view = fixture_tss_output.view(MIN_ST);
+
+    fixture_tsd_output = TSOutput{*registry.tsd(int_schema, ts_int)};
+    {
+        auto view = fixture_tsd_output.view(MIN_ST);
+        auto mutation = view.as_dict().begin_mutation(MIN_ST);
+        auto element = mutation.at(Value{std::int32_t{3}}.view());
+        auto element_mutation = element.begin_mutation(MIN_ST);
+        static_cast<void>(element_mutation.copy_value_from(Value{std::int32_t{30}}.view()));
+    }
+    fixture_tsd_view = fixture_tsd_output.view(MIN_ST);
+
+    const auto *tsb = registry.tsb("DebuggerTSBundle", {{"number", ts_int}, {"enabled", registry.ts(bool_schema)}});
+    fixture_tsb_output = TSOutput{*tsb};
+    const auto tsb_binding = ValuePlanFactory::instance().type_for(tsb->value_schema);
+    BundleBuilder tsb_builder{tsb_binding};
+    tsb_builder.set("number", Value{std::int32_t{12}});
+    tsb_builder.set("enabled", Value{true});
+    {
+        auto mutation = fixture_tsb_output.begin_mutation(MIN_ST);
+        static_cast<void>(mutation.copy_value_from(tsb_builder.build().view()));
+    }
+    fixture_tsb_view = fixture_tsb_output.view(MIN_ST);
 
     NodeTypeMetaData node_schema;
     node_schema.display_name = "debugger_fixture_node";
@@ -201,6 +278,7 @@ int main()
         std::make_unique<GraphExecutorValue>(nested_executor_builder.make_executor());
 
     auto nested_graph = fixture_nested_executor->view().graph();
+    fixture_graph_view = GraphView{nested_graph.pointer()};
     fixture_nested_graph_pointer = nested_graph.pointer().to_any();
     bool found_switch = false;
     bool found_map    = false;
@@ -208,6 +286,15 @@ int main()
     for (std::size_t i = 0; i < nested_graph.node_count(); ++i)
     {
         auto node = nested_graph.node_at(i);
+        if (!fixture_node_view.valid() && node.has_input() && node.has_output())
+        {
+            fixture_node_view = NodeView{node.pointer()};
+            fixture_ts_input_view = node.input(MIN_ST);
+            fixture_ts_output_view = node.output(MIN_ST);
+            fixture_ts_output_view.subscribe(&fixture_subscriber);
+            fixture_derived_output_view = FixtureDerivedOutputView{node.output(MIN_ST)};
+            fixture_ts_data_view = fixture_ts_output_view.data_view().borrowed_ref();
+        }
         if (node.is<SwitchNodeView>())
         {
             fixture_switch_node_pointer = node.pointer().to_any();
@@ -261,6 +348,13 @@ int main()
     fixture_root_graph.reset();
     fixture_node_value = NodeValue{};
     fixture_map_value = Value{};
+    fixture_set_value = Value{};
+    fixture_tss_view = TSOutputView{};
+    fixture_tsd_view = TSOutputView{};
+    fixture_tsb_view = TSOutputView{};
+    fixture_tss_output = TSOutput{};
+    fixture_tsd_output = TSOutput{};
+    fixture_tsb_output = TSOutput{};
     fixture_list_value = Value{};
     fixture_bundle_value = Value{};
     fixture_atomic_value = Value{};

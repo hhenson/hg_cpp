@@ -629,6 +629,7 @@ namespace hgraph
             const TSValueTypeMetaData        *schema{nullptr};
             const detail::TSInputEndpointOps *endpoint_ops{nullptr};
             TSDataLayout                      layout{};
+            FixedTSBDataLayout                bundle_layout{};
             IndexedTSDataOps                  ts_data_ops{};
             IndexedValueOps                   value_ops{};
             InputDeltaSurface                 delta{};
@@ -734,19 +735,20 @@ namespace hgraph
 
         [[nodiscard]] const TSDataLayout *input_layout(const void *context) noexcept
         {
-            return &static_cast<const InputBindingContext *>(context)->layout;
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            return state->schema->kind == TSTypeKind::TSB
+                       ? static_cast<const TSDataLayout *>(&state->bundle_layout)
+                       : &state->layout;
         }
 
         [[nodiscard]] const TSDataTracking *input_tracking(const void *context, const void *memory) noexcept
         {
-            const auto *state = static_cast<const InputBindingContext *>(context);
-            return MemoryUtils::cast<TSDataTracking>(advance(memory, state->layout.tracking_offset));
+            return MemoryUtils::cast<TSDataTracking>(advance(memory, input_layout(context)->tracking_offset));
         }
 
         [[nodiscard]] TSDataTracking *input_mutable_tracking(const void *context, void *memory) noexcept
         {
-            const auto *state = static_cast<const InputBindingContext *>(context);
-            return MemoryUtils::cast<TSDataTracking>(advance(memory, state->layout.tracking_offset));
+            return MemoryUtils::cast<TSDataTracking>(advance(memory, input_layout(context)->tracking_offset));
         }
 
         [[nodiscard]] TSRoleTypeRef input_value_storage_type(const void *context,
@@ -1886,6 +1888,11 @@ namespace hgraph
             context->schema = endpoint_schema.schema();
             context->endpoint_ops = &non_peered_input_endpoint_ops_for(endpoint_schema);
             context->layout.tracking_offset = storage_offset + tracking_offset(local_plan);
+            context->bundle_layout.tracking_offset = context->layout.tracking_offset;
+            if (context->schema->kind == TSTypeKind::TSB)
+            {
+                context->bundle_layout.fields.reserve(endpoint_schema.children().size());
+            }
             context->children.reserve(endpoint_schema.children().size());
             InputListDeltaSurface *list_delta = nullptr;
             if (!context->endpoint_ops->named_value_projection)
@@ -1914,6 +1921,15 @@ namespace hgraph
                     .direct_child_memory = child_schema.is_owned(),
                     .local_storage = child_type.plan() != &root_plan,
                 });
+                if (context->schema->kind == TSTypeKind::TSB)
+                {
+                    const auto *child_layout = child_type.ops_ref().layout_impl(child_type.ops_ref().context);
+                    context->bundle_layout.fields.push_back(FixedTSDataFieldLayout{
+                        .type = child_type,
+                        .layout = child_layout,
+                        .data_offset = child_offset,
+                    });
+                }
                 if (list_delta != nullptr)
                 {
                     list_delta->ordinal_keys.push_back(static_cast<std::int64_t>(index));
@@ -1937,6 +1953,7 @@ namespace hgraph
             context->value_binding = intern_value_type(*context->schema->value_schema, root_plan,
                                                                context->value_ops);
             context->layout.value_binding = context->value_binding;
+            context->bundle_layout.value_binding = context->value_binding;
 
             const auto *delta_schema = context->schema->delta_value_schema;
             if (delta_schema == nullptr)
@@ -2026,6 +2043,7 @@ namespace hgraph
                 context->delta_binding = intern_value_type(*delta_schema, root_plan, delta.map_ops);
             }
             context->layout.delta_binding = context->delta_binding;
+            context->bundle_layout.delta_binding = context->delta_binding;
 
             context->ts_data_ops = IndexedTSDataOps{};
             TSDataOps &base_ops = context->ts_data_ops;

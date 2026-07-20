@@ -8,7 +8,7 @@ SCHEMA_HEADER_ABI_VERSION = 1
 TYPE_RECORD_ABI_VERSION = 1
 TYPE_KIND_NONE = 0xFF
 DEBUG_DESCRIPTOR_MAGIC = 0x48474444
-DEBUG_DESCRIPTOR_ABI_VERSION = 1
+DEBUG_DESCRIPTOR_ABI_VERSION = 3
 DEBUG_DYNAMIC_LAYOUT_MAGIC = 0x4847444C
 DEBUG_DYNAMIC_LAYOUT_ABI_VERSION = 1
 
@@ -103,6 +103,7 @@ DEBUG_LAYOUT_NAMES = {
     4: "KeyedSlots",
     5: "Node",
     6: "Graph",
+    7: "TimeSeries",
 }
 
 DEBUG_ATOMIC_NAMES = {
@@ -111,12 +112,14 @@ DEBUG_ATOMIC_NAMES = {
     2: "SignedInteger",
     3: "UnsignedInteger",
     4: "FloatingPoint",
+    5: "String",
 }
 
 DEBUG_DESCRIPTOR_HAS_VALIDITY = 1 << 0
 KNOWN_DEBUG_DESCRIPTOR_FLAGS = DEBUG_DESCRIPTOR_HAS_VALIDITY
 DEBUG_FIELD_EMBEDDED_OWNER = 1 << 1
 DEBUG_FIELD_EMBEDDED_POINTER = 1 << 2
+DEBUG_FIELD_INDIRECT_EMBEDDED_POINTER = 1 << 3
 DEBUG_DYNAMIC_SIZE_CONSTANT = 1 << 0
 DEBUG_DYNAMIC_DATA_INDIRECT = 1 << 1
 DEBUG_DYNAMIC_KEY_DATA_INDIRECT = 1 << 2
@@ -259,6 +262,7 @@ def debug_descriptor_valid(snapshot):
         and not (snapshot.get("layout") in (3, 4) and not snapshot.get("dynamic_layout", 0))
         and not (snapshot.get("layout") not in (3, 4, 5, 6) and snapshot.get("dynamic_layout", 0))
         and not (snapshot.get("dynamic_layout", 0) and not snapshot.get("element_type", 0))
+        and ((snapshot.get("layout") == 7) == bool(snapshot.get("time_series_layout", 0)))
         and (
             (
                 has_validity
@@ -278,7 +282,7 @@ def debug_descriptor_summary(snapshot):
     state = "valid" if debug_descriptor_valid(snapshot) else "invalid"
     return (
         "DebugDescriptor{{{} layout={} atomic={} fields={} validity_offset={} "
-        "validity_word_size={} key={} element={} dynamic={}}}"
+        "validity_word_size={} key={} element={} dynamic={} time_series={}}}"
     ).format(
         state,
         debug_layout_text(snapshot.get("layout", 0)),
@@ -289,6 +293,7 @@ def debug_descriptor_summary(snapshot):
         pointer_text(snapshot.get("key_type", 0)),
         pointer_text(snapshot.get("element_type", 0)),
         pointer_text(snapshot.get("dynamic_layout", 0)),
+        pointer_text(snapshot.get("time_series_layout", 0)),
     )
 
 
@@ -389,7 +394,6 @@ def pointer_summary(type_name, record_address, data_address, access, record=None
         return "{}{{malformed record={} data={} access={}}}".format(
             type_name, pointer_text(record_address), pointer_text(data_address), access_text(access)
         )
-
     state = "typed-null" if data_address == 0 else "live"
     if record is None:
         classification = "unknown"
@@ -417,3 +421,35 @@ def pointer_summary(type_name, record_address, data_address, access, record=None
         pointer_text(data_address),
         value_text,
     ) + "}"
+
+
+def compact_pointer_summary(type_name, record_address, data_address, access, record=None, atomic_value=_MISSING):
+    """User-facing carrier summary; full ABI identity remains on the expanded record."""
+    if record_address == 0 and data_address == 0:
+        return "{}{{unbound}}".format(type_name)
+    if record_address == 0 or access not in ACCESS_NAMES or record is None or not record_valid(record):
+        return "{}{{malformed}}".format(type_name)
+    semantic = record["schema"].get("label") or "<?>"
+    parts = [semantic]
+    if data_address == 0:
+        parts.append("null")
+    elif atomic_value is not _MISSING:
+        parts.append("value={!r}".format(atomic_value))
+    return "{}{{{}}}".format(type_name, " ".join(parts))
+
+
+def typed_pointer_name(record):
+    if not record or not record.get("schema"):
+        return "TypedPtr"
+    family = record["schema"].get("family")
+    role = record.get("role")
+    return {
+        (1, 1): "ValuePtr",
+        (2, 2): "TSDataPtr",
+        (2, 4): "TSInputPtr",
+        (2, 5): "TSOutputPtr",
+        (3, 3): "NodePtr",
+        (4, 3): "GraphPtr",
+        (5, 3): "ExecutorPtr",
+        (6, 3): "ClockPtr",
+    }.get((family, role), "TypedPtr")

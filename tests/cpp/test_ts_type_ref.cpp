@@ -1,4 +1,5 @@
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/registry_reset.h>
@@ -158,7 +159,11 @@ TEST_CASE("scalar time-series role records are canonical, exact, and thread stab
         REQUIRE(type.record()->schema == &schema->header);
         REQUIRE(type.record()->ops_abi_version == TS_DATA_OPS_ABI_VERSION);
         REQUIRE(type.record()->implementation_name().empty());
-        REQUIRE(type.record()->debug == nullptr);
+        REQUIRE(type.record()->debug != nullptr);
+        REQUIRE(type.record()->debug->valid());
+        REQUIRE(type.record()->debug->layout == DebugLayoutKind::TimeSeries);
+        REQUIRE(type.record()->debug->time_series_layout != nullptr);
+        REQUIRE(type.record()->debug->time_series_layout->value_type != nullptr);
         REQUIRE(type.ops_ref().kind == TSTypeKind::TS);
         REQUIRE(has_capability(type.capabilities(), TypeCapabilities::Viewable));
         REQUIRE_FALSE(has_capability(type.capabilities(), TypeCapabilities::HasChildren));
@@ -755,6 +760,10 @@ TEST_CASE("keyed and reference role records preserve root input and projection t
     REQUIRE(label(factory.output_type_for(ref).as_role()) == "ts.ref.output.root");
 
     TSData dict_data{factory.data_type_for(tsd)};
+    const auto set_data_type = factory.data_type_for(tss);
+    REQUIRE(set_data_type.ops_ref().layout_impl(set_data_type.ops_ref().context)->value_binding.record()->debug != nullptr);
+    const auto dict_data_type = factory.data_type_for(tsd);
+    REQUIRE(dict_data_type.ops_ref().layout_impl(dict_data_type.ops_ref().context)->value_binding.record()->debug != nullptr);
     auto dict_view = dict_data.view();
     auto dict = dict_view.as_dict();
     REQUIRE(label(dict.key_set().base().type_ref()) == "ts.tsd.key-set.data");

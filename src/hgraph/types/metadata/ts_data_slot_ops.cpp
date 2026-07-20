@@ -2,6 +2,7 @@
 #include <hgraph/types/time_series/ts_data/empty_delta_fields.h>
 
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
+#include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/time_series/endpoint_schema.h>
@@ -26,6 +27,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -83,6 +85,31 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
             return seed;
+        }
+
+        template <typename Storage, typename Member>
+        [[nodiscard]] std::size_t debug_offset(const Storage &storage, const Member &member) noexcept
+        {
+            return static_cast<std::size_t>(reinterpret_cast<const std::byte *>(&member) -
+                                            reinterpret_cast<const std::byte *>(&storage));
+        }
+
+        template <typename Storage>
+        [[nodiscard]] DebugDynamicLayout tss_value_debug_layout(const Storage &sample,
+                                                                 const ValueTypeRef &key_binding)
+        {
+            const auto &keys = sample.keys();
+            return DebugDynamicLayout{
+                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
+                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
+                .kind = DebugDynamicKind::StableSlots,
+                .flags = DebugDynamicFlags::DataIsIndirect | DebugDynamicFlags::DataIsPointerTable |
+                         DebugDynamicFlags::HasSlotState,
+                .size_offset = debug_offset(sample, keys.live.bit_count),
+                .data_offset = debug_offset(sample, keys.key_storage.slots),
+                .stride = key_binding.checked_plan().layout.size,
+                .state_offset = debug_offset(sample, keys.live.words),
+            };
         }
 
         [[nodiscard]] std::size_t value_key_hash(const void *key, const void *context)
@@ -410,6 +437,10 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] const void *child_at_slot(std::size_t slot) const
             {
                 return values_.value_memory(slot);
+            }
+            [[nodiscard]] const ValueSlotStore &debug_values() const noexcept
+            {
+                return values_.debug_values();
             }
             [[nodiscard]] void *child_memory_for_write(std::size_t slot)
             {
@@ -1000,16 +1031,34 @@ namespace hgraph::ts_data_plan_factory_detail
             void initialise_tss_common(const TSValueTypeMetaData &schema_,
                                        const MemoryUtils::StoragePlan &plan_,
                                        const ValueTypeRef &key_binding,
-                                       bool mutable_storage)
+                                       bool mutable_storage,
+                                       TSRoleTypeRef sample_element_type = {})
             {
                 schema = &schema_;
                 plan   = &plan_;
                 set_layout.key_binding     = key_binding;
-                set_layout.tracking_offset = 0;
-
                 configure_set_value_ops();
                 configure_delta_ops();
-                set_layout.value_binding   = intern_value_type(*schema->value_schema, *plan, value_set_ops);
+                const auto [debug_layout, tracking_offset] = [&] {
+                    if constexpr (std::is_same_v<Storage, TSDSlotStorage>)
+                    {
+                        const Storage sample{key_binding, sample_element_type};
+                        return std::pair{tss_value_debug_layout(sample, key_binding),
+                                         debug_offset(sample, sample.key_set_tracking())};
+                    }
+                    else
+                    {
+                        const Storage sample{key_binding};
+                        return std::pair{tss_value_debug_layout(sample, key_binding),
+                                         debug_offset(sample, sample.tracking())};
+                    }
+                }();
+                set_layout.tracking_offset = tracking_offset;
+                const auto &debug = intern_dynamic_debug_descriptor(
+                    schema->value_schema->header, *plan, DebugLayoutKind::Sequence,
+                    nullptr, key_binding.record(), debug_layout, &value_set_ops);
+                set_layout.value_binding = intern_value_type(
+                    *schema->value_schema, *plan, value_set_ops, &debug);
                 configure_tss_ops(mutable_storage);
                 bind_tss_delta_surfaces();
             }
@@ -1883,7 +1932,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     throw std::logic_error("TSD key-set schema is not resolved");
                 }
-                initialise_tss_common(*key_set_schema, plan, key_binding, false);
+                initialise_tss_common(*key_set_schema, plan, key_binding, false, element_type);
                 initialise_tsd(schema, plan, key_binding, element_type);
                 root_type = TSRoleTypeRef{intern_ts_type(
                     schema, role, plan, dict_ops, keyed_root_label(schema.kind, role, embedded, composite))};
@@ -2083,7 +2132,24 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     throw std::logic_error("TSD schemas are not populated");
                 }
-                dict_layout.value_binding = intern_value_type(*value_schema, plan_, value_map_ops);
+                const auto key_binding = dict_layout.key_binding;
+                const auto element_type = dict_layout.element_type;
+                const TSDSlotStorage sample{key_binding, element_type};
+                const auto &keys = sample.keys();
+                const auto &values = sample.debug_values();
+                auto debug_layout = tss_value_debug_layout(sample, key_binding);
+                debug_layout.flags = debug_layout.flags | DebugDynamicFlags::KeyDataIsIndirect |
+                                     DebugDynamicFlags::KeyDataIsPointerTable;
+                debug_layout.data_offset = debug_offset(sample, values.value_storage.slots);
+                debug_layout.stride = element_type.checked_plan().layout.size;
+                debug_layout.key_data_offset = debug_offset(sample, keys.key_storage.slots);
+                debug_layout.key_stride = key_binding.checked_plan().layout.size;
+                const auto &debug = intern_dynamic_debug_descriptor(
+                    value_schema->header, plan_, DebugLayoutKind::KeyedSlots,
+                    key_binding.record(), dict_layout.element_value_binding.record(), debug_layout,
+                    &value_map_ops);
+                dict_layout.value_binding = intern_value_type(*value_schema, plan_, value_map_ops, &debug);
+                dict_layout.tracking_offset = debug_offset(sample, sample.tracking());
 
                 if (delta_schema->value_kind() != ValueTypeKind::Bundle || delta_schema->field_count != 3)
                 {

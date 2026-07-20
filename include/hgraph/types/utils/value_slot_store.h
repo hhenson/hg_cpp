@@ -368,6 +368,9 @@ namespace hgraph
         /** Bound value payload plan. */
         [[nodiscard]] const MemoryUtils::StoragePlan *plan() const noexcept { return m_values.plan(); }
 
+        /** Stable storage metadata used to publish debugger-only slot offsets. */
+        [[nodiscard]] const ValueSlotStore &debug_values() const noexcept { return m_values; }
+
         /**
          * True when the key slot is constructed. This is the public lifetime
          * answer for mirrored storage; the wrapped ``ValueSlotStore`` bitmap is

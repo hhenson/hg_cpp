@@ -1,7 +1,7 @@
 # Ported from ext/main/hgraph_unit_tests/_wiring/test_decorators.py
 from datetime import timedelta
 
-from hgraph import generator, SCALAR, compute_node, PythonWiringNodeClass, sink_node, graph
+from hgraph import generator, SCALAR, compute_node, WiringNodeClass, sink_node, graph
 # ported: private-module imports corrected to the public hgraph surface
 from hgraph import (GraphWiringNodeClass, TS, PythonGeneratorWiringNodeClass,
                     WiringNodeType, WiringNodeSignature)
@@ -26,7 +26,7 @@ def test_compute_node():
     def simple_compute_node(ts: TS[int], s1: str = "test") -> TS[str]:
         return f"{s1}: {ts.value}"
 
-    assert type(simple_compute_node) is PythonWiringNodeClass
+    assert type(simple_compute_node) is WiringNodeClass
     signature: WiringNodeSignature = simple_compute_node.signature
     assert signature.node_type is WiringNodeType.COMPUTE_NODE
     assert signature.name == "simple_compute_node"
@@ -38,7 +38,7 @@ def test_sink_node():
     @sink_node
     def simple_sink_node(ts: TS[int], s1: str = "test"): ...
 
-    assert type(simple_sink_node) is PythonWiringNodeClass
+    assert type(simple_sink_node) is WiringNodeClass
     signature: WiringNodeSignature = simple_sink_node.signature
     assert signature.node_type is WiringNodeType.SINK_NODE
     assert signature.name == "simple_sink_node"
