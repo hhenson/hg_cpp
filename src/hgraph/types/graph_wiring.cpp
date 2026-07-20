@@ -1897,7 +1897,7 @@ void Wiring::apply_service_rank_dependencies() {
   }
 }
 
-GraphBuilder Wiring::finish() && {
+GraphBuilder Wiring::finish_top_level(bool consume_state) {
   if (!impl_->implementation_scopes.empty()) {
     throw std::logic_error("Wiring::finish encountered an unterminated "
                            "service/adaptor implementation scope");
@@ -1909,15 +1909,19 @@ GraphBuilder Wiring::finish() && {
     }
   }
 
-  apply_service_rank_dependencies();
+  apply_service_rank_dependencies(); // add_rank_dependency de-dupes: idempotent
   const auto realization =
       TypeRealizationSnapshot::capture(TypeRegistry::instance());
   TypeRealizationScope realization_scope{realization.get()};
   RankedGraphBuild build = build_ranked_graph(impl_->instances, nullptr);
   validate_same_cycle_pairs(build.index_of);
   build.graph_builder.type_realization(realization);
-  build.graph_builder.global_state(std::move(
-      impl_->global_state)); // carry wiring-time entries onto the graph
+  // Carry wiring-time entries onto the graph: moved on the consuming
+  // finish() path, copied on the snapshot() path so the wiring stays live
+  // (GlobalState is copy-in/copy-out by contract).
+  build.graph_builder.global_state(consume_state
+                                       ? std::move(impl_->global_state)
+                                       : GlobalState{impl_->global_state});
   const ValueView traits_value = impl_->traits.as_value().view();
   const auto traits_map = traits_value.as_map();
   for (const auto [key, boxed] : traits_map) {
@@ -1925,6 +1929,10 @@ GraphBuilder Wiring::finish() && {
   }
   return std::move(build.graph_builder);
 }
+
+GraphBuilder Wiring::finish() && { return finish_top_level(true); }
+
+GraphBuilder Wiring::snapshot() & { return finish_top_level(false); }
 
 CompiledSubGraph Wiring::finish_subgraph(
     std::optional<WiringPortRef> output,

@@ -983,6 +983,16 @@ namespace hgraph
         [[nodiscard]] GraphBuilder finish() &&;
 
         /**
+         * Build a runnable graph from the wiring **as it currently stands**,
+         * leaving the wiring open for further wiring (interactive/notebook
+         * sessions — design record ``developer_guide/notebook.rst``). Same
+         * validation as ``finish()``; the wiring ``GlobalState`` is COPIED
+         * onto the builder rather than moved. Repeated snapshots are safe:
+         * rank-dependency application de-duplicates.
+         */
+        [[nodiscard]] GraphBuilder snapshot() &;
+
+        /**
          * Compile this wiring as a **sub-graph**: rank the nodes into a child
          * ``GraphBuilder`` and convert every boundary-sourced input into a
          * nested-graph input binding instead of an edge. ``output`` is the
@@ -1011,6 +1021,9 @@ namespace hgraph
         [[nodiscard]] WiringScopeEvent begin_observation(WiringScopeEvent event);
         void end_observation(const WiringScopeEvent &event, std::string_view error);
         void apply_service_rank_dependencies();
+        /** Shared body of finish()/snapshot(): validate + rank + build; the
+            wiring GlobalState is moved when consuming, copied otherwise. */
+        [[nodiscard]] GraphBuilder finish_top_level(bool consume_state);
         void validate_same_cycle_pairs(
             const std::unordered_map<const WiringInstance *, std::size_t> &index_of) const;
 

@@ -266,7 +266,8 @@ namespace hgraph::python_bridge
             int logger_level, nb::object logger_formatter,
             nb::tuple observers, std::int64_t trace_back_depth,
             bool capture_values,
-            bool cleanup_on_error)
+            bool cleanup_on_error,
+            bool snapshot)
         {
             ensure_open();
             if (owned == nullptr) { throw std::logic_error("a borrowed Wiring cannot be run"); }
@@ -275,8 +276,12 @@ namespace hgraph::python_bridge
                 throw std::invalid_argument(
                     "trace_back_depth must be non-negative");
             }
-            finished = true;
-            GraphBuilder builder = std::move(*owned).finish();
+            // snapshot=true builds from the wiring AS IT STANDS and leaves it
+            // open for further wiring (interactive/notebook sessions —
+            // developer_guide/notebook.rst); the default consumes the wiring.
+            GraphBuilder builder = snapshot
+                                       ? owned->snapshot()
+                                       : (finished = true, std::move(*owned).finish());
 
             GraphExecutorBuilder eb;
             eb.graph_builder(std::move(builder))

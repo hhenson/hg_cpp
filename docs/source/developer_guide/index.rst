@@ -27,4 +27,5 @@ The developer guide describes the internal design of the C++ implementation. The
    python_integration
    python_bridge
    type_reflection
+   notebook
    testing
