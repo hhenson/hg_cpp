@@ -167,6 +167,8 @@ jobs:
           CMAKE_ARGS: ${{ matrix.cmake_args }}
           CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.parallel }}
         run: python -m build --wheel
+      - name: Audit wheel contents
+        run: python tools/audit_distribution.py "dist/*.whl"
       - name: Verify wheel ABI
         shell: python
         run: |
@@ -217,6 +219,8 @@ jobs:
           CMAKE_ARGS: -DHGRAPH_WARNINGS_AS_ERRORS=ON
           CMAKE_BUILD_PARALLEL_LEVEL: "2"
         run: /opt/python/cp312-cp312/bin/python -m build --wheel
+      - name: Audit wheel contents
+        run: /opt/python/cp312-cp312/bin/python tools/audit_distribution.py "dist/*.whl"
       - name: Repair for the glibc 2.28 floor
         run: |
           mkdir wheelhouse
@@ -268,6 +272,8 @@ jobs:
         run: |
           python -m pip install --upgrade build
           python -m build --sdist
+      - name: Audit source distribution contents
+        run: python tools/audit_distribution.py "dist/*.tar.gz"
       - name: Verify source distribution
         shell: python
         run: |

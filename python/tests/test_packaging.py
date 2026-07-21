@@ -117,6 +117,14 @@ def test_release_workflow_reuses_tested_commit_artifacts():
     assert "needs.reuse-build.outputs.run-id || github.run_id" in workflow
 
 
+def test_release_workflow_audits_distribution_contents():
+    workflow = (ROOT / ".github/workflows/build.yml").read_text()
+
+    assert workflow.count("tools/audit_distribution.py") == 3
+    assert '"dist/*.whl"' in workflow
+    assert '"dist/*.tar.gz"' in workflow
+
+
 def main():
     test_pyarrow_build_and_runtime_requirements_share_the_supported_abi()
     test_supported_python_versions_are_declared()
@@ -127,6 +135,7 @@ def main():
     test_full_suite_dependencies_include_the_dataframe_runtime()
     test_release_workflow_targets_supported_platforms()
     test_release_workflow_reuses_tested_commit_artifacts()
+    test_release_workflow_audits_distribution_contents()
     print("PASS test_pyarrow_build_and_runtime_requirements_share_the_supported_abi")
     print("PASS test_supported_python_versions_are_declared")
     print("PASS test_pypi_classifiers_are_valid")
@@ -136,6 +145,7 @@ def main():
     print("PASS test_full_suite_dependencies_include_the_dataframe_runtime")
     print("PASS test_release_workflow_targets_supported_platforms")
     print("PASS test_release_workflow_reuses_tested_commit_artifacts")
+    print("PASS test_release_workflow_audits_distribution_contents")
 
 
 if __name__ == "__main__":
