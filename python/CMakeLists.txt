@@ -53,6 +53,7 @@ if(WIN32 AND HGRAPH_USE_PYARROW_ARROW)
     install(FILES
         "${HGRAPH_PYARROW_ARROW_RUNTIME}"
         "${HGRAPH_PYARROW_COMPUTE_RUNTIME}"
+        "${HGRAPH_PYARROW_ACERO_RUNTIME}"
         ${_hgraph_pyarrow_support_dlls}
         DESTINATION .
     )

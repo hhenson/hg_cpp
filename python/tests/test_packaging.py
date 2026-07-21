@@ -30,6 +30,14 @@ def test_pyarrow_build_and_runtime_requirements_share_the_supported_abi():
     assert PYARROW_REQUIREMENT in runtime_requires
 
 
+def test_windows_wheel_installs_all_linked_pyarrow_runtimes():
+    python_cmake = (ROOT / "python/CMakeLists.txt").read_text()
+
+    assert '"${HGRAPH_PYARROW_ARROW_RUNTIME}"' in python_cmake
+    assert '"${HGRAPH_PYARROW_COMPUTE_RUNTIME}"' in python_cmake
+    assert '"${HGRAPH_PYARROW_ACERO_RUNTIME}"' in python_cmake
+
+
 def test_supported_python_versions_are_declared():
     project = load_project()["project"]
 
@@ -130,6 +138,7 @@ def test_release_workflow_audits_distribution_contents():
 
 def main():
     test_pyarrow_build_and_runtime_requirements_share_the_supported_abi()
+    test_windows_wheel_installs_all_linked_pyarrow_runtimes()
     test_supported_python_versions_are_declared()
     test_pypi_classifiers_are_valid()
     test_release_metadata_is_consistent()
@@ -140,6 +149,7 @@ def main():
     test_release_workflow_reuses_tested_commit_artifacts()
     test_release_workflow_audits_distribution_contents()
     print("PASS test_pyarrow_build_and_runtime_requirements_share_the_supported_abi")
+    print("PASS test_windows_wheel_installs_all_linked_pyarrow_runtimes")
     print("PASS test_supported_python_versions_are_declared")
     print("PASS test_pypi_classifiers_are_valid")
     print("PASS test_release_metadata_is_consistent")
