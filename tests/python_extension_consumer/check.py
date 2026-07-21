@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import os
 from pathlib import Path
 import subprocess
@@ -45,15 +44,31 @@ def main() -> int:
             check=True,
         )
 
-        import _hgraph  # noqa: F401 -- load the wheel's shared runtime first
-
         module_dir = build_dir / "Release" if sys.platform == "win32" else build_dir
-        sys.path.insert(0, str(module_dir))
-        consumer = importlib.import_module("_hgraph_consumer")
-        address = consumer.registry_address()
-        if not isinstance(address, int) or address == 0:
-            raise RuntimeError("downstream extension returned an invalid registry address")
-        print(f"installed Python extension consumer passed: registry={address:#x}")
+        check = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import importlib
+import sys
+
+import _hgraph  # Load the wheel's shared runtime first.
+
+sys.path.insert(0, sys.argv[1])
+consumer = importlib.import_module("_hgraph_consumer")
+address = consumer.registry_address()
+if not isinstance(address, int) or address == 0:
+    raise RuntimeError("downstream extension returned an invalid registry address")
+print(f"installed Python extension consumer passed: registry={address:#x}")
+""",
+                str(module_dir),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        print(check.stdout, end="")
     return 0
 
 
