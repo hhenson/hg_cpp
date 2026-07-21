@@ -207,10 +207,10 @@ namespace hgraph
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         /** Current value converted by the TSData binding's type-erased Python export op. */
-        [[nodiscard]] HGRAPH_EXPORT nb::object value_to_python() const;
+        [[nodiscard]] nb::object value_to_python() const;
 
         /** Delta value for ``evaluation_time`` converted by the TSData binding's type-erased Python export op. */
-        [[nodiscard]] HGRAPH_EXPORT nb::object delta_value_to_python(DateTime evaluation_time) const;
+        [[nodiscard]] nb::object delta_value_to_python(DateTime evaluation_time) const;
 #endif
 
         /** Last evaluation time that modified this TSData node, or ``MIN_DT`` if never valid. */
@@ -362,7 +362,7 @@ namespace hgraph
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         /** Apply a Python object through the TSData binding's type-erased conversion op. */
-        [[nodiscard]] HGRAPH_EXPORT bool from_python(nb::handle source);
+        [[nodiscard]] bool from_python(nb::handle source);
 #endif
 
       private:
