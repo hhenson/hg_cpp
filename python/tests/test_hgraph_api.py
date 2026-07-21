@@ -1106,12 +1106,34 @@ def test_service_adaptor_from_python():
     out = eval_node(two_interfaces, [3, None, 4])
     check(out == [None, 6, None, 8], f"service adaptor interfaces: {out}")
 
-    try:
-        @hg.service_adaptor
-        def invalid(lhs: TS[int], rhs: TS[int]) -> TS[int]: ...
-        check(False, f"expected invalid service adaptor definition: {invalid}")
-    except TypeError as e:
-        check("exactly one" in str(e), f"unexpected service adaptor error: {e}")
+    class ArithmeticResult(hg.TimeSeriesSchema):
+        total: TS[int]
+        difference: TS[int]
+
+    @hg.service_adaptor
+    def arithmetic(lhs: TS[int], rhs: TS[int]) -> TSB[ArithmeticResult]: ...
+
+    @hg.graph
+    def arithmetic_for_client(lhs: TS[int], rhs: TS[int]) -> TSB[ArithmeticResult]:
+        return hg.combine[TSB[ArithmeticResult]](
+            total=lhs + rhs,
+            difference=lhs - rhs,
+        )
+
+    @hg.service_adaptor_impl(interfaces=arithmetic)
+    def arithmetic_impl(
+        lhs: TSD[int, TS[int]],
+        rhs: TSD[int, TS[int]],
+    ) -> TSD[int, TSB[ArithmeticResult]]:
+        return hg.map_(arithmetic_for_client, lhs, rhs)
+
+    @graph
+    def arithmetic_client(lhs: TS[int], rhs: TS[int]) -> TSB[ArithmeticResult]:
+        hg.register_adaptor("arithmetic", arithmetic_impl)
+        return arithmetic(lhs, rhs, path="arithmetic")
+
+    out = eval_node(arithmetic_client, [7], [2])
+    check(out == [None, {"total": 9, "difference": 5}], f"multi-field service adaptor: {out}")
 
     try:
         @hg.service_adaptor_impl(interfaces=echo)

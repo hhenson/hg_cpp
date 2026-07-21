@@ -101,6 +101,44 @@ namespace
         }
     };
 
+    using RuntimeMultiFields =
+        TSB<"RuntimeMultiFields", Field<"lhs", TS<Int>>, Field<"rhs", TS<Int>>>;
+
+    struct RuntimeMultiFieldServiceAdaptor : service_adaptor::interface
+    {
+        static constexpr std::string_view name{"runtime_multi_field_service_adaptor"};
+        using input_schema = RuntimeMultiFields;
+        using output_schema = RuntimeMultiFields;
+    };
+
+    struct RuntimeMultiFieldServiceAdaptorImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "runtime_multi_field_service_adaptor_impl";
+
+        static Port<TSD<Int, RuntimeMultiFields>> compose(
+            Wiring &, Port<TSD<Int, RuntimeMultiFields>> requests)
+        {
+            return requests;
+        }
+    };
+
+    struct RuntimeMultiFieldServiceAdaptorGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "runtime_multi_field_service_adaptor_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            service_adaptor::register_service_adaptor_impl<
+                RuntimeMultiFieldServiceAdaptor, RuntimeMultiFieldServiceAdaptorImpl>(
+                w, service_adaptor::path("multi"));
+            auto reply = wire<RuntimeMultiFieldServiceAdaptor>(
+                w, service_adaptor::path("multi"), lhs, rhs);
+            auto reply_lhs = wire<stdlib::getattr_>(w, reply, Str{"lhs"}).as<TS<Int>>();
+            auto reply_rhs = wire<stdlib::getattr_>(w, reply, Str{"rhs"}).as<TS<Int>>();
+            return wire<stdlib::add_>(w, reply_lhs, reply_rhs).as<TS<Int>>();
+        }
+    };
+
     struct ErasedServiceAdaptorRegisterTemplateClients
     {
         [[maybe_unused]] static constexpr auto name = "erased_service_adaptor_register_template_clients";
@@ -216,6 +254,14 @@ TEST_CASE("service runtime: erased service-adaptor registration serves typed cli
 {
     stdlib::register_standard_operators();
     CHECK_OUTPUT(eval_node<ErasedServiceAdaptorRegisterTemplateClients>(
+                     values<Int>(1, none, 2), values<Int>(10, none, 20)),
+                 values<Int>(none, 11, none, 22));
+}
+
+TEST_CASE("service runtime: C++ service adaptors carry multi-field requests and responses")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<RuntimeMultiFieldServiceAdaptorGraph>(
                      values<Int>(1, none, 2), values<Int>(10, none, 20)),
                  values<Int>(none, 11, none, 22));
 }

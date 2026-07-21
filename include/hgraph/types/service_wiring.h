@@ -1,6 +1,7 @@
 #ifndef HGRAPH_TYPES_SERVICE_WIRING_H
 #define HGRAPH_TYPES_SERVICE_WIRING_H
 
+#include <hgraph/lib/std/operators/collection.h>
 #include <hgraph/lib/std/operators/container.h>
 #include <hgraph/runtime/feedback_node.h>
 #include <hgraph/runtime/service_node.h>
@@ -1947,6 +1948,31 @@ namespace hgraph::service_adaptor
         auto input)
     {
         return adaptor<Interface>(w, detail::default_adaptor_path<Interface>(), std::move(input));
+    }
+
+    /** Pack the fields of a TSB request schema from separate client ports. */
+    template <typename Interface, typename... Inputs>
+        requires(sizeof...(Inputs) > 1)
+    [[nodiscard]] Port<detail::output_schema_t<Interface>> adaptor(
+        Wiring &w,
+        ServiceAdaptorPath user_path,
+        const Inputs &...inputs)
+    {
+        using input_schema = detail::input_schema_t<Interface>;
+        static_assert(stdlib::collection_detail::is_tsb_schema_v<input_schema>,
+                      "multi-input service adaptors require a TSB input_schema");
+        return adaptor<Interface>(
+            w, std::move(user_path), stdlib::to_tsb<input_schema>(w, inputs...));
+    }
+
+    /** Pack the fields of a TSB request schema from separate client ports. */
+    template <typename Interface, typename... Inputs>
+        requires(sizeof...(Inputs) > 1)
+    [[nodiscard]] Port<detail::output_schema_t<Interface>> adaptor(
+        Wiring &w,
+        const Inputs &...inputs)
+    {
+        return adaptor<Interface>(w, detail::default_adaptor_path<Interface>(), inputs...);
     }
 }  // namespace hgraph::service_adaptor
 

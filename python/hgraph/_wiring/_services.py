@@ -582,9 +582,11 @@ def adaptor(fn=None, resolvers=None):
 
 
 class _ServiceAdaptorStub:
-    """@service_adaptor: one request time-series per client, multiplexed as
-    ``TSD[int, request]`` for the implementation and demultiplexed from its
-    ``TSD[int, response]`` result by the native runtime."""
+    """A C++ service-adaptor contract with Python structural bundling.
+
+    Multiple Python request parameters become one unnamed ``TSB`` request,
+    matching a C++ interface whose ``input_schema`` is a ``TSB<...>``.
+    """
 
     def __init__(self, fn, *, resolution=None, specialization="",
                  resolvers=None):
@@ -595,14 +597,14 @@ class _ServiceAdaptorStub:
         self._resolvers = dict(resolvers) if resolvers else None
         sig = inspect.signature(fn)
         params = [p for p in sig.parameters.values() if _is_ts_annotation(p.annotation)]
-        if len(params) != 1:
+        if not params:
             raise TypeError(
-                f"@service_adaptor '{self.__name__}' requires exactly one time-series request parameter"
+                f"@service_adaptor '{self.__name__}' requires at least one time-series request parameter"
             )
         if not _is_ts_annotation(sig.return_annotation):
             raise TypeError(f"@service_adaptor '{self.__name__}' requires a time-series return annotation")
-        self._request_name = params[0].name
-        self._request_annotation = params[0].annotation
+        self._signature = sig
+        self._request_params = tuple(params)
         path_param = sig.parameters.get("path")
         default_path = (
             path_param.default
@@ -612,8 +614,19 @@ class _ServiceAdaptorStub:
         if specialization:
             default_path = f"{default_path}[{specialization}]"
         self._default_path = default_path
-        request = _resolve_annotation(params[0].annotation, resolution)
+        request_fields = [
+            (parameter.name, _resolve_annotation(parameter.annotation, resolution))
+            for parameter in params
+        ]
+        request = (
+            request_fields[0][1]
+            if len(request_fields) == 1
+            else _hgraph.un_named_tsb_type(request_fields)
+            if all(field_type is not None for _, field_type in request_fields)
+            else None
+        )
         output = _resolve_annotation(sig.return_annotation, resolution)
+        self._request_type = request
         self.descriptor = None if request is None or output is None else _hgraph.service_descriptor(
             name=fn.__name__, flavour="service_adaptor",
             request=request, output=output,
@@ -644,30 +657,55 @@ class _ServiceAdaptorStub:
         suffix = f"[{self._specialization}]"
         return path if path.endswith(suffix) else f"{path}{suffix}"
 
-    def __call__(self, *args, path="", **kwargs):
-        if args and isinstance(args[0], str):
-            if path:
-                raise TypeError(f"{self.__name__} received path twice")
-            path, args = args[0], args[1:]
-        if len(args) > 1:
-            raise TypeError(f"{self.__name__} accepts one time-series request")
-        if args:
-            if self._request_name in kwargs:
-                raise TypeError(f"{self.__name__} received its request twice")
-            request = args[0]
-        elif self._request_name in kwargs:
-            request = kwargs.pop(self._request_name)
+    @property
+    def implementation_arity(self):
+        return len(self._request_params)
+
+    def __call__(self, *args, **kwargs):
+        kwargs = dict(kwargs)
+        has_path_parameter = "path" in self._signature.parameters
+        external_path = kwargs.pop("path", "") if not has_path_parameter else None
+        if has_path_parameter and "path" in kwargs and args and not isinstance(args[0], str):
+            external_path = kwargs.pop("path")
+            request_signature = self._signature.replace(parameters=[
+                parameter for parameter in self._signature.parameters.values()
+                if parameter.name != "path"
+            ])
+            bound = request_signature.bind(*args, **kwargs)
         else:
-            raise TypeError(f"{self.__name__} requires '{self._request_name}'")
-        if kwargs:
-            raise TypeError(f"{self.__name__} got unexpected arguments {sorted(kwargs)!r}")
+            bound = self._signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        path = bound.arguments.get("path", external_path) if has_path_parameter else external_path
+        if path is None:
+            path = ""
+        if not isinstance(path, str):
+            raise TypeError(f"service adaptor '{self.__name__}' path must be a string")
+
+        from ._node import _lift_time_series_argument
+        requests = [
+            value if isinstance(value, WiringPort)
+            else _lift_time_series_argument(value, parameter.annotation)
+            for parameter in self._request_params
+            for value in (bound.arguments[parameter.name],)
+        ]
         stub = self
         if self.descriptor is None:
-            resolution, specialization = _inferred_specialization(
-                self.fn, self._request_annotation, request, self._resolvers)
+            resolution = _hgraph.ResolutionScope()
+            for parameter, request in zip(self._request_params, requests):
+                if not resolution.match(_pattern_of(parameter.annotation), _unwrap(request).ts_type):
+                    raise TypeError(
+                        f"generic adaptor '{self.__name__}' request does not match its type pattern")
+            _apply_service_defaults(self._signature, resolution)
+            _apply_service_resolvers(resolution, self._resolvers)
+            specialization = _specialization_label(resolution)
             stub = _ServiceAdaptorStub(
                 self.fn, resolution=resolution, specialization=specialization,
                 resolvers=self._resolvers)
+        request = requests[0] if len(requests) == 1 else WiringPort(_hgraph.tsb_port(
+            stub._request_type,
+            {parameter.name: _unwrap(value)
+             for parameter, value in zip(stub._request_params, requests)},
+        ))
         return WiringPort(_hgraph.service_adaptor_client(
             _current_wiring(), stub._require_descriptor(), stub._resolved_path(path), _unwrap(request)))
 
@@ -882,7 +920,7 @@ class _ServiceInputs:
 
 
 def _split_service_requests(stub, packed):
-    if stub.flavour != "request_reply" or stub.implementation_arity == 1:
+    if stub.flavour not in {"request_reply", "service_adaptor"} or stub.implementation_arity == 1:
         return [packed]
     return [wire("getattr_", packed, parameter.name) for parameter in stub._request_params]
 
