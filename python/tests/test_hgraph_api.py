@@ -1010,7 +1010,6 @@ def test_private_service_transport_helpers_are_not_public():
         "capture_output_to_global_state",
         "get_shared_reference_output",
         "mesh_subscribe_node",
-        "request_id",
         "write_service_replies",
         "write_service_request",
         "write_subscription_key",
