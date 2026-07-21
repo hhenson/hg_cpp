@@ -15,8 +15,14 @@ if(NOT HGRAPH_PYTHON_CONSUMER_PREFIX_RESULT EQUAL 0 OR HGRAPH_PYTHON_CONSUMER_PR
     message(FATAL_ERROR "Could not determine Python's site-packages prefix")
 endif()
 list(APPEND CMAKE_PREFIX_PATH "${HGRAPH_PYTHON_CONSUMER_PREFIX}")
+file(GLOB HGRAPH_PYTHON_CONSUMER_CONFIG_HINTS
+    LIST_DIRECTORIES true
+    "${HGRAPH_PYTHON_CONSUMER_PREFIX}/lib*/cmake/hgraph"
+)
 
-find_package(hgraph 0.4 CONFIG REQUIRED)
+find_package(hgraph 0.4 CONFIG REQUIRED
+    HINTS ${HGRAPH_PYTHON_CONSUMER_CONFIG_HINTS}
+)
 if(NOT COMMAND hgraph_add_python_module)
     message(FATAL_ERROR "The installed hgraph SDK does not provide hgraph_add_python_module")
 endif()

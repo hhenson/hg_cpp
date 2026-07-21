@@ -88,7 +88,10 @@ because it creates an isolated registry universe that Python wiring cannot see.
 
 The wheel includes public headers and a relocatable ``hgraphConfig.cmake``.
 A downstream scikit-build project can add Python's ``purelib`` directory to
-``CMAKE_PREFIX_PATH``, call ``find_package(hgraph CONFIG REQUIRED)``, and use
+``CMAKE_PREFIX_PATH`` and pass its ``lib*/cmake/hgraph`` subdirectories as
+``HINTS`` to ``find_package(hgraph CONFIG REQUIRED)``. Explicit hints avoid
+depending on CMake's platform-specific ``lib`` versus ``lib64`` prefix
+expansion. The project can then use
 ``hgraph_add_python_module(name STABLE_ABI sources...)`` before linking the
 module to ``hgraph::core``. The helper applies nanobind's extension settings
 while linking the wheel's shared ``hgraph::nanobind`` runtime; calling
