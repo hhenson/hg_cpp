@@ -25,10 +25,18 @@ SDIST_REQUIRED = {
 WHEEL_REQUIRED = {
     "hgraph/__init__.py",
     "include/hgraph/hgraph.h",
-    "lib/cmake/hgraph/hgraphConfig.cmake",
-    "lib/cmake/hgraph/hgraphConfigVersion.cmake",
     "share/hgraph/debugger/hgraph_debug_common.py",
 }
+
+WHEEL_CMAKE_ROOTS = (
+    "lib/cmake/hgraph",
+    "lib64/cmake/hgraph",
+)
+
+WHEEL_CMAKE_FILES = (
+    "hgraphConfig.cmake",
+    "hgraphConfigVersion.cmake",
+)
 
 FORBIDDEN_PARTS = {
     ".git",
@@ -89,6 +97,14 @@ def _audit_wheel(path: Path) -> int:
     _validate_common(paths)
     _require(paths, WHEEL_REQUIRED)
 
+    if not any(
+        all(f"{root}/{name}" in paths for name in WHEEL_CMAKE_FILES)
+        for root in WHEEL_CMAKE_ROOTS
+    ):
+        raise AuditError(
+            "wheel does not contain a complete hgraph CMake package under lib or lib64"
+        )
+
     extension_names = {PurePosixPath(name).name for name in paths}
     if not any(
         name == "_hgraph.pyd" or (name.startswith("_hgraph.") and name.endswith(".so"))
@@ -99,7 +115,7 @@ def _audit_wheel(path: Path) -> int:
     libraries = [
         name
         for name in paths
-        if name.startswith("lib/")
+        if PurePosixPath(name).parts[0] in {"lib", "lib64"}
         and "hgraph" in PurePosixPath(name).name
         and PurePosixPath(name).suffix in {".a", ".dylib", ".lib", ".so"}
     ]

@@ -67,6 +67,20 @@ def test_wheel_distribution_audit_accepts_release_payload(tmp_path):
     assert "PASS" in result.stdout
 
 
+def test_wheel_distribution_audit_accepts_linux_lib64_payload(tmp_path):
+    wheel = tmp_path / "hg_cpp-0.4.1-cp312-abi3-any.whl"
+    files = tuple(
+        name.replace("lib/", "lib64/", 1) if name.startswith("lib/") else name
+        for name in WHEEL_FILES
+    )
+    _wheel(wheel, files)
+
+    result = _audit(wheel)
+
+    assert result.returncode == 0, result.stderr
+    assert "PASS" in result.stdout
+
+
 def test_source_distribution_audit_accepts_release_payload(tmp_path):
     sdist = tmp_path / "hg_cpp-0.4.1.tar.gz"
     _sdist(sdist)
@@ -85,6 +99,19 @@ def test_distribution_audit_rejects_missing_native_payload(tmp_path):
 
     assert result.returncode == 1
     assert "native hgraph libraries" in result.stderr
+
+
+def test_distribution_audit_rejects_incomplete_cmake_payload(tmp_path):
+    wheel = tmp_path / "hg_cpp-0.4.1-cp312-abi3-any.whl"
+    _wheel(
+        wheel,
+        tuple(name for name in WHEEL_FILES if not name.endswith("hgraphConfigVersion.cmake")),
+    )
+
+    result = _audit(wheel)
+
+    assert result.returncode == 1
+    assert "complete hgraph CMake package" in result.stderr
 
 
 def test_distribution_audit_rejects_private_or_generated_content(tmp_path):
