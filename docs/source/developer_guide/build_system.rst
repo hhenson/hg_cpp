@@ -79,12 +79,12 @@ runner image while retaining a macOS 15 deployment target.
 Downstream Native Extensions
 ----------------------------
 
-The Python wheel builds ``hgraph_runtime``, ``hgraph_wiring``, and
-``hgraph_stdlib`` as shared libraries. The ``_hgraph`` bridge and downstream
-native modules must use those same libraries so process-wide type, operator,
-and plan registries have exactly one instance. Linking the wheel's runtime
-statically into another extension is unsupported because it creates an
-isolated registry universe that Python wiring cannot see.
+The Python wheel builds ``hgraph_runtime``, ``hgraph_wiring``, ``hgraph_stdlib``,
+and the nanobind bridge runtime as shared libraries. The ``_hgraph`` bridge and
+downstream native modules must use those same libraries so process-wide type,
+operator, plan, and nanobind conversion registries have exactly one instance.
+Linking the wheel's runtime statically into another extension is unsupported
+because it creates an isolated registry universe that Python wiring cannot see.
 
 The wheel includes public headers and a relocatable ``hgraphConfig.cmake``.
 A downstream scikit-build project can add Python's ``purelib`` directory to

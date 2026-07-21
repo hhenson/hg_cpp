@@ -1,6 +1,10 @@
 # The Python bridge module (roadmap P4). Opt-in only: the default build never
 # needs Python (HGRAPH_BUILD_PYTHON_BINDINGS=ON enables this subtree).
-set(_hgraph_nanobind_options NB_STATIC NOMINSIZE NOSTRIP)
+if(HGRAPH_BUILD_SHARED)
+    set(_hgraph_nanobind_options NB_SHARED NOMINSIZE NOSTRIP)
+else()
+    set(_hgraph_nanobind_options NB_STATIC NOMINSIZE NOSTRIP)
+endif()
 if(_hgraph_use_python_stable_abi)
     list(APPEND _hgraph_nanobind_options STABLE_ABI)
 endif()

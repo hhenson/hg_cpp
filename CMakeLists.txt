@@ -502,10 +502,18 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     )
     if(_hgraph_use_python_stable_abi)
         target_link_libraries(hgraph_options INTERFACE Python::SABIModule)
-        set(_hgraph_nanobind_library nanobind-static-abi3)
+        if(HGRAPH_BUILD_SHARED)
+            set(_hgraph_nanobind_library nanobind-abi3)
+        else()
+            set(_hgraph_nanobind_library nanobind-static-abi3)
+        endif()
     else()
         target_link_libraries(hgraph_options INTERFACE Python::Module)
-        set(_hgraph_nanobind_library nanobind-static)
+        if(HGRAPH_BUILD_SHARED)
+            set(_hgraph_nanobind_library nanobind)
+        else()
+            set(_hgraph_nanobind_library nanobind-static)
+        endif()
     endif()
     if(HGRAPH_ENABLE_PYTHON_USER_NODES AND NOT _hgraph_use_python_stable_abi AND TARGET Python::Python)
         target_link_libraries(hgraph_options INTERFACE Python::Python)
@@ -589,6 +597,17 @@ install(TARGETS ${_hgraph_export_targets}
     RUNTIME DESTINATION "${_hgraph_runtime_destination}"
 )
 
+if(HGRAPH_BUILD_SHARED AND (HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES))
+    # Python conversion operations execute from the shared hgraph runtime as
+    # well as from extension modules. They must all use one nanobind runtime;
+    # separate static copies have independent ndarray/type internals.
+    install(TARGETS ${_hgraph_nanobind_library}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION "${_hgraph_runtime_destination}"
+    )
+endif()
+
 if(EXISTS "${PROJECT_SOURCE_DIR}/include")
     install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING
@@ -645,8 +664,10 @@ string(JOIN "" _hgraph_config_dependencies ${_hgraph_config_dependencies})
 if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     if(_hgraph_use_python_stable_abi)
         set(_hgraph_config_python_components "Interpreter Development.Module Development.SABIModule")
+        set(_hgraph_config_python_link_target "Python::SABIModule")
     else()
         set(_hgraph_config_python_components "Interpreter Development.Module")
+        set(_hgraph_config_python_link_target "Python::Module")
     endif()
     if(HGRAPH_ENABLE_PYTHON_USER_NODES AND NOT _hgraph_use_python_stable_abi)
         set(_hgraph_config_python_components "Interpreter Development.Module Development.Embed")
@@ -693,7 +714,35 @@ elseif(NOT HGRAPH_BUILD_PYTHON_BINDINGS)
         "endif()\n"
     )
 endif()
-if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
+if(HGRAPH_BUILD_SHARED AND (HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES))
+    file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
+        # Recreate the installed shared nanobind target under the name used by
+        # nanobind_add_module(NB_SHARED). That function reuses an existing
+        # target, keeping every downstream extension in the same runtime.
+        "get_filename_component(_hgraph_package_prefix \"\${CMAKE_CURRENT_LIST_DIR}/../../..\" ABSOLUTE)\n"
+        "if(NOT TARGET ${_hgraph_nanobind_library})\n"
+        "  add_library(${_hgraph_nanobind_library} SHARED IMPORTED)\n"
+        "  if(WIN32)\n"
+        "    set_target_properties(${_hgraph_nanobind_library} PROPERTIES\n"
+        "      IMPORTED_LOCATION \"\${_hgraph_package_prefix}/${_hgraph_runtime_destination}/${_hgraph_nanobind_library}\${CMAKE_SHARED_LIBRARY_SUFFIX}\"\n"
+        "      IMPORTED_IMPLIB \"\${_hgraph_package_prefix}/${CMAKE_INSTALL_LIBDIR}/${_hgraph_nanobind_library}\${CMAKE_IMPORT_LIBRARY_SUFFIX}\"\n"
+        "    )\n"
+        "  else()\n"
+        "    set_target_properties(${_hgraph_nanobind_library} PROPERTIES\n"
+        "      IMPORTED_LOCATION \"\${_hgraph_package_prefix}/${CMAKE_INSTALL_LIBDIR}/\${CMAKE_SHARED_LIBRARY_PREFIX}${_hgraph_nanobind_library}\${CMAKE_SHARED_LIBRARY_SUFFIX}\"\n"
+        "    )\n"
+        "  endif()\n"
+        "  set_target_properties(${_hgraph_nanobind_library} PROPERTIES\n"
+        "    INTERFACE_COMPILE_DEFINITIONS \"NB_SHARED\"\n"
+        "    INTERFACE_INCLUDE_DIRECTORIES \"\${NB_DIR}/include;\${Python_INCLUDE_DIRS}\"\n"
+        "    INTERFACE_LINK_LIBRARIES \"${_hgraph_config_python_link_target}\"\n"
+        "  )\n"
+        "endif()\n"
+        "if(TARGET hgraph::options)\n"
+        "  target_link_libraries(hgraph::options INTERFACE ${_hgraph_nanobind_library})\n"
+        "endif()\n"
+    )
+elseif(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
         "if(COMMAND nanobind_build_library AND NOT TARGET ${_hgraph_nanobind_library})\n"
         "  nanobind_build_library(${_hgraph_nanobind_library} AS_SYSINCLUDE)\n"

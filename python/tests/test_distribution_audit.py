@@ -18,6 +18,7 @@ WHEEL_FILES = (
     "lib/cmake/hgraph/hgraphConfig.cmake",
     "lib/cmake/hgraph/hgraphConfigVersion.cmake",
     "lib/libhgraph_core.a",
+    "lib/libnanobind-abi3.so",
     "share/hgraph/debugger/hgraph_debug_common.py",
 )
 
@@ -99,6 +100,16 @@ def test_distribution_audit_rejects_missing_native_payload(tmp_path):
 
     assert result.returncode == 1
     assert "native hgraph libraries" in result.stderr
+
+
+def test_distribution_audit_rejects_missing_shared_nanobind_runtime(tmp_path):
+    wheel = tmp_path / "hg_cpp-0.4.1-cp312-abi3-any.whl"
+    _wheel(wheel, tuple(name for name in WHEEL_FILES if "nanobind-abi3" not in name))
+
+    result = _audit(wheel)
+
+    assert result.returncode == 1
+    assert "shared nanobind runtime" in result.stderr
 
 
 def test_distribution_audit_rejects_incomplete_cmake_payload(tmp_path):

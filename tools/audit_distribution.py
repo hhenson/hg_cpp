@@ -121,6 +121,8 @@ def _audit_wheel(path: Path) -> int:
     ]
     if not libraries:
         raise AuditError("wheel does not contain the native hgraph libraries")
+    if not any("nanobind-abi3" in PurePosixPath(name).name for name in paths):
+        raise AuditError("wheel does not contain the shared nanobind runtime")
     return len(paths)
 
 
