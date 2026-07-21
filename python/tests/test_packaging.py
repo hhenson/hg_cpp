@@ -114,6 +114,11 @@ def test_release_workflow_targets_supported_platforms():
     assert "--exclude libarrow.so.2400" in workflow
     assert "--exclude libarrow_compute.so.2400" in workflow
     assert "--exclude libarrow_acero.so.2400" in workflow
+    assert "--exclude libhgraph_runtime.so" in workflow
+    assert "--exclude libhgraph_wiring.so" in workflow
+    assert "--exclude libhgraph_stdlib.so" in workflow
+    assert "--exclude libnanobind-abi3.so" in workflow
+    assert "tests/python_extension_consumer/check.py" in workflow
     assert "libarrow-acero=24" in workflow
     assert "g++-13 --version" in workflow
     assert "runs-on: ubuntu-24.04" in workflow

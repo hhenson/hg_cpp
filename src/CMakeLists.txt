@@ -144,9 +144,21 @@ if(HGRAPH_BUILD_SHARED)
     target_link_libraries(hgraph_runtime PRIVATE hgraph_private_dependencies)
     target_link_libraries(hgraph_wiring PRIVATE hgraph_private_dependencies)
     target_link_libraries(hgraph_stdlib PRIVATE hgraph_private_dependencies)
-    target_compile_definitions(hgraph_runtime PRIVATE hgraph_EXPORTS)
-    target_compile_definitions(hgraph_wiring PRIVATE hgraph_EXPORTS)
-    target_compile_definitions(hgraph_stdlib PRIVATE hgraph_EXPORTS)
+    if(MSVC)
+        # HGRAPH_EXPORT is intentionally shared by the three public component
+        # libraries. While each DLL is being compiled, leave those declarations
+        # unannotated and let WINDOWS_EXPORT_ALL_SYMBOLS create its import
+        # library. Defining hgraph_EXPORTS for every target makes MSVC emit
+        # graph-wiring vtables from runtime translation units and introduces a
+        # circular DLL dependency.
+        target_compile_definitions(hgraph_runtime PRIVATE HGRAPH_STATIC_DEFINE)
+        target_compile_definitions(hgraph_wiring PRIVATE HGRAPH_STATIC_DEFINE)
+        target_compile_definitions(hgraph_stdlib PRIVATE HGRAPH_STATIC_DEFINE)
+    else()
+        target_compile_definitions(hgraph_runtime PRIVATE hgraph_EXPORTS)
+        target_compile_definitions(hgraph_wiring PRIVATE hgraph_EXPORTS)
+        target_compile_definitions(hgraph_stdlib PRIVATE hgraph_EXPORTS)
+    endif()
 
     if(HGRAPH_BUILD_PYTHON_BINDINGS)
         if(APPLE)

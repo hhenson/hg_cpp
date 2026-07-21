@@ -30,6 +30,9 @@ SDIST_FILES = (
     "python/hgraph/__init__.py",
     "src/CMakeLists.txt",
     "tests/install_consumer/CMakeLists.txt",
+    "tests/python_extension_consumer/CMakeLists.txt",
+    "tests/python_extension_consumer/check.py",
+    "tests/python_extension_consumer/module.cpp",
     "tools/audit_distribution.py",
 )
 
