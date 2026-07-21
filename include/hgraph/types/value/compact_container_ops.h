@@ -1217,109 +1217,23 @@ namespace hgraph
     // ``Value`` over a container schema.
     // -----------------------------------------------------------------
 
-    [[nodiscard]] inline ValueTypeRef
-    compact_list_type(const ValueTypeRef &element_binding)
-    {
-        const auto *meta = TypeRegistry::instance().list(element_binding.schema(), /*fixed_size=*/0);
-        const auto &plan = compact_list_plan(element_binding);
-        const auto &debug = intern_dynamic_debug_descriptor(
-            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(),
-            DebugDynamicLayout{
-                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
-                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
-                .kind = DebugDynamicKind::Contiguous,
-                .flags = DebugDynamicFlags::DataIsIndirect,
-                .size_offset = ListStorage::debug_size_offset(),
-                .data_offset = ListStorage::debug_data_offset(),
-                .stride = element_binding.checked_plan().layout.size,
-            });
-        return intern_value_type(*meta, plan, compact_list_ops(), &debug);
-    }
+    [[nodiscard]] HGRAPH_EXPORT ValueTypeRef compact_list_type(const ValueTypeRef &element_binding);
 
     /** Meta-preserving form: a variadic-TUPLE schema keeps its identity (and
         its python read-back as a tuple) while sharing the list plan+ops. */
-    [[nodiscard]] inline ValueTypeRef
-    compact_list_type(const ValueTypeRef &element_binding, const ValueTypeMetaData &meta)
-    {
-        // Ops-variant selection AT BINDING TIME: a variadic tuple reads back
-        // as a python tuple through its OWN fn-ptr, not a runtime flag check.
-        const auto &ops = meta.has(ValueTypeFlags::VariadicTuple)
-                              ? container_ops_detail::compact_list_ops_impl<true>()
-                              : meta.has(ValueTypeFlags::ShapedArray)
-                                    ? container_ops_detail::compact_list_ops_impl<false, true>()
-                                    : compact_list_ops();
-        const auto &plan = compact_list_plan(element_binding);
-        if (meta.is_nullable()) { return intern_value_type(meta, plan, ops); }
-        const auto &debug = intern_dynamic_debug_descriptor(
-            meta.header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(),
-            DebugDynamicLayout{
-                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
-                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
-                .kind = DebugDynamicKind::Contiguous,
-                .flags = DebugDynamicFlags::DataIsIndirect,
-                .size_offset = ListStorage::debug_size_offset(),
-                .data_offset = ListStorage::debug_data_offset(),
-                .stride = element_binding.checked_plan().layout.size,
-            });
-        return intern_value_type(meta, plan, ops, &debug);
-    }
+    [[nodiscard]] HGRAPH_EXPORT ValueTypeRef compact_list_type(const ValueTypeRef &element_binding,
+                                                                const ValueTypeMetaData &meta);
 
-    [[nodiscard]] inline ValueTypeRef compact_set_type(const ValueTypeRef &element_binding)
-    {
-        const auto *meta = TypeRegistry::instance().set(element_binding.schema());
-        const auto &plan = compact_set_plan(element_binding);
-        const SetStorage exemplar;
-        const auto &debug = intern_dynamic_debug_descriptor(
-            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(),
-            exemplar.debug_layout(element_binding.checked_plan().layout.size));
-        return intern_value_type(*meta, plan, compact_set_ops(), &debug);
-    }
+    [[nodiscard]] HGRAPH_EXPORT ValueTypeRef compact_set_type(const ValueTypeRef &element_binding);
 
-    [[nodiscard]] inline ValueTypeRef compact_map_type(const ValueTypeRef &key_binding,
-                                                                     const ValueTypeRef &value_binding)
-    {
-        const auto *meta = TypeRegistry::instance().map(key_binding.schema(), value_binding.schema());
-        return intern_value_type(*meta, compact_map_plan(key_binding, value_binding), compact_map_ops());
-    }
+    [[nodiscard]] HGRAPH_EXPORT ValueTypeRef compact_map_type(const ValueTypeRef &key_binding,
+                                                              const ValueTypeRef &value_binding);
 
-    [[nodiscard]] inline ValueTypeRef
-    compact_cyclic_buffer_type(const ValueTypeRef &element_binding, std::size_t capacity)
-    {
-        const auto *meta = TypeRegistry::instance().cyclic_buffer(element_binding.schema(), capacity);
-        const auto &plan = compact_cyclic_buffer_plan(element_binding, capacity);
-        const auto &debug = intern_dynamic_debug_descriptor(
-            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(),
-            DebugDynamicLayout{
-                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
-                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
-                .kind = DebugDynamicKind::Contiguous,
-                .flags = DebugDynamicFlags::DataIsIndirect | DebugDynamicFlags::HasHead,
-                .size_offset = CyclicBufferStorage::debug_size_offset(),
-                .data_offset = CyclicBufferStorage::debug_data_offset(),
-                .stride = element_binding.checked_plan().layout.size,
-                .auxiliary_offset = CyclicBufferStorage::debug_head_offset(),
-            });
-        return intern_value_type(*meta, plan, compact_cyclic_buffer_ops(), &debug);
-    }
+    [[nodiscard]] HGRAPH_EXPORT ValueTypeRef compact_cyclic_buffer_type(const ValueTypeRef &element_binding,
+                                                                        std::size_t capacity);
 
-    [[nodiscard]] inline ValueTypeRef compact_queue_type(const ValueTypeRef &element_binding,
-                                                                       std::size_t             max_capacity)
-    {
-        const auto *meta = TypeRegistry::instance().queue(element_binding.schema(), max_capacity);
-        const auto &plan = compact_queue_plan(element_binding, max_capacity);
-        const auto &debug = intern_dynamic_debug_descriptor(
-            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(),
-            DebugDynamicLayout{
-                .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
-                .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
-                .kind = DebugDynamicKind::Contiguous,
-                .flags = DebugDynamicFlags::DataIsIndirect,
-                .size_offset = QueueStorage::debug_size_offset(),
-                .data_offset = QueueStorage::debug_data_offset(),
-                .stride = element_binding.checked_plan().layout.size,
-            });
-        return intern_value_type(*meta, plan, compact_queue_ops(), &debug);
-    }
+    [[nodiscard]] HGRAPH_EXPORT ValueTypeRef compact_queue_type(const ValueTypeRef &element_binding,
+                                                                std::size_t max_capacity);
 
     /**
      * Binding for the read-only ``SetView`` returned by
@@ -1330,13 +1244,8 @@ namespace hgraph
      * coexist with the map's own binding without any layout
      * unification.
      */
-    [[nodiscard]] inline ValueTypeRef
-    compact_map_key_set_type(const ValueTypeRef &key_binding, const ValueTypeRef &value_binding)
-    {
-        const auto *set_meta = TypeRegistry::instance().set(key_binding.schema());
-        return intern_value_type(
-            *set_meta, compact_map_plan(key_binding, value_binding), compact_map_key_set_ops());
-    }
+    [[nodiscard]] HGRAPH_EXPORT ValueTypeRef compact_map_key_set_type(const ValueTypeRef &key_binding,
+                                                                      const ValueTypeRef &value_binding);
 
     inline SetView compact_map_key_set_thunk(const void *, ValueTypeRef /*map_binding*/, const void *memory)
     {

@@ -14,7 +14,7 @@ namespace hgraph
     class TSDInputView;
     class TSWInputView;
 
-    class TSBInputView : public TSInputTypedView<TSBInputView>
+    class HGRAPH_EXPORT TSBInputView : public TSInputTypedView<TSBInputView>
     {
       public:
         explicit TSBInputView(TSInputView view);

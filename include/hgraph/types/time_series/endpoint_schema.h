@@ -34,7 +34,7 @@ namespace hgraph
      * associated with one output peering. An owned terminal uses ordinary local
      * TSData storage for the whole remaining subtree.
      */
-    class TSEndpointSchema
+    class HGRAPH_EXPORT TSEndpointSchema
     {
       public:
         TSEndpointSchema() noexcept;
@@ -100,8 +100,8 @@ namespace hgraph
     };
 
     /** Structural equality for canonical or equivalent time-series schemas. */
-    [[nodiscard]] bool time_series_schema_equivalent(const TSValueTypeMetaData *lhs,
-                                                     const TSValueTypeMetaData *rhs) noexcept;
+    [[nodiscard]] HGRAPH_EXPORT bool time_series_schema_equivalent(
+        const TSValueTypeMetaData *lhs, const TSValueTypeMetaData *rhs) noexcept;
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_TIME_SERIES_ENDPOINT_SCHEMA_H

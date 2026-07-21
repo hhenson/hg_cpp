@@ -1,6 +1,10 @@
 # The Python bridge module (roadmap P4). Opt-in only: the default build never
 # needs Python (HGRAPH_BUILD_PYTHON_BINDINGS=ON enables this subtree).
-set(_hgraph_nanobind_options NB_STATIC NOMINSIZE NOSTRIP)
+if(HGRAPH_BUILD_SHARED)
+    set(_hgraph_nanobind_options NB_SHARED NOMINSIZE NOSTRIP)
+else()
+    set(_hgraph_nanobind_options NB_STATIC NOMINSIZE NOSTRIP)
+endif()
 if(_hgraph_use_python_stable_abi)
     list(APPEND _hgraph_nanobind_options STABLE_ABI)
 endif()
@@ -14,6 +18,9 @@ nanobind_add_module(_hgraph ${_hgraph_nanobind_options}
     value_conversion.cpp
 )
 target_link_libraries(_hgraph PRIVATE hgraph_core hgraph::options)
+if(HGRAPH_BUILD_SHARED)
+    target_link_libraries(_hgraph PRIVATE hgraph_private_dependencies)
+endif()
 hgraph_enable_private_pch(_hgraph)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     # GCC at -O3 (NOMINSIZE) trips -Wmaybe-uninitialized false positives on
@@ -24,6 +31,14 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_compile_options(_hgraph PRIVATE -Wno-maybe-uninitialized)
 endif()
 
+set(_hgraph_install_rpath)
+if(HGRAPH_BUILD_SHARED)
+    if(APPLE)
+        list(APPEND _hgraph_install_rpath "@loader_path/${CMAKE_INSTALL_LIBDIR}")
+    elseif(UNIX)
+        list(APPEND _hgraph_install_rpath "$ORIGIN/${CMAKE_INSTALL_LIBDIR}")
+    endif()
+endif()
 if(HGRAPH_USE_PYARROW_ARROW AND HGRAPH_PYARROW_LIBRARY_DIR)
     if(APPLE)
         set(_hgraph_pyarrow_rpath "@loader_path/pyarrow")
@@ -32,10 +47,14 @@ if(HGRAPH_USE_PYARROW_ARROW AND HGRAPH_PYARROW_LIBRARY_DIR)
     else()
         set(_hgraph_pyarrow_rpath "")
     endif()
-    set_target_properties(_hgraph PROPERTIES
-        BUILD_RPATH "${HGRAPH_PYARROW_LIBRARY_DIR}"
-        INSTALL_RPATH "${_hgraph_pyarrow_rpath}"
-    )
+    set_target_properties(_hgraph PROPERTIES BUILD_RPATH "${HGRAPH_PYARROW_LIBRARY_DIR}")
+    if(_hgraph_pyarrow_rpath)
+        list(APPEND _hgraph_install_rpath "${_hgraph_pyarrow_rpath}")
+    endif()
+endif()
+if(_hgraph_install_rpath)
+    list(REMOVE_DUPLICATES _hgraph_install_rpath)
+    set_target_properties(_hgraph PROPERTIES INSTALL_RPATH "${_hgraph_install_rpath}")
 endif()
 
 install(TARGETS _hgraph

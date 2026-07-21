@@ -1848,9 +1848,8 @@ namespace hgraph
         {
         };
 
-        [[nodiscard]] WiringPortRef adapt_source_for_input(Wiring &w,
-                                                           const TSValueTypeMetaData *input_schema,
-                                                           WiringPortRef source);
+        [[nodiscard]] HGRAPH_EXPORT WiringPortRef adapt_source_for_input(
+            Wiring &w, const TSValueTypeMetaData *input_schema, WiringPortRef source);
 
         // ---- context scopes (see *Contexts* in services.rst) ----
         // The wiring-time context stack lives on the OperatorRegistry singleton
@@ -1858,10 +1857,13 @@ namespace hgraph
         // out of this header. `resolve` throws a precise wiring error when the
         // context is missing. A publication from an enclosing Wiring becomes
         // an implicit captured boundary input on the child.
-        [[nodiscard]] WiringPortRef resolve_context_source(Wiring &w, std::string_view name);
-        [[nodiscard]] bool          has_context_source(const Wiring &w, std::string_view name) noexcept;
-        void push_context_source(const Wiring &w, std::string_view name, WiringPortRef port);
-        void pop_context_source() noexcept;
+        [[nodiscard]] HGRAPH_EXPORT WiringPortRef resolve_context_source(Wiring &w,
+                                                                         std::string_view name);
+        [[nodiscard]] HGRAPH_EXPORT bool has_context_source(const Wiring &w,
+                                                            std::string_view name) noexcept;
+        HGRAPH_EXPORT void push_context_source(const Wiring &w, std::string_view name,
+                                               WiringPortRef port);
+        HGRAPH_EXPORT void pop_context_source() noexcept;
 
         [[nodiscard]] inline TSEndpointSchema endpoint_for_source(const TSValueTypeMetaData *schema,
                                                                   const WiringPortRef       &source)

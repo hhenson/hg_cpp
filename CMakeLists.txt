@@ -106,6 +106,13 @@ endif()
 
 add_library(hgraph_options INTERFACE)
 add_library(hgraph::options ALIAS hgraph_options)
+set_target_properties(hgraph_options PROPERTIES EXPORT_NAME options)
+
+# Third-party implementation dependencies are private when the runtime is
+# shared. Downstream node extensions then link only the hgraph DSOs and cannot
+# accidentally embed a second copy of process-wide registries or dependency
+# state. Static builds retain the existing transitive dependency contract.
+add_library(hgraph_private_dependencies INTERFACE)
 
 if(NOT HGRAPH_BUILD_SHARED)
     target_compile_definitions(hgraph_options INTERFACE HGRAPH_STATIC_DEFINE)
@@ -117,6 +124,7 @@ target_include_directories(hgraph_options INTERFACE
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include/third_party>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/third_party>
 )
 
 if(MSVC)
@@ -173,9 +181,13 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_FETCH_SIMDJSON)
     # simdjson's PCH includes <bit> when the header exists. Build the fetched
     # library in a mode where that header's contents are available on MSVC.
     target_compile_features(simdjson PRIVATE cxx_std_20)
-    target_link_libraries(hgraph_options INTERFACE
-        $<BUILD_INTERFACE:simdjson::simdjson>
-    )
+    if(HGRAPH_BUILD_SHARED AND HGRAPH_BUILD_PYTHON_BINDINGS)
+        target_link_libraries(hgraph_private_dependencies INTERFACE simdjson::simdjson)
+    else()
+        target_link_libraries(hgraph_options INTERFACE
+            $<BUILD_INTERFACE:simdjson::simdjson>
+        )
+    endif()
 else()
     # json_impl.cpp uses simdjson::dom::element_type::BIGINT, introduced in
     # simdjson 4.5 (the FetchContent path above pins v4.6.4). Distro packages
@@ -187,7 +199,11 @@ else()
         message(FATAL_ERROR "hgraph requires simdjson >= 4.5 for "
             "dom::element_type::BIGINT; found ${simdjson_VERSION}")
     endif()
-    target_link_libraries(hgraph_options INTERFACE simdjson::simdjson)
+    if(HGRAPH_BUILD_SHARED AND HGRAPH_BUILD_PYTHON_BINDINGS)
+        target_link_libraries(hgraph_private_dependencies INTERFACE simdjson::simdjson)
+    else()
+        target_link_libraries(hgraph_options INTERFACE simdjson::simdjson)
+    endif()
 endif()
 
 if(NOT HGRAPH_BUILD_PYTHON_BINDINGS)
@@ -213,7 +229,9 @@ if(NOT fmt_FOUND)
     endif()
     set(_hgraph_fmt_fetched ON)
 endif()
-if(_hgraph_fmt_fetched)
+if(HGRAPH_BUILD_SHARED AND HGRAPH_BUILD_PYTHON_BINDINGS)
+    target_link_libraries(hgraph_private_dependencies INTERFACE fmt::fmt)
+elseif(_hgraph_fmt_fetched)
     target_link_libraries(hgraph_options INTERFACE
         $<BUILD_INTERFACE:fmt::fmt>
     )
@@ -329,10 +347,17 @@ else()
     find_package(ArrowCompute CONFIG REQUIRED)  # Arrow 24 splits compute into its own lib
     find_package(ArrowAcero CONFIG REQUIRED)
 endif()
-target_link_libraries(hgraph_options INTERFACE
-    Arrow::arrow_shared
-    ArrowCompute::arrow_compute_shared
-    ArrowAcero::arrow_acero_shared)
+if(HGRAPH_BUILD_SHARED AND HGRAPH_BUILD_PYTHON_BINDINGS)
+    target_link_libraries(hgraph_private_dependencies INTERFACE
+        Arrow::arrow_shared
+        ArrowCompute::arrow_compute_shared
+        ArrowAcero::arrow_acero_shared)
+else()
+    target_link_libraries(hgraph_options INTERFACE
+        Arrow::arrow_shared
+        ArrowCompute::arrow_compute_shared
+        ArrowAcero::arrow_acero_shared)
+endif()
 
 # Boost.Math supplies the numerically stable correlation implementation used
 # by the scientific operators. It is header-only and remains a build-interface
@@ -374,7 +399,9 @@ if(NOT spdlog_FOUND)
     set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "Build spdlog examples" FORCE)
     FetchContent_MakeAvailable(spdlog)
 endif()
-if(spdlog_FOUND)
+if(HGRAPH_BUILD_SHARED AND HGRAPH_BUILD_PYTHON_BINDINGS)
+    target_link_libraries(hgraph_private_dependencies INTERFACE spdlog::spdlog)
+elseif(spdlog_FOUND)
     target_link_libraries(hgraph_options INTERFACE spdlog::spdlog)
 else()
     # The FetchContent'd spdlog target cannot join the install export set;
@@ -475,10 +502,18 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     )
     if(_hgraph_use_python_stable_abi)
         target_link_libraries(hgraph_options INTERFACE Python::SABIModule)
-        set(_hgraph_nanobind_library nanobind-static-abi3)
+        if(HGRAPH_BUILD_SHARED)
+            set(_hgraph_nanobind_library nanobind-abi3)
+        else()
+            set(_hgraph_nanobind_library nanobind-static-abi3)
+        endif()
     else()
         target_link_libraries(hgraph_options INTERFACE Python::Module)
-        set(_hgraph_nanobind_library nanobind-static)
+        if(HGRAPH_BUILD_SHARED)
+            set(_hgraph_nanobind_library nanobind)
+        else()
+            set(_hgraph_nanobind_library nanobind-static)
+        endif()
     endif()
     if(HGRAPH_ENABLE_PYTHON_USER_NODES AND NOT _hgraph_use_python_stable_abi AND TARGET Python::Python)
         target_link_libraries(hgraph_options INTERFACE Python::Python)
@@ -549,12 +584,29 @@ if(BUILD_TESTING AND EXISTS "${PROJECT_SOURCE_DIR}/tests/CMakeLists.txt")
 endif()
 
 set(_hgraph_export_targets hgraph_options hgraph_runtime hgraph_wiring hgraph_stdlib hgraph_core)
+set(_hgraph_runtime_destination "${CMAKE_INSTALL_BINDIR}")
+if(WIN32 AND HGRAPH_BUILD_SHARED AND HGRAPH_BUILD_PYTHON_BINDINGS)
+    # Python loads dependent DLLs from beside the importing extension. Both
+    # _hgraph and downstream extension modules are installed at wheel root.
+    set(_hgraph_runtime_destination ".")
+endif()
 install(TARGETS ${_hgraph_export_targets}
     EXPORT hgraphTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    RUNTIME DESTINATION "${_hgraph_runtime_destination}"
 )
+
+if(HGRAPH_BUILD_SHARED AND (HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES))
+    # Python conversion operations execute from the shared hgraph runtime as
+    # well as from extension modules. They must all use one nanobind runtime;
+    # separate static copies have independent ndarray/type internals.
+    install(TARGETS ${_hgraph_nanobind_library}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION "${_hgraph_runtime_destination}"
+    )
+endif()
 
 if(EXISTS "${PROJECT_SOURCE_DIR}/include")
     install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
@@ -565,6 +617,16 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/include")
     )
 endif()
 install(FILES "${HGRAPH_VERSION_HEADER}" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hgraph)
+
+if(HGRAPH_BUILD_SHARED AND HGRAPH_BUILD_PYTHON_BINDINGS)
+    # Public node-authoring headers include fmt and spdlog headers. Wheel
+    # builds fetch both projects, so ship those headers as part of the SDK;
+    # implementation libraries remain private inside the hgraph DSOs.
+    install(DIRECTORY "${fmt_SOURCE_DIR}/include/fmt"
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(DIRECTORY "${spdlog_SOURCE_DIR}/include/spdlog"
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()
 
 if(EXISTS "${PROJECT_SOURCE_DIR}/tools/debugger")
     install(DIRECTORY tools/debugger/ DESTINATION ${CMAKE_INSTALL_DATADIR}/hgraph/debugger
@@ -581,35 +643,52 @@ write_basic_package_version_file(
     COMPATIBILITY SameMajorVersion
 )
 
-set(_hgraph_config_dependencies
-    "find_dependency(Threads)\n"
-    "find_dependency(fmt 11 CONFIG)\n"
-    "find_dependency(Arrow CONFIG)\n"
-    "find_dependency(ArrowCompute CONFIG)\n"
-    "find_dependency(ArrowAcero CONFIG)\n"
-    "find_dependency(spdlog 1.15 CONFIG)\n"
-    # Both installed-config flavours reference simdjson::simdjson, and the
-    # code needs dom::element_type::BIGINT from simdjson 4.5. The
-    # floor is an explicit check because simdjson's package version file
-    # uses same-minor compatibility.
-    "find_dependency(simdjson CONFIG)\n"
-    "if(simdjson_VERSION VERSION_LESS 4.5)\n"
-    "  message(FATAL_ERROR \"hgraph requires simdjson >= 4.5; found \${simdjson_VERSION}\")\n"
-    "endif()\n"
-)
+set(_hgraph_config_dependencies "find_dependency(Threads)\n")
+if(NOT HGRAPH_BUILD_SHARED OR NOT HGRAPH_BUILD_PYTHON_BINDINGS)
+    list(APPEND _hgraph_config_dependencies
+        "find_dependency(fmt 11 CONFIG)\n"
+        "find_dependency(Arrow CONFIG)\n"
+        "find_dependency(ArrowCompute CONFIG)\n"
+        "find_dependency(ArrowAcero CONFIG)\n"
+        "find_dependency(spdlog 1.15 CONFIG)\n"
+        # Static consumers link these implementation dependencies. The
+        # simdjson floor is explicit because its package version file uses
+        # same-minor compatibility.
+        "find_dependency(simdjson CONFIG)\n"
+        "if(simdjson_VERSION VERSION_LESS 4.5)\n"
+        "  message(FATAL_ERROR \"hgraph requires simdjson >= 4.5; found \${simdjson_VERSION}\")\n"
+        "endif()\n"
+    )
+endif()
 string(JOIN "" _hgraph_config_dependencies ${_hgraph_config_dependencies})
 if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     if(_hgraph_use_python_stable_abi)
         set(_hgraph_config_python_components "Interpreter Development.Module Development.SABIModule")
+        set(_hgraph_config_python_link_target "Python::SABIModule")
     else()
         set(_hgraph_config_python_components "Interpreter Development.Module")
+        set(_hgraph_config_python_link_target "Python::Module")
     endif()
     if(HGRAPH_ENABLE_PYTHON_USER_NODES AND NOT _hgraph_use_python_stable_abi)
         set(_hgraph_config_python_components "Interpreter Development.Module Development.Embed")
     endif()
     string(APPEND _hgraph_config_dependencies
         "find_dependency(Python 3.12 COMPONENTS ${_hgraph_config_python_components})\n"
-        "find_dependency(nanobind CONFIG)\n"
+        "execute_process(\n"
+        "  COMMAND \"\${Python_EXECUTABLE}\" -m nanobind --cmake_dir\n"
+        "  OUTPUT_VARIABLE nanobind_ROOT\n"
+        "  OUTPUT_STRIP_TRAILING_WHITESPACE\n"
+        "  RESULT_VARIABLE _hgraph_nanobind_result\n"
+        ")\n"
+        "if(NOT _hgraph_nanobind_result EQUAL 0 OR nanobind_ROOT STREQUAL \"\")\n"
+        "  set(hgraph_FOUND FALSE)\n"
+        "  set(hgraph_NOT_FOUND_MESSAGE \"hgraph's Python-enabled SDK requires nanobind\")\n"
+        "  return()\n"
+        "endif()\n"
+        "list(PREPEND CMAKE_PREFIX_PATH \"\${nanobind_ROOT}\")\n"
+        # nanobind's shared runtime is not ABI-compatible with headers from a
+        # different release. Require the exact version used to build the SDK.
+        "find_dependency(nanobind ${nanobind_VERSION} EXACT CONFIG)\n"
     )
 endif()
 
@@ -618,22 +697,127 @@ file(WRITE "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
     "${_hgraph_config_dependencies}"
     "include(\"\${CMAKE_CURRENT_LIST_DIR}/hgraphTargets.cmake\")\n"
 )
-file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
-    # FetchContent dependencies are build-interface-only because their targets
-    # cannot join hgraph's export set. Reattach the packages resolved above for
-    # every installed configuration; repeating an existing system dependency
-    # is harmless and keeps the exported surface independent of configure path.
-    "if(TARGET hgraph::options)\n"
-    "  target_link_libraries(hgraph::options INTERFACE simdjson::simdjson fmt::fmt spdlog::spdlog)\n"
-    "endif()\n"
-)
-if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
+if(NOT HGRAPH_BUILD_SHARED)
     file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
+        # FetchContent dependencies are build-interface-only because their
+        # targets cannot join hgraph's export set. Reattach the packages
+        # resolved above for installed static configurations.
+        "if(TARGET hgraph::options)\n"
+        "  target_link_libraries(hgraph::options INTERFACE simdjson::simdjson fmt::fmt spdlog::spdlog)\n"
+        "endif()\n"
+    )
+elseif(NOT HGRAPH_BUILD_PYTHON_BINDINGS)
+    file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
+        # A native shared SDK uses its system packages as the public-header
+        # include/link surface. Python wheels instead ship the required
+        # headers and keep implementation dependencies private.
+        "if(TARGET hgraph::options)\n"
+        "  target_link_libraries(hgraph::options INTERFACE simdjson::simdjson fmt::fmt spdlog::spdlog Arrow::arrow_shared ArrowCompute::arrow_compute_shared ArrowAcero::arrow_acero_shared)\n"
+        "endif()\n"
+    )
+endif()
+if(HGRAPH_BUILD_SHARED AND (HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES))
+    if(_hgraph_use_python_stable_abi)
+        set(_hgraph_config_nanobind_definitions "NB_SHARED;Py_LIMITED_API=0x030C0000")
+    else()
+        set(_hgraph_config_nanobind_definitions "NB_SHARED")
+    endif()
+    file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
+        # Expose the wheel's installed shared nanobind runtime without taking
+        # the mutable target name used internally by nanobind_add_module().
+        # Downstream modules use hgraph_add_python_module(), which applies
+        # nanobind's module settings while linking this imported runtime.
+        "get_filename_component(_hgraph_package_prefix \"\${CMAKE_CURRENT_LIST_DIR}/../../..\" ABSOLUTE)\n"
+        "if(NOT TARGET hgraph::nanobind)\n"
+        "  add_library(hgraph::nanobind SHARED IMPORTED)\n"
+        "  if(WIN32)\n"
+        "    set_target_properties(hgraph::nanobind PROPERTIES\n"
+        "      IMPORTED_LOCATION \"\${_hgraph_package_prefix}/${_hgraph_runtime_destination}/${_hgraph_nanobind_library}\${CMAKE_SHARED_LIBRARY_SUFFIX}\"\n"
+        "      IMPORTED_IMPLIB \"\${_hgraph_package_prefix}/${CMAKE_INSTALL_LIBDIR}/${_hgraph_nanobind_library}\${CMAKE_IMPORT_LIBRARY_SUFFIX}\"\n"
+        "    )\n"
+        "  else()\n"
+        "    set_target_properties(hgraph::nanobind PROPERTIES\n"
+        "      IMPORTED_LOCATION \"\${_hgraph_package_prefix}/${CMAKE_INSTALL_LIBDIR}/\${CMAKE_SHARED_LIBRARY_PREFIX}${_hgraph_nanobind_library}\${CMAKE_SHARED_LIBRARY_SUFFIX}\"\n"
+        "    )\n"
+        "  endif()\n"
+        "  set_target_properties(hgraph::nanobind PROPERTIES\n"
+        "    INTERFACE_COMPILE_DEFINITIONS \"${_hgraph_config_nanobind_definitions}\"\n"
+        "    INTERFACE_INCLUDE_DIRECTORIES \"\${NB_DIR}/include;\${Python_INCLUDE_DIRS}\"\n"
+        "    INTERFACE_LINK_LIBRARIES \"${_hgraph_config_python_link_target}\"\n"
+        "  )\n"
+        "endif()\n"
+        "if(TARGET hgraph::options)\n"
+        "  target_link_libraries(hgraph::options INTERFACE hgraph::nanobind)\n"
+        "endif()\n"
+        "function(hgraph_add_python_module name)\n"
+        "  cmake_parse_arguments(PARSE_ARGV 1 _hgraph_module\n"
+        "    \"STABLE_ABI;PROTECT_STACK;LTO;NOMINSIZE;NOSTRIP\" \"\" \"\")\n"
+        "  if(NOT _hgraph_module_STABLE_ABI)\n"
+        "    message(FATAL_ERROR \"hgraph_add_python_module currently requires STABLE_ABI\")\n"
+        "  endif()\n"
+        "  if(Python_VERSION VERSION_LESS 3.12 OR NOT TARGET Python::SABIModule)\n"
+        "    message(FATAL_ERROR \"hgraph stable-ABI modules require CPython 3.12+ and Python::SABIModule\")\n"
+        "  endif()\n"
+        "  add_library(\${name} MODULE \${_hgraph_module_UNPARSED_ARGUMENTS})\n"
+        "  nanobind_compile_options(\${name})\n"
+        "  nanobind_link_options(\${name})\n"
+        "  set_target_properties(\${name} PROPERTIES LINKER_LANGUAGE CXX)\n"
+        "  nanobind_extension_abi3(\${name})\n"
+        "  target_link_libraries(\${name} PRIVATE hgraph::nanobind)\n"
+        "  if(NOT _hgraph_module_PROTECT_STACK)\n"
+        "    nanobind_disable_stack_protector(\${name})\n"
+        "  endif()\n"
+        "  if(NOT _hgraph_module_NOMINSIZE)\n"
+        "    nanobind_opt_size(\${name})\n"
+        "  endif()\n"
+        "  if(NOT _hgraph_module_NOSTRIP)\n"
+        "    nanobind_strip(\${name})\n"
+        "  endif()\n"
+        "  if(_hgraph_module_LTO)\n"
+        "    nanobind_lto(\${name})\n"
+        "  endif()\n"
+        "  nanobind_set_visibility(\${name})\n"
+        "  if(APPLE)\n"
+        "    set_target_properties(\${name} PROPERTIES INSTALL_RPATH \"@loader_path/${CMAKE_INSTALL_LIBDIR}\")\n"
+        "  elseif(UNIX)\n"
+        "    set_target_properties(\${name} PROPERTIES INSTALL_RPATH \"$ORIGIN/${CMAKE_INSTALL_LIBDIR}\")\n"
+        "  endif()\n"
+        "endfunction()\n"
+    )
+elseif(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
+    file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
+        "if(COMMAND nanobind_build_library AND NOT TARGET ${_hgraph_nanobind_library})\n"
+        "  nanobind_build_library(${_hgraph_nanobind_library} AS_SYSINCLUDE)\n"
+        "endif()\n"
+        "if(TARGET hgraph::options AND TARGET ${_hgraph_nanobind_library})\n"
+        "  target_link_libraries(hgraph::options INTERFACE ${_hgraph_nanobind_library})\n"
+        "endif()\n"
         "if(TARGET hgraph::options AND DEFINED NB_DIR AND EXISTS \"\${NB_DIR}/include\")\n"
         "  target_include_directories(hgraph::options INTERFACE \"\${NB_DIR}/include\")\n"
         "endif()\n"
         "if(TARGET hgraph::options AND Python_INCLUDE_DIRS)\n"
         "  target_include_directories(hgraph::options INTERFACE \${Python_INCLUDE_DIRS})\n"
+        "endif()\n"
+    )
+endif()
+if(HGRAPH_BUILD_SHARED AND HGRAPH_USE_PYARROW_ARROW)
+    file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
+        # Some public optional implementation headers use Arrow directly.
+        # Resolve only its headers here; the shared hgraph libraries already
+        # own their Arrow link dependencies.
+        "execute_process(\n"
+        "  COMMAND \"\${Python_EXECUTABLE}\" -c \"import pathlib, pyarrow; print((pathlib.Path(pyarrow.__file__).resolve().parent / 'include').as_posix())\"\n"
+        "  OUTPUT_VARIABLE _hgraph_arrow_include\n"
+        "  OUTPUT_STRIP_TRAILING_WHITESPACE\n"
+        "  RESULT_VARIABLE _hgraph_arrow_include_result\n"
+        ")\n"
+        "if(NOT _hgraph_arrow_include_result EQUAL 0 OR NOT EXISTS \"\${_hgraph_arrow_include}/arrow/api.h\")\n"
+        "  set(hgraph_FOUND FALSE)\n"
+        "  set(hgraph_NOT_FOUND_MESSAGE \"hgraph's shared SDK requires pyarrow headers\")\n"
+        "  return()\n"
+        "endif()\n"
+        "if(TARGET hgraph::options)\n"
+        "  target_include_directories(hgraph::options INTERFACE \"\${_hgraph_arrow_include}\")\n"
         "endif()\n"
     )
 endif()

@@ -1,6 +1,7 @@
 #ifndef HGRAPH_CPP_ROOT_VALUE_COMPACT_STORAGE_H
 #define HGRAPH_CPP_ROOT_VALUE_COMPACT_STORAGE_H
 
+#include <hgraph/hgraph_export.h>
 #include <hgraph/types/metadata/debug_descriptor.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value_ops.h>
@@ -1308,14 +1309,7 @@ namespace hgraph
      * state. Test-only helper used by the registry-reset listener;
      * pointers previously returned by ``compact_*_plan`` become invalid.
      */
-    inline void clear_compact_container_plans() noexcept
-    {
-        compact_detail::list_registry().clear();
-        compact_detail::set_registry().clear();
-        compact_detail::map_registry().clear();
-        compact_detail::cyclic_buffer_registry().clear();
-        compact_detail::queue_registry().clear();
-    }
+    HGRAPH_EXPORT void clear_compact_container_plans() noexcept;
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_VALUE_COMPACT_STORAGE_H

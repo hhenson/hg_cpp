@@ -10,6 +10,7 @@ from trove_classifiers import classifiers as valid_classifiers
 
 ROOT = Path(__file__).resolve().parents[2]
 PYARROW_REQUIREMENT = "pyarrow>=24,<25"
+NANOBIND_REQUIREMENT = "nanobind==2.13.0"
 SUPPORTED_PYTHON_MINIMUM = ">=3.12"
 STABLE_ABI_TAG = "cp312"
 DISTRIBUTION_NAME = "hg_cpp"
@@ -28,6 +29,17 @@ def test_pyarrow_build_and_runtime_requirements_share_the_supported_abi():
 
     assert PYARROW_REQUIREMENT in build_requires
     assert PYARROW_REQUIREMENT in runtime_requires
+
+
+def test_nanobind_build_and_sdk_headers_use_one_exact_runtime_abi():
+    project = load_project()
+
+    assert NANOBIND_REQUIREMENT in project["build-system"]["requires"]
+    assert NANOBIND_REQUIREMENT in project["project"]["optional-dependencies"]["python"]
+    assert NANOBIND_REQUIREMENT in project["project"]["optional-dependencies"]["dev"]
+
+    cmake = (ROOT / "CMakeLists.txt").read_text()
+    assert "find_dependency(nanobind ${nanobind_VERSION} EXACT CONFIG)" in cmake
 
 
 def test_windows_wheel_installs_all_linked_pyarrow_runtimes():
@@ -79,6 +91,12 @@ def test_wheel_targets_the_python_312_stable_abi():
     assert scikit_build["wheel"]["py-api"] == STABLE_ABI_TAG
 
 
+def test_wheel_uses_shared_runtime_for_downstream_native_extensions():
+    cmake_defines = load_project()["tool"]["scikit-build"]["cmake"]["define"]
+
+    assert cmake_defines["HGRAPH_BUILD_SHARED"] == "ON"
+
+
 def test_source_distribution_excludes_private_release_evidence():
     scikit_build = load_project()["tool"]["scikit-build"]
     excluded = scikit_build["sdist"]["exclude"]
@@ -108,6 +126,11 @@ def test_release_workflow_targets_supported_platforms():
     assert "--exclude libarrow.so.2400" in workflow
     assert "--exclude libarrow_compute.so.2400" in workflow
     assert "--exclude libarrow_acero.so.2400" in workflow
+    assert "--exclude libhgraph_runtime.so" in workflow
+    assert "--exclude libhgraph_wiring.so" in workflow
+    assert "--exclude libhgraph_stdlib.so" in workflow
+    assert "--exclude libnanobind-abi3.so" in workflow
+    assert "tests/python_extension_consumer/check.py" in workflow
     assert "libarrow-acero=24" in workflow
     assert "g++-13 --version" in workflow
     assert "runs-on: ubuntu-24.04" in workflow
@@ -143,6 +166,7 @@ def main():
     test_pypi_classifiers_are_valid()
     test_release_metadata_is_consistent()
     test_wheel_targets_the_python_312_stable_abi()
+    test_wheel_uses_shared_runtime_for_downstream_native_extensions()
     test_source_distribution_excludes_private_release_evidence()
     test_full_suite_dependencies_include_the_dataframe_runtime()
     test_release_workflow_targets_supported_platforms()
@@ -154,6 +178,7 @@ def main():
     print("PASS test_pypi_classifiers_are_valid")
     print("PASS test_release_metadata_is_consistent")
     print("PASS test_wheel_targets_the_python_312_stable_abi")
+    print("PASS test_wheel_uses_shared_runtime_for_downstream_native_extensions")
     print("PASS test_source_distribution_excludes_private_release_evidence")
     print("PASS test_full_suite_dependencies_include_the_dataframe_runtime")
     print("PASS test_release_workflow_targets_supported_platforms")

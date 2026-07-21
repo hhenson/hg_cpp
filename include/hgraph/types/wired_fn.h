@@ -309,26 +309,13 @@ namespace hgraph
     template <>
     struct python_conversion_traits<WiredFn>
     {
-        inline static nanobind::object (*to_python_hook)(const WiredFn &) = nullptr;
-        inline static WiredFn (*from_python_hook)(nanobind::handle)       = nullptr;
+        using ToPythonHook   = nanobind::object (*)(const WiredFn &);
+        using FromPythonHook = WiredFn (*)(nanobind::handle);
 
-        static nanobind::object to_python(const WiredFn &value)
-        {
-            if (to_python_hook == nullptr)
-            {
-                throw std::logic_error("WiredFn python conversion hook not installed (import the module)");
-            }
-            return to_python_hook(value);
-        }
-
-        static WiredFn from_python(nanobind::handle source)
-        {
-            if (from_python_hook == nullptr)
-            {
-                throw std::logic_error("WiredFn python conversion hook not installed (import the module)");
-            }
-            return from_python_hook(source);
-        }
+        [[nodiscard]] HGRAPH_EXPORT static ToPythonHook &to_python_hook() noexcept;
+        [[nodiscard]] HGRAPH_EXPORT static FromPythonHook &from_python_hook() noexcept;
+        HGRAPH_EXPORT static nanobind::object to_python(const WiredFn &value);
+        HGRAPH_EXPORT static WiredFn from_python(nanobind::handle source);
     };
 #endif
 

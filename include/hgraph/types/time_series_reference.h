@@ -214,28 +214,13 @@ namespace hgraph
     template <>
     struct python_conversion_traits<TimeSeriesReference>
     {
-        inline static nanobind::object (*to_python_hook)(const TimeSeriesReference &) = nullptr;
-        inline static TimeSeriesReference (*from_python_hook)(nanobind::handle)       = nullptr;
+        using ToPythonHook   = nanobind::object (*)(const TimeSeriesReference &);
+        using FromPythonHook = TimeSeriesReference (*)(nanobind::handle);
 
-        static nanobind::object to_python(const TimeSeriesReference &value)
-        {
-            if (to_python_hook == nullptr)
-            {
-                throw std::logic_error(
-                    "TimeSeriesReference python conversion hook not installed (import the module)");
-            }
-            return to_python_hook(value);
-        }
-
-        static TimeSeriesReference from_python(nanobind::handle source)
-        {
-            if (from_python_hook == nullptr)
-            {
-                throw std::logic_error(
-                    "TimeSeriesReference python conversion hook not installed (import the module)");
-            }
-            return from_python_hook(source);
-        }
+        [[nodiscard]] HGRAPH_EXPORT static ToPythonHook &to_python_hook() noexcept;
+        [[nodiscard]] HGRAPH_EXPORT static FromPythonHook &from_python_hook() noexcept;
+        HGRAPH_EXPORT static nanobind::object to_python(const TimeSeriesReference &value);
+        HGRAPH_EXPORT static TimeSeriesReference from_python(nanobind::handle source);
     };
 }  // namespace hgraph
 #endif  // HGRAPH_ENABLE_PYTHON_USER_NODES

@@ -1,6 +1,7 @@
 #ifndef HGRAPH_CPP_TS_DATA_OPS_H
 #define HGRAPH_CPP_TS_DATA_OPS_H
 
+#include <hgraph/hgraph_export.h>
 #include <hgraph/types/time_series/ts_data/types.h>
 #include <hgraph/types/utils/slot_observer.h>
 #include <hgraph/types/value/value_range.h>
@@ -43,7 +44,7 @@ namespace hgraph
         [[nodiscard]] bool missing_delta_has_effect(const TSOutputView &, const ValueView &);
         void missing_apply_delta(const TSOutputView &, const ValueView &);
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
-        [[nodiscard]] bool missing_from_python(const void *, void *, nb::handle, DateTime);
+        [[nodiscard]] HGRAPH_EXPORT bool missing_from_python(const void *, void *, nb::handle, DateTime);
         [[nodiscard]] nb::object missing_to_python(const void *, const void *);
         [[nodiscard]] nb::object missing_delta_to_python(const void *, const void *, DateTime);
 #endif

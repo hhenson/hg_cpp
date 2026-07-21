@@ -11,6 +11,7 @@
 #ifndef HGRAPH_CPP_ROOT_TYPE_REGISTRY_H
 #define HGRAPH_CPP_ROOT_TYPE_REGISTRY_H
 
+#include <hgraph/hgraph_export.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
@@ -31,6 +32,12 @@
 
 namespace hgraph
 {
+    struct Frame;
+    struct Series;
+    struct TimeSeriesReference;
+    struct ValueCallable;
+    struct WiredFn;
+
     /** Atomic copy of the registered Bundle graph at one hierarchy generation. */
     struct BundleHierarchySnapshot
     {
@@ -81,7 +88,7 @@ namespace hgraph
      * aliases on first construction. The constructor is private. The class
      * is non-copyable and non-movable.
      */
-    class TypeRegistry
+    class HGRAPH_EXPORT TypeRegistry
     {
     public:
         /** Singleton accessor; returns a reference to the process-wide registry. */
@@ -373,7 +380,7 @@ namespace hgraph
         ValueFieldMetaData *store_value_fields(std::unique_ptr<ValueFieldMetaData[]> fields);
         TSFieldMetaData *store_ts_fields(std::unique_ptr<TSFieldMetaData[]> fields);
 
-        const ValueTypeMetaData *register_scalar_impl(std::type_index type_key,
+        const ValueTypeMetaData *register_scalar_impl(std::string_view type_key,
                                                       std::string_view name,
                                                       ValueTypeFlags flags,
                                                       const MemoryUtils::StoragePlan *canonical_plan);
@@ -634,7 +641,11 @@ namespace hgraph
 
         // Identity caches: thin wrappers over InternTable that own the
         // metadata. Equivalent keys always return the same canonical pointer.
-        InternTable<std::type_index, ValueTypeMetaData> scalar_cache_;
+        // RTTI object addresses are not unique for hidden hgraph types across
+        // Mach-O/ELF shared-library boundaries. The ABI type name is stable
+        // within one process/toolchain and lets an extension resolve the same
+        // scalar registered by a core hgraph DSO.
+        InternTable<std::string, ValueTypeMetaData> scalar_cache_;
         InternTable<std::string, ValueTypeMetaData> synthetic_scalar_cache_;
         InternTable<TupleKey, ValueTypeMetaData, TupleKeyHash> tuple_cache_;
         InternTable<BundleKey, ValueTypeMetaData, BundleKeyHash> bundle_cache_;
@@ -685,7 +696,7 @@ namespace hgraph
         const std::lock_guard lock(mutex_);
         const std::string_view canonical_name = name.empty() ? std::string_view{typeid(T).name()} : name;
         const ValueTypeMetaData *meta = register_scalar_impl(
-            std::type_index(typeid(T)),
+            typeid(T).name(),
             canonical_name,
             compute_scalar_flags<T>() | extra_flags,
             &MemoryUtils::plan_for<T>());
@@ -707,10 +718,45 @@ namespace hgraph
     [[nodiscard]] inline ValueTypeRef TypeRegistry::scalar_type() const
     {
         const std::lock_guard lock(mutex_);
-        const ValueTypeMetaData *meta = scalar_cache_.find(std::type_index(typeid(T)));
+        const ValueTypeMetaData *meta = scalar_cache_.find(std::string{typeid(T).name()});
         if (meta == nullptr) { return {}; }
         return ValuePlanFactory::instance().find_type(meta);
     }
+
+    // Standard scalar plans and value-operation tables must have exactly one
+    // process-wide address. In shared builds an inline function-local static
+    // would otherwise be instantiated independently in the runtime, stdlib,
+    // Python module, and every downstream node extension. Keep these common
+    // specializations in hgraph_runtime; custom extension scalar types still
+    // instantiate their bindings in the extension that owns the type.
+#define HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(Type)                                                \
+    extern template HGRAPH_EXPORT const MemoryUtils::StoragePlan &MemoryUtils::plan_for<Type>() noexcept; \
+    extern template HGRAPH_EXPORT const ValueOps &ops_for<Type>() noexcept
+
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(Bool);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(Int);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(Float);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(Date);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(DateTime);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(TimeDelta);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(Time);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(Str);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(Bytes);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(Frame);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(Series);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(std::int8_t);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(std::int16_t);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(std::int32_t);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(std::uint8_t);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(std::uint16_t);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(std::uint32_t);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(std::uint64_t);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(float);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(TimeSeriesReference);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(ValueCallable);
+    HGRAPH_DECLARE_STANDARD_SCALAR_BINDING(WiredFn);
+
+#undef HGRAPH_DECLARE_STANDARD_SCALAR_BINDING
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_TYPE_REGISTRY_H

@@ -76,9 +76,38 @@ environment.
 The macOS build uses the current system Clang from the latest Apple Silicon
 runner image while retaining a macOS 15 deployment target.
 
+Downstream Native Extensions
+----------------------------
+
+The Python wheel builds ``hgraph_runtime``, ``hgraph_wiring``, ``hgraph_stdlib``,
+and the nanobind bridge runtime as shared libraries. The ``_hgraph`` bridge and
+downstream native modules must use those same libraries so process-wide type,
+operator, plan, and nanobind conversion registries have exactly one instance.
+Linking the wheel's runtime statically into another extension is unsupported
+because it creates an isolated registry universe that Python wiring cannot see.
+
+The wheel includes public headers and a relocatable ``hgraphConfig.cmake``.
+A downstream scikit-build project can add Python's ``purelib`` directory to
+``CMAKE_PREFIX_PATH`` and pass its ``lib*/cmake/hgraph`` subdirectories as
+``HINTS`` to ``find_package(hgraph CONFIG REQUIRED)``. Explicit hints avoid
+depending on CMake's platform-specific ``lib`` versus ``lib64`` prefix
+expansion. The project can then use
+``hgraph_add_python_module(name STABLE_ABI sources...)`` before linking the
+module to ``hgraph::core``. The helper applies nanobind's extension settings
+while linking the wheel's shared ``hgraph::nanobind`` runtime; calling
+``nanobind_add_module(NB_SHARED)`` directly would create a second runtime.
+The SDK config requires the exact nanobind release used to build its shared
+runtime (2.13.0 for hgraph 0.4.2), since nanobind's C++ runtime ABI can change
+between releases.
+Native modules should be installed beside ``_hgraph``. The helper applies a
+relative runtime search path to the wheel's platform-selected library directory
+(``lib`` or ``lib64``), using ``@loader_path`` on macOS and ``$ORIGIN`` on ELF
+systems.
+
 Open Design Items
 -----------------
 
 - Decide when to split runtime, system nodes, schema, and Python bridge into separate targets.
 - Decide whether tests should use a bundled test framework or depend on system packages.
-- Define packaging expectations for static and shared library builds.
+- Decide whether the shared extension ABI needs an explicit compatibility
+  version independent of the Python distribution version.

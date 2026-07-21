@@ -84,26 +84,13 @@ namespace hgraph
     template <>
     struct python_conversion_traits<Series>
     {
-        inline static nanobind::object (*to_python_hook)(const Series &)      = nullptr;
-        inline static Series (*from_python_hook)(nanobind::handle)            = nullptr;
+        using ToPythonHook   = nanobind::object (*)(const Series &);
+        using FromPythonHook = Series (*)(nanobind::handle);
 
-        static nanobind::object to_python(const Series &value)
-        {
-            if (to_python_hook == nullptr)
-            {
-                throw std::logic_error("Series python conversion hook not installed (import the module)");
-            }
-            return to_python_hook(value);
-        }
-
-        static Series from_python(nanobind::handle source)
-        {
-            if (from_python_hook == nullptr)
-            {
-                throw std::logic_error("Series python conversion hook not installed (import the module)");
-            }
-            return from_python_hook(source);
-        }
+        [[nodiscard]] HGRAPH_EXPORT static ToPythonHook &to_python_hook() noexcept;
+        [[nodiscard]] HGRAPH_EXPORT static FromPythonHook &from_python_hook() noexcept;
+        HGRAPH_EXPORT static nanobind::object to_python(const Series &value);
+        HGRAPH_EXPORT static Series from_python(nanobind::handle source);
     };
 }  // namespace hgraph
 #endif  // HGRAPH_ENABLE_PYTHON_USER_NODES

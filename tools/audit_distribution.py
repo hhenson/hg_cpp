@@ -19,6 +19,9 @@ SDIST_REQUIRED = {
     "python/hgraph/__init__.py",
     "src/CMakeLists.txt",
     "tests/install_consumer/CMakeLists.txt",
+    "tests/python_extension_consumer/CMakeLists.txt",
+    "tests/python_extension_consumer/check.py",
+    "tests/python_extension_consumer/module.cpp",
     "tools/audit_distribution.py",
 }
 
@@ -121,6 +124,8 @@ def _audit_wheel(path: Path) -> int:
     ]
     if not libraries:
         raise AuditError("wheel does not contain the native hgraph libraries")
+    if not any("nanobind-abi3" in PurePosixPath(name).name for name in paths):
+        raise AuditError("wheel does not contain the shared nanobind runtime")
     return len(paths)
 
 

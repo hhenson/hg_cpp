@@ -738,10 +738,10 @@ namespace hgraph::python_bridge
 
     void bind_wiring(nb::module_ &m)
     {
-    python_conversion_traits<WiredFn>::to_python_hook = [](const WiredFn &value) {
+    python_conversion_traits<WiredFn>::to_python_hook() = [](const WiredFn &value) {
         return nb::cast(PyWiredFn{value});
     };
-    python_conversion_traits<WiredFn>::from_python_hook = [](nb::handle source) {
+    python_conversion_traits<WiredFn>::from_python_hook() = [](nb::handle source) {
         if (!nb::isinstance<PyWiredFn>(source))
         {
             throw nb::type_error("expected a WiredFn value");

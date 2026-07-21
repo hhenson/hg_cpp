@@ -18,7 +18,7 @@ namespace hgraph
 namespace hgraph::stdlib::json_tree
 {
     [[nodiscard]] const ValueTypeMetaData *json_meta();
-    [[nodiscard]] bool is_json_ts(const TSValueTypeMetaData *ts) noexcept;
+    [[nodiscard]] HGRAPH_EXPORT bool is_json_ts(const TSValueTypeMetaData *ts) noexcept;
     [[nodiscard]] bool equals(const ValueView &lhs, const ValueView &rhs);
     [[nodiscard]] std::partial_ordering compare(const ValueView &lhs, const ValueView &rhs);
 }  // namespace hgraph::stdlib::json_tree

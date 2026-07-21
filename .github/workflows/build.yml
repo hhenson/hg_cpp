@@ -229,6 +229,10 @@ jobs:
             --exclude libarrow.so.2400 \
             --exclude libarrow_compute.so.2400 \
             --exclude libarrow_acero.so.2400 \
+            --exclude libhgraph_runtime.so \
+            --exclude libhgraph_wiring.so \
+            --exclude libhgraph_stdlib.so \
+            --exclude libnanobind-abi3.so \
             --wheel-dir wheelhouse \
             dist/*.whl
           rm dist/*.whl
@@ -345,6 +349,9 @@ jobs:
         run: uv run --no-sync python -c "import importlib.metadata as m; import _hgraph; print(m.version('hg_cpp'), _hgraph.__file__)"
       - name: Run Python compatibility suite
         run: uv run --no-sync python -m pytest python/tests -q -m "not wip"
+      - name: Build installed Python extension consumer
+        if: matrix.python-version == '3.12'
+        run: uv run --no-sync python tests/python_extension_consumer/check.py
 
   native-cpp:
     name: Native C++ / ${{ matrix.os }}

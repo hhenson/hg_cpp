@@ -36,7 +36,7 @@ namespace hgraph
      * terminal, or a position inside a bound target output reached through a
      * TargetLink terminal.
      */
-    class TSInputView
+    class HGRAPH_EXPORT TSInputView
     {
       public:
         TSInputView() noexcept;

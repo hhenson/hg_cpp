@@ -648,26 +648,26 @@ namespace hgraph::python_bridge
 
     void install_value_conversion_hooks()
     {
-        python_conversion_traits<ValueCallable>::to_python_hook = [](const ValueCallable &value) {
+        python_conversion_traits<ValueCallable>::to_python_hook() = [](const ValueCallable &value) {
             if (value.ops != &python_value_callable_ops() || value.context == nullptr)
             {
                 throw nb::type_error("native value callable has no Python callable object");
             }
             return static_cast<const PyObj *>(value.context)->get();
         };
-        python_conversion_traits<ValueCallable>::from_python_hook = &python_value_callable;
-        python_conversion_traits<Frame>::to_python_hook   = &frame_to_py;
-        python_conversion_traits<Frame>::from_python_hook = [](nb::handle o) {
+        python_conversion_traits<ValueCallable>::from_python_hook() = &python_value_callable;
+        python_conversion_traits<Frame>::to_python_hook()   = &frame_to_py;
+        python_conversion_traits<Frame>::from_python_hook() = [](nb::handle o) {
             return py_arrow_to_frame(o).view().checked_as<Frame>();
         };
-        python_conversion_traits<Series>::to_python_hook   = &series_to_py;
-        python_conversion_traits<Series>::from_python_hook = [](nb::handle o) {
+        python_conversion_traits<Series>::to_python_hook()   = &series_to_py;
+        python_conversion_traits<Series>::from_python_hook() = [](nb::handle o) {
             return py_arrow_to_series(o).view().checked_as<Series>();
         };
-        python_conversion_traits<TimeSeriesReference>::to_python_hook = [](const TimeSeriesReference &value) {
+        python_conversion_traits<TimeSeriesReference>::to_python_hook() = [](const TimeSeriesReference &value) {
             return nb::cast(PyOpaqueRef{Value{value}, MIN_DT});
         };
-        python_conversion_traits<TimeSeriesReference>::from_python_hook = [](nb::handle source) {
+        python_conversion_traits<TimeSeriesReference>::from_python_hook() = [](nb::handle source) {
             if (!nb::isinstance<PyOpaqueRef>(source))
             {
                 throw nb::type_error("expected a TimeSeriesReference value");

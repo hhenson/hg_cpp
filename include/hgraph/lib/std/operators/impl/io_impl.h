@@ -29,7 +29,7 @@ namespace hgraph::stdlib
         redirection (and pytest capture) behaves like hgraph's python
         prints. One line per call (no trailing newline in ``line``). */
     using IoWriteFn = void (*)(std::string_view line, bool to_stdout);
-    [[nodiscard]] IoWriteFn &io_write_slot() noexcept;
+    [[nodiscard]] HGRAPH_EXPORT IoWriteFn &io_write_slot() noexcept;
     void io_write(std::string_view line, bool to_stdout);
 
     /**
