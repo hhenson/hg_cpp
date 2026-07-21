@@ -181,12 +181,16 @@ Ported operator-test suite (the behaviour yardstick)
 
 **All 48** upstream ``hgraph_unit_tests/_operators`` files are ported into
 ``python/tests/ported`` (the ctest gate ``hgraph_python_ported_suite``).
-Standing residue, each marked precisely in the test file:
+No implementation-gap skips remain in this tier. The two final stale markers
+were removed on 2026-07-21 after the unchanged upstream cases passed: proxy
+lag preserves sparse TSB field deltas, and every parameterized
+``combine_status_messages`` case executes through the current stream schema
+adapter. The sparse TSB behavior also has a public C++ ``eval_node`` regression.
+TSS rebind-to-empty removal semantics execute through the keyed structural-REF
+implementation.
 
-- **2 accepted gaps** — sparse TSB deltas (the canonical bundle delta is
-  dense) and the ``hgraph.stream`` status library
-  (``Base[COMPOUND_SCALAR]`` Python generics). TSS rebind-to-empty removal
-  semantics now execute through the keyed structural-REF implementation.
+Standing residue is limited to recorded deviations:
+
 - **Recorded deviations** — python wiring-node signature introspection,
   CompoundScalar string representation, and
   ``test_to_table_dispatch`` (upstream ``_impl`` internals; behaviour covered

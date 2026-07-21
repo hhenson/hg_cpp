@@ -130,6 +130,8 @@ auditor for Linux's standard ``lib64`` install layout; it did not change the
 runtime or wheel payload. Commit ``c0582b7e`` completed the matching
 ``auditwheel`` exclusion set for the three Arrow libraries supplied by
 PyArrow; it likewise changed only release automation and its regression test.
+Commit ``5086abaa`` then added the linked Arrow Acero runtime to the Windows
+wheel after the first post-push import check identified the omitted DLL.
 
 **macOS 26.5.2, arm64, Apple Clang 21.0.0:**
 
@@ -180,6 +182,10 @@ debugger support, and Python package while accepting the platform-standard
 ``lib`` or ``lib64`` root.
 
 The official ``manylinux_2_28``/GCC 14 wheel, Windows Visual Studio wheel,
-three-version wheel installs, and Linux shared-package consumer remain
-post-push GitHub CI evidence. They must not be inferred from local results, and
-the final tag review must name the exact tagged commit.
+three-version wheel installs, and Linux shared-package consumer all passed in
+GitHub Actions run ``29818280267`` at ``5086abaa``. The Windows artifact
+included ``arrow.dll``, ``arrow_compute.dll``, and ``arrow_acero.dll`` beside
+``_hgraph.pyd``; the same ``cp312-abi3`` wheel passed under Python 3.12, 3.13,
+and 3.14. The final compatibility-skip refresh on top of that runtime source
+passed 1,204 native tests and 1,509 Python 3.14.6 tests with 10 documented
+deviation skips. The final tag review must still name the exact tagged commit.

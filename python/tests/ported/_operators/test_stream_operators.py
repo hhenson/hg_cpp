@@ -259,8 +259,6 @@ def test_tss_proxy_lag():
     ]
 
 
-@pytest.mark.skip(reason="gap: sparse TSB deltas (the canonical bundle delta is dense; "
-                         "a partial-field tick re-records the other valid fields)")
 def test_lag_proxy_tsb():
     s = ts_schema(a=TS[int], b=TS[float])
 
@@ -1003,8 +1001,6 @@ def test_slice_():
         ("Using stale price for x1, x2", "Using stale price for x3, x1", "Using stale price for x1, x2, x3"),
     ],
 )
-@pytest.mark.skip(reason="gap: hgraph.stream status library (Base[COMPOUND_SCALAR] generic "
-                         "compound scalars are not bridged)")
 def test_combine_status_messages(messages, new_message, expected):
     register_status_message_pattern(r"Using stale price for (\w+)")
     register_status_message_pattern(r"No price for (\w+) for a week")

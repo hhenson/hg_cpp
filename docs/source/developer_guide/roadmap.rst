@@ -23,7 +23,7 @@ of truth.  It distinguishes four states deliberately:
 Review Snapshot: 2026-07-21
 ---------------------------
 
-This review has been refreshed through ``c0582b7e`` against the
+This review has been refreshed through ``5086abaa`` against the
 adjacent Python hgraph checkout at ``a0deb32e``.  The completed evidence below
 is retained at the revisions where it was recorded.  The current findings and
 ordered implementation milestones are maintained in
@@ -50,6 +50,14 @@ The final runtime source passed 1,203 native tests on macOS and Ubuntu, a
 stable-ABI wheel passed 1,502 Python 3.14 tests with 16 skips on macOS, and the
 complete Linux native and Python ASan suites passed. Exact artifact and
 application-canary evidence is recorded in :doc:`release_readiness`.
+
+The final compatibility-skip audit removed the two remaining stale ``gap:``
+markers without changing runtime code. Proxy lag already preserved sparse TSB
+field deltas, and the current stream schema adapter already executed all five
+parameterized status-message cases. A public C++ ``eval_node`` regression now
+pins the sparse TSB call shape. The clean macOS gate passed 1,204 native tests,
+and the stable-ABI wheel under Python 3.14.6 passed 1,509 tests with 10
+documented deviation skips. No implementation-gap skip remains.
 
 Evidence came from the public implementation and tests, the commit history,
 :doc:`parity_matrix`, :doc:`python_integration`, :doc:`nested_graphs`, and
@@ -373,6 +381,8 @@ results, accepted restrictions, and upstream revision are saved in
   const-lifting, runtime higher-order erasure of ordinary registered operators,
   mutually recursive CompoundScalars, ``RecordReplayEnum.RESET`` and recorder
   state helpers, and generic WebSocket implementation registration.
+- **Landed:** sparse field-delta preservation for TSB proxy lag and the complete
+  parameterized ``hgraph.stream`` status-message compatibility pack.
 
 **Accepted from this audit:** old ``GraphBuilder``/``WiringNodeInstance`` and
 peering/binding introspection are private; ``const_fn`` remains replaced by

@@ -10,7 +10,7 @@ Audit Baseline
 
 The audit was refreshed on 2026-07-21 against:
 
-- ``hg_cpp`` at ``c0582b7e``;
+- ``hg_cpp`` at ``5086abaa``;
 - the adjacent Python hgraph checkout at ``a0deb32e``; and
 - application evidence from ``hg_oap`` and ``hg_systematic``, which both run
   against ``hg_cpp``.
@@ -27,6 +27,11 @@ complete. Native evaluation tracing, profiling, wiring diagnostics, and owned
 graph inspection are implemented. The authoring mismatches found by this audit
 were completed in milestones R0 and R1 on 2026-07-20; the remaining operational
 milestones completed on 2026-07-21.
+
+The final compatibility-skip audit found that both recorded operator gaps were
+stale. Sparse TSB proxy-lag deltas and the complete stream status-message pack
+pass unchanged; the former now also has a public C++ ``eval_node`` regression.
+The non-WIP compatibility suite contains no remaining ``gap:`` skip.
 
 Completed Authoring Work
 ------------------------
@@ -453,8 +458,10 @@ The full macOS and Ubuntu Release suites, macOS and Linux stable-ABI wheels,
 strict ABI audits, Linux native and Python ASan suites, installed CMake
 consumer, and both application canaries passed. :doc:`roadmap`,
 :doc:`parity_matrix`, public compatibility documentation, and
-:doc:`release_readiness` were refreshed with the exact evidence. Windows
-remains a wheel-focused, best-effort CI gate.
+:doc:`release_readiness` were refreshed with the exact evidence. The final
+Windows Visual Studio wheel, stable-ABI audit, and Python 3.12/3.13/3.14 suites
+passed in GitHub Actions at ``5086abaa``. Windows remains a wheel-focused,
+best-effort CI gate.
 
 Completion Rules
 ----------------

@@ -511,6 +511,18 @@ namespace
         }
     };
 
+    struct TsbProxyLagGraph
+    {
+        static constexpr auto name = "tsb_proxy_lag_graph";
+
+        static Port<NumericTsbBundle> compose(Wiring &w, Port<TS<Int>> a,
+                                              Port<TS<Float>> b, Port<TS<Bool>> proxy)
+        {
+            auto ts = stdlib::to_tsb<NumericTsbBundle>(w, a, b);
+            return wire<stdlib::lag>(w, ts, Int{2}, proxy).as<NumericTsbBundle>();
+        }
+    };
+
     struct NamedTsbDedupGraph
     {
         static constexpr auto name = "named_tsb_dedup_graph";
@@ -1876,6 +1888,28 @@ TEST_CASE("std operators: stream operators cover sampling filtering slicing and 
                  values<Float>(0.0, 0.5, 1.0));
     CHECK_OUTPUT(eval_node<stdlib::ewma>(values<Float>(1.0, 2.0, 3.0, 4.0), Float{0.5}),
                  values<Float>(1.0, 1.5, 2.25, 3.125));
+}
+
+TEST_CASE("std operators: TSB proxy lag preserves sparse field deltas")
+{
+    stdlib::register_standard_operators();
+
+    const auto bundle_delta = [](std::optional<Int> a, std::optional<Float> b) {
+        const auto *schema = ts_type<NumericTsbBundle>();
+        BundleBuilder builder{
+            ValuePlanFactory::instance().type_for(schema->delta_value_schema)};
+        if (a.has_value()) { builder.set("a", Value{*a}); }
+        if (b.has_value()) { builder.set("b", Value{*b}); }
+        return builder.build();
+    };
+
+    CHECK_OUTPUT(eval_node<TsbProxyLagGraph>(
+                     values<Int>(1, 2, 3, 4, 5),
+                     values<Float>(1.0, 2.0, none, none, none),
+                     values<Bool>(true, none, true, true, true)),
+                 values<Value>(none, none, none,
+                               bundle_delta(Int{2}, Float{2.0}),
+                               bundle_delta(Int{3}, std::nullopt)));
 }
 
 TEST_CASE("std operators: schedule and resample are bounded by executor end time")
