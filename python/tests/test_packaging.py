@@ -97,6 +97,9 @@ def test_release_workflow_targets_supported_platforms():
     assert "quay.io/pypa/manylinux_2_28_x86_64:latest" in workflow
     assert "Build manylinux 2.28 / GCC 14 wheel" in workflow
     assert "--plat manylinux_2_28_x86_64" in workflow
+    assert "--exclude libarrow.so.2400" in workflow
+    assert "--exclude libarrow_compute.so.2400" in workflow
+    assert "--exclude libarrow_acero.so.2400" in workflow
     assert "libarrow-acero=24" in workflow
     assert "g++-13 --version" in workflow
     assert "runs-on: ubuntu-24.04" in workflow

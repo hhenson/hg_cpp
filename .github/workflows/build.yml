@@ -228,6 +228,7 @@ jobs:
             --plat manylinux_2_28_x86_64 \
             --exclude libarrow.so.2400 \
             --exclude libarrow_compute.so.2400 \
+            --exclude libarrow_acero.so.2400 \
             --wheel-dir wheelhouse \
             dist/*.whl
           rm dist/*.whl
