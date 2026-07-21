@@ -654,12 +654,31 @@ void py_assemble_lifecycle_args(std::string_view layout,
                                 const nb::object &runtime_global_state,
                                 EngineControlView engine,
                                 const PyTsLease &lease, const NodeView &node,
-                                nb::list &call_args) {
+                                nb::list &call_args,
+                                const TSInputView *inputs = nullptr) {
   std::size_t scalar_index = 0;
   auto scalar_list =
       scalars.valid() ? std::optional{scalars.as_list()} : std::nullopt;
   for (const char kind : layout) {
     switch (kind) {
+    case 'i': {
+      if (inputs == nullptr || !scalar_list.has_value()) {
+        throw std::logic_error(
+            "python lifecycle callback: missing stop input bundle");
+      }
+      const auto index = static_cast<std::size_t>(
+          (*scalar_list)[scalar_index++].as_any().get().checked_as<Int>());
+      auto bundle = inputs->as_bundle();
+      if (index >= bundle.size()) {
+        throw std::out_of_range(
+            "python lifecycle callback: stop input index is out of range");
+      }
+      nb::object ts_object;
+      static_cast<void>(py_make_ts_arg(
+          'U', bundle[index], lease, ts_object));
+      call_args.append(ts_object);
+      break;
+    }
     case 's':
       if (!scalar_list.has_value()) {
         throw std::logic_error(
@@ -809,7 +828,8 @@ void py_call_lifecycle(const PyNodeRef &fn, bool enabled,
                        std::string_view config, const ValueView &scalars,
                        State<PyStateRef> &state, NodeScheduler scheduler,
                        GlobalStateView global_state, EngineControlView engine,
-                       const NodeView &node) {
+                       const NodeView &node,
+                       const TSInputView *inputs = nullptr) {
   if (!enabled) {
     return;
   }
@@ -824,7 +844,7 @@ void py_call_lifecycle(const PyNodeRef &fn, bool enabled,
     py_assemble_lifecycle_args(config, scalars, &state, nullptr,
                                engine.evaluation_clock().evaluation_time(),
                                scheduler, runtime_state, engine, lease, node,
-                               call_args);
+                               call_args, inputs);
     (void)py_call_with_contexts(fn.record->fn, call_args, context_values,
                                 runtime_state);
     invalid.release();
@@ -910,16 +930,18 @@ struct py_compute_node {
        Scalar<"stop_scalars", ScalarVar<"XSV">> scalars,
        State<PyStateRef> state, NodeScheduler scheduler,
        GlobalStateView global_state, EngineControlView engine, NodeView node) {
-    // Mirror the start hook: drop the per-child link subscriptions so a
-    // stopped node (e.g. a removed map_ child) can never be re-scheduled
-    // by a lingering active input.
-    py_clear_input_activity(parse_py_call_shape(eval_config.value()).layout,
-                            args.base());
-    auto release = UnwindCleanupGuard([&] { py_release_state(state); });
+    auto cleanup = UnwindCleanupGuard([&] {
+      py_clear_input_activity(
+          parse_py_call_shape(eval_config.value()).layout, args.base());
+      py_release_state(state);
+    });
+    const auto input_view = args.base().borrowed_ref();
     py_call_lifecycle(fn.value(), enabled.value(), config.value(),
                       scalars.value(), state, scheduler, global_state, engine,
-                      node);
-    release.release();
+                      node, &input_view);
+    cleanup.release();
+    py_clear_input_activity(parse_py_call_shape(eval_config.value()).layout,
+                            args.base());
     py_release_state(state);
   }
 };
@@ -1183,11 +1205,11 @@ struct py_compute_recordable_node {
        Scalar<"stop_scalars", ScalarVar<"XSV">> scalars,
        RecordableState<TsVar<"RS">> state, NodeScheduler scheduler,
        GlobalStateView global_state, EngineControlView engine, NodeView node) {
-    py_clear_input_activity(parse_py_call_shape(eval_config.value()).layout,
-                            args.base());
-    if (!enabled.value()) {
-      return;
-    }
+    auto cleanup = UnwindCleanupGuard([&] {
+      py_clear_input_activity(
+          parse_py_call_shape(eval_config.value()).layout, args.base());
+    });
+    if (!enabled.value()) { return; }
     nb::gil_scoped_acquire gil;
     translate_python_error([&] {
       nb::list call_args;
@@ -1201,12 +1223,13 @@ struct py_compute_recordable_node {
           config.value(), scalars.value(),
           static_cast<PyStateRef *>(nullptr), &state_view,
           state.evaluation_time(), scheduler, runtime_state, engine, lease,
-          node, call_args);
+          node, call_args, &args.base());
       (void)py_call_with_contexts(fn.value().record->fn, call_args,
                                   std::nullopt, runtime_state);
       invalid.release();
       lease.invalidate();
     });
+    cleanup.complete();
   }
 };
 
@@ -1280,16 +1303,18 @@ struct py_sink_node {
        Scalar<"stop_scalars", ScalarVar<"XSV">> scalars,
        State<PyStateRef> state, NodeScheduler scheduler,
        GlobalStateView global_state, EngineControlView engine, NodeView node) {
-    // Mirror the start hook: drop the per-child link subscriptions so a
-    // stopped node (e.g. a removed map_ child) can never be re-scheduled
-    // by a lingering active input.
-    py_clear_input_activity(parse_py_call_shape(eval_config.value()).layout,
-                            args.base());
-    auto release = UnwindCleanupGuard([&] { py_release_state(state); });
+    auto cleanup = UnwindCleanupGuard([&] {
+      py_clear_input_activity(
+          parse_py_call_shape(eval_config.value()).layout, args.base());
+      py_release_state(state);
+    });
+    const auto input_view = args.base().borrowed_ref();
     py_call_lifecycle(fn.value(), enabled.value(), config.value(),
                       scalars.value(), state, scheduler, global_state, engine,
-                      node);
-    release.release();
+                      node, &input_view);
+    cleanup.release();
+    py_clear_input_activity(parse_py_call_shape(eval_config.value()).layout,
+                            args.base());
     py_release_state(state);
   }
 };
@@ -1390,11 +1415,19 @@ struct py_generator_node {
 
   static void eval(Scalar<"fn", PyNodeRef> fn, Scalar<"config", Str> config,
                    Scalar<"scalars", ScalarVar<"SV">> scalars,
+                   Scalar<"stop_fn", PyNodeRef> stop_fn,
+                   Scalar<"stop_enabled", Bool> stop_enabled,
+                   Scalar<"stop_config", Str> stop_config,
+                   Scalar<"stop_scalars", ScalarVar<"XSV">> stop_scalars,
                    State<PyGenStateRef> state, NodeScheduler sched,
                    Out<TsVar<"O">> out) {
     static_cast<void>(fn);
     static_cast<void>(config);
     static_cast<void>(scalars);
+    static_cast<void>(stop_fn);
+    static_cast<void>(stop_enabled);
+    static_cast<void>(stop_config);
+    static_cast<void>(stop_scalars);
     nb::gil_scoped_acquire gil;
     translate_python_error([&] {
       PyGenHandle *handle = state.get().handle;
@@ -1406,11 +1439,38 @@ struct py_generator_node {
     });
   }
 
-  static void stop(State<PyGenStateRef> state) {
+  static void stop(State<PyGenStateRef> state,
+                   Scalar<"stop_fn", PyNodeRef> fn,
+                   Scalar<"stop_enabled", Bool> enabled,
+                   Scalar<"stop_config", Str> config,
+                   Scalar<"stop_scalars", ScalarVar<"XSV">> scalars,
+                   NodeScheduler scheduler, GlobalStateView global_state,
+                   EngineControlView engine, NodeView node) {
     nb::gil_scoped_acquire gil;
     std::unique_ptr<PyGenHandle> handle{state.get().handle};
     state.set(PyGenStateRef{});
     if (handle != nullptr) {
+      auto release = UnwindCleanupGuard([&] {
+        handle->iterator = nb::object{};
+        handle->pending = nb::object{};
+        handle->lease.invalidate();
+        py_release_state(handle->local_state);
+      });
+      if (enabled.value()) {
+        translate_python_error([&] {
+          nb::list call_args;
+          nb::object runtime_state = py_runtime_global_state_for_call(
+              global_state, handle->lease.guard);
+          py_assemble_lifecycle_args(
+              config.value(), scalars.value(), &handle->local_state,
+              static_cast<TSOutputView *>(nullptr),
+              engine.evaluation_clock().evaluation_time(), scheduler,
+              runtime_state, engine, handle->lease, node, call_args);
+          (void)py_call_with_contexts(fn.value().record->fn, call_args,
+                                      std::nullopt, runtime_state);
+        });
+      }
+      release.release();
       handle->iterator = nb::object{};
       handle->pending = nb::object{};
       handle->lease.invalidate();
@@ -1450,7 +1510,10 @@ struct op_py_sink
                Scalar<"stop_scalars", ScalarVar<"XSV">>> {};
 struct op_py_generator
     : Operator<"__py_generator", Scalar<"fn", PyNodeRef>, Scalar<"config", Str>,
-               Scalar<"scalars", ScalarVar<"SV">>, Out<TsVar<"O">>> {};
+               Scalar<"scalars", ScalarVar<"SV">>,
+               Scalar<"stop_fn", PyNodeRef>, Scalar<"stop_enabled", Bool>,
+               Scalar<"stop_config", Str>,
+               Scalar<"stop_scalars", ScalarVar<"XSV">>, Out<TsVar<"O">>> {};
 struct harness_replay {
   static constexpr auto name = "__harness_replay";
   static constexpr bool schedule_on_start = true;

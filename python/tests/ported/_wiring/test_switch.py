@@ -284,3 +284,184 @@ def test_switch_tss():
         {"c", "d"},
         {"e", "f"},
     ]
+
+
+def test_switch_carries_tss_of_compound_scalars():
+    from dataclasses import dataclass
+
+    from hgraph import CompoundScalar, DEFAULT, emit, len_
+
+    @dataclass(frozen=True)
+    class Item(CompoundScalar):
+        name: str
+
+    @graph
+    def one(values: TSS[Item]) -> TS[Item]:
+        return emit(values)
+
+    @graph
+    def many(values: TSS[Item]) -> TS[Item]:
+        return emit(values)
+
+    @graph
+    def switch_test(values: TSS[Item]) -> TS[Item]:
+        return switch_(len_(values), {1: one, DEFAULT: many}, values)
+
+    item = Item("one")
+    assert eval_node(switch_test, [{item}]) == [item]
+
+
+def test_switch_carries_tss_of_nested_catalogue_shaped_scalars():
+    from dataclasses import dataclass
+
+    from frozendict import frozendict
+    from hgraph import CompoundScalar, DEFAULT, emit, len_
+
+    @dataclass(frozen=True)
+    class Store(CompoundScalar):
+        path: str
+
+    @dataclass(frozen=True)
+    class Entry(CompoundScalar):
+        schema: object
+        dataset: str
+        scope: frozendict[str, object]
+        store: Store
+
+    @dataclass(frozen=True)
+    class Selection(CompoundScalar):
+        dce: Entry
+        options: frozendict[str, object]
+
+    @graph
+    def branch(values: TSS[Selection]) -> TS[Selection]:
+        return emit(values)
+
+    @graph
+    def switch_test(values: TSS[Selection]) -> TS[Selection]:
+        return switch_(len_(values), {1: branch, DEFAULT: branch}, values)
+
+    selection = Selection(
+        Entry(int, "rows", frozendict(), Store("sink")), frozendict())
+    assert eval_node(switch_test, [{selection}]) == [selection]
+
+
+def test_switch_branch_calls_service_adaptor_from_tss_key():
+    from dataclasses import dataclass
+
+    import hgraph as hg
+    from hgraph import CompoundScalar, DEFAULT, emit, len_
+
+    @dataclass(frozen=True)
+    class Selection(CompoundScalar):
+        value: int
+
+    @hg.service_adaptor
+    def adaptor(request: TS[Selection]) -> TS[int]: ...
+
+    @hg.compute_node
+    def extract(request: TS[Selection]) -> TS[int]:
+        return request.value.value
+
+    @hg.service_adaptor_impl(interfaces=adaptor)
+    def adaptor_impl(requests: TSD[int, TS[Selection]]) -> TSD[int, TS[int]]:
+        return map_(extract, request=requests)
+
+    @graph
+    def branch(values: TSS[Selection]) -> TS[int]:
+        return adaptor(emit(values), path="switch-repro")
+
+    @graph
+    def switch_test(values: TSS[Selection]) -> TS[int]:
+        hg.register_adaptor("switch-repro", adaptor_impl)
+        return switch_(len_(values), {1: branch, DEFAULT: branch}, values)
+
+    assert eval_node(switch_test, [{Selection(1)}]) == [None, 1]
+
+
+def test_switch_branch_returns_service_adaptor_bundle_from_tss_key():
+    from dataclasses import dataclass
+
+    import hgraph as hg
+    from hgraph import CompoundScalar, DEFAULT, TimeSeriesSchema, emit, len_
+
+    @dataclass(frozen=True)
+    class Selection(CompoundScalar):
+        value: int
+
+    class Reply(TimeSeriesSchema):
+        status: TS[int]
+        value: TS[int]
+
+    @hg.service_adaptor
+    def adaptor(request: TS[Selection]) -> TSB[Reply]: ...
+
+    @graph
+    def reply(request: TS[Selection]) -> TSB[Reply]:
+        return hg.combine[TSB[Reply]](status=0, value=request.value)
+
+    @hg.service_adaptor_impl(interfaces=adaptor)
+    def adaptor_impl(requests: TSD[int, TS[Selection]]) -> TSD[int, TSB[Reply]]:
+        delayed_requests = hg.feedback(TSD[int, TS[Selection]])
+        delayed_requests(requests)
+        return map_(reply, request=delayed_requests())
+
+    @graph
+    def branch(values: TSS[Selection]) -> TSB[Reply]:
+        return adaptor(emit(values), path="switch-bundle-repro")
+
+    @graph
+    def switch_test(values: TSS[Selection]) -> TSB[Reply]:
+        hg.register_adaptor("switch-bundle-repro", adaptor_impl)
+        return switch_(len_(values), {1: branch, DEFAULT: branch}, values)
+
+    assert eval_node(switch_test, [{Selection(1)}]) == [
+        None, None, {"status": 0, "value": 1}]
+
+
+def test_switch_service_adaptor_with_covariant_compound_field():
+    from dataclasses import dataclass
+
+    import hgraph as hg
+    from hgraph import CompoundScalar, DEFAULT, TimeSeriesSchema, emit, len_
+
+    @dataclass(frozen=True)
+    class Store(CompoundScalar, abstract=True):
+        path: str
+
+    @dataclass(frozen=True)
+    class ConcreteStore(Store):
+        value: int
+
+    @dataclass(frozen=True)
+    class Selection(CompoundScalar):
+        store: Store
+
+    class Reply(TimeSeriesSchema):
+        value: TS[int]
+
+    @hg.service_adaptor
+    def adaptor(request: TS[Selection]) -> TSB[Reply]: ...
+
+    @graph
+    def reply(request: TS[Selection]) -> TSB[Reply]:
+        concrete = hg.downcast_ref(ConcreteStore, request.store)
+        return hg.combine[TSB[Reply]](value=concrete.value)
+
+    @hg.service_adaptor_impl(interfaces=adaptor)
+    def adaptor_impl(requests: TSD[int, TS[Selection]]) -> TSD[int, TSB[Reply]]:
+        delayed = hg.feedback(TSD[int, TS[Selection]])
+        delayed(requests)
+        return map_(reply, request=delayed())
+
+    @graph
+    def branch(values: TSS[Selection]) -> TSB[Reply]:
+        return adaptor(emit(values), path="switch-covariant-repro")
+
+    @graph
+    def switch_test(values: TSS[Selection]) -> TSB[Reply]:
+        hg.register_adaptor("switch-covariant-repro", adaptor_impl)
+        return switch_(len_(values), {1: branch, DEFAULT: branch}, values)
+
+    value = Selection(ConcreteStore("sink", 1))
+    assert eval_node(switch_test, [{value}]) == [None, None, {"value": 1}]

@@ -366,7 +366,7 @@ def test_tsb_output_keyed_field_uses_the_graph_realization():
     }]
 
 
-def test_compact_container_elements_use_the_graph_realization():
+def test_compact_container_preserves_mixed_derived_elements_across_node_input():
     @dataclass
     class Base(CompoundScalar, namespace="tests.container", abstract=True):
         value: int
@@ -376,16 +376,26 @@ def test_compact_container_elements_use_the_graph_realization():
         label: str
 
     @dataclass
+    class OtherDerived(Base):
+        quantity: int
+
+    @dataclass
     class Batch(CompoundScalar, namespace="tests.container"):
         items: tuple[Base, ...]
 
     @compute_node
-    def contains_derived(value: TS[Batch]) -> TS[bool]:
-        return isinstance(value.value.items[0], Derived)
+    def preserves_derived_types(value: TS[Batch]) -> TS[bool]:
+        return (
+            isinstance(value.value.items[0], Derived)
+            and isinstance(value.value.items[1], OtherDerived)
+        )
 
     assert eval_node(
-        contains_derived,
-        [Batch(items=(Derived(value=1, label="one"),))],
+        preserves_derived_types,
+        [Batch(items=(
+            Derived(value=1, label="one"),
+            OtherDerived(value=2, quantity=10),
+        ))],
     ) == [True]
 
 

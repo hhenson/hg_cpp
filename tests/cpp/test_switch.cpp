@@ -17,6 +17,7 @@
 #include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/subgraph_wiring.h>
@@ -31,6 +32,28 @@
 #include <span>
 #include <stdexcept>
 #include <vector>
+
+namespace switch_repro
+{
+    struct CovariantStore
+    {};
+}
+
+namespace hgraph
+{
+    template <>
+    struct scalar_descriptor<switch_repro::CovariantStore>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept { return true; }
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            auto &registry = TypeRegistry::instance();
+            return registry.bundle(
+                "tests.switch", "CovariantStore",
+                {{"path", registry.value_type("str")}}, {}, true);
+        }
+    };
+}
 
 namespace
 {
@@ -133,6 +156,77 @@ namespace
                        stdlib::switch_cases({{Value{Str{"one"}}, fn<ConstOneString>()},
                                              {Value{Str{"two"}}, fn<ConstTwoString>()}}))
                 .as<TS<Str>>();
+        }
+    };
+
+    using CovariantStore = switch_repro::CovariantStore;
+    using CovariantSelection =
+        Bundle<"tests.switch::CovariantSelection", Field<"store", CovariantStore>>;
+
+    [[nodiscard]] Value covariant_selection_value(Int value)
+    {
+        auto &registry = TypeRegistry::instance();
+        const auto *store_base = scalar_descriptor<CovariantStore>::value_meta();
+        const auto *concrete = registry.bundle(
+            "tests.switch", "ConcreteStore",
+            {{"path", registry.value_type("str")}, {"value", registry.value_type("int")}},
+            {store_base});
+        BundleBuilder store{value_type_for_wiring(concrete)};
+        store.set("path", Value{Str{"sink"}});
+        store.set("value", Value{value});
+        BundleBuilder selection{value_type_for_wiring(
+            scalar_descriptor<CovariantSelection>::value_meta())};
+        selection.set("store", store.build());
+        Value result = selection.build();
+        auto result_view = result.view();
+        auto result_bundle = result_view.as_bundle();
+        const auto concrete_store = result_bundle.at(0).concrete();
+        if (!concrete_store.valid() || concrete_store.schema() != concrete)
+        {
+            throw std::logic_error("covariant selection fixture lost its concrete store");
+        }
+        return result;
+    }
+
+    [[nodiscard]] Value covariant_selection_set_delta(const Value &selection)
+    {
+        const auto *selection_meta = scalar_descriptor<CovariantSelection>::value_meta();
+        auto &registry = TypeRegistry::instance();
+        SetBuilder added{value_type_for_wiring(selection_meta)};
+        added.insert_copy(selection.view().data());
+        SetBuilder removed{value_type_for_wiring(selection_meta)};
+        const auto *delta_meta = registry.un_named_bundle(
+            {{"added", registry.set(selection_meta)}, {"removed", registry.set(selection_meta)}});
+        BundleBuilder delta{value_type_for_wiring(delta_meta)};
+        delta.set("added", added.build());
+        delta.set("removed", removed.build());
+        return delta.build();
+    }
+
+    struct CovariantSwitchBranch
+    {
+        static constexpr auto name = "switch_covariant_branch";
+        static Port<TS<CovariantSelection>> compose(
+            Wiring &w, Port<TSS<CovariantSelection>> values)
+        {
+            return wire<stdlib::emit>(w, values).as<TS<CovariantSelection>>();
+        }
+    };
+
+    struct CovariantSwitchGraph
+    {
+        static constexpr auto name = "switch_covariant_graph";
+        static Port<TS<CovariantSelection>> compose(
+            Wiring &w, Port<TSS<CovariantSelection>> values)
+        {
+            auto size = wire<stdlib::len_>(w, values).as<TS<Int>>();
+            return wire<stdlib::switch_>(
+                       w, size,
+                       stdlib::switch_cases(
+                           {{Value{Int{1}}, fn<CovariantSwitchBranch>()}},
+                           fn<CovariantSwitchBranch>()),
+                       values)
+                .as<TS<CovariantSelection>>();
         }
     };
 
@@ -406,6 +500,16 @@ TEST_CASE("switch_: the key selects the branch and a swap samples the held input
                      stdlib::switch_cases({{Value{Str{"a"}}, fn<Doubler>()}, {Value{Str{"b"}}, fn<Negator>()}}),
                      values<Int>(3, 4, none, 5)),
                  values<Int>(6, 8, -4, -5));
+}
+
+TEST_CASE("switch_: branch reads a TSS key with a covariant compound field")
+{
+    stdlib::register_standard_operators();
+    const Value selection = covariant_selection_value(Int{1});
+    CHECK_OUTPUT(
+        (eval_node<CovariantSwitchGraph>(
+            values<Value>(covariant_selection_set_delta(selection)))),
+        values<Value>(selection));
 }
 
 TEST_CASE("switch_: sink branches use the native outputless wiring contract")

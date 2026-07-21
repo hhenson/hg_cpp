@@ -841,29 +841,25 @@ namespace hgraph
         w.register_service_rank_anchor(endpoint, capture);
     }
 
-    WiringPortRef service_adaptor_client(Wiring &w,
-                                         const RuntimeServiceDescriptor &descriptor,
-                                         std::string_view path,
-                                         const WiringPortRef &in)
+    void service_adaptor_client_from_graph(Wiring &w,
+                                           const RuntimeServiceDescriptor &descriptor,
+                                           std::string_view path,
+                                           const WiringPortRef &in,
+                                           const WiringPortRef &request_id)
     {
         require_flavour(descriptor, ServiceFlavour::ServiceAdaptor, "service adaptor");
-        if (descriptor.input_schema == nullptr || descriptor.output_schema == nullptr)
+        if (descriptor.input_schema == nullptr)
         {
             throw std::invalid_argument(
-                "service adaptor '" + descriptor.name + "' requires input and output schemas");
+                "service adaptor '" + descriptor.name + "' has no input schema");
         }
         const std::string base          = service_adaptor_base(descriptor, path);
         const std::string request_path  = base + "/from_graph";
-        const std::string replies_path  = base + "/to_graph";
-        WiringPortRef request_id = request_id_source_node(w);
         w.register_service_client_path(base, "service adaptor");
 
         WiringPortRef requests = keyed_request_input_source_node(
             w, descriptor.input_schema, request_path,
             std::type_index(typeid(service_adaptor::detail::request_input_source_marker)));
-        WiringPortRef replies = keyed_reply_output_source_node(
-            w, descriptor.output_schema, replies_path,
-            std::type_index(typeid(service_adaptor::detail::output_source_marker)));
         w.register_service_rank_anchor(request_path, requests.peered_node());
 
         WiringPortRef adapted_input = graph_wiring_detail::adapt_source_for_input(
@@ -884,6 +880,25 @@ namespace hgraph
             std::move(builder), std::span<const WiringInputRef>{inputs.data(), inputs.size()},
             Value{});
         w.register_service_client_rank(request_path, "service adaptor", capture.peered_node(), false);
+    }
+
+    WiringPortRef service_adaptor_client_to_graph(Wiring &w,
+                                                  const RuntimeServiceDescriptor &descriptor,
+                                                  std::string_view path,
+                                                  const WiringPortRef &request_id)
+    {
+        require_flavour(descriptor, ServiceFlavour::ServiceAdaptor, "service adaptor");
+        if (descriptor.output_schema == nullptr)
+        {
+            throw std::invalid_argument(
+                "service adaptor '" + descriptor.name + "' has no output schema");
+        }
+        const std::string base         = service_adaptor_base(descriptor, path);
+        const std::string replies_path = base + "/to_graph";
+        w.register_service_client_path(base, "service adaptor");
+        WiringPortRef replies = keyed_reply_output_source_node(
+            w, descriptor.output_schema, replies_path,
+            std::type_index(typeid(service_adaptor::detail::output_source_marker)));
         w.register_service_client_rank(replies_path, "service adaptor", replies.peered_node(), true);
 
         WiringPortRef dict = replies;
@@ -902,6 +917,21 @@ namespace hgraph
             resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs).output;
         output.schema = descriptor.output_schema;
         return output;
+    }
+
+    WiringPortRef service_adaptor_client(Wiring &w,
+                                         const RuntimeServiceDescriptor &descriptor,
+                                         std::string_view path,
+                                         const WiringPortRef &in)
+    {
+        if (descriptor.input_schema == nullptr || descriptor.output_schema == nullptr)
+        {
+            throw std::invalid_argument(
+                "service adaptor '" + descriptor.name + "' requires input and output schemas");
+        }
+        WiringPortRef request_id = request_id_source_node(w);
+        service_adaptor_client_from_graph(w, descriptor, path, in, request_id);
+        return service_adaptor_client_to_graph(w, descriptor, path, request_id);
     }
 
     void register_service_adaptor_impl(Wiring &w,

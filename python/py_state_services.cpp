@@ -356,6 +356,20 @@ namespace hgraph::python_bridge
                                         const std::string &path, const PyPort &in) {
         return PyPort{service_adaptor_client(w.wiring_ref(), *desc.descriptor, path, in.ref)};
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("in"));
+    m.def("service_adaptor_client_from_graph", [](PyWiring &w, const PyServiceDesc &desc,
+                                                    const std::string &path, const PyPort &in,
+                                                    const PyPort &request_id) {
+        service_adaptor_client_from_graph(
+            w.wiring_ref(), *desc.descriptor, path, in.ref, request_id.ref);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{},
+       nb::arg("in"), nb::arg("request_id"));
+    m.def("service_adaptor_client_to_graph", [](PyWiring &w, const PyServiceDesc &desc,
+                                                  const std::string &path,
+                                                  const PyPort &request_id) {
+        return PyPort{service_adaptor_client_to_graph(
+            w.wiring_ref(), *desc.descriptor, path, request_id.ref)};
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{},
+       nb::arg("request_id"));
     m.def("service_adaptor_from_graph", [](PyWiring &w, const PyServiceDesc &desc,
                                             const std::string &path) {
         return PyPort{service_adaptor_from_graph(w.wiring_ref(), *desc.descriptor, path)};

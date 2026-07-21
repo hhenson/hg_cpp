@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import pyarrow as pa
+import pytest
 from frozendict import frozendict
 
 import hgraph as hg
@@ -17,6 +18,7 @@ from hgraph.adaptors.data_catalogue import (
     subscribe_adaptor_impl,
 )
 from hgraph.adaptors.json import JsonDataSource
+from hgraph.adaptors.json import json_adaptor_impl
 from hgraph.stream import StreamStatus
 
 
@@ -51,6 +53,7 @@ def test_catalogue_subscribe_routes_json_source(tmp_path):
     @hg.graph
     def app():
         hg.register_adaptor("data-catalogue", subscribe_adaptor_impl)
+        hg.register_adaptor("json", json_adaptor_impl)
         capture(subscribe[_Row]("rows"))
 
     catalogue = DataCatalogue()
@@ -70,12 +73,51 @@ def test_catalogue_subscribe_routes_json_source(tmp_path):
     assert responses[0][2].equals(pa.table({"name": ["a"], "value": [1]}))
 
 
+def test_subscriber_handler_requires_concrete_source_annotation():
+    from hgraph.adaptors.data_catalogue.subscribe import subscriber_impl_to_graph
+
+    with pytest.raises(TypeError, match=r"ds must be TS\[DataSource subclass\]"):
+        @subscriber_impl_to_graph
+        def untyped_source(dce, ds, options, request_id):
+            pass
+
+
 def test_catalogue_publish_routes_all_matching_sinks():
     writes = []
 
-    @DataCatalogue.sink_handler(_Sink)
-    def capture_write(entry, options, frame, environment_path):
-        writes.append((entry.dataset, options, frame, environment_path))
+    from hgraph.adaptors.data_catalogue.publish import (
+        publish_impl_from_graph, publish_impl_to_graph,
+    )
+
+    @hg.compute_node
+    def capture_write(
+        data: hg.TS[hg.Frame[_Row]], options: hg.TS[dict[str, object]],
+    ) -> hg.TS[datetime]:
+        writes.append((data.value, options.value))
+        return datetime.now(timezone.utc).replace(tzinfo=None)
+
+    @publish_impl_from_graph
+    def publish_test_from_graph(
+        dce: DataCatalogueEntry, data_sink: hg.TS[_Sink],
+        options: hg.TS[dict[str, object]], request_id: hg.TS[int],
+        data: hg.TS[hg.Frame[hg.SCHEMA]],
+        _schema: type[hg.SCHEMA] = hg.AUTO_RESOLVE,
+    ):
+        hg.null_sink(request_id)
+
+    @publish_impl_to_graph
+    def publish_test_to_graph(
+        dce: DataCatalogueEntry, data_sink: hg.TS[_Sink],
+        options: hg.TS[dict[str, object]], request_id: hg.TS[int],
+        data: hg.TS[hg.Frame[hg.SCHEMA]],
+        _schema: type[hg.SCHEMA] = hg.AUTO_RESOLVE,
+    ) -> hg.TSB[hg.stream.Stream[hg.stream.Data[datetime]]]:
+        return hg.combine[hg.TSB[hg.stream.Stream[hg.stream.Data[datetime]]]](
+            status=StreamStatus.OK,
+            status_msg="",
+            values=capture_write(data, options),
+            timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
 
     frame = pa.table({"name": ["a"], "value": [1]})
 
@@ -109,6 +151,4 @@ def test_catalogue_publish_routes_all_matching_sinks():
             )
             hg.run_graph(app, run_mode=hg.EvaluationMode.REAL_TIME, end_time=_end_time())
 
-    assert writes[0][0] == "rows"
-    assert writes[0][2].equals(frame)
-    assert writes[0][3] == "memory"
+    assert writes[0][0].equals(frame)

@@ -3,9 +3,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import pyarrow as pa
+from frozendict import frozendict
 
 import hgraph as hg
-from hgraph.adaptors.data_catalogue import DataEnvironment, DataEnvironmentEntry
+from hgraph.adaptors.data_catalogue import DataCatalogue, DataCatalogueEntry, DataEnvironment, DataEnvironmentEntry
+from hgraph.adaptors.data_catalogue.publish import publish, publish_adaptor_impl
 from hgraph.adaptors.sql import (
     SQLWriteMode,
     sql_execute_adaptor,
@@ -14,6 +16,13 @@ from hgraph.adaptors.sql import (
     sql_read_adaptor_impl,
     sql_write_adaptor,
     sql_write_adaptor_impl,
+)
+from hgraph.adaptors.sql.sql_publisher import SqlDataSink
+from hgraph.adaptors.sql.sql_adaptor_raw import (
+    sql_read_adaptor_raw,
+    sql_execute_adaptor_raw_impl,
+    sql_read_adaptor_raw_impl,
+    sql_write_adaptor_raw_impl,
 )
 from hgraph.stream import StreamStatus
 
@@ -55,13 +64,74 @@ def test_sql_read_adaptor_returns_a_typed_arrow_frame(tmp_path):
     @hg.graph
     def app():
         hg.register_adaptor("database", sql_read_adaptor_impl)
+        hg.register_adaptor(f"sqlite:///{database}", sql_read_adaptor_raw_impl)
         capture(sql_read_adaptor[_Row](query(), path="database"))
 
     with hg.GlobalContext(hg.GlobalState()):
         with _environment(database):
             hg.run_graph(app, run_mode=hg.EvaluationMode.REAL_TIME, end_time=_end_time())
 
-    assert captured[0].equals(pa.table({"name": ["a", "b"], "value": [1, 2]}))
+    assert captured[0].to_pylist() == [
+        {"name": "a", "value": 1},
+        {"name": "b", "value": 2},
+    ]
+
+
+def test_sql_raw_adaptor_serves_repeated_requests_from_the_same_client(
+    tmp_path, monkeypatch,
+):
+    import importlib
+    import threading
+    import time
+
+    database = tmp_path / "repeated-read.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("create table rows (value integer)")
+        connection.executemany("insert into rows values (?)", [(1,), (2,)])
+    target = f"sqlite:///{database}"
+    captured = []
+    release_first = threading.Event()
+    sql_module = importlib.import_module("hgraph.adaptors.sql.sql_connection")
+    connection_type = sql_module.SqlAdaptorConnectionSQLServer
+    original_read = connection_type.read_database
+    calls = 0
+
+    def blocked_first_read(connection, statement):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            release_first.wait(timeout=2.0)
+        return original_read(connection, statement)
+
+    monkeypatch.setattr(connection_type, "read_database", blocked_first_read)
+
+    @hg.push_queue(hg.TS[str])
+    def query(sender):
+        def feed():
+            sender("select value from rows where value = 1")
+            time.sleep(0.05)
+            sender("select value from rows where value = 2")
+            release_first.set()
+
+        threading.Thread(target=feed, daemon=True).start()
+
+    @hg.sink_node
+    def capture(response: hg.TSB[hg.stream.Stream[hg.stream.Data[hg.Frame]]],
+                engine: hg.EvaluationEngineApi = None):
+        if response.status.value is StreamStatus.OK:
+            captured.append(response["values"].value.column("value")[0].as_py())
+            if len(captured) == 2:
+                engine.request_engine_stop()
+
+    @hg.graph
+    def app():
+        hg.register_adaptor(target, sql_read_adaptor_raw_impl)
+        capture(sql_read_adaptor_raw(query(), path=target))
+
+    with hg.GlobalContext(hg.GlobalState()):
+        hg.run_graph(app, run_mode=hg.EvaluationMode.REAL_TIME, end_time=_end_time())
+
+    assert captured == [1, 2]
 
 
 def test_sql_write_adaptor_writes_arrow_rows(tmp_path):
@@ -80,6 +150,7 @@ def test_sql_write_adaptor_writes_arrow_rows(tmp_path):
     @hg.graph
     def app():
         hg.register_adaptor("database", sql_write_adaptor_impl)
+        hg.register_adaptor(f"sqlite:///{database}", sql_write_adaptor_raw_impl)
         stop_when_done(
             sql_write_adaptor(
                 path="database",
@@ -100,8 +171,23 @@ def test_sql_write_adaptor_writes_arrow_rows(tmp_path):
         ]
 
 
-def test_sql_execute_adaptor_commits_statements(tmp_path):
+def test_sql_execute_adaptor_appends_reference_timestamp_query(tmp_path, monkeypatch):
+    import importlib
+
     database = tmp_path / "execute.sqlite"
+    statements = []
+    connection_module = importlib.import_module(
+        "hgraph.adaptors.sql.sql_connection")
+
+    def execute(connection, statement):
+        statements.append(statement)
+        with sqlite3.connect(database) as sqlite_connection:
+            sqlite_connection.execute(statement.split(";", 1)[0])
+        return pa.table({})
+
+    monkeypatch.setattr(
+        connection_module.SqlAdaptorConnectionSQLServer,
+        "read_database", execute)
 
     @hg.push_queue(hg.TS[str])
     def query(sender):
@@ -115,6 +201,7 @@ def test_sql_execute_adaptor_commits_statements(tmp_path):
     @hg.graph
     def app():
         hg.register_adaptor("database", sql_execute_adaptor_impl)
+        hg.register_adaptor(f"sqlite:///{database}", sql_execute_adaptor_raw_impl)
         stop_when_done(sql_execute_adaptor(query(), path="database"))
 
     with hg.GlobalContext(hg.GlobalState()):
@@ -125,3 +212,37 @@ def test_sql_execute_adaptor_commits_statements(tmp_path):
         assert connection.execute(
             "select name from sqlite_master where type='table' and name='executed'"
         ).fetchone() == ("executed",)
+    assert statements == [
+        "create table executed (value integer); select getutcdate()"
+    ]
+
+
+def test_catalogue_publish_routes_to_sql_write_adaptor(tmp_path):
+    database = tmp_path / "catalogue.sqlite"
+    frame = pa.table({"name": ["a"], "value": [1]})
+
+    @hg.push_queue(hg.TS[hg.Frame[_Row]])
+    def data(sender): sender(frame)
+
+    @hg.sink_node
+    def stop(response: hg.TSB[hg.stream.Stream[hg.stream.Data[datetime]]],
+             engine: hg.EvaluationEngineApi = None):
+        if response.status.value is StreamStatus.OK:
+            engine.request_engine_stop()
+
+    @hg.graph
+    def app():
+        hg.register_adaptor("data-catalogue-publish", publish_adaptor_impl)
+        hg.register_adaptor("database", sql_write_adaptor_impl)
+        hg.register_adaptor(f"sqlite:///{database}", sql_write_adaptor_raw_impl)
+        stop(publish[_Row]("rows", data()))
+
+    with hg.GlobalContext(hg.GlobalState()):
+        with DataCatalogue(), _environment(database):
+            DataCatalogueEntry[SqlDataSink](
+                _Row, "rows", frozendict(),
+                SqlDataSink("database", "rows", mode=SQLWriteMode.OVERWRITE))
+            hg.run_graph(app, run_mode=hg.EvaluationMode.REAL_TIME, end_time=_end_time())
+
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("select name, value from rows").fetchall() == [("a", 1)]

@@ -131,6 +131,14 @@ namespace hgraph
     [[nodiscard]] HGRAPH_EXPORT WiringPortRef service_adaptor_client(
         Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
         const WiringPortRef &in);
+    /** Client-side request publication under an explicitly supplied ID. */
+    HGRAPH_EXPORT void service_adaptor_client_from_graph(
+        Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
+        const WiringPortRef &in, const WiringPortRef &request_id);
+    /** Client-side reply selection for an explicitly supplied ID. */
+    [[nodiscard]] HGRAPH_EXPORT WiringPortRef service_adaptor_client_to_graph(
+        Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
+        const WiringPortRef &request_id);
     /** Implementation-side keyed request dictionary. */
     [[nodiscard]] HGRAPH_EXPORT WiringPortRef service_adaptor_from_graph(
         Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path);

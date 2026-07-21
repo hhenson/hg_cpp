@@ -1,6 +1,7 @@
 """Service/adaptor decorators, impl registration and the wiring-scope
 ``context``."""
 import inspect
+import itertools
 import typing
 
 import _hgraph
@@ -22,6 +23,7 @@ from ._node import _PyNode, _warn_deprecated
 
 
 _TS_ANNOTATIONS = (_TsExpr, _GenericTsExpr)
+_SERVICE_ADAPTOR_CLIENT_TOKENS = itertools.count()
 
 
 def _is_ts_annotation(annotation):
@@ -589,12 +591,18 @@ class _ServiceAdaptorStub:
     """
 
     def __init__(self, fn, *, resolution=None, specialization="",
-                 resolvers=None):
+                 resolvers=None, pending_registrations=None,
+                 registered_resolutions=None):
         self.fn = fn
         self.__name__ = fn.__name__
         self.flavour = "service_adaptor"
         self._specialization = specialization
+        self._resolution = resolution
         self._resolvers = dict(resolvers) if resolvers else None
+        self._pending_registrations = (
+            pending_registrations if pending_registrations is not None else [])
+        self._registered_resolutions = (
+            registered_resolutions if registered_resolutions is not None else [])
         sig = inspect.signature(fn)
         params = [p for p in sig.parameters.values() if _is_ts_annotation(p.annotation)]
         if not params:
@@ -635,11 +643,25 @@ class _ServiceAdaptorStub:
     def __getitem__(self, item):
         if self.descriptor is not None and not self._specialization:
             raise TypeError(f"service adaptor '{self.__name__}' is not generic")
+        items = item if isinstance(item, tuple) else (item,)
+        if not all(isinstance(binding, slice) for binding in items):
+            variables = [
+                variable for variable in _service_type_variables(self._signature)
+                if self._resolution is None
+                or _type_var_name(variable) not in self._resolution.bindings
+            ]
+            if len(variables) != 1 or len(items) != 1:
+                raise TypeError(
+                    f"service adaptor '{self.__name__}' cannot infer which type variable "
+                    f"to bind; use TYPEVAR: concrete")
+            item = slice(variables[0], items[0])
         resolution, specialization = _specialization(
             item, f"service adaptor '{self.__name__}'", self._resolvers)
         result = _ServiceAdaptorStub(
             self.fn, resolution=resolution, specialization=specialization,
-            resolvers=self._resolvers)
+            resolvers=self._resolvers,
+            pending_registrations=self._pending_registrations,
+            registered_resolutions=self._registered_resolutions)
         if result.descriptor is None:
             raise TypeError(
                 f"service adaptor '{self.__name__}' specialization leaves an unresolved time-series type")
@@ -661,7 +683,7 @@ class _ServiceAdaptorStub:
     def implementation_arity(self):
         return len(self._request_params)
 
-    def __call__(self, *args, **kwargs):
+    def _prepare_client_request(self, args, kwargs):
         kwargs = dict(kwargs)
         has_path_parameter = "path" in self._signature.parameters
         external_path = kwargs.pop("path", "") if not has_path_parameter else None
@@ -684,6 +706,8 @@ class _ServiceAdaptorStub:
         from ._node import _lift_time_series_argument
         requests = [
             value if isinstance(value, WiringPort)
+            else wire("nothing", output_type=parameter.annotation)
+            if value is None
             else _lift_time_series_argument(value, parameter.annotation)
             for parameter in self._request_params
             for value in (bound.arguments[parameter.name],)
@@ -700,14 +724,52 @@ class _ServiceAdaptorStub:
             specialization = _specialization_label(resolution)
             stub = _ServiceAdaptorStub(
                 self.fn, resolution=resolution, specialization=specialization,
-                resolvers=self._resolvers)
+                resolvers=self._resolvers,
+                pending_registrations=self._pending_registrations,
+                registered_resolutions=self._registered_resolutions)
+        _materialize_pending_registrations(self, stub._resolution, _current_wiring())
         request = requests[0] if len(requests) == 1 else WiringPort(_hgraph.tsb_port(
             stub._request_type,
             {parameter.name: _unwrap(value)
              for parameter, value in zip(stub._request_params, requests)},
         ))
-        return WiringPort(_hgraph.service_adaptor_client(
-            _current_wiring(), stub._require_descriptor(), stub._resolved_path(path), _unwrap(request)))
+        return stub, stub._resolved_path(path), request
+
+    @staticmethod
+    def _client_request_id(path, request):
+        del path, request
+        return wire("request_id", next(_SERVICE_ADAPTOR_CLIENT_TOKENS))
+
+    def from_graph(self, *args, __request_id__=None, **kwargs):
+        stub, path, request = self._prepare_client_request(args, kwargs)
+        request_id = (
+            self._client_request_id(path, request)
+            if __request_id__ is None else __request_id__)
+        _hgraph.service_adaptor_client_from_graph(
+            _current_wiring(), stub._require_descriptor(), path,
+            _unwrap(request), _unwrap(request_id))
+        return request_id
+
+    def to_graph(self, *, path="", __request_id__, __no_ts_inputs__=False):
+        del __no_ts_inputs__  # compatibility with the old explicit client API
+        stub = self
+        if stub.descriptor is None:
+            raise TypeError(
+                f"generic service adaptor '{self.__name__}' must be specialized")
+        path = stub._resolved_path(path)
+        return WiringPort(_hgraph.service_adaptor_client_to_graph(
+            _current_wiring(), stub._require_descriptor(), path,
+            _unwrap(__request_id__)))
+
+    def __call__(self, *args, **kwargs):
+        stub, path, request = self._prepare_client_request(args, kwargs)
+        request_id = self._client_request_id(path, request)
+        _hgraph.service_adaptor_client_from_graph(
+            _current_wiring(), stub._require_descriptor(), path,
+            _unwrap(request), _unwrap(request_id))
+        return WiringPort(_hgraph.service_adaptor_client_to_graph(
+            _current_wiring(), stub._require_descriptor(), path,
+            _unwrap(request_id)))
 
 
 class _AdaptorImplGroup:
@@ -763,8 +825,21 @@ def register_adaptor(path, implementation, resolution_dict=None, **kwargs):
         return
     if not isinstance(implementation, _ServiceImpl):
         raise WiringError("register_adaptor requires an @adaptor_impl-decorated implementation")
+    unresolved = tuple(
+        stub for stub in implementation.interfaces
+        if getattr(stub, "descriptor", None) is None)
+    if unresolved and not resolution_dict:
+        _queue_service_registration(
+            path, implementation, kwargs, unresolved,
+            registrar=_register_resolved_adaptor)
+        return
     implementation = _resolve_registered_implementation(
         implementation, resolution_dict, "register_adaptor")
+    _register_resolved_adaptor(path, implementation, kwargs)
+
+
+def _register_resolved_adaptor(path, implementation, kwargs, wiring=None):
+    wiring = wiring or _current_wiring()
     flavours = {stub.flavour for stub in implementation.interfaces}
     if not flavours <= {"adaptor", "service_adaptor"}:
         raise WiringError("register_adaptor requires adaptor interfaces")
@@ -780,7 +855,7 @@ def register_adaptor(path, implementation, resolution_dict=None, **kwargs):
         resolved_path = resolved_paths.pop()
         impl_fn = _bind_registered_impl(implementation, path, kwargs)
         _hgraph.register_multi_service_impl(
-            _current_wiring(), [stub.descriptor for stub in implementation.interfaces], resolved_path,
+            wiring, [stub.descriptor for stub in implementation.interfaces], resolved_path,
             _wrap_graph_fn(impl_fn))
         return
     stub = implementation.interfaces[0]
@@ -789,10 +864,10 @@ def register_adaptor(path, implementation, resolution_dict=None, **kwargs):
     impl_fn = _bind_registered_impl(implementation, user_path, kwargs)
     if stub.flavour == "service_adaptor":
         _hgraph.register_service_adaptor_impl(
-            _current_wiring(), stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
+            wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
     else:
         _hgraph.register_adaptor_impl(
-            _current_wiring(), stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
+            wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
 
 
 def adaptor_impl(fn=None, *, interfaces=None, resolvers=None,
@@ -1053,14 +1128,16 @@ def _resolve_registered_implementation(implementation, resolution_dict, operatio
 
 
 class _PendingServiceRegistration:
-    __slots__ = ("wiring", "path", "implementation", "config", "owners", "completed")
+    __slots__ = (
+        "wiring", "path", "implementation", "config", "owners", "registrar", "completed")
 
-    def __init__(self, wiring, path, implementation, config, owners):
+    def __init__(self, wiring, path, implementation, config, owners, registrar):
         self.wiring = wiring
         self.path = path
         self.implementation = implementation
         self.config = config
         self.owners = owners
+        self.registrar = registrar
         self.completed = False
 
 
@@ -1110,16 +1187,22 @@ def _specialize_registered_implementation(implementation, resolution):
             else:
                 interfaces.append(stub)
             continue
-        if not isinstance(stub, _ServiceStub):
+        if not isinstance(stub, (_ServiceStub, _ServiceAdaptorStub)):
             raise WiringError(
                 f"generic registration is not supported for {stub.flavour} '{stub.__name__}'")
-        concrete = _ServiceStub(
-            stub.fn, stub.flavour, resolution=resolution,
-            specialization=specialization, resolvers=stub._resolvers,
-            deprecated=stub._deprecated,
-            pending_registrations=stub._pending_registrations,
-            registered_resolutions=stub._registered_resolutions,
-        )
+        if isinstance(stub, _ServiceAdaptorStub):
+            concrete = _ServiceAdaptorStub(
+                stub.fn, resolution=resolution, specialization=specialization,
+                resolvers=stub._resolvers,
+                pending_registrations=stub._pending_registrations,
+                registered_resolutions=stub._registered_resolutions)
+        else:
+            concrete = _ServiceStub(
+                stub.fn, stub.flavour, resolution=resolution,
+                specialization=specialization, resolvers=stub._resolvers,
+                deprecated=stub._deprecated,
+                pending_registrations=stub._pending_registrations,
+                registered_resolutions=stub._registered_resolutions)
         if concrete.descriptor is None:
             raise WiringError(
                 f"service '{stub.__name__}' remains unresolved after request inference")
@@ -1128,7 +1211,8 @@ def _specialize_registered_implementation(implementation, resolution):
     return resolved
 
 
-def _queue_service_registration(path, implementation, config, owners=None):
+def _queue_service_registration(path, implementation, config, owners=None,
+                                registrar=None):
     unresolved = tuple(
         stub for stub in implementation.interfaces
         if getattr(stub, "descriptor", None) is None
@@ -1137,12 +1221,14 @@ def _queue_service_registration(path, implementation, config, owners=None):
     if not triggers:
         raise WiringError("cannot defer a registration without a generic service interface")
     participants = tuple(
-        stub for stub in implementation.interfaces if isinstance(stub, _ServiceStub)
+        stub for stub in implementation.interfaces
+        if isinstance(stub, (_ServiceStub, _ServiceAdaptorStub))
     )
     wiring = _current_wiring()
     root_wiring = _wiring_stack[0] if _wiring_stack else wiring
     pending = _PendingServiceRegistration(
-        root_wiring, path, implementation, dict(config), participants)
+        root_wiring, path, implementation, dict(config), participants,
+        registrar or _register_resolved_service)
     for stub in participants:
         stub._registered_resolutions[:] = [
             registered
@@ -1175,7 +1261,7 @@ def _materialize_pending_registrations(owner, resolution, wiring):
                 stub._registered_resolutions.append(registered)
                 newly_registered.append(stub)
         try:
-            _register_resolved_service(
+            pending.registrar(
                 pending.path, resolved, pending.config, wiring=pending.wiring)
         except Exception:
             pending.completed = False

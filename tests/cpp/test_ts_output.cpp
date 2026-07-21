@@ -891,6 +891,79 @@ TEST_CASE("forwarding TSS outputs preserve slot observer remove and erase protoc
     link_set.unsubscribe_slot_observer(&observer);
 }
 
+TEST_CASE("forwarding TSS inputs preserve realized bindings for derived keys and rebind deltas")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *integer = registry.register_scalar<std::int32_t>("int32");
+    const auto *text = registry.value_type("str");
+    const auto *base = registry.bundle(
+        "tests.output", "PolymorphicSetBase", {{"id", integer}}, {}, true);
+    const auto *small = registry.bundle(
+        "tests.output", "PolymorphicSetSmall",
+        {{"id", integer}, {"label", text}}, {base});
+    const auto *large = registry.bundle(
+        "tests.output", "PolymorphicSetLarge",
+        {{"id", integer}, {"quantity", integer}}, {base});
+    const auto *tss = registry.tss(base);
+
+    const auto make_key = [&](const ValueTypeMetaData *schema, std::int32_t id) {
+        BundleBuilder builder{ValuePlanFactory::instance().type_for(schema)};
+        builder.set("id", Value{id});
+        if (schema == small) builder.set("label", Value{Str{"small"}});
+        if (schema == large) builder.set("quantity", Value{std::int32_t{10}});
+        return builder.build();
+    };
+    const Value small_key = make_key(small, 1);
+    const Value large_key = make_key(large, 2);
+
+    const auto snapshot = TypeRealizationSnapshot::capture(registry);
+    TypeRealizationScope realization_scope{snapshot.get()};
+    TSOutput first{*tss};
+    TSOutput second{*tss};
+    TSOutput forwarding{TSEndpointSchema::peered(tss)};
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
+    forwarding.view(t1).bind_forwarding_target(first.view(t1));
+
+    {
+        auto first_data = first.data_view();
+        auto mutation = first_data.as_set().begin_mutation(t1);
+        REQUIRE(mutation.add(small_key.view()));
+        REQUIRE(mutation.add(large_key.view()));
+    }
+    auto forwarding_data = forwarding.data_view();
+    auto linked = forwarding_data.as_set();
+    REQUIRE(linked.layout().key_binding == ValuePlanFactory::instance().type_for(base));
+    std::vector<const ValueTypeMetaData *> added;
+    for (const auto &key : linked.added()) added.push_back(key.concrete().schema());
+    REQUIRE(added == std::vector<const ValueTypeMetaData *>{small, large});
+
+    {
+        auto first_data = first.data_view();
+        auto mutation = first_data.as_set().begin_mutation(t2);
+        REQUIRE(mutation.remove(small_key.view()));
+    }
+    std::vector<const ValueTypeMetaData *> removed;
+    for (const auto &key : linked.removed()) removed.push_back(key.concrete().schema());
+    REQUIRE(removed == std::vector<const ValueTypeMetaData *>{small});
+
+    {
+        auto second_data = second.data_view();
+        auto mutation = second_data.as_set().begin_mutation(t3);
+        REQUIRE(mutation.add(small_key.view()));
+    }
+    forwarding.view(t3).bind_forwarding_target(second.view(t3));
+    forwarding_data = forwarding.data_view();
+    linked = forwarding_data.as_set();
+    std::vector<const ValueTypeMetaData *> current;
+    for (const auto &key : linked.values()) current.push_back(key.concrete().schema());
+    REQUIRE(current == std::vector<const ValueTypeMetaData *>{small});
+}
+
 TEST_CASE("sampled forwarding rebind publishes a valid-to-invalid transition")
 {
     using namespace hgraph;

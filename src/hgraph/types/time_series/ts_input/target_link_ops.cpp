@@ -162,7 +162,7 @@ namespace hgraph::detail
                                                      const TSDataView &target,
                                                      std::size_t slot)
         {
-            const auto *layout = static_cast<const TSSDataLayout *>(state.active_layout);
+            const auto *layout = static_cast<const TSSDataLayout *>(&target.layout());
             return ValueView{layout->key_binding, state.slot_access->key_at_slot(target, slot)};
         }
 
@@ -546,8 +546,14 @@ namespace hgraph::detail
                                                               const void *memory,
                                                               std::size_t slot)
         {
-            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
-            const auto *layout = static_cast<const TSSDataLayout *>(state->active_layout);
+            const auto target = target_link_target_view(context, memory);
+            const auto *layout = target.valid()
+                                     ? static_cast<const TSSDataLayout *>(&target.layout())
+                                     : nullptr;
+            if (layout == nullptr)
+            {
+                throw std::logic_error("TSInput target-link key projection requires a bound target layout");
+            }
             return ValueView{layout->key_binding, target_link_set_key_at_slot(context, memory, slot)};
         }
 

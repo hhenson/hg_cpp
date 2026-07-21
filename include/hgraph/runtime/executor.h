@@ -81,6 +81,7 @@ namespace hgraph
         explicit PushQueueEngineView(ExecutorPtr pointer) noexcept;
 
         [[nodiscard]] bool valid() const noexcept;
+        [[nodiscard]] bool stop_requested() const noexcept;
         [[nodiscard]] bool is_push_update_pending() const noexcept;
 
         void mark_push_update_pending() const;

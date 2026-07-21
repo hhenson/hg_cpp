@@ -576,6 +576,51 @@ TEST_CASE("push source policy validates output shape and sender payload schema s
     runner.join();
 }
 
+TEST_CASE("push source sender ignores values after graph shutdown")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<Int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    const auto check_policy = [&](PushSourcePolicy policy) {
+        PushSourceSender sender;
+        GraphBuilder graph_builder;
+        graph_builder.add_node(make_push_source_node(
+            *ts_int,
+            std::move(policy),
+            [&sender](PushSourceSender live_sender) { sender = std::move(live_sender); }));
+        NodeTypeMetaData stop_sender_schema;
+        stop_sender_schema.display_name = "send_during_stop";
+        NodeCallbacks stop_sender_callbacks;
+        stop_sender_callbacks.stop = [&sender](const NodeView &, DateTime) { sender.send(Int{41}); };
+        graph_builder.add_node(NodeBuilder::native(
+            std::move(stop_sender_schema), std::move(stop_sender_callbacks)));
+
+        const DateTime start_time = hgraph::testing::wall_now();
+        GraphExecutorBuilder executor_builder;
+        executor_builder.graph_builder(std::move(graph_builder))
+            .mode(GraphExecutorMode::RealTime)
+            .start_time(start_time)
+            .end_time(start_time + TimeDelta{1'000'000});
+
+        auto executor = executor_builder.make_executor();
+        auto view = executor.view();
+        hgraph::testing::AsyncGraphExecutorRun runner{view};
+
+        std::this_thread::sleep_for(std::chrono::milliseconds{20});
+        REQUIRE(sender.valid());
+        view.request_stop();
+        runner.join();
+
+        CHECK_NOTHROW(sender.send(Int{42}));
+    };
+
+    SECTION("queue policy") { check_policy(make_push_source_queue_policy(*int_meta)); }
+    SECTION("conflating policy") { check_policy(make_push_source_conflating_policy(*int_meta)); }
+}
+
 TEST_CASE("push source nodes require a real-time root graph executor")
 {
     using namespace hgraph;

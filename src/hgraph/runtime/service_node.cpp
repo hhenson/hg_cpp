@@ -853,7 +853,15 @@ namespace hgraph
             path, descriptor.storage_plan->component(request_input_capture_storage_field).offset);
 
         descriptor.callbacks.start = [context](const NodeView &view, DateTime evaluation_time) {
-            capture_request_input(*context, view, evaluation_time, true);
+            // A request_id operator publishes during evaluation rather than
+            // node startup. Its input is active, so defer initial capture until
+            // that first tick instead of requiring a startup-valid ID.
+            auto input = view.input(evaluation_time);
+            auto bundle = input.as_bundle();
+            if (bundle.at(2).valid())
+            {
+                capture_request_input(*context, view, evaluation_time, true);
+            }
         };
         descriptor.callbacks.stop            = &request_input_capture_stop;
         descriptor.ops.evaluate_impl         = &request_input_capture_evaluate_impl;

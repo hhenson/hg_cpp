@@ -1153,6 +1153,26 @@ def test_service_adaptor_from_python():
         check("missing implementation" in str(e), f"unexpected missing implementation error: {e}")
 
 
+def test_service_adaptor_explicit_request_id_client_split():
+    @hg.service_adaptor
+    def echo(request: TS[int]) -> TS[int]: ...
+
+    @hg.service_adaptor_impl(interfaces=echo)
+    def echo_impl(requests: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
+        return requests
+
+    @graph
+    def split_client(value: TS[int]) -> TS[int]:
+        hg.register_adaptor("echo-split", echo_impl)
+        rid = hg.request_id(1)
+        echo.from_graph(value, path="echo-split", __request_id__=rid)
+        return echo.to_graph(
+            path="echo-split", __request_id__=rid, __no_ts_inputs__=True)
+
+    out = eval_node(split_client, [1, None, 2])
+    check(out == [None, 1, None, 2], f"split service adaptor client: {out}")
+
+
 def test_generic_adaptor_specializations_from_python():
     from typing import TypeVar
 
@@ -1175,10 +1195,10 @@ def test_generic_adaptor_specializations_from_python():
 
     int_service_adaptor = generic_service_adaptor[payload:int]
 
-    @hg.service_adaptor_impl(interfaces=int_service_adaptor)
+    @hg.service_adaptor_impl(interfaces=generic_service_adaptor)
     def int_service_adaptor_impl(
-        requests: TSD[int, TS[int]],
-    ) -> TSD[int, TS[int]]:
+        requests: TSD[int, TS[payload]],
+    ) -> TSD[int, TS[payload]]:
         return requests
 
     @graph

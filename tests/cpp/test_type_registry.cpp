@@ -528,6 +528,36 @@ TEST_CASE("abstract Bundle without a concrete alternative cannot be realized") {
   REQUIRE_THROWS_AS(snapshot->type_for(abstract), std::logic_error);
 }
 
+TEST_CASE("realized Base lists preserve mixed derived element types") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  const auto *text = registry.value_type("str");
+  const auto *base = registry.bundle(
+      "tests.realization", "MixedListBase", {{"id", integer}}, {}, true);
+  const auto *named = registry.bundle(
+      "tests.realization", "MixedListNamed",
+      {{"id", integer}, {"name", text}}, {base});
+  const auto *sized = registry.bundle(
+      "tests.realization", "MixedListSized",
+      {{"id", integer}, {"size", integer}}, {base});
+  const auto *list_schema = registry.mutable_list(base);
+
+  const auto snapshot = TypeRealizationSnapshot::capture(registry);
+  Value list{snapshot->type_for(list_schema)};
+  Value first{ValuePlanFactory::instance().type_for(named)};
+  Value second{ValuePlanFactory::instance().type_for(sized)};
+  first.as_bundle().begin_mutation()["name"].set(std::string{"first"});
+  second.as_bundle().begin_mutation()["size"].set(std::int64_t{2});
+
+  auto values = list.as_list().begin_mutation();
+  values.push_back(first.view());
+  values.push_back(second.view());
+
+  REQUIRE(values.at(0).concrete().schema() == named);
+  REQUIRE(values.at(1).concrete().schema() == sized);
+}
+
 TEST_CASE(
     "closed Bundle realization owns only an indirect recursive union edge") {
   using namespace hgraph;

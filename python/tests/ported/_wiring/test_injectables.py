@@ -127,6 +127,26 @@ def test_node_self_injectable_for_sink_nodes():
     ]
 
 
+def test_sink_stop_reads_final_time_series_input_before_deactivation():
+    stopped = []
+
+    @sink_node
+    def observe(value: TS[int]):
+        pass
+
+    @observe.stop
+    def stop(value: TS[int]):
+        stopped.append((value.valid, value.value))
+
+    @graph
+    def app(value: TS[int]) -> TS[int]:
+        observe(value)
+        return value
+
+    assert eval_node(app, [1, 2]) == [1, 2]
+    assert stopped == [(True, 2)]
+
+
 @pytest.mark.skip(reason="deviation: const_fn is not ported (record_replay_table.rst P1 - "
                           "a wiring-time computation is a plain function; const-evaluable "
                           "operators cover the replay/table cases)")

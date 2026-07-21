@@ -48,8 +48,6 @@ class DataCatalogueEntry(CompoundScalar, Generic[DATA_STORE]):
 class DataCatalogue:
     _STATE_KEY = ":adaptors:data_catalogue:catalogue"
     _MISSING = object()
-    _source_handlers = {}
-    _sink_handlers = {}
 
     def __init__(self):
         self.catalogue = defaultdict(set)
@@ -107,31 +105,6 @@ class DataCatalogue:
 
     def get_registered_schemas(self):
         return {schema for schema, _ in self.catalogue}
-
-    @classmethod
-    def source_handler(cls, source_type):
-        def register(fn):
-            cls._source_handlers[source_type] = fn
-            return fn
-
-        return register
-
-    @classmethod
-    def sink_handler(cls, sink_type):
-        def register(fn):
-            cls._sink_handlers[sink_type] = fn
-            return fn
-
-        return register
-
-    @classmethod
-    def handler_for(cls, store, *, sink=False):
-        handlers = cls._sink_handlers if sink else cls._source_handlers
-        for store_type in type(store).__mro__:
-            if store_type in handlers:
-                return handlers[store_type]
-        kind = "sink" if sink else "source"
-        raise TypeError(f"no data catalogue {kind} handler registered for {type(store)!r}")
 
     def matching_entries(self, schema, dataset, store_type, options):
         entries = self.get_entries(schema, dataset, store_type)
