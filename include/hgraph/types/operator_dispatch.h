@@ -1019,6 +1019,7 @@ namespace hgraph
                 case ScalarPattern::Kind::Map:
                 case ScalarPattern::Kind::Series:
                 case ScalarPattern::Kind::Frame:
+                case ScalarPattern::Kind::Array:
                 case ScalarPattern::Kind::Bundle:
                     acc.structural += 1;
                     for (const ScalarPattern &child : pattern.children)

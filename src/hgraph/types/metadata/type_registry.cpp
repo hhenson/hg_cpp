@@ -613,6 +613,7 @@ namespace hgraph
         named_enum_cache_.clear();
         clear_enum_ops();
         list_cache_.clear();
+        array_cache_.clear();
         set_cache_.clear();
         mutable_list_cache_.clear();
         nullable_tuple_cache_.clear();
@@ -1186,6 +1187,67 @@ namespace hgraph
             return m;
         });
         return &meta;
+    }
+
+    const ValueTypeMetaData *TypeRegistry::array(const ValueTypeMetaData *element_type,
+                                                  size_t size)
+    {
+        if (element_type == nullptr)
+        {
+            throw std::invalid_argument("array requires an element type");
+        }
+        const std::lock_guard lock(mutex_);
+        const SizedKey key{element_type, size};
+        const ValueTypeMetaData &meta = array_cache_.intern(key, [&]() {
+            std::string label{"Array["};
+            label.append(element_type->name());
+            label.push_back(',');
+            label.append(size == 0 ? "*" : std::to_string(size));
+            label.push_back(']');
+            ValueTypeMetaData value(ValueTypeKind::List,
+                                    list_flags(element_type, size, false) |
+                                        ValueTypeFlags::ShapedArray,
+                                    store_name_interned(label));
+            value.element_type = element_type;
+            value.fixed_size = size;
+            return value;
+        });
+        return &meta;
+    }
+
+    const ValueTypeMetaData *TypeRegistry::array(
+        const ValueTypeMetaData *element_type, std::span<const size_t> dimensions)
+    {
+        if (dimensions.empty()) { return array(element_type, 0); }
+        const ValueTypeMetaData *result = element_type;
+        for (auto dimension = dimensions.rbegin(); dimension != dimensions.rend(); ++dimension)
+        {
+            result = array(result, *dimension);
+        }
+        return result;
+    }
+
+    bool TypeRegistry::is_array(const ValueTypeMetaData *meta) noexcept
+    {
+        return meta != nullptr && meta->is_shaped_array();
+    }
+
+    const ValueTypeMetaData *TypeRegistry::array_element(const ValueTypeMetaData *meta) noexcept
+    {
+        if (!is_array(meta)) { return nullptr; }
+        while (is_array(meta)) { meta = meta->element_type; }
+        return meta;
+    }
+
+    std::vector<size_t> TypeRegistry::array_dimensions(const ValueTypeMetaData *meta)
+    {
+        std::vector<size_t> result;
+        while (is_array(meta))
+        {
+            result.push_back(meta->fixed_size);
+            meta = meta->element_type;
+        }
+        return result;
     }
 
     const ValueTypeMetaData *TypeRegistry::mutable_list(const ValueTypeMetaData *element_type)

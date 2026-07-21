@@ -59,7 +59,8 @@ from hgraph import (
 # deviation: upstream imports filter_by from hgraph._operators._stream; here the
 # root package exports it (private hgraph._* paths are internal-only).
 from hgraph import filter_by
-from hgraph.nodes import extract_tsd, flatten_tsd, keys_where_true, make_tsd, where_true
+from hgraph.nodes import (extract_tsd, flatten_tsd, keys_where_true, make_tsd,
+                          make_tsd_scalar, where_true)
 from hgraph.test import eval_node
 
 import pytest
@@ -68,6 +69,34 @@ pytestmark = pytest.mark.smoke
 
 def test_make_tsd():
     assert eval_node(make_tsd, ["a", "b", "a"], [1, 2, 3]) == [{"a": 1}, {"b": 2}, {"a": 3}]
+
+
+def test_make_tsd_scalar():
+    @graph
+    def g(ts: TS[int]) -> TSD[str, TS[int]]:
+        return make_tsd_scalar("key", ts)
+
+    assert eval_node(g, [1, 2]) == [{"key": 1}, {"key": 2}]
+
+
+def test_make_tsd_scalar_remove_key():
+    @graph
+    def g(ts: TS[int], remove: TS[bool]) -> TSD[str, TS[int]]:
+        return make_tsd_scalar("key", ts, remove)
+
+    assert eval_node(g, [1, 2, 3], [False, True, False]) == [
+        {"key": 1},
+        {"key": REMOVE},
+        {"key": 3},
+    ]
+
+
+def test_make_tsd_scalar_explicit_ts_type():
+    @graph
+    def g(ts: TS[int]) -> TSD[str, TS[int]]:
+        return make_tsd_scalar("key", ts, ts_type=TS[int])
+
+    assert eval_node(g, [1, 2]) == [{"key": 1}, {"key": 2}]
 
 
 def d(d):

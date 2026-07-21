@@ -210,6 +210,28 @@ namespace hgraph
                                                                                       : std::string_view{"?"}));
         }
 
+        void validate_array_type(const arrow::Array &array,
+                                 const ValueTypeMetaData *leaf,
+                                 std::string_view source)
+        {
+            const LeafOps ops = leaf_ops_for(leaf);
+            const auto actual = array.type();
+            const bool compatible = actual->Equals(ops.type) ||
+                                    (ops.type->id() == arrow::Type::STRING &&
+                                     actual->id() == arrow::Type::LARGE_STRING) ||
+                                    (ops.type->id() == arrow::Type::BINARY &&
+                                     actual->id() == arrow::Type::LARGE_BINARY);
+            if (!compatible)
+            {
+                throw std::invalid_argument(fmt::format(
+                    "table codec: {} has Arrow type '{}', expected '{}' for native scalar '{}'",
+                    source, actual->ToString(), ops.type->ToString(),
+                    leaf != nullptr && !leaf->name().empty()
+                        ? leaf->name()
+                        : std::string_view{"?"}));
+            }
+        }
+
         void append_sequence(const Column &column, const ValueView &leaf, arrow::ArrayBuilder &builder)
         {
             auto &list_builder = static_cast<arrow::ListBuilder &>(builder);
@@ -546,6 +568,36 @@ namespace hgraph
         return names;
     }
 
+    Value array_cell(const arrow::Array &array, const ValueTypeMetaData *leaf,
+                     std::int64_t row)
+    {
+        if (leaf == nullptr) { throw std::invalid_argument("table codec: Arrow array cell has no native schema"); }
+        if (row < 0 || row >= array.length())
+        {
+            throw std::out_of_range("table codec: Arrow array row is out of range");
+        }
+        if (array.IsNull(row)) { return Value{}; }
+
+        validate_array_type(array, leaf, "Arrow array");
+        const LeafOps ops = leaf_ops_for(leaf);
+        const Column temp{.leaf_meta = leaf, .type = ops.type};
+        return ops.read(temp, array, row);
+    }
+
+    arrow::Datum arrow_scalar(const ValueView &value, const ValueTypeMetaData *leaf)
+    {
+        if (leaf == nullptr) { throw std::invalid_argument("table codec: null scalar schema"); }
+        const LeafOps ops = leaf_ops_for(leaf);
+        const Column column{.leaf_meta = leaf, .type = ops.type};
+        auto builder = make_builder(ops.type);
+        if (value.has_value()) { ops.append(column, value, *builder); }
+        else { append_null(*builder); }
+        const auto array = finish(*builder);
+        auto scalar = array->GetScalar(0);
+        if (!scalar.ok()) { fail_status(scalar.status(), "read encoded scalar"); }
+        return arrow::Datum{std::move(*scalar)};
+    }
+
     Value frame_cell(const Frame &frame, std::string_view column, const ValueTypeMetaData *leaf,
                      std::int64_t row)
     {
@@ -563,23 +615,8 @@ namespace hgraph
             array = *combined;
         }
         else { array = chunked->chunk(0); }
-        if (array->IsNull(row)) { return Value{}; }
-        const LeafOps ops = leaf_ops_for(leaf);
-        const auto actual = array->type();
-        const bool compatible = actual->Equals(ops.type) ||
-                                (ops.type->id() == arrow::Type::STRING &&
-                                 actual->id() == arrow::Type::LARGE_STRING) ||
-                                (ops.type->id() == arrow::Type::BINARY &&
-                                 actual->id() == arrow::Type::LARGE_BINARY);
-        if (!compatible)
-        {
-            throw std::invalid_argument(fmt::format(
-                "table codec: frame column '{}' has Arrow type '{}', expected '{}' for native scalar '{}'",
-                column, actual->ToString(), ops.type->ToString(),
-                leaf != nullptr && !leaf->name().empty() ? leaf->name() : std::string_view{"?"}));
-        }
-        const Column  temp{.name = std::string{column}, .leaf_meta = leaf, .type = ops.type};
-        return ops.read(temp, *array, row);
+        validate_array_type(*array, leaf, fmt::format("column '{}'", column));
+        return array_cell(*array, leaf, row);
     }
 
     Frame frame_rename_columns(const Frame &frame,

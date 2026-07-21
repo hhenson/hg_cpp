@@ -98,6 +98,8 @@ namespace hgraph
          *  ``Value``. */
         template <typename C> struct delta_input { using type = Value; };
         template <typename V> struct delta_input<TS<V>> { using type = V; };
+        template <typename V> struct delta_input<TS<SeriesOf<V>>> { using type = Series; };
+        template <typename V> struct delta_input<TS<FrameOf<V>>> { using type = Frame; };
         template <typename V, std::size_t P, std::size_t M> struct delta_input<TSW<V, P, M>> { using type = V; };
         template <> struct delta_input<SIGNAL> { using type = bool; };
         template <typename C> using delta_input_t = typename delta_input<C>::type;

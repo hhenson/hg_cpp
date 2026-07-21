@@ -3396,10 +3396,16 @@ namespace hgraph::stdlib
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
                 if (output_bound(resolution)) { return; }
-                const auto *key = time_series_schema_at_as<AnyTS>(context, 0);
-                const auto *value = time_series_schema_at(context, 1);
-                if (key == nullptr || value == nullptr) { return; }
-                bind_output(resolution, TypeRegistry::instance().tsd(key->value_schema, value));
+                const auto *key_value = resolution.find_scalar("K");
+                const auto *value = resolution.find_ts("V");
+                if (key_value == nullptr)
+                {
+                    const auto *key = time_series_schema_at_as<AnyTS>(context, 0);
+                    key_value = key != nullptr ? key->value_schema : nullptr;
+                }
+                if (value == nullptr) { value = time_series_schema_at(context, 1); }
+                if (key_value == nullptr || value == nullptr) { return; }
+                bind_output(resolution, TypeRegistry::instance().tsd(key_value, value));
             }
 
             static void eval(In<"key", TS<ScalarVar<"K">>> key,

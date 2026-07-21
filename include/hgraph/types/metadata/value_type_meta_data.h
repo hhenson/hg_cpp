@@ -126,6 +126,8 @@ namespace hgraph
         Enum = 1u << 10,
         /** Bundle-shaped indirection whose inline storage is exactly one owner pointer. */
         Owned = 1u << 11,
+        /** A list schema that represents one dimension of a shaped numerical array. */
+        ShapedArray = 1u << 12,
     };
 
     /** Bitwise OR over ``ValueTypeFlags``. */
@@ -332,6 +334,10 @@ namespace hgraph
 
         [[nodiscard]] constexpr bool is_enum() const noexcept { return has(ValueTypeFlags::Enum); }
         [[nodiscard]] constexpr bool is_owned() const noexcept { return has(ValueTypeFlags::Owned); }
+        [[nodiscard]] constexpr bool is_shaped_array() const noexcept
+        {
+            return try_value_kind() == ValueTypeKind::List && has(ValueTypeFlags::ShapedArray);
+        }
     };
 
     namespace detail

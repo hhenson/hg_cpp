@@ -7,10 +7,8 @@
  * documentary signatures only; the implementations are registered separately (see
  * ``register_standard_operators`` in ``<hgraph/lib/std/std_operators.h>``).
  *
- * The catalogue mirrors the Python ``hgraph`` operators under
- * ``ext/main/hgraph/_operators/``. The JSON / table / data-frame conversion family is
- * intentionally **not** defined here yet — it needs scalar value types
- * (``Frame`` / ``JSON`` / ``TABLE``) the value layer does not model yet.
+ * The catalogue mirrors the Python ``hgraph`` operators. JSON, table, and
+ * data-frame operators use the native value-layer scalar types.
  *
  * See ``docs/source/developer_guide/operators.rst``.
  */
@@ -21,11 +19,13 @@
 #include <hgraph/lib/std/operators/container.h>
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/lib/std/operators/conversion.h>
+#include <hgraph/lib/std/operators/data_frame.h>
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/std/operators/io.h>
 #include <hgraph/lib/std/operators/json.h>
 #include <hgraph/lib/std/operators/table.h>
 #include <hgraph/lib/std/operators/logical.h>
+#include <hgraph/lib/std/operators/numpy.h>
 #include <hgraph/lib/std/operators/stream.h>
 #include <hgraph/lib/std/operators/string.h>
 #include <hgraph/lib/std/operators/temporal.h>

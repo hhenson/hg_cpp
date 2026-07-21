@@ -244,26 +244,83 @@ the correctness and operational work above.
 Arrow dataframe operations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The data-frame adaptor lacks the upstream public ``join``, ``concat``, filter,
-sort, ``ungroup``, and ``with_columns`` helpers.  The old implementations are
-Polars-oriented.  Implement common operations over the native Arrow ``Frame``
-boundary and classify expression-only Polars forms explicitly instead of
-introducing Polars as a second runtime substrate.  The already recorded
-``Series`` to tuple convenience conversion belongs in this slice.
+**Completed 2026-07-21.**  The public ``join``, ``concat``, structural filter,
+sort, ``group_by``, ``ungroup``, and ``with_columns`` facades now execute in
+C++.  Join uses Arrow Acero's hash join; the other operators use Arrow compute
+and the shared native table codec.  Key materialization, compound-item
+ungrouping, scalar broadcast, typed ``Series`` columns, output projection, and
+group removals have public C++ wiring tests and Python bridge coverage.
+
+The Python wrappers for ``filter_frame(**predicate)`` and
+``with_columns(**columns)`` only pack keyword ports into a structural TSB.
+The legacy typed third argument to ``ungroup`` is likewise a wiring adapter;
+evaluation still delegates to the native operator.  ``TS[Series[T]]`` to
+``TS[tuple[T, ...]]`` is native and preserves Arrow nulls as unset tuple
+elements.
+
+Expression filters remain supported compatibility APIs.  Their scalar is a
+Python ``pyarrow.compute.Expression``, so those specific nodes are the recorded
+advanced Python execution path; structural filters with native scalar values
+do not use it.
 
 NumPy and analytical facades
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The public ``hgraph.numpy_`` module is absent.  The upstream surface is small:
-array conversion/indexing, ``cumsum``, ``corrcoef``, and ``quantile``.  Decide
-whether these operate on the existing tuple/Series scalar forms or justify a
-native array scalar before implementation.  NumPy is already a package
-dependency, but Python must not own time-series execution semantics.
+**Completed 2026-07-21.** ``Array[T, Size[...]]`` now retains every dimension
+in an interned C++ schema and uses planned fixed-array storage or the compact
+dynamic list plan. Generic element and dimension patterns, generic TSB schema
+specialization, ndarray conversion, and C++ ``ArrayOf<T, ...>`` authoring use
+the same type records.
 
-The compatibility ``hgraph.nodes`` namespace also lacks several public
-rolling-window/statistics conveniences.  Port useful graph/operator facades
-over native operators.  Do not port internal request/reply writer helpers or
-old node-builder implementation hooks merely to match an export list.
+The complete public ``hgraph.numpy_`` catalogue -- ``as_array``, ``get_item``,
+``cumsum``, ``corrcoef``, and ``quantile`` -- executes in typed or structurally
+bound C++ kernels and has paired public C++/Python tests. The additional
+``hgraph.nodes`` exports ``np_rolling_window``, ``np_quantile``, ``np_std``,
+``pct_change``, ``rolling_window``, and ``rolling_average`` are also backed by
+native operators or native graph composition. This audit intentionally covers
+the published upstream surface even when the checked-out applications do not
+import it.
+
+Recorded boundaries are numeric ``int``/``float`` kernels, one- or
+two-dimensional ``corrcoef``, fixed tick windows for ``as_array``, and the five
+common quantile interpolation methods. Unsupported methods and shapes fail
+explicitly. Early ``np_rolling_window`` output uses dynamic array dimensions,
+correcting the old implementation's mismatch between a fixed shape declaration
+and shorter warm-up ndarrays.
+
+The ``hgraph.numpy_`` namespace keeps familiar Python naming, but it is treated
+as the scientific-computation facade rather than a byte-for-byte NumPy
+compatibility layer. Quantile and standard deviation follow Arrow Compute,
+correlation follows Boost.Math, and cumulative sum uses hgraph's native shaped
+array traversal with defined integer wrapping. A future neutral namespace may
+alias this catalogue; no public rename is part of the current replacement work.
+
+The native ``window`` and tick/time ``rolling_average`` implementations and
+their Python compatibility tests are already complete; the earlier roadmap
+entry claiming that rolling support was absent was stale.  Audit the remaining
+statistics conveniences individually and implement public graph/operator
+facades over native operators.  An upstream public export remains a
+compatibility obligation even when it is not used by ``hg_oap`` or
+``hg_systematic``.
+
+Public service and mesh helper adapters
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Remaining.**  The public ``hgraph.nodes`` audit also found the service and
+mesh helpers ``capture_output_node_to_global_state``,
+``capture_output_to_global_state``, ``get_shared_reference_output``,
+``mesh_subscribe_node``, ``request_id``, ``write_service_replies``,
+``write_service_request``, and ``write_subscription_key``.  They are part of
+the upstream import surface and therefore cannot be discarded as unused
+implementation details.
+
+Their old Python implementations encode the superseded Python ``GlobalState``
+transport and node-builder layout.  Compatibility must instead be supplied by
+thin wiring adapters over the existing native request/reply, shared-reference,
+subscription, and mesh nodes.  The adapters must preserve the public call
+signatures and behaviour without creating a parallel Python service runtime,
+and each adapter needs equivalent public C++ wiring coverage.  Existing private
+builder objects remain non-targets.
 
 Deferred And Accepted Restrictions
 ----------------------------------
@@ -346,11 +403,29 @@ disabled for the Python process-wide shutdown state.
 Milestone R6: data and analytics catalogue
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Add the high-value Arrow dataframe operations and Series conversion, followed
-by the NumPy and rolling-statistics facades chosen from real application use.
-Keep every Python facade paired with a C++ wiring route.
+**Completed 2026-07-21.** Arrow dataframe
+operations, Series conversion, shaped native arrays, the complete public
+``hgraph.numpy_`` module, and the NumPy/analytical ``hgraph.nodes`` exports are
+implemented as described above. Application scans guided additional tests but
+did not define or reduce the public compatibility surface. Every Python facade
+has a C++ wiring route and paired behavioral coverage.
 
-Milestone R7: release hardening
+Fresh macOS and Ubuntu x86_64 Release builds each passed 1,203 native tests.
+Stable-ABI wheels built with Python 3.12 each passed 1,493 Python 3.14 tests
+with 16 skips. Sphinx passed with warnings as errors, an installed C++ consumer
+passed against system Arrow 25, and the Linux Debug/ASan numerical suite passed
+8 cases with 128 assertions.
+
+Milestone R7: public service and mesh helper adapters
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Implement the remaining public ``hgraph.nodes`` service and mesh helpers over
+the current native service runtime.  Freeze their upstream signatures with
+Python import and ``eval_node`` tests, add equivalent public C++ wiring tests,
+and reject only private Python builder/reflection objects that are not exposed
+as supported behaviour.
+
+Milestone R8: release hardening
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Run the full macOS and Linux native/Python gates, Linux ASan, install/consumer

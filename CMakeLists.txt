@@ -253,12 +253,16 @@ def pick(pattern):
 if sys.platform == "win32":
     arrow_link = pick("arrow.lib")
     compute_link = pick("arrow_compute.lib")
+    acero_link = pick("arrow_acero.lib")
     arrow_runtime = pick("arrow.dll")
     compute_runtime = pick("arrow_compute.dll")
+    acero_runtime = pick("arrow_acero.dll")
 else:
     arrow_link = arrow_runtime = pick("libarrow.*")
     compute_link = compute_runtime = pick("libarrow_compute.*")
-for path in (root, root / "include", arrow_link, compute_link, arrow_runtime, compute_runtime):
+    acero_link = acero_runtime = pick("libarrow_acero.*")
+for path in (root, root / "include", arrow_link, compute_link, acero_link,
+             arrow_runtime, compute_runtime, acero_runtime):
     print(path.as_posix())
 ]=])
     execute_process(
@@ -278,13 +282,16 @@ for path in (root, root / "include", arrow_link, compute_link, arrow_runtime, co
     list(GET _hgraph_pyarrow_info 1 _hgraph_pyarrow_include)
     list(GET _hgraph_pyarrow_info 2 _hgraph_pyarrow_arrow_lib)
     list(GET _hgraph_pyarrow_info 3 _hgraph_pyarrow_compute_lib)
-    list(GET _hgraph_pyarrow_info 4 HGRAPH_PYARROW_ARROW_RUNTIME)
-    list(GET _hgraph_pyarrow_info 5 HGRAPH_PYARROW_COMPUTE_RUNTIME)
+    list(GET _hgraph_pyarrow_info 4 _hgraph_pyarrow_acero_lib)
+    list(GET _hgraph_pyarrow_info 5 HGRAPH_PYARROW_ARROW_RUNTIME)
+    list(GET _hgraph_pyarrow_info 6 HGRAPH_PYARROW_COMPUTE_RUNTIME)
+    list(GET _hgraph_pyarrow_info 7 HGRAPH_PYARROW_ACERO_RUNTIME)
     if(NOT EXISTS "${_hgraph_pyarrow_include}/arrow/api.h")
         message(FATAL_ERROR "pyarrow headers not found under ${_hgraph_pyarrow_include}")
     endif()
     add_library(Arrow::arrow_shared SHARED IMPORTED GLOBAL)
     add_library(ArrowCompute::arrow_compute_shared SHARED IMPORTED GLOBAL)
+    add_library(ArrowAcero::arrow_acero_shared SHARED IMPORTED GLOBAL)
     if(WIN32)
         set_target_properties(Arrow::arrow_shared PROPERTIES
             IMPORTED_IMPLIB "${_hgraph_pyarrow_arrow_lib}"
@@ -296,6 +303,11 @@ for path in (root, root / "include", arrow_link, compute_link, arrow_runtime, co
             IMPORTED_LOCATION "${HGRAPH_PYARROW_COMPUTE_RUNTIME}"
             INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
         )
+        set_target_properties(ArrowAcero::arrow_acero_shared PROPERTIES
+            IMPORTED_IMPLIB "${_hgraph_pyarrow_acero_lib}"
+            IMPORTED_LOCATION "${HGRAPH_PYARROW_ACERO_RUNTIME}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
+        )
     else()
         set_target_properties(Arrow::arrow_shared PROPERTIES
             IMPORTED_LOCATION "${_hgraph_pyarrow_arrow_lib}"
@@ -305,14 +317,42 @@ for path in (root, root / "include", arrow_link, compute_link, arrow_runtime, co
             IMPORTED_LOCATION "${_hgraph_pyarrow_compute_lib}"
             INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
         )
+        set_target_properties(ArrowAcero::arrow_acero_shared PROPERTIES
+            IMPORTED_LOCATION "${_hgraph_pyarrow_acero_lib}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_hgraph_pyarrow_include}"
+        )
     endif()
     set(HGRAPH_PYARROW_LIBRARY_DIR "${_hgraph_pyarrow_dir}" CACHE PATH
         "Directory containing pyarrow's bundled Arrow libraries" FORCE)
 else()
     find_package(Arrow CONFIG REQUIRED)
     find_package(ArrowCompute CONFIG REQUIRED)  # Arrow 24 splits compute into its own lib
+    find_package(ArrowAcero CONFIG REQUIRED)
 endif()
-target_link_libraries(hgraph_options INTERFACE Arrow::arrow_shared ArrowCompute::arrow_compute_shared)
+target_link_libraries(hgraph_options INTERFACE
+    Arrow::arrow_shared
+    ArrowCompute::arrow_compute_shared
+    ArrowAcero::arrow_acero_shared)
+
+# Boost.Math supplies the numerically stable correlation implementation used
+# by the scientific operators. It is header-only and remains a build-interface
+# implementation detail of hgraph_stdlib.
+find_package(boost_math 1.90 CONFIG QUIET)
+if(NOT TARGET Boost::math)
+    FetchContent_Declare(
+        boost_math
+        GIT_REPOSITORY https://github.com/boostorg/math.git
+        GIT_TAG        boost-1.91.0
+        GIT_SHALLOW    TRUE
+        SYSTEM
+    )
+    set(BOOST_MATH_STANDALONE ON CACHE BOOL "Use Boost.Math without the Boost superproject" FORCE)
+    set(_hgraph_build_testing "${BUILD_TESTING}")
+    set(BUILD_TESTING OFF)
+    FetchContent_MakeAvailable(boost_math)
+    set(BUILD_TESTING "${_hgraph_build_testing}")
+    unset(_hgraph_build_testing)
+endif()
 
 # spdlog backs the LOGGER injectable (ruling 2026-07-04), built in
 # SPDLOG_FMT_EXTERNAL mode against the fmt above so there is exactly one fmt
@@ -546,10 +586,10 @@ set(_hgraph_config_dependencies
     "find_dependency(fmt 11 CONFIG)\n"
     "find_dependency(Arrow CONFIG)\n"
     "find_dependency(ArrowCompute CONFIG)\n"
+    "find_dependency(ArrowAcero CONFIG)\n"
     "find_dependency(spdlog 1.15 CONFIG)\n"
-    # Both installed-config flavours reference simdjson::simdjson (the
-    # non-bindings export links it; the bindings config re-links it below),
-    # and the code needs dom::element_type::BIGINT from simdjson 4.5. The
+    # Both installed-config flavours reference simdjson::simdjson, and the
+    # code needs dom::element_type::BIGINT from simdjson 4.5. The
     # floor is an explicit check because simdjson's package version file
     # uses same-minor compatibility.
     "find_dependency(simdjson CONFIG)\n"
@@ -578,13 +618,15 @@ file(WRITE "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
     "${_hgraph_config_dependencies}"
     "include(\"\${CMAKE_CURRENT_LIST_DIR}/hgraphTargets.cmake\")\n"
 )
-if(HGRAPH_BUILD_PYTHON_BINDINGS)
-    file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
-        "if(TARGET hgraph::options)\n"
-        "  target_link_libraries(hgraph::options INTERFACE simdjson::simdjson fmt::fmt spdlog::spdlog)\n"
-        "endif()\n"
-    )
-endif()
+file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
+    # FetchContent dependencies are build-interface-only because their targets
+    # cannot join hgraph's export set. Reattach the packages resolved above for
+    # every installed configuration; repeating an existing system dependency
+    # is harmless and keeps the exported surface independent of configure path.
+    "if(TARGET hgraph::options)\n"
+    "  target_link_libraries(hgraph::options INTERFACE simdjson::simdjson fmt::fmt spdlog::spdlog)\n"
+    "endif()\n"
+)
 if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
         "if(TARGET hgraph::options AND DEFINED NB_DIR AND EXISTS \"\${NB_DIR}/include\")\n"

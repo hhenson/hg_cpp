@@ -228,6 +228,13 @@ namespace hgraph
         {
             return nb::tuple(list_to_python(context, memory));
         }
+
+        /** Shaped-array variant selected when the binding is interned. */
+        inline nb::object list_to_python_array(const void *context, const void *memory)
+        {
+            nb::object value = list_to_python(context, memory);
+            return nb::module_::import_("numpy").attr("asarray")(std::move(value));
+        }
 #endif
 
         // ----- CyclicBuffer (read in ring order) ------------------------
@@ -993,13 +1000,13 @@ namespace hgraph
 
     namespace container_ops_detail
     {
-        template <bool VariadicTuple>
+        template <bool VariadicTuple, bool ShapedArray = false>
         [[nodiscard]] const ListValueOps &compact_list_ops_impl() noexcept;
     }
 
     namespace container_ops_detail
     {
-        template <bool VariadicTuple>
+        template <bool VariadicTuple, bool ShapedArray>
         [[nodiscard]] const ListValueOps &compact_list_ops_impl() noexcept
         {
             static const ListValueOps ops = {
@@ -1013,8 +1020,9 @@ namespace hgraph
                   &container_ops_detail::list_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                   ,
-                  VariadicTuple ? &container_ops_detail::list_to_python_tuple
-                                : &container_ops_detail::list_to_python,
+                  ShapedArray ? &container_ops_detail::list_to_python_array
+                              : VariadicTuple ? &container_ops_detail::list_to_python_tuple
+                                              : &container_ops_detail::list_to_python,
                   &container_ops_detail::list_from_python
 #endif
                  },
@@ -1237,7 +1245,9 @@ namespace hgraph
         // as a python tuple through its OWN fn-ptr, not a runtime flag check.
         const auto &ops = meta.has(ValueTypeFlags::VariadicTuple)
                               ? container_ops_detail::compact_list_ops_impl<true>()
-                              : compact_list_ops();
+                              : meta.has(ValueTypeFlags::ShapedArray)
+                                    ? container_ops_detail::compact_list_ops_impl<false, true>()
+                                    : compact_list_ops();
         const auto &plan = compact_list_plan(element_binding);
         if (meta.is_nullable()) { return intern_value_type(meta, plan, ops); }
         const auto &debug = intern_dynamic_debug_descriptor(

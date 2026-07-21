@@ -235,6 +235,13 @@ namespace hgraph
         using element_type = TElement;
     };
 
+    /** Shaped numerical array. Zero (or an omitted dimension) denotes an unbounded 1-D array. */
+    template <typename TElement, auto... TDimensions>
+    struct ArrayOf
+    {
+        using element_type = TElement;
+    };
+
     /** Scalar fixed-position tuple. ``Tuple`` is the user-facing alias. */
     template <typename... TElements>
     struct FixedTuple
@@ -409,6 +416,39 @@ namespace hgraph
             if constexpr (is_concrete())
             {
                 return TypeRegistry::instance().list(scalar_descriptor<TElement>::value_meta(), 0, true);
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <typename TElement, auto... TDimensions>
+    struct scalar_descriptor<ArrayOf<TElement, TDimensions...>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TElement>::is_concrete() &&
+                   (static_schema_detail::size_parameter_descriptor<TDimensions>::is_concrete() && ...);
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                if constexpr (sizeof...(TDimensions) == 0)
+                {
+                    return TypeRegistry::instance().array(
+                        scalar_descriptor<TElement>::value_meta(), 0);
+                }
+                else
+                {
+                    const std::vector<std::size_t> dimensions{
+                        static_schema_detail::size_parameter_descriptor<TDimensions>::concrete_size()...};
+                    return TypeRegistry::instance().array(
+                        scalar_descriptor<TElement>::value_meta(), dimensions);
+                }
             }
             else
             {

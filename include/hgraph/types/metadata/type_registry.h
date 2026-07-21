@@ -22,6 +22,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <typeindex>
@@ -223,6 +224,17 @@ namespace hgraph
         const ValueTypeMetaData *list(const ValueTypeMetaData *element_type,
                                       size_t fixed_size = 0,
                                       bool variadic_tuple = false);
+        /** Intern one shaped-array dimension. ``size == 0`` is an unbounded dimension. */
+        const ValueTypeMetaData *array(const ValueTypeMetaData *element_type, size_t size = 0);
+        /** Intern a shaped array from outermost-to-innermost dimensions. */
+        const ValueTypeMetaData *array(const ValueTypeMetaData *element_type,
+                                       std::span<const size_t> dimensions);
+        /** True only for metadata interned through :cpp:func:`array`. */
+        [[nodiscard]] static bool is_array(const ValueTypeMetaData *meta) noexcept;
+        /** Return the scalar leaf beneath every array dimension, or null for a non-array. */
+        [[nodiscard]] static const ValueTypeMetaData *array_element(const ValueTypeMetaData *meta) noexcept;
+        /** Return array dimensions from outermost to innermost; empty for a non-array. */
+        [[nodiscard]] static std::vector<size_t> array_dimensions(const ValueTypeMetaData *meta);
         /**
          * Intern a **mutable** (structurally-mutable, slot-store-backed)
          * dynamic list value-schema for ``element_type``. Distinct from the
@@ -631,6 +643,7 @@ namespace hgraph
         std::vector<std::unique_ptr<ValueTypeMetaData>> recursive_bundle_storage_;
         InternTable<std::string, ValueTypeMetaData> named_enum_cache_;
         InternTable<ListKey, ValueTypeMetaData, ListKeyHash> list_cache_;
+        InternTable<SizedKey, ValueTypeMetaData, SizedKeyHash> array_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> set_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_list_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> nullable_tuple_cache_;

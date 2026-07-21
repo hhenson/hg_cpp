@@ -396,6 +396,21 @@ namespace hgraph
             return at(size() - 1);
         }
 
+        /** Set the logical extent of a bounded list representation.
+         *
+         * Fixed shaped arrays use this to expose a prefix of their inline
+         * capacity while warming up. Ordinary fixed lists do not install the
+         * hook and therefore reject resizing.
+         */
+        void resize(std::size_t size) const
+        {
+            if (ops_->resize == nullptr)
+            {
+                throw std::logic_error("MutableListView::resize is not supported by this list representation");
+            }
+            ops_->resize(ops_->context, mutable_data(), size);
+        }
+
         // -- structural mutation (only for a mutable list; throws otherwise) --
 
         /** Append a copy of ``element`` (its schema must match the element type). */

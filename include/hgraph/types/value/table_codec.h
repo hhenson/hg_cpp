@@ -21,6 +21,7 @@ namespace arrow
     class ArrayBuilder;
     class DataType;
     class Schema;
+    struct Datum;
 }  // namespace arrow
 
 namespace hgraph
@@ -140,6 +141,20 @@ namespace hgraph
 
     /** The frame's own column names, in schema order. */
     [[nodiscard]] HGRAPH_EXPORT std::vector<std::string> frame_column_names(const Frame &frame);
+
+    /**
+     * Read one typed scalar from an Arrow array. An Arrow null yields an
+     * empty ``Value``. The array's physical type is validated against
+     * ``leaf`` before the value is decoded.
+     */
+    [[nodiscard]] HGRAPH_EXPORT Value array_cell(const arrow::Array &array,
+                                                 const ValueTypeMetaData *leaf,
+                                                 std::int64_t row);
+
+    /** Encode one native scalar as an Arrow Datum using the frame codec's
+        type mapping. An empty Value produces a null scalar Datum. */
+    [[nodiscard]] HGRAPH_EXPORT arrow::Datum arrow_scalar(
+        const ValueView &value, const ValueTypeMetaData *leaf);
 
     /**
      * Read one cell by column NAME at ``row``, typed by ``leaf`` (an atomic

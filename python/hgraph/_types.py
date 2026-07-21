@@ -609,6 +609,23 @@ def _compound_value_type(scalar, type_args=()):
 def _value_type(scalar):
     if isinstance(scalar, _hgraph.ValueType):
         return scalar
+    if isinstance(scalar, _ArrayType):
+        dimensions = tuple(0 if dimension == -1 else dimension
+                           for dimension in scalar.dimensions) or (0,)
+        try:
+            element = _value_type(scalar.element)
+            if any(isinstance(dimension, (_TypeVarSentinel, _typing.TypeVar))
+                   for dimension in dimensions):
+                raise _GenericType()
+            return _hgraph.array_vt(element, list(dimensions))
+        except _GenericType as error:
+            element_pattern = (error.pattern if error.pattern is not None
+                               else _scalar_pattern(scalar.element))
+            dimension_patterns = [_size_pattern(dimension) for dimension in dimensions]
+            raise _GenericType(
+                repr(scalar),
+                _hgraph.scalar_pattern_array(element_pattern, dimension_patterns),
+            ) from error
     if isinstance(scalar, _SeriesType):
         try:
             return _hgraph.series_vt(_value_type(scalar.element))
@@ -1364,10 +1381,16 @@ class _TSBMeta(type):
                 f"got {len(type_args)}")
 
         scalar_replacements = {}
+        size_replacements = {}
         ts_replacements = {}
         for parameter, argument in zip(parameters, type_args):
+            if isinstance(argument, int) and not isinstance(argument, bool):
+                size_replacements[_type_var_name(parameter)] = _hgraph.size_pattern_value(argument)
+                continue
             if isinstance(argument, (_TypeVarSentinel, typing.TypeVar)):
                 replacement = _hgraph.scalar_pattern_var(_type_var_name(argument))
+                size_replacements[_type_var_name(parameter)] = _hgraph.size_pattern_var(
+                    _type_var_name(argument))
             else:
                 replacement = _scalar_pattern(argument)
             scalar_replacements[_type_var_name(parameter)] = replacement
@@ -1414,6 +1437,8 @@ class _TSBMeta(type):
             pattern = _pattern_of(ts)
             if scalar_replacements:
                 pattern = _hgraph.type_pattern_substitute_scalars(pattern, scalar_replacements)
+            if size_replacements:
+                pattern = _hgraph.type_pattern_substitute_sizes(pattern, size_replacements)
             resolved = scope.resolve_ts(pattern)
             field_names.append(name)
             field_patterns.append(pattern)
@@ -1666,14 +1691,41 @@ class _GenericTsExpr:
 SIGNAL = _GenericTsExpr("SIGNAL", pattern=_hgraph.type_pattern_signal())
 
 
+class _ArrayType:
+    """Resolved or generic shaped-array scalar expression."""
+
+    __slots__ = ("element", "dimensions")
+
+    def __init__(self, element, dimensions):
+        self.element = element
+        self.dimensions = tuple(dimensions)
+
+    @property
+    def __args__(self):
+        return (self.element, *self.dimensions)
+
+    def __repr__(self):
+        suffix = "" if not self.dimensions else ", " + ", ".join(
+            f"Size[{dimension}]" for dimension in self.dimensions
+        )
+        return f"Array[{self.element!r}{suffix}]"
+
+    def __eq__(self, other):
+        return (isinstance(other, _ArrayType) and self.element == other.element
+                and self.dimensions == other.dimensions)
+
+    def __hash__(self):
+        return hash((self.element, self.dimensions))
+
+
 class Array:
-    """Array[T, Size[N]] — hgraph's numpy-array scalar annotation. This
-    runtime has no array value kind; arrays are variadic TUPLE values
-    (agreed deviation - numpy round-tripping is the Arrow workstream's)."""
+    """Array[T, Size[...]] - a native shaped-array scalar annotation."""
 
     def __class_getitem__(cls, item):
         items = item if isinstance(item, tuple) else (item,)
-        return tuple[items[0], ...]
+        if not items:
+            raise TypeError("Array requires an element type")
+        return _ArrayType(items[0], items[1:])
 
 
 def ts_schema(**kwargs):

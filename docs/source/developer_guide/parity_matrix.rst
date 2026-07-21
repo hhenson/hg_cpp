@@ -448,7 +448,7 @@ Types and scalars
        lower to nominal C++ enum schemas and convert back to the registered
        Python class.
    * - DataFrame / Series, numpy arrays, JSON scalar
-     - ``Frame`` landed; rest missing
+     - Full
      - Value kinds; gate the serialization operator families. **Ruling
        (2026-07-04): the Frame/table specification maps onto Apache Arrow
        tables, not Polars** — Polars sits on Arrow, so Polars (and other
@@ -461,11 +461,16 @@ Types and scalars
        ``__arrow_c_stream__``; frame reads yield ``pyarrow.Table`` and
        consumers use ``pl.from_arrow``. The to-frame ``convert`` family, the
        DATA_FRAME record/replay model (``recordable_id`` +
-       ``set_data_frame_overrides``), and the data-source generators execute
-       Arrow-native; the upstream data-frame tier's residue is exactly the
-       polars-native assertion boundary (ported copies in
-       ``python/tests/ported/adaptors/data_frame`` are green) plus the
-       recorded ``join``-operator gap.
+       ``set_data_frame_overrides``), the data-source generators, join,
+       structural filters, group/ungroup, sorting, concatenation, column
+       replacement/projection, and Series-to-tuple conversion execute
+       Arrow-native. Python expression filters are retained for the
+       Python-owned ``pyarrow.compute.Expression`` scalar. Native shaped arrays
+       retain all ``Size`` dimensions and back the complete public
+       ``hgraph.numpy_`` catalogue plus the NumPy helpers exported from
+       ``hgraph.nodes``. Fixed shapes use inline capacity with a stored logical
+       extent; unbounded dimensions
+       use compact list storage.
    * - Generics (``TypeVar``, ``AUTO_RESOLVE``, ``Type[...]``)
      - Re-architected
      - ``TsVar``/``ScalarVar``/``SizeVar`` + wiring ``ResolutionMap`` +

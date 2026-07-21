@@ -180,6 +180,24 @@ namespace hgraph::python_bridge
     m.def("map_vt", [](PyValueType k, PyValueType v) {
         return PyValueType{TypeRegistry::instance().map(k.meta, v.meta)};
     });
+    m.def("array_vt", [](PyValueType element, nb::list dimensions) {
+        std::vector<std::size_t> shape;
+        shape.reserve(nb::len(dimensions));
+        for (nb::handle dimension : dimensions)
+        {
+            const auto value = nb::cast<std::int64_t>(dimension);
+            if (value < 0)
+            {
+                if (value != -1) { throw nb::value_error("Array dimensions must be positive or -1"); }
+                shape.push_back(0);
+            }
+            else
+            {
+                shape.push_back(static_cast<std::size_t>(value));
+            }
+        }
+        return PyValueType{TypeRegistry::instance().array(element.meta, shape)};
+    });
     m.def("owned_vt", [](PyValueType target) {
         return PyValueType{TypeRegistry::instance().owned(target.meta)};
     });
@@ -346,6 +364,17 @@ namespace hgraph::python_bridge
     });
     m.def("scalar_pattern_frame", [](PyScalarPattern schema) {
         return PyScalarPattern{ScalarPattern::frame(std::move(schema.pattern))};
+    });
+    m.def("scalar_pattern_array", [](PyScalarPattern element, nb::list dimensions) {
+        std::vector<DimensionPattern> shape;
+        shape.reserve(nb::len(dimensions));
+        for (nb::handle dimension : dimensions)
+        {
+            const auto &value = nb::cast<PySizePattern &>(dimension);
+            shape.push_back(value.variable ? DimensionPattern::var(value.name)
+                                           : DimensionPattern::fixed(value.value));
+        }
+        return PyScalarPattern{ScalarPattern::array(std::move(element.pattern), std::move(shape))};
     });
     m.def("scalar_pattern_bundle", [] {
         return PyScalarPattern{ScalarPattern::bundle()};
@@ -522,6 +551,18 @@ namespace hgraph::python_bridge
                            nb::cast<PyScalarPattern &>(replacement).pattern);
         }
         return PyTypePattern{substitute_scalar_patterns(std::move(pattern.pattern), values)};
+    });
+    m.def("type_pattern_substitute_sizes", [](PyTypePattern pattern, nb::dict replacements) {
+        std::unordered_map<std::string, DimensionPattern> values;
+        values.reserve(nb::len(replacements));
+        for (auto [name, replacement] : replacements)
+        {
+            const auto &size = nb::cast<PySizePattern &>(replacement);
+            values.emplace(nb::cast<std::string>(name),
+                           size.variable ? DimensionPattern::var(size.name)
+                                         : DimensionPattern::fixed(size.value));
+        }
+        return PyTypePattern{substitute_size_patterns(std::move(pattern.pattern), values)};
     });
     m.def("type_pattern_ref", [](PyTypePattern target) {
         return PyTypePattern{TypePattern::ref(std::move(target.pattern))};

@@ -221,6 +221,10 @@ namespace hgraph::stdlib
                 {
                     return value;
                 }
+                if (value != nullptr && registry.is_series(value) && value->element_type != nullptr)
+                {
+                    return registry.list(value->element_type, 0, true);
+                }
                 const ValueTypeMetaData *element = collection_element_or_self_schema(value);
                 if (element != nullptr) { return registry.list(element, 0, true); }
             }
@@ -403,6 +407,7 @@ namespace hgraph::stdlib
                 case ScalarPattern::Kind::Map: return registry.ts(infer_mapping_value_candidate(inputs));
                 case ScalarPattern::Kind::Series:
                 case ScalarPattern::Kind::Frame:
+                case ScalarPattern::Kind::Array:
                 {
                     const TSValueTypeMetaData *input = require_one_input(
                         inputs, scalar_pattern_to_string(scalar_pattern));
@@ -412,9 +417,12 @@ namespace hgraph::stdlib
                             fmt::format("cannot infer {} target from {}",
                                         scalar_pattern_to_string(scalar_pattern), schema_name(input)));
                     }
-                    const bool matches = scalar_pattern.kind == ScalarPattern::Kind::Series
-                                             ? registry.is_series(input->value_schema)
-                                             : registry.is_frame(input->value_schema);
+                    const bool matches =
+                        scalar_pattern.kind == ScalarPattern::Kind::Series
+                            ? registry.is_series(input->value_schema)
+                            : scalar_pattern.kind == ScalarPattern::Kind::Frame
+                                  ? registry.is_frame(input->value_schema)
+                                  : registry.is_array(input->value_schema);
                     if (!matches)
                     {
                         throw std::invalid_argument(

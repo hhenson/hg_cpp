@@ -106,6 +106,12 @@ namespace hgraph::stdlib
     {
     };
 
+    /** Fractional change from the immediately preceding value. */
+    struct pct_change
+        : Operator<"pct_change", In<"ts", TS<ScalarVar<"T">>>, Out<TS<Float>>>
+    {
+    };
+
     /** ``gate`` — queue ticks while ``condition`` is ``False``, releasing them once it is ``True``. */
     struct gate : Operator<"gate", In<"condition", TS<Bool>>, In<"ts", TsVar<"S">>, Scalar<"buffer_length", Int>,
                            Out<TsVar<"S">>>

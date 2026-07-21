@@ -4,7 +4,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 from frozendict import frozendict
 
-from hgraph import CompoundScalar, Frame, TS, TSD, compound_scalar, filter_, graph
+from hgraph import CompoundScalar, Frame, Series, TS, TSD, compound_scalar, filter_, graph
 from hgraph.adaptors.data_frame import (
     concat,
     filter_cs,
@@ -38,6 +38,22 @@ def test_join():
     assert eval_node(app, [left], [right])[0].equals(
         pa.table({"a": [2, 1], "b": [20, 10], "b_right": [200, None]})
     )
+
+
+def test_join_semi_and_anti():
+    left = pa.table({"a": [1, 2], "b": [10, 20]})
+    right = pa.table({"a": [2, 3], "b": [200, 300]})
+
+    @graph
+    def semi(lhs: TS[Frame[AB]], rhs: TS[Frame[AB]]) -> TS[Frame[AB]]:
+        return join(lhs, rhs, on="a", how="semi")
+
+    @graph
+    def anti(lhs: TS[Frame[AB]], rhs: TS[Frame[AB]]) -> TS[Frame[AB]]:
+        return join(lhs, rhs, on="a", how="anti")
+
+    assert eval_node(semi, [left], [right])[0].equals(left.slice(1, 1))
+    assert eval_node(anti, [left], [right])[0].equals(left.slice(0, 1))
 
 
 def test_filter_variants():
@@ -109,8 +125,15 @@ def test_ungroup_default_and_with_keys():
     def keyed(ts: TSD[tuple[str, str], TS[Frame[row]]]) -> TS[Frame[keyed_row]]:
         return ungroup(ts, ("parent", "child"), keyed_row)
 
+    @graph
+    def keyed_inferred(ts: TSD[tuple[str, str], TS[Frame[row]]]) -> TS[Frame[keyed_row]]:
+        return ungroup(ts, ("parent", "child"))
+
     assert eval_node(plain, [frozendict(one=one, two=two)])[0].equals(pa.concat_tables([one, two]))
     assert eval_node(keyed, [frozendict({("p", "x"): one, ("q", "y"): two})])[0].equals(
+        pa.table({"b": [10, 20, 30], "parent": ["p", "p", "q"], "child": ["x", "x", "y"]})
+    )
+    assert eval_node(keyed_inferred, [frozendict({("p", "x"): one, ("q", "y"): two})])[0].equals(
         pa.table({"b": [10, 20, 30], "parent": ["p", "p", "q"], "child": ["x", "x", "y"]})
     )
 
@@ -138,3 +161,16 @@ def test_with_columns_replace_and_project():
 
     assert eval_node(replace, [table], [99])[0].equals(pa.table({"a": [1, 2], "b": [99, 99]}))
     assert eval_node(project, [table], [7])[0].equals(pa.table({"a": [1, 2], "c": [7, 7]}))
+
+
+def test_with_columns_accepts_a_typed_series_column():
+    table = pa.table({"a": [1, 2], "b": [10, 20]})
+    projected = compound_scalar(a=int, c=int)
+
+    @graph
+    def app(ts: TS[Frame[AB]], c: TS[Series[int]]) -> TS[Frame[projected]]:
+        return with_columns(ts, _tp_out=projected, c=c)
+
+    assert eval_node(app, [table], [pa.array([7, 8])])[0].equals(
+        pa.table({"a": [1, 2], "c": [7, 8]})
+    )

@@ -10,13 +10,18 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
+#include <hgraph/types/series.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/type_resolution.h>
 #include <hgraph/types/wired_fn.h>
+#include <hgraph/types/value/table_codec.h>
+#include <hgraph/types/value/value_builder.h>
 #include <hgraph/types/value/value_conversion.h>
 #include <hgraph/util/date_time.h>
+
+#include <arrow/array.h>
 
 #include <limits>
 #include <deque>
@@ -659,6 +664,50 @@ namespace hgraph::stdlib
                 }
                 result = builder.build();
             }
+            auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(result)));
+        }
+    };
+
+    /** ``convert[TS[tuple[T, ...]]](series)`` copies one Arrow column into
+        the native compact variadic-tuple storage. Arrow nulls remain unset
+        tuple elements and therefore bridge back to Python as ``None``. */
+    struct convert_series_to_tuple_impl
+    {
+        static constexpr auto name = "convert_series_to_tuple";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const auto *out = output_ts_value_schema(resolution);
+            const auto *in  = ts_value_schema_at(context, 0);
+            return out != nullptr && in != nullptr &&
+                   out->has(ValueTypeFlags::VariadicTuple) &&
+                   TypeRegistry::instance().is_series(in) &&
+                   out->element_type != nullptr && out->element_type == in->element_type;
+        }
+
+        static void eval(In<"ts", TS<ScalarVar<"S">>> ts, Out<TsVar<"__out__">> out)
+        {
+            const auto &erased       = static_cast<const TSOutputView &>(out);
+            const auto *output_meta  = erased.schema()->value_schema;
+            const auto *element_meta = output_meta->element_type;
+            const auto  binding      = ValuePlanFactory::instance().type_for(element_meta);
+            const auto  series_value = ts.base().value();
+            const auto &series       = series_value.checked_as<Series>();
+
+            ListBuilder builder{binding};
+            if (series.has_value())
+            {
+                for (std::int64_t index = 0; index < series.array->length(); ++index)
+                {
+                    Value value = array_cell(*series.array, element_meta, index);
+                    if (value.has_value()) { builder.push_back_copy(value.view().data()); }
+                    else { builder.push_back_unset(); }
+                }
+            }
+
+            ListStorage storage = builder.build_storage();
+            Value result{compact_list_type(binding, *output_meta), &storage};
             auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
             static_cast<void>(mutation.move_value_from(std::move(result)));
         }

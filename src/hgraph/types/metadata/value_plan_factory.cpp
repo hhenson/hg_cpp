@@ -131,8 +131,11 @@ composite_mark_all(const CompositeIndexedContext *state, void *memory,
 struct ArrayIndexedContext {
   const ValueTypeMetaData *schema{nullptr};
   ValueTypeRef element_binding{nullptr};
-  std::size_t size{0};
+  std::size_t capacity{0};
   std::size_t stride{0};
+  std::size_t size_offset{0};
+  std::size_t data_offset{0};
+  bool bounded{false};
 };
 
 struct OwnedAllocation {
@@ -531,8 +534,7 @@ void require_python_source(nb::handle source, const char *what) {
 }
 
 [[nodiscard]] bool is_python_sequence(nb::handle source) {
-  nb::object object = nb::borrow<nb::object>(source);
-  return nb::isinstance<nb::list>(object) || nb::isinstance<nb::tuple>(object);
+  return PySequence_Check(source.ptr()) != 0;
 }
 
 void assign_child_from_python(const ValueTypeRef &binding, void *memory,
@@ -793,15 +795,31 @@ void composite_value_from_python(const void *context, const ValueTypeRef &,
 #endif
 
 [[nodiscard]] std::size_t array_indexed_size(const void *context,
-                                             const void *) noexcept {
-  return static_cast<const ArrayIndexedContext *>(context)->size;
+                                             const void *memory) noexcept {
+  const auto *state = static_cast<const ArrayIndexedContext *>(context);
+  if (!state->bounded) {
+    return state->capacity;
+  }
+  return *reinterpret_cast<const std::size_t *>(
+      static_cast<const std::byte *>(memory) + state->size_offset);
+}
+
+void array_indexed_resize(const void *context, void *memory,
+                          std::size_t size) {
+  const auto *state = static_cast<const ArrayIndexedContext *>(context);
+  if (!state->bounded || size > state->capacity) {
+    throw std::out_of_range("bounded Array resize exceeds its declared capacity");
+  }
+  *reinterpret_cast<std::size_t *>(static_cast<std::byte *>(memory) +
+                                   state->size_offset) = size;
 }
 
 [[nodiscard]] const void *array_indexed_element_at(const void *context,
                                                    const void *memory,
                                                    std::size_t index) {
   const auto *state = static_cast<const ArrayIndexedContext *>(context);
-  return static_cast<const std::byte *>(memory) + index * state->stride;
+  return static_cast<const std::byte *>(memory) + state->data_offset +
+         index * state->stride;
 }
 
 [[nodiscard]] ValueTypeRef array_indexed_element_binding(const void *context,
@@ -853,9 +871,11 @@ array_indexed_make_mutable_range(const void *context, void *memory) {
   const auto *state = static_cast<const ArrayIndexedContext *>(context);
   const auto &ops = state->element_binding.ops_ref();
   std::size_t seed = 0;
-  for (std::size_t index = 0; index < state->size; ++index) {
+  const auto size = array_indexed_size(context, memory);
+  for (std::size_t index = 0; index < size; ++index) {
     const auto *child =
-        static_cast<const std::byte *>(memory) + index * state->stride;
+        static_cast<const std::byte *>(memory) + state->data_offset +
+        index * state->stride;
     seed = combine_hash(seed, ops.hash(child));
   }
   return seed;
@@ -868,12 +888,18 @@ array_indexed_make_mutable_range(const void *context, void *memory) {
   }
   return fallback_on_exception(false, [&] {
     const auto *state = static_cast<const ArrayIndexedContext *>(context);
+    const auto lhs_size = array_indexed_size(context, lhs);
+    if (lhs_size != array_indexed_size(context, rhs)) {
+      return false;
+    }
     const auto &ops = state->element_binding.ops_ref();
-    for (std::size_t index = 0; index < state->size; ++index) {
+    for (std::size_t index = 0; index < lhs_size; ++index) {
       const auto *a =
-          static_cast<const std::byte *>(lhs) + index * state->stride;
+          static_cast<const std::byte *>(lhs) + state->data_offset +
+          index * state->stride;
       const auto *b =
-          static_cast<const std::byte *>(rhs) + index * state->stride;
+          static_cast<const std::byte *>(rhs) + state->data_offset +
+          index * state->stride;
       if (!ops.equals(a, b)) {
         return false;
       }
@@ -892,15 +918,26 @@ array_value_compare(const void *context, const void *lhs,
   return fallback_on_exception(std::partial_ordering::unordered, [&]() {
     const auto *state = static_cast<const ArrayIndexedContext *>(context);
     const auto &ops = state->element_binding.ops_ref();
-    for (std::size_t index = 0; index < state->size; ++index) {
+    const auto lhs_size = array_indexed_size(context, lhs);
+    const auto rhs_size = array_indexed_size(context, rhs);
+    const auto common_size = std::min(lhs_size, rhs_size);
+    for (std::size_t index = 0; index < common_size; ++index) {
       const auto *a =
-          static_cast<const std::byte *>(lhs) + index * state->stride;
+          static_cast<const std::byte *>(lhs) + state->data_offset +
+          index * state->stride;
       const auto *b =
-          static_cast<const std::byte *>(rhs) + index * state->stride;
+          static_cast<const std::byte *>(rhs) + state->data_offset +
+          index * state->stride;
       const auto c = ops.compare(a, b);
       if (c != 0) {
         return c;
       }
+    }
+    if (lhs_size < rhs_size) {
+      return std::partial_ordering::less;
+    }
+    if (lhs_size > rhs_size) {
+      return std::partial_ordering::greater;
     }
     return std::partial_ordering::equivalent;
   });
@@ -915,12 +952,14 @@ array_value_compare(const void *context, const void *lhs,
   const auto &ops = state->element_binding.ops_ref();
   fmt::memory_buffer out;
   fmt::format_to(std::back_inserter(out), "[");
-  for (std::size_t index = 0; index < state->size; ++index) {
+  const auto size = array_indexed_size(context, memory);
+  for (std::size_t index = 0; index < size; ++index) {
     if (index > 0) {
       fmt::format_to(std::back_inserter(out), ", ");
     }
     const auto *child =
-        static_cast<const std::byte *>(memory) + index * state->stride;
+        static_cast<const std::byte *>(memory) + state->data_offset +
+        index * state->stride;
     fmt::format_to(std::back_inserter(out), "{}", ops.to_string(child));
   }
   fmt::format_to(std::back_inserter(out), "]");
@@ -935,6 +974,7 @@ array_value_compare(const void *context, const void *lhs,
   }
   const auto *state = static_cast<const ArrayIndexedContext *>(context);
   const auto &ops = state->element_binding.ops_ref();
+  const auto size = array_indexed_size(context, memory);
   if (ops.can_to_python_buffer(state->element_binding)) {
     struct ArrayBufferOwner {
       const void *memory{nullptr};
@@ -946,29 +986,38 @@ array_value_compare(const void *context, const void *lhs,
       const auto *owner_state =
           static_cast<const ArrayBufferOwner *>(owner_memory);
       return static_cast<const std::byte *>(owner_state->memory) +
+             owner_state->state->data_offset +
              index * owner_state->state->stride;
     };
     return ops.to_python_buffer(state->element_binding,
                                 ValueArraySource{
                                     .owner = &owner,
-                                    .size = state->size,
+                                    .size = size,
                                     .element_at = element_at,
                                     .first =
                                         ValueArraySpan{
-                                            .data = memory,
-                                            .size = state->size,
+                                            .data = static_cast<const std::byte *>(memory) +
+                                                    state->data_offset,
+                                            .size = size,
                                             .stride = state->stride,
                                         },
                                 });
   }
 
   nb::list result;
-  for (std::size_t index = 0; index < state->size; ++index) {
+  for (std::size_t index = 0; index < size; ++index) {
     const auto *child =
-        static_cast<const std::byte *>(memory) + index * state->stride;
+        static_cast<const std::byte *>(memory) + state->data_offset +
+        index * state->stride;
     result.append(ops.to_python(child));
   }
   return result;
+}
+
+[[nodiscard]] nb::object array_value_to_numpy(const void *context,
+                                              const void *memory) {
+  nb::object value = array_value_to_python(context, memory);
+  return nb::module_::import_("numpy").attr("asarray")(std::move(value));
 }
 
 void array_value_from_python(const void *context, const ValueTypeRef &,
@@ -986,14 +1035,25 @@ void array_value_from_python(const void *context, const ValueTypeRef &,
   nb::object object = nb::borrow<nb::object>(source);
   nb::sequence sequence = nb::cast<nb::sequence>(object);
   const auto count = static_cast<std::size_t>(nb::len(sequence));
-  if (count != state->size) {
+  if ((!state->bounded && count != state->capacity) ||
+      (state->bounded && count > state->capacity)) {
+    if (state->bounded) {
+      throw std::invalid_argument(fmt::format(
+          "Array value accepts at most {} elements, got {}",
+          state->capacity, count));
+    }
     throw std::invalid_argument(fmt::format(
-        "Fixed List value expects {} elements, got {}", state->size, count));
+        "Fixed List value expects {} elements, got {}", state->capacity,
+        count));
+  }
+  if (state->bounded) {
+    array_indexed_resize(context, memory, count);
   }
 
   for (std::size_t index = 0; index < count; ++index) {
     nb::object element = sequence[index];
-    auto *child = static_cast<std::byte *>(memory) + index * state->stride;
+    auto *child = static_cast<std::byte *>(memory) + state->data_offset +
+                  index * state->stride;
     assign_child_from_python(state->element_binding, child, element,
                              "Fixed List value");
   }
@@ -1510,7 +1570,18 @@ struct ArrayIndexedOpsEntry {
 
   ArrayIndexedOpsEntry(const ValueTypeMetaData &schema,
                        const MemoryUtils::StoragePlan &plan) {
-    if (!plan.is_array()) {
+    const MemoryUtils::StoragePlan *elements_plan = &plan;
+    std::size_t size_offset = 0;
+    std::size_t data_offset = 0;
+    bool bounded = false;
+    if (schema.is_shaped_array() && plan.is_tuple() &&
+        plan.component_count() == 2) {
+      data_offset = plan.component(0).offset;
+      size_offset = plan.component(1).offset;
+      elements_plan = plan.component(0).plan;
+      bounded = true;
+    }
+    if (!elements_plan->is_array()) {
       throw std::logic_error(
           "ValuePlanFactory: array indexed ops require an array plan");
     }
@@ -1525,8 +1596,11 @@ struct ArrayIndexedOpsEntry {
     context = ArrayIndexedContext{
         .schema = &schema,
         .element_binding = element_binding,
-        .size = plan.array_count(),
-        .stride = plan.array_stride(),
+        .capacity = elements_plan->array_count(),
+        .stride = elements_plan->array_stride(),
+        .size_offset = size_offset,
+        .data_offset = data_offset,
+        .bounded = bounded,
     };
 
     ops = IndexedValueOps{
@@ -1535,7 +1609,9 @@ struct ArrayIndexedOpsEntry {
          &array_value_equals, &array_value_compare, &array_value_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
          ,
-         &array_value_to_python, &array_value_from_python
+         schema.is_shaped_array() ? &array_value_to_numpy
+                                  : &array_value_to_python,
+         &array_value_from_python
 #endif
         },
         &array_indexed_size,
@@ -1544,6 +1620,7 @@ struct ArrayIndexedOpsEntry {
         &array_indexed_make_range,
         &array_indexed_make_mutable_range,
     };
+    ops.resize = bounded ? &array_indexed_resize : nullptr;
   }
 };
 
@@ -1953,7 +2030,17 @@ ValuePlanFactory::synthesise(const ValueTypeMetaData *schema) {
       throw std::logic_error(
           "ValuePlanFactory: fixed list has no element plan");
     }
-    plan = &MemoryUtils::array_plan(*element_plan, schema->fixed_size);
+    const auto &elements =
+        MemoryUtils::array_plan(*element_plan, schema->fixed_size);
+    if (schema->is_shaped_array()) {
+      auto builder = MemoryUtils::tuple();
+      builder.reserve(2);
+      builder.add_plan(elements);
+      builder.add_type<std::size_t>();
+      plan = &builder.build();
+    } else {
+      plan = &elements;
+    }
     break;
   }
 
@@ -2037,6 +2124,16 @@ ValuePlanFactory::synthesise_type(const ValueTypeMetaData *schema) {
                                  array_indexed_ops(*schema, *plan));
         break;
       }
+      const auto *elements_plan = plan;
+      std::size_t size_offset = 0;
+      std::size_t data_offset = 0;
+      DebugDynamicFlags flags = DebugDynamicFlags::SizeIsConstant;
+      if (schema->is_shaped_array()) {
+        data_offset = plan->component(0).offset;
+        size_offset = plan->component(1).offset;
+        elements_plan = plan->component(0).plan;
+        flags = DebugDynamicFlags::None;
+      }
       const auto &debug = intern_dynamic_debug_descriptor(
           schema->header, *plan, DebugLayoutKind::Sequence, nullptr,
           element_type.record(),
@@ -2044,9 +2141,11 @@ ValuePlanFactory::synthesise_type(const ValueTypeMetaData *schema) {
               .magic = DEBUG_DYNAMIC_LAYOUT_MAGIC,
               .abi_version = DEBUG_DYNAMIC_LAYOUT_ABI_VERSION,
               .kind = DebugDynamicKind::Contiguous,
-              .flags = DebugDynamicFlags::SizeIsConstant,
+              .flags = flags,
+              .size_offset = size_offset,
               .size_constant = schema->fixed_size,
-              .stride = plan->array_stride(),
+              .data_offset = data_offset,
+              .stride = elements_plan->array_stride(),
           });
       type = intern_value_type(*schema, *plan,
                                array_indexed_ops(*schema, *plan), &debug);

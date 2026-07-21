@@ -152,6 +152,34 @@ namespace hgraph
                 return TypeRegistry::instance().is_frame(concrete) &&
                        concrete->element_type != nullptr && !pattern.children.empty() &&
                        scalar_pattern_match(pattern.children[0], concrete->element_type, map);
+            case ScalarPattern::Kind::Array:
+            {
+                if (!TypeRegistry::is_array(concrete) || pattern.children.empty()) { return false; }
+                const ValueTypeMetaData *current = concrete;
+                for (const auto &dimension : pattern.dimensions)
+                {
+                    if (!TypeRegistry::is_array(current)) { return false; }
+                    const std::size_t concrete_size = current->fixed_size;
+                    if (dimension.variable)
+                    {
+                        if (const auto bound = map.find_size(dimension.name))
+                        {
+                            if (*bound != concrete_size) { return false; }
+                        }
+                        else
+                        {
+                            map.bind_size(dimension.name, concrete_size);
+                        }
+                    }
+                    else if (dimension.value != 0 && dimension.value != concrete_size)
+                    {
+                        return false;
+                    }
+                    current = current->element_type;
+                }
+                return !TypeRegistry::is_array(current) &&
+                       scalar_pattern_match(pattern.children[0], current, map);
+            }
             case ScalarPattern::Kind::Bundle:
             {
                 if (concrete->value_kind() != ValueTypeKind::Bundle) { return false; }
@@ -377,6 +405,7 @@ namespace hgraph
             case ScalarPattern::Kind::Set:
             case ScalarPattern::Kind::Series:
             case ScalarPattern::Kind::Frame:
+            case ScalarPattern::Kind::Array:
                 return 1 + (!pattern.children.empty() ? scalar_pattern_rank(pattern.children[0]) / 2 : 0);
             case ScalarPattern::Kind::FixedTuple:
             case ScalarPattern::Kind::Map:
@@ -467,6 +496,25 @@ namespace hgraph
             {
                 const ValueTypeMetaData *schema = resolve_required_scalar_child(pattern, map);
                 return schema != nullptr ? TypeRegistry::instance().frame(schema) : nullptr;
+            }
+            case ScalarPattern::Kind::Array:
+            {
+                const ValueTypeMetaData *element = resolve_required_scalar_child(pattern, map);
+                if (element == nullptr) { return nullptr; }
+                std::vector<std::size_t> dimensions;
+                dimensions.reserve(pattern.dimensions.size());
+                for (const auto &dimension : pattern.dimensions)
+                {
+                    if (!dimension.variable)
+                    {
+                        dimensions.push_back(dimension.value);
+                        continue;
+                    }
+                    const auto resolved = map.find_size(dimension.name);
+                    if (!resolved.has_value()) { return nullptr; }
+                    dimensions.push_back(*resolved);
+                }
+                return TypeRegistry::instance().array(element, dimensions);
             }
             case ScalarPattern::Kind::Bundle: return pattern.schema_var ? map.find_scalar(pattern.name) : nullptr;
         }
@@ -566,6 +614,52 @@ namespace hgraph
         return pattern;
     }
 
+    ScalarPattern substitute_size_patterns(
+        ScalarPattern pattern,
+        const std::unordered_map<std::string, DimensionPattern> &replacements)
+    {
+        for (DimensionPattern &dimension : pattern.dimensions)
+        {
+            if (!dimension.variable) { continue; }
+            const auto replacement = replacements.find(dimension.name);
+            if (replacement != replacements.end()) { dimension = replacement->second; }
+        }
+        for (ScalarPattern &child : pattern.children)
+        {
+            child = substitute_size_patterns(std::move(child), replacements);
+        }
+        return pattern;
+    }
+
+    TypePattern substitute_size_patterns(
+        TypePattern pattern,
+        const std::unordered_map<std::string, DimensionPattern> &replacements)
+    {
+        pattern.scalar = substitute_size_patterns(std::move(pattern.scalar), replacements);
+        if (pattern.size_var)
+        {
+            const auto replacement = replacements.find(pattern.size_name);
+            if (replacement != replacements.end())
+            {
+                if (replacement->second.variable)
+                {
+                    pattern.size_name = replacement->second.name;
+                }
+                else
+                {
+                    pattern.fixed_size = replacement->second.value;
+                    pattern.size_name.clear();
+                    pattern.size_var = false;
+                }
+            }
+        }
+        for (TypePattern &child : pattern.children)
+        {
+            child = substitute_size_patterns(std::move(child), replacements);
+        }
+        return pattern;
+    }
+
     std::string scalar_pattern_to_string(const ScalarPattern &pattern)
     {
         switch (pattern.kind)
@@ -608,6 +702,21 @@ namespace hgraph
                 return fmt::format("Frame[{}]",
                                    pattern.children.empty() ? std::string{"schema"}
                                                             : scalar_pattern_to_string(pattern.children[0]));
+            case ScalarPattern::Kind::Array:
+            {
+                std::vector<std::string> dimensions;
+                dimensions.reserve(pattern.dimensions.size());
+                for (const auto &dimension : pattern.dimensions)
+                {
+                    dimensions.push_back(dimension.variable ? "~" + dimension.name
+                                                            : dimension.value == 0 ? "*"
+                                                                                   : std::to_string(dimension.value));
+                }
+                return fmt::format("Array[{}, {}]",
+                                   pattern.children.empty() ? std::string{"scalar"}
+                                                            : scalar_pattern_to_string(pattern.children[0]),
+                                   fmt::join(dimensions, ", "));
+            }
             case ScalarPattern::Kind::Bundle:
                 if (!pattern.bundle_origin.empty())
                 {

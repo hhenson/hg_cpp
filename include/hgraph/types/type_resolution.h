@@ -113,6 +113,18 @@ namespace hgraph
     // scalar_resolver<T> — resolve a scalar schema type to its value meta,
     // substituting a ``ScalarVar`` leaf from the map.
     // -----------------------------------------------------------------
+    template <auto TSize>
+    struct size_resolver
+    {
+        [[nodiscard]] static std::size_t resolve(const ResolutionMap &m);
+    };
+
+    template <auto TSize>
+    struct size_unifier
+    {
+        static void unify(std::size_t concrete, ResolutionMap &m);
+    };
+
     template <typename T>
     struct scalar_resolver
     {
@@ -137,6 +149,26 @@ namespace hgraph
         [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &m)
         {
             return TypeRegistry::instance().list(scalar_resolver<TElement>::resolve(m), 0, true);
+        }
+    };
+
+    template <typename TElement, auto... TDimensions>
+    struct scalar_resolver<ArrayOf<TElement, TDimensions...>>
+    {
+        [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &m)
+        {
+            if constexpr (sizeof...(TDimensions) == 0)
+            {
+                return TypeRegistry::instance().array(
+                    scalar_resolver<TElement>::resolve(m), 0);
+            }
+            else
+            {
+                const std::vector<std::size_t> dimensions{
+                    size_resolver<TDimensions>::resolve(m)...};
+                return TypeRegistry::instance().array(
+                    scalar_resolver<TElement>::resolve(m), dimensions);
+            }
         }
     };
 
@@ -190,15 +222,12 @@ namespace hgraph
     };
 
     template <auto TSize>
-    struct size_resolver
+    std::size_t size_resolver<TSize>::resolve(const ResolutionMap &m)
     {
-        [[nodiscard]] static std::size_t resolve(const ResolutionMap &m)
-        {
-            using size = static_schema_detail::size_parameter_descriptor<TSize>;
-            if constexpr (size::is_concrete()) { return size::concrete_size(); }
-            else { return m.size(size::name()); }
-        }
-    };
+        using size = static_schema_detail::size_parameter_descriptor<TSize>;
+        if constexpr (size::is_concrete()) { return size::concrete_size(); }
+        else { return m.size(size::name()); }
+    }
 
     // -----------------------------------------------------------------
     // ts_resolver<S> — resolve a time-series schema type to its TS meta,
@@ -396,6 +425,29 @@ namespace hgraph
         }
     };
 
+    template <typename TElement, auto... TDimensions>
+    struct scalar_unifier<ArrayOf<TElement, TDimensions...>>
+    {
+        static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
+        {
+            if (!TypeRegistry::is_array(concrete))
+            {
+                throw std::logic_error("expected a shaped Array scalar");
+            }
+            const auto dimensions = TypeRegistry::array_dimensions(concrete);
+            if constexpr (sizeof...(TDimensions) != 0)
+            {
+                if (dimensions.size() != sizeof...(TDimensions))
+                {
+                    throw std::logic_error("Array rank does not match its static schema");
+                }
+                std::size_t index = 0;
+                (size_unifier<TDimensions>::unify(dimensions[index++], m), ...);
+            }
+            scalar_unifier<TElement>::unify(TypeRegistry::array_element(concrete), m);
+        }
+    };
+
     namespace type_resolution_detail
     {
         [[nodiscard]] inline const ValueTypeMetaData *homogeneous_tuple_element(
@@ -489,24 +541,21 @@ namespace hgraph
     };
 
     template <auto TSize>
-    struct size_unifier
+    void size_unifier<TSize>::unify(std::size_t concrete, ResolutionMap &m)
     {
-        static void unify(std::size_t concrete, ResolutionMap &m)
+        using size = static_schema_detail::size_parameter_descriptor<TSize>;
+        if constexpr (!size::is_concrete())
         {
-            using size = static_schema_detail::size_parameter_descriptor<TSize>;
-            if constexpr (!size::is_concrete())
+            const std::vector<std::size_t> constraints = size::constraints();
+            if (!constraints.empty() &&
+                std::find(constraints.begin(), constraints.end(), concrete) == constraints.end())
             {
-                const std::vector<std::size_t> constraints = size::constraints();
-                if (!constraints.empty() &&
-                    std::find(constraints.begin(), constraints.end(), concrete) == constraints.end())
-                {
-                    throw std::logic_error(fmt::format("size variable '{}' resolved outside its constraints",
-                                                       size::name()));
-                }
-                m.bind_size(size::name(), concrete);
+                throw std::logic_error(fmt::format("size variable '{}' resolved outside its constraints",
+                                                   size::name()));
             }
+            m.bind_size(size::name(), concrete);
         }
-    };
+    }
 
     /**
      * REF transparency (Python parity: ``REF[X]`` is type-compatible with

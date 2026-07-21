@@ -37,6 +37,72 @@ namespace hgraph::stdlib
         : Operator<"group_by", In<"ts", TS<ScalarVar<"F">>>, Scalar<"by", ScalarVar<"B">>, Out<TsVar<"__out__">>>
     {
     };
+
+    /** ``sorted_(ts, by, descending=false)`` — order a typed frame by one column. */
+    struct sorted_
+        : Operator<"sorted_", In<"ts", TS<FrameOf<ScalarVar<"R">>>>, Scalar<"by", Str>,
+                   Scalar<"descending", Bool>, Out<TS<FrameOf<ScalarVar<"R">>>>>
+    {
+    };
+
+    /** ``concat(ts1, ts2)`` — append rows from two frames with the same schema. */
+    struct concat
+        : Operator<"concat", In<"ts1", TS<FrameOf<ScalarVar<"R">>>>,
+                   In<"ts2", TS<FrameOf<ScalarVar<"R">>>>, Out<TS<FrameOf<ScalarVar<"R">>>>>
+    {
+    };
+
+    namespace data_frame
+    {
+        /** Arrow-native equi-join. The namespace avoids colliding with the
+            string join marker; both remain overloads in the public family. */
+        struct join
+            : Operator<"join", In<"lhs", TS<FrameOf<ScalarVar<"L">>>>,
+                       In<"rhs", TS<FrameOf<ScalarVar<"R">>>>,
+                       Scalar<"on", ScalarVar<"K">>, Scalar<"how", Str>,
+                       Scalar<"suffix", Str>, Out<TS<FrameOf<ScalarVar<"O">>>>>
+        {
+        };
+
+        /** Filter a frame by the currently valid fields of a structural TSB. */
+        struct filter_frame
+            : Operator<"filter_frame", In<"ts", TS<FrameOf<ScalarVar<"R">>>>,
+                       In<"predicate", TsVar<"P">>,
+                       Out<TS<FrameOf<ScalarVar<"R">>>>>
+        {
+        };
+
+        /** Filter a frame by the set fields of one compound scalar value. */
+        struct filter_cs
+            : Operator<"filter_cs", In<"ts", TS<FrameOf<ScalarVar<"R">>>>,
+                       In<"predicate", TS<ScalarVar<"P">>>,
+                       Out<TS<FrameOf<ScalarVar<"R">>>>>
+        {
+        };
+
+        /** Concatenate the valid values of a keyed frame collection. */
+        struct ungroup
+            : Operator<"ungroup", In<"ts", TsVar<"S">>,
+                       Out<TS<FrameOf<ScalarVar<"O">>>>>
+        {
+        };
+
+        /** Ungroup while materializing a scalar or tuple key into columns. */
+        struct ungroup_with_keys
+            : Operator<"ungroup", In<"ts", TsVar<"S">>,
+                       Scalar<"key_col", ScalarVar<"C">>,
+                       Out<TS<FrameOf<ScalarVar<"O">>>>>
+        {
+        };
+
+        /** Replace/add structural columns and project to the output row schema. */
+        struct with_columns
+            : Operator<"with_columns", In<"ts", TS<FrameOf<ScalarVar<"R">>>>,
+                       In<"columns", TsVar<"C">>,
+                       Out<TS<FrameOf<ScalarVar<"O">>>>>
+        {
+        };
+    }  // namespace data_frame
 }  // namespace hgraph::stdlib
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_DATA_FRAME_H

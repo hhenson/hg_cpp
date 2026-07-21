@@ -1643,6 +1643,34 @@ namespace hgraph::stdlib
         }
     };
 
+    struct pct_change_compose
+    {
+        static constexpr auto name = "pct_change";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *value = ts_value_schema_at(context, 0);
+            return value == scalar_descriptor<Int>::value_meta() ||
+                   value == scalar_descriptor<Float>::value_meta();
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution,
+                                          OperatorCallContext)
+        {
+            if (!output_bound(resolution))
+            {
+                bind_output(resolution, TypeRegistry::instance().ts(
+                    scalar_descriptor<Float>::value_meta()));
+            }
+        }
+
+        static auto compose(Wiring &w, NamedPort<"ts", TS<ScalarVar<"T">>> ts)
+        {
+            auto previous = wire<lag>(w, ts, Int{1});
+            return wire<div_>(w, wire<sub_>(w, ts, previous), previous);
+        }
+    };
+
     struct count_impl
     {
         static void eval(In<"ts", SIGNAL> ts, State<Int> count, Out<TS<Int>> out)

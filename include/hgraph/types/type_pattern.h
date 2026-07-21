@@ -15,6 +15,23 @@
 
 namespace hgraph
 {
+    struct DimensionPattern
+    {
+        bool variable{false};
+        std::string name{};
+        std::size_t value{0};
+
+        [[nodiscard]] static DimensionPattern fixed(std::size_t size) noexcept
+        {
+            return DimensionPattern{.value = size};
+        }
+
+        [[nodiscard]] static DimensionPattern var(std::string variable_name)
+        {
+            return DimensionPattern{.variable = true, .name = std::move(variable_name)};
+        }
+    };
+
     /**
      * Runtime *type pattern* — the wiring-time form of a (possibly generic) schema
      * used for operator overload **matching** and **ranking**. It is the single
@@ -44,6 +61,7 @@ namespace hgraph
             Map,
             Series,
             Frame,
+            Array,
             Bundle
         };
 
@@ -52,6 +70,7 @@ namespace hgraph
         const ValueTypeMetaData *meta{nullptr};     ///< ``Concrete``: the interned scalar.
         std::vector<const ValueTypeMetaData *> constraints{};  ///< ``Var``: accepted concrete scalar schemas.
         std::vector<ScalarPattern> children{};      ///< recursive scalar payloads.
+        std::vector<DimensionPattern> dimensions{}; ///< ``Array`` dimensions, outermost first.
         bool                       schema_var{false}; ///< ``Bundle``: true when ``name`` is a schema variable.
         std::string                bundle_origin{}; ///< ``Bundle``: qualified generic origin, when constrained.
 
@@ -125,6 +144,15 @@ namespace hgraph
             ScalarPattern p;
             p.kind = Kind::Frame;
             p.children.push_back(std::move(schema));
+            return p;
+        }
+        [[nodiscard]] static ScalarPattern array(ScalarPattern element,
+                                                 std::vector<DimensionPattern> shape)
+        {
+            ScalarPattern p;
+            p.kind = Kind::Array;
+            p.children.push_back(std::move(element));
+            p.dimensions = std::move(shape);
             return p;
         }
         [[nodiscard]] static ScalarPattern bundle()
@@ -368,6 +396,14 @@ namespace hgraph
         TypePattern pattern,
         const std::unordered_map<std::string, ScalarPattern> &replacements);
 
+    /** Replace named dimensions in Array and TSL patterns. */
+    [[nodiscard]] HGRAPH_EXPORT ScalarPattern substitute_size_patterns(
+        ScalarPattern pattern,
+        const std::unordered_map<std::string, DimensionPattern> &replacements);
+    [[nodiscard]] HGRAPH_EXPORT TypePattern substitute_size_patterns(
+        TypePattern pattern,
+        const std::unordered_map<std::string, DimensionPattern> &replacements);
+
     /** Human-readable rendering, for error messages. */
     [[nodiscard]] HGRAPH_EXPORT std::string ts_pattern_to_string(const TypePattern &pattern);
     [[nodiscard]] HGRAPH_EXPORT std::string scalar_pattern_to_string(const ScalarPattern &pattern);
@@ -609,6 +645,35 @@ namespace hgraph
         [[nodiscard]] static ScalarPattern lower()
         {
             return ScalarPattern::homogeneous_tuple(to_scalar_pattern<TElement>());
+        }
+    };
+
+    template <typename TElement, auto... TDimensions>
+    struct scalar_pattern_lower<ArrayOf<TElement, TDimensions...>>
+    {
+        [[nodiscard]] static ScalarPattern lower()
+        {
+            std::vector<DimensionPattern> dimensions;
+            dimensions.reserve(sizeof...(TDimensions) == 0 ? 1 : sizeof...(TDimensions));
+            if constexpr (sizeof...(TDimensions) == 0)
+            {
+                dimensions.push_back(DimensionPattern::fixed(0));
+            }
+            else
+            {
+                ([&]() {
+                    using dimension = static_schema_detail::size_parameter_descriptor<TDimensions>;
+                    if constexpr (dimension::is_concrete())
+                    {
+                        dimensions.push_back(DimensionPattern::fixed(dimension::concrete_size()));
+                    }
+                    else
+                    {
+                        dimensions.push_back(DimensionPattern::var(std::string{dimension::name()}));
+                    }
+                }(), ...);
+            }
+            return ScalarPattern::array(to_scalar_pattern<TElement>(), std::move(dimensions));
         }
     };
 

@@ -1,8 +1,59 @@
 """hgraph.nodes - helper nodes (hgraph parity; python impls as upstream)."""
-from ._wiring import compute_node, graph, wire, REMOVE_IF_EXISTS, operator_function
-from ._types import TS, TSD, TSS, K, K_1, COMPOUND_SCALAR, SCALAR
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Generic, Type
 
-__all__ = ("make_tsd", "flatten_tsd", "extract_tsd", "keys_where_true", "where_true", "tsl_to_tsd")
+from ._wiring import compute_node, graph, wire, REMOVE_IF_EXISTS, operator_function
+from ._types import (Array, SIZE, TS, TSB, TSD, TSS, K, K_1,
+                     COMPOUND_SCALAR, NUMBER, SCALAR, TIME_SERIES_TYPE,
+                     TIME_SERIES_TYPE_1, TimeSeriesSchema)
+
+__all__ = (
+    "NpRollingWindowResult", "NpRollingWindowState", "np_rolling_window",
+    "np_quantile", "np_std", "pct_change", "rolling_window",
+    "rolling_average", "make_tsd", "make_tsd_scalar", "flatten_tsd",
+    "extract_tsd", "keys_where_true", "where_true", "flatten_tsl_values",
+    "tsl_to_tsd",
+)
+
+
+@dataclass
+class NpRollingWindowResult(TimeSeriesSchema, Generic[SCALAR, SIZE]):
+    buffer: TS[Array[SCALAR, SIZE]]
+    index: TS[Array[datetime, SIZE]]
+
+
+@dataclass
+class NpRollingWindowState:
+    """Compatibility state shape retained for code that imports it directly."""
+
+    capacity: int = None
+    buffer: Array[SCALAR] = None
+    index: Array[datetime] = None
+    start: int = 0
+    length: int = 0
+
+
+_to_window_native = operator_function("to_window")
+_rolling_window_arrays_native = operator_function("rolling_window_arrays")
+_quantile_native = operator_function("quantile")
+_std_native = operator_function("np_std")
+pct_change = operator_function("pct_change")
+rolling_window = operator_function("window")
+rolling_average = operator_function("rolling_average")
+
+
+@graph
+def np_rolling_window(ts: TS[SCALAR], period: SIZE,
+                      min_window_period: int = None) -> TSB[NpRollingWindowResult]:
+    """Return native shaped arrays for a tick window's values and timestamps."""
+    window = (_to_window_native(ts, period) if min_window_period is None
+              else _to_window_native(ts, period, min_window_period))
+    return _rolling_window_arrays_native(window)
+
+
+np_quantile = _quantile_native
+np_std = _std_native
 
 
 def _requires_python_descriptor(mapping, attr):
@@ -27,6 +78,18 @@ def _getattr_compound_descriptor(
 
 
 make_tsd = operator_function("make_tsd")
+_const = operator_function("const")
+
+
+@graph
+def make_tsd_scalar(
+        key: K_1,
+        value: TIME_SERIES_TYPE,
+        remove_key: TS[bool] = None,
+        ts_type: Type[TIME_SERIES_TYPE_1] = TIME_SERIES_TYPE,
+) -> TSD[K_1, TIME_SERIES_TYPE_1]:
+    """Const-lift a scalar key and delegate TSD updates to the native node."""
+    return make_tsd(_const(key), value, remove_key)
 
 
 @compute_node

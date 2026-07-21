@@ -9,6 +9,7 @@
 #include <hgraph/types/operator_type_resolution.h>
 #include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/operators/convert_target.h>
 #include <hgraph/lib/std/operators/impl/conversion_impl.h>
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/runtime/runtime.h>
@@ -722,6 +723,21 @@ TEST_CASE("operators: typed broad schema aliases match runtime schemas")
     CHECK(time_series_schema_matches<AnyREF>(registry.ref(ts_type<TS<Int>>())));
 }
 
+TEST_CASE("operators: a bare tuple conversion target resolves a Series element type")
+{
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = registry.value_type("int");
+    const auto *series = registry.ts(registry.series(integer));
+    const auto pattern = to_pattern<TS<UnknownTuple<>>>();
+
+    const auto *resolved = stdlib::resolve_convert_target(pattern, {&series, 1});
+
+    REQUIRE(resolved != nullptr);
+    REQUIRE(resolved->value_schema != nullptr);
+    CHECK(resolved->value_schema->has(ValueTypeFlags::VariadicTuple));
+    CHECK(resolved->value_schema->element_type == integer);
+}
+
 TEST_CASE("operators: TypePattern supports TSB schema variables")
 {
     using Bundle = UnNamedTSB<Field<"x", TS<Int>>>;
@@ -1035,6 +1051,39 @@ TEST_CASE("operators: typed Series and Frame patterns preserve their scalar stru
     CHECK(scalar_type<SeriesOf<Int>>() == registry.series(integer));
     CHECK(scalar_type<FrameOf<Bundle<"tests.pattern::Row", Field<"value", Int>>>>() ==
           registry.frame(registry.bundle("tests.pattern::Row", {{"value", integer}})));
+}
+
+TEST_CASE("operators: shaped Array patterns resolve element and dimension variables")
+{
+    auto &registry = TypeRegistry::instance();
+    const auto *integer = scalar_type<Int>();
+    const auto *matrix = registry.array(integer, std::vector<std::size_t>{3, 2});
+
+    const ScalarPattern pattern =
+        to_scalar_pattern<ArrayOf<ScalarVar<"T">, SIZE<"ROWS">, 2>>();
+    ResolutionMap resolution;
+    REQUIRE(scalar_pattern_match(pattern, matrix, resolution));
+    CHECK(resolution.find_scalar("T") == integer);
+    CHECK(resolution.find_size("ROWS") == 3);
+    CHECK(scalar_pattern_resolve(pattern, resolution) == matrix);
+    CHECK(scalar_pattern_to_string(pattern) == "Array[~T, ~ROWS, 2]");
+
+    ResolutionMap mismatch;
+    CHECK_FALSE(scalar_pattern_match(
+        pattern, registry.array(integer, std::vector<std::size_t>{3, 4}), mismatch));
+}
+
+TEST_CASE("operators: shaped dimensions can be specialized before resolution")
+{
+    const TypePattern pattern = TypePattern::ts(ScalarPattern::array(
+        ScalarPattern::var("T"), {DimensionPattern::var("N")}));
+    const TypePattern specialized = substitute_size_patterns(
+        pattern, {{"N", DimensionPattern::fixed(4)}});
+    ResolutionMap resolution;
+    resolution.bind_scalar("T", scalar_descriptor<Int>::value_meta());
+    CHECK(ts_pattern_resolve(specialized, resolution) ==
+          TypeRegistry::instance().ts(
+              TypeRegistry::instance().array(scalar_descriptor<Int>::value_meta(), 4)));
 }
 
 TEST_CASE("operators: typed Frame generics are first-class C++ overloads")

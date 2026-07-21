@@ -30,6 +30,8 @@
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/util/date_time.h>
 
+#include <arrow/api.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
@@ -63,6 +65,34 @@ namespace
         for (Int value : values) { builder.push_back(value); }
         ListStorage storage = builder.build_storage();
         return Value{compact_list_type(binding, *meta), &storage};
+    }
+
+    [[nodiscard]] Value nullable_int_tuple(std::initializer_list<std::optional<Int>> values)
+    {
+        const auto *meta = scalar_descriptor<HomogeneousTuple<Int>>::value_meta();
+        const auto binding = ValuePlanFactory::instance().type_for(scalar_descriptor<Int>::value_meta());
+        ListBuilder builder{binding};
+        for (const auto value : values)
+        {
+            if (value.has_value()) { builder.push_back(*value); }
+            else { builder.push_back_unset(); }
+        }
+        ListStorage storage = builder.build_storage();
+        return Value{compact_list_type(binding, *meta), &storage};
+    }
+
+    [[nodiscard]] Series int_series(std::initializer_list<std::optional<Int>> values)
+    {
+        arrow::Int64Builder builder;
+        for (const auto value : values)
+        {
+            const arrow::Status status = value.has_value() ? builder.Append(*value) : builder.AppendNull();
+            if (!status.ok()) { throw std::runtime_error(status.ToString()); }
+        }
+        std::shared_ptr<arrow::Array> array;
+        const auto status = builder.Finish(&array);
+        if (!status.ok()) { throw std::runtime_error(status.ToString()); }
+        return Series{std::move(array)};
     }
 
     [[nodiscard]] WiringArg scalar_arg(Value value)
@@ -101,6 +131,16 @@ namespace
         if (recorded.size() < input.size()) { recorded.resize(input.size()); }
         return recorded;
     }
+
+    struct SeriesToTupleGraph
+    {
+        static constexpr auto name = "series_to_tuple_graph";
+
+        static Port<TS<HomogeneousTuple<Int>>> compose(Wiring &w, Port<TS<SeriesOf<Int>>> ts)
+        {
+            return wire<stdlib::convert, TS<HomogeneousTuple<Int>>>(w, ts);
+        }
+    };
 
     // Lightweight graphs with declared inputs/outputs, driven through eval_node.
     struct SyntaxArithmeticGraph
@@ -1491,6 +1531,10 @@ TEST_CASE("std operators: collection container operators support TSS TSD and fix
     CHECK_OUTPUT((eval_node<stdlib::contains_, TSD<Int, TS<Int>>>(
                      values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}})), values<Int>(1, 3))),
                  values<Bool>(true, false));
+    CHECK_OUTPUT(eval_node<stdlib::make_tsd>(
+                     Str{"key"}, values<Int>(1, 2)),
+                 values<Value>(dict_delta<Str, TS<Int>>({{Str{"key"}, 1}}),
+                               dict_delta<Str, TS<Int>>({{Str{"key"}, 2}})));
 
     CHECK_OUTPUT((eval_node<stdlib::len_, TSL<TS<Int>, 2>>(values<Value>(list_delta<TS<Int>>({}),
                                                                          list_delta<TS<Int>>({{0, 1}}),
@@ -1673,6 +1717,17 @@ TEST_CASE("std operators: TSB itemwise bitwise and analytics reuse field operato
                                         values<Int>(5),
                                         values<Str>(Str{"9"})),
                  values<Value>(tsb_delta<ContainerAccessBundle>(Int{7}, Str{"9"})));
+}
+
+TEST_CASE("std operators: convert copies an Arrow Series into a native variadic tuple")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<SeriesToTupleGraph>(
+                     values<Series>(int_series({}), int_series({Int{1}}),
+                                    int_series({Int{2}, std::nullopt, Int{3}}))),
+                 values<Value>(int_tuple({}), int_tuple({Int{1}}),
+                               nullable_int_tuple({Int{2}, std::nullopt, Int{3}})));
 }
 
 TEST_CASE("std operators: str_ converts scalar time-series values to strings")

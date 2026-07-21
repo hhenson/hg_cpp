@@ -249,3 +249,22 @@ TEST_CASE("static_schema: nested compositions resolve recursively")
     REQUIRE(schema_descriptor<NestedSchema>::is_concrete());
     REQUIRE(schema_descriptor<NestedSchema>::ts_meta() == expected);
 }
+
+TEST_CASE("static_schema: shaped arrays retain rank and dimensions")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+
+    const auto *integer = scalar_descriptor<Int>::value_meta();
+    const auto *matrix = scalar_descriptor<ArrayOf<Int, 3, 2>>::value_meta();
+    REQUIRE(matrix != nullptr);
+    CHECK(TypeRegistry::is_array(matrix));
+    CHECK(TypeRegistry::array_element(matrix) == integer);
+    CHECK(TypeRegistry::array_dimensions(matrix) == std::vector<std::size_t>{3, 2});
+    CHECK(matrix == registry.array(integer, std::vector<std::size_t>{3, 2}));
+
+    const auto *dynamic = scalar_descriptor<ArrayOf<Int>>::value_meta();
+    REQUIRE(dynamic != nullptr);
+    CHECK(TypeRegistry::array_dimensions(dynamic) == std::vector<std::size_t>{0});
+    CHECK(dynamic != registry.list(integer, 0, true));
+}

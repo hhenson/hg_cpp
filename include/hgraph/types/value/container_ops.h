@@ -99,6 +99,9 @@ namespace hgraph
             that MARKS the field live (field validity, core_concepts.rst) and
             returns real memory even when unset. */
         void *(*mutable_element_at)(const void *context, void *memory, std::size_t index) = nullptr;
+        /** Change the logical extent of bounded indexed storage. Null for
+            representations whose size is structural or fixed exactly. */
+        void (*resize)(const void *context, void *memory, std::size_t size) = nullptr;
     };
 
     struct ListValueOps : IndexedValueOps

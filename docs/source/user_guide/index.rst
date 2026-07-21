@@ -12,4 +12,5 @@ The user guide describes the HGraph model from a user point of view: what the fr
    authoring_nodes_cpp
    authoring_graphs_cpp
    testing_graphs_cpp
+   data_and_analytics
    python_compatibility

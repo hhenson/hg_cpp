@@ -73,6 +73,11 @@ The important corrections to the previous roadmap are:
   bridge registry also contains internal and compatibility operators, so its
   raw ``operator_names()`` count is intentionally larger and is not the parity
   numerator.
+- Public compatibility is not limited to APIs exercised by the two checked-out
+  applications. Every upstream public export remains supported or is recorded
+  as remaining work. In particular, the legacy service and mesh helpers
+  exported from ``hgraph.nodes`` require native-backed adapters even though
+  their old Python runtime implementation is not itself a compatibility target.
 
 The A3, compiled-boundary REF, constrained-generic, and nested-map baseline
 passed the full acceptance gates on both local platforms:
@@ -513,9 +518,17 @@ layout. ``dedup_builder`` and ``collect_builder`` are upstream Python
 implementation-injection hooks; the native overload registry is their C++-first
 equivalent and no parallel Python builder layer should be added.
 
-**Remaining inventory:** Arrow ``Series`` values are first-class and support
-native indexing, arithmetic, and comparisons, but the convenience conversion
-from ``TS[Series[T]]`` to ``TS[tuple[T, ...]]`` remains a classified gap. The
+Arrow ``Series`` values are first-class and support native indexing,
+arithmetic, comparisons, and conversion to ``TS[tuple[T, ...]]``; Arrow nulls
+become unset tuple elements.  The dataframe ``join``, structural filter,
+``group_by``, ``ungroup``, sort, concat, and ``with_columns`` paths are also
+native.  Python expression-filter nodes remain the explicit compatibility path
+for the Python-owned ``pyarrow.compute.Expression`` scalar. The native
+``ArrayOf<T, ...>`` schema and Python ``Array[T, Size[...]]`` adapter retain
+complete shape information. The public ``hgraph.numpy_`` conversion, indexing,
+cumulative-sum, correlation, and quantile catalogue and the NumPy/analytical
+helpers exported by ``hgraph.nodes`` execute through native operators or
+native graph composition with paired C++ and Python coverage. The
 arrow-combinator library is
 ported (``hgraph/arrow/`` mirrors the upstream package over the public wiring
 surface; upstream's own arrow tests pass, with two recorded deviations:

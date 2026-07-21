@@ -106,6 +106,7 @@ set(HGRAPH_STDLIB_SOURCES
     hgraph/lib/std/operators/data_frame_impl.cpp
     hgraph/lib/std/operators/json_impl.cpp
     hgraph/lib/std/operators/logical_impl.cpp
+    hgraph/lib/std/operators/numpy_impl.cpp
     hgraph/lib/std/operators/record_replay_frame_impl.cpp
     hgraph/lib/std/operators/record_replay_memory_impl.cpp
     hgraph/lib/std/operators/registration.cpp
@@ -129,6 +130,7 @@ add_library(hgraph::stdlib ALIAS hgraph_stdlib)
 target_link_libraries(hgraph_runtime PUBLIC hgraph::options)
 target_link_libraries(hgraph_wiring PUBLIC hgraph_runtime hgraph::options)
 target_link_libraries(hgraph_stdlib PUBLIC hgraph_wiring hgraph::options)
+target_link_libraries(hgraph_stdlib PRIVATE $<BUILD_INTERFACE:Boost::math>)
 target_link_libraries(hgraph_core INTERFACE hgraph_stdlib hgraph::options)
 
 if(MSVC)

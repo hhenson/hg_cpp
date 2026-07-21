@@ -14,6 +14,7 @@ from hgraph import (
     Removed,
     TSL,
     Size,
+    Series,
     emit,
 )
 from hgraph.test import eval_node
@@ -86,11 +87,24 @@ def test_convert_tsl_to_tuple():
 
 
 def test_convert_series_to_tuple():
-    # ARROW ruling (2026-07-08): Series is arrow-backed; operators use arrow
-    # compute and tests validate with pyarrow (never polars). Skipped until
-    # the arrow Series type lands in the bridge.
     pa = pytest.importorskip("pyarrow")
-    pytest.skip("gap: native convert[TS[tuple]] over an Arrow Series has not landed")
+
+    @graph
+    def g(a: TS[Series[int]]) -> TIME_SERIES_TYPE:
+        return convert[TS[Tuple]](a)
+
+    values = [
+        pa.array([], type=pa.int64()),
+        pa.array([1], type=pa.int64()),
+        pa.array([2, None, 3], type=pa.int64()),
+    ]
+    assert eval_node(g, values) == [tuple(), (1,), (2, None, 3)]
+
+    @graph
+    def h(a: TS[Series[int]]) -> TIME_SERIES_TYPE:
+        return convert[TS[Tuple[int, ...]]](a)
+
+    assert eval_node(h, values) == [tuple(), (1,), (2, None, 3)]
 
 
 def test_combine_tuple():
