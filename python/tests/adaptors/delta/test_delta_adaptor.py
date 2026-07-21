@@ -17,6 +17,8 @@ from hgraph.adaptors.delta import (
     publish_tsd_to_delta_table,
     register_delta_backend,
 )
+from hgraph.adaptors.delta.delta_adaptor_raw import delta_table_maintenance
+from hgraph.adaptors.delta.delta_tsd_publisher import tsd_to_frame_batched
 from hgraph.stream import StreamStatus
 
 
@@ -30,6 +32,7 @@ class _Backend(DeltaBackend):
     def __init__(self):
         self.tables = {"memory/rows": pa.table({"name": ["b", "a"], "value": [2, 1]})}
         self.writes = []
+        self.maintenance_calls = []
 
     def read(self, table_path, *, columns=(), filters=(), storage_options=None):
         table = self.tables[table_path]
@@ -52,6 +55,10 @@ class _Backend(DeltaBackend):
         storage_options=None,
     ):
         self.writes.append((table_path, data, mode, schema_mode, keys, partition))
+
+    def maintenance(self, table_path, *, storage_options=None):
+        self.maintenance_calls.append((table_path, storage_options))
+        return {"compacted": True}, ["vacuumed"]
 
 
 def _end_time():
@@ -171,6 +178,26 @@ def test_delta_write_preserves_modes_keys_and_partitions():
     assert partition == ("name",)
 
 
+def test_delta_table_maintenance_uses_the_injected_backend():
+    backend = _Backend()
+
+    @hg.graph
+    def app() -> hg.TS[bool]:
+        delta_table_maintenance(
+            "memory",
+            "rows",
+            periodic=hg.MIN_TD,
+            start=hg.MIN_ST,
+        )
+        return hg.const(True)
+
+    with hg.GlobalContext(hg.GlobalState()):
+        register_delta_backend(backend)
+        hg.eval_node(app, __end_time__=hg.MIN_ST + 2 * hg.MIN_TD)
+
+    assert backend.maintenance_calls == [("memory/rows", {})]
+
+
 def test_tsd_delta_publisher_uses_the_native_table_codec():
     backend = _Backend()
 
@@ -199,4 +226,94 @@ def test_tsd_delta_publisher_uses_the_native_table_codec():
     assert frame.column_names[-3:] == ["__key_1__", "name", "value"]
     assert frame.select(["__key_1__", "name", "value"]).to_pylist() == [
         {"__key_1__": 1, "name": "a", "value": 1}
+    ]
+
+
+def _expected_tsd_batch(rows, as_of):
+    return pa.Table.from_pylist([
+        {
+            "__date_time__": timestamp,
+            "__as_of__": as_of,
+            "__key_1_removed__": False,
+            "__key_1__": key,
+            "name": name,
+            "value": value,
+        }
+        for timestamp, key, name, value in rows
+    ])
+
+
+def test_tsd_to_frame_batches_scalar_values_by_row_count():
+    @hg.graph
+    def app(tsd: hg.TSD[str, hg.TS[_Row]]) -> hg.TS[object]:
+        return tsd_to_frame_batched(tsd, max_rows=2, flush_period=timedelta(milliseconds=1))
+
+    as_of = hg.MIN_ST + 10 * hg.MIN_TD
+    with hg.GlobalState():
+        hg.set_as_of(as_of)
+        out = hg.eval_node(
+            app,
+            [{"a": _Row("a", 1)}, {"b": _Row("b", 2)}],
+            __end_time__=hg.MIN_ST + timedelta(milliseconds=10),
+            __elide__=True,
+        )
+
+    expected = _expected_tsd_batch([
+        (hg.MIN_ST, "a", "a", 1),
+        (hg.MIN_ST + hg.MIN_TD, "b", "b", 2),
+    ], as_of)
+    assert out == [expected]
+
+
+def test_tsd_to_frame_batches_bundle_values_by_row_count():
+    @hg.graph
+    def app(tsd: hg.TSD[str, hg.TSB[_Row]]) -> hg.TS[object]:
+        return tsd_to_frame_batched(tsd, max_rows=2, flush_period=timedelta(milliseconds=1))
+
+    as_of = hg.MIN_ST + 10 * hg.MIN_TD
+    with hg.GlobalState():
+        hg.set_as_of(as_of)
+        out = hg.eval_node(
+            app,
+            [{"a": _Row("a", 1)}, {"b": _Row("b", 2)}],
+            __end_time__=hg.MIN_ST + timedelta(milliseconds=10),
+            __elide__=True,
+        )
+
+    expected = _expected_tsd_batch([
+        (hg.MIN_ST, "a", "a", 1),
+        (hg.MIN_ST + hg.MIN_TD, "b", "b", 2),
+    ], as_of)
+    assert out == [expected]
+
+
+def test_tsd_to_frame_emits_multiple_row_count_batches():
+    @hg.graph
+    def app(tsd: hg.TSD[str, hg.TS[_Row]]) -> hg.TS[object]:
+        return tsd_to_frame_batched(tsd, max_rows=2, flush_period=timedelta(milliseconds=1))
+
+    as_of = hg.MIN_ST + 10 * hg.MIN_TD
+    with hg.GlobalState():
+        hg.set_as_of(as_of)
+        out = hg.eval_node(
+            app,
+            [
+                {"a": _Row("a", 1)},
+                {"b": _Row("b", 2)},
+                {"a": _Row("a", 3)},
+                {"c": _Row("c", 4)},
+            ],
+            __end_time__=hg.MIN_ST + timedelta(milliseconds=10),
+            __elide__=True,
+        )
+
+    assert out == [
+        _expected_tsd_batch([
+            (hg.MIN_ST, "a", "a", 1),
+            (hg.MIN_ST + hg.MIN_TD, "b", "b", 2),
+        ], as_of),
+        _expected_tsd_batch([
+            (hg.MIN_ST + 2 * hg.MIN_TD, "a", "a", 3),
+            (hg.MIN_ST + 3 * hg.MIN_TD, "c", "c", 4),
+        ], as_of),
     ]

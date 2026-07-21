@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
+from concurrent.futures import Executor
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
+import logging
 
 import pyarrow as pa
 
@@ -10,15 +12,18 @@ from hgraph import (
     CompoundScalar,
     Frame,
     GlobalState,
+    MIN_DT,
     TS,
     TSB,
     TSD,
     WiringPort,
     compute_node,
     const,
+    graph,
     push_queue,
     service_adaptor,
     service_adaptor_impl,
+    schedule,
     sink_node,
 )
 from hgraph.adaptors._async import KeyedAsyncState
@@ -37,7 +42,11 @@ __all__ = (
     "delta_query_adaptor_raw_impl",
     "delta_write_adaptor_raw",
     "delta_write_adaptor_raw_impl",
+    "delta_table_maintenance",
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 _RAW_FRAME_STREAM = TSB[Stream[Data[Frame]]]
@@ -116,6 +125,10 @@ class DeltaBackend(ABC):
     ):
         raise NotImplementedError
 
+    def maintenance(self, table_path, *, storage_options=None):
+        """Compact and vacuum a table, when supported by the backend."""
+        raise NotImplementedError(f"{type(self).__name__} does not support Delta table maintenance")
+
 
 class _DeltalakeBackend(DeltaBackend):
     @staticmethod
@@ -178,6 +191,57 @@ class _DeltalakeBackend(DeltaBackend):
                 "delta.logRetentionDuration": "interval 2 days",
             },
         )
+
+    def maintenance(self, table_path, *, storage_options=None):
+        table = self._module().DeltaTable(table_path, storage_options=storage_options or None)
+        compact_result = table.optimize.compact()
+        vacuum_result = table.vacuum(
+            retention_hours=1,
+            enforce_retention_duration=False,
+            dry_run=False,
+        )
+        return compact_result, vacuum_result
+
+
+@graph
+def delta_table_maintenance(
+    path: str,
+    table: str,
+    periodic: timedelta,
+    start: datetime = MIN_DT,
+):
+    trigger = schedule(periodic, start=start)
+
+    @sink_node
+    def maintenance(
+        path: str,
+        table: str,
+        trigger: TS[bool],
+        executor: TS[Executor],
+    ):
+        if not trigger.value:
+            return
+
+        store = DeltaStore.instance()
+        backend = store.backend
+        table_path = _table_path(path, table)
+        storage_options = store.options_for(path)
+
+        def run_maintenance():
+            try:
+                logger.info("Doing maintenance for delta table %s", table_path)
+                compact_result, vacuum_result = backend.maintenance(
+                    table_path,
+                    storage_options=storage_options,
+                )
+                logger.info("Compaction for delta table %s: %s", table_path, compact_result)
+                logger.info("Vacuum for delta table %s: %s", table_path, vacuum_result)
+            except Exception:
+                logger.exception("Error doing maintenance for delta table %s", table_path)
+
+        executor.value.submit(run_maintenance)
+
+    maintenance(path, table, trigger, adaptor_executor())
 
 
 def _sql_literal(value):
