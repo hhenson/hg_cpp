@@ -55,7 +55,7 @@ using PyInferValueFn = void *; // set as Value (*)(nb::handle) by the module
  */
 [[nodiscard]] HGRAPH_EXPORT nb::dict &bundle_class_registry();
 
-struct NB_EXPORT_SHARED PyBundleClassInfo {
+struct PyBundleClassInfo {
   using Allocator = PyObject *(*)(PyTypeObject *, Py_ssize_t);
 
   nb::object type{};
