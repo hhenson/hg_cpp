@@ -20,7 +20,7 @@ namespace hgraph
     inline constexpr std::uint16_t NODE_OPS_ABI_VERSION = 2;
 
     /** One-word canonical identity for a runtime node implementation. */
-    class NodeTypeRef
+    class HGRAPH_EXPORT NodeTypeRef
     {
       public:
         constexpr NodeTypeRef() noexcept = default;

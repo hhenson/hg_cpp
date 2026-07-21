@@ -1,6 +1,8 @@
 #ifndef HGRAPH_TYPES_TIME_SERIES_TS_DELTA_H
 #define HGRAPH_TYPES_TIME_SERIES_TS_DELTA_H
 
+#include <hgraph/hgraph_export.h>
+
 namespace hgraph
 {
     class TSInputView;
@@ -34,9 +36,9 @@ namespace hgraph
      * ``REF`` throws a clear ``std::logic_error``: it is a separate
      * reference-binding surface rather than ordinary value replay.
      */
-    [[nodiscard]] Value capture_delta(const TSInputView &in);
+    [[nodiscard]] HGRAPH_EXPORT Value capture_delta(const TSInputView &in);
 
-    void apply_delta(const TSOutputView &out, const ValueView &delta);
+    HGRAPH_EXPORT void apply_delta(const TSOutputView &out, const ValueView &delta);
 
     /**
      * Apply a whole current value to a time-series output.
@@ -46,9 +48,9 @@ namespace hgraph
      * children so non-peered structures such as fixed ``TSL`` and ``TSB`` can be
      * materialized from ordinary value-layer containers.
      */
-    [[nodiscard]] bool current_value_schema_compatible(const TSValueTypeMetaData &schema,
-                                                       const ValueTypeMetaData   &value_schema);
-    void apply_current_value(const TSOutputView &out, const ValueView &value);
+    [[nodiscard]] HGRAPH_EXPORT bool current_value_schema_compatible(
+        const TSValueTypeMetaData &schema, const ValueTypeMetaData &value_schema);
+    HGRAPH_EXPORT void apply_current_value(const TSOutputView &out, const ValueView &value);
 }  // namespace hgraph
 
 #endif  // HGRAPH_TYPES_TIME_SERIES_TS_DELTA_H

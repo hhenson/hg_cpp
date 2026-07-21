@@ -46,7 +46,7 @@ namespace hgraph
      * The factory is a process-wide singleton via ``instance()``;
      * non-copyable and non-movable.
      */
-    class ValuePlanFactory
+    class HGRAPH_EXPORT ValuePlanFactory
     {
       public:
         /** Singleton accessor; returns a reference to the process-wide factory. */

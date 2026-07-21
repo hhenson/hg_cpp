@@ -88,7 +88,7 @@ namespace hgraph
      * aliases on first construction. The constructor is private. The class
      * is non-copyable and non-movable.
      */
-    class TypeRegistry
+    class HGRAPH_EXPORT TypeRegistry
     {
     public:
         /** Singleton accessor; returns a reference to the process-wide registry. */

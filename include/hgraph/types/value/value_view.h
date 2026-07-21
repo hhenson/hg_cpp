@@ -54,7 +54,7 @@ namespace hgraph
      * transition, and that transition is allowed only when the bound ops
      * table opts in.
      */
-    class ValueView
+    class HGRAPH_EXPORT ValueView
     {
       public:
         constexpr ValueView() noexcept = default;

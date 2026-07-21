@@ -898,7 +898,7 @@ namespace hgraph
      * invalid view when empty). Methods that touch the embedded ``Value`` are
      * defined out-of-line (in ``value_view.cpp``) where ``Value`` is complete.
      */
-    class AnyView : public ValueView
+    class HGRAPH_EXPORT AnyView : public ValueView
     {
       public:
         explicit AnyView(ValueView base)
@@ -921,7 +921,7 @@ namespace hgraph
      * Writable view over an ``Any`` value: replace or clear the contained
      * value. ``set`` deep-copies the supplied value into the box.
      */
-    class MutableAnyView : public AnyView
+    class HGRAPH_EXPORT MutableAnyView : public AnyView
     {
       public:
         explicit MutableAnyView(ValueView base)

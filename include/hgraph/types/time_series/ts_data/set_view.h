@@ -79,7 +79,7 @@ namespace hgraph
     };
 
     /** Mutation view over set-shaped TSData. */
-    class TSSDataMutationView : public TSSDataView
+    class HGRAPH_EXPORT TSSDataMutationView : public TSSDataView
     {
       public:
         TSSDataMutationView(TSDataView view, DateTime evaluation_time);

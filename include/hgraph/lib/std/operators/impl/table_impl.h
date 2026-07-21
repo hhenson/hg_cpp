@@ -68,9 +68,8 @@ namespace hgraph::stdlib
             [[nodiscard]] bool multi() const noexcept { return partitioned() || is_multi_row; }
         };
 
-        [[nodiscard]] const TsTableLayout &ts_table_layout(const TSValueTypeMetaData *ts,
-                                                           std::string_view           date_key,
-                                                           std::string_view           as_of_key);
+        [[nodiscard]] HGRAPH_EXPORT const TsTableLayout &ts_table_layout(
+            const TSValueTypeMetaData *ts, std::string_view date_key, std::string_view as_of_key);
         void clear_ts_table_layouts() noexcept;
 
         /** The ToTableMode enum meta (registers it on first use). */

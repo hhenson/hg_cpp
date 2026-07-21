@@ -15,7 +15,7 @@ namespace hgraph
     class Value;
     class ValueView;
 
-    class ValueTypeRef
+    class HGRAPH_EXPORT ValueTypeRef
     {
       public:
         constexpr ValueTypeRef() noexcept = default;
