@@ -2,7 +2,9 @@
 
 #if defined HGRAPH_STATIC_DEFINE
 #define HGRAPH_EXPORT
+#define HGRAPH_LOCAL
 #elif defined _WIN32 || defined __CYGWIN__
+#define HGRAPH_LOCAL
 #ifdef hgraph_EXPORTS
 #ifdef __GNUCC__
 #define HGRAPH_EXPORT __attribute__ ((dllexport))
@@ -20,8 +22,10 @@
 #else
 #if __GNUC__ >= 4
 #define HGRAPH_EXPORT __attribute__ ((visibility ("default")))
+#define HGRAPH_LOCAL __attribute__ ((visibility ("hidden")))
 #else
 #define HGRAPH_EXPORT
+#define HGRAPH_LOCAL
 #endif
 #endif
 
