@@ -122,39 +122,55 @@ set(HGRAPH_STDLIB_SOURCES
     hgraph/lib/std/operators/convert_target.cpp
 )
 
-add_library(hgraph_runtime ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_RUNTIME_SOURCES})
-add_library(hgraph_wiring ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_WIRING_SOURCES})
-add_library(hgraph_stdlib ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_STDLIB_SOURCES})
+set(HGRAPH_WINDOWS_UNIFIED_SHARED OFF)
+if(MSVC AND HGRAPH_BUILD_SHARED)
+    # A single export macro cannot describe dependencies between three Windows
+    # DLLs: compiling each component with hgraph_EXPORTS makes runtime objects
+    # emit wiring vtables, while exporting every unannotated template symbol
+    # exceeds MSVC's 65,535-object library limit. Keep the public component
+    # targets, but place their implementation in one explicitly exported DLL.
+    set(HGRAPH_WINDOWS_UNIFIED_SHARED ON)
+    add_library(hgraph_runtime INTERFACE)
+    add_library(hgraph_wiring INTERFACE)
+    add_library(hgraph_stdlib SHARED
+        ${HGRAPH_RUNTIME_SOURCES}
+        ${HGRAPH_WIRING_SOURCES}
+        ${HGRAPH_STDLIB_SOURCES}
+    )
+else()
+    add_library(hgraph_runtime ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_RUNTIME_SOURCES})
+    add_library(hgraph_wiring ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_WIRING_SOURCES})
+    add_library(hgraph_stdlib ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_STDLIB_SOURCES})
+endif()
 add_library(hgraph_core INTERFACE)
 
 add_library(hgraph::runtime ALIAS hgraph_runtime)
 add_library(hgraph::wiring ALIAS hgraph_wiring)
 add_library(hgraph::stdlib ALIAS hgraph_stdlib)
 
-target_link_libraries(hgraph_runtime PUBLIC hgraph::options)
-target_link_libraries(hgraph_wiring PUBLIC hgraph_runtime hgraph::options)
-target_link_libraries(hgraph_stdlib PUBLIC hgraph_wiring hgraph::options)
+if(HGRAPH_WINDOWS_UNIFIED_SHARED)
+    target_link_libraries(hgraph_stdlib PUBLIC hgraph::options)
+    target_link_libraries(hgraph_runtime INTERFACE hgraph_stdlib hgraph::options)
+    target_link_libraries(hgraph_wiring INTERFACE hgraph_stdlib hgraph::options)
+else()
+    target_link_libraries(hgraph_runtime PUBLIC hgraph::options)
+    target_link_libraries(hgraph_wiring PUBLIC hgraph_runtime hgraph::options)
+    target_link_libraries(hgraph_stdlib PUBLIC hgraph_wiring hgraph::options)
+endif()
 target_link_libraries(hgraph_stdlib PRIVATE $<BUILD_INTERFACE:Boost::math>)
 target_link_libraries(hgraph_core INTERFACE hgraph_stdlib hgraph::options)
 
 if(HGRAPH_BUILD_SHARED)
-    set_target_properties(hgraph_runtime hgraph_wiring hgraph_stdlib PROPERTIES
-        WINDOWS_EXPORT_ALL_SYMBOLS ON
-    )
-    target_link_libraries(hgraph_runtime PRIVATE hgraph_private_dependencies)
-    target_link_libraries(hgraph_wiring PRIVATE hgraph_private_dependencies)
-    target_link_libraries(hgraph_stdlib PRIVATE hgraph_private_dependencies)
-    if(MSVC)
-        # HGRAPH_EXPORT is intentionally shared by the three public component
-        # libraries. While each DLL is being compiled, leave those declarations
-        # unannotated and let WINDOWS_EXPORT_ALL_SYMBOLS create its import
-        # library. Defining hgraph_EXPORTS for every target makes MSVC emit
-        # graph-wiring vtables from runtime translation units and introduces a
-        # circular DLL dependency.
-        target_compile_definitions(hgraph_runtime PRIVATE HGRAPH_STATIC_DEFINE)
-        target_compile_definitions(hgraph_wiring PRIVATE HGRAPH_STATIC_DEFINE)
-        target_compile_definitions(hgraph_stdlib PRIVATE HGRAPH_STATIC_DEFINE)
+    if(HGRAPH_WINDOWS_UNIFIED_SHARED)
+        target_link_libraries(hgraph_stdlib PRIVATE hgraph_private_dependencies)
+        target_compile_definitions(hgraph_stdlib PRIVATE hgraph_EXPORTS)
     else()
+        set_target_properties(hgraph_runtime hgraph_wiring hgraph_stdlib PROPERTIES
+            WINDOWS_EXPORT_ALL_SYMBOLS ON
+        )
+        target_link_libraries(hgraph_runtime PRIVATE hgraph_private_dependencies)
+        target_link_libraries(hgraph_wiring PRIVATE hgraph_private_dependencies)
+        target_link_libraries(hgraph_stdlib PRIVATE hgraph_private_dependencies)
         target_compile_definitions(hgraph_runtime PRIVATE hgraph_EXPORTS)
         target_compile_definitions(hgraph_wiring PRIVATE hgraph_EXPORTS)
         target_compile_definitions(hgraph_stdlib PRIVATE hgraph_EXPORTS)
@@ -177,14 +193,18 @@ if(HGRAPH_BUILD_SHARED)
 endif()
 
 if(MSVC)
-    target_compile_options(hgraph_runtime PRIVATE /bigobj)
-    target_compile_options(hgraph_wiring PRIVATE /bigobj)
     target_compile_options(hgraph_stdlib PRIVATE /bigobj)
+    if(NOT HGRAPH_WINDOWS_UNIFIED_SHARED)
+        target_compile_options(hgraph_runtime PRIVATE /bigobj)
+        target_compile_options(hgraph_wiring PRIVATE /bigobj)
+    endif()
 endif()
 
-hgraph_enable_private_pch(hgraph_runtime)
-hgraph_enable_private_pch(hgraph_wiring)
 hgraph_enable_private_pch(hgraph_stdlib)
+if(NOT HGRAPH_WINDOWS_UNIFIED_SHARED)
+    hgraph_enable_private_pch(hgraph_runtime)
+    hgraph_enable_private_pch(hgraph_wiring)
+endif()
 
 set_target_properties(hgraph_runtime PROPERTIES EXPORT_NAME runtime)
 set_target_properties(hgraph_wiring PROPERTIES EXPORT_NAME wiring)
