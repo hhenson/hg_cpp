@@ -17,6 +17,7 @@ namespace hgraph::stdlib
         register_graph_overload<lag, lag_proxy_tsl_compose>();
         register_graph_overload<lag, lag_proxy_tsb_compose>();
         register_overload<schedule, schedule_impl>();
+        register_overload<request_id, request_id_impl>();
         register_overload<schedule, schedule_ts_impl>();
         register_overload<schedule, schedule_ts_start_impl>();
         register_overload<resample, resample_impl>();

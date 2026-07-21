@@ -24,6 +24,12 @@
 
 namespace hgraph
 {
+    Int next_request_id() noexcept
+    {
+        static std::atomic<Int> next{0};
+        return next.fetch_add(1, std::memory_order_relaxed) + 1;
+    }
+
     namespace
     {
         constexpr std::string_view subscription_key_source_storage_field{"subscription_key_source"};
@@ -695,8 +701,6 @@ namespace hgraph
 
     NodeBuilder make_request_id_source_node()
     {
-        static std::atomic<Int> next_request_id{0};
-
         NodeTypeMetaData schema;
         schema.display_name  = "request_id_source";
         schema.output_schema = TypeRegistry::instance().ts(scalar_descriptor<Int>::value_meta());
@@ -704,7 +708,7 @@ namespace hgraph
 
         NodeCallbacks callbacks;
         callbacks.start = [](const NodeView &view, DateTime evaluation_time) {
-            const Int request_id = next_request_id.fetch_add(1, std::memory_order_relaxed) + 1;
+            const Int request_id = next_request_id();
             auto mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
             if (!mutation.move_value_from(Value{request_id}))
             {

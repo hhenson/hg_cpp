@@ -12,6 +12,7 @@
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
+#include <hgraph/runtime/service_node.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/time_series/ts_delta.h>
@@ -1063,6 +1064,16 @@ namespace hgraph::stdlib
         static std::vector<std::pair<std::string_view, Value>> defaults()
         {
             return {{"initial_delay", Value{true}}, {"max_ticks", Value{std::numeric_limits<Int>::max()}}};
+        }
+    };
+
+    struct request_id_impl
+    {
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Scalar<"hash", Int>, Out<TS<Int>> out)
+        {
+            out.set(next_request_id());
         }
     };
 
