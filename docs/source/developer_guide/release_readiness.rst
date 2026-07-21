@@ -1,17 +1,17 @@
 Release readiness
 =================
 
-This is the operational release contract for ``hg_cpp 0.4.0rc1``. The release
-candidate validates the C++ runtime and Python compatibility package in the
-wild; it is not yet the cut-over release for the upstream ``hgraph`` package.
+This is the operational release contract for the ``hg_cpp 0.4`` line. The
+distribution validates the C++ runtime and Python compatibility package in the
+wild; it is not the upstream ``hgraph`` distribution.
 
 Compatibility policy
 --------------------
 
 - The documented Python ``hgraph`` surface is stable for the ``0.4`` line.
   Private modules and ``_hgraph`` are not public APIs.
-- The C++ runtime is the source of truth, but its public source and binary ABI
-  remain provisional for this release candidate.
+- The C++ runtime is the source of truth. Its public source and binary ABI
+  remain provisional throughout the ``0.4`` line.
 - Every Python-visible runtime behavior must have a native C++ wiring route
   and comparable behavioral coverage. Python-only syntax and opaque Python
   object adaptation are boundary exceptions, not alternate runtime semantics.
@@ -61,18 +61,18 @@ The repository contains three levels of migration evidence:
 3. The native suite proves the equivalent C++ wiring paths and the lower-level
    ownership, type-erasure, nested-graph, and lifecycle contracts.
 
-Before the final ``0.4.0`` release, run representative real applications in an
-environment containing ``hg_cpp`` but not upstream ``hgraph``. Cover startup
-and shutdown, services/adaptors, record/replay, nested map/mesh/switch graphs,
-Python user nodes, exceptions, real-time execution, and long-running memory
-behavior. Record any incompatibility as a minimal repository test before
-changing the implementation.
+For each release review, run representative real applications in an environment
+containing ``hg_cpp`` but not upstream ``hgraph``. Cover startup and shutdown,
+services/adaptors, record/replay, nested map/mesh/switch graphs, Python user
+nodes, exceptions, real-time execution, and long-running memory behavior.
+Record any incompatibility as a minimal repository test before changing the
+implementation.
 
 Release gates
 -------------
 
 The definition-of-done commands in ``AGENTS.md`` are authoritative. A release
-candidate requires all of the following from a clean checkout:
+requires all of the following from a clean checkout:
 
 - fresh Release native configure/build and the complete C++ suite on macOS;
 - a Python 3.12 ``cp312-abi3`` wheel, installed into a fresh Python 3.14
@@ -88,8 +88,8 @@ candidate requires all of the following from a clean checkout:
 
 GitHub CI is post-push platform evidence, not a substitute for the local gates.
 Tagged releases reuse the successful distribution artifacts for the exact
-commit SHA. Prerelease tags use the same ``v_`` convention, for example
-``v_0.4.0rc1``.
+commit SHA and restamp their package metadata to the tag version. Prerelease
+tags use the same ``v_`` convention, for example ``v_0.4.2rc1``.
 
 Performance evidence
 --------------------
@@ -108,8 +108,8 @@ Release review
 
 The release reviewer should verify:
 
-- package, documentation, wheel, and tag versions agree under PEP 440, and
-  CMake's numeric version matches their base version;
+- the untagged package, documentation, and CMake baseline versions agree, and
+  tagged artifacts have been restamped to the validated PEP 440 tag version;
 - no public Python name relies on a private bridge-only runtime implementation;
 - the parity matrix and roadmap contain no stale implemented-as-missing rows;
 - every remaining skip has a ``deviation:`` or ``gap:`` reason and an owner or
@@ -123,30 +123,41 @@ The release reviewer should verify:
 Validation evidence
 -------------------
 
-The following pre-tag evidence was recorded on 19 July 2026. The source was the
-working tree based on commit ``4aeeddb05f586e427da9b1e85f228916a70cc0e9``;
-it intentionally contained the uncommitted release-candidate changes, so this
-is implementation-review evidence rather than evidence for a final tag.
+The following pre-tag evidence was recorded on 21 July 2026. Runtime and wheel
+source was commit ``8ac34dfd6e8f368d45255779329dab8b009d2150``. Commit
+``4dff53401d6dcd78bd90b92bffb8c834015e9175`` then extended the distribution
+auditor for Linux's standard ``lib64`` install layout; it did not change the
+runtime or wheel payload. Commit ``c0582b7e`` completed the matching
+``auditwheel`` exclusion set for the three Arrow libraries supplied by
+PyArrow; it likewise changed only release automation and its regression test.
 
 **macOS 26.5.2, arm64, Apple Clang 21.0.0:**
 
-- a fresh Release configure and warning-as-error build passed all 1,131 native
+- a fresh Release configure and warning-as-error build passed all 1,203 native
   tests;
-- ``hg_cpp-0.4.0rc1-cp312-abi3-macosx_15_0_arm64.whl`` passed strict
-  ``abi3audit`` and loaded from a fresh Python 3.14 environment; and
-- that installed wheel passed 1,356 Python tests with 16 documented skips.
+- a Python 3.12 stable-ABI wheel passed the 305-file distribution audit and
+  strict ``abi3audit``; and
+- that wheel, installed into a fresh Python 3.14.6 environment, passed 1,502
+  Python tests with 16 documented skips.
 
 **Ubuntu 24.04 VM, x86_64, GCC 13.3.0:**
 
-- a fresh Release configure and warning-as-error build passed all 1,131 native
+- a fresh Release configure and warning-as-error build passed all 1,203 native
   tests;
-- the local ``cp312-abi3`` wheel passed strict ``abi3audit``, loaded from a
-  fresh Python 3.14 environment, and passed 1,356 Python tests with 16
-  documented skips; and
-- Debug AddressSanitizer builds passed both complete suites (1,131 native and
-  1,356 Python tests with 16 skips) without sanitizer diagnostics. Leak
-  detection was disabled for the Python process because ownership of the
-  interpreter and Arrow shutdown allocations is outside the tested runtime.
+- the local ``cp312-abi3`` wheel passed the 305-file distribution audit and
+  strict ``abi3audit``, then passed 1,500 Python 3.14.6 tests with 16 documented
+  skips; and
+- Debug AddressSanitizer builds passed all 1,203 native tests and all 1,500
+  Python runtime tests with 16 skips, without sanitizer diagnostics. Native
+  leak detection was enabled; it was disabled for the Python process because
+  ownership of interpreter and Arrow shutdown allocations is outside the
+  tested runtime.
+
+The wheel built from the same source was also installed temporarily into the
+two migration applications without upstream ``hgraph`` present. ``hg_oap`` at
+``e4c56c36`` passed 198 tests with 2 skips and 2 expected failures;
+``hg_systematic`` at ``522bcd0a`` passed all 39 tests. Both application
+environments were restored to their locked release dependencies afterwards.
 
 The controlled Linux core benchmark is recorded in
 ``benchmarks/results/matrix-20260719-124516.md`` with the corresponding raw
@@ -157,15 +168,18 @@ All workload guards passed. The result preserves both improvements and
 regressions relative to upstream instead of treating timings as a release
 pass/fail gate.
 
-The cross-platform CMake install/consumer check passed for the new public
-headers. Sphinx 9.1 completed with ``-W``; all 44 packaging, readiness, and
-benchmark-harness canaries passed; and ``uv lock --check`` plus workflow YAML
-validation succeeded. The final source distribution contained 696 files
-(approximately 1.9 MiB), retained the public headers and implementation
-sources, and excluded the reference submodule, benchmark environments/results,
-release-review reports, caches, and build trees.
+The macOS installed-package CMake consumer passed against system Arrow 25.
+Sphinx 9.1 passed with warnings as errors; all 48 packaging, readiness,
+distribution, and benchmark-harness canaries passed; and ``uv lock --check``
+was clean. The source distribution contained 735 audited files (2,091,465
+bytes), retained the public headers, implementation sources, consumer test,
+and audit tool, and excluded the reference submodule, benchmark
+environments/results, release-review reports, caches, and build trees. Wheel
+audits require the extension, native libraries, headers, CMake package,
+debugger support, and Python package while accepting the platform-standard
+``lib`` or ``lib64`` root.
 
-The official ``manylinux_2_28``/GCC 14 wheel and Windows Visual Studio wheel
-remain post-push GitHub CI evidence. They must not be inferred from these local
-results, and the final tag review must replace the working-tree revision above
-with the exact tagged commit.
+The official ``manylinux_2_28``/GCC 14 wheel, Windows Visual Studio wheel,
+three-version wheel installs, and Linux shared-package consumer remain
+post-push GitHub CI evidence. They must not be inferred from local results, and
+the final tag review must name the exact tagged commit.

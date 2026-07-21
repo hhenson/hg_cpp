@@ -62,12 +62,16 @@ extension, so the two distributions should be tested in separate environments.
 ``.github/workflows/build.yml`` builds one ``cp312-abi3`` wheel for Linux x86_64,
 Windows x86_64, and Apple Silicon macOS, then installs each platform wheel under
 CPython 3.12, 3.13, and 3.14.  A tag matching ``v_x.x.x`` publishes the tested
-wheels and source distribution through PyPI trusted publishing.  The tag version
-must exactly match ``pyproject.toml`` and ``docs/source/conf.py``.  CMake's
-``project(VERSION)`` field is numeric, so prereleases use the corresponding base
-version there (for example ``0.4.0rc1`` maps to ``0.4.0``).  The packaging tests
-enforce both relationships.  The PyPI trusted publisher is bound to the
-``build.yml`` workflow and the GitHub ``release`` environment.
+wheels and source distribution through PyPI trusted publishing.  The tag is the
+release version authority: the publish job restamps the metadata of artifacts
+already tested for that exact commit, rather than rebuilding them.  The version
+in ``pyproject.toml`` and ``docs/source/conf.py`` is the untagged artifact
+baseline.  CMake's ``project(VERSION)`` field is numeric and matches that
+baseline's base version (for example ``0.4.0rc1`` maps to ``0.4.0``).  Packaging
+tests enforce the baseline relationships and the release workflow validates
+the tag syntax and rejects versions already present on PyPI.  The PyPI trusted
+publisher is bound to the ``build.yml`` workflow and the GitHub ``release``
+environment.
 
 The macOS build uses the current system Clang from the latest Apple Silicon
 runner image while retaining a macOS 15 deployment target.

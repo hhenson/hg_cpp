@@ -8,9 +8,9 @@ also preserves the history and validation evidence for completed work.
 Audit Baseline
 --------------
 
-The audit was performed on 2026-07-20 against:
+The audit was refreshed on 2026-07-21 against:
 
-- ``hg_cpp`` at ``f1f4b4ba``;
+- ``hg_cpp`` at ``c0582b7e``;
 - the adjacent Python hgraph checkout at ``a0deb32e``; and
 - application evidence from ``hg_oap`` and ``hg_systematic``, which both run
   against ``hg_cpp``.
@@ -22,10 +22,11 @@ C++ route.  In particular, the ``Hg*TypeMetaData`` hierarchy, Python
 hooks, and generic Python ``nested_graph`` construction remain intentional
 non-targets.
 
-The package is close to application replacement, but release hardening is not
-yet complete. Native evaluation tracing, profiling, wiring diagnostics, and
-owned graph inspection are now implemented. The authoring mismatches found by
-this audit were completed in milestones R0 and R1 on 2026-07-20.
+The supported replacement surface and release-hardening automation are
+complete. Native evaluation tracing, profiling, wiring diagnostics, and owned
+graph inspection are implemented. The authoring mismatches found by this audit
+were completed in milestones R0 and R1 on 2026-07-20; the remaining operational
+milestones completed on 2026-07-21.
 
 Completed Authoring Work
 ------------------------
@@ -440,11 +441,20 @@ skips; and the Sphinx build passed with warnings treated as errors.
 Milestone R8: release hardening
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Run the full macOS and Linux native/Python gates, Linux ASan, install/consumer
-tests, stable-ABI wheel audit, and the two application suites.  Refresh
-:doc:`roadmap`, :doc:`parity_matrix`, public compatibility documentation, and
-the release checklist with exact results.  Windows remains a wheel-focused,
-best-effort CI gate.
+**Completed 2026-07-21.**  Release artifacts now have an executable content
+audit in local tests and CI. Wheels must contain the stable-ABI extension,
+native libraries, public headers, a complete CMake package under ``lib`` or
+``lib64``, and debugger support; wheels and sdists reject private, generated,
+cached, and unsafe archive paths. The manylinux wheel explicitly compiles with
+GCC 14 warnings as errors, and the standalone Linux package installs Arrow
+Acero before exercising the shared-library consumer.
+
+The full macOS and Ubuntu Release suites, macOS and Linux stable-ABI wheels,
+strict ABI audits, Linux native and Python ASan suites, installed CMake
+consumer, and both application canaries passed. :doc:`roadmap`,
+:doc:`parity_matrix`, public compatibility documentation, and
+:doc:`release_readiness` were refreshed with the exact evidence. Windows
+remains a wheel-focused, best-effort CI gate.
 
 Completion Rules
 ----------------

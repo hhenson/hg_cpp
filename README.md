@@ -5,12 +5,13 @@ A clean-slate, **C++-first** implementation of the
 runtime. The C++ runtime is the source of truth. Python provides wiring
 compatibility and supports Python-authored nodes running inside that runtime.
 
-## Python release candidate
+## Python package
 
-Release candidates are published under the `hg_cpp` distribution name:
+The C++-backed compatibility package is published under the `hg_cpp`
+distribution name:
 
 ```sh
-python -m pip install hg_cpp==0.4.0rc1
+python -m pip install hg_cpp
 ```
 
 The distribution exposes the `hgraph` import package and the native `_hgraph`

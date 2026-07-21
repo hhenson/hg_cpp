@@ -6,7 +6,7 @@ Python ``hgraph`` surface (the ``ext/main`` reference tree) offers, what the
 C++ runtime provides today, and precisely what is missing — so "done" for the
 Python bridge is measurable rather than discovered.
 
-**Snapshot: 2026-07-19.** Regenerate the operator section by scanning
+**Snapshot: 2026-07-21.** Regenerate the operator section by scanning
 ``ext/main/hgraph/_operators/*.py`` for public ``def`` names and comparing
 against ``lib/std``'s ``Operator<"name">`` markers and ``register_*``
 call sites (three states below). Update this page in the same change as any
@@ -39,8 +39,8 @@ Operator catalogue
 
 Of the **165** public operator definitions in ``hgraph/_operators``:
 **136 registered**, **0 declared-only**, **0 missing** — **29** further names
-are covered by equivalent C++/bridge APIs (snapshot regenerated 2026-07-15
-after closing the catalogue residue; the counts come from comparing
+are covered by equivalent C++/bridge APIs (catalogue rechecked 2026-07-21
+after the release-hardening audit; the counts come from comparing
 ``operator_names()`` and the catalogue markers against the upstream scan).
 
 .. list-table::

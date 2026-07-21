@@ -20,10 +20,10 @@ of truth.  It distinguishes four states deliberately:
    Behaviour intentionally differs from Python hgraph and must not quietly
    return as a second Python runtime implementation.
 
-Review Snapshot: 2026-07-20
+Review Snapshot: 2026-07-21
 ---------------------------
 
-This historical review has been refreshed through ``f1f4b4ba`` against the
+This review has been refreshed through ``c0582b7e`` against the
 adjacent Python hgraph checkout at ``a0deb32e``.  The completed evidence below
 is retained at the revisions where it was recorded.  The current findings and
 ordered implementation milestones are maintained in
@@ -43,6 +43,14 @@ inspector. The R5 acceptance source passed 1,182 native tests and 1,461 Python
 tests with 17 skips on both macOS ARM64 and Ubuntu x86_64, plus focused native
 and Python ASan teardown gates. Exact commands and results are recorded in the
 gap plan.
+
+Milestones R6 through R8 completed the native data/analytics catalogue,
+formalized the supported service/mesh boundary, and hardened release artifacts.
+The final runtime source passed 1,203 native tests on macOS and Ubuntu, a
+stable-ABI wheel passed 1,502 Python 3.14 tests with 16 skips on macOS, and the
+complete Linux native and Python ASan suites passed. Exact artifact and
+application-canary evidence is recorded in :doc:`release_readiness`.
+
 Evidence came from the public implementation and tests, the commit history,
 :doc:`parity_matrix`, :doc:`python_integration`, :doc:`nested_graphs`, and
 :doc:`services`.
