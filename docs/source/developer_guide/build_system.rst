@@ -76,9 +76,27 @@ environment.
 The macOS build uses the current system Clang from the latest Apple Silicon
 runner image while retaining a macOS 15 deployment target.
 
+Downstream Native Extensions
+----------------------------
+
+The Python wheel builds ``hgraph_runtime``, ``hgraph_wiring``, and
+``hgraph_stdlib`` as shared libraries. The ``_hgraph`` bridge and downstream
+native modules must use those same libraries so process-wide type, operator,
+and plan registries have exactly one instance. Linking the wheel's runtime
+statically into another extension is unsupported because it creates an
+isolated registry universe that Python wiring cannot see.
+
+The wheel includes public headers and a relocatable ``hgraphConfig.cmake``.
+A downstream scikit-build project can add Python's ``purelib`` directory to
+``CMAKE_PREFIX_PATH``, call ``find_package(hgraph CONFIG REQUIRED)``, and link
+its extension to ``hgraph::core``. Native modules should be installed beside
+``_hgraph`` and use a relative runtime search path to the wheel's ``lib``
+directory (``@loader_path/lib`` on macOS or ``$ORIGIN/lib`` on ELF systems).
+
 Open Design Items
 -----------------
 
 - Decide when to split runtime, system nodes, schema, and Python bridge into separate targets.
 - Decide whether tests should use a bundled test framework or depend on system packages.
-- Define packaging expectations for static and shared library builds.
+- Decide whether the shared extension ABI needs an explicit compatibility
+  version independent of the Python distribution version.

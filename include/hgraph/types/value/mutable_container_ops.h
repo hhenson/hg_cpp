@@ -1,6 +1,7 @@
 #ifndef HGRAPH_CPP_ROOT_VALUE_MUTABLE_CONTAINER_OPS_H
 #define HGRAPH_CPP_ROOT_VALUE_MUTABLE_CONTAINER_OPS_H
 
+#include <hgraph/hgraph_export.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/utils/value_slot_store.h>
 #include <hgraph/types/value/compact_container_ops.h>
@@ -479,16 +480,7 @@ namespace hgraph
         return ops;
     }
 
-    [[nodiscard]] inline ValueTypeRef mutable_list_type(const ValueTypeRef &element_binding)
-    {
-        const auto *meta = TypeRegistry::instance().mutable_list(element_binding.schema());
-        const auto &plan = mutable_list_plan(element_binding);
-        if (meta->is_nullable()) { return intern_value_type(*meta, plan, mutable_list_ops()); }
-        const MutableListStorage exemplar{element_binding};
-        const auto &debug = intern_dynamic_debug_descriptor(
-            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(), exemplar.debug_layout());
-        return intern_value_type(*meta, plan, mutable_list_ops(), &debug);
-    }
+    [[nodiscard]] HGRAPH_EXPORT ValueTypeRef mutable_list_type(const ValueTypeRef &element_binding);
 
     // =================================================================
     // Mutable Map
@@ -1050,17 +1042,8 @@ namespace hgraph
         return ops;
     }
 
-    [[nodiscard]] inline ValueTypeRef mutable_map_type(const ValueTypeRef &key_binding,
-                                                                     const ValueTypeRef &value_binding)
-    {
-        const auto *meta = TypeRegistry::instance().mutable_map(key_binding.schema(), value_binding.schema());
-        const auto &plan = mutable_map_plan(key_binding, value_binding);
-        const MutableMapStorage exemplar{key_binding, value_binding};
-        const auto &debug = intern_dynamic_debug_descriptor(
-            meta->header, plan, DebugLayoutKind::KeyedSlots, key_binding.record(), value_binding.record(),
-            exemplar.debug_layout());
-        return intern_value_type(*meta, plan, mutable_map_ops(), &debug);
-    }
+    [[nodiscard]] HGRAPH_EXPORT ValueTypeRef mutable_map_type(const ValueTypeRef &key_binding,
+                                                              const ValueTypeRef &value_binding);
 
     // -----------------------------------------------------------------
     // Mutable Set — a structurally-mutable value-layer set (the key-only
@@ -1345,22 +1328,9 @@ namespace hgraph
         return ops;
     }
 
-    [[nodiscard]] inline ValueTypeRef mutable_set_type(const ValueTypeRef &element_binding)
-    {
-        const auto *meta = TypeRegistry::instance().mutable_set(element_binding.schema());
-        const auto &plan = mutable_set_plan(element_binding);
-        const MutableSetStorage exemplar{element_binding};
-        const auto &debug = intern_dynamic_debug_descriptor(
-            meta->header, plan, DebugLayoutKind::Sequence, nullptr, element_binding.record(), exemplar.debug_layout());
-        return intern_value_type(*meta, plan, mutable_set_ops(), &debug);
-    }
+    [[nodiscard]] HGRAPH_EXPORT ValueTypeRef mutable_set_type(const ValueTypeRef &element_binding);
 
-    inline void clear_mutable_container_plans() noexcept
-    {
-        mutable_container_detail::list_registry().clear();
-        mutable_container_detail::map_registry().clear();
-        mutable_container_detail::set_registry().clear();
-    }
+    HGRAPH_EXPORT void clear_mutable_container_plans() noexcept;
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_VALUE_MUTABLE_CONTAINER_OPS_H

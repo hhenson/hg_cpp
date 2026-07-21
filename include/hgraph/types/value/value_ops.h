@@ -2,6 +2,7 @@
 #define HGRAPH_CPP_ROOT_VALUE_OPS_H
 
 #include <hgraph/config.h>
+#include <hgraph/hgraph_export.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value_type_ref.h>
@@ -783,8 +784,8 @@ namespace hgraph
         through these slots. */
     using EnumToPythonFn   = nanobind::object (*)(const ValueTypeMetaData *meta, long long value);
     using EnumFromPythonFn = long long (*)(const ValueTypeMetaData *meta, nanobind::handle source);
-    EnumToPythonFn &enum_to_python_slot() noexcept;
-    EnumFromPythonFn &enum_from_python_slot() noexcept;
+    HGRAPH_EXPORT EnumToPythonFn &enum_to_python_slot() noexcept;
+    HGRAPH_EXPORT EnumFromPythonFn &enum_from_python_slot() noexcept;
 #endif
 }  // namespace hgraph
 

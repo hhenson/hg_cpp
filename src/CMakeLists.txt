@@ -83,6 +83,10 @@ set(HGRAPH_RUNTIME_SOURCES
     hgraph/util/date_time.cpp
 )
 
+if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
+    list(APPEND HGRAPH_RUNTIME_SOURCES hgraph/python/bridge_state.cpp)
+endif()
+
 set(HGRAPH_WIRING_SOURCES
     hgraph/types/graph_wiring.cpp
     hgraph/types/operator_dispatch.cpp
@@ -132,6 +136,33 @@ target_link_libraries(hgraph_wiring PUBLIC hgraph_runtime hgraph::options)
 target_link_libraries(hgraph_stdlib PUBLIC hgraph_wiring hgraph::options)
 target_link_libraries(hgraph_stdlib PRIVATE $<BUILD_INTERFACE:Boost::math>)
 target_link_libraries(hgraph_core INTERFACE hgraph_stdlib hgraph::options)
+
+if(HGRAPH_BUILD_SHARED)
+    set_target_properties(hgraph_runtime hgraph_wiring hgraph_stdlib PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+    target_link_libraries(hgraph_runtime PRIVATE hgraph_private_dependencies)
+    target_link_libraries(hgraph_wiring PRIVATE hgraph_private_dependencies)
+    target_link_libraries(hgraph_stdlib PRIVATE hgraph_private_dependencies)
+    target_compile_definitions(hgraph_runtime PRIVATE hgraph_EXPORTS)
+    target_compile_definitions(hgraph_wiring PRIVATE hgraph_EXPORTS)
+    target_compile_definitions(hgraph_stdlib PRIVATE hgraph_EXPORTS)
+
+    if(HGRAPH_BUILD_PYTHON_BINDINGS)
+        if(APPLE)
+            set(_hgraph_core_install_rpath "@loader_path;@loader_path/../pyarrow")
+        elseif(UNIX)
+            set(_hgraph_core_install_rpath "$ORIGIN;$ORIGIN/../pyarrow")
+        else()
+            set(_hgraph_core_install_rpath "")
+        endif()
+        if(_hgraph_core_install_rpath)
+            set_target_properties(hgraph_runtime hgraph_wiring hgraph_stdlib PROPERTIES
+                INSTALL_RPATH "${_hgraph_core_install_rpath}"
+            )
+        endif()
+    endif()
+endif()
 
 if(MSVC)
     target_compile_options(hgraph_runtime PRIVATE /bigobj)

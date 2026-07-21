@@ -3,6 +3,7 @@
 #include <hgraph/lib/std/standard_types.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/time_series_reference.h>
+#include <hgraph/types/value_callable.h>
 
 #include <cstdint>
 #include <mutex>
@@ -13,6 +14,35 @@
 
 namespace hgraph
 {
+#define HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(Type)                                                 \
+    template HGRAPH_EXPORT const MemoryUtils::StoragePlan &MemoryUtils::plan_for<Type>() noexcept; \
+    template HGRAPH_EXPORT const ValueOps &ops_for<Type>() noexcept
+
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(Bool);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(Int);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(Float);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(Date);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(DateTime);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(TimeDelta);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(Time);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(Str);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(Bytes);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(Frame);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(Series);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(std::int8_t);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(std::int16_t);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(std::int32_t);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(std::uint8_t);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(std::uint16_t);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(std::uint32_t);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(std::uint64_t);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(float);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(TimeSeriesReference);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(ValueCallable);
+    HGRAPH_DEFINE_STANDARD_SCALAR_BINDING(WiredFn);
+
+#undef HGRAPH_DEFINE_STANDARD_SCALAR_BINDING
+
     namespace
     {
         [[nodiscard]] std::string qualified_bundle_name(std::string_view bundle_namespace,
@@ -739,13 +769,13 @@ namespace hgraph
         ts_name_cache_.emplace(std::move(key), meta);
     }
 
-    const ValueTypeMetaData *TypeRegistry::register_scalar_impl(std::type_index type_key,
+    const ValueTypeMetaData *TypeRegistry::register_scalar_impl(std::string_view type_key,
                                                                 std::string_view name,
                                                                 ValueTypeFlags flags,
                                                                 const MemoryUtils::StoragePlan *canonical_plan)
     {
         (void)canonical_plan;
-        const ValueTypeMetaData &meta = scalar_cache_.intern(type_key, [&]() {
+        const ValueTypeMetaData &meta = scalar_cache_.intern(std::string{type_key}, [&]() {
             return ValueTypeMetaData(ValueTypeKind::Atomic, flags, store_name_interned(name));
         });
         register_value_alias(name, &meta);

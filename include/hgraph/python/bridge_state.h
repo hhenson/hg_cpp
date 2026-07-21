@@ -3,6 +3,8 @@
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
 
+#include <hgraph/hgraph_export.h>
+
 #include <nanobind/nanobind.h>
 
 #include <unordered_map>
@@ -18,48 +20,25 @@
 namespace hgraph::python_bridge {
 namespace nb = nanobind;
 
-[[nodiscard]] inline nb::object &cmp_result_enum_slot() {
-  static auto *slot = new nb::object{};
-  return *slot;
-}
-
-[[nodiscard]] inline nb::object &divide_by_zero_enum_slot() {
-  static auto *slot = new nb::object{};
-  return *slot;
-}
-
-[[nodiscard]] inline nb::object &removed_sentinel_slot() {
-  static auto *slot = new nb::object{};
-  return *slot;
-}
+[[nodiscard]] HGRAPH_EXPORT nb::object &cmp_result_enum_slot();
+[[nodiscard]] HGRAPH_EXPORT nb::object &divide_by_zero_enum_slot();
+[[nodiscard]] HGRAPH_EXPORT nb::object &removed_sentinel_slot();
 
 /** hgraph's REMOVE_IF_EXISTS sentinel (lenient TSD key removal; REMOVE
     is strict — absent key raises at delta application). */
-[[nodiscard]] inline nb::object &remove_if_exists_sentinel_slot() {
-  static auto *slot = new nb::object{};
-  return *slot;
-}
+[[nodiscard]] HGRAPH_EXPORT nb::object &remove_if_exists_sentinel_slot();
 
 /** hgraph's Removed(item) marker class (TSS delta shaping). */
-[[nodiscard]] inline nb::object &removed_class_slot() {
-  static auto *slot = new nb::object{};
-  return *slot;
-}
+[[nodiscard]] HGRAPH_EXPORT nb::object &removed_class_slot();
 
 /** hgraph's SetDelta class (a frozenset subclass): TSS delta_value
     results are built as this type so returning them to a TSS output
     applies as a DELTA (a plain frozenset applies as the full value). */
-[[nodiscard]] inline nb::object &set_delta_class_slot() {
-  static auto *slot = new nb::object{};
-  return *slot;
-}
+[[nodiscard]] HGRAPH_EXPORT nb::object &set_delta_class_slot();
 
 /** Python callback that maps canonical type-erased delta values onto the
     public compatibility shapes (SetDelta, Removed, and REMOVED). */
-[[nodiscard]] inline nb::object &delta_shaper_slot() {
-  static auto *slot = new nb::object{};
-  return *slot;
-}
+[[nodiscard]] HGRAPH_EXPORT nb::object &delta_shaper_slot();
 
 /** The module-installed python->Value INFERENCE hook (schema-free
     conversion is inherently a dispatch on PYTHON types, so it lives in
@@ -67,20 +46,14 @@ namespace nb = nanobind;
     through this slot). */
 using PyInferValueFn = void *; // set as Value (*)(nb::handle) by the module
 
-[[nodiscard]] inline PyInferValueFn &py_infer_value_slot() {
-  static PyInferValueFn slot = nullptr;
-  return slot;
-}
+[[nodiscard]] HGRAPH_EXPORT PyInferValueFn &py_infer_value_slot();
 
 /**
  * CompoundScalar schema address -> python class (read-back
  * reconstruction). Schema identity is nominal; labels are diagnostic and
  * are not a safe registry key once namespaces and specialisations exist.
  */
-[[nodiscard]] inline nb::dict &bundle_class_registry() {
-  static auto *registry = new nb::dict();
-  return *registry;
-}
+[[nodiscard]] HGRAPH_EXPORT nb::dict &bundle_class_registry();
 
 struct NB_EXPORT_SHARED PyBundleClassInfo {
   using Allocator = PyObject *(*)(PyTypeObject *, Py_ssize_t);
@@ -96,22 +69,15 @@ struct NB_EXPORT_SHARED PyBundleClassInfo {
 /** Schema-addressed companion to ``bundle_class_registry`` for hot value
     conversion. It retains interned field-name objects so conversion does
     not recreate and hash every field name on every node evaluation. */
-[[nodiscard]] inline std::unordered_map<const void *, PyBundleClassInfo> &
-bundle_class_info_registry() {
-  static auto *registry =
-      new std::unordered_map<const void *, PyBundleClassInfo>();
-  return *registry;
-}
+[[nodiscard]] HGRAPH_EXPORT std::unordered_map<const void *, PyBundleClassInfo> &
+bundle_class_info_registry();
 
 /** Structural ``TSB[CompoundScalar]`` schema -> its scalar Bundle schema.
  * The TS runtime remains structural; this bridge-only association restores the
  * declared Python value class when a Python node reads the complete TSB value.
  */
-[[nodiscard]] inline std::unordered_map<const void *, const void *> &
-tsb_compound_value_registry() {
-  static auto *registry = new std::unordered_map<const void *, const void *>();
-  return *registry;
-}
+[[nodiscard]] HGRAPH_EXPORT std::unordered_map<const void *, const void *> &
+tsb_compound_value_registry();
 } // namespace hgraph::python_bridge
 
 #endif // HGRAPH_ENABLE_PYTHON_USER_NODES

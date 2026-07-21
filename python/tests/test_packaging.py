@@ -79,6 +79,12 @@ def test_wheel_targets_the_python_312_stable_abi():
     assert scikit_build["wheel"]["py-api"] == STABLE_ABI_TAG
 
 
+def test_wheel_uses_shared_runtime_for_downstream_native_extensions():
+    cmake_defines = load_project()["tool"]["scikit-build"]["cmake"]["define"]
+
+    assert cmake_defines["HGRAPH_BUILD_SHARED"] == "ON"
+
+
 def test_source_distribution_excludes_private_release_evidence():
     scikit_build = load_project()["tool"]["scikit-build"]
     excluded = scikit_build["sdist"]["exclude"]
@@ -143,6 +149,7 @@ def main():
     test_pypi_classifiers_are_valid()
     test_release_metadata_is_consistent()
     test_wheel_targets_the_python_312_stable_abi()
+    test_wheel_uses_shared_runtime_for_downstream_native_extensions()
     test_source_distribution_excludes_private_release_evidence()
     test_full_suite_dependencies_include_the_dataframe_runtime()
     test_release_workflow_targets_supported_platforms()
@@ -154,6 +161,7 @@ def main():
     print("PASS test_pypi_classifiers_are_valid")
     print("PASS test_release_metadata_is_consistent")
     print("PASS test_wheel_targets_the_python_312_stable_abi")
+    print("PASS test_wheel_uses_shared_runtime_for_downstream_native_extensions")
     print("PASS test_source_distribution_excludes_private_release_evidence")
     print("PASS test_full_suite_dependencies_include_the_dataframe_runtime")
     print("PASS test_release_workflow_targets_supported_platforms")
