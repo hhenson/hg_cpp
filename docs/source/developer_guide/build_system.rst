@@ -96,6 +96,9 @@ expansion. The project can then use
 module to ``hgraph::core``. The helper applies nanobind's extension settings
 while linking the wheel's shared ``hgraph::nanobind`` runtime; calling
 ``nanobind_add_module(NB_SHARED)`` directly would create a second runtime.
+The SDK config requires the exact nanobind release used to build its shared
+runtime (2.13.0 for hgraph 0.4.2), since nanobind's C++ runtime ABI can change
+between releases.
 Native modules should be installed beside ``_hgraph``. The helper applies a
 relative runtime search path to the wheel's platform-selected library directory
 (``lib`` or ``lib64``), using ``@loader_path`` on macOS and ``$ORIGIN`` on ELF

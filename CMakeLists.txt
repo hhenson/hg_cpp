@@ -686,7 +686,9 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
         "  return()\n"
         "endif()\n"
         "list(PREPEND CMAKE_PREFIX_PATH \"\${nanobind_ROOT}\")\n"
-        "find_dependency(nanobind CONFIG)\n"
+        # nanobind's shared runtime is not ABI-compatible with headers from a
+        # different release. Require the exact version used to build the SDK.
+        "find_dependency(nanobind ${nanobind_VERSION} EXACT CONFIG)\n"
     )
 endif()
 

@@ -10,6 +10,7 @@ from trove_classifiers import classifiers as valid_classifiers
 
 ROOT = Path(__file__).resolve().parents[2]
 PYARROW_REQUIREMENT = "pyarrow>=24,<25"
+NANOBIND_REQUIREMENT = "nanobind==2.13.0"
 SUPPORTED_PYTHON_MINIMUM = ">=3.12"
 STABLE_ABI_TAG = "cp312"
 DISTRIBUTION_NAME = "hg_cpp"
@@ -28,6 +29,17 @@ def test_pyarrow_build_and_runtime_requirements_share_the_supported_abi():
 
     assert PYARROW_REQUIREMENT in build_requires
     assert PYARROW_REQUIREMENT in runtime_requires
+
+
+def test_nanobind_build_and_sdk_headers_use_one_exact_runtime_abi():
+    project = load_project()
+
+    assert NANOBIND_REQUIREMENT in project["build-system"]["requires"]
+    assert NANOBIND_REQUIREMENT in project["project"]["optional-dependencies"]["python"]
+    assert NANOBIND_REQUIREMENT in project["project"]["optional-dependencies"]["dev"]
+
+    cmake = (ROOT / "CMakeLists.txt").read_text()
+    assert "find_dependency(nanobind ${nanobind_VERSION} EXACT CONFIG)" in cmake
 
 
 def test_windows_wheel_installs_all_linked_pyarrow_runtimes():
