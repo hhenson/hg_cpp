@@ -2,6 +2,7 @@
 #define HGRAPH_TYPES_UTILS_SLOT_BITMAP_H
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -132,6 +133,16 @@ namespace hgraph
                 }
             }
             return false;
+        }
+
+        [[nodiscard]] std::size_t count() const noexcept
+        {
+            std::size_t result = 0;
+            for (std::size_t index = 0; index < word_count(); ++index)
+            {
+                result += static_cast<std::size_t>(std::popcount(words[index]));
+            }
+            return result;
         }
 
       private:

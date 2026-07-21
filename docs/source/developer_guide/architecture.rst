@@ -396,9 +396,11 @@ Nested graphs do not own a push queue and therefore do not emit this event.
 The Python bridge owns adapter observers in the run handle and registers their
 native base pointers through the same builder API. Each callback receives a
 guarded ``Graph`` or ``Node`` projection; the projection is invalidated as
-soon as that callback returns. ``EvaluationTrace`` and
-``EvaluationProfiler`` are recognized separately and remain native observers,
-so they do not cross the Python boundary per event.
+soon as that callback returns. ``EvaluationTrace``, ``EvaluationProfiler``, and
+``Inspector`` are recognized separately and remain native observers, so they
+do not cross the Python boundary per event. The inspector copies identity,
+hierarchy, schema, schedule, timing, and storage data during callbacks; its
+snapshots never retain graph or node views.
 
 Observer And Callback Draining
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

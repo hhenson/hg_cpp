@@ -241,6 +241,24 @@ namespace hgraph
             return *result;
         }
 
+        [[nodiscard]] NodeStorageMetrics map_storage_metrics(
+            const void *raw_context, const void *memory) noexcept
+        {
+            const auto &context = *static_cast<const MapNodeContext *>(raw_context);
+            const auto &storage = *MemoryUtils::cast<const MapNodeStorage>(
+                MemoryUtils::advance(memory, context.storage_offset));
+            NodeStorageMetrics result{};
+            for (const auto *bank : {&storage.entries, &storage.previous_entries})
+            {
+                result.nested_graph_count += bank->entry_count();
+                result.nested_graph_capacity += bank->slot_capacity();
+                result.nested_graph_blocks += bank->block_count();
+                result.dynamic_live_bytes += bank->live_bytes();
+                result.dynamic_reserved_bytes += bank->reserved_bytes();
+            }
+            return result;
+        }
+
         [[nodiscard]] TSOutputHandle effective_output_handle(TSOutputView source)
         {
             if (!source.bound()) { return {}; }
@@ -1204,6 +1222,7 @@ namespace hgraph
 
         descriptor.callbacks.stop            = &map_node_stop;
         descriptor.ops.evaluate_impl         = &map_evaluate_impl;
+        descriptor.ops.storage_metrics_impl  = &map_storage_metrics;
         descriptor.ops.extended_view_type_id = MapNodeView::node_view_type_id();
         const MemoryUtils::StorageLayout graph_layout = spec.child.graph_builder.nested_storage_layout();
         MapNodeStorage debug_exemplar;

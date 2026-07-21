@@ -70,6 +70,30 @@ Python-authored wiring observers are deliberately unsupported. The observer
 interface and its event records are C++ diagnostics APIs; Python configuration
 currently accepts only the bound native ``WiringTracer``.
 
+The runtime inspector follows the same native-observer rule. Register an
+``Inspector`` before execution and retain that handle to read an owned snapshot
+after the graph has stopped:
+
+.. code-block:: python
+
+   from hgraph import GraphConfiguration, evaluate_graph
+   from hgraph.debug import Inspector, inspection_rows
+
+   runtime_inspector = Inspector(recent_window=50)
+   evaluate_graph(
+       app,
+       GraphConfiguration(life_cycle_observers=(runtime_inspector,)),
+   )
+   rows = inspection_rows(runtime_inspector.snapshot())
+
+The rows contain graph/node hierarchy, schemas, schedules, evaluation counts
+and timings, and current/peak static and nested-slot storage. This replaces the
+upstream Python runtime-object walker. It is safe for pure native, mixed, and
+keyed nested graphs; an optional table, notebook, or HTTP UI is a presentation
+consumer of these rows rather than part of runtime inspection.
+``Inspector.reset()`` raises ``RuntimeError`` while an executor is active and
+otherwise clears the owned history.
+
 ``trace_back_depth`` bounds the native activation trace attached to an
 uncaught run error; ``capture_values=True`` includes current input values.
 ``cleanup_on_error=False`` defers node stop while the raised exception remains

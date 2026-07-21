@@ -106,6 +106,20 @@ namespace hgraph
             return *result;
         }
 
+        [[nodiscard]] NodeStorageMetrics tsl_map_storage_metrics(
+            const void *raw_context, const void *memory) noexcept {
+            const auto &context = *static_cast<const TslMapNodeContext *>(raw_context);
+            const auto &storage = *MemoryUtils::cast<const TslMapNodeStorage>(
+                MemoryUtils::advance(memory, context.storage_offset));
+            return NodeStorageMetrics{
+                .nested_graph_count = storage.entries.entry_count(),
+                .nested_graph_capacity = storage.entries.slot_capacity(),
+                .nested_graph_blocks = storage.entries.block_count(),
+                .dynamic_live_bytes = storage.entries.live_bytes(),
+                .dynamic_reserved_bytes = storage.entries.reserved_bytes(),
+            };
+        }
+
         [[nodiscard]] TSOutputHandle effective_output_handle(TSOutputView source) {
             if (!source.bound()) { return {}; }
 
@@ -399,6 +413,7 @@ namespace hgraph
 
         descriptor.callbacks.stop            = &tsl_map_node_stop;
         descriptor.ops.evaluate_impl         = &tsl_map_evaluate_impl;
+        descriptor.ops.storage_metrics_impl  = &tsl_map_storage_metrics;
         descriptor.ops.extended_view_type_id = TslMapNodeView::node_view_type_id();
 
         const MemoryUtils::StorageLayout graph_layout = spec.child.graph_builder.nested_storage_layout();

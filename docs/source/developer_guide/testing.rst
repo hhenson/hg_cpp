@@ -154,6 +154,32 @@ Both workloads must report zero steady-state allocations. Timing comparisons
 are recorded on the controlled Linux host; macOS runs are useful development
 evidence but not a release performance baseline.
 
+Runtime inspection
+------------------
+
+``hgraph/runtime/inspector.h`` provides the native ``Inspector`` lifecycle
+observer. Register it on ``GraphExecutorBuilder`` and retain the caller handle;
+observer copies share their C++ collector state:
+
+.. code-block:: cpp
+
+   Inspector inspector;
+   GraphExecutorBuilder builder;
+   builder.graph_builder(std::move(graph))
+          .add_lifecycle_observer(&inspector);
+   auto executor = builder.make_executor();
+   executor.view().run();
+
+   InspectionSnapshot snapshot = inspector.snapshot();
+
+Snapshots own their strings, hierarchy, timings, and storage counters. They
+remain valid after nested slot erase and executor destruction. ``reset`` is a
+between-runs operation and throws ``std::logic_error`` while an executor is
+active.
+
+Storage inspection is a cold path through ``NodeView::storage_metrics`` and is
+never called when no inspector is registered.
+
 Python Compatibility Tests
 --------------------------
 

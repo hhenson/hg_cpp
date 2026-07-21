@@ -138,6 +138,24 @@ namespace hgraph
             return *result;
         }
 
+        [[nodiscard]] NodeStorageMetrics ordered_reduce_storage_metrics(
+            const void *raw_context, const void *memory) noexcept
+        {
+            const auto &context = *static_cast<const OrderedReduceContext *>(raw_context);
+            const auto &storage = *MemoryUtils::cast<const OrderedReduceStorage>(
+                MemoryUtils::advance(memory, context.storage_offset));
+            NodeStorageMetrics result{};
+            for (const auto &bank : storage.banks)
+            {
+                result.nested_graph_count += bank.entry_count();
+                result.nested_graph_capacity += bank.slot_capacity();
+                result.nested_graph_blocks += bank.block_count();
+                result.dynamic_live_bytes += bank.live_bytes();
+                result.dynamic_reserved_bytes += bank.reserved_bytes();
+            }
+            return result;
+        }
+
         [[nodiscard]] TSOutputView collection_element_output(
             const NodeView &view,
             const OrderedReduceContext &context,
@@ -559,6 +577,7 @@ namespace hgraph
             ordered_collection_ops_for(*descriptor.schema.input_schema->fields()[0].type);
         descriptor.callbacks.stop = &ordered_reduce_stop;
         descriptor.ops.evaluate_impl = &ordered_reduce_evaluate_impl;
+        descriptor.ops.storage_metrics_impl = &ordered_reduce_storage_metrics;
         descriptor.ops.extended_view_type_id = OrderedReduceNodeView::node_view_type_id();
         descriptor.ops.extended_view_context = &register_ordered_reduce_context(
             std::move(spec),

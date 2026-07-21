@@ -57,6 +57,7 @@ TEST_CASE("SlotBitmap preserves visible bits and clears reused capacity", "[slot
     REQUIRE(bits.test(1));
     REQUIRE(bits.test(65));
     REQUIRE(bits.test(129));
+    REQUIRE(bits.count() == 3);
 
     bits.resize(64);
     REQUIRE(bits.test(1));
@@ -65,9 +66,11 @@ TEST_CASE("SlotBitmap preserves visible bits and clears reused capacity", "[slot
     REQUIRE(bits.test(1));
     REQUIRE_FALSE(bits.test(65));
     REQUIRE_FALSE(bits.test(129));
+    REQUIRE(bits.count() == 1);
 
     bits.reset();
     REQUIRE_FALSE(bits.any());
+    REQUIRE(bits.count() == 0);
     REQUIRE(bits.words != nullptr);
     REQUIRE(bits.bit_count == 130);
 }

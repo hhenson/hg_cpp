@@ -52,6 +52,18 @@ namespace hgraph
             return *result;
         }
 
+        [[nodiscard]] NodeStorageMetrics single_nested_storage_metrics(
+            const void *raw_context, const void *memory) noexcept
+        {
+            const auto &context = *static_cast<const SingleNestedGraphNodeContext *>(raw_context);
+            const auto &storage = *MemoryUtils::cast<const SingleNestedGraphNodeStorage>(
+                MemoryUtils::advance(memory, context.graph_storage_offset));
+            return NodeStorageMetrics{
+                .nested_graph_count = storage.graph.has_value() ? 1U : 0U,
+                .nested_graph_capacity = 1,
+            };
+        }
+
         [[nodiscard]] SingleNestedGraphNodeView checked_nested_view(const NodeView &view)
         {
             return view.as<SingleNestedGraphNodeView>();
@@ -243,6 +255,7 @@ namespace hgraph
         descriptor.callbacks.start = &single_nested_graph_start;
         descriptor.callbacks.stop  = &single_nested_graph_stop;
         descriptor.ops.evaluate_impl = &single_nested_graph_evaluate_impl;
+        descriptor.ops.storage_metrics_impl = &single_nested_storage_metrics;
         descriptor.ops.extended_view_type_id = SingleNestedGraphNodeView::node_view_type_id();
         descriptor.ops.extended_view_context = &register_single_nested_graph_context(
             std::move(spec),

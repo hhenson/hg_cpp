@@ -235,6 +235,24 @@ namespace hgraph
             return *result;
         }
 
+        [[nodiscard]] NodeStorageMetrics reduce_storage_metrics(
+            const void *raw_context, const void *memory) noexcept
+        {
+            const auto &context = *static_cast<const ReduceNodeContext *>(raw_context);
+            const auto &storage = *MemoryUtils::cast<const ReduceNodeStorage>(
+                MemoryUtils::advance(memory, context.storage_offset));
+            NodeStorageMetrics result{};
+            for (const auto &bank : storage.combiner_banks)
+            {
+                result.nested_graph_count += bank.entry_count();
+                result.nested_graph_capacity += bank.slot_capacity();
+                result.nested_graph_blocks += bank.block_count();
+                result.dynamic_live_bytes += bank.live_bytes();
+                result.dynamic_reserved_bytes += bank.reserved_bytes();
+            }
+            return result;
+        }
+
         /** Where an aggregate currently comes from, without materialising it. */
         struct Aggregate
         {
@@ -1536,6 +1554,7 @@ namespace hgraph
 
         descriptor.callbacks.stop            = &reduce_node_stop;
         descriptor.ops.evaluate_impl         = &reduce_evaluate_impl;
+        descriptor.ops.storage_metrics_impl  = &reduce_storage_metrics;
         descriptor.ops.extended_view_type_id = ReduceNodeView::node_view_type_id();
         descriptor.ops.extended_view_context = &register_reduce_node_context(
             std::move(spec), descriptor.storage_plan->component(reduce_storage_field_name).offset,

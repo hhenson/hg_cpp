@@ -595,6 +595,11 @@ namespace hgraph::python_bridge
                 owned.push_back(std::make_unique<EvaluationProfiler>(
                     nb::cast<const EvaluationProfiler &>(observer)));
             }
+            else if (nb::isinstance<Inspector>(observer))
+            {
+                owned.push_back(std::make_unique<Inspector>(
+                    nb::cast<const Inspector &>(observer)));
+            }
             else
             {
                 owned.push_back(std::make_unique<PythonLifecycleObserver>(
@@ -786,6 +791,54 @@ namespace hgraph::python_bridge
              nb::arg("graph") = true, nb::arg("recent_window") = 100)
         .def("snapshot", &EvaluationProfiler::snapshot)
         .def("reset", &EvaluationProfiler::reset);
+
+    nb::enum_<InspectionEntityKind>(m, "InspectionEntityKind")
+        .value("GRAPH", InspectionEntityKind::Graph)
+        .value("NODE", InspectionEntityKind::Node);
+    nb::class_<NodeStorageMetrics>(m, "NodeStorageMetrics")
+        .def_ro("static_bytes", &NodeStorageMetrics::static_bytes)
+        .def_ro("nested_graph_count", &NodeStorageMetrics::nested_graph_count)
+        .def_ro("nested_graph_capacity", &NodeStorageMetrics::nested_graph_capacity)
+        .def_ro("nested_graph_blocks", &NodeStorageMetrics::nested_graph_blocks)
+        .def_ro("dynamic_live_bytes", &NodeStorageMetrics::dynamic_live_bytes)
+        .def_ro("dynamic_reserved_bytes", &NodeStorageMetrics::dynamic_reserved_bytes);
+    nb::class_<InspectionEntry>(m, "InspectionEntry")
+        .def_ro("id", &InspectionEntry::id)
+        .def_ro("parent_id", &InspectionEntry::parent_id)
+        .def_ro("children", &InspectionEntry::children)
+        .def_ro("path", &InspectionEntry::path)
+        .def_ro("label", &InspectionEntry::label)
+        .def_ro("schema_label", &InspectionEntry::schema_label)
+        .def_ro("implementation_label", &InspectionEntry::implementation_label)
+        .def_ro("kind", &InspectionEntry::kind)
+        .def_ro("node_kind", &InspectionEntry::node_kind)
+        .def_ro("started", &InspectionEntry::started)
+        .def_ro("stopped", &InspectionEntry::stopped)
+        .def_ro("evaluation_time", &InspectionEntry::evaluation_time)
+        .def_ro("scheduled_time", &InspectionEntry::scheduled_time)
+        .def_ro("storage", &InspectionEntry::storage)
+        .def_ro("peak_storage", &InspectionEntry::peak_storage)
+        .def_ro("start", &InspectionEntry::start)
+        .def_ro("evaluation", &InspectionEntry::evaluation)
+        .def_ro("stop", &InspectionEntry::stop);
+    nb::class_<InspectionSnapshot>(m, "InspectionSnapshot")
+        .def_ro("graph_cycles", &InspectionSnapshot::graph_cycles)
+        .def_ro("wall_time", &InspectionSnapshot::wall_time)
+        .def_ro("root_evaluation_time", &InspectionSnapshot::root_evaluation_time)
+        .def_ro("scheduling_lag_total", &InspectionSnapshot::scheduling_lag_total)
+        .def_ro("scheduling_lag_max", &InspectionSnapshot::scheduling_lag_max)
+        .def_ro("scheduling_lag_samples", &InspectionSnapshot::scheduling_lag_samples)
+        .def_ro("runtime_load", &InspectionSnapshot::runtime_load)
+        .def_ro("planned_bytes", &InspectionSnapshot::planned_bytes)
+        .def_ro("dynamic_live_bytes", &InspectionSnapshot::dynamic_live_bytes)
+        .def_ro("dynamic_reserved_bytes", &InspectionSnapshot::dynamic_reserved_bytes)
+        .def_ro("peak_dynamic_live_bytes", &InspectionSnapshot::peak_dynamic_live_bytes)
+        .def_ro("peak_dynamic_reserved_bytes", &InspectionSnapshot::peak_dynamic_reserved_bytes)
+        .def_ro("entries", &InspectionSnapshot::entries);
+    nb::class_<Inspector>(m, "Inspector")
+        .def(nb::init<std::size_t>(), nb::arg("recent_window") = 100)
+        .def("snapshot", &Inspector::snapshot)
+        .def("reset", &Inspector::reset);
 
     nb::class_<WiringTracer>(m, "WiringTracer")
         .def(nb::init<std::string, bool, bool>(), nb::arg("filter") = "",

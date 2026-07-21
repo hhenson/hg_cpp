@@ -36,6 +36,13 @@ value ABI.  The completed source passed 1,164 native tests and 1,431 Python
 tests on both macOS ARM64 and Ubuntu x86_64; the Python gates used a stable-ABI
 wheel built with Python 3.12 and installed under Python 3.14.6.  See the gap
 plan for exact platform and skip counts.
+
+Milestones R2 through R5 subsequently landed native profiling and run logging,
+lifecycle/error configuration, C++ wiring diagnostics, and the native runtime
+inspector. The R5 acceptance source passed 1,182 native tests and 1,461 Python
+tests with 17 skips on both macOS ARM64 and Ubuntu x86_64, plus focused native
+and Python ASan teardown gates. Exact commands and results are recorded in the
+gap plan.
 Evidence came from the public implementation and tests, the commit history,
 :doc:`parity_matrix`, :doc:`python_integration`, :doc:`nested_graphs`, and
 :doc:`services`.
@@ -525,10 +532,11 @@ Native lifecycle observers, ``EngineControlView``, the C++ ``stop_engine``
 sink, and Python's guarded ``EvaluationEngineApi`` projection have landed and
 cover nested graphs through the root executor. Native ``EvaluationTrace`` has
 also landed. Native aggregate ``EvaluationProfiler`` snapshots and run-owned
-logging now back Python profiling and mixed native/Python logging. Remaining
-observability work is wiring tracing and the inspector. Python lifecycle
-observers now adapt onto the same executor-owned native observer list with
-callback-scoped graph/node views; see
+logging now back Python profiling and mixed native/Python logging. Native
+wiring tracing and owned inspection snapshots cover the remaining diagnostic
+paths without Python runtime walkers. Python lifecycle observers now adapt
+onto the same executor-owned native observer list with callback-scoped
+graph/node views; see
 :doc:`replacement_gap_plan`.
 
 Priority 4: Boundary Products

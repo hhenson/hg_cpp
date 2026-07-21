@@ -51,6 +51,23 @@ namespace hgraph
         Nested,
     };
 
+    /** Owned storage counters returned through the type-erased node API. */
+    struct HGRAPH_EXPORT NodeStorageMetrics
+    {
+        /** Bytes reserved in the graph's fixed node allocation. */
+        std::size_t static_bytes{0};
+        /** Constructed nested graph slots, including a retained prior generation. */
+        std::size_t nested_graph_count{0};
+        /** Addressable nested graph slots across all storage banks. */
+        std::size_t nested_graph_capacity{0};
+        /** Stable allocation blocks backing the nested graph slots. */
+        std::size_t nested_graph_blocks{0};
+        /** Slot payload/index bytes attributable to constructed entries. */
+        std::size_t dynamic_live_bytes{0};
+        /** Slot payload/index/bitmap bytes retained at current capacity. */
+        std::size_t dynamic_reserved_bytes{0};
+    };
+
     /**
      * Interned node schema descriptor.
      *
@@ -147,6 +164,14 @@ namespace hgraph
                                                              DateTime evaluation_time) = nullptr;
         TSOutputView (*recordable_state_view_impl)(const void *context, void *memory,
                                                                  DateTime evaluation_time) = nullptr;
+
+        /**
+         * Optional cold-path storage inspection. The context is
+         * ``extended_view_context`` because ``context`` is reserved for the
+         * common node runtime operations.
+         */
+        NodeStorageMetrics (*storage_metrics_impl)(const void *context,
+                                                   const void *memory) noexcept = nullptr;
 
         const void *extended_view_type_id{nullptr};
         const void *extended_view_context{nullptr};
@@ -251,6 +276,8 @@ namespace hgraph
         [[nodiscard]] EvaluationClockView evaluation_clock() const;
         [[nodiscard]] TSOutputView error_output(DateTime evaluation_time) const;
         [[nodiscard]] TSOutputView recordable_state(DateTime evaluation_time) const;
+        /** Owned storage counters; the normal execution path never calls this. */
+        [[nodiscard]] NodeStorageMetrics storage_metrics() const noexcept;
 
         template <typename T>
         [[nodiscard]] T as() const

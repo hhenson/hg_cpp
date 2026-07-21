@@ -330,6 +330,20 @@ register_mesh_node_context(MeshNodeSpec spec, std::size_t storage_offset,
   return *result;
 }
 
+[[nodiscard]] NodeStorageMetrics mesh_storage_metrics(
+    const void *raw_context, const void *memory) noexcept {
+  const auto &context = *static_cast<const MeshNodeContext *>(raw_context);
+  const auto &storage = *MemoryUtils::cast<const MeshNodeStorage>(
+      MemoryUtils::advance(memory, context.storage_offset));
+  return NodeStorageMetrics{
+      .nested_graph_count = storage.entries.entry_count(),
+      .nested_graph_capacity = storage.entries.slot_capacity(),
+      .nested_graph_blocks = storage.entries.block_count(),
+      .dynamic_live_bytes = storage.entries.live_bytes(),
+      .dynamic_reserved_bytes = storage.entries.reserved_bytes(),
+  };
+}
+
 [[nodiscard]] std::vector<std::unique_ptr<MeshSubscribeContext>> &
 mesh_subscribe_contexts() noexcept {
   static auto *contexts =
@@ -1292,6 +1306,7 @@ NodeBuilder mesh_node(NodeTypeMetaData meta, MeshNodeSpec spec) {
 
   descriptor.callbacks.stop = &mesh_node_stop;
   descriptor.ops.evaluate_impl = &mesh_evaluate_impl;
+  descriptor.ops.storage_metrics_impl = &mesh_storage_metrics;
   descriptor.ops.extended_view_type_id = MeshNodeView::node_view_type_id();
   MeshNodeStorage debug_exemplar;
   debug_exemplar.entries.bind_graph_layout(graph_layout);

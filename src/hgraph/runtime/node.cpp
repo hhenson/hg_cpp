@@ -1331,6 +1331,25 @@ namespace hgraph
         return ops().recordable_state_view_impl(ops().context, data(), evaluation_time);
     }
 
+    NodeStorageMetrics NodeView::storage_metrics() const noexcept
+    {
+        NodeStorageMetrics result{};
+        if (!valid()) { return result; }
+        if (const auto *plan = type().plan(); plan != nullptr)
+        {
+            result.static_bytes = plan->layout.size;
+        }
+        const NodeOps &node_ops = ops();
+        if (node_ops.storage_metrics_impl != nullptr)
+        {
+            NodeStorageMetrics dynamic = node_ops.storage_metrics_impl(
+                node_ops.extended_view_context, data());
+            dynamic.static_bytes = result.static_bytes;
+            return dynamic;
+        }
+        return result;
+    }
+
     void NodeView::start(DateTime evaluation_time) const { ops().start_impl(ops().context, *this, evaluation_time); }
     void NodeView::stop(DateTime evaluation_time) const { ops().stop_impl(ops().context, *this, evaluation_time); }
     bool NodeView::evaluate(DateTime evaluation_time) const

@@ -82,6 +82,23 @@ register_switch_node_context(SwitchNodeSpec spec, std::size_t storage_offset,
   return *result;
 }
 
+[[nodiscard]] NodeStorageMetrics switch_storage_metrics(
+    const void *raw_context, const void *memory) noexcept {
+  const auto &context = *static_cast<const SwitchNodeContext *>(raw_context);
+  const auto &storage = *MemoryUtils::cast<const SwitchNodeStorage>(
+      MemoryUtils::advance(memory, context.storage_offset));
+  std::size_t count = 0;
+  for (const GraphValue &graph : storage.graphs) {
+    if (graph.has_value()) {
+      ++count;
+    }
+  }
+  return NodeStorageMetrics{
+      .nested_graph_count = count,
+      .nested_graph_capacity = storage.graphs.size(),
+  };
+}
+
 [[nodiscard]] void *switch_graph_memory(const NodeView &view,
                                         const SwitchNodeContext &context,
                                         std::size_t slot) noexcept {
@@ -512,6 +529,7 @@ NodeBuilder switch_node(NodeTypeMetaData meta, SwitchNodeSpec spec) {
 
   descriptor.callbacks.stop = &switch_node_stop;
   descriptor.ops.evaluate_impl = &switch_evaluate_impl;
+  descriptor.ops.storage_metrics_impl = &switch_storage_metrics;
   descriptor.ops.extended_view_type_id = SwitchNodeView::node_view_type_id();
   descriptor.ops.extended_view_context = &register_switch_node_context(
       std::move(spec),

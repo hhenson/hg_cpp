@@ -22,11 +22,10 @@ C++ route.  In particular, the ``Hg*TypeMetaData`` hierarchy, Python
 hooks, and generic Python ``nested_graph`` construction remain intentional
 non-targets.
 
-The package is close to application replacement, but it is not yet
-operationally complete.  The largest missing area is diagnostics rather than
-execution: native evaluation tracing and profiling exist, while wiring
-tracing and the inspector do not.  The authoring mismatches found by this
-audit were completed in milestones R0 and R1 on 2026-07-20.
+The package is close to application replacement, but release hardening is not
+yet complete. Native evaluation tracing, profiling, wiring diagnostics, and
+owned graph inspection are now implemented. The authoring mismatches found by
+this audit were completed in milestones R0 and R1 on 2026-07-20.
 
 Completed Authoring Work
 ------------------------
@@ -222,17 +221,19 @@ lines but cannot implement an observer callback.
 Inspector
 ~~~~~~~~~
 
-The public ``hgraph.debug`` inspector is absent.  Implement it on the same
-native measurements as the profiler rather than porting the Python runtime
-object walker.  The native inspection snapshot should include graph and node
-identity, parent/child paths, schema labels, evaluation statistics, scheduled
-time, and planned/dynamic storage metrics.  Snapshots must own or intern their
-diagnostic data; they must not retain borrowed node pointers across graph
-teardown or keyed-slot erase.
+**Completed.** ``Inspector`` is a native lifecycle observer. Its owned
+snapshots contain stable graph/node identities and hierarchy, schema and
+implementation labels, scheduling state, phase timings, root load, fixed graph
+plan bytes, and current/peak nested-slot storage. ``NodeOps`` supplies the
+cold-path storage measurement, so map, mesh, reduce, ordered reduce, switch,
+fixed TSL map, and single nested nodes report storage without an
+inspector-side type switch.
 
-The Perspective/HTTP presentation can remain Python and optional.  It should
-consume native snapshots, which keeps inspection correct for pure C++ and
-mixed graphs and avoids a second model of nested graph lifetime.
+The observer forgets runtime pointers at stop/failure boundaries. Historical
+records remain queryable after keyed graph delete/erase and executor teardown.
+The ``hgraph.debug`` module binds that native observer and provides only a flat
+snapshot-to-rows presentation helper. A later Perspective/HTTP view may consume
+those rows; it must not reintroduce the old Python runtime object walker.
 
 Catalogue Gaps
 --------------
@@ -329,10 +330,18 @@ implementation objects; Python tests cover only the configured native tracer.
 Milestone R5: native inspector
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Build inspection snapshots on the profiler and graph-view infrastructure,
-then port the optional Python presentation.  Validate nested switch/map/mesh
-creation, stop/delete/erase, and repeated inspector queries under ASan on
-Linux.
+**Completed 2026-07-20.** Inspection snapshots build on lifecycle and graph-view
+infrastructure, with native storage reporting through the erased node operation
+table. Native and Python ``eval_node`` tests cover switch/map/mesh creation,
+key shrink and erase, stopped-state accounting, shared observer copies, and
+repeated snapshot queries after teardown.
+
+The final macOS and Ubuntu x86_64 Release gates each passed 1,182 native tests.
+Stable-ABI wheels built with Python 3.12 passed 1,461 Python 3.14 compatibility
+tests with 17 skips on both platforms. A Linux Debug/ASan extension passed the
+Python ``eval_node`` inspector teardown test, and the bindings-off native ASan
+build passed all three inspector cases with 120 assertions. Leak detection was
+disabled for the Python process-wide shutdown state.
 
 Milestone R6: data and analytics catalogue
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

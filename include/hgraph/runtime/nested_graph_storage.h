@@ -90,6 +90,19 @@ namespace hgraph
         [[nodiscard]] MemoryUtils::StorageLayout slot_layout() const noexcept { return slot_layout_; }
         [[nodiscard]] size_t graph_offset() const noexcept { return graph_offset_; }
         [[nodiscard]] bool has_entries() const noexcept { return constructed_.any(); }
+        [[nodiscard]] size_t entry_count() const noexcept
+        {
+            return constructed_.count();
+        }
+        [[nodiscard]] size_t live_bytes() const noexcept
+        {
+            return entry_count() * slot_layout_.size;
+        }
+        [[nodiscard]] size_t reserved_bytes() const noexcept
+        {
+            return slot_capacity() * (slot_layout_.size + sizeof(std::byte *)) +
+                   constructed_.word_capacity * sizeof(std::uint64_t);
+        }
 
         void reserve_to(size_t capacity)
         {
