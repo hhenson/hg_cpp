@@ -138,7 +138,10 @@ def test_wall_clock_scheduler_reschedule():
 
     now = utc_now()
     with GlobalState():
-        run_graph(g, run_mode=EvaluationMode.REAL_TIME, start_time=now, end_time=now + timedelta(milliseconds=350), __trace__=True)
+        # Per-tick trace output can consume more than this graph's complete
+        # real-time window on slow Windows CI runners and hide the rescheduled
+        # alarm that the test is meant to observe.
+        run_graph(g, run_mode=EvaluationMode.REAL_TIME, start_time=now, end_time=now + timedelta(milliseconds=350))
         values = get_recorded_value()
 
     assert [v[1][0] for v in values][:3] == [100000, 100000, -1]
