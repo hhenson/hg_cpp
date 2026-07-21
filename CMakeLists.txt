@@ -775,6 +775,11 @@ if(HGRAPH_BUILD_SHARED AND (HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON
         "    nanobind_lto(\${name})\n"
         "  endif()\n"
         "  nanobind_set_visibility(\${name})\n"
+        "  if(APPLE)\n"
+        "    set_target_properties(\${name} PROPERTIES INSTALL_RPATH \"@loader_path/${CMAKE_INSTALL_LIBDIR}\")\n"
+        "  elseif(UNIX)\n"
+        "    set_target_properties(\${name} PROPERTIES INSTALL_RPATH \"$ORIGIN/${CMAKE_INSTALL_LIBDIR}\")\n"
+        "  endif()\n"
         "endfunction()\n"
     )
 elseif(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)

@@ -93,9 +93,10 @@ A downstream scikit-build project can add Python's ``purelib`` directory to
 module to ``hgraph::core``. The helper applies nanobind's extension settings
 while linking the wheel's shared ``hgraph::nanobind`` runtime; calling
 ``nanobind_add_module(NB_SHARED)`` directly would create a second runtime.
-Native modules should be installed beside ``_hgraph`` and use a relative
-runtime search path to the wheel's ``lib`` directory (``@loader_path/lib`` on
-macOS or ``$ORIGIN/lib`` on ELF systems).
+Native modules should be installed beside ``_hgraph``. The helper applies a
+relative runtime search path to the wheel's platform-selected library directory
+(``lib`` or ``lib64``), using ``@loader_path`` on macOS and ``$ORIGIN`` on ELF
+systems.
 
 Open Design Items
 -----------------
