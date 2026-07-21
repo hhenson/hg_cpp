@@ -22,25 +22,33 @@ def main() -> int:
             str(SOURCE_DIR),
             "-B",
             str(build_dir),
-            "-G",
-            "Ninja",
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DPython_EXECUTABLE={sys.executable}",
         ]
+        if sys.platform == "win32":
+            # The Windows wheel and its import libraries are built with MSVC;
+            # a MinGW consumer would require incompatible .dll.a files.
+            configure.extend(["-G", "Visual Studio 18 2026", "-A", "x64"])
+        else:
+            configure.extend(["-G", "Ninja"])
         if prefix := os.environ.get("HGRAPH_CMAKE_PREFIX"):
             configure.append(f"-DCMAKE_PREFIX_PATH={prefix}")
         subprocess.run(
             configure,
             check=True,
         )
+        build = ["cmake", "--build", str(build_dir), "--parallel", "2"]
+        if sys.platform == "win32":
+            build.extend(["--config", "Release"])
         subprocess.run(
-            ["cmake", "--build", str(build_dir), "--parallel", "2"],
+            build,
             check=True,
         )
 
         import _hgraph  # noqa: F401 -- load the wheel's shared runtime first
 
-        sys.path.insert(0, str(build_dir))
+        module_dir = build_dir / "Release" if sys.platform == "win32" else build_dir
+        sys.path.insert(0, str(module_dir))
         consumer = importlib.import_module("_hgraph_consumer")
         address = consumer.registry_address()
         if not isinstance(address, int) or address == 0:
