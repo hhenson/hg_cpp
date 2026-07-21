@@ -303,24 +303,32 @@ facades over native operators.  An upstream public export remains a
 compatibility obligation even when it is not used by ``hg_oap`` or
 ``hg_systematic``.
 
-Public service and mesh helper adapters
+Leaked service and mesh runtime helpers
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Remaining.**  The public ``hgraph.nodes`` audit also found the service and
-mesh helpers ``capture_output_node_to_global_state``,
+**Accepted implementation boundary (2026-07-21).**  The ``hgraph.nodes``
+wildcard export in upstream includes ``capture_output_node_to_global_state``,
 ``capture_output_to_global_state``, ``get_shared_reference_output``,
 ``mesh_subscribe_node``, ``request_id``, ``write_service_replies``,
-``write_service_request``, and ``write_subscription_key``.  They are part of
-the upstream import surface and therefore cannot be discarded as unused
-implementation details.
+``write_service_request``, and ``write_subscription_key``.  Source review found
+that these names are used exclusively by upstream's private Python wiring-node
+classes.  They do not form a coherent application authoring API.
 
-Their old Python implementations encode the superseded Python ``GlobalState``
-transport and node-builder layout.  Compatibility must instead be supplied by
-thin wiring adapters over the existing native request/reply, shared-reference,
-subscription, and mesh nodes.  The adapters must preserve the public call
-signatures and behaviour without creating a parallel Python service runtime,
-and each adapter needs equivalent public C++ wiring coverage.  Existing private
-builder objects remain non-targets.
+The helpers expose the old runtime implementation directly: owning-node
+reflection, mutation of captured source nodes, ``GlobalState`` path protocols,
+and ``PythonMeshNodeImpl`` graph traversal.  Reproducing them would create a
+second, partially assembled service transport beneath the descriptor-based
+native API.  In particular, ``capture_output_node_to_global_state`` cannot keep
+its stated behaviour without restoring the private ``ts.output.owning_node``
+model, and the old per-argument request fan-out differs from the native bundled
+request schema.
+
+These accidental exports are therefore intentionally absent.  Supported code
+uses ``reference_service``, ``subscription_service``,
+``request_reply_service``, adaptors/service adaptors, and ``mesh_`` /
+``get_mesh``.  Those paths are C++-owned and have paired C++ and Python
+behavioral coverage.  A surface test pins both the supported replacements and
+the absence of the leaked helpers.
 
 Deferred And Accepted Restrictions
 ----------------------------------
@@ -416,14 +424,18 @@ with 16 skips. Sphinx passed with warnings as errors, an installed C++ consumer
 passed against system Arrow 25, and the Linux Debug/ASan numerical suite passed
 8 cases with 128 assertions.
 
-Milestone R7: public service and mesh helper adapters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Milestone R7: service and mesh API boundary
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Implement the remaining public ``hgraph.nodes`` service and mesh helpers over
-the current native service runtime.  Freeze their upstream signatures with
-Python import and ``eval_node`` tests, add equivalent public C++ wiring tests,
-and reject only private Python builder/reflection objects that are not exposed
-as supported behaviour.
+**Completed 2026-07-21.**  Detailed source review reclassified the upstream
+``hgraph.nodes`` transport helpers as leaked private-runtime implementation,
+not compatibility APIs.  No raw path/schema service transport or owning-node
+reflection surface was added.  The supported descriptor-based services,
+adaptors, and native mesh access remain covered at the behavioral level in C++
+and Python; the Python surface test prevents the internal names from being
+introduced accidentally.  The fresh macOS gate passed all 1,203 native tests;
+the CPython 3.12 stable-ABI wheel passed 1,494 tests on CPython 3.14 with 16
+skips; and the Sphinx build passed with warnings treated as errors.
 
 Milestone R8: release hardening
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

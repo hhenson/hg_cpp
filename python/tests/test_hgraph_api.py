@@ -1002,6 +1002,33 @@ def test_mesh_python_reference_surface():
     assert not hasattr(hg, "mesh_ref")
 
 
+def test_private_service_transport_helpers_are_not_public():
+    import hgraph.nodes as nodes
+
+    private_transport = (
+        "capture_output_node_to_global_state",
+        "capture_output_to_global_state",
+        "get_shared_reference_output",
+        "mesh_subscribe_node",
+        "request_id",
+        "write_service_replies",
+        "write_service_request",
+        "write_subscription_key",
+    )
+    assert all(not hasattr(nodes, name) for name in private_transport)
+
+    public_surface = (
+        "reference_service",
+        "subscription_service",
+        "request_reply_service",
+        "adaptor",
+        "service_adaptor",
+        "mesh_",
+        "get_mesh",
+    )
+    assert all(hasattr(hg, name) for name in public_surface)
+
+
 def test_adaptor_from_python():
     # A duplex adaptor: the client input reaches the impl via from_graph,
     # the impl publishes via to_graph, the client reads it back same-cycle.

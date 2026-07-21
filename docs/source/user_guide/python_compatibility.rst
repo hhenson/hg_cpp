@@ -20,6 +20,16 @@ Python-authored compute, sink, generator, graph, service, adaptor, component,
 and push-source code executes in the C++ runtime. Python adapts values and
 callables; it does not implement a second graph engine.
 
+Upstream's ``hgraph.nodes`` wildcard also exposes several private transport
+helpers: ``capture_output_node_to_global_state``,
+``capture_output_to_global_state``, ``get_shared_reference_output``,
+``mesh_subscribe_node``, ``request_id``, ``write_service_replies``,
+``write_service_request``, and ``write_subscription_key``. They depend on the
+old Python owning-node and ``GlobalState`` mutation protocol and are
+intentionally not exposed by ``hg_cpp``. Use the public service, adaptor, and
+``mesh_`` / ``get_mesh`` APIs; these execute through the native runtime in both
+C++ and Python.
+
 Run diagnostics
 ---------------
 

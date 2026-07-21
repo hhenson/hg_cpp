@@ -74,10 +74,11 @@ The important corrections to the previous roadmap are:
   raw ``operator_names()`` count is intentionally larger and is not the parity
   numerator.
 - Public compatibility is not limited to APIs exercised by the two checked-out
-  applications. Every upstream public export remains supported or is recorded
-  as remaining work. In particular, the legacy service and mesh helpers
-  exported from ``hgraph.nodes`` require native-backed adapters even though
-  their old Python runtime implementation is not itself a compatibility target.
+  applications. Documented upstream APIs remain supported or are recorded as
+  remaining work. Accidental wildcard exports may be excluded when their only
+  semantics are private runtime mutation. The legacy ``hgraph.nodes`` service
+  transport and mesh helpers fall into that category: supported code uses the
+  descriptor-based service/adaptor APIs and ``mesh_`` / ``get_mesh`` instead.
 
 The A3, compiled-boundary REF, constrained-generic, and nested-map baseline
 passed the full acceptance gates on both local platforms:
