@@ -439,6 +439,27 @@ def _compound_field_value_type(annotation, scalar, substitutions):
     return _value_type(annotation)
 
 
+def _is_covariant_compound_field(annotation, inherited_annotation):
+    """Whether a Python field annotation safely narrows its inherited bundle type.
+
+    The narrower annotation remains visible to Python reflection, while native
+    storage retains the inherited schema so the base prefix stays invariant.
+    """
+    from ._compat import CompoundScalar
+    import typing
+
+    annotation = typing.get_origin(annotation) or annotation
+    inherited_annotation = typing.get_origin(inherited_annotation) or inherited_annotation
+    return (
+        isinstance(annotation, type)
+        and isinstance(inherited_annotation, type)
+        and issubclass(annotation, CompoundScalar)
+        and issubclass(inherited_annotation, CompoundScalar)
+        and annotation is not inherited_annotation
+        and issubclass(annotation, inherited_annotation)
+    )
+
+
 def _compound_value_type(scalar, type_args=()):
     from ._compat import CompoundScalar
     import dataclasses
@@ -493,6 +514,7 @@ def _compound_value_type(scalar, type_args=()):
             )
 
     parent_metas = []
+    inherited_annotations = {}
     original_bases = tuple(scalar.__dict__.get("__orig_bases__", ()))
     consumed = set()
     import typing
@@ -505,6 +527,11 @@ def _compound_value_type(scalar, type_args=()):
             _substitute_typevars(arg, substitutions) for arg in typing.get_args(original_base)
         )
         parent_metas.append(_compound_value_type(base_origin, base_args))
+        base_substitutions = dict(zip(getattr(base_origin, "__parameters__", ()), base_args))
+        inherited_annotations.update({
+            name: _substitute_typevars(annotation, base_substitutions)
+            for name, annotation in _compound_python_field_types(base_origin).items()
+        })
         consumed.add(base_origin)
     for base in scalar.__bases__:
         if (
@@ -514,6 +541,7 @@ def _compound_value_type(scalar, type_args=()):
             and base not in consumed
         ):
             parent_metas.append(_compound_value_type(base))
+            inherited_annotations.update(_compound_python_field_types(base))
 
     inherited_fields = {}
     for parent in parent_metas:
@@ -556,6 +584,13 @@ def _compound_value_type(scalar, type_args=()):
             continue
         else:
             field_type = resolved_annotations.get(field_name, field_type)
+        if (
+            field_name in inherited_fields
+            and field_name in inherited_annotations
+            and _is_covariant_compound_field(field_type, inherited_annotations[field_name])
+        ):
+            fields.append((field_name, inherited_fields[field_name]))
+            continue
         if _is_self_recursive_annotation(field_type, scalar, substitutions):
             fields.append((field_name, None))
             has_self_recursion = True
@@ -1573,7 +1608,7 @@ def _type_var_is_scalar(value):
 
 
 SCALAR = _typing.TypeVar("SCALAR")
-SCHEMA = _TypeVarSentinel("SCHEMA", is_scalar=True)
+SCHEMA = _typing.TypeVar("SCHEMA", bound="CompoundScalar")
 TS_SCHEMA = _TypeVarSentinel("TS_SCHEMA")
 SCALAR_1 = _TypeVarSentinel("SCALAR_1", is_scalar=True)
 SCALAR_2 = _TypeVarSentinel("SCALAR_2", is_scalar=True)
@@ -1592,8 +1627,8 @@ WINDOW_SIZE = _TypeVarSentinel("WINDOW_SIZE", is_scalar=True)
 ENUM = _TypeVarSentinel("ENUM", is_scalar=True)
 WINDOW_SIZE_MIN = _TypeVarSentinel("WINDOW_SIZE_MIN", is_scalar=True)
 TABLE = _TypeVarSentinel("TABLE", is_scalar=True)
-COMPOUND_SCALAR = _TypeVarSentinel("COMPOUND_SCALAR", is_scalar=True)
-COMPOUND_SCALAR_1 = _TypeVarSentinel("COMPOUND_SCALAR", is_scalar=True)
+COMPOUND_SCALAR = _typing.TypeVar("COMPOUND_SCALAR", bound="CompoundScalar")
+COMPOUND_SCALAR_1 = _typing.TypeVar("COMPOUND_SCALAR_1", bound="CompoundScalar")
 
 
 def with_signature(fn=None, *, annotations=None, args=None, kwargs=None, defaults=None,

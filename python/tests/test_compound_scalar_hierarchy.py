@@ -9,6 +9,7 @@ from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, combine, comp
 # (qualified names, generic specialisation identity), which has no public
 # introspection surface — the module under test is imported directly.
 from hgraph._types import _value_type
+from hgraph.reflection import fields
 from hgraph.test import eval_node
 
 
@@ -279,6 +280,37 @@ def test_polymorphic_bundle_field_uses_the_graph_realization():
     assert eval_node(
         contains_derived,
         [Envelope(item=Derived(value=1, label="one"))],
+    ) == [True]
+
+
+def test_covariant_field_annotation_reuses_inherited_native_schema():
+    @dataclass
+    class Base(CompoundScalar, namespace="tests.covariant_field", abstract=True):
+        value: int
+
+    @dataclass
+    class Derived(Base):
+        label: str
+
+    @dataclass
+    class Container(CompoundScalar, namespace="tests.covariant_field"):
+        item: Base
+
+    @dataclass
+    class NarrowContainer(Container):
+        item: Derived
+
+    native_fields = dict(_value_type(NarrowContainer).fields)
+    assert native_fields["item"] == _value_type(Base)
+    assert fields(NarrowContainer)["item"] is Derived
+
+    @compute_node
+    def is_derived(value: TS[NarrowContainer]) -> TS[bool]:
+        return isinstance(value.value.item, Derived)
+
+    assert eval_node(
+        is_derived,
+        [NarrowContainer(item=Derived(value=1, label="one"))],
     ) == [True]
 
 
