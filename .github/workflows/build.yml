@@ -414,6 +414,7 @@ jobs:
             ninja
             libarrow=24
             libarrow-compute=24
+            libarrow-acero=24
             fmt
             spdlog>=1.15
             simdjson>=4.5
