@@ -234,7 +234,15 @@ def test_websocket_server_handler_multiplexes_batch_requests(free_tcp_port):
     @hg.graph
     def server_graph() -> None:
         done = drive_clients()
-        register_websocket_server_adaptor(free_tcp_port)
+        hg.register_adaptor(
+            "websocket_server_adaptor",
+            websocket_server_adaptor_impl,
+            port=free_tcp_port,
+        )
+        # ACE explicitly wires selected handlers after registering the legacy
+        # server implementation. The second call must reuse the automatic
+        # wiring rather than create a duplicate adaptor client.
+        echo()
         stop_when_done(done)
 
     state = hg.GlobalState()

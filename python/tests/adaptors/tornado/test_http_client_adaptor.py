@@ -505,6 +505,54 @@ def test_http_server_handler_registers_and_maps_single_requests(free_tcp_port):
     assert f"http_server_adaptor://{free_tcp_port}/{route}/queue" not in state
 
 
+def test_http_server_supports_late_manual_handler_and_idempotent_call(free_tcp_port):
+    route = f"/late-manual-{free_tcp_port}"
+    observed = []
+
+    @hg.sink_node
+    def capture_and_stop(value: hg.TS[bool], _engine: hg.EvaluationEngineApi = None):
+        observed.append(value.value)
+        _engine.request_engine_stop()
+
+    @hg.graph
+    def server_graph() -> None:
+        register_http_server_adaptor(free_tcp_port)
+
+        @http_server_handler(url=route)
+        def handler(request: hg.TS[HttpRequest]) -> hg.TS[HttpResponse]:
+            return hg.combine[hg.TS[HttpResponse]](status_code=200)
+
+        first = handler()
+        second = handler()
+        capture_and_stop(hg.const(first is second))
+
+    hg.run_graph(
+        server_graph,
+        run_mode=hg.EvaluationMode.REAL_TIME,
+        end_time=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=5),
+    )
+    assert observed == [True]
+
+
+def test_http_manager_buffers_request_until_route_queue_starts(free_tcp_port):
+    from hgraph.adaptors.tornado import HttpAdaptorManager
+
+    route = f"/pending-{free_tcp_port}"
+    manager = HttpAdaptorManager(free_tcp_port)
+    sent = []
+
+    async def exercise():
+        request = HttpGetRequest(url=route)
+        request_id, response = manager.add_request(route, request)
+        assert sent == []
+        assert not response.done()
+        manager.set_queue(route, sent.append)
+        assert sent == [{request_id: request}]
+        manager.remove_request(request_id)
+
+    asyncio.run(exercise())
+
+
 def test_http_server_handler_registers_batch_requests(free_tcp_port):
     route = f"/batch-handler-{free_tcp_port}"
     received = []

@@ -29,6 +29,7 @@ from hgraph import (
     sink_node,
     to_graph,
 )
+from hgraph._wiring._core import _current_wiring
 
 from ._tornado_web import BaseHandler, TornadoWeb
 
@@ -370,8 +371,14 @@ class _WebSocketServerHandler:
             parameter.default is not inspect.Parameter.empty
             for parameter in parameters
         )
+        self._wired = {}
 
     def __call__(self, *args, **kwargs):
+        wiring = _current_wiring()
+        if not args and not kwargs and wiring in self._wired:
+            return self._wired[wiring]
+        _ensure_websocket_route_registered(
+            wiring, self.url, self.message_type)
         bound = self.__signature__.bind(*args, **kwargs)
         bound.apply_defaults()
         response_type = TSD[int, TSB[WebSocketResponse[self.message_type]]]
@@ -383,10 +390,29 @@ class _WebSocketServerHandler:
         else:
             responses = self._fn(request=requests, **bound.arguments)
         response_feedback(responses)
+        if not args and not kwargs:
+            self._wired[wiring] = responses
         return responses
 
 
 _WEBSOCKET_SERVER_HANDLERS = {}
+_WEBSOCKET_SERVER_REGISTRATIONS = {}
+
+
+def _ensure_websocket_route_registered(wiring, path, message_type):
+    registration = _WEBSOCKET_SERVER_REGISTRATIONS.get(wiring)
+    if registration is None:
+        return
+    port, paths = registration
+    key = (path, message_type)
+    if key not in paths:
+        register_adaptor(
+            path,
+            _server_implementation(message_type),
+            port=port,
+            url=path,
+        )
+        paths.add(key)
 
 
 def websocket_server_handler(fn=None, *, url: str):
@@ -400,13 +426,22 @@ def websocket_server_handler(fn=None, *, url: str):
 
 def register_websocket_server_adaptor(port: int) -> None:
     """Register all declared WebSocket routes on ``port``."""
+    wiring = _current_wiring()
+    registration = _WEBSOCKET_SERVER_REGISTRATIONS.setdefault(
+        wiring, (port, set()))
+    if registration[0] != port:
+        raise ValueError("one wiring graph cannot register the WebSocket server on two ports")
+    registered_paths = registration[1]
     for url, handler in tuple(_WEBSOCKET_SERVER_HANDLERS.items()):
-        register_adaptor(
-            url,
-            _server_implementation(handler.message_type),
-            port=port,
-            url=url,
-        )
+        key = (url, handler.message_type)
+        if key not in registered_paths:
+            register_adaptor(
+                url,
+                _server_implementation(handler.message_type),
+                port=port,
+                url=url,
+            )
+            registered_paths.add(key)
         if handler.auto_wire:
             handler()
 

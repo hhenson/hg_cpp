@@ -28,6 +28,7 @@ from hgraph import (
 )
 from hgraph._types import _TsExpr
 from hgraph._wiring import _GraphFn, _PyNode
+from hgraph._wiring._core import _current_wiring
 from hgraph._wiring._markers import (
     LOGGER,
     _INJECTABLE_MARKERS,
@@ -147,10 +148,14 @@ class HttpAdaptorManager:
         self._queues = {}
         self._registered_paths = set()
         self._requests = {}
+        self._pending = {}
         self._next_request_id = 1
 
     def set_queue(self, path: str, sender) -> None:
         self._queues[path] = sender
+        for request_id, request in self._pending.pop(path, ()):
+            if request_id in self._requests:
+                sender({request_id: request})
 
     def register_path(self, path: str) -> None:
         if path not in self._registered_paths:
@@ -172,6 +177,7 @@ class HttpAdaptorManager:
                         if not future.done():
                             future.cancel()
                         self._requests.pop(request_id, None)
+                self._pending.pop(path, None)
             finally:
                 completed.set()
 
@@ -181,14 +187,15 @@ class HttpAdaptorManager:
         self._web.stop()
 
     def add_request(self, path: str, request: HttpRequest):
-        sender = self._queues.get(path)
-        if sender is None:
-            raise RuntimeError(f"HTTP graph queue for {path!r} is not running")
         request_id = self._next_request_id
         self._next_request_id += 1
         future = asyncio.get_running_loop().create_future()
         self._requests[request_id] = (path, future)
-        sender({request_id: request})
+        sender = self._queues.get(path)
+        if sender is None:
+            self._pending.setdefault(path, []).append((request_id, request))
+        else:
+            sender({request_id: request})
         return request_id, future
 
     def complete_request(self, request_id: int, response: HttpResponse) -> None:
@@ -203,6 +210,13 @@ class HttpAdaptorManager:
         pending = self._requests.pop(request_id, None)
         if pending is not None and not pending[1].done():
             pending[1].cancel()
+        if pending is not None:
+            path = pending[0]
+            queued = self._pending.get(path)
+            if queued is not None:
+                self._pending[path] = [item for item in queued if item[0] != request_id]
+                if not self._pending[path]:
+                    self._pending.pop(path, None)
 
 
 class HttpHandler(BaseHandler):
@@ -329,8 +343,13 @@ class _HttpServerHandler:
             parameter.default is not inspect.Parameter.empty
             for parameter in parameters
         )
+        self._wired = {}
 
     def __call__(self, *args, **kwargs):
+        wiring = _current_wiring()
+        if not args and not kwargs and wiring in self._wired:
+            return self._wired[wiring]
+        _ensure_http_route_registered(wiring, self.url)
         bound = self.__signature__.bind(*args, **kwargs)
         bound.apply_defaults()
 
@@ -341,10 +360,23 @@ class _HttpServerHandler:
         else:
             responses = self._fn(request=requests, **bound.arguments)
         response_feedback(responses.response if self._auxiliary_output else responses)
+        if not args and not kwargs:
+            self._wired[wiring] = responses
         return responses
 
 
 _HTTP_SERVER_HANDLERS: dict[str, _HttpServerHandler] = {}
+_HTTP_SERVER_REGISTRATIONS = {}
+
+
+def _ensure_http_route_registered(wiring, path):
+    registration = _HTTP_SERVER_REGISTRATIONS.get(wiring)
+    if registration is None:
+        return
+    port, paths = registration
+    if path not in paths:
+        register_adaptor(path, http_server_adaptor_impl, port=port)
+        paths.add(path)
 
 
 def http_server_handler(fn=None, *, url: str):
@@ -412,6 +444,12 @@ def http_server_adaptor_impl(path: str, port: int = 80) -> None:
 def register_http_server_adaptor(port: int) -> None:
     """Register the HTTP server implementation and wire automatic handlers."""
     handlers = tuple(_HTTP_SERVER_HANDLERS.items())
+    wiring = _current_wiring()
+    registration = _HTTP_SERVER_REGISTRATIONS.setdefault(
+        wiring, (port, set()))
+    if registration[0] != port:
+        raise ValueError("one wiring graph cannot register the HTTP server on two ports")
+    registered_paths = registration[1]
     manager = HttpAdaptorManager.instance(port)
 
     # A shared listener may accept requests as soon as the first adaptor starts.
@@ -420,7 +458,9 @@ def register_http_server_adaptor(port: int) -> None:
         manager.register_path(path)
 
     for path, handler in handlers:
-        register_adaptor(path, http_server_adaptor_impl, port=port)
+        if path not in registered_paths:
+            register_adaptor(path, http_server_adaptor_impl, port=port)
+            registered_paths.add(path)
         if handler.auto_wire:
             handler()
 
