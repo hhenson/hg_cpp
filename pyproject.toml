@@ -55,7 +55,9 @@ web = [
     "tornado>=6.5",
 ]
 sql = [
+    "connectorx>=0.4.5",
     "duckdb>=1.4",
+    "pandas>=2.0",
     "sqlalchemy>=2.0",
 ]
 snowflake = [
