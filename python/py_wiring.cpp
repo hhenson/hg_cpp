@@ -1027,7 +1027,7 @@ namespace hgraph::python_bridge
     // Conversion-layer round trip (test/debug aid): Python -> Value -> Python.
     m.def("_roundtrip_value", [](nb::handle object) { return value_to_py(py_to_value(object).view()); });
 
-    nb::class_<PyWiring>(m, "Wiring")
+    nb::class_<PyWiring>(m, "Wiring", nb::is_weak_referenceable())
         .def(nb::init<>())
         .def(nb::init<GlobalState &>(), nb::arg("state"))
         .def("exception_time_series", &PyWiring::exception_time_series,
@@ -1051,6 +1051,16 @@ namespace hgraph::python_bridge
         .def("build_services", [](PyWiring &wiring) { wiring.raw->build_services(); })
         .def("service_client_paths", [](PyWiring &wiring) {
             return wiring.raw->service_client_paths();
+        })
+        .def("service_client_records", [](PyWiring &wiring) {
+            nb::list records;
+            for (const auto &record : wiring.raw->service_client_records())
+            {
+                records.append(nb::make_tuple(
+                    record.base_path, record.endpoint_path, record.kind,
+                    record.interface_name, record.specialization, record.receive));
+            }
+            return records;
         })
         .def("built_service_paths", [](PyWiring &wiring) {
             return wiring.raw->built_service_paths();

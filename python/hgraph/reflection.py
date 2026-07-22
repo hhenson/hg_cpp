@@ -101,6 +101,8 @@ def resolved_type(t):
         return t
     if isinstance(t, _m.TsType):
         return _wrap(t)
+    if isinstance(t, _m.ValueType):
+        return _m.python_type_for_value(t)
     raise TypeError(f"{t!r} is not a resolved time-series type")
 
 

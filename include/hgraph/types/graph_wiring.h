@@ -454,6 +454,16 @@ namespace hgraph
         ResolutionMap resolution{};
     };
 
+    struct WiringServiceClientRecord
+    {
+        std::string base_path{};
+        std::string endpoint_path{};
+        std::string kind{};
+        std::string interface_name{};
+        std::string specialization{};
+        bool        receive{true};
+    };
+
     namespace wiring_path_detail
     {
         template <typename>
@@ -845,7 +855,9 @@ namespace hgraph
          */
         void register_built_service_path(std::string path, std::string_view kind);
 
-        void register_service_client_path(std::string path, std::string_view kind);
+        void register_service_client_path(std::string path, std::string_view kind,
+                                          std::string_view interface_name = {},
+                                          std::string_view specialization = {});
         void register_service_rank_anchor(std::string path, const WiringInstance *node);
         void register_service_client_rank(std::string path, std::string_view kind,
                                           const WiringInstance *node, bool receive);
@@ -886,6 +898,8 @@ namespace hgraph
         void build_services();
         [[nodiscard]] std::vector<std::pair<std::string, std::string>>
         service_client_paths() const;
+        [[nodiscard]] std::vector<WiringServiceClientRecord>
+        service_client_records() const;
         [[nodiscard]] std::vector<std::pair<std::string, std::string>>
         built_service_paths() const;
         [[nodiscard]] std::string_view service_materialization_path() const noexcept;
@@ -904,7 +918,8 @@ namespace hgraph
             ServiceImplementationScope() noexcept = default;
             ServiceImplementationScope(Wiring &wiring,
                                        std::string description,
-                                       std::vector<WiringServiceImplementationEndpoint> required_endpoints);
+                                       std::vector<WiringServiceImplementationEndpoint> required_endpoints,
+                                       bool require_all = true);
             ServiceImplementationScope(Wiring &wiring,
                                        std::string description,
                                        std::vector<std::string> required_endpoints);
@@ -925,14 +940,17 @@ namespace hgraph
 
         [[nodiscard]] ServiceImplementationScope service_implementation_scope(
             std::string description,
-            std::vector<WiringServiceImplementationEndpoint> required_endpoints);
+            std::vector<WiringServiceImplementationEndpoint> required_endpoints,
+            bool require_all = true);
         [[nodiscard]] ServiceImplementationScope service_implementation_scope(
             std::string description,
             std::vector<std::string> required_endpoints);
 
         void begin_service_implementation(std::string description, std::vector<std::string> required_endpoints);
         void begin_service_implementation(std::string description,
-                                          std::vector<WiringServiceImplementationEndpoint> required_endpoints);
+                                          std::vector<WiringServiceImplementationEndpoint> required_endpoints,
+                                          bool require_all = true);
+        [[nodiscard]] std::vector<std::string> service_implementation_used_endpoints() const;
         void register_service_implementation_stub(std::string endpoint, std::string_view kind);
         [[nodiscard]] ResolutionMap service_implementation_stub_resolution(const std::string &endpoint) const;
         void end_service_implementation();
