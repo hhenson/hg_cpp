@@ -30,7 +30,7 @@ class SqlDataSource(DataSource):
 
 @compute_node(
     valid=("ds", "scope"),
-    active=("ds", "scope", "options", "response_status"),
+    active=("ds", "scope", "options"),
 )
 def _render_query(
     ds: TS[SqlDataSource],
@@ -57,6 +57,7 @@ def _render_query(
     if retry_options is not None:
         assert poll is None, "Cannot have both 'poll' and 'retry' options set"
         assert isinstance(retry_options, RetryOptions)
+        response_status.make_active()
         if inputs_modified:
             if hasattr(_state, "retry"):
                 _scheduler.un_schedule("_")
