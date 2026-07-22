@@ -317,6 +317,21 @@ def _register_mutual_recursive_component(component):
         _COMPOUND_TYPE_CACHE[(generation, scalar, ())] = meta
 
 
+def _locally_declared_annotations(scalar):
+    """Annotations declared on this class itself, excluding inherited ones.
+
+    Python 3.14 (PEP 649) materialises class annotations lazily through
+    ``__annotate__``, so ``cls.__dict__`` holds no ``__annotations__`` entry;
+    ``annotationlib`` reads them without evaluating forward references.
+    """
+    try:
+        import annotationlib
+    except ImportError:
+        return scalar.__dict__.get("__annotations__", {})
+    return annotationlib.get_annotations(
+        scalar, format=annotationlib.Format.FORWARDREF)
+
+
 def _compound_field_specs(scalar, dataclass_fields, inherited_fields):
     """Return the logical fields of a CompoundScalar in schema order.
 
@@ -333,7 +348,7 @@ def _compound_field_specs(scalar, dataclass_fields, inherited_fields):
         for field in dataclass_fields
         if not field.metadata.get("hidden", False)
     }
-    locally_declared = scalar.__dict__.get("__annotations__", {})
+    locally_declared = _locally_declared_annotations(scalar)
     specs = []
     consumed = set()
 
