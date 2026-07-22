@@ -475,9 +475,11 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
         set(_hgraph_python_components Interpreter Development.Module)
     endif()
     # Python user nodes execute in standalone native graphs as well as in the
-    # extension.  They therefore need the full embedding library even when
-    # the optional extension itself uses the stable ABI.
-    if(HGRAPH_ENABLE_PYTHON_USER_NODES)
+    # extension.  Native executables therefore need the full embedding library
+    # even when the optional extension itself uses the stable ABI.  Wheel
+    # builds (SKBUILD) run inside a host interpreter and must not require or
+    # link libpython — manylinux images do not ship it at all.
+    if(HGRAPH_ENABLE_PYTHON_USER_NODES AND NOT SKBUILD)
         list(APPEND _hgraph_python_components Development.Embed)
     endif()
 
