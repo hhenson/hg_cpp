@@ -1034,7 +1034,7 @@ def test_adaptor_from_python():
     @hg.adaptor
     def loopback(ts: TS[int]) -> TS[int]: ...
 
-    @hg.adaptor_impl(interfaces=loopback)
+    @hg.adaptor_impl(interfaces=(loopback,))
     def loopback_impl():
         incoming = hg.from_graph(loopback, path="io")
         hg.to_graph(loopback, incoming + incoming, path="io")
@@ -1046,6 +1046,122 @@ def test_adaptor_from_python():
 
     out = eval_node(g, [3, 5], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD)
     check(out == [6, 10], f"adaptor: {out}")
+
+    @hg.adaptor_impl(interfaces=loopback)
+    def direct_loopback_impl(ts: TS[int]) -> TS[int]:
+        return ts + ts
+
+    with pytest.raises(TypeError, match="automatic adaptor inputs"):
+        @hg.adaptor_impl(interfaces=loopback)
+        def missing_automatic_input() -> TS[int]: ...
+
+    with pytest.raises(TypeError, match="output does not match"):
+        @hg.adaptor_impl(interfaces=loopback)
+        def wrong_automatic_output(ts: TS[int]) -> TS[str]: ...
+
+    @graph
+    def direct(x: TS[int]) -> TS[int]:
+        hg.register_adaptor("direct-io", direct_loopback_impl)
+        return loopback(x, path="direct-io")
+
+    out = eval_node(direct, [3, 5], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD)
+    check(out == [6, 10], f"direct adaptor implementation: {out}")
+
+    @hg.adaptor
+    def source(path: str = "source") -> TS[int]: ...
+
+    @hg.adaptor_impl(interfaces=source)
+    def source_impl() -> TS[int]:
+        return hg.const(7, tp=TS[int])
+
+    @hg.adaptor
+    def sink(ts: TS[int], path: str = "sink"): ...
+
+    captured = []
+
+    @hg.sink_node
+    def capture_for_sink(ts: TS[int]):
+        captured.append(ts.value)
+
+    @hg.adaptor_impl(interfaces=sink)
+    def sink_impl(ts: TS[int]):
+        capture_for_sink(ts)
+
+    @graph
+    def source_and_sink(x: TS[int]) -> TS[int]:
+        hg.register_adaptor("source", source_impl)
+        hg.register_adaptor("sink", sink_impl)
+        sink(x, path="sink")
+        return source(path="source")
+
+    check(eval_node(source_and_sink, [3]) == [7], "automatic source adaptor")
+    check(captured == [3], f"automatic sink adaptor: {captured}")
+
+    @hg.adaptor_impl(interfaces=(loopback,))
+    def configured_manual(extra: TS[int]):
+        incoming = hg.from_graph(loopback, path="configured")
+        hg.to_graph(loopback, incoming + extra, path="configured")
+
+    @graph
+    def configured(x: TS[int]) -> TS[int]:
+        hg.register_adaptor(
+            "configured", configured_manual, extra=hg.const(10, tp=TS[int]))
+        return loopback(x, path="configured")
+
+    check(eval_node(configured, [3, 5]) == [13, 15], "manual adaptor TS configuration")
+
+    @hg.adaptor
+    def left_io(ts: TS[int]) -> TS[int]: ...
+
+    @hg.adaptor
+    def right_io(ts: TS[int]) -> TS[int]: ...
+
+    @hg.adaptor_impl(interfaces=(left_io, right_io))
+    def paired_impl(extra: TS[int]):
+        left_value = hg.from_graph(left_io, path="paired")
+        right_value = hg.from_graph(right_io, path="paired")
+        hg.to_graph(left_io, right_value + extra, path="paired")
+        hg.to_graph(right_io, left_value + extra, path="paired")
+
+    @graph
+    def paired(lhs: TS[int], rhs: TS[int]) -> TS[int]:
+        hg.register_adaptor("paired", paired_impl, extra=hg.const(1, tp=TS[int]))
+        return left_io(lhs, path="paired") + right_io(rhs, path="paired")
+
+    check(eval_node(paired, [1, 2], [10, 20]) == [13, 24], "manual multi-adaptor")
+
+    @hg.adaptor
+    def arithmetic_io(lhs: TS[int], rhs: TS[int]) -> TS[int]: ...
+
+    @hg.adaptor_impl(interfaces=arithmetic_io)
+    def arithmetic_io_impl(lhs: TS[int], rhs: TS[int]) -> TS[int]:
+        return lhs + rhs
+
+    @graph
+    def arithmetic_graph(lhs: TS[int], rhs: TS[int]) -> TS[int]:
+        hg.register_adaptor("arithmetic-io", arithmetic_io_impl)
+        return arithmetic_io(lhs, rhs, path="arithmetic-io")
+
+    check(eval_node(arithmetic_graph, [1, 2], [10, 20]) == [11, 22],
+          "automatic multi-input adaptor")
+
+    unbound_values = []
+
+    @hg.sink_node
+    def capture_unbound(value: TS[int]):
+        unbound_values.append(value.value)
+
+    @hg.adaptor_impl(interfaces=())
+    def unbound_impl(value: TS[int]):
+        capture_unbound(value)
+
+    @graph
+    def unbound_graph(value: TS[int]) -> TS[int]:
+        hg.register_adaptor("unbound", unbound_impl, value=value)
+        return value
+
+    check(eval_node(unbound_graph, [4, 5]) == [4, 5], "unbound manual adaptor")
+    check(unbound_values == [4, 5], f"unbound manual adaptor values: {unbound_values}")
 
 
 def test_service_adaptor_from_python():
@@ -1182,10 +1298,22 @@ def test_generic_adaptor_specializations_from_python():
 
     int_adaptor = generic_adaptor[payload:int]
 
-    @hg.adaptor_impl(interfaces=int_adaptor)
+    @hg.adaptor_impl(interfaces=(int_adaptor,))
     def int_adaptor_impl(path: str):
         value = hg.from_graph(int_adaptor, path=path)
         hg.to_graph(int_adaptor, value + 1, path=path)
+
+    @hg.adaptor_impl(interfaces=generic_adaptor)
+    def automatic_generic_impl(value: TS[payload]) -> TS[payload]:
+        return value
+
+    @graph
+    def automatic_generic(value: TS[int]) -> TS[int]:
+        hg.register_adaptor("automatic-generic", automatic_generic_impl)
+        return generic_adaptor(value, path="automatic-generic")
+
+    check(eval_node(automatic_generic, [1, 2]) == [1, 2],
+          "automatic generic adaptor")
 
     @hg.service_adaptor
     def generic_service_adaptor(

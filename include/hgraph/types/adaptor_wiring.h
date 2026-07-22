@@ -398,15 +398,15 @@ namespace hgraph::adaptor
         }
 
         template <typename Impl, typename... Args>
-        void wire_impl(Wiring &w, const AdaptorPath &user_path, const Args &...args)
+        decltype(auto) wire_impl(Wiring &w, const AdaptorPath &user_path, const Args &...args)
         {
             if constexpr (implementation_accepts_path<Impl>())
             {
-                static_cast<void>(wire<Impl>(w, args..., arg<"path">(Str{user_path.value})));
+                return wire<Impl>(w, args..., arg<"path">(Str{user_path.value}));
             }
             else
             {
-                static_cast<void>(wire<Impl>(w, args...));
+                return wire<Impl>(w, args...);
             }
         }
 
@@ -454,6 +454,15 @@ namespace hgraph::adaptor
         }
     }  // namespace detail
 
+    template <typename Interface>
+        requires detail::has_input_schema<Interface>::value
+    [[nodiscard]] Port<detail::input_schema_t<Interface>> from_graph(
+        Wiring &w, AdaptorPath user_path);
+
+    template <typename Interface>
+        requires detail::has_output_schema<Interface>::value
+    void to_graph(Wiring &w, AdaptorPath user_path, auto output);
+
     template <typename Interface, typename Impl, typename... Args>
     void register_adaptor(Wiring &w, AdaptorPath user_path, const Args &...args)
     {
@@ -471,6 +480,53 @@ namespace hgraph::adaptor
     void register_adaptor(Wiring &w, const Args &...args)
     {
         register_adaptor<Interface, Impl>(w, detail::default_adaptor_path<Interface>(), args...);
+    }
+
+    template <typename Interface, typename Impl, typename... Args>
+    void register_automatic_adaptor(
+        Wiring &w, AdaptorPath user_path, const Args &...args)
+    {
+        static_assert(detail::adaptor_interface<Interface>,
+                      "register_automatic_adaptor requires an adaptor interface");
+        std::string base_path = detail::adaptor_base_path<Interface>(user_path);
+        w.register_built_service_path(base_path, "adaptor");
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+        detail::append_required_stub_endpoints<Interface>(required_endpoints, user_path);
+        auto scope = w.service_implementation_scope(
+            "automatic adaptor " + base_path, std::move(required_endpoints));
+
+        if constexpr (detail::has_input_schema<Interface>::value)
+        {
+            auto input = from_graph<Interface>(w, user_path);
+            if constexpr (detail::has_output_schema<Interface>::value)
+            {
+                auto output = detail::wire_impl<Impl>(
+                    w, user_path, input, args...);
+                to_graph<Interface>(w, user_path, output);
+            }
+            else
+            {
+                static_cast<void>(detail::wire_impl<Impl>(
+                    w, user_path, input, args...));
+            }
+        }
+        else if constexpr (detail::has_output_schema<Interface>::value)
+        {
+            auto output = detail::wire_impl<Impl>(w, user_path, args...);
+            to_graph<Interface>(w, user_path, output);
+        }
+        else
+        {
+            static_cast<void>(detail::wire_impl<Impl>(w, user_path, args...));
+        }
+        scope.complete();
+    }
+
+    template <typename Interface, typename Impl, typename... Args>
+    void register_automatic_adaptor(Wiring &w, const Args &...args)
+    {
+        register_automatic_adaptor<Interface, Impl>(
+            w, detail::default_adaptor_path<Interface>(), args...);
     }
 
     template <typename Impl, typename... Interfaces, typename... Args>

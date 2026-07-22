@@ -257,7 +257,7 @@ def _server_implementation(message_type: type):
     responses_type = TSD[int, response_bundle]
     message_ts = TS[tuple[message_type, ...]]
 
-    @adaptor_impl(interfaces=interface)
+    @adaptor_impl(interfaces=(interface,))
     def websocket_server_adaptor_impl(path: str, port: int, url: str) -> None:
         connect_key = f"websocket_server_adaptor://{port}/{path}/connect_queue"
         message_key = f"websocket_server_adaptor://{port}/{path}/message_queue"

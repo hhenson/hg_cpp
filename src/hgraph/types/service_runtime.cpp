@@ -531,6 +531,29 @@ namespace hgraph
 
     namespace
     {
+        [[nodiscard]] std::string adaptor_base(
+            const RuntimeServiceDescriptor &d, std::string_view p)
+        {
+            return full_path("adaptor://", d, p);
+        }
+
+        void append_adaptor_required_endpoints(
+            const RuntimeServiceDescriptor &descriptor,
+            const std::string &base,
+            std::vector<WiringServiceImplementationEndpoint> &endpoints)
+        {
+            if (descriptor.input_schema != nullptr)
+            {
+                endpoints.push_back(
+                    WiringServiceImplementationEndpoint{base + "/from_graph", {}});
+            }
+            if (descriptor.output_schema != nullptr)
+            {
+                endpoints.push_back(
+                    WiringServiceImplementationEndpoint{base + "/to_graph", {}});
+            }
+        }
+
         [[nodiscard]] std::string flavour_base(const RuntimeServiceDescriptor &d, std::string_view p)
         {
             switch (d.flavour)
@@ -539,7 +562,7 @@ namespace hgraph
                 case ServiceFlavour::Subscription: return subscription_base(d, p);
                 case ServiceFlavour::RequestReply: return request_reply_base(d, p);
                 case ServiceFlavour::ServiceAdaptor: return service_adaptor_base(d, p);
-                case ServiceFlavour::Adaptor: break;
+                case ServiceFlavour::Adaptor: return adaptor_base(d, p);
             }
             throw std::invalid_argument("service '" + d.name + "': not a service flavour");
         }
@@ -573,6 +596,8 @@ namespace hgraph
             }
             case ServiceFlavour::ServiceAdaptor:
                 return service_adaptor_from_graph(w, descriptor, path);
+            case ServiceFlavour::Adaptor:
+                return adaptor_from_graph(w, descriptor, path);
             default:
                 throw std::invalid_argument("service '" + descriptor.name + "': flavour has no impl input");
         }
@@ -630,13 +655,17 @@ namespace hgraph
             case ServiceFlavour::ServiceAdaptor:
                 service_adaptor_to_graph(w, descriptor, path, out);
                 return;
+            case ServiceFlavour::Adaptor:
+                adaptor_to_graph(w, descriptor, path, out);
+                return;
             default:
                 throw std::invalid_argument("service '" + descriptor.name + "': flavour has no impl output");
         }
     }
 
     void register_multi_service_impl(Wiring &w, std::span<const RuntimeServiceDescriptor *const> descriptors,
-                                     std::string_view path, const WiredFn &impl)
+                                     std::string_view path, const WiredFn &impl,
+                                     std::span<const WiringPortRef> implementation_inputs)
     {
         if (descriptors.empty())
         {
@@ -650,6 +679,7 @@ namespace hgraph
             const char *what = descriptor->flavour == ServiceFlavour::Reference       ? "reference service"
                                : descriptor->flavour == ServiceFlavour::Subscription  ? "subscription service"
                                : descriptor->flavour == ServiceFlavour::RequestReply  ? "request/reply service"
+                               : descriptor->flavour == ServiceFlavour::Adaptor         ? "adaptor"
                                                                                        : "service adaptor";
             w.register_built_service_path(base, what);
             description += ' ';
@@ -674,25 +704,26 @@ namespace hgraph
                     required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/from_graph", {}});
                     required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/to_graph", {}});
                     break;
+                case ServiceFlavour::Adaptor:
+                    append_adaptor_required_endpoints(
+                        *descriptor, base, required_endpoints);
+                    break;
                 default: break;
             }
         }
         auto scope = w.service_implementation_scope(std::move(description), std::move(required_endpoints));
-        static_cast<void>(wire_impl(w, *descriptors.front(), impl, {}));
+        if (impl.arity != implementation_inputs.size())
+        {
+            throw std::invalid_argument(
+                "manual multi-interface implementation input count does not match supplied inputs");
+        }
+        static_cast<void>(wire_impl(w, *descriptors.front(), impl, implementation_inputs));
         scope.complete();
     }
 
     // ------------------------------------------------------------------
     // Adaptors (adaptor_wiring.h erased; same recipe as the services)
     // ------------------------------------------------------------------
-
-    namespace
-    {
-        [[nodiscard]] std::string adaptor_base(const RuntimeServiceDescriptor &d, std::string_view p)
-        {
-            return full_path("adaptor://", d, p);
-        }
-    }  // namespace
 
     WiringPortRef adaptor_from_graph(Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path)
     {
@@ -779,23 +810,68 @@ namespace hgraph
     }
 
     void register_adaptor_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
-                               const WiredFn &impl)
+                               const WiredFn &impl, AdaptorImplMode mode,
+                               std::span<const WiringPortRef> implementation_inputs)
     {
         require_flavour(descriptor, ServiceFlavour::Adaptor, "adaptor");
         const std::string base = adaptor_base(descriptor, path);
         w.register_built_service_path(base, "adaptor");
         std::vector<WiringServiceImplementationEndpoint> required_endpoints;
-        if (descriptor.input_schema != nullptr)
-        {
-            required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/from_graph", {}});
-        }
-        if (descriptor.output_schema != nullptr)
-        {
-            required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/to_graph", {}});
-        }
+        append_adaptor_required_endpoints(descriptor, base, required_endpoints);
         auto scope = w.service_implementation_scope("adaptor " + base, std::move(required_endpoints));
-        static_cast<void>(wire_impl(w, descriptor, impl, {}));
+        std::array<WiringPortRef, 1> automatic_inputs{};
+        std::span<const WiringPortRef> impl_inputs = implementation_inputs;
+        if (mode == AdaptorImplMode::Automatic)
+        {
+            if (!implementation_inputs.empty())
+            {
+                throw std::invalid_argument(
+                    "automatic adaptor implementation does not accept additional transport inputs");
+            }
+            const std::size_t expected_arity = descriptor.input_schema != nullptr ? 1 : 0;
+            if (impl.arity != expected_arity)
+            {
+                throw std::invalid_argument(
+                    "automatic adaptor implementation input count does not match the interface");
+            }
+            if (descriptor.input_schema != nullptr)
+            {
+                automatic_inputs[0] = adaptor_from_graph(w, descriptor, path);
+                impl_inputs = std::span<const WiringPortRef>{automatic_inputs.data(), 1};
+            }
+        }
+        else if (impl.arity != implementation_inputs.size())
+        {
+            throw std::invalid_argument(
+                "manual adaptor implementation input count does not match supplied inputs");
+        }
+        WiringPortRef output = wire_impl(w, descriptor, impl, impl_inputs);
+        if (mode == AdaptorImplMode::Automatic && descriptor.output_schema != nullptr)
+        {
+            if (output.schema == nullptr)
+            {
+                throw std::invalid_argument(
+                    "direct adaptor implementation did not produce its declared output");
+            }
+            adaptor_to_graph(w, descriptor, path, output);
+        }
         scope.complete();
+    }
+
+    void register_unbound_adaptor_impl(
+        Wiring &w, const WiredFn &impl,
+        std::span<const WiringPortRef> implementation_inputs)
+    {
+        if (impl.arity != implementation_inputs.size())
+        {
+            throw std::invalid_argument(
+                "unbound adaptor implementation input count does not match supplied inputs");
+        }
+        if (!impl.valid())
+        {
+            throw std::invalid_argument("unbound adaptor implementation is not wirable");
+        }
+        static_cast<void>(impl.wire(w, implementation_inputs));
     }
 
     // ------------------------------------------------------------------

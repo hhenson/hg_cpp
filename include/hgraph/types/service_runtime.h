@@ -110,7 +110,8 @@ namespace hgraph
                                            std::string_view path, const WiringPortRef &out);
     HGRAPH_EXPORT void register_multi_service_impl(Wiring &w,
                                                    std::span<const RuntimeServiceDescriptor *const> descriptors,
-                                                   std::string_view path, const WiredFn &impl);
+                                                   std::string_view path, const WiredFn &impl,
+                                                   std::span<const WiringPortRef> implementation_inputs = {});
 
     /** Adaptor client: publishes ``in`` (when the interface has an input)
         and returns the adaptor output ref (empty for sink-only adaptors). */
@@ -123,8 +124,18 @@ namespace hgraph
     /** Impl-side: publish the adaptor output back to clients. */
     HGRAPH_EXPORT void adaptor_to_graph(Wiring &w, const RuntimeServiceDescriptor &descriptor,
                                         std::string_view path, const WiringPortRef &out);
+    enum class AdaptorImplMode : std::uint8_t
+    {
+        Automatic,
+        Manual,
+    };
     HGRAPH_EXPORT void register_adaptor_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
-                                             std::string_view path, const WiredFn &impl);
+                                             std::string_view path, const WiredFn &impl,
+                                             AdaptorImplMode mode = AdaptorImplMode::Manual,
+                                             std::span<const WiringPortRef> implementation_inputs = {});
+    HGRAPH_EXPORT void register_unbound_adaptor_impl(
+        Wiring &w, const WiredFn &impl,
+        std::span<const WiringPortRef> implementation_inputs = {});
 
     /** Per-client keyed adaptor exchange (the erased counterpart of
         ``service_adaptor::adaptor`` / ``wire<Interface>``). */

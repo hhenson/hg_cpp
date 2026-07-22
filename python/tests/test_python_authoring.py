@@ -756,7 +756,7 @@ def test_adaptor_path_and_scalar_configuration():
     @hg.adaptor
     def loopback(value: TS[int]) -> TS[int]: ...
 
-    @hg.adaptor_impl(interfaces=loopback)
+    @hg.adaptor_impl(interfaces=(loopback,))
     def loopback_impl(path: str, factor: int):
         incoming = hg.from_graph(loopback, path=path)
         hg.to_graph(loopback, incoming * factor, path=path)

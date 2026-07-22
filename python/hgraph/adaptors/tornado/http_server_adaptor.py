@@ -375,7 +375,7 @@ def http_server_adaptor(
     """Expose a graph request/response stream as an HTTP route."""
 
 
-@adaptor_impl(interfaces=http_server_adaptor)
+@adaptor_impl(interfaces=(http_server_adaptor,))
 def http_server_adaptor_impl(path: str, port: int = 80) -> None:
     """Run one HTTP route on the shared Tornado server for ``port``."""
     queue_key = f"http_server_adaptor://{port}/{path}/queue"

@@ -255,6 +255,62 @@ namespace
         }
     };
 
+    struct AutomaticLoopbackAdaptorImpl
+    {
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> input)
+        {
+            return wire<EchoNode>(w, input);
+        }
+    };
+
+    struct AutomaticSourceAdaptorImpl
+    {
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            return wire<FiveSource>(w);
+        }
+    };
+
+    struct AutomaticSinkAdaptorImpl
+    {
+        static void compose(Wiring &w, Port<TS<Int>> input)
+        {
+            wire<stdlib::dense_record_impl>(w, input, std::string{"automatic_sink_out"});
+        }
+    };
+
+    struct AutomaticLoopbackGraph
+    {
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            adaptor::register_automatic_adaptor<
+                LoopbackAdaptor, AutomaticLoopbackAdaptorImpl>(w);
+            return wire<LoopbackAdaptor>(w, wire<OneTickSource>(w));
+        }
+    };
+
+    struct AutomaticSourceGraph
+    {
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            adaptor::register_automatic_adaptor<
+                SourceOnlyAdaptor, AutomaticSourceAdaptorImpl>(w);
+            return wire<SourceOnlyAdaptor>(w);
+        }
+    };
+
+    struct AutomaticSinkGraph
+    {
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            adaptor::register_automatic_adaptor<
+                SinkOnlyAdaptor, AutomaticSinkAdaptorImpl>(w);
+            auto input = wire<OneTickSource>(w);
+            wire<SinkOnlyAdaptor>(w, input);
+            return input;
+        }
+    };
+
     struct SecondLoopbackAdaptor : adaptor::interface
     {
         static constexpr std::string_view name{"second_loopback"};
@@ -541,6 +597,17 @@ TEST_CASE("adaptor wiring resolves generic interface identities from client inpu
     (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     CHECK_OUTPUT(testing::eval_node<GenericAdaptorGraph>(testing::values<Int>(41)), testing::values<Int>(41));
+}
+
+TEST_CASE("adaptor wiring supports automatic source sink and duplex implementations")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    CHECK_OUTPUT(testing::eval_node<AutomaticLoopbackGraph>(), testing::values<Int>(41));
+    CHECK_OUTPUT(testing::eval_node<AutomaticSourceGraph>(), testing::values<Int>(5));
+    CHECK_OUTPUT(testing::eval_node<AutomaticSinkGraph>(), testing::values<Int>(41));
 }
 
 TEST_CASE("adaptor wiring rejects duplicate implementation registrations")

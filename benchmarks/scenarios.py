@@ -1147,27 +1147,14 @@ def service_subscription_py(cycle_scale: float, size_scale: float):
 def _benchmark_adaptor(value: TS[int], path: str = "benchmark") -> TS[int]: ...
 
 
-# Upstream hgraph auto-wires a single adaptor interface into its implementation;
-# hg-cpp exposes the equivalent transport explicitly. Keep this API difference
-# outside the scenario definitions so all modes still measure the same graph.
-if hasattr(hg, "from_graph"):
-    @hg.adaptor_impl(interfaces=_benchmark_adaptor)
-    def _benchmark_adaptor_std_impl(path: str):
-        incoming = hg.from_graph(_benchmark_adaptor, path=path)
-        hg.to_graph(_benchmark_adaptor, incoming + 1, path=path)
+@hg.adaptor_impl(interfaces=_benchmark_adaptor)
+def _benchmark_adaptor_std_impl(value: TS[int], path: str) -> TS[int]:
+    return value + 1
 
-    @hg.adaptor_impl(interfaces=_benchmark_adaptor)
-    def _benchmark_adaptor_py_impl(path: str):
-        incoming = hg.from_graph(_benchmark_adaptor, path=path)
-        hg.to_graph(_benchmark_adaptor, _add_one_py(incoming), path=path)
-else:
-    @hg.adaptor_impl(interfaces=_benchmark_adaptor)
-    def _benchmark_adaptor_std_impl(value: TS[int], path: str) -> TS[int]:
-        return value + 1
 
-    @hg.adaptor_impl(interfaces=_benchmark_adaptor)
-    def _benchmark_adaptor_py_impl(value: TS[int], path: str) -> TS[int]:
-        return _add_one_py(value)
+@hg.adaptor_impl(interfaces=_benchmark_adaptor)
+def _benchmark_adaptor_py_impl(value: TS[int], path: str) -> TS[int]:
+    return _add_one_py(value)
 
 
 def adaptor_std(scale: float):
