@@ -85,17 +85,20 @@ namespace hgraph
                                                                        const RuntimeServiceDescriptor &descriptor,
                                                                        std::string_view path);
     HGRAPH_EXPORT void register_reference_service_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
-                                                       std::string_view path, const WiredFn &impl);
+                                                       std::string_view path, const WiredFn &impl,
+                                                       bool default_fallback = false);
 
     [[nodiscard]] HGRAPH_EXPORT WiringPortRef subscription_service_subscribe(
         Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path, const WiringPortRef &key);
     HGRAPH_EXPORT void register_subscription_service_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
-                                                          std::string_view path, const WiredFn &impl);
+                                                          std::string_view path, const WiredFn &impl,
+                                                          bool default_fallback = false);
 
     [[nodiscard]] HGRAPH_EXPORT WiringPortRef request_reply_service_call(
         Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path, const WiringPortRef &request);
     HGRAPH_EXPORT void register_request_reply_service_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
-                                                           std::string_view path, const WiredFn &impl);
+                                                           std::string_view path, const WiredFn &impl,
+                                                           bool default_fallback = false);
 
     /**
      * Multi-interface implementations (the ``register_services`` +
@@ -111,7 +114,8 @@ namespace hgraph
     HGRAPH_EXPORT void register_multi_service_impl(Wiring &w,
                                                    std::span<const RuntimeServiceDescriptor *const> descriptors,
                                                    std::string_view path, const WiredFn &impl,
-                                                   std::span<const WiringPortRef> implementation_inputs = {});
+                                                   std::span<const WiringPortRef> implementation_inputs = {},
+                                                   bool default_fallback = false);
 
     /** Adaptor client: publishes ``in`` (when the interface has an input)
         and returns the adaptor output ref (empty for sink-only adaptors). */
@@ -132,7 +136,8 @@ namespace hgraph
     HGRAPH_EXPORT void register_adaptor_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
                                              std::string_view path, const WiredFn &impl,
                                              AdaptorImplMode mode = AdaptorImplMode::Manual,
-                                             std::span<const WiringPortRef> implementation_inputs = {});
+                                             std::span<const WiringPortRef> implementation_inputs = {},
+                                             bool default_fallback = false);
     HGRAPH_EXPORT void register_unbound_adaptor_impl(
         Wiring &w, const WiredFn &impl,
         std::span<const WiringPortRef> implementation_inputs = {});
@@ -161,7 +166,8 @@ namespace hgraph
     HGRAPH_EXPORT void register_service_adaptor_impl(Wiring &w,
                                                      const RuntimeServiceDescriptor &descriptor,
                                                      std::string_view path,
-                                                     const WiredFn &impl);
+                                                     const WiredFn &impl,
+                                                     bool default_fallback = false);
 }  // namespace hgraph
 
 #endif  // HGRAPH_TYPES_SERVICE_RUNTIME_H

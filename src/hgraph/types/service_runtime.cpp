@@ -267,21 +267,40 @@ namespace hgraph
     }
 
     void register_reference_service_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
-                                         std::string_view path, const WiredFn &impl)
+                                         std::string_view path, const WiredFn &impl,
+                                         bool default_fallback)
     {
         require_flavour(descriptor, ServiceFlavour::Reference, "reference");
         const std::string base = reference_base(descriptor, path);
-        w.register_built_service_path(base, "reference service");
-        WiringPortRef shared = shared_output_source_node(
-            w, std::type_index(typeid(service::detail::reference_output_source_marker)),
-            descriptor.output_schema, base);
-        WiringPortRef output = describe_service_output(
-            descriptor, descriptor.output_schema,
-            wire_impl(w, descriptor, impl, {}));
-        const WiringInstance *capture = shared_output_capture_node(
-            w, std::type_index(typeid(service::detail::reference_output_capture_marker)),
-            descriptor.output_schema, base, output, shared);
-        w.register_service_rank_anchor(base, capture);
+        const auto *descriptor_ptr = &descriptor;
+        auto materialize = [descriptor_ptr, impl](Wiring &target, std::string_view requested_path) {
+                const std::string requested_base = reference_base(*descriptor_ptr, requested_path);
+                target.register_built_service_path(requested_base, "reference service");
+                WiringPortRef shared = shared_output_source_node(
+                    target, std::type_index(typeid(service::detail::reference_output_source_marker)),
+                    descriptor_ptr->output_schema, requested_base);
+                WiringPortRef output = describe_service_output(
+                    *descriptor_ptr, descriptor_ptr->output_schema,
+                    wire_impl(target, *descriptor_ptr, impl, {}));
+                const WiringInstance *capture = shared_output_capture_node(
+                    target, std::type_index(typeid(service::detail::reference_output_capture_marker)),
+                    descriptor_ptr->output_schema, requested_base, output, shared);
+                target.register_service_rank_anchor(requested_base, capture);
+            };
+        if (default_fallback)
+        {
+            w.register_default_service_implementation_candidate(
+                "ref_svc://", "/" + descriptor.name,
+                "default reference service " + descriptor.name, std::move(materialize));
+        }
+        else
+        {
+            w.register_service_implementation_candidate(
+                {base}, "reference service " + base,
+                [materialize = std::move(materialize), base](Wiring &target) {
+                    materialize(target, base);
+                });
+        }
     }
 
     // ------------------------------------------------------------------
@@ -354,37 +373,55 @@ namespace hgraph
     }
 
     void register_subscription_service_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
-                                            std::string_view path, const WiredFn &impl)
+                                            std::string_view path, const WiredFn &impl,
+                                            bool default_fallback)
     {
         require_flavour(descriptor, ServiceFlavour::Subscription, "subscription");
         const std::string base      = subscription_base(descriptor, path);
-        const std::string subs_path = base + "/subs";
-        const std::string out_path  = base + "/out";
-        w.register_built_service_path(base, "subscription service");
-
-        const auto *subs_meta = TypeRegistry::instance().tss(descriptor.key_type);
-        WiringNodeSchema subs_schema;
-        subs_schema.output = subs_meta;
-        WiringPortRef subscriptions = w.add_node(
-            std::type_index(typeid(service::detail::subscription_source_marker)), subs_schema,
-            std::span<const WiringPortRef>{}, service::detail::path_key_value(subs_path),
-            [subs_path, key_meta = descriptor.key_type]() {
-                return make_subscription_key_source_node(subs_path, *key_meta);
-            });
-
-        const auto *dict_meta = TypeRegistry::instance().tsd(descriptor.key_type, descriptor.value_schema);
-        WiringPortRef shared = shared_output_source_node(
-            w, std::type_index(typeid(service::detail::shared_output_source_marker)), dict_meta, out_path);
-        w.register_service_rank_anchor(subs_path, subscriptions.peered_node());
-
-        std::array<WiringPortRef, 1> impl_inputs{subscriptions};
-        WiringPortRef output = describe_service_output(
-            descriptor, dict_meta,
-            wire_impl(w, descriptor, impl, impl_inputs));
-        const WiringInstance *capture = shared_output_capture_node(
-            w, std::type_index(typeid(service::detail::shared_output_capture_marker)),
-            dict_meta, out_path, output, shared);
-        w.register_service_rank_anchor(out_path, capture);
+        const auto *descriptor_ptr = &descriptor;
+        auto materialize = [descriptor_ptr, impl](Wiring &target, std::string_view requested_path) {
+                const std::string requested_base = subscription_base(*descriptor_ptr, requested_path);
+                const std::string subs_path = requested_base + "/subs";
+                const std::string out_path  = requested_base + "/out";
+                target.register_built_service_path(requested_base, "subscription service");
+                const auto *subs_meta = TypeRegistry::instance().tss(descriptor_ptr->key_type);
+                WiringNodeSchema subs_schema;
+                subs_schema.output = subs_meta;
+                WiringPortRef subscriptions = target.add_node(
+                    std::type_index(typeid(service::detail::subscription_source_marker)), subs_schema,
+                    std::span<const WiringPortRef>{}, service::detail::path_key_value(subs_path),
+                    [subs_path, key_meta = descriptor_ptr->key_type]() {
+                        return make_subscription_key_source_node(subs_path, *key_meta);
+                    });
+                const auto *dict_meta = TypeRegistry::instance().tsd(
+                    descriptor_ptr->key_type, descriptor_ptr->value_schema);
+                WiringPortRef shared = shared_output_source_node(
+                    target, std::type_index(typeid(service::detail::shared_output_source_marker)),
+                    dict_meta, out_path);
+                target.register_service_rank_anchor(subs_path, subscriptions.peered_node());
+                std::array<WiringPortRef, 1> impl_inputs{subscriptions};
+                WiringPortRef output = describe_service_output(
+                    *descriptor_ptr, dict_meta,
+                    wire_impl(target, *descriptor_ptr, impl, impl_inputs));
+                const WiringInstance *capture = shared_output_capture_node(
+                    target, std::type_index(typeid(service::detail::shared_output_capture_marker)),
+                    dict_meta, out_path, output, shared);
+                target.register_service_rank_anchor(out_path, capture);
+            };
+        if (default_fallback)
+        {
+            w.register_default_service_implementation_candidate(
+                "subs_svc://", "/" + descriptor.name,
+                "default subscription service " + descriptor.name, std::move(materialize));
+        }
+        else
+        {
+            w.register_service_implementation_candidate(
+                {base}, "subscription service " + base,
+                [materialize = std::move(materialize), base](Wiring &target) {
+                    materialize(target, base);
+                });
+        }
     }
 
     // ------------------------------------------------------------------
@@ -490,38 +527,55 @@ namespace hgraph
     }
 
     void register_request_reply_service_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
-                                             std::string_view path, const WiredFn &impl)
+                                             std::string_view path, const WiredFn &impl,
+                                             bool default_fallback)
     {
         require_flavour(descriptor, ServiceFlavour::RequestReply, "request/reply");
         const std::string base         = request_reply_base(descriptor, path);
-        const std::string request_path = base + "/request";
-        const std::string replies_path = base + "/replies";
-        w.register_built_service_path(base, "request/reply service");
-
-        WiringPortRef requests = request_input_source_node(w, descriptor, request_path);
-        w.register_service_rank_anchor(request_path, requests.peered_node());
-
-        std::array<WiringPortRef, 1> impl_inputs{requests};
-        WiringPortRef output = wire_impl(w, descriptor, impl, impl_inputs);
-        if (descriptor.response_schema == nullptr)
+        const auto *descriptor_ptr = &descriptor;
+        auto materialize = [descriptor_ptr, impl](Wiring &target, std::string_view requested_path) {
+                const std::string requested_base = request_reply_base(*descriptor_ptr, requested_path);
+                const std::string request_path = requested_base + "/request";
+                const std::string replies_path = requested_base + "/replies";
+                target.register_built_service_path(requested_base, "request/reply service");
+                WiringPortRef requests = request_input_source_node(target, *descriptor_ptr, request_path);
+                target.register_service_rank_anchor(request_path, requests.peered_node());
+                std::array<WiringPortRef, 1> impl_inputs{requests};
+                WiringPortRef output = wire_impl(target, *descriptor_ptr, impl, impl_inputs);
+                if (descriptor_ptr->response_schema == nullptr)
+                {
+                    if (output.schema != nullptr)
+                    {
+                        throw std::invalid_argument("reply-less service '" + descriptor_ptr->name +
+                                                    "' implementation returned an output");
+                    }
+                    return;
+                }
+                WiringPortRef replies = reply_output_source_node(target, *descriptor_ptr, replies_path);
+                const auto *dict_meta = TypeRegistry::instance().tsd(
+                    scalar_descriptor<Int>::value_meta(), descriptor_ptr->response_schema);
+                output = describe_service_output(*descriptor_ptr, dict_meta, std::move(output));
+                output = service::detail::request_reply_response_feedback(
+                    target, std::move(output), *dict_meta);
+                const WiringInstance *capture = shared_output_capture_node(
+                    target, std::type_index(typeid(service::detail::request_reply_output_capture_marker)),
+                    dict_meta, replies_path, output, replies);
+                target.register_service_rank_anchor(replies_path, capture);
+            };
+        if (default_fallback)
         {
-            if (output.schema != nullptr)
-            {
-                throw std::invalid_argument("reply-less service '" + descriptor.name +
-                                            "' implementation returned an output");
-            }
-            return;
+            w.register_default_service_implementation_candidate(
+                "reqrepl_svc://", "/" + descriptor.name,
+                "default request/reply service " + descriptor.name, std::move(materialize));
         }
-
-        WiringPortRef replies = reply_output_source_node(w, descriptor, replies_path);
-        const auto *dict_meta = TypeRegistry::instance().tsd(scalar_descriptor<Int>::value_meta(),
-                                                             descriptor.response_schema);
-        output = describe_service_output(descriptor, dict_meta, std::move(output));
-        output = service::detail::request_reply_response_feedback(w, std::move(output), *dict_meta);
-        const WiringInstance *capture = shared_output_capture_node(
-            w, std::type_index(typeid(service::detail::request_reply_output_capture_marker)),
-            dict_meta, replies_path, output, replies);
-        w.register_service_rank_anchor(replies_path, capture);
+        else
+        {
+            w.register_service_implementation_candidate(
+                {base}, "request/reply service " + base,
+                [materialize = std::move(materialize), base](Wiring &target) {
+                    materialize(target, base);
+                });
+        }
     }
 
     // ------------------------------------------------------------------
@@ -565,6 +619,19 @@ namespace hgraph
                 case ServiceFlavour::Adaptor: return adaptor_base(d, p);
             }
             throw std::invalid_argument("service '" + d.name + "': not a service flavour");
+        }
+
+        [[nodiscard]] std::string_view flavour_prefix(ServiceFlavour flavour)
+        {
+            switch (flavour)
+            {
+                case ServiceFlavour::Reference: return "ref_svc://";
+                case ServiceFlavour::Subscription: return "subs_svc://";
+                case ServiceFlavour::RequestReply: return "reqrepl_svc://";
+                case ServiceFlavour::ServiceAdaptor: return "service_adaptor://";
+                case ServiceFlavour::Adaptor: return "adaptor://";
+            }
+            throw std::invalid_argument("unknown service flavour");
         }
     }  // namespace
 
@@ -663,9 +730,11 @@ namespace hgraph
         }
     }
 
-    void register_multi_service_impl(Wiring &w, std::span<const RuntimeServiceDescriptor *const> descriptors,
-                                     std::string_view path, const WiredFn &impl,
-                                     std::span<const WiringPortRef> implementation_inputs)
+    namespace
+    {
+    void materialize_multi_service_impl(Wiring &w, std::span<const RuntimeServiceDescriptor *const> descriptors,
+                                        std::string_view path, const WiredFn &impl,
+                                        std::span<const WiringPortRef> implementation_inputs)
     {
         if (descriptors.empty())
         {
@@ -719,6 +788,69 @@ namespace hgraph
         }
         static_cast<void>(wire_impl(w, *descriptors.front(), impl, implementation_inputs));
         scope.complete();
+    }
+    }
+
+    void register_multi_service_impl(Wiring &w, std::span<const RuntimeServiceDescriptor *const> descriptors,
+                                     std::string_view path, const WiredFn &impl,
+                                     std::span<const WiringPortRef> implementation_inputs,
+                                     bool default_fallback)
+    {
+        if (descriptors.empty())
+        {
+            throw std::invalid_argument("register_multi_service_impl requires at least one interface");
+        }
+        std::vector<const RuntimeServiceDescriptor *> stored_descriptors(descriptors.begin(), descriptors.end());
+        std::vector<WiringPortRef> stored_inputs(implementation_inputs.begin(), implementation_inputs.end());
+        if (default_fallback)
+        {
+            std::vector<std::pair<std::string, std::string>> selectors;
+            selectors.reserve(stored_descriptors.size());
+            for (const auto *descriptor : stored_descriptors)
+            {
+                selectors.emplace_back(
+                    std::string{flavour_prefix(descriptor->flavour)}, "/" + descriptor->name);
+            }
+            w.register_default_service_implementation_candidate(
+                std::move(selectors), "default multi-service implementation",
+                [stored_descriptors = std::move(stored_descriptors), impl,
+                 stored_inputs = std::move(stored_inputs)](Wiring &target, std::string_view requested_path) {
+                    std::string user_path;
+                    for (const auto *descriptor : stored_descriptors)
+                    {
+                        const std::string_view prefix = flavour_prefix(descriptor->flavour);
+                        const std::string suffix = "/" + descriptor->name;
+                        if (requested_path.starts_with(prefix) && requested_path.ends_with(suffix))
+                        {
+                            user_path = std::string{requested_path.substr(
+                                prefix.size(), requested_path.size() - prefix.size() - suffix.size())};
+                            break;
+                        }
+                    }
+                    if (user_path.empty())
+                    {
+                        throw std::logic_error("default multi-service request does not match its interfaces");
+                    }
+                    materialize_multi_service_impl(
+                        target, stored_descriptors, user_path, impl, stored_inputs);
+                });
+        }
+        else
+        {
+            std::vector<std::string> paths;
+            paths.reserve(stored_descriptors.size());
+            for (const auto *descriptor : stored_descriptors)
+            {
+                paths.push_back(flavour_base(*descriptor, path));
+            }
+            std::string stored_path{path};
+            w.register_service_implementation_candidate(
+                std::move(paths), "multi-service implementation",
+                [stored_descriptors = std::move(stored_descriptors), stored_path = std::move(stored_path),
+                 impl, stored_inputs = std::move(stored_inputs)](Wiring &target) {
+                    materialize_multi_service_impl(target, stored_descriptors, stored_path, impl, stored_inputs);
+                });
+        }
     }
 
     // ------------------------------------------------------------------
@@ -809,9 +941,11 @@ namespace hgraph
         return WiringPortRef{};
     }
 
-    void register_adaptor_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
-                               const WiredFn &impl, AdaptorImplMode mode,
-                               std::span<const WiringPortRef> implementation_inputs)
+    namespace
+    {
+    void materialize_adaptor_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
+                                  const WiredFn &impl, AdaptorImplMode mode,
+                                  std::span<const WiringPortRef> implementation_inputs)
     {
         require_flavour(descriptor, ServiceFlavour::Adaptor, "adaptor");
         const std::string base = adaptor_base(descriptor, path);
@@ -857,21 +991,57 @@ namespace hgraph
         }
         scope.complete();
     }
+    }
+
+    void register_adaptor_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
+                               const WiredFn &impl, AdaptorImplMode mode,
+                               std::span<const WiringPortRef> implementation_inputs,
+                               bool default_fallback)
+    {
+        require_flavour(descriptor, ServiceFlavour::Adaptor, "adaptor");
+        const std::string base = adaptor_base(descriptor, path);
+        const auto *descriptor_ptr = &descriptor;
+        std::vector<WiringPortRef> stored_inputs(implementation_inputs.begin(), implementation_inputs.end());
+        auto materialize = [descriptor_ptr, impl, mode,
+             stored_inputs = std::move(stored_inputs)](Wiring &target, std::string_view requested_path) {
+                materialize_adaptor_impl(
+                    target, *descriptor_ptr, requested_path, impl, mode, stored_inputs);
+            };
+        if (default_fallback)
+        {
+            w.register_default_service_implementation_candidate(
+                "adaptor://", "/" + descriptor.name,
+                "default adaptor " + descriptor.name, std::move(materialize));
+        }
+        else
+        {
+            w.register_service_implementation_candidate(
+                {base}, "adaptor " + base,
+                [materialize = std::move(materialize), base](Wiring &target) {
+                    materialize(target, base);
+                });
+        }
+    }
 
     void register_unbound_adaptor_impl(
         Wiring &w, const WiredFn &impl,
         std::span<const WiringPortRef> implementation_inputs)
     {
-        if (impl.arity != implementation_inputs.size())
-        {
-            throw std::invalid_argument(
-                "unbound adaptor implementation input count does not match supplied inputs");
-        }
-        if (!impl.valid())
-        {
-            throw std::invalid_argument("unbound adaptor implementation is not wirable");
-        }
-        static_cast<void>(impl.wire(w, implementation_inputs));
+        std::vector<WiringPortRef> stored_inputs(implementation_inputs.begin(), implementation_inputs.end());
+        w.register_catch_all_service_implementation_candidate(
+            "unbound adaptor implementation",
+            [impl, stored_inputs = std::move(stored_inputs)](Wiring &target) {
+                if (impl.arity != stored_inputs.size())
+                {
+                    throw std::invalid_argument(
+                        "unbound adaptor implementation input count does not match supplied inputs");
+                }
+                if (!impl.valid())
+                {
+                    throw std::invalid_argument("unbound adaptor implementation is not wirable");
+                }
+                static_cast<void>(impl.wire(target, stored_inputs));
+            });
     }
 
     // ------------------------------------------------------------------
@@ -1010,10 +1180,12 @@ namespace hgraph
         return service_adaptor_client_to_graph(w, descriptor, path, request_id);
     }
 
-    void register_service_adaptor_impl(Wiring &w,
-                                       const RuntimeServiceDescriptor &descriptor,
-                                       std::string_view path,
-                                       const WiredFn &impl)
+    namespace
+    {
+    void materialize_service_adaptor_impl(Wiring &w,
+                                          const RuntimeServiceDescriptor &descriptor,
+                                          std::string_view path,
+                                          const WiredFn &impl)
     {
         require_flavour(descriptor, ServiceFlavour::ServiceAdaptor, "service adaptor");
         const std::string base = service_adaptor_base(descriptor, path);
@@ -1029,5 +1201,34 @@ namespace hgraph
         WiringPortRef replies = wire_impl(w, descriptor, impl, impl_inputs);
         service_adaptor_to_graph(w, descriptor, path, replies);
         scope.complete();
+    }
+    }
+
+    void register_service_adaptor_impl(Wiring &w,
+                                       const RuntimeServiceDescriptor &descriptor,
+                                       std::string_view path,
+                                       const WiredFn &impl,
+                                       bool default_fallback)
+    {
+        require_flavour(descriptor, ServiceFlavour::ServiceAdaptor, "service adaptor");
+        const std::string base = service_adaptor_base(descriptor, path);
+        const auto *descriptor_ptr = &descriptor;
+        auto materialize = [descriptor_ptr, impl](Wiring &target, std::string_view requested_path) {
+            materialize_service_adaptor_impl(target, *descriptor_ptr, requested_path, impl);
+        };
+        if (default_fallback)
+        {
+            w.register_default_service_implementation_candidate(
+                "service_adaptor://", "/" + descriptor.name,
+                "default service adaptor " + descriptor.name, std::move(materialize));
+        }
+        else
+        {
+            w.register_service_implementation_candidate(
+                {base}, "service adaptor " + base,
+                [materialize = std::move(materialize), base](Wiring &target) {
+                    materialize(target, base);
+                });
+        }
     }
 }  // namespace hgraph

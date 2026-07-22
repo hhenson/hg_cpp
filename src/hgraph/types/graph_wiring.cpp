@@ -1007,6 +1007,18 @@ struct Wiring::Impl {
     bool receive{true};
   };
 
+  struct ServiceImplementationCandidate {
+    std::vector<std::string> paths{};
+    std::string description{};
+    std::function<void(Wiring &)> materialize{};
+    std::function<void(Wiring &, std::string_view)> materialize_default{};
+    std::vector<std::pair<std::string, std::string>> path_selectors{};
+    bool catch_all{false};
+    bool default_fallback{false};
+    bool materialized{false};
+    std::unordered_set<std::string> materialized_paths{};
+  };
+
   /** A same-cycle boundary pairing: the capture must rank before the source. */
   struct SameCyclePair {
     const WiringInstance *capture{nullptr};
@@ -1020,10 +1032,15 @@ struct Wiring::Impl {
   std::unordered_map<std::string, const WiringInstance *>
       service_rank_anchors{};
   std::vector<ServiceClientRank> service_client_ranks{};
+  std::vector<ServiceImplementationCandidate> service_candidates{};
+  std::unordered_map<std::string, std::size_t> service_candidate_paths{};
+  std::unordered_map<std::string, std::size_t> default_service_candidates{};
   std::vector<SameCyclePair> same_cycle_pairs{};
   std::vector<WiringPortRef> captured_inputs{};
   GlobalState traits{}; // value-layer Map<string, Any>
   std::vector<ServiceImplementationScopeState> implementation_scopes{};
+  bool building_services{false};
+  std::string service_materialization_path{};
   GlobalState global_state{};
   std::shared_ptr<WiringObserverRegistry> observers{};
   std::vector<std::string> wiring_path{};
@@ -1589,6 +1606,250 @@ void Wiring::register_service_client_rank(std::string path,
   });
 }
 
+void Wiring::register_service_implementation_candidate(
+    std::vector<std::string> paths, std::string description,
+    std::function<void(Wiring &)> materialize) {
+  if (impl_->kind == WiringKind::SubGraph) {
+    throw std::logic_error(
+        "service/adaptor implementations cannot be registered inside an isolated sub-graph");
+  }
+  if (paths.empty()) {
+    throw std::invalid_argument(
+        "service/adaptor implementation candidate requires at least one path");
+  }
+  if (!materialize) {
+    throw std::invalid_argument(
+        "service/adaptor implementation candidate is not materializable");
+  }
+  std::sort(paths.begin(), paths.end());
+  paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+  for (const auto &path : paths) {
+    if (path.empty()) {
+      throw std::invalid_argument(
+          "service/adaptor implementation candidate path must not be empty");
+    }
+    if (const auto found = impl_->service_candidate_paths.find(path);
+        found != impl_->service_candidate_paths.end()) {
+      throw std::invalid_argument(
+          "duplicate service/adaptor implementation candidate for '" + path +
+          "'; already registered by '" +
+          impl_->service_candidates[found->second].description + "'");
+    }
+  }
+  const std::size_t index = impl_->service_candidates.size();
+  impl_->service_candidates.push_back(Impl::ServiceImplementationCandidate{
+      .paths = std::move(paths),
+      .description = std::move(description),
+      .materialize = std::move(materialize),
+  });
+  for (const auto &path : impl_->service_candidates.back().paths) {
+    impl_->service_candidate_paths.emplace(path, index);
+  }
+}
+
+void Wiring::register_default_service_implementation_candidate(
+    std::string path_prefix, std::string path_suffix,
+    std::string description,
+    std::function<void(Wiring &, std::string_view)> materialize) {
+  register_default_service_implementation_candidate(
+      {{std::move(path_prefix), std::move(path_suffix)}},
+      std::move(description), std::move(materialize));
+}
+
+void Wiring::register_default_service_implementation_candidate(
+    std::vector<std::pair<std::string, std::string>> path_selectors,
+    std::string description,
+    std::function<void(Wiring &, std::string_view)> materialize) {
+  if (impl_->kind == WiringKind::SubGraph) {
+    throw std::logic_error(
+        "service/adaptor implementations cannot be registered inside an isolated sub-graph");
+  }
+  if (path_selectors.empty()) {
+    throw std::invalid_argument(
+        "default service/adaptor implementation candidate requires at least one path selector");
+  }
+  if (!materialize) {
+    throw std::invalid_argument(
+        "default service/adaptor implementation candidate is not materializable");
+  }
+  std::vector<std::string> selector_keys;
+  selector_keys.reserve(path_selectors.size());
+  for (const auto &[path_prefix, path_suffix] : path_selectors) {
+    if (path_prefix.empty() || path_suffix.empty()) {
+      throw std::invalid_argument(
+          "default service/adaptor implementation candidate requires a path prefix and suffix");
+    }
+    std::string selector = path_prefix;
+    selector.push_back('\0');
+    selector.append(path_suffix);
+    if (const auto found = impl_->default_service_candidates.find(selector);
+        found != impl_->default_service_candidates.end()) {
+      throw std::invalid_argument(
+          "duplicate default service/adaptor implementation candidate for '" +
+          path_prefix + "*" + path_suffix + "'; already registered by '" +
+          impl_->service_candidates[found->second].description + "'");
+    }
+    selector_keys.push_back(std::move(selector));
+  }
+  const std::size_t index = impl_->service_candidates.size();
+  impl_->service_candidates.push_back(Impl::ServiceImplementationCandidate{
+      .description = std::move(description),
+      .materialize_default = std::move(materialize),
+      .path_selectors = std::move(path_selectors),
+      .default_fallback = true,
+  });
+  for (auto &selector : selector_keys) {
+    impl_->default_service_candidates.emplace(std::move(selector), index);
+  }
+}
+
+void Wiring::register_catch_all_service_implementation_candidate(
+    std::string description, std::function<void(Wiring &)> materialize) {
+  if (impl_->kind == WiringKind::SubGraph) {
+    throw std::logic_error(
+        "service/adaptor implementations cannot be registered inside an isolated sub-graph");
+  }
+  if (!materialize) {
+    throw std::invalid_argument(
+        "catch-all service/adaptor implementation candidate is not materializable");
+  }
+  impl_->service_candidates.push_back(Impl::ServiceImplementationCandidate{
+      .description = std::move(description),
+      .materialize = std::move(materialize),
+      .catch_all = true,
+  });
+}
+
+void Wiring::build_services() {
+  if (impl_->building_services) {
+    return;
+  }
+  impl_->building_services = true;
+  const auto reset_building = [this] { impl_->building_services = false; };
+  try {
+  bool progress = true;
+  while (progress) {
+    progress = false;
+
+    // Ordinary exact-path candidates form the recursive fixed point. Mark a
+    // candidate before invoking it so a recursively requested sibling cannot
+    // materialize the same multi-interface implementation twice.
+    for (std::size_t i = 0; i < impl_->service_candidates.size(); ++i) {
+      auto &candidate = impl_->service_candidates[i];
+      if (candidate.materialized || candidate.catch_all || candidate.default_fallback) {
+        continue;
+      }
+      const bool requested = std::ranges::any_of(
+          candidate.paths, [&](const std::string &path) {
+            return impl_->client_service_paths.contains(path) &&
+                   !impl_->built_service_paths.contains(path);
+          });
+      if (!requested) {
+        continue;
+      }
+      candidate.materialized = true;
+      auto materialize = candidate.materialize;
+      materialize(*this);
+      progress = true;
+    }
+
+    // Exact registrations take precedence. For every remaining concrete
+    // request, materialize the matching interface-default candidate at that
+    // requested path, once per path/specialization.
+    const auto clients = service_client_paths();
+    for (const auto &[path, _kind] : clients) {
+      if (impl_->built_service_paths.contains(path) ||
+          impl_->service_candidate_paths.contains(path)) {
+        continue;
+      }
+      for (std::size_t i = 0; i < impl_->service_candidates.size(); ++i) {
+        auto &candidate = impl_->service_candidates[i];
+        if (!candidate.default_fallback) {
+          continue;
+        }
+        const auto selector = std::ranges::find_if(
+            candidate.path_selectors, [&](const auto &value) {
+              return path.starts_with(value.first) && path.ends_with(value.second) &&
+                     path.size() >= value.first.size() + value.second.size();
+            });
+        if (selector == candidate.path_selectors.end()) { continue; }
+        const std::string concrete_user_path = path.substr(
+            selector->first.size(),
+            path.size() - selector->first.size() - selector->second.size());
+        if (candidate.materialized_paths.contains(concrete_user_path)) { continue; }
+        for (const auto &[prefix, suffix] : candidate.path_selectors) {
+          const std::string sibling_path = prefix + concrete_user_path + suffix;
+          if (const auto exact = impl_->service_candidate_paths.find(sibling_path);
+              exact != impl_->service_candidate_paths.end()) {
+            throw std::invalid_argument(
+                "default multi-interface implementation '" + candidate.description +
+                "' overlaps exact implementation '" +
+                impl_->service_candidates[exact->second].description +
+                "' at '" + sibling_path + "'");
+          }
+        }
+        candidate.materialized_paths.insert(concrete_user_path);
+        auto materialize = candidate.materialize_default;
+        impl_->service_materialization_path = path;
+        try {
+          materialize(*this, path);
+          impl_->service_materialization_path.clear();
+        } catch (...) {
+          impl_->service_materialization_path.clear();
+          throw;
+        }
+        progress = true;
+        break;
+      }
+    }
+
+    // Catch-all registrations are ordinary implementation graphs which inspect
+    // the complete demand ledger themselves. Compose each once, matching the
+    // reference engine; rewiring the same graph for later clients is invalid.
+    for (std::size_t i = 0; i < impl_->service_candidates.size(); ++i) {
+      auto &candidate = impl_->service_candidates[i];
+      if (!candidate.catch_all || candidate.materialized) {
+        continue;
+      }
+      candidate.materialized = true;
+      auto materialize = candidate.materialize;
+      materialize(*this);
+      progress = true;
+    }
+  }
+  reset_building();
+  } catch (...) {
+    reset_building();
+    throw;
+  }
+}
+
+std::vector<std::pair<std::string, std::string>>
+Wiring::service_client_paths() const {
+  std::vector<std::pair<std::string, std::string>> result;
+  result.reserve(impl_->client_service_paths.size());
+  for (const auto &[path, kind] : impl_->client_service_paths) {
+    result.emplace_back(path, kind);
+  }
+  std::ranges::sort(result);
+  return result;
+}
+
+std::vector<std::pair<std::string, std::string>>
+Wiring::built_service_paths() const {
+  std::vector<std::pair<std::string, std::string>> result;
+  result.reserve(impl_->built_service_paths.size());
+  for (const auto &[path, kind] : impl_->built_service_paths) {
+    result.emplace_back(path, kind);
+  }
+  std::ranges::sort(result);
+  return result;
+}
+
+std::string_view Wiring::service_materialization_path() const noexcept {
+  return impl_->service_materialization_path;
+}
+
 Wiring::ServiceImplementationScope::ServiceImplementationScope(
     Wiring &wiring, std::string description,
     std::vector<WiringServiceImplementationEndpoint> required_endpoints)
@@ -1902,6 +2163,7 @@ GraphBuilder Wiring::finish_top_level(bool consume_state) {
     throw std::logic_error("Wiring::finish encountered an unterminated "
                            "service/adaptor implementation scope");
   }
+  build_services();
   for (const auto &[path, kind] : impl_->client_service_paths) {
     if (!impl_->built_service_paths.contains(path)) {
       throw std::invalid_argument("missing implementation for " + kind + " '" +

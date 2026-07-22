@@ -576,14 +576,9 @@ TEST_CASE("adaptor wiring supports scalar-qualified paths")
             output_sources.push_back(name);
         }
     }
-    CHECK(configured_paths == std::vector<std::string>{
-                                  "typed[side=primary]",
-                                  "typed[side=secondary]",
-                                  "typed[side=secondary%2Fspecial%2C%20value]"});
+    CHECK(configured_paths == std::vector<std::string>{"typed[side=primary]"});
     CHECK(output_sources == std::vector<std::string>{
-                                "shared_output_source:adaptor://typed[side=primary]/typed_source/to_graph",
-                                "shared_output_source:adaptor://typed[side=secondary]/typed_source/to_graph",
-                                "shared_output_source:adaptor://typed[side=secondary%2Fspecial%2C%20value]/typed_source/to_graph"});
+                                "shared_output_source:adaptor://typed[side=primary]/typed_source/to_graph"});
 
     CHECK_OUTPUT(testing::eval_node<TypedPathAdaptorGraph>(Str{"primary"}), testing::values<Int>(11));
     CHECK_OUTPUT(testing::eval_node<TypedPathAdaptorGraph>(Str{"secondary"}), testing::values<Int>(22));
@@ -619,7 +614,7 @@ TEST_CASE("adaptor wiring rejects duplicate implementation registrations")
     CHECK_THROWS_AS(build_graph<DuplicateAdaptorGraph>(), std::invalid_argument);
 }
 
-TEST_CASE("adaptor wiring validates missing implementations and illegal stubs")
+TEST_CASE("adaptor wiring validates requested implementations and ignores unused candidates")
 {
     using namespace hgraph;
 
@@ -627,5 +622,5 @@ TEST_CASE("adaptor wiring validates missing implementations and illegal stubs")
 
     CHECK_THROWS_AS(build_graph<MissingAdaptorImplementationGraph>(), std::invalid_argument);
     CHECK_THROWS_AS(build_graph<IllegalAdaptorStubGraph>(), std::invalid_argument);
-    CHECK_THROWS_AS(build_graph<MissingAdaptorStubGraph>(), std::invalid_argument);
+    CHECK_NOTHROW(build_graph<MissingAdaptorStubGraph>());
 }

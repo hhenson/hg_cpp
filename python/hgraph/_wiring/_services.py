@@ -884,6 +884,7 @@ def register_adaptor(path, implementation, resolution_dict=None, **kwargs):
 
 def _register_resolved_adaptor(path, implementation, kwargs, wiring=None):
     wiring = wiring or _current_wiring()
+    default_fallback = path is None
     implementation_inputs, scalar_kwargs = _adaptor_registration_inputs(
         implementation, kwargs)
     if not implementation.interfaces:
@@ -905,7 +906,8 @@ def _register_resolved_adaptor(path, implementation, kwargs, wiring=None):
         impl_fn = _bind_registered_impl(implementation, path, scalar_kwargs)
         _hgraph.register_multi_service_impl(
             wiring, [stub.descriptor for stub in implementation.interfaces], resolved_path,
-            _wrap_graph_fn(impl_fn), [_unwrap(port) for port in implementation_inputs])
+            _wrap_graph_fn(impl_fn), [_unwrap(port) for port in implementation_inputs],
+            default_fallback=default_fallback)
         return
     stub = implementation.interfaces[0]
     resolved_path = _resolved_service_path(stub, path)
@@ -913,12 +915,14 @@ def _register_resolved_adaptor(path, implementation, kwargs, wiring=None):
     impl_fn = _bind_registered_impl(implementation, user_path, scalar_kwargs)
     if stub.flavour == "service_adaptor":
         _hgraph.register_service_adaptor_impl(
-            wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
+            wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn),
+            default_fallback=default_fallback)
     else:
         _hgraph.register_adaptor_impl(
             wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn),
             automatic=not implementation.manual_adaptor,
-            inputs=[_unwrap(port) for port in implementation_inputs])
+            inputs=[_unwrap(port) for port in implementation_inputs],
+            default_fallback=default_fallback)
 
 
 def _adaptor_registration_inputs(implementation, config):
@@ -1122,6 +1126,8 @@ def _split_service_requests(stub, packed):
 def _bind_registered_impl(implementation, path, config):
     """Bind path/config while leaving only native service ports in the signature."""
     impl_fn = implementation.fn
+    from ._core import _published_contexts
+    registration_contexts = tuple(_published_contexts)
     signature = implementation.signature
     parameters = list(signature.parameters.values())
     stub = implementation.interfaces[0] if len(implementation.interfaces) == 1 else None
@@ -1194,10 +1200,46 @@ def _bind_registered_impl(implementation, path, config):
         )
         arguments = dict(zip((param.name for param in port_parameters), user_ports))
         if any(param.name == "path" for param in parameters):
-            arguments["path"] = path
+            effective_path = path
+            materialized_path = _current_wiring().service_materialization_path()
+            if materialized_path:
+                _, _, qualified = materialized_path.partition("://")
+                matched_stub = next(
+                    (candidate for candidate in implementation.interfaces
+                     if qualified.endswith(f"/{candidate.__name__}")),
+                    None,
+                )
+                if matched_stub is not None:
+                    suffix = f"/{matched_stub.__name__}"
+                    effective_path = qualified[:-len(suffix)]
+                    specialization = getattr(matched_stub, "_specialization", "")
+                    typed_suffix = f"[{specialization}]" if specialization else ""
+                    if typed_suffix and effective_path.endswith(typed_suffix):
+                        effective_path = effective_path[:-len(typed_suffix)]
+            arguments["path"] = effective_path
         for param in scalar_parameters:
             arguments[param.name] = resolved_config.get(param.name, param.default)
-        return impl_fn(**arguments)
+        from contextlib import ExitStack
+        wiring = _wiring_stack[0] if _wiring_stack else _current_wiring()
+        contexts = _SERVICE_BUILD_CONTEXTS.get(wiring, ())
+        existing_context_count = len(_published_contexts)
+        _published_contexts.extend(registration_contexts)
+        try:
+            if not contexts:
+                return impl_fn(**arguments)
+            with ExitStack() as stack:
+                for context, context_name in contexts:
+                    if isinstance(context, WiringPort):
+                        from types import SimpleNamespace
+                        frame = SimpleNamespace(
+                            f_locals={context_name: context} if context_name else {})
+                        _published_contexts.append(
+                            (context, _unwrap(context).ts_type, frame))
+                    else:
+                        stack.enter_context(context)
+                return impl_fn(**arguments)
+        finally:
+            del _published_contexts[existing_context_count:]
 
     bound.__name__ = implementation.__name__
     bound.__signature__ = inspect.Signature(
@@ -1480,6 +1522,9 @@ def set_service_output(path, stub, out):
         out=_unwrap(out))
 
 
+_SERVICE_BUILD_CONTEXTS = {}
+
+
 class WiringGraphContext:
     """Compatibility view of the active native wiring context.
 
@@ -1495,7 +1540,50 @@ class WiringGraphContext:
 
     @staticmethod
     def build_services():
-        _current_wiring()
+        _current_wiring().build_services()
+
+    @staticmethod
+    def add_service_build_context(context, name=None):
+        wiring = _wiring_stack[0] if _wiring_stack else _current_wiring()
+        contexts = _SERVICE_BUILD_CONTEXTS.setdefault(wiring, [])
+        if name is not None and any(existing_name == name for _, existing_name in contexts):
+            raise WiringError(
+                f"service build context with name {name!r} is already registered")
+        contexts.append((context, name))
+
+    @staticmethod
+    def registered_service_clients(service):
+        """Compatibility reflection over concrete native client identities.
+
+        The native linker de-duplicates build demand by concrete base path;
+        expose the old adaptor endpoint shape for catch-all resolvers. Node
+        identity is represented by ``None`` because ranking is retained in the
+        native client ledger rather than Python wiring-node objects.
+        """
+        prefix = {
+            "reference": "ref_svc://",
+            "subscription": "subs_svc://",
+            "request_reply": "reqrepl_svc://",
+            "adaptor": "adaptor://",
+            "service_adaptor": "service_adaptor://",
+        }[service.flavour]
+        suffix = f"/{service.__name__}"
+        clients = []
+        for base, _kind in _current_wiring().service_client_paths():
+            if not base.startswith(prefix) or not base.endswith(suffix):
+                continue
+            if service.flavour in {"adaptor", "service_adaptor"}:
+                if service._request_params:
+                    clients.append((base + "/from_graph", {}, None, False))
+                if _is_ts_annotation(service._signature.return_annotation):
+                    clients.append((base + "/to_graph", {}, None, True))
+            else:
+                clients.append((base, {}, None, True))
+        return tuple(clients)
+
+    @staticmethod
+    def built_services():
+        return dict(_current_wiring().built_service_paths())
 
 
 def impl_input(stub, path=""):
@@ -1516,6 +1604,7 @@ def impl_output(stub, out, path=""):
 
 def _register_resolved_service(path, implementation, kwargs, *, wiring=None):
     wiring = _current_wiring() if wiring is None else wiring
+    default_fallback = path is None
     if len(implementation.interfaces) > 1:
         resolved_paths = {
             _resolved_service_path(stub, path) for stub in implementation.interfaces
@@ -1526,14 +1615,15 @@ def _register_resolved_service(path, implementation, kwargs, *, wiring=None):
         impl_fn = _bind_registered_impl(implementation, path, kwargs)
         _hgraph.register_multi_service_impl(
             wiring, [stub.descriptor for stub in implementation.interfaces], resolved_path,
-            _wrap_graph_fn(impl_fn))
+            _wrap_graph_fn(impl_fn), default_fallback=default_fallback)
         return
     stub = implementation.interfaces[0]
     resolved_path = _resolved_service_path(stub, path)
     user_path = getattr(stub, "_default_path", "") if path is None else path
     impl_fn = _bind_registered_impl(implementation, user_path, kwargs)
     _hgraph.register_service_impl(
-        wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
+        wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn),
+        default_fallback=default_fallback)
 
 
 def register_service(path, implementation, resolution_dict=None, **kwargs):

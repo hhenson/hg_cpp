@@ -1002,6 +1002,67 @@ def test_mesh_python_reference_surface():
     assert not hasattr(hg, "mesh_ref")
 
 
+def test_service_implementations_materialize_only_when_requested():
+    compositions = []
+
+    @hg.reference_service
+    def lazy_value() -> TS[int]: ...
+
+    @hg.service_impl(interfaces=lazy_value)
+    def lazy_value_impl() -> TS[int]:
+        compositions.append("built")
+        return hg.const(7, tp=TS[int])
+
+    @graph
+    def unused() -> TS[int]:
+        hg.register_service("lazy", lazy_value_impl)
+        return hg.const(1, tp=TS[int])
+
+    assert eval_node(unused) == [1]
+    assert compositions == []
+
+    @graph
+    def requested() -> TS[int]:
+        hg.register_service("lazy", lazy_value_impl)
+        return lazy_value(path="lazy")
+
+    assert eval_node(requested) == [7]
+    assert compositions == ["built"]
+
+
+def test_explicit_service_build_reenters_registered_contexts():
+    active = []
+    observed = []
+
+    class BuildContext:
+        def __enter__(self):
+            active.append(True)
+            return self
+
+        def __exit__(self, *_):
+            active.pop()
+
+    @hg.reference_service
+    def contextual_value() -> TS[int]: ...
+
+    @hg.service_impl(interfaces=contextual_value)
+    def contextual_value_impl() -> TS[int]:
+        observed.append(bool(active))
+        return hg.const(9, tp=TS[int])
+
+    @graph
+    def requested() -> TS[int]:
+        hg.register_service("contextual", contextual_value_impl)
+        value = contextual_value(path="contextual")
+        hg.WiringGraphContext.instance().add_service_build_context(
+            BuildContext(), "build_context")
+        hg.WiringGraphContext.instance().build_services()
+        return value
+
+    assert eval_node(requested) == [9]
+    assert observed == [True]
+
+
 def test_private_service_transport_helpers_are_not_public():
     import hgraph.nodes as nodes
 
@@ -1096,6 +1157,24 @@ def test_adaptor_from_python():
 
     check(eval_node(source_and_sink, [3]) == [7], "automatic source adaptor")
     check(captured == [3], f"automatic sink adaptor: {captured}")
+
+    observed_paths = []
+
+    @hg.adaptor
+    def fallback_source(path: str = "fallback") -> TS[str]: ...
+
+    @hg.adaptor_impl(interfaces=fallback_source)
+    def fallback_source_impl(path: str = "fallback") -> TS[str]:
+        observed_paths.append(path)
+        return hg.const(path)
+
+    @graph
+    def custom_source() -> TS[str]:
+        hg.register_adaptor(None, fallback_source_impl)
+        return fallback_source(path="custom-source")
+
+    check(eval_node(custom_source) == ["custom-source"], "default adaptor at custom path")
+    check(observed_paths == ["custom-source"], f"adaptor paths: {observed_paths}")
 
     @hg.adaptor_impl(interfaces=(loopback,))
     def configured_manual(extra: TS[int]):

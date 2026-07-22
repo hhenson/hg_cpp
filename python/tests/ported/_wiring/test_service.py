@@ -75,6 +75,61 @@ def test_specialized_service_impl_receives_user_path_without_type_suffix():
     assert eval_node(client) == [1]
 
 
+def test_default_service_impl_serves_custom_path_and_receives_that_path():
+    observed = []
+
+    @hg.reference_service
+    def value(path: str = "default") -> TS[str]: ...
+
+    @hg.service_impl(interfaces=value)
+    def value_impl(path: str = "default") -> TS[str]:
+        observed.append(path)
+        return hg.const(path)
+
+    @graph
+    def client() -> TS[str]:
+        hg.register_service(None, value_impl)
+        return value(path="custom")
+
+    assert eval_node(client) == ["custom"]
+    assert observed == ["custom"]
+
+
+def test_registration_is_allowed_in_flattened_graph_but_not_map_body():
+    @hg.reference_service
+    def value(path: str) -> TS[int]: ...
+
+    @hg.service_impl(interfaces=value)
+    def value_impl() -> TS[int]:
+        return hg.const(1)
+
+    @graph
+    def flattened_helper() -> TS[int]:
+        hg.register_service("flattened", value_impl)
+        return value(path="flattened")
+
+    @graph
+    def flattened_client() -> TS[int]:
+        return flattened_helper()
+
+    assert eval_node(flattened_client) == [1]
+
+    @graph
+    def mapped_item(ts: TS[int]) -> TS[int]:
+        hg.register_service("mapped", value_impl)
+        return ts
+
+    @graph
+    def mapped_client(ts: hg.TSD[str, TS[int]]) -> hg.TSD[str, TS[int]]:
+        return hg.map_(mapped_item, ts)
+
+    with pytest.raises(
+        RuntimeError,
+        match="cannot be registered inside an isolated sub-graph",
+    ):
+        eval_node(mapped_client, [{"item": 1}])
+
+
 def test_single_service_type_variable_accepts_direct_specialization():
     output = TypeVar("SERVICE_OUTPUT", bound=TS[object])
 
@@ -139,6 +194,30 @@ def test_mixed_multi_service_interfaces_share_a_generic_specialization():
     assert eval_node(
         client, [7], __end_time__=hg.MIN_ST + 4 * hg.MIN_TD,
     )[-1] == 7
+
+
+def test_default_multi_service_impl_is_atomic_at_custom_path():
+    observed = []
+
+    @hg.reference_service
+    def first(path: str = "default") -> TS[int]: ...
+
+    @hg.reference_service
+    def second(path: str = "default") -> TS[str]: ...
+
+    @hg.service_impl(interfaces=(first, second))
+    def impl(path: str = "default"):
+        observed.append(path)
+        first.wire_impl_out_stub(path, hg.const(1))
+        second.wire_impl_out_stub(path, hg.const(path))
+
+    @graph
+    def client() -> TS[str]:
+        hg.register_service(None, impl)
+        return second(path="custom")
+
+    assert eval_node(client) == ["custom"]
+    assert observed == ["custom"]
 
 
 def test_specialized_numeric_request_reply_services_use_native_exchange():
