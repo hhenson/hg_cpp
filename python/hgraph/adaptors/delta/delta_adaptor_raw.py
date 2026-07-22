@@ -1,5 +1,4 @@
 import logging
-import os
 from concurrent.futures import Executor
 from datetime import datetime, timedelta
 from enum import Enum
@@ -44,7 +43,9 @@ class DeltaSchemaMode(Enum):
 
 
 def _base_path(path):
-    return path if path.endswith(os.path.sep) else path + os.path.sep
+    # Table locations are URI-style (s3://…, memory, plain directories);
+    # deltalake accepts "/" on every platform while "\" corrupts URIs.
+    return path if path.endswith("/") else path + "/"
 
 
 def _credentials(credentials, path):
