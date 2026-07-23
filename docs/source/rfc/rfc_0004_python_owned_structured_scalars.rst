@@ -14,11 +14,12 @@ objects throughout graph execution. A Python dataclass used as a scalar type
 has a nominal hgraph schema and supports reflection, typed attribute access,
 construction, dispatch, equality, and the usual scalar graph operations, but
 its runtime storage is one strong reference to the original Python object. It
-is not materialised as a C++ ``Bundle`` and its fields are not exposed through
-``BundleView``.
+is not materialised into field-by-field C++ storage. It is nevertheless a
+``Bundle`` semantically and exposes its declared fields through the same
+type-erased ``BundleView`` used by native bundle storage.
 
-``CompoundScalar`` remains the C++-addressable structured scalar. This RFC
-adds a separate Python-owned representation for application models whose
+``CompoundScalar`` remains the native-layout structured scalar. This RFC adds
+a Python-backed Bundle representation for application models whose
 constructors, descriptors, inheritance, equality, or deliberately permissive
 field values rely on Python behaviour.
 
@@ -41,13 +42,16 @@ value or silently changing it. Examples include:
 The current arbitrary-object fallback preserves a Python object but maps every
 class to the same native ``object`` schema. It cannot provide reliable nominal
 dispatch, field reflection, or wiring-time output resolution for
-``getattr_``. Conversely, mapping the class to ``Bundle`` provides those
-features by eagerly converting every declared field into native storage, which
-is the source of the compatibility problem.
+``getattr_``. The current canonical ``Bundle`` binding provides those features
+but eagerly converts every declared field into native storage, which is the
+source of the compatibility problem.
 
-The required model therefore separates logical schema from physical layout:
-C++ can know that a value is a particular record with particular declared
-attributes, while the Python bridge alone owns and interprets its payload.
+The required model therefore separates logical schema and view from physical
+layout. Both representations are Bundles. The native binding projects fields
+through offsets in structured storage; the Python binding projects fields
+through Python attribute access. ``BundleView`` already exists to erase that
+representation difference, so a second structured value kind would duplicate
+the concept and weaken generic Bundle operators.
 
 Goals
 -----
@@ -56,13 +60,14 @@ Goals
   Python-defined behaviour.
 * Extract an ordered, typed schema suitable for hgraph wiring, reflection, and
   operator resolution.
+* Present the value as a normal read-only ``BundleView`` to generic C++ code.
 * Provide the structured scalar conveniences users expect, especially
   ``getattr_`` and construction from field time series.
 * Avoid eager, recursive field validation or conversion when the whole object
   enters a time series.
 * Keep native ``CompoundScalar`` semantics, storage, and C++ access unchanged.
-* Make the ownership and performance boundary visible: C++ can inspect the
-  logical schema but cannot directly address Python-owned fields.
+* Make the ownership and performance boundary visible: C++ can access fields
+  through type erasure but cannot assume native field addresses or layouts.
 
 Non-goals
 ---------
@@ -71,8 +76,9 @@ This RFC does not:
 
 * make a Python-owned object usable in a Python-free process;
 * expose ``PyObject`` or bridge-internal storage in the public C++ SDK;
-* make an opaque record a ``Bundle`` or permit ``BundleView`` access;
-* infer a portable wire format, Arrow layout, or JSON representation;
+* expose Python-backed fields as direct native memory addresses;
+* provide a mutable ``BundleView`` over the held Python object;
+* infer an Arrow layout merely from the Python storage strategy;
 * observe in-place mutation as an hgraph tick;
 * perform general runtime validation from Python type annotations; or
 * change the representation of an existing ``CompoundScalar``.
@@ -85,16 +91,17 @@ Terminology and ownership
    fields participate in hgraph's type system, while its value remains one
    Python object.
 
-**Opaque record**
-   The binding-neutral core schema capability used to describe a nominal
-   record whose fields are logical attributes rather than addressable storage
-   components.
+**Python-backed Bundle binding**
+   A ``ValueTypeKind::Bundle`` binding whose storage owns a Python object and
+   whose ``IndexedValueOps`` project the declared fields by Python attribute
+   access. It implements the same read-only ``BundleView`` contract as a
+   field-expanded native binding without sharing its layout.
 
-The opaque-record metadata and its interning rules belong to the hgraph core.
-The class registry, ``PyObject`` lifetime, schema extraction, Python
-conversion, and attribute evaluation belong to the optional Python bridge.
-Pure C++ builds contain no Python class registrations and retain no dependency
-on the Python runtime.
+Bundle schema metadata, ``BundleView``, and the representation-neutral indexed
+operations belong to the hgraph core. The class registry, ``PyObject``
+lifetime, schema extraction, Python projection operations, and construction
+policy belong to the optional Python bridge. Pure C++ builds contain no Python
+class registrations and retain no dependency on the Python runtime.
 
 Python contract
 ---------------
@@ -218,46 +225,62 @@ tick unless the default-valued ``getattr_`` form is used.
 C++ schema contract
 -------------------
 
-The core adds a nominal opaque-record schema facility. An opaque record:
+The Python class registers as an ordinary nominal
+``ValueTypeKind::Bundle``. Its ordered ``ValueFieldMetaData`` is the logical
+field contract, and its qualified class name provides nominal identity. No new
+value kind or opaque-record capability is introduced.
 
-* is scalar/atomic for storage and time-series purposes;
-* carries ``ValueTypeFlags::OpaqueRecord``;
-* may carry ordered ``ValueFieldMetaData`` entries as logical attributes;
-* has nominal identity and cannot be structurally assigned to another opaque
-  record merely because its fields match;
-* is paired explicitly with an atomic storage plan and ``ValueOps`` table; and
-* never provides indexed, tuple, or bundle views over those fields.
-
-The metadata contract must no longer describe ``fields`` as exclusive to
-``Tuple`` and ``Bundle``. Fields on an enum remain enum members, fields on a
-``Bundle`` remain physical components, and fields on an opaque record are
-descriptive attributes. Consumers must check the kind and capability flag
-before interpreting the array.
-
-The registry operation is conceptually:
+Schema and representation remain separate. A schema may be paired with a
+binding whose storage plan is not the factory-derived named-tuple layout,
+provided that binding supplies the erased operations required by the schema's
+views. The core registration facility is conceptually:
 
 .. code-block:: cpp
 
-   opaque_record(
-       qualified_name,
-       ordered_fields,
-       atomic_storage_binding);
+   register_bundle_binding(
+       nominal_bundle_schema,
+       python_object_storage_plan,
+       python_indexed_value_ops);
 
-It interns by nominal name and field schema, verifies idempotent
-re-registration, and associates the result with the supplied atomic storage
-binding. The Python bridge uses its private Python-object binding; that binding
-is not installed as a public C++ payload type.
+The general core change is the ability to register a non-layout-derived
+canonical binding for a Bundle schema. It is not Python-specific. Registration
+verifies that the binding exposes a complete read-only ``IndexedValueOps``
+surface matching the schema field count and field schemas. The Python bridge's
+storage plan and projection operations remain private.
 
-A C++ consumer can use the schema in generic wiring, inspect its name and
-logical fields, and pass or compare its erased value through registered
-operations. It cannot call ``checked_as<PythonClass>()``, obtain field offsets,
-or use ``BundleView``. Operators that execute Python behaviour are registered
-only when Python support is enabled.
+``BundleView`` is the semantic interface, not a promise of native named-tuple
+storage. A Python-backed binding therefore supports:
+
+.. code-block:: cpp
+
+   BundleView bundle = value.as_bundle();
+   ValueView bid = bundle.at("bid");
+
+The indexed operations project each field through a field-specific erased
+binding. That projection interprets the parent Python-object storage, performs
+ordinary Python attribute lookup under the GIL, and materialises or converts
+the field only when an operation consumes it. The field view remains governed
+by its declared field schema. The erased assignment/materialisation protocol
+must support copying such a projected view into canonical native storage
+without requiring a direct pointer to an ``Int``, ``Float``, or other child
+inside the parent object.
+
+This may require extending the indexed/value ops contract beyond its current
+direct-child-pointer fast path. Native composite bindings retain that fast
+path. The Python binding must not create a parallel Python-only Bundle view or
+teach generic operators to branch on storage policy.
+
+A C++ consumer can inspect, iterate, copy, compare, serialise, and project
+fields through ``BundleView`` and the normal erased operations. It cannot call
+``checked_as<PythonClass>()``, obtain native field offsets, or assume that
+``bundle.at(i).data()`` points at canonical child storage. A
+``MutableBundleView`` is not provided for the held Python object.
 
 This facility is separate from :doc:`rfc_0003_extension_scalar_registration`.
 RFC 0003 associates a Python facade with extension-owned native scalar storage.
 This RFC does the inverse: the Python class owns the value semantics and the
-core sees only an opaque nominal schema plus bridge-owned operations.
+core sees a normal nominal Bundle schema through a Python-backed erased
+binding.
 
 Runtime representation
 ----------------------
@@ -270,9 +293,9 @@ independent hgraph storage until extracted.
 
 The declared schema controls a typed boundary. Schema-free inference uses an
 exact registered class first and then the first registered class in the
-runtime type's Python MRO. It never chooses an opaque-record schema by
-inspecting field values. When a target schema is already known, ``isinstance``
-against its registered class is authoritative.
+runtime type's Python MRO. It never chooses a Bundle schema by inspecting field
+values. When a target schema is already known, ``isinstance`` against its
+registered class is authoritative.
 
 Equality follows Python ``==`` and propagates Python exceptions. Hash support
 is advertised only when the registered class is hashable; hashing follows
@@ -286,18 +309,15 @@ Operator semantics
 Attribute access
 ~~~~~~~~~~~~~~~~
 
-``getattr_(ts, attr)`` and ``ts.attr`` select a Python-owned-object overload
-when the input has the opaque-record capability. ``attr`` remains a wiring-time
-string. For a declared field, the output is resolved from the field schema,
-then the runtime node acquires the GIL, performs ordinary Python attribute
-lookup, and converts only the result to the output schema.
-
-This is a distinct operator implementation selected during wiring; native
-``Bundle`` attribute access retains its direct field-projection
-implementation. No per-tick storage-policy branch is introduced.
+``getattr_(ts, attr)`` and ``ts.attr`` use the existing Bundle overload.
+``attr`` remains a wiring-time string, the output is resolved from the Bundle
+field schema, and evaluation copies the projected field view into the output.
+The binding's erased indexed operations determine whether that projection uses
+a native field offset or Python attribute access. The operator contains no
+storage-policy branch.
 
 Properties and other descriptors use Python lookup. A descriptor not listed in
-the record schema requires an explicit output specialisation, for example:
+the Bundle schema requires an explicit output specialisation, for example:
 
 .. code-block:: python
 
@@ -311,9 +331,10 @@ returns ``None``; it does not swallow other descriptor exceptions.
 Construction
 ~~~~~~~~~~~~
 
-``combine[TS[Quote]](...)`` is implemented by a Python bridge node, not by a
-native Bundle builder. Wiring checks field names and input time-series types.
-At evaluation the node calls the registered class with keyword arguments and
+``combine[TS[Quote]](...)`` uses the ordinary Bundle composition path. Wiring
+checks field names and input time-series types. The target Bundle binding
+receives the composed field views through the erased assignment protocol and
+calls the registered Python construction policy with keyword arguments. It
 publishes the resulting object unchanged.
 
 For dataclasses, omitted ``init=True`` fields must have a default or default
@@ -332,10 +353,11 @@ Other scalar operations
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 Pass-through, merge, switch, sampling, ``type_``, equality, string conversion,
-and explicit deduplication use the ordinary scalar framework and the
-Python-object ``ValueOps``. There is no implicit field-wise merge. Operators
-that require native scalar, tuple, map, list, or Bundle storage do not match an
-opaque record merely because its logical fields have compatible schemas.
+and explicit deduplication use the ordinary scalar and Bundle framework.
+Generic Bundle operators consume ``BundleView`` and therefore apply to both
+storage strategies. An operator that requires a concrete native child layout
+must state that narrower requirement explicitly; testing
+``ValueTypeKind::Bundle`` alone never establishes a layout.
 
 Mutation and time-series semantics
 ----------------------------------
@@ -356,37 +378,43 @@ object graphs.
 Inheritance and assignability
 -----------------------------
 
-The declared opaque-record schema is nominal. A runtime subclass instance is
-valid for a base-class target and remains a subclass object. A port declared as
-``TS[Child]`` may bind to ``TS[Base]`` through an opaque up-cast that changes
-only the logical schema and retains the same object handle. Down-casts require
-the existing explicit dispatch/cast mechanisms and an ``isinstance`` check.
+The declared Bundle schema is nominal. A runtime subclass instance is valid
+for a base-class target and remains a subclass object. A port declared as
+``TS[Child]`` may bind to ``TS[Base]`` through the normal Bundle up-cast while
+retaining the same Python object handle. Down-casts require the existing
+explicit dispatch/cast mechanisms and an ``isinstance`` check.
 
-Opaque-record ancestry is captured when a graph is wired so that later class
-definitions do not change an existing graph's overload set. Unlike closed
-``CompoundScalar`` unions, storage size is unaffected by descendants and no
-discriminator is required: the Python object already carries its concrete
-class.
+Python-backed Bundle ancestry participates in the same wiring-time hierarchy
+snapshot as native Bundles, so later class definitions do not change an
+existing graph's overload set. Its realised binding remains Python-backed:
+storage size is unaffected by descendants, and the binding obtains the active
+concrete schema from the object's registered runtime class. No external
+discriminator is needed for a live value because the Python object already
+carries that class.
 
 Serialization and persistence
 -----------------------------
 
-The presence of logical fields does not opt an opaque record into the native
-Bundle, JSON, Arrow, Frame, record/replay, or table codecs. Pickle is not an
-implicit interchange format. Persistence requires an explicit adapter or a
-future schema-directed Python-object codec with a separately reviewed version
-and reconstruction contract.
+Schema-directed Bundle codecs operate through ``BundleView`` and therefore may
+serialise the declared fields of either storage representation. Decoding or
+replay targets the Python-backed binding, which reconstructs the Python object
+through its registered construction policy. The same field schemas,
+discriminator rules, and codec compatibility checks apply.
 
-This restriction prevents descriptive annotations from being mistaken for
-proof that arbitrary constructors, descriptors, hidden state, subclasses, and
-field values can round-trip field by field.
+Only declared Bundle fields participate. Hidden attributes and other Python
+object state are not part of the representation. A class whose constructor
+cannot recreate the declared schema must register an explicit construction
+factory or is rejected by reconstruction-dependent codecs. Field-wise Arrow or
+table support still requires an operator-defined layout; being Python-backed
+does not itself imply one. Pickle is not an implicit interchange format.
 
 Compatibility and migration
 ---------------------------
 
 Existing native ``CompoundScalar`` classes are unchanged. Code that requires
-C++ nodes to inspect fields, native field projection, native codecs, or
-Python-free execution should continue to use ``CompoundScalar``.
+direct field addresses, GIL-free field access, native construction, or
+Python-free execution should continue to use ``CompoundScalar``. Generic C++
+code written against ``BundleView`` supports both representations.
 
 A legacy model that requires Python object semantics migrates by removing the
 ``CompoundScalar`` base while retaining its dataclass definition:
@@ -406,7 +434,8 @@ A legacy model that requires Python object semantics migrates by removing the
        ask: float
 
 Both support typed Python wiring and attribute access, but their storage and
-C++ capabilities are intentionally different.
+C++ field-view surface is intentionally the same. Their layout, mutation,
+construction, GIL, and Python-free capabilities are different.
 
 Dataclasses currently falling through to the shared ``object`` schema gain a
 distinct nominal schema. Python source behaviour is compatible, but code that
@@ -451,9 +480,15 @@ Use the shared ``object``/``Any`` schema
    ``getattr_`` or native overloads.
 
 Represent the value as a ``Bundle`` with Python-object storage
-   Rejected because ``Bundle`` promises addressable field storage.
-   ``BundleView``, codecs, comparison, and table operators would interpret the
-   object pointer as a composite layout.
+   Chosen. A Bundle promises a named structured view, not one physical layout.
+   ``BundleView`` and ``IndexedValueOps`` are the type-erasure boundary that
+   allows native offsets and Python attribute projections to satisfy the same
+   contract.
+
+Add an atomic ``OpaqueRecord`` schema
+   Rejected because it duplicates the Bundle field schema, prevents generic
+   Bundle operators from applying, and encodes a storage decision as a
+   semantic value category.
 
 Restore opaque storage for every ``CompoundScalar``
    This would weaken the established C++-first contract and make existing C++
@@ -462,11 +497,9 @@ Restore opaque storage for every ``CompoundScalar``
 
 Add a new ``ValueTypeKind``
    A dedicated kind is more visibly distinct but requires changes to every
-   exhaustive value-kind switch. An atomic schema with an
-   ``OpaqueRecord`` capability accurately describes the storage and follows
-   the existing precedent of nominal atomic schemas carrying supplementary
-   metadata. A later generalisation can introduce a kind if non-atomic
-   semantics emerge.
+   exhaustive value-kind switch while still needing the same named-field view.
+   The existing Bundle kind already describes the semantics; the binding
+   supplies the representation.
 
 Validate all annotated fields on assignment
    Rejected because it recreates the compatibility failure this RFC addresses
@@ -485,12 +518,17 @@ Acceptance criteria and test plan
 Core metadata and storage
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-* Opaque records have nominal identity, ordered logical fields, an atomic
-  storage binding, and no indexed/Bundle view.
+* A Python-owned class has normal nominal Bundle metadata with ordered fields.
+* Its canonical binding owns the Python object and exposes complete read-only
+  ``IndexedValueOps``; ``ValueView::as_bundle()`` succeeds.
+* ``BundleView`` field access works by index and name without assuming native
+  child offsets.
+* Projected field views retain the declared field schema and can be copied or
+  materialised into canonical native field storage through erased operations.
+* Native offset-backed and Python-projection-backed Bundles pass the same
+  generic ``BundleView`` conformance suite.
 * Equal registration is idempotent; name, field, class, or binding conflicts
   fail deterministically.
-* Metadata consumers distinguish enum members, physical composite fields, and
-  opaque logical attributes.
 * A Python-free build and the installed C++ SDK remain independent of Python.
 
 Python typing and conversion
@@ -500,7 +538,8 @@ Python typing and conversion
   base and reflects its ordered fields.
 * A non-dataclass can be explicitly registered; an unregistered class keeps
   the generic object fallback.
-* A native ``CompoundScalar`` remains a Bundle and does not take this path.
+* A native ``CompoundScalar`` remains an offset-backed Bundle; a plain
+  dataclass uses the Python-backed Bundle binding.
 * Typed assignment retains object identity and accepts subclasses without
   eagerly reading or validating fields.
 * Schema-free inference is deterministic across exact classes and MRO bases.
@@ -520,7 +559,10 @@ Operators
   factories, keyword-only fields, ``init=False``, and ``__post_init__``.
 * Equality and hashing follow Python. Unhashable classes are rejected as
   ``TSS``/``TSD`` keys rather than receiving an identity-hash fallback.
-* Native Bundle operators do not accidentally select for opaque records.
+* Existing generic Bundle attribute, comparison, conversion, and composition
+  operators work through type erasure for both storage strategies.
+* Schema-directed Bundle codec round trips reconstruct the Python class when
+  its registered construction policy permits it.
 
 Semantics and robustness
 ~~~~~~~~~~~~~~~~~~~~~~~~
