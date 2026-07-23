@@ -13,6 +13,7 @@
 #include <hgraph/runtime/node_error.h>
 
 #include <memory>
+#include <stdexcept>
 
 namespace spdlog
 {
@@ -34,6 +35,21 @@ namespace hgraph
     {
         Simulation,
         RealTime,
+    };
+
+    /**
+     * Thrown by ``GraphExecutorView::run()`` when the opt-in recursion guard
+     * (``GraphExecutorBuilder::max_consecutive_immediate_cycles``) trips: the
+     * graph evaluated the configured number of consecutive cycles that each
+     * advanced evaluation time by exactly ``MIN_TD`` — the evaluation-graph
+     * shape of infinite recursion. The message carries the per-node
+     * evaluation path of the last cycle (design record: execution_layer.rst,
+     * *Opt-in recursion guard*).
+     */
+    class HGRAPH_EXPORT RecursiveEvaluationError : public std::runtime_error
+    {
+      public:
+        using std::runtime_error::runtime_error;
     };
 
     /** Schema/config descriptor for a graph executor. */
@@ -213,6 +229,14 @@ namespace hgraph
         GraphExecutorBuilder &logger(std::shared_ptr<spdlog::logger> logger);
         GraphExecutorBuilder &error_capture_options(ErrorCaptureOptions options) noexcept;
         GraphExecutorBuilder &cleanup_on_error(bool value) noexcept;
+        /**
+         * Arm the opt-in recursion guard: after ``limit`` consecutive cycles
+         * that each advance evaluation time by exactly ``MIN_TD``, the run
+         * records one further cycle's per-node evaluation path and throws
+         * ``RecursiveEvaluationError``. ``0`` (the default) disables the
+         * guard. Applies to both run modes.
+         */
+        GraphExecutorBuilder &max_consecutive_immediate_cycles(std::uint32_t limit) noexcept;
         /** Register a lifecycle observer for this executor's run (see ``LifecycleObserver``). */
         GraphExecutorBuilder &add_lifecycle_observer(LifecycleObserver *observer);
 
@@ -224,6 +248,7 @@ namespace hgraph
         [[nodiscard]] const std::shared_ptr<spdlog::logger> &logger() const noexcept;
         [[nodiscard]] ErrorCaptureOptions error_capture_options() const noexcept;
         [[nodiscard]] bool cleanup_on_error() const noexcept;
+        [[nodiscard]] std::uint32_t max_consecutive_immediate_cycles() const noexcept;
         [[nodiscard]] const std::vector<LifecycleObserver *> &lifecycle_observers() const noexcept;
         [[nodiscard]] GraphTypeRef graph_type() const;
         [[nodiscard]] ExecutorTypeRef type() const;
@@ -240,6 +265,7 @@ namespace hgraph
         std::shared_ptr<spdlog::logger>  logger_{};
         ErrorCaptureOptions             error_capture_options_{};
         bool                            cleanup_on_error_{true};
+        std::uint32_t                   max_consecutive_immediate_cycles_{0};
         std::vector<LifecycleObserver *> lifecycle_observers_{};
         mutable ExecutorTypeRef          type_{};
     };

@@ -48,6 +48,25 @@ Current implementation
     cascades deeper than the bound are cut off exactly as
     ``request_stop()`` would cut them.
 
+    **Opt-in recursion guard.** A run of consecutive ``MIN_TD`` cycles is
+    usually the evaluation-graph equivalent of infinite recursion — a
+    feedback/retry shape that re-schedules itself every cycle and never
+    settles. ``GraphExecutorBuilder::max_consecutive_immediate_cycles(n)``
+    (default ``0`` = disabled) arms a guard in **both** run modes: the run
+    loop counts consecutive cycles that advance evaluation time by exactly
+    ``MIN_TD`` (any larger advance resets the count). When the count
+    reaches ``n``, the executor evaluates **one further cycle** with a
+    temporary ``LifecycleObserver`` recording every evaluated node's
+    ``diagnostic::node_path`` (nested graphs included, capped at 256
+    entries), then throws ``RecursiveEvaluationError`` whose message names
+    the consecutive-cycle count, the evaluation time, and the recorded
+    per-node evaluation path of that last cycle. The same text is logged
+    through the run logger before the throw. If the loop settles during
+    the recording cycle the guard disarms and the run continues. The guard
+    shares the consecutive-``MIN_TD`` counter with the real-time drain
+    bound above; past wall-clock ``end_time`` whichever limit is lower
+    fires first (the drain ends the run quietly, the guard throws).
+
 Pause / resume (the cursor protocol)
 ------------------------------------
 
