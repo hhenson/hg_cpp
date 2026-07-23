@@ -112,10 +112,12 @@ Acceptance criteria
 Implementation status
 ---------------------
 
-Implementation is planned for subsequent commits after review of this
-proposal. It will cover the type system, Arrow codec, Python bridge,
-table-operator propagation, and conformance tests. This RFC remains
-``Proposed`` until that implementation is accepted for merge.
+The implementation is complete on its implementation PR. It covers the
+two-parameter C++ and Python Frame type, field-wise Arrow schema codec,
+marker-bearing and markerless decoding, Python conversion validation,
+metadata-aware table overloads, installed-SDK use, and C++/Python conformance
+tests. The RFC remains ``Proposed`` until that implementation is accepted for
+merge, at which point this status changes to ``Accepted`` in the same PR.
 
 Versioned-dataset proof
 -----------------------

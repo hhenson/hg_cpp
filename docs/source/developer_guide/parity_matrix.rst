@@ -416,6 +416,19 @@ Types and scalars
    * - ``TSL``
      - Full
      - Fixed and dynamic.
+   * - ``Frame[Rows, Metadata]``
+     - Full for typed value transport and metadata-aware table transforms
+     - Metadata is encoded field by field in Arrow schema metadata: supported
+       atomics as plain strings and nested fields as JSON. Sorting, filtering,
+       and column projection preserve it; concat requires equality; join
+       requires an explicit metadata policy. C++ and Python bridge round trips
+       use the same table representation.
+   * - Downstream native scalar registration
+     - Full
+     - Installed C++ and public Python hooks associate extension-owned scalar
+       schemas with Python classes for annotation resolution, reflection, and
+       value conversion. Registration is process-wide, idempotent for an
+       identical pair, and rejects conflicts.
    * - ``REF``
      - Full
      - Wiring marker + runtime retargeting; executor-level tests

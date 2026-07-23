@@ -99,7 +99,7 @@ namespace hgraph
         template <typename C> struct delta_input { using type = Value; };
         template <typename V> struct delta_input<TS<V>> { using type = V; };
         template <typename V> struct delta_input<TS<SeriesOf<V>>> { using type = Series; };
-        template <typename V> struct delta_input<TS<FrameOf<V>>> { using type = Frame; };
+        template <typename V, typename M> struct delta_input<TS<FrameOf<V, M>>> { using type = Frame; };
         template <typename V, std::size_t P, std::size_t M> struct delta_input<TSW<V, P, M>> { using type = V; };
         template <> struct delta_input<SIGNAL> { using type = bool; };
         template <typename C> using delta_input_t = typename delta_input<C>::type;
@@ -614,11 +614,11 @@ namespace hgraph
         [[nodiscard]] const TSInputView &base() const noexcept { return *this; }
     };
 
-    template <fixed_string Name, typename TSchema, auto... TPolicies>
-    class In<Name, TS<FrameOf<TSchema>>, TPolicies...> : public TSInputView
+    template <fixed_string Name, typename TSchema, typename TMetadata, auto... TPolicies>
+    class In<Name, TS<FrameOf<TSchema, TMetadata>>, TPolicies...> : public TSInputView
     {
       public:
-        using schema                     = TS<FrameOf<TSchema>>;
+        using schema                     = TS<FrameOf<TSchema, TMetadata>>;
         using value_type                 = Frame;
         static constexpr auto field_name = Name;
         static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
@@ -1072,11 +1072,11 @@ namespace hgraph
         }
     };
 
-    template <typename TSchema>
-    class Out<TS<FrameOf<TSchema>>> : public TSOutputView
+    template <typename TSchema, typename TMetadata>
+    class Out<TS<FrameOf<TSchema, TMetadata>>> : public TSOutputView
     {
       public:
-        using schema     = TS<FrameOf<TSchema>>;
+        using schema     = TS<FrameOf<TSchema, TMetadata>>;
         using value_type = Frame;
 
         Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}

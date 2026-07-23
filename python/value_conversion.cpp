@@ -1,5 +1,6 @@
 #include "module_internal.h"
 
+#include <hgraph/python/native_scalar_registration.h>
 #include <hgraph/types/metadata/type_realization.h>
 
 #include <hgraph/lib/std/operators/arithmetic.h>
@@ -14,6 +15,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -378,13 +380,6 @@ namespace hgraph::python_bridge
                 return py_to_value_as(object, meta);
             }
         }
-        // Python classes are callable too, but are scalar data for dispatch,
-        // context, and TS[object]. Only callable instances become runtime
-        // callables during schema-free inference.
-        if (PyType_Check(object.ptr()) == 0 && PyCallable_Check(object.ptr()) != 0)
-        {
-            return Value{python_value_callable(object)};
-        }
         const auto &date_time_types = python_datetime_types();
         if (nb::isinstance(object, date_time_types.datetime))
         {
@@ -423,6 +418,18 @@ namespace hgraph::python_bridge
                 throw nb::type_error("invalid Python timedelta value");
             }
             return Value{delta};
+        }
+        if (const auto *native =
+                python_bridge::native_scalar_type_for_value(object))
+        {
+            return py_to_value_as(object, native);
+        }
+        // Python classes are callable too, but are scalar data for dispatch,
+        // context, and TS[object]. Only unregistered callable instances become
+        // runtime callables during schema-free inference.
+        if (PyType_Check(object.ptr()) == 0 && PyCallable_Check(object.ptr()) != 0)
+        {
+            return Value{python_value_callable(object)};
         }
         if (nb::hasattr(object, "__arrow_c_stream__"))
         {
@@ -619,6 +626,12 @@ namespace hgraph::python_bridge
             boxed.as_any().begin_mutation().set(std::move(inferred));
             return boxed;
         }
+
+        // A typed Frame owns two schemas in one Arrow representation:
+        // element_type describes the columns and key_type describes the
+        // field-wise hgraph entries in the Arrow schema metadata. Validate
+        // those entries while the target schema is available.
+        const bool frame_target = meta != nullptr && TypeRegistry::instance().is_frame(meta);
         // Conversion goes through the binding's from_python operation; no
         // schema-kind switch is needed at this boundary.
         std::shared_ptr<const TypeRealizationSnapshot> conversion_snapshot;
@@ -643,6 +656,33 @@ namespace hgraph::python_bridge
         TypeRealizationScope realization_scope{snapshot};
         Value result{type};
         result.view().assign_from_python(object);
+        if (frame_target)
+        {
+            const auto frame = result.view().checked_as<Frame>();
+            const bool carries_metadata = frame.has_metadata();
+            if (meta->key_type == nullptr && carries_metadata)
+            {
+                throw nb::type_error(
+                    "row-only Frame input cannot carry hgraph Arrow metadata; "
+                    "call without_frame_metadata() explicitly");
+            }
+            if (meta->key_type != nullptr && !carries_metadata)
+            {
+                throw nb::type_error(
+                    "typed Frame input requires metadata encoded in the Arrow schema");
+            }
+            if (carries_metadata)
+            {
+                try
+                {
+                    (void)frame_metadata(frame, meta->key_type);
+                }
+                catch (const std::exception &error)
+                {
+                    throw nb::type_error(error.what());
+                }
+            }
+        }
         return result;
     }
 

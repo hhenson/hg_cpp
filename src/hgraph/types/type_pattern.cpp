@@ -149,9 +149,16 @@ namespace hgraph
                        concrete->element_type != nullptr && !pattern.children.empty() &&
                        scalar_pattern_match(pattern.children[0], concrete->element_type, map);
             case ScalarPattern::Kind::Frame:
-                return TypeRegistry::instance().is_frame(concrete) &&
-                       concrete->element_type != nullptr && !pattern.children.empty() &&
-                       scalar_pattern_match(pattern.children[0], concrete->element_type, map);
+                if (!TypeRegistry::instance().is_frame(concrete) || concrete->element_type == nullptr ||
+                    pattern.children.empty() || pattern.children.size() > 2 ||
+                    !scalar_pattern_match(pattern.children[0], concrete->element_type, map))
+                {
+                    return false;
+                }
+                return pattern.children.size() == 1
+                           ? concrete->key_type == nullptr
+                           : concrete->key_type != nullptr &&
+                                 scalar_pattern_match(pattern.children[1], concrete->key_type, map);
             case ScalarPattern::Kind::Array:
             {
                 if (!TypeRegistry::is_array(concrete) || pattern.children.empty()) { return false; }
@@ -406,7 +413,11 @@ namespace hgraph
             case ScalarPattern::Kind::Series:
             case ScalarPattern::Kind::Frame:
             case ScalarPattern::Kind::Array:
-                return 1 + (!pattern.children.empty() ? scalar_pattern_rank(pattern.children[0]) / 2 : 0);
+            {
+                int rank = 1;
+                for (const ScalarPattern &child : pattern.children) { rank += scalar_pattern_rank(child) / 2; }
+                return rank;
+            }
             case ScalarPattern::Kind::FixedTuple:
             case ScalarPattern::Kind::Map:
             {
@@ -494,8 +505,14 @@ namespace hgraph
             }
             case ScalarPattern::Kind::Frame:
             {
-                const ValueTypeMetaData *schema = resolve_required_scalar_child(pattern, map);
-                return schema != nullptr ? TypeRegistry::instance().frame(schema) : nullptr;
+                if (pattern.children.empty() || pattern.children.size() > 2) { return nullptr; }
+                const ValueTypeMetaData *schema = scalar_pattern_resolve(pattern.children[0], map);
+                const ValueTypeMetaData *metadata = pattern.children.size() == 2
+                                                        ? scalar_pattern_resolve(pattern.children[1], map)
+                                                        : nullptr;
+                return schema != nullptr && (pattern.children.size() == 1 || metadata != nullptr)
+                           ? TypeRegistry::instance().frame(schema, metadata)
+                           : nullptr;
             }
             case ScalarPattern::Kind::Array:
             {
@@ -699,9 +716,13 @@ namespace hgraph
                                    pattern.children.empty() ? std::string{"scalar"}
                                                             : scalar_pattern_to_string(pattern.children[0]));
             case ScalarPattern::Kind::Frame:
-                return fmt::format("Frame[{}]",
-                                   pattern.children.empty() ? std::string{"schema"}
-                                                            : scalar_pattern_to_string(pattern.children[0]));
+                if (pattern.children.empty()) { return "Frame[schema]"; }
+                if (pattern.children.size() == 1)
+                {
+                    return fmt::format("Frame[{}]", scalar_pattern_to_string(pattern.children[0]));
+                }
+                return fmt::format("Frame[{}, {}]", scalar_pattern_to_string(pattern.children[0]),
+                                   scalar_pattern_to_string(pattern.children[1]));
             case ScalarPattern::Kind::Array:
             {
                 std::vector<std::string> dimensions;

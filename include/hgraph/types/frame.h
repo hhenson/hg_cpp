@@ -8,6 +8,7 @@
 #include <functional>
 #include <iosfwd>
 #include <memory>
+#include <string_view>
 
 namespace arrow
 {
@@ -16,6 +17,8 @@ namespace arrow
 
 namespace hgraph
 {
+    class Value;
+
     /**
      * The ``Frame`` scalar — a first-class table value backed by an **Apache
      * Arrow** table (design record: *Record/replay, tables and const_fn*,
@@ -43,6 +46,8 @@ namespace hgraph
         std::shared_ptr<arrow::Table> table{};
 
         [[nodiscard]] bool has_value() const noexcept { return table != nullptr; }
+        /** True when the Arrow schema carries any reserved hgraph frame metadata. */
+        [[nodiscard]] HGRAPH_EXPORT bool has_metadata() const noexcept;
 
         friend bool operator==(const Frame &lhs, const Frame &rhs) noexcept
         {
@@ -50,11 +55,38 @@ namespace hgraph
         }
     };
 
+    /** Reserved Arrow schema-metadata keys used by the field-wise codec. */
+    inline constexpr std::string_view frame_metadata_prefix{"hgraph.metadata."};
+    inline constexpr std::string_view frame_metadata_schema_key{"hgraph.metadata.schema"};
+    inline constexpr std::string_view frame_metadata_version_key{"hgraph.metadata.version"};
+    inline constexpr std::string_view frame_metadata_field_prefix{"hgraph.metadata.field."};
+
+    /**
+     * Encode a named Bundle value into the Arrow table's schema metadata.
+     * Atomic fields use their plain string form; structured fields use JSON.
+     * Existing non-hgraph Arrow metadata is preserved.
+     */
+    [[nodiscard]] HGRAPH_EXPORT Frame with_frame_metadata(Frame frame, Value metadata);
+    /**
+     * Decode metadata against a declared named Bundle schema. When no schema
+     * is supplied, the optional encoded schema marker is used for reflective
+     * loading; markerless metadata therefore requires an explicit schema.
+     */
+    [[nodiscard]] HGRAPH_EXPORT Value frame_metadata(
+        const Frame &frame, const ValueTypeMetaData *metadata_schema = nullptr);
+    /** True when the Arrow schema carries any reserved hgraph metadata entry. */
+    [[nodiscard]] HGRAPH_EXPORT bool has_frame_metadata(const Frame &frame) noexcept;
+    /** Compare only the reserved hgraph metadata entries on two Arrow schemas. */
+    [[nodiscard]] HGRAPH_EXPORT bool frame_metadata_equal(
+        const Frame &lhs, const Frame &rhs) noexcept;
+    /** Explicitly discard hgraph metadata while preserving unrelated Arrow metadata. */
+    [[nodiscard]] HGRAPH_EXPORT Frame without_frame_metadata(Frame frame);
+
     /** Render as ``frame[rows x cols]`` (diagnostics; not a data format). */
     std::ostream &operator<<(std::ostream &os, const Frame &value);
 
     /** Row count (0 for an empty frame) without exposing Arrow headers. */
-    [[nodiscard]] std::int64_t frame_rows(const Frame &value) noexcept;
+    [[nodiscard]] HGRAPH_EXPORT std::int64_t frame_rows(const Frame &value) noexcept;
 
     namespace static_schema_detail
     {

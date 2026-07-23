@@ -530,20 +530,26 @@ namespace hgraph::stdlib
             {
                 throw std::runtime_error("sorted_: arrow take failed: " + sorted.status().ToString());
             }
-            return Frame{sorted->table()};
+            return Frame{sorted->table()->ReplaceSchemaMetadata(
+                frame.table->schema()->metadata())};
         }
 
         Frame concat_frames(const Frame &lhs, const Frame &rhs)
         {
             if (!lhs.has_value()) { return rhs; }
             if (!rhs.has_value()) { return lhs; }
+            if (!frame_metadata_equal(lhs, rhs))
+            {
+                throw std::invalid_argument("concat: frame metadata must be equal");
+            }
 
             auto result = arrow::ConcatenateTables({lhs.table, rhs.table});
             if (!result.ok())
             {
                 throw std::runtime_error("concat: arrow concatenate failed: " + result.status().ToString());
             }
-            return Frame{std::move(*result)};
+            return Frame{(*result)->ReplaceSchemaMetadata(
+                lhs.table->schema()->metadata())};
         }
 
         namespace
@@ -784,7 +790,8 @@ namespace hgraph::stdlib
                     throw std::runtime_error("filter_frame: Arrow filter failed: " +
                                              result.status().ToString());
                 }
-                return Frame{result->table()};
+                return Frame{result->table()->ReplaceSchemaMetadata(
+                    frame.table->schema()->metadata())};
             }
         }  // namespace
 
@@ -1146,8 +1153,9 @@ namespace hgraph::stdlib
                 fields.push_back(arrow::field(name, column->type()));
                 values.push_back(std::move(column));
             }
-            return Frame{arrow::Table::Make(arrow::schema(std::move(fields)),
-                                            std::move(values), frame.table->num_rows())};
+            return Frame{arrow::Table::Make(
+                arrow::schema(std::move(fields), frame.table->schema()->metadata()),
+                std::move(values), frame.table->num_rows())};
         }
         // -----------------------------------------------------------------
         // convert / combine frame targets
@@ -1357,14 +1365,19 @@ namespace hgraph::stdlib
         register_overload<to_data_frame, to_data_frame_impl>();
         register_overload<group_by, group_by_impl>();
         register_overload<sorted_, sorted_frame_impl>();
+        register_overload<sorted_, sorted_metadata_frame_impl>();
         register_overload<concat, concat_frame_impl>();
+        register_overload<concat, concat_metadata_frame_impl>();
         register_overload<data_frame::join, join_frame_impl>();
         register_overload<data_frame::filter_frame, filter_frame_impl>();
+        register_overload<data_frame::filter_frame, filter_metadata_frame_impl>();
         register_overload<data_frame::filter_cs, filter_cs_impl>();
+        register_overload<data_frame::filter_cs, filter_cs_metadata_frame_impl>();
         register_overload<data_frame::ungroup, ungroup_frame_impl>();
         register_overload<data_frame::ungroup_with_keys, ungroup_frame_with_keys_impl>();
         register_overload<data_frame::ungroup, ungroup_items_impl>();
         register_overload<data_frame::with_columns, with_columns_impl>();
+        register_overload<data_frame::with_columns, with_columns_metadata_frame_impl>();
         register_overload<convert, convert_tsd_to_frame_impl>();
         register_overload<convert, convert_frame_to_frame_impl>();
         register_overload<convert, convert_value_to_frame_impl>();
