@@ -58,32 +58,6 @@ struct ValueKeyEqual {
 using ValueSet =
     ankerl::unordered_dense::set<Value, ValueKeyHash, ValueKeyEqual>;
 
-[[nodiscard]] std::size_t mesh_key_hash(const void *key, const void *context) {
-  const auto *ops = static_cast<const ValueOps *>(context);
-  if (ops == nullptr) {
-    throw std::logic_error("mesh_ key hash requires key ops");
-  }
-  return ops->hash(key);
-}
-
-[[nodiscard]] bool mesh_key_equal(const void *lhs, const void *rhs,
-                                  const void *context) {
-  const auto *ops = static_cast<const ValueOps *>(context);
-  if (ops == nullptr) {
-    throw std::logic_error("mesh_ key equality requires key ops");
-  }
-  return ops->equals(lhs, rhs);
-}
-
-[[nodiscard]] KeySlotStoreOps
-mesh_key_store_ops(const ValueTypeRef &binding) noexcept {
-  return KeySlotStoreOps{
-      .hash = &mesh_key_hash,
-      .equal = &mesh_key_equal,
-      .context = &binding.ops_ref(),
-  };
-}
-
 // One mesh instance. Declaration order is load-bearing (reverse
 // destruction): the child graph (a subscriber to key_source) tears down
 // before the key source it observes.
@@ -160,8 +134,7 @@ struct MeshNodeStorage final : SlotObserver {
     if (instance_keys.has_value()) {
       return;
     }
-    instance_keys.emplace(key_binding.checked_plan(),
-                          mesh_key_store_ops(key_binding));
+    instance_keys.emplace(key_binding);
     instance_keys->add_slot_observer(this);
   }
 
@@ -228,7 +201,7 @@ struct MeshNodeStorage final : SlotObserver {
     if (!instance_keys.has_value() || !key.has_value()) {
       return KeySlotStore::npos;
     }
-    return instance_keys->find_slot(key.data());
+    return instance_keys->find_slot(key);
   }
 
   [[nodiscard]] MeshEntry *find(const ValueView &key) noexcept {
@@ -523,7 +496,7 @@ MeshEntry &create_instance(const NodeView &view, const MeshNodeContext &context,
   const MeshNodeSpec &spec = context.spec;
   initialise_mesh_storage(storage, context);
 
-  const auto inserted = storage.instance_keys->insert(key_view.data());
+  const auto inserted = storage.instance_keys->insert(key_view);
   const std::size_t slot = inserted.slot;
   MeshEntry *existing = storage.entries.entry_at(slot);
   if (!inserted.inserted) {
@@ -537,7 +510,9 @@ MeshEntry &create_instance(const NodeView &view, const MeshNodeContext &context,
       UnwindCleanupGuard([&] { storage.retire_slot(slot, evaluation_time); });
   auto &entry = existing != nullptr
                     ? *existing
-                    : storage.entries.construct_at(slot, Value{key_view});
+                    : storage.entries.construct_at(
+                          slot, Value{ValueView{context.key_binding,
+                                               (*storage.instance_keys)[slot]}});
   entry.rank = rank;
   entry.paused = true;
   entry.settled_time = MIN_DT;
@@ -848,7 +823,34 @@ bool mesh_evaluate_impl(const void *, const NodeView &view,
     }
 
     if (++guard > storage.active_count() + 64) {
-      throw std::runtime_error("mesh_ failed to settle within the cycle");
+      std::string detail;
+      for (std::size_t slot = 0; slot < storage.instance_keys->slot_capacity();
+           ++slot) {
+        if (!storage.instance_keys->slot_live(slot)) {
+          continue;
+        }
+        const MeshEntry *entry = storage.entries.entry_at(slot);
+        if (entry == nullptr || !entry->graph.has_value()) {
+          continue;
+        }
+        const auto child = entry->graph.view();
+        if (entry->settled_time == evaluation_time ||
+            (!entry->paused && child.next_scheduled_time() > evaluation_time)) {
+          continue;
+        }
+        if (!detail.empty()) {
+          detail.append(", ");
+        }
+        detail.append(entry->key.view().to_string());
+        detail.append(fmt::format("[rank={}, paused={}, settled={}, next={}]",
+                                  entry->rank, entry->paused,
+                                  entry->settled_time == evaluation_time,
+                                  child.next_scheduled_time()
+                                      .time_since_epoch()
+                                      .count()));
+      }
+      throw std::runtime_error(
+          fmt::format("mesh_ failed to settle within the cycle: {}", detail));
     }
   }
   storage.current_eval_key = {};

@@ -3,6 +3,7 @@
 #include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/utils/key_slot_store.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/json_codec.h>
 #include <hgraph/types/value/value.h>
@@ -528,6 +529,139 @@ TEST_CASE("abstract Bundle without a concrete alternative cannot be realized") {
   REQUIRE_THROWS_AS(snapshot->type_for(abstract), std::logic_error);
 }
 
+TEST_CASE("canonical and realized views have equal logical hashes") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  const auto *text = registry.value_type("str");
+  REQUIRE(integer != nullptr);
+  REQUIRE(text != nullptr);
+
+  const auto *base = registry.bundle(
+      "tests.realization.hash", "Base", {{"id", integer}}, {}, true);
+  const auto *leaf = registry.bundle(
+      "tests.realization.hash", "Leaf",
+      {{"id", integer}, {"name", text}}, {base});
+
+  Value canonical{ValuePlanFactory::instance().type_for(leaf)};
+  auto canonical_fields = canonical.as_bundle().begin_mutation();
+  canonical_fields["id"].set(Int{7});
+  canonical_fields["name"].set(Str{"seven"});
+
+  const auto snapshot = TypeRealizationSnapshot::capture(registry);
+  const auto realized_base = snapshot->type_for(base);
+  Value realized{realized_base};
+  auto destination = realized.begin_mutation();
+  realized_base.ops_ref().copy_assign_from(
+      realized_base, destination.mutable_data(), canonical.binding(),
+      canonical.view().data());
+
+  REQUIRE(canonical.view().equals(realized.view()));
+  REQUIRE(realized.view().equals(canonical.view()));
+  REQUIRE(canonical.view().hash() == realized.view().hash());
+}
+
+TEST_CASE("KeySlotStore supports heterogeneous realized value lookup") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  const auto *text = registry.value_type("str");
+  REQUIRE(integer != nullptr);
+  REQUIRE(text != nullptr);
+
+  const auto *base = registry.bundle(
+      "tests.realization.key_store", "Base", {{"id", integer}}, {}, true);
+  const auto *leaf = registry.bundle(
+      "tests.realization.key_store", "Leaf",
+      {{"id", integer}, {"name", text}}, {base});
+
+  const auto canonical_binding = ValuePlanFactory::instance().type_for(leaf);
+  Value canonical{canonical_binding};
+  auto canonical_fields = canonical.as_bundle().begin_mutation();
+  canonical_fields["id"].set(Int{7});
+  canonical_fields["name"].set(Str{"seven"});
+
+  const auto snapshot = TypeRealizationSnapshot::capture(registry);
+  const auto realized_binding = snapshot->type_for(base);
+  Value realized{realized_binding};
+  auto realized_destination = realized.begin_mutation();
+  realized_binding.ops_ref().copy_assign_from(
+      realized_binding, realized_destination.mutable_data(), canonical.binding(),
+      canonical.view().data());
+
+  KeySlotStore realized_store{realized_binding};
+  const auto inserted = realized_store.insert(canonical.view());
+  REQUIRE(inserted.inserted);
+  REQUIRE(inserted.constructed);
+  REQUIRE(realized_store.find_slot(realized.view()) == inserted.slot);
+  REQUIRE_FALSE(realized_store.insert(realized.view()).inserted);
+  REQUIRE(realized_store.size() == 1);
+  REQUIRE(ValueView{realized_binding, realized_store.key_memory(inserted.slot)}
+              .equals(canonical.view()));
+
+  KeySlotStore canonical_store{canonical_binding};
+  const auto reverse_inserted = canonical_store.insert(canonical.view());
+  REQUIRE(reverse_inserted.inserted);
+  REQUIRE(reverse_inserted.constructed);
+  REQUIRE(canonical_store.find_slot(realized.view()) == reverse_inserted.slot);
+  REQUIRE_FALSE(canonical_store.insert(realized.view()).inserted);
+  REQUIRE(canonical_store.size() == 1);
+}
+
+TEST_CASE("closed unions convert alternatives between realization snapshots") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  REQUIRE(integer != nullptr);
+
+  const auto *inner_base = registry.bundle(
+      "tests.realization.snapshot_conversion", "InnerBase", {{"id", integer}});
+  registry.bundle("tests.realization.snapshot_conversion", "InnerSmall",
+                  {{"id", integer}, {"small", integer}}, {inner_base});
+  const auto *outer_base = registry.bundle(
+      "tests.realization.snapshot_conversion", "OuterBase", {}, {}, true);
+  const auto *outer_leaf = registry.bundle(
+      "tests.realization.snapshot_conversion", "OuterLeaf",
+      {{"inner", inner_base}}, {outer_base});
+
+  const auto first = TypeRealizationSnapshot::capture(registry);
+  const auto first_outer = first->type_for(outer_base);
+  Value canonical{ValuePlanFactory::instance().type_for(outer_leaf)};
+  canonical.as_bundle().begin_mutation()["inner"]
+      .as_bundle().begin_mutation()["id"].set(Int{7});
+  Value older{first_outer};
+  auto older_destination = older.begin_mutation();
+  first_outer.ops_ref().copy_assign_from(
+      first_outer, older_destination.mutable_data(), canonical.binding(),
+      canonical.view().data());
+
+  registry.bundle("tests.realization.snapshot_conversion", "InnerLarge",
+                  {{"id", integer}, {"large", integer}, {"extra", integer}},
+                  {inner_base});
+  const auto second = TypeRealizationSnapshot::capture(registry);
+  const auto second_outer = second->type_for(outer_base);
+  REQUIRE(first->type_for(outer_leaf) != second->type_for(outer_leaf));
+
+  Value copied{second_outer};
+  auto copied_destination = copied.begin_mutation();
+  second_outer.ops_ref().copy_assign_from(
+      second_outer, copied_destination.mutable_data(), older.binding(),
+      older.view().data());
+  REQUIRE(copied.view().concrete().schema() == outer_leaf);
+  REQUIRE(copied.view().concrete().as_bundle()["inner"]
+              .concrete().as_bundle()["id"].checked_as<Int>() == 7);
+
+  Value moved{second_outer};
+  auto moved_destination = moved.begin_mutation();
+  auto older_source = older.begin_mutation();
+  second_outer.ops_ref().move_assign_from(
+      second_outer, moved_destination.mutable_data(), older.binding(),
+      older_source.mutable_data());
+  REQUIRE(moved.view().concrete().schema() == outer_leaf);
+  REQUIRE(moved.view().concrete().as_bundle()["inner"]
+              .concrete().as_bundle()["id"].checked_as<Int>() == 7);
+}
+
 TEST_CASE("realized Base lists preserve mixed derived element types") {
   using namespace hgraph;
   auto &registry = TypeRegistry::instance();
@@ -556,6 +690,46 @@ TEST_CASE("realized Base lists preserve mixed derived element types") {
 
   REQUIRE(values.at(0).concrete().schema() == named);
   REQUIRE(values.at(1).concrete().schema() == sized);
+}
+
+TEST_CASE("closed Bundle accepts a canonical alternative with realized fields") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  REQUIRE(integer != nullptr);
+
+  const auto *model = registry.bundle(
+      "tests.realization.canonical_source", "Model", {{"id", integer}});
+  const auto *concrete_model = registry.bundle(
+      "tests.realization.canonical_source", "ConcreteModel",
+      {{"id", integer}, {"parameter", integer}}, {model});
+  REQUIRE(concrete_model != nullptr);
+  const auto *base = registry.bundle(
+      "tests.realization.canonical_source", "Base", {{"id", integer}}, {},
+      true);
+  const auto *derived = registry.bundle(
+      "tests.realization.canonical_source", "Derived",
+      {{"id", integer}, {"model", model}}, {base});
+
+  const auto snapshot = TypeRealizationSnapshot::capture(registry);
+  const auto realized_base = snapshot->type_for(base);
+  const auto realized_derived = snapshot->exact_type_for(derived);
+  const auto canonical_derived = ValuePlanFactory::instance().type_for(derived);
+  REQUIRE(realized_derived != canonical_derived);
+
+  Value source{canonical_derived};
+  auto source_fields = source.as_bundle().begin_mutation();
+  source_fields["id"].set(Int{1});
+
+  Value target{realized_base};
+  auto mutable_target = target.begin_mutation();
+  realized_base.ops_ref().copy_assign_from(
+      realized_base, mutable_target.mutable_data(), canonical_derived,
+      source.view().data());
+
+  const auto concrete = target.view().concrete();
+  REQUIRE(concrete.schema() == derived);
+  REQUIRE(concrete.as_bundle()["id"].checked_as<Int>() == 1);
 }
 
 TEST_CASE(

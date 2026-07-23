@@ -17,7 +17,12 @@ _DELAY = timedelta(milliseconds=10)
 
 
 def _end_time():
-    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=2)
+    # Safety net only: every test stops its own engine once it has captured
+    # what it asserts on, so the width costs nothing on the happy path. A
+    # shared CI runner stalling longer than the remainder of the window
+    # after a capture drops the next wall-clock poll and fails the test
+    # (observed on windows-latest with the previous 2s window).
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=15)
 
 
 def test_delta_subscription_polling_reissues_rendered_request():

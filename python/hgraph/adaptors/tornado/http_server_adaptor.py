@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import threading
+import weakref
 from dataclasses import dataclass
 
 import _hgraph
@@ -21,6 +22,8 @@ from hgraph import (
     from_graph,
     graph,
     map_,
+    merge,
+    partition,
     push_queue,
     register_adaptor,
     sink_node,
@@ -165,6 +168,34 @@ class HttpAdaptorManager:
     def start(self, path: str) -> None:
         self.register_path(path)
         self._web.start()
+
+    def start_routes(self, paths, sender) -> None:
+        for path in paths:
+            self.register_path(path)
+            self.set_queue(path, sender)
+        self._web.start()
+
+    def stop_routes(self, paths) -> None:
+        paths = set(paths)
+        completed = threading.Event()
+
+        def cleanup():
+            try:
+                for path in paths:
+                    self._queues.pop(path, None)
+                    self._pending.pop(path, None)
+                for request_id, (request_path, future) in tuple(self._requests.items()):
+                    if request_path in paths:
+                        if not future.done():
+                            future.cancel()
+                        self._requests.pop(request_id, None)
+            finally:
+                completed.set()
+
+        TornadoWeb.get_loop().add_callback(cleanup)
+        if not completed.wait(timeout=5.0):
+            raise RuntimeError("HTTP routes did not stop")
+        self._web.stop()
 
     def stop(self, path: str) -> None:
         completed = threading.Event()
@@ -343,7 +374,7 @@ class _HttpServerHandler:
             parameter.default is not inspect.Parameter.empty
             for parameter in parameters
         )
-        self._wired = {}
+        self._wired = weakref.WeakKeyDictionary()
 
     def __call__(self, *args, **kwargs):
         wiring = _current_wiring()
@@ -366,17 +397,13 @@ class _HttpServerHandler:
 
 
 _HTTP_SERVER_HANDLERS: dict[str, _HttpServerHandler] = {}
-_HTTP_SERVER_REGISTRATIONS = {}
+_HTTP_SERVER_REGISTRATIONS = weakref.WeakKeyDictionary()
 
 
 def _ensure_http_route_registered(wiring, path):
-    registration = _HTTP_SERVER_REGISTRATIONS.get(wiring)
-    if registration is None:
-        return
-    port, paths = registration
-    if path not in paths:
-        register_adaptor(path, http_server_adaptor_impl, port=port)
-        paths.add(path)
+    # Route clients are discovered by the shared catch-all implementation.
+    # The function remains as the handler call boundary for compatibility.
+    del wiring, path
 
 
 def http_server_handler(fn=None, *, url: str):
@@ -407,10 +434,26 @@ def http_server_adaptor(
     """Expose a graph request/response stream as an HTTP route."""
 
 
-@adaptor_impl(interfaces=(http_server_adaptor,))
+@adaptor_impl(interfaces=())
 def http_server_adaptor_impl(path: str, port: int = 80) -> None:
-    """Run one HTTP route on the shared Tornado server for ``port``."""
-    queue_key = f"http_server_adaptor://{port}/{path}/queue"
+    """Wire every requested HTTP route through one shared server graph."""
+    from hgraph import WiringGraphContext
+
+    clients = WiringGraphContext.instance().registered_service_clients(
+        http_server_adaptor)
+    endpoints = set()
+    routes = set()
+    for endpoint, type_map, _node, receive in clients:
+        if type_map:
+            raise TypeError("HTTP server adaptor does not support generic bindings")
+        if (endpoint, receive) in endpoints:
+            raise ValueError(
+                f"duplicate HTTP adaptor client for {endpoint!r} and direction {receive}")
+        endpoints.add((endpoint, receive))
+        base = endpoint.removesuffix("/from_graph").removesuffix("/to_graph")
+        routes.add(base)
+
+    queue_key = f"http_server_adaptor://{port}/queue"
     manager = HttpAdaptorManager.instance(port)
 
     @push_queue(TSD[int, TS[HttpRequest]])
@@ -425,42 +468,43 @@ def http_server_adaptor_impl(path: str, port: int = 80) -> None:
 
     @to_web.start
     def to_web_start(_global_state: GlobalState = None) -> None:
-        manager.set_queue(path, _global_state[queue_key])
-        manager.start(path)
+        manager.start_routes(
+            tuple(http_server_adaptor.path_from_full_path(base) for base in routes),
+            _global_state[queue_key])
 
     @to_web.stop
     def to_web_stop(_global_state: GlobalState = None) -> None:
         try:
-            manager.stop(path)
+            manager.stop_routes(tuple(
+                http_server_adaptor.path_from_full_path(base) for base in routes))
         finally:
             if queue_key in _global_state:
                 del _global_state[queue_key]
 
     requests = from_web()
-    to_web(from_graph(http_server_adaptor, path=path))
-    to_graph(http_server_adaptor, requests, path=path)
 
+    @graph
+    def request_url(request: TS[HttpRequest]) -> TS[str]:
+        return request.url
+
+    requests_by_url = partition(requests, map_(request_url, requests))
+    responses = []
+    for base in routes:
+        route = http_server_adaptor.path_from_full_path(base)
+        responses.append(from_graph(http_server_adaptor, path=base))
+        to_graph(http_server_adaptor, requests_by_url[route], path=base)
+    if responses:
+        to_web(merge(*responses, disjoint=True))
 
 def register_http_server_adaptor(port: int) -> None:
     """Register the HTTP server implementation and wire automatic handlers."""
     handlers = tuple(_HTTP_SERVER_HANDLERS.items())
     wiring = _current_wiring()
-    registration = _HTTP_SERVER_REGISTRATIONS.setdefault(
-        wiring, (port, set()))
-    if registration[0] != port:
+    registration = _HTTP_SERVER_REGISTRATIONS.setdefault(wiring, port)
+    if registration != port:
         raise ValueError("one wiring graph cannot register the HTTP server on two ports")
-    registered_paths = registration[1]
-    manager = HttpAdaptorManager.instance(port)
-
-    # A shared listener may accept requests as soon as the first adaptor starts.
-    # Install the complete route table before any adaptor can open that listener.
-    for path, _ in handlers:
-        manager.register_path(path)
-
-    for path, handler in handlers:
-        if path not in registered_paths:
-            register_adaptor(path, http_server_adaptor_impl, port=port)
-            registered_paths.add(path)
+    register_adaptor("http_server_adaptor", http_server_adaptor_impl, port=port)
+    for _path, handler in handlers:
         if handler.auto_wire:
             handler()
 

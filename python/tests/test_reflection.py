@@ -11,6 +11,7 @@ import pytest
 from hgraph import (REF, TS, TSB, TSD, TSL, TSS, TS_SCHEMA, CompoundScalar,
                     TimeSeriesSchema, compute_node, graph, operator)
 from hgraph.reflection import (
+    bundle_schema_type,
     dereference,
     element_type,
     fields,
@@ -84,6 +85,17 @@ def test_fields_tsb():
     assert list(f) == ["a", "b"]  # ordered
 
 
+def test_bundle_schema_type_preserves_nominal_schema():
+    class MyB(TimeSeriesSchema):
+        a: TS[int]
+
+    assert bundle_schema_type(TSB[MyB]) is MyB
+    assert bundle_schema_type(TSB[MyB].handle) is MyB
+
+    with pytest.raises(TypeError):
+        bundle_schema_type(TS[int])
+
+
 def test_fields_accepts_variadic_wiring_values():
     observed = {}
 
@@ -151,7 +163,9 @@ def test_predicates_bundle_and_compound():
     assert is_bundle(TSB[MyB])
     assert not is_bundle(TS[int])
     assert is_compound_scalar(TS[MyCS])
+    assert is_compound_scalar(MyCS)
     assert not is_compound_scalar(TS[int])
+    assert not is_compound_scalar(int)
 
 
 def test_wrong_kind_raises():

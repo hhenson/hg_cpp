@@ -40,6 +40,8 @@ namespace hgraph
     {
         std::string                        service_path{};
         std::string                        service_kind{};
+        std::string                        interface_name{};
+        std::string                        specialization{};
         std::type_index                    definition{typeid(void)};
         NodeBuilder                        builder{};
         const TSValueTypeMetaData         *source_schema{nullptr};
@@ -85,7 +87,9 @@ namespace hgraph
         [[nodiscard]] inline WiringPortRef materialize_external_service_input(
             Wiring &w, NestedServiceInput input)
         {
-            w.register_service_client_path(input.service_path, input.service_kind);
+            w.register_service_client_path(
+                input.service_path, input.service_kind,
+                input.interface_name, input.specialization);
             Value scalars = input.builder.scalars();
             WiringPortRef source = w.add_node(
                 input.definition, std::move(input.builder), std::span<const WiringPortRef>{},

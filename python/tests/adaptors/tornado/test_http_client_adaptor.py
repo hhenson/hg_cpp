@@ -553,6 +553,26 @@ def test_http_manager_buffers_request_until_route_queue_starts(free_tcp_port):
     asyncio.run(exercise())
 
 
+def test_http_manager_stop_routes_cancels_outstanding_requests(free_tcp_port):
+    from hgraph.adaptors.tornado import HttpAdaptorManager
+
+    route = f"/stopping-{free_tcp_port}"
+    manager = HttpAdaptorManager(free_tcp_port)
+
+    async def exercise():
+        manager.start_routes((route,), lambda _: None)
+        request_id, response = manager.add_request(route, HttpGetRequest(url=route))
+        assert request_id in manager._requests
+        assert not response.done()
+
+        manager.stop_routes((route,))
+
+        assert response.cancelled()
+        assert request_id not in manager._requests
+
+    asyncio.run(exercise())
+
+
 def test_http_server_handler_registers_batch_requests(free_tcp_port):
     route = f"/batch-handler-{free_tcp_port}"
     received = []
