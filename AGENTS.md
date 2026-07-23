@@ -168,6 +168,12 @@ artifacts.
 
 ## Git Hygiene
 
+- Develop every change on a dedicated non-`main` branch and merge it through a
+  pull request. Do not commit or push changes directly to `main`.
+- A change that affects this repository and a downstream project requires a
+  separate branch and pull request in each repository. Cross-link the related
+  pull requests so the complete change remains traceable.
+- Keep each branch and pull request focused on one coherent change.
 - The worktree may contain unrelated user or concurrent-agent changes. Ignore
   them unless they directly affect the task; never revert them.
 - Keep edits and staging scoped to the requested task.

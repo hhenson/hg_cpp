@@ -17,3 +17,4 @@ Developer Guide
 
    user_guide/index
    developer_guide/index
+   rfc/index
