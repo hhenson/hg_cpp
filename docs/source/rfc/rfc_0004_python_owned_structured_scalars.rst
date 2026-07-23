@@ -9,14 +9,15 @@ RFC 0004: Python-Owned Structured Scalars
 Summary
 -------
 
-Add a schema-bearing scalar category for values that remain ordinary Python
-objects throughout graph execution. A Python dataclass used as a scalar type
-has a nominal hgraph schema and supports reflection, typed attribute access,
-construction, dispatch, equality, and the usual scalar graph operations, but
-its runtime storage is one strong reference to the original Python object. It
-is not materialised into field-by-field C++ storage. It is nevertheless a
-``Bundle`` semantically and exposes its declared fields through the same
-type-erased ``BundleView`` used by native bundle storage.
+Add a Python-backed storage policy for ``CompoundScalar`` semantics. A Python
+dataclass used as a scalar type remains an ordinary Python object throughout
+graph execution while having a nominal hgraph Bundle schema. It supports the
+same storage-independent reflection, generic resolution, casting, dispatch,
+equality, hashing, and scalar graph operations as a native
+``CompoundScalar``. Its runtime binding retains the original Python object and
+the active concrete schema; it does not materialise the object into
+field-by-field C++ storage. It exposes its declared fields through the same
+type-erased ``BundleView`` used by native Bundle storage.
 
 ``CompoundScalar`` remains the native-layout structured scalar. This RFC adds
 a Python-backed Bundle representation for application models whose
@@ -58,6 +59,10 @@ Goals
 
 * Preserve the exact Python instance, including its concrete runtime class and
   Python-defined behaviour.
+* Make a Python-backed dataclass satisfy the storage-independent
+  ``CompoundScalar`` behavioural contract, including parameterised classes,
+  TypeVar resolution, Bundle conversion, nominal dispatch, equality, and
+  hashing.
 * Extract an ordered, typed schema suitable for hgraph wiring, reflection, and
   operator resolution.
 * Present the value as a normal read-only ``BundleView`` to generic C++ code.
@@ -91,11 +96,18 @@ Terminology and ownership
    fields participate in hgraph's type system, while its value remains one
    Python object.
 
+**Python CompoundScalar**
+   A concise name for a Python-owned structured scalar when discussing the
+   common behavioural contract. It is a normal nominal Bundle with
+   ``CompoundScalar`` semantics and Python-backed storage; it is not an
+   instance of the native-layout ``CompoundScalar`` base class.
+
 **Python-backed Bundle binding**
-   A ``ValueTypeKind::Bundle`` binding whose storage owns a Python object and
-   whose ``IndexedValueOps`` project the declared fields by Python attribute
-   access. It implements the same read-only ``BundleView`` contract as a
-   field-expanded native binding without sharing its layout.
+   A ``ValueTypeKind::Bundle`` binding whose storage owns a Python object plus
+   its active concrete schema and whose ``IndexedValueOps`` project declared
+   fields by Python attribute access. It implements the same read-only
+   ``BundleView`` contract as a field-expanded native binding without sharing
+   its layout.
 
 Bundle schema metadata, ``BundleView``, and the representation-neutral indexed
 operations belong to the hgraph core. The class registry, ``PyObject``
@@ -182,11 +194,65 @@ different hgraph types. The diagnostic name is based on ``module`` and
 ``qualname``; the registry uses the retained class identity rather than the
 rendered name as the Python-side key.
 
-Direct self references are permitted because they are descriptive metadata and
-do not imply recursive native storage. Parameterised generic dataclasses,
-mutually recursive registrations, and automatic recognition of
-PEP 681 dataclass-like frameworks are deferred. Such classes may use explicit
-registration once an unambiguous resolved field mapping is available.
+Direct and mutually recursive references are permitted because they are
+descriptive metadata and do not imply recursive native storage. Registration
+uses the same forward-declaration and resolution mechanism as
+``CompoundScalar``. Automatic recognition of PEP 681 dataclass-like frameworks
+is deferred; such classes may use explicit registration once an unambiguous
+resolved field mapping is available.
+
+Parameterised classes and TypeVar resolution
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Parameterised Python classes use the existing ``CompoundScalar`` generic model:
+
+.. code-block:: python
+
+   from dataclasses import dataclass
+   from typing import Generic, TypeVar
+
+   T = TypeVar("T")
+
+   @dataclass(frozen=True)
+   class Box(Generic[T]):
+       value: T
+
+   @dataclass(frozen=True)
+   class IntegerBox(Box[int]):
+       pass
+
+``Box[int]`` and ``Box[str]`` resolve to distinct, invariant nominal Bundle
+schemas. Resolution substitutes TypeVars through fields, inherited bases,
+nested structured types, and container arguments. The resolved schema records
+the origin class and concrete generic arguments, and presents the same
+qualified diagnostic name and reflection surface as the equivalent
+``CompoundScalar`` specialisation. ``IntegerBox`` records ``Box[int]`` as its
+resolved parent.
+
+An unresolved argument creates the same Bundle generic pattern used for a
+native ``CompoundScalar`` and participates in the normal wiring resolution
+scope. Consequently a signature such as ``TS[Box[T]] -> TS[T]`` binds ``T``
+from ``TS[Box[int]]`` without a Python-specific resolver. Generic arguments are
+invariant unless the hgraph type system explicitly introduces variance.
+
+Python normally erases generic arguments from ``type(value)``. The Python-backed
+binding therefore retains the resolved specialisation as the value's active
+schema; it must not attempt to recover ``Box[int]`` versus ``Box[str]`` from
+the runtime class during dispatch. At a target-typed boundary the target
+specialisation supplies that identity. At a schema-free boundary inference
+uses, in order:
+
+* an exact registered concrete subclass such as ``IntegerBox``;
+* ``__orig_class__`` when Python has retained an applicable parameterised
+  alias; and
+* the existing ``CompoundScalar`` field-schema matching algorithm across
+  registered specialisations when the alias is absent, as it commonly is for
+  frozen dataclasses.
+
+The last step is inference, not eager validation: it is used only when the
+target schema is unknown. A tie is an explicit ambiguity error rather than a
+registry-order choice. Once selected, the active schema is retained with the
+object through copies, up-casts, switches, and time-series storage.
 
 Reflection provides:
 
@@ -221,6 +287,23 @@ and owning class in the diagnostic.
 ``None`` retains hgraph's existing scalar meaning: it does not form a valid
 value tick. For attribute access, a missing attribute or ``None`` produces no
 tick unless the default-valued ``getattr_`` form is used.
+
+CompoundScalar compatibility contract
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A Python CompoundScalar must pass the existing storage-independent
+``CompoundScalar`` behaviour suite. This includes nominal and generic schema
+identity, TypeVar resolution, inheritance and recursive schemas, reflection,
+auto-constant conversion, attribute projection, Bundle composition and
+conversion, overload dispatch, comparison, and hashability. The suite should
+be parameterised over native and Python-backed storage wherever the behaviour
+does not require direct native field addresses.
+
+The intentional differences are limited to representation-dependent
+capabilities: a Python CompoundScalar preserves the exact Python object,
+projects attributes under the GIL, has no native field offsets or mutable
+Bundle view, and delegates whole-value equality and hashing to Python. These
+differences must not leak into generic schema matching or operator selection.
 
 C++ schema contract
 -------------------
@@ -285,23 +368,42 @@ binding.
 Runtime representation
 ----------------------
 
-The canonical value plan is one bridge-owned Python object handle. Assignment
-retains the exact object with a strong reference; copy and destruction adjust
-Python reference counts under the GIL; conversion back to Python returns the
-same object. Nested attributes remain part of that object and create no
-independent hgraph storage until extracted.
+The canonical value plan is a bridge-owned Python object handle plus an active
+concrete Bundle schema tag. Assignment retains the exact object with a strong
+reference; copy and destruction preserve the tag and adjust Python reference
+counts under the GIL; conversion back to Python returns the same object.
+Nested attributes remain part of that object and create no independent hgraph
+storage until extracted. The schema tag is type-system state, not a
+field-expanded copy or external application discriminator.
 
-The declared schema controls a typed boundary. Schema-free inference uses an
-exact registered class first and then the first registered class in the
-runtime type's Python MRO. It never chooses a Bundle schema by inspecting field
-values. When a target schema is already known, ``isinstance`` against its
-registered class is authoritative.
+When a target schema is known, ``isinstance`` against its registered origin
+class is authoritative and the resolved target specialisation becomes the
+active schema. No fields are read for validation. At a schema-free boundary,
+the bridge selects the most specific registered class using Python
+``isinstance`` and MRO semantics, then applies the generic inference rules
+above when that class has more than one registered specialisation. The realised
+binding exposes the active schema through the existing erased concrete-type
+operation so native Bundle hierarchy, casting, and dispatch machinery can use
+it without inspecting ``PyObject``.
 
-Equality follows Python ``==`` and propagates Python exceptions. Hash support
-is advertised only when the registered class is hashable; hashing follows
-Python ``hash`` and must not silently fall back to object identity. Ordering is
-not advertised merely because Python could attempt ``<``. These rules preserve
-Python's equality/hash contract for ``TSS`` and ``TSD`` keys.
+Equality and hashing
+~~~~~~~~~~~~~~~~~~~~
+
+Whole-value equality follows the held object's Python ``==`` and propagates
+Python exceptions. It does not substitute structural field equality: a class
+may deliberately include hidden state, use subclass-sensitive equality, or
+define identity semantics even though its declared fields remain projectable
+through ``BundleView``. ``eq_``, ``ne_``, and deduplication must therefore use
+the Python-backed binding's erased value operations.
+
+Hash support is advertised only when the registered class has an effective
+``__hash__`` implementation. Hashing follows Python ``hash`` and must not
+silently fall back to a pointer or object-identity hash when Python declares
+the class unhashable. An unhashable Python CompoundScalar is rejected where
+``TSS`` or ``TSD`` key semantics require hashing. Ordering is not advertised
+merely because Python could attempt ``<``. These rules preserve Python's
+equality/hash contract, including equal distinct frozen dataclass instances and
+custom ``__eq__``/``__hash__`` implementations.
 
 Operator semantics
 ------------------
@@ -349,6 +451,60 @@ The initial implementation does not define a generic field-update or
 registered class-specific factory, but it must return a new emitted object and
 must not mutate the held value in place.
 
+Bundle conversion and casting
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The existing ``CompoundScalar`` conversion surface applies unchanged:
+
+* ``TS[PythonClass]`` converts to ``TSB[PythonClass]`` by projecting its
+  declared fields through ``BundleView``;
+* a ``TSB[PythonClass]`` or compatible structural Bundle converts to
+  ``TS[PythonClass]`` through the registered Python construction policy;
+* strict and non-strict ``combine`` behaviour, omitted defaults, ``None``
+  handling, ``as_scalar_ts``, and reference conversion follow the existing
+  Bundle conversion rules; and
+* the ``COMPOUND_SCALAR``/Bundle generic patterns match both native and
+  Python-backed representations.
+
+The target specialisation determines the Bundle shape. For example,
+``TS[Box[int]]`` casts to a Bundle whose ``value`` field is ``TS[int]``, while
+``TS[Box[str]]`` produces ``TS[str]``. Round-tripping reconstructs the
+registered Python class with the same resolved specialisation tag. Converting
+an already-held Python object to a target-typed ``TS[Box[int]]`` preserves that
+object and does not reconstruct it; only conversion from field values invokes
+the construction policy.
+
+Storage policy is not part of structural compatibility. Generic conversion
+operators work through ``BundleView`` and the erased construction/materialise
+operations, so they do not branch on native versus Python-backed storage.
+Nominal assignment and down-casting still follow the declared Bundle hierarchy
+and active concrete schema.
+
+Overload dispatch
+~~~~~~~~~~~~~~~~~
+
+Python CompoundScalars use the same native Bundle dispatch path as
+``CompoundScalar``. They must not fall back to the generic Python-object
+``type_``/switch implementation. The binding reports its active concrete
+schema, and ``dispatch_cases`` uses the graph's closed Bundle hierarchy snapshot
+to select the most specific applicable overload.
+
+Class matching follows Python ``isinstance`` semantics represented by the
+registered Bundle ancestry. A child value dispatches to a child overload in
+preference to a base overload; a base fallback remains applicable; explicit
+``dispatch_on``, output specialisation, union overloads, switching, down-cast,
+and reference down-cast behave as for native ``CompoundScalar``. Ambiguous
+multiple inheritance produces the same diagnostic as the existing
+``CompoundScalar`` dispatcher.
+
+Generic dispatch uses the retained specialisation, not ``type(value)``.
+Consequently overloads for ``Box[int]`` and ``Box[str]`` remain distinguishable
+even though both values have runtime class ``Box``. Up-casting to a base port
+must preserve the active child/specialisation tag, so later dispatch can still
+recover the most-specific valid overload. ``type_`` may still return the
+object's actual Python runtime class; it is not the dispatch discriminator for
+this feature.
+
 Other scalar operations
 ~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -387,10 +543,11 @@ explicit dispatch/cast mechanisms and an ``isinstance`` check.
 Python-backed Bundle ancestry participates in the same wiring-time hierarchy
 snapshot as native Bundles, so later class definitions do not change an
 existing graph's overload set. Its realised binding remains Python-backed:
-storage size is unaffected by descendants, and the binding obtains the active
-concrete schema from the object's registered runtime class. No external
-discriminator is needed for a live value because the Python object already
-carries that class.
+storage size is unaffected by descendants, and the binding retains the active
+concrete schema selected at the typed or inference boundary. The explicit tag
+is necessary because Python runtime classes do not in general retain generic
+arguments. It is internal erased-binding state rather than an application
+field or a separately emitted discriminator.
 
 Serialization and persistence
 -----------------------------
@@ -451,11 +608,11 @@ unambiguous.
 Performance and memory
 ----------------------
 
-The time-series slot contains one owning handle rather than storage for every
-declared field. Whole-object flow avoids native decomposition and later
-dataclass reconstruction. It still incurs Python reference counting, and
-copy/destruction, equality, hashing, attribute access, construction, and
-conversion require the GIL.
+The time-series slot contains one owning handle and one active-schema tag rather
+than storage for every declared field. Whole-object flow avoids native
+decomposition and later dataclass reconstruction. It still incurs Python
+reference counting, and copy/destruction, equality, hashing, attribute access,
+construction, and conversion require the GIL.
 
 Each extracted attribute incurs Python lookup plus conversion to its output
 schema. A graph that repeatedly performs field-level work in C++ should use a
@@ -521,6 +678,8 @@ Core metadata and storage
 * A Python-owned class has normal nominal Bundle metadata with ordered fields.
 * Its canonical binding owns the Python object and exposes complete read-only
   ``IndexedValueOps``; ``ValueView::as_bundle()`` succeeds.
+* The binding retains and reports the active concrete/specialised schema
+  independently of the erased Python runtime class.
 * ``BundleView`` field access works by index and name without assuming native
   child offsets.
 * Projected field views retain the declared field schema and can be copied or
@@ -542,9 +701,29 @@ Python typing and conversion
   dataclass uses the Python-backed Bundle binding.
 * Typed assignment retains object identity and accepts subclasses without
   eagerly reading or validating fields.
-* Schema-free inference is deterministic across exact classes and MRO bases.
+* Parameterised dataclasses resolve TypeVars through fields, bases, recursion,
+  nested structures, and containers with the same invariant semantics and
+  reflection as parameterised ``CompoundScalar`` classes.
+* Target-typed conversion records the target specialisation. Schema-free
+  inference is deterministic across exact classes, ``__orig_class__``, MRO
+  bases, and field-schema matching, with ambiguity reported explicitly.
 * Registry reset and repeated import do not leave stale class or schema
   pointers.
+
+CompoundScalar conformance
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Existing storage-independent ``CompoundScalar`` hierarchy, generic
+  resolution, reflection, recursive registration, auto-constant, and TypeVar
+  tests are parameterised to run against Python-backed dataclasses.
+* ``TS[PythonClass]`` to and from ``TSB[PythonClass]``, compatible structural
+  Bundles, ``as_scalar_ts``, references, strict/non-strict composition,
+  defaults, and ``None`` pass the corresponding ``CompoundScalar`` conversion
+  tests.
+* Resolved generic classes cast to Bundles with their substituted field shapes
+  and retain the active specialisation on round-trip.
+* Conversion and generic operators select by Bundle capability and schema, not
+  storage policy.
 
 Operators
 ~~~~~~~~~
@@ -557,7 +736,16 @@ Operators
   fields.
 * ``combine[TS[Class]]`` honours dataclass required fields, defaults, default
   factories, keyword-only fields, ``init=False``, and ``__post_init__``.
-* Equality and hashing follow Python. Unhashable classes are rejected as
+* Runtime dispatch covers exact matches, base fallback, union overloads,
+  explicit ``dispatch_on``, output specialisation, switch branches, down-cast,
+  reference down-cast, and multiple-inheritance ambiguity using the existing
+  Bundle dispatcher.
+* Dispatch distinguishes generic specialisations such as ``Box[int]`` and
+  ``Box[str]`` after storage and after an up-cast, despite their shared Python
+  runtime class.
+* Equality, inequality, and deduplication follow Python for equal distinct
+  instances, subclasses, and custom equality implementations. Hashing follows
+  Python for custom and generated hashes. Unhashable classes are rejected as
   ``TSS``/``TSD`` keys rather than receiving an identity-hash fallback.
 * Existing generic Bundle attribute, comparison, conversion, and composition
   operators work through type erasure for both storage strategies.
