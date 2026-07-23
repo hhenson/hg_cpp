@@ -308,6 +308,15 @@ namespace hgraph
             }
 
             wall_now = current_wall_time();
+            if (wall_now >= state.end_time)
+            {
+                // end_time is also a wall-clock bound: a busy-rescheduling
+                // graph advances evaluation time by MIN_TD per cycle and
+                // would starve the logical bound indefinitely (see
+                // execution_layer.rst, end-of-run enforcement).
+                state.set_evaluation_time(state.end_time);
+                return state.end_time;
+            }
             const DateTime next = std::min(target, std::max(next_cycle, wall_now));
             state.set_evaluation_time(next);
             return next;

@@ -28,6 +28,20 @@ Current implementation
     receive ``evaluation_time`` explicitly, and "next scheduled time" is the
     minimum over the graph's per-node schedule entries.
 
+    **End-of-run enforcement.** ``end_time`` bounds the run in *evaluation*
+    time — the loop exits once the next evaluation time reaches it. The
+    real-time executor additionally enforces it against the **wall clock**:
+    ``advance_realtime`` ends the run as soon as the wall clock passes
+    ``end_time``, even if earlier-scheduled work remains. Without this, a
+    node that re-schedules itself every ``MIN_TD`` while each cycle burns
+    real wall time (the shape of a permanently failing adaptor retry loop)
+    advances evaluation time by only one microsecond per cycle and can
+    starve the logical bound almost indefinitely at 100% CPU. This is a
+    recorded deviation from the ``ext/main`` Python runtime, whose run loop
+    bounds only evaluation time and shares the starvation. Work scheduled
+    before ``end_time`` but not yet evaluated when the wall clock reaches it
+    is dropped, exactly as ``request_stop()`` would drop it.
+
 Pause / resume (the cursor protocol)
 ------------------------------------
 
