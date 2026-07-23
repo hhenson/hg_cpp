@@ -237,9 +237,10 @@ TEST_CASE("real-time executor honours end_time on the wall clock under busy resc
     // real wall time is the shape of a permanently failing adaptor retry
     // loop: evaluation time advances one microsecond per cycle, so the
     // logical end_time bound alone would need hundreds of thousands of
-    // cycles. The wall clock passing end_time must end the run.
+    // cycles. Once the wall clock passes end_time, the bounded drain
+    // (max_immediate_drain_cycles) must end the run.
     constexpr TimeDelta run_window{250'000};
-    constexpr auto      cycle_cost = std::chrono::milliseconds{2};
+    constexpr auto      cycle_cost = std::chrono::milliseconds{1};
 
     std::atomic_int eval_count{0};
 
@@ -277,9 +278,64 @@ TEST_CASE("real-time executor honours end_time on the wall clock under busy resc
 
     const TimeDelta elapsed = hgraph::testing::wall_now() - start_time;
     CHECK(eval_count.load() > 0);
-    // Generous CI margin: the fixed executor returns at ~run_window; the
-    // starved one needs run_window / MIN_TD cycles at cycle_cost each.
-    CHECK(elapsed < TimeDelta{5'000'000});
+    // Generous CI margin: the bounded drain returns after at most
+    // run_window plus ~max_immediate_drain_cycles cycles at cycle_cost;
+    // the starved executor needs run_window / MIN_TD cycles.
+    CHECK(elapsed < TimeDelta{15'000'000});
+}
+
+TEST_CASE("real-time executor drains a lagging graph to its logical end_time")
+{
+    using namespace hgraph;
+
+    // A graph whose cycles cost more wall time than their logical spacing
+    // lags the wall clock; scheduled work must still evaluate at its
+    // scheduled logical times after the wall clock passes end_time (the
+    // ported wall-clock scheduler tests rely on late alarm delivery). Ticks
+    // land at start, +50ms and +100ms; each costs ~80ms wall, so the wall
+    // clock passes the 150ms end_time before the drain completes.
+    constexpr TimeDelta step{50'000};
+    constexpr TimeDelta run_window{150'000};
+    constexpr auto      cycle_cost = std::chrono::milliseconds{80};
+
+    std::atomic_int       eval_count{0};
+    std::vector<DateTime> stamps;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<Int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    NodeTypeMetaData schema;
+    schema.display_name      = "lagging_source";
+    schema.output_schema     = ts_int;
+    schema.node_kind         = NodeKind::PullSource;
+    schema.schedule_on_start = true;
+
+    NodeCallbacks callbacks;
+    callbacks.evaluate = [&eval_count, &stamps, cycle_cost, step](const NodeView &view, DateTime evaluation_time) {
+        ++eval_count;
+        stamps.push_back(evaluation_time);
+        std::this_thread::sleep_for(cycle_cost);
+        testing::set_output_value(view, evaluation_time, Int{eval_count.load()});
+        view.graph_value()->schedule_node(view.node_index(), evaluation_time + step);
+    };
+
+    GraphBuilder graph_builder;
+    graph_builder.add_node(NodeBuilder::native(std::move(schema), std::move(callbacks)));
+
+    const DateTime start_time = hgraph::testing::wall_now();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .mode(GraphExecutorMode::RealTime)
+        .start_time(start_time)
+        .end_time(start_time + run_window);
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    executor.view().run();
+
+    REQUIRE(eval_count.load() == 3);
+    CHECK(stamps == std::vector<DateTime>{start_time, start_time + step, start_time + step + step});
 }
 
 TEST_CASE("real-time executor evaluates root push queues after pending update signal")

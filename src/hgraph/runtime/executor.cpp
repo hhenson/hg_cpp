@@ -92,6 +92,7 @@ namespace hgraph
             DateTime                     end_time{MAX_ET};
             DateTime                     evaluation_time{MIN_ST};
             DateTime                     last_time_allowed_push{MIN_DT};
+            std::uint32_t                immediate_drain_cycles{0};
             ErrorCaptureOptions          error_capture_options{};
             bool                         cleanup_on_error{true};
 
@@ -277,6 +278,12 @@ namespace hgraph
             return next;
         }
 
+        // Consecutive MIN_TD-only cycles tolerated once the wall clock has
+        // passed end_time before the run is cut off. Deep enough for any sane
+        // immediate cascade (feedback chains) inside a drain; a busy retry
+        // loop exceeds it almost immediately.
+        constexpr std::uint32_t max_immediate_drain_cycles = 1024;
+
         [[nodiscard]] DateTime advance_realtime(RealTimeExecutorStorage &state, DateTime next_scheduled_time)
         {
             const DateTime target = std::min(next_scheduled_time, state.end_time);
@@ -305,16 +312,25 @@ namespace hgraph
             }
 
             wall_now = current_wall_time();
-            if (wall_now >= state.end_time)
-            {
-                // end_time is also a wall-clock bound: a busy-rescheduling
-                // graph advances evaluation time by MIN_TD per cycle and
-                // would starve the logical bound indefinitely (see
-                // execution_layer.rst, end-of-run enforcement).
-                state.set_evaluation_time(state.end_time);
-                return state.end_time;
-            }
             const DateTime next = std::min(target, std::max(next_cycle, wall_now));
+            if (wall_now >= state.end_time && next <= next_cycle)
+            {
+                // Past wall-clock end_time the executor only drains: a lagging
+                // graph still evaluates its scheduled work at the scheduled
+                // times, but a graph advancing exactly MIN_TD per cycle is
+                // making no material logical progress (the shape of a failing
+                // retry loop) and would starve the end_time bound indefinitely
+                // (see execution_layer.rst, end-of-run enforcement).
+                if (++state.immediate_drain_cycles > max_immediate_drain_cycles)
+                {
+                    state.set_evaluation_time(state.end_time);
+                    return state.end_time;
+                }
+            }
+            else
+            {
+                state.immediate_drain_cycles = 0;
+            }
             state.set_evaluation_time(next);
             return next;
         }

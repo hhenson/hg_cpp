@@ -29,18 +29,24 @@ Current implementation
     minimum over the graph's per-node schedule entries.
 
     **End-of-run enforcement.** ``end_time`` bounds the run in *evaluation*
-    time — the loop exits once the next evaluation time reaches it. The
-    real-time executor additionally enforces it against the **wall clock**:
-    ``advance_realtime`` ends the run as soon as the wall clock passes
-    ``end_time``, even if earlier-scheduled work remains. Without this, a
-    node that re-schedules itself every ``MIN_TD`` while each cycle burns
-    real wall time (the shape of a permanently failing adaptor retry loop)
-    advances evaluation time by only one microsecond per cycle and can
-    starve the logical bound almost indefinitely at 100% CPU. This is a
-    recorded deviation from the ``ext/main`` Python runtime, whose run loop
-    bounds only evaluation time and shares the starvation. Work scheduled
-    before ``end_time`` but not yet evaluated when the wall clock reaches it
-    is dropped, exactly as ``request_stop()`` would drop it.
+    time — the loop exits once the next evaluation time reaches it. A
+    real-time graph may lag the wall clock (cycles cost more wall time than
+    their logical spacing); once the wall clock passes ``end_time`` the
+    executor **drains**: remaining scheduled work still evaluates at its
+    scheduled (logical) times up to ``end_time``, matching the ``ext/main``
+    Python runtime and the ported wall-clock scheduler tests, which rely on
+    a lagging graph delivering its alarms late rather than dropping them.
+    The drain is bounded by *logical progress*: a cycle that advances
+    evaluation time by exactly ``MIN_TD`` makes no material progress, and
+    after ``max_immediate_drain_cycles`` (1024) consecutive such cycles past
+    wall-clock ``end_time`` the run ends. Without that bound, a node that
+    re-schedules itself every ``MIN_TD`` while each cycle burns real wall
+    time (the shape of a permanently failing adaptor retry loop) advances
+    evaluation time one microsecond per cycle and starves the logical bound
+    almost indefinitely at 100% CPU — a starvation the Python runtime
+    shares; the bound is the recorded deviation. Immediate (``MIN_TD``)
+    cascades deeper than the bound are cut off exactly as
+    ``request_stop()`` would cut them.
 
 Pause / resume (the cursor protocol)
 ------------------------------------
