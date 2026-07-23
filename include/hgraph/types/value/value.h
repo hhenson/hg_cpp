@@ -253,11 +253,11 @@ namespace hgraph
 
         // -- generic ops --
         [[nodiscard]] std::size_t hash() const { return view().hash(); }
-        [[nodiscard]] bool equals(const Value &other) const noexcept
+        [[nodiscard]] bool equals(const Value &other) const
         {
             return view().equals(other.view());
         }
-        [[nodiscard]] bool equals(const ValueView &other) const noexcept
+        [[nodiscard]] bool equals(const ValueView &other) const
         {
             return view().equals(other);
         }
@@ -269,7 +269,7 @@ namespace hgraph
         {
             return view().compare(other);
         }
-        [[nodiscard]] bool operator==(const Value &other) const noexcept { return equals(other); }
+        [[nodiscard]] bool operator==(const Value &other) const { return equals(other); }
         [[nodiscard]] std::partial_ordering operator<=>(const Value &other) const noexcept
         {
             return compare(other);

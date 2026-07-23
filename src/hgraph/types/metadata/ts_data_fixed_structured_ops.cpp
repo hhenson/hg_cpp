@@ -150,6 +150,15 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 throw std::logic_error("TSDataPlanFactory: fixed TSData owning bindings are not resolved");
             }
+            if (schema->kind == TSTypeKind::TSB &&
+                !value_owning_binding.checked_plan().is_composite())
+            {
+                // The TSB's internal storage is field-expanded even when the
+                // scalar's owning representation is not. Present the existing
+                // projected Bundle surface and materialise the owning value
+                // only when a consumer requests one.
+                projected_value_surface = true;
+            }
             active_layout().value_binding =
                 projected_value_surface ? intern_value_type(*value_schema, *plan, value_indexed_ops)
                                         : value_owning_binding;
@@ -779,14 +788,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 throw std::logic_error("fixed TSData value copy requires the canonical parent value schema");
             }
 
-            const auto &plan = binding.checked_plan();
-            auto       *bytes = static_cast<std::byte *>(dst);
             if (state->schema->kind == TSTypeKind::TSB)
             {
-                if (!plan.is_composite() || plan.component_count() < state->element_count())
-                {
-                    throw std::logic_error("fixed TSB value copy requires a matching structured plan");
-                }
                 BundleBuilder builder{binding};
                 for (std::size_t index = 0; index < state->element_count(); ++index)
                 {
@@ -796,10 +799,12 @@ namespace hgraph::ts_data_plan_factory_detail
                     builder.set(index, child.view());
                 }
                 Value bundle = builder.build();
-                plan.copy_assign(dst, bundle.view().data());
+                binding.checked_plan().copy_assign(dst, bundle.view().data());
                 return;
             }
 
+            const auto &plan = binding.checked_plan();
+            auto       *bytes = static_cast<std::byte *>(dst);
             if (!plan.is_array() || plan.array_count() != state->element_count())
             {
                 throw std::logic_error("fixed TSL value copy requires a matching array plan");

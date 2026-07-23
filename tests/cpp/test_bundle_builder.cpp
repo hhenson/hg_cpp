@@ -7,12 +7,14 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <ranges>
 #include <utility>
 
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/primitive_types.h>
+#include <hgraph/types/value/specialized_views.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/types/value/value_builder.h>
 
@@ -52,6 +54,119 @@ namespace
     {
         BundleMoveCountingScalar::copy_constructs = 0;
         BundleMoveCountingScalar::copy_assigns    = 0;
+    }
+
+    struct ProjectedBundleStorage
+    {
+        std::int32_t count{0};
+        Str          label{};
+
+        bool operator==(const ProjectedBundleStorage &) const = default;
+    };
+
+    struct ProjectedBundleContext
+    {
+        ValueTypeRef binding{};
+        ValueTypeRef count_binding{};
+        ValueTypeRef label_binding{};
+    };
+
+    std::size_t projected_bundle_size(const void *, const void *) noexcept { return 2; }
+
+    ValueTypeRef projected_bundle_element_binding(const void *context, const void *,
+                                                  std::size_t index) noexcept
+    {
+        const auto &self = *static_cast<const ProjectedBundleContext *>(context);
+        if (index == 0) { return self.count_binding; }
+        if (index == 1) { return self.label_binding; }
+        return {};
+    }
+
+    const void *projected_bundle_element_at(const void *, const void *memory, std::size_t index)
+    {
+        if (memory == nullptr) { return nullptr; }
+        const auto &value = *static_cast<const ProjectedBundleStorage *>(memory);
+        if (index == 0) { return std::addressof(value.count); }
+        if (index == 1) { return std::addressof(value.label); }
+        throw std::out_of_range("projected Bundle field index");
+    }
+
+    ValueView projected_bundle_project(const void *context, const void *memory,
+                                       std::size_t index)
+    {
+        return ValueView{
+            projected_bundle_element_binding(context, memory, index),
+            projected_bundle_element_at(context, memory, index),
+        };
+    }
+
+    Range<ValueView> projected_bundle_range(const void *context, const void *memory)
+    {
+        return Range<ValueView>{
+            .context = context,
+            .memory = memory,
+            .limit = 2,
+            .predicate = nullptr,
+            .projector = &projected_bundle_project,
+        };
+    }
+
+    std::size_t projected_bundle_hash(const void *, const void *memory)
+    {
+        const auto &value = *static_cast<const ProjectedBundleStorage *>(memory);
+        return std::hash<std::int32_t>{}(value.count) ^
+               (std::hash<Str>{}(value.label) << 1U);
+    }
+
+    std::partial_ordering projected_bundle_compare(
+        const void *, const void *lhs, const void *rhs) noexcept
+    {
+        const auto &left = *static_cast<const ProjectedBundleStorage *>(lhs);
+        const auto &right = *static_cast<const ProjectedBundleStorage *>(rhs);
+        if (left.count < right.count) { return std::partial_ordering::less; }
+        if (left.count > right.count) { return std::partial_ordering::greater; }
+        if (left.label < right.label) { return std::partial_ordering::less; }
+        if (left.label > right.label) { return std::partial_ordering::greater; }
+        return std::partial_ordering::equivalent;
+    }
+
+    bool projected_bundle_accepts(const void *, ValueTypeRef binding,
+                                  ValueTypeRef source) noexcept
+    {
+        const auto *target = binding.schema();
+        const auto *candidate = source.schema();
+        if (target == nullptr || candidate == nullptr ||
+            candidate->try_value_kind() != ValueTypeKind::Bundle ||
+            target->field_count != candidate->field_count)
+        {
+            return false;
+        }
+        for (std::size_t index = 0; index < target->field_count; ++index)
+        {
+            if (target->fields[index].type != candidate->fields[index].type)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void projected_bundle_assign(const void *, ValueTypeRef, void *destination,
+                                 ValueTypeRef source, const void *source_memory)
+    {
+        const auto concrete = source.ops_ref().concrete_type(source, source_memory);
+        const auto *memory = source.ops_ref().concrete_memory(source_memory);
+        const auto *indexed = checked_value_ops<IndexedValueOps>(
+            concrete, "projected Bundle assignment");
+        auto &result = *static_cast<ProjectedBundleStorage *>(destination);
+        result.count = ValueView{
+            indexed->element_binding(indexed->context, memory, 0),
+            indexed->element_at(indexed->context, memory, 0),
+        }.checked_as<std::int32_t>();
+        result.label = ValueView{
+            indexed->element_binding(indexed->context, memory, 1),
+            indexed->element_at(indexed->context, memory, 1),
+        }.checked_as<Str>();
     }
 
     // Build the canonical TSS-delta bundle: Bundle{added: Set<std::int32_t>, removed: Set<std::int32_t>}.
@@ -170,4 +285,61 @@ TEST_CASE("BundleBuilder: the built value matches the canonical un_named_bundle 
     // it compares (Value::equals) against a runtime-produced delta of the same shape.
     CHECK(bundle.schema() == bundle_schema);
     CHECK_FALSE(bundle.view().to_string().empty());
+}
+
+TEST_CASE("BundleBuilder: constructs a registered non-composite Bundle binding")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    auto &factory = ValuePlanFactory::instance();
+    const auto *count_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *label_meta = registry.register_scalar<Str>("str");
+    const auto *schema = registry.bundle(
+        "tests.bundle_binding",
+        "ProjectedBundle",
+        {{"count", count_meta}, {"label", label_meta}});
+
+    // The registered ops table is process-global, so its context must outlive
+    // this test case just as a production extension binding's context does.
+    auto *context = new ProjectedBundleContext{
+        .count_binding = factory.type_for(count_meta),
+        .label_binding = factory.type_for(label_meta),
+    };
+    IndexedValueOps ops{};
+    static_cast<ValueOps &>(ops) = ops_for<ProjectedBundleStorage>();
+    ops.kind = ValueOpsKind::Indexed;
+    ops.context = context;
+    ops.allows_mutation = false;
+    ops.hash_impl = &projected_bundle_hash;
+    ops.compare_impl = &projected_bundle_compare;
+    ops.accepts_source_impl = &projected_bundle_accepts;
+    ops.copy_assign_from_impl = &projected_bundle_assign;
+    ops.move_assign_from_impl =
+        [](const void *ops_context, ValueTypeRef binding, void *destination,
+           ValueTypeRef source, void *source_memory) {
+            projected_bundle_assign(
+                ops_context, binding, destination, source, source_memory);
+        };
+    ops.size = &projected_bundle_size;
+    ops.element_binding = &projected_bundle_element_binding;
+    ops.element_at = &projected_bundle_element_at;
+    ops.make_range = &projected_bundle_range;
+
+    context->binding = intern_value_type(
+        *schema, MemoryUtils::plan_for<ProjectedBundleStorage>(), ops);
+    factory.register_type(context->binding);
+    REQUIRE_FALSE(context->binding.checked_plan().is_composite());
+
+    BundleBuilder builder{context->binding};
+    builder.set("count", Value{std::int32_t{7}});
+    builder.set("label", Value{Str{"seven"}});
+    Value value = builder.build();
+
+    REQUIRE(value.binding() == context->binding);
+    const auto bundle = value.as_bundle();
+    REQUIRE(bundle.size() == 2);
+    CHECK(bundle.at("count").checked_as<std::int32_t>() == 7);
+    CHECK(bundle.at("label").checked_as<Str>() == "seven");
+    CHECK(std::ranges::distance(bundle) == 2);
 }

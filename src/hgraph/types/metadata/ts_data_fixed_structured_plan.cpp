@@ -3,6 +3,7 @@
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_realization.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/value/specialized_views.h>
 
 #include <fmt/format.h>
 
@@ -29,6 +30,45 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (const auto realized = snapshot->type_for(schema)) { return realized; }
             }
             return ValuePlanFactory::instance().type_for(schema);
+        }
+
+        [[nodiscard]] ValueTypeRef fixed_value_storage_binding(const TSValueTypeMetaData &schema)
+        {
+            auto binding = realized_value_binding(schema.value_schema);
+            if (schema.kind != TSTypeKind::TSB || !binding || binding.checked_plan().is_composite())
+            {
+                return binding;
+            }
+
+            // A TSB always stores its children independently. A named Bundle
+            // may nevertheless have a canonical non-composite representation
+            // (for example a Python-owned object projected through
+            // IndexedValueOps). Use the schema's anonymous structural twin for
+            // the TSB's internal field storage; its public value surface will
+            // materialise the canonical owning representation through erased
+            // Bundle operations.
+            const auto *value_schema = schema.value_schema;
+            if (value_schema == nullptr || value_schema->wrapped_un_named == nullptr)
+            {
+                throw std::logic_error(
+                    "TSDataPlanFactory: non-composite TSB value has no structural twin");
+            }
+            const auto *indexed = checked_value_ops<IndexedValueOps>(
+                binding, "TSDataPlanFactory: non-composite TSB value");
+            std::vector<ValueTypeRef> fields;
+            fields.reserve(value_schema->field_count);
+            for (std::size_t index = 0; index < value_schema->field_count; ++index)
+            {
+                const auto field = indexed->element_binding(indexed->context, nullptr, index);
+                if (!field)
+                {
+                    throw std::logic_error(
+                        "TSDataPlanFactory: non-composite TSB field binding is unresolved");
+                }
+                fields.push_back(field);
+            }
+            return ValuePlanFactory::instance().realized_composite_type_for(
+                value_schema->wrapped_un_named, fields);
         }
 
         [[nodiscard]] TSRoleTypeRef realized_output_type(const TSValueTypeMetaData &schema)
@@ -449,7 +489,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 schema, role, root_plan, ops, fixed_record_label(schema, role, false))};
         }
 
-        const auto value_type = realized_value_binding(schema.value_schema);
+        const auto value_type = fixed_value_storage_binding(schema);
         if (!value_type) throw std::logic_error("embedded fixed TSData value binding is not resolved");
 
         const auto &value_plan = value_type.checked_plan();
@@ -482,14 +522,14 @@ namespace hgraph::ts_data_plan_factory_detail
 
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_fixed_plan(const TSValueTypeMetaData &schema)
     {
-        const auto value_plan = ValuePlanFactory::instance().plan_for(schema.value_schema);
-        if (value_plan == nullptr)
+        const auto value_binding = fixed_value_storage_binding(schema);
+        if (!value_binding)
         {
             throw std::logic_error("TSDataPlanFactory: fixed TSData value plan is not resolved");
         }
         auto builder = MemoryUtils::named_tuple();
         builder.reserve(2);
-        builder.add_field("value", *value_plan);
+        builder.add_field("value", value_binding.checked_plan());
         builder.add_field("aux", ts_data_aux_plan(schema));
         return &builder.build();
     }

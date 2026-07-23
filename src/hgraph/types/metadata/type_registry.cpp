@@ -1540,6 +1540,10 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::tss(const ValueTypeMetaData *element_type)
     {
+        if (element_type != nullptr && (!element_type->is_hashable() || !element_type->is_equatable()))
+        {
+            throw std::invalid_argument("TSS element type must be hashable and equatable");
+        }
         const std::lock_guard lock(mutex_);
         const TSValueTypeMetaData &meta = tss_cache_.intern(element_type, [&]() {
             TSValueTypeMetaData m(TSTypeKind::TSS, element_type ? set(element_type) : nullptr,
@@ -1552,6 +1556,10 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::tsd(const ValueTypeMetaData *key_type, const TSValueTypeMetaData *value_ts)
     {
+        if (key_type != nullptr && (!key_type->is_hashable() || !key_type->is_equatable()))
+        {
+            throw std::invalid_argument("TSD key type must be hashable and equatable");
+        }
         const std::lock_guard lock(mutex_);
         const TSDictKey key{key_type, value_ts};
         const TSValueTypeMetaData &meta = tsd_cache_.intern(key, [&]() {

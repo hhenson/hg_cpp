@@ -3298,9 +3298,15 @@ namespace hgraph::stdlib
         {
             const auto *target = erased.schema()->value_schema;
             const auto *snapshot = active_type_realization();
-            BundleBuilder builder{snapshot != nullptr
-                                      ? snapshot->exact_type_for(target)
-                                      : ValuePlanFactory::instance().type_for(target)};
+            const auto target_binding = snapshot != nullptr
+                                            ? snapshot->exact_type_for(target)
+                                            : ValuePlanFactory::instance().type_for(target);
+            const bool policy_materialization =
+                target_binding.ops_ref().has_source_materialization_policy();
+            const auto assembly_binding = policy_materialization
+                                              ? BundleBuilder::assembly_type(target_binding)
+                                              : target_binding;
+            BundleBuilder builder{assembly_binding};
 
             const auto *input_schema = fields.schema();
             for (std::size_t index = 0; index < input_schema->field_count(); ++index)
@@ -3324,7 +3330,25 @@ namespace hgraph::stdlib
                     }
                 }
             }
-            Value bundle = builder.build();
+            Value source = builder.build();
+            if (policy_materialization &&
+                !target_binding.ops_ref().can_materialize_source(source.binding(), source.view().data()))
+            {
+                return;
+            }
+
+            Value bundle;
+            if (assembly_binding == target_binding)
+            {
+                bundle = std::move(source);
+            }
+            else
+            {
+                bundle = Value{target_binding};
+                target_binding.ops_ref().move_assign_from(
+                    target_binding, const_cast<void *>(bundle.view().data()),
+                    source.binding(), const_cast<void *>(source.view().data()));
+            }
             if (erased.data_view().has_current_value() && erased.value().equals(bundle.view())) { return; }
             auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
             static_cast<void>(mutation.move_value_from(std::move(bundle)));
@@ -3437,8 +3461,11 @@ namespace hgraph::stdlib
             }
         };
 
-        /** convert[TS[CS]](tsb): the whole-bundle VALUE of a TSB (strict:
-            every field valid; None until then - hgraph parity). */
+        /** convert[TS[CS]](tsb): the whole-bundle VALUE of a TSB. Ordinary
+            composite Bundles remain all-fields-valid. An erased owning
+            representation may declare that an incomplete indexed source is
+            constructible (for example a Python dataclass with defaults or
+            init=False fields). */
         struct convert_tsb_to_cs_impl
         {
             static constexpr auto name = "convert_tsb_to_cs";
@@ -3456,13 +3483,22 @@ namespace hgraph::stdlib
                 return bundle_value != nullptr && bundle_value->value_kind() == ValueTypeKind::Bundle;
             }
 
-            static void eval(In<"ts", TsVar<"S">, InputValidity::AllValid> ts, Out<TsVar<"__out__">> out)
+            static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Out<TsVar<"__out__">> out)
             {
                 const auto &erased = static_cast<const TSOutputView &>(out);
                 const auto  value  = ts.base().value();
-                if (erased.data_view().has_current_value() && erased.value().equals(value)) { return; }
+                if (!ts.base().all_valid())
+                {
+                    const auto target = erased.data_view().layout().value_binding;
+                    if (!target || !target.ops_ref().can_materialize_source(value.binding(), value.data()))
+                    {
+                        return;
+                    }
+                }
+                Value materialized{value};
+                if (erased.data_view().has_current_value() && erased.value().equals(materialized.view())) { return; }
                 auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
-                static_cast<void>(mutation.copy_value_from(value));
+                static_cast<void>(mutation.move_value_from(std::move(materialized)));
             }
         };
 
@@ -3481,9 +3517,10 @@ namespace hgraph::stdlib
             {
                 const auto &erased = static_cast<const TSOutputView &>(out);
                 const auto  value  = ts.base().value();
-                if (erased.data_view().has_current_value() && erased.value().equals(value)) { return; }
+                Value materialized{value};
+                if (erased.data_view().has_current_value() && erased.value().equals(materialized.view())) { return; }
                 auto mutation = erased.data_view().begin_mutation(erased.evaluation_time());
-                static_cast<void>(mutation.copy_value_from(value));
+                static_cast<void>(mutation.move_value_from(std::move(materialized)));
             }
         };
 

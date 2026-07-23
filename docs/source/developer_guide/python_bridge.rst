@@ -185,6 +185,46 @@ scopes move verbatim** — when relocating code, never widen or narrow an
 acquire/release, and keep the ruling comments attached to
 ``PyWiring::run`` and the sender.
 
+Python-owned Bundle bindings
+----------------------------
+
+RFC 0004 adds a second owning representation for named Bundles without adding
+a value kind. ``src/hgraph/python/bridge_state.cpp`` owns the bridge-only
+``PythonBundleValue`` and its binding registry. A value retains the exact
+``PyObject *``, its active concrete schema, its realised binding, and a lazy
+cache of projected fields. The public C++ surface remains
+``ValueTypeRef``/``BundleView``; neither ``PyObject`` nor the carrier layout is
+part of the SDK.
+
+The binding is deliberately non-composite but supplies complete read-only
+``IndexedValueOps``. ``element_at`` performs normal Python attribute lookup
+under the GIL and converts only the requested field into its declared realised
+binding. Generic Bundle code therefore selects on indexed capability, not on
+Python ownership. Whole-object copy, move, conversion, equality, hashing,
+formatting, and destruction acquire the GIL where Python is involved.
+
+The named Bundle's anonymous structural twin remains the assembly format.
+``TSB[PythonClass]`` stores that field-expanded shape, while
+``BundleBuilder`` and ``as_scalar_ts`` erase the source and ask the owning
+binding to construct the Python class. The optional
+``ValueOps::can_materialize_source`` policy permits construction when every
+required constructor field is valid, even if defaulted or ``init=False``
+fields are absent. Bindings without that capability keep the normal
+all-fields-valid rule.
+
+Python-side schema extraction and generic specialisation live in
+``hgraph._types``. Class identity, not rendered name or field shape, is the
+registration key. A concrete generic alias is retained beside its shared
+Python origin so ``Box[int]`` and ``Box[str]`` have distinct nominal schemas
+and dispatcher tags. Runtime conversion first uses exact class/specialisation
+information, then MRO and field-schema matching; ambiguous inference is an
+error.
+
+Registration records and owning bindings follow the bridge's immortality
+rule. ``reset_registries`` clears the lookup maps and invalidates Python-side
+generation-keyed caches, but already-published binding objects are never
+destroyed during interpreter teardown.
+
 The single-threaded wiring model
 --------------------------------
 

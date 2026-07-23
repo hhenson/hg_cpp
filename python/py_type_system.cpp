@@ -164,6 +164,15 @@ namespace hgraph::python_bridge
         .def_prop_ro("local_name", [](const PyValueType &self) {
             return self.meta != nullptr ? std::string{self.meta->bundle_local_name()} : std::string{};
         })
+        .def_prop_ro("is_hashable", [](const PyValueType &self) {
+            return self.meta != nullptr && self.meta->is_hashable();
+        })
+        .def_prop_ro("is_equatable", [](const PyValueType &self) {
+            return self.meta != nullptr && self.meta->is_equatable();
+        })
+        .def_prop_ro("is_comparable", [](const PyValueType &self) {
+            return self.meta != nullptr && self.meta->is_comparable();
+        })
         .def_prop_ro("fields", [](const PyValueType &self) {
             nb::list result;
             if (self.meta == nullptr) { return result; }
@@ -199,7 +208,9 @@ namespace hgraph::python_bridge
         const auto bundle = bundle_class_info_registry().find(value.meta);
         if (bundle != bundle_class_info_registry().end() && bundle->second.type.is_valid())
         {
-            return bundle->second.type;
+            return bundle->second.specialization.is_valid()
+                       ? bundle->second.specialization
+                       : bundle->second.type;
         }
         const auto enumeration = enum_class_registry().find(value.meta);
         if (enumeration != enum_class_registry().end()) { return enumeration->second; }
