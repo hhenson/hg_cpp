@@ -1,6 +1,7 @@
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
+#include <hgraph/types/adaptor_wiring.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/service_runtime.h>
@@ -101,6 +102,44 @@ namespace
         }
     };
 
+    using RuntimeMultiFields =
+        TSB<"RuntimeMultiFields", Field<"lhs", TS<Int>>, Field<"rhs", TS<Int>>>;
+
+    struct RuntimeMultiFieldServiceAdaptor : service_adaptor::interface
+    {
+        static constexpr std::string_view name{"runtime_multi_field_service_adaptor"};
+        using input_schema = RuntimeMultiFields;
+        using output_schema = RuntimeMultiFields;
+    };
+
+    struct RuntimeMultiFieldServiceAdaptorImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "runtime_multi_field_service_adaptor_impl";
+
+        static Port<TSD<Int, RuntimeMultiFields>> compose(
+            Wiring &, Port<TSD<Int, RuntimeMultiFields>> requests)
+        {
+            return requests;
+        }
+    };
+
+    struct RuntimeMultiFieldServiceAdaptorGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "runtime_multi_field_service_adaptor_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            service_adaptor::register_service_adaptor_impl<
+                RuntimeMultiFieldServiceAdaptor, RuntimeMultiFieldServiceAdaptorImpl>(
+                w, service_adaptor::path("multi"));
+            auto reply = wire<RuntimeMultiFieldServiceAdaptor>(
+                w, service_adaptor::path("multi"), lhs, rhs);
+            auto reply_lhs = wire<stdlib::getattr_>(w, reply, Str{"lhs"}).as<TS<Int>>();
+            auto reply_rhs = wire<stdlib::getattr_>(w, reply, Str{"rhs"}).as<TS<Int>>();
+            return wire<stdlib::add_>(w, reply_lhs, reply_rhs).as<TS<Int>>();
+        }
+    };
+
     struct ErasedServiceAdaptorRegisterTemplateClients
     {
         [[maybe_unused]] static constexpr auto name = "erased_service_adaptor_register_template_clients";
@@ -121,6 +160,40 @@ namespace
             auto lhs_reply = wire<RuntimeEchoServiceAdaptor>(w, custom, lhs);
             auto rhs_reply = wire<RuntimeEchoServiceAdaptor>(w, custom, rhs);
             return wire<stdlib::add_>(w, lhs_reply, rhs_reply).as<TS<Int>>();
+        }
+    };
+
+    struct RuntimeAutomaticAdaptor : adaptor::interface
+    {
+        static constexpr std::string_view name{"runtime_automatic_adaptor"};
+        using input_schema  = TS<Int>;
+        using output_schema = TS<Int>;
+    };
+
+    struct RuntimeAutomaticAdaptorImpl
+    {
+        static Port<TS<Int>> compose(Wiring &, Port<TS<Int>> input)
+        {
+            return input;
+        }
+    };
+
+    struct ErasedAutomaticAdaptorRegisterTemplateClient
+    {
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> input)
+        {
+            auto &registry = TypeRegistry::instance();
+            RuntimeServiceDescriptor descriptor;
+            descriptor.name          = std::string{RuntimeAutomaticAdaptor::name};
+            descriptor.flavour       = ServiceFlavour::Adaptor;
+            descriptor.input_schema  = registry.ts(scalar_descriptor<Int>::value_meta());
+            descriptor.output_schema = descriptor.input_schema;
+            const auto *interned = &intern_service_descriptor(std::move(descriptor));
+
+            register_adaptor_impl(
+                w, *interned, "echo", fn<RuntimeAutomaticAdaptorImpl>(),
+                AdaptorImplMode::Automatic);
+            return wire<RuntimeAutomaticAdaptor>(w, adaptor::path("echo"), input);
         }
     };
 
@@ -218,6 +291,22 @@ TEST_CASE("service runtime: erased service-adaptor registration serves typed cli
     CHECK_OUTPUT(eval_node<ErasedServiceAdaptorRegisterTemplateClients>(
                      values<Int>(1, none, 2), values<Int>(10, none, 20)),
                  values<Int>(none, 11, none, 22));
+}
+
+TEST_CASE("service runtime: C++ service adaptors carry multi-field requests and responses")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<RuntimeMultiFieldServiceAdaptorGraph>(
+                     values<Int>(1, none, 2), values<Int>(10, none, 20)),
+                 values<Int>(none, 11, none, 22));
+}
+
+TEST_CASE("service runtime: erased automatic adaptor registration serves a typed client")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<ErasedAutomaticAdaptorRegisterTemplateClient>(
+                     values<Int>(1, none, 2)),
+                 values<Int>(1, none, 2));
 }
 
 TEST_CASE("service runtime: erased reply-less requests have no client output")

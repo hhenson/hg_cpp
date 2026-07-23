@@ -146,6 +146,30 @@ class _TswOutMarker:
 
 TSW_OUT = _TswOutMarker()
 
+
+class _TsdOutMarker:
+    """TSD_OUT[K, V]: output-backed dictionary annotation sugar."""
+
+    def __getitem__(self, item):
+        from .._types import TSD
+
+        return TSD[item]
+
+
+TSD_OUT = _TsdOutMarker()
+
+
+class _TssOutMarker:
+    """TSS_OUT[T]: output-backed set annotation sugar."""
+
+    def __getitem__(self, item):
+        from .._types import TSS
+
+        return TSS[item]
+
+
+TSS_OUT = _TssOutMarker()
+
 class TSB_OUT:
     """_output annotation sugar (TSB_OUT[Schema]); injection keys on the
     parameter NAME (_output), the subscript documents the shape."""

@@ -248,10 +248,7 @@ namespace hgraph
             auto &state = realtime_storage(memory);
             {
                 std::lock_guard lock{state.mutex};
-                if (state.stop_requested.load(std::memory_order_acquire))
-                {
-                    throw std::runtime_error("Cannot mark push update pending on a stopped real-time graph executor");
-                }
+                if (state.stop_requested.load(std::memory_order_acquire)) { return; }
                 state.push_update_pending = true;
             }
             state.condition.notify_all();
@@ -741,6 +738,11 @@ namespace hgraph
     bool PushQueueEngineView::valid() const noexcept
     {
         return pointer_.has_value();
+    }
+
+    bool PushQueueEngineView::stop_requested() const noexcept
+    {
+        return valid() && ops().stop_requested_impl(ops().context, pointer_.data());
     }
 
     bool PushQueueEngineView::is_push_update_pending() const noexcept

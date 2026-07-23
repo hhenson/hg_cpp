@@ -2,11 +2,12 @@ from dataclasses import dataclass
 
 from frozendict import frozendict
 
-from hgraph import TS, compute_node
-from hgraph.adaptors.data_catalogue import DataCatalogue, DataSource
+from hgraph import AUTO_RESOLVE, SCHEMA, TS, TSB, Frame, compute_node, null_sink
+from hgraph.adaptors.data_catalogue import DataSource, DataCatalogueEntry
+from hgraph.adaptors.data_catalogue.subscribe import subscriber_impl_from_graph, subscriber_impl_to_graph
+from hgraph.stream import Data, Stream
 
 from .sql_adaptor import sql_read_adaptor, sql_read_adaptor_impl
-from .sql_subscriber import _read_sql_source
 
 __all__ = ("BatchSqlDataSource", "sql_adaptor_batch", "sql_adaptor_batch_impl")
 
@@ -21,9 +22,23 @@ class BatchSqlDataSource(DataSource):
         return self.query.format(**options)
 
 
-@DataCatalogue.source_handler(BatchSqlDataSource)
-def _read_batch_sql_source(entry, options, environment_path):
-    return _read_sql_source(entry, options, environment_path)
+@subscriber_impl_from_graph
+def subscribe_batch_sql_from_graph(
+    dce: DataCatalogueEntry, ds: TS[BatchSqlDataSource],
+    options: TS[dict[str, object]], request_id: TS[int],
+    _schema: type[SCHEMA] = AUTO_RESOLVE,
+):
+    null_sink(request_id)
+
+
+@subscriber_impl_to_graph
+def subscribe_batch_sql_to_graph(
+    dce: DataCatalogueEntry, ds: TS[BatchSqlDataSource],
+    options: TS[dict[str, object]], request_id: TS[int],
+    _schema: type[SCHEMA] = AUTO_RESOLVE,
+) -> TSB[Stream[Data[Frame[SCHEMA]]]]:
+    return sql_adaptor_batch[_schema](
+        ds, dce.scope, options, path=dce.store.source_path)
 
 
 @compute_node

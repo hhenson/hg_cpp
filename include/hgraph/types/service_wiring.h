@@ -1,6 +1,7 @@
 #ifndef HGRAPH_TYPES_SERVICE_WIRING_H
 #define HGRAPH_TYPES_SERVICE_WIRING_H
 
+#include <hgraph/lib/std/operators/collection.h>
 #include <hgraph/lib/std/operators/container.h>
 #include <hgraph/runtime/feedback_node.h>
 #include <hgraph/runtime/service_node.h>
@@ -1036,13 +1037,22 @@ namespace hgraph::service
     void register_reference_service(Wiring &w, ServicePath user_path, const Args &...args)
     {
         using output_schema = detail::reference_output_schema_t<Service>;
-
-        w.register_built_service_path(detail::reference_base_path<Service>(user_path), "reference service");
-        auto shared_output = detail::reference_shared_output_source<Service>(w, user_path);
-        auto output        = detail::wire_service_impl<Impl, output_schema>(w, user_path, args...);
-        const WiringInstance *capture =
-            detail::capture_reference_service_output<Service, Impl>(w, output, shared_output, user_path);
-        w.register_service_rank_anchor(detail::reference_base_path<Service>(user_path), capture);
+        const std::string base_path = detail::reference_base_path<Service>(user_path);
+        auto stored_args = std::tuple<std::decay_t<Args>...>{args...};
+        w.register_service_implementation_candidate(
+            {base_path}, "reference service " + base_path,
+            [user_path = std::move(user_path), stored_args = std::move(stored_args), base_path](Wiring &target) {
+                target.register_built_service_path(base_path, "reference service");
+                auto shared_output = detail::reference_shared_output_source<Service>(target, user_path);
+                auto output = std::apply(
+                    [&](const auto &...stored) {
+                        return detail::wire_service_impl<Impl, output_schema>(target, user_path, stored...);
+                    }, stored_args);
+                const WiringInstance *capture =
+                    detail::capture_reference_service_output<Service, Impl>(
+                        target, output, shared_output, user_path);
+                target.register_service_rank_anchor(base_path, capture);
+            });
     }
 
     template <typename Service, typename Impl, typename... Args>
@@ -1261,15 +1271,26 @@ namespace hgraph::service
     {
         using output_schema = detail::output_schema_t<Service>;
 
-        w.register_built_service_path(detail::subscription_base_path<Service>(user_path), "subscription service");
-        auto subscriptions = detail::subscription_source<Service>(w, user_path);
-        auto shared_output = detail::shared_output_source<Service>(w, user_path);
-        w.register_service_rank_anchor(detail::subscriptions_path<Service>(user_path), subscriptions.node());
-        auto output = detail::wire_service_impl<Impl, output_schema>(
-            w, user_path, detail::service_input_arg<Impl>(subscriptions), args...);
-        const WiringInstance *capture =
-            detail::capture_service_output<Service, Impl>(w, output, shared_output, user_path);
-        w.register_service_rank_anchor(detail::output_path<Service>(user_path), capture);
+        const std::string base_path = detail::subscription_base_path<Service>(user_path);
+        auto stored_args = std::tuple<std::decay_t<Args>...>{args...};
+        w.register_service_implementation_candidate(
+            {base_path}, "subscription service " + base_path,
+            [user_path = std::move(user_path), stored_args = std::move(stored_args), base_path](Wiring &target) {
+                target.register_built_service_path(base_path, "subscription service");
+                auto subscriptions = detail::subscription_source<Service>(target, user_path);
+                auto shared_output = detail::shared_output_source<Service>(target, user_path);
+                target.register_service_rank_anchor(
+                    detail::subscriptions_path<Service>(user_path), subscriptions.node());
+                auto output = std::apply(
+                    [&](const auto &...stored) {
+                        return detail::wire_service_impl<Impl, output_schema>(
+                            target, user_path, detail::service_input_arg<Impl>(subscriptions), stored...);
+                    }, stored_args);
+                const WiringInstance *capture = detail::capture_service_output<Service, Impl>(
+                    target, output, shared_output, user_path);
+                target.register_service_rank_anchor(
+                    detail::output_path<Service>(user_path), capture);
+            });
     }
 
     template <typename Service, typename Impl, typename... Args>
@@ -1348,15 +1369,27 @@ namespace hgraph::service
     {
         using output_schema = detail::request_output_schema_t<Service>;
 
-        w.register_built_service_path(detail::request_reply_base_path<Service>(user_path), "request/reply service");
-        auto requests = detail::request_input_source<Service>(w, user_path);
-        auto replies  = detail::request_reply_output_source<Service>(w, user_path);
-        w.register_service_rank_anchor(detail::request_input_path<Service>(user_path), requests.node());
-        auto output = detail::wire_service_impl<Impl, output_schema>(
-            w, user_path, detail::service_input_arg<Impl>(requests), args...);
-        const WiringInstance *capture =
-            detail::capture_request_reply_service_output<Service, Impl>(w, output, replies, user_path);
-        w.register_service_rank_anchor(detail::request_reply_output_path<Service>(user_path), capture);
+        const std::string base_path = detail::request_reply_base_path<Service>(user_path);
+        auto stored_args = std::tuple<std::decay_t<Args>...>{args...};
+        w.register_service_implementation_candidate(
+            {base_path}, "request/reply service " + base_path,
+            [user_path = std::move(user_path), stored_args = std::move(stored_args), base_path](Wiring &target) {
+                target.register_built_service_path(base_path, "request/reply service");
+                auto requests = detail::request_input_source<Service>(target, user_path);
+                auto replies  = detail::request_reply_output_source<Service>(target, user_path);
+                target.register_service_rank_anchor(
+                    detail::request_input_path<Service>(user_path), requests.node());
+                auto output = std::apply(
+                    [&](const auto &...stored) {
+                        return detail::wire_service_impl<Impl, output_schema>(
+                            target, user_path, detail::service_input_arg<Impl>(requests), stored...);
+                    }, stored_args);
+                const WiringInstance *capture =
+                    detail::capture_request_reply_service_output<Service, Impl>(
+                        target, output, replies, user_path);
+                target.register_service_rank_anchor(
+                    detail::request_reply_output_path<Service>(user_path), capture);
+            });
     }
 
     template <typename Service, typename Impl, typename... Args>
@@ -1787,11 +1820,19 @@ namespace hgraph::service_adaptor
         static_assert(detail::service_adaptor_interface<Interface>,
                       "register_service_adaptor requires a type derived from service_adaptor::interface");
         std::string base_path = detail::adaptor_base_path<Interface>(user_path);
-        w.register_built_service_path(base_path, "service adaptor");
-        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
-        detail::append_required_stub_endpoints<Interface>(required_endpoints, user_path);
-        detail::wire_impl_with_scope<Impl>(
-            w, user_path, "service adaptor " + base_path, std::move(required_endpoints), args...);
+        auto stored_args = std::tuple<std::decay_t<Args>...>{args...};
+        w.register_service_implementation_candidate(
+            {base_path}, "service adaptor " + base_path,
+            [user_path = std::move(user_path), stored_args = std::move(stored_args), base_path](Wiring &target) {
+                target.register_built_service_path(base_path, "service adaptor");
+                std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+                detail::append_required_stub_endpoints<Interface>(required_endpoints, user_path);
+                std::apply([&](const auto &...stored) {
+                    detail::wire_impl_with_scope<Impl>(
+                        target, user_path, "service adaptor " + base_path,
+                        std::move(required_endpoints), stored...);
+                }, stored_args);
+            });
     }
 
     template <typename Interface, typename Impl, typename... Args>
@@ -1807,11 +1848,22 @@ namespace hgraph::service_adaptor
                       "register_service_adaptors requires at least one service adaptor interface");
         static_assert((detail::service_adaptor_interface<Interfaces> && ...),
                       "register_service_adaptors requires service_adaptor::interface descriptor types");
-        (w.register_built_service_path(detail::adaptor_base_path<Interfaces>(user_path), "service adaptor"), ...);
-        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
-        (detail::append_required_stub_endpoints<Interfaces>(required_endpoints, user_path), ...);
-        detail::wire_impl_with_scope<Impl>(
-            w, user_path, "multi-service-adaptor implementation", std::move(required_endpoints), args...);
+        std::vector<std::string> base_paths{
+            detail::adaptor_base_path<Interfaces>(user_path)...};
+        auto stored_args = std::tuple<std::decay_t<Args>...>{args...};
+        w.register_service_implementation_candidate(
+            std::move(base_paths), "multi-service-adaptor implementation",
+            [user_path = std::move(user_path), stored_args = std::move(stored_args)](Wiring &target) {
+                (target.register_built_service_path(
+                    detail::adaptor_base_path<Interfaces>(user_path), "service adaptor"), ...);
+                std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+                (detail::append_required_stub_endpoints<Interfaces>(required_endpoints, user_path), ...);
+                std::apply([&](const auto &...stored) {
+                    detail::wire_impl_with_scope<Impl>(
+                        target, user_path, "multi-service-adaptor implementation",
+                        std::move(required_endpoints), stored...);
+                }, stored_args);
+            });
     }
 
     template <typename Interface>
@@ -1830,16 +1882,23 @@ namespace hgraph::service_adaptor
         using output_schema = detail::request_output_schema_t<Interface>;
 
         std::string base_path = detail::adaptor_base_path<Interface>(user_path);
-        w.register_built_service_path(base_path, "service adaptor");
-
-        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
-        detail::append_required_stub_endpoints<Interface>(required_endpoints, user_path);
-        auto scope = w.service_implementation_scope(
-            "service adaptor impl " + base_path, std::move(required_endpoints));
-        auto requests = from_graph<Interface>(w, user_path);
-        auto replies = detail::wire_impl_output<Impl, output_schema>(w, user_path, requests, args...);
-        to_graph<Interface>(w, user_path, replies);
-        scope.complete();
+        auto stored_args = std::tuple<std::decay_t<Args>...>{args...};
+        w.register_service_implementation_candidate(
+            {base_path}, "service adaptor impl " + base_path,
+            [user_path = std::move(user_path), stored_args = std::move(stored_args), base_path](Wiring &target) {
+                target.register_built_service_path(base_path, "service adaptor");
+                std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+                detail::append_required_stub_endpoints<Interface>(required_endpoints, user_path);
+                auto scope = target.service_implementation_scope(
+                    "service adaptor impl " + base_path, std::move(required_endpoints));
+                auto requests = from_graph<Interface>(target, user_path);
+                auto replies = std::apply([&](const auto &...stored) {
+                    return detail::wire_impl_output<Impl, output_schema>(
+                        target, user_path, requests, stored...);
+                }, stored_args);
+                to_graph<Interface>(target, user_path, replies);
+                scope.complete();
+            });
     }
 
     template <typename Interface, typename Impl, typename... Args>
@@ -1947,6 +2006,31 @@ namespace hgraph::service_adaptor
         auto input)
     {
         return adaptor<Interface>(w, detail::default_adaptor_path<Interface>(), std::move(input));
+    }
+
+    /** Pack the fields of a TSB request schema from separate client ports. */
+    template <typename Interface, typename... Inputs>
+        requires(sizeof...(Inputs) > 1)
+    [[nodiscard]] Port<detail::output_schema_t<Interface>> adaptor(
+        Wiring &w,
+        ServiceAdaptorPath user_path,
+        const Inputs &...inputs)
+    {
+        using input_schema = detail::input_schema_t<Interface>;
+        static_assert(stdlib::collection_detail::is_tsb_schema_v<input_schema>,
+                      "multi-input service adaptors require a TSB input_schema");
+        return adaptor<Interface>(
+            w, std::move(user_path), stdlib::to_tsb<input_schema>(w, inputs...));
+    }
+
+    /** Pack the fields of a TSB request schema from separate client ports. */
+    template <typename Interface, typename... Inputs>
+        requires(sizeof...(Inputs) > 1)
+    [[nodiscard]] Port<detail::output_schema_t<Interface>> adaptor(
+        Wiring &w,
+        const Inputs &...inputs)
+    {
+        return adaptor<Interface>(w, detail::default_adaptor_path<Interface>(), inputs...);
     }
 }  // namespace hgraph::service_adaptor
 

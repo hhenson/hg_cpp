@@ -68,10 +68,7 @@ namespace hgraph
             [[nodiscard]] bool send(const PushSourcePolicyContext &context, Value value)
             {
                 std::lock_guard lock{mutex};
-                if (!accepting)
-                {
-                    throw std::logic_error("PushSourceSender cannot send before start or after stop");
-                }
+                if (!accepting) { return false; }
                 if (!value.has_value())
                 {
                     throw std::invalid_argument("PushSourceSender requires a live value payload");
@@ -131,10 +128,7 @@ namespace hgraph
             [[nodiscard]] bool send(const PushSourcePolicyContext &context, Value value)
             {
                 std::lock_guard lock{mutex};
-                if (!accepting)
-                {
-                    throw std::logic_error("PushSourceSender cannot send before start or after stop");
-                }
+                if (!accepting) { return false; }
                 if (!value.has_value())
                 {
                     throw std::invalid_argument("PushSourceSender requires a live value payload");
@@ -458,6 +452,7 @@ namespace hgraph
     void detail::PushSourcePolicyStorageRef::send(Value value) const
     {
         if (!bound()) { throw std::logic_error("PushSourceSender requires live push-source policy storage"); }
+        if (push_engine.stop_requested()) { return; }
         if (policy.ops_->send_impl(policy.context_, storage, std::move(value)))
         {
             push_engine.mark_push_update_pending();

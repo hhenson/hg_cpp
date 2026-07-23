@@ -1048,6 +1048,16 @@ namespace hgraph::python_bridge
              nb::arg("trace_wiring") = false,
              nb::arg("observers") = nb::tuple())
         .def("wiring_trace_lines", &PyWiring::wiring_trace_lines)
+        .def("build_services", [](PyWiring &wiring) { wiring.raw->build_services(); })
+        .def("service_client_paths", [](PyWiring &wiring) {
+            return wiring.raw->service_client_paths();
+        })
+        .def("built_service_paths", [](PyWiring &wiring) {
+            return wiring.raw->built_service_paths();
+        })
+        .def("service_materialization_path", [](PyWiring &wiring) {
+            return std::string{wiring.raw->service_materialization_path()};
+        })
         .def("_graph_wiring_scope", &PyWiring::graph_wiring_scope,
              nb::arg("label"))
         .def("_release_seed_context", &PyWiring::release_seed_context)

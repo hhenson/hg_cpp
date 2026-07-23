@@ -1,6 +1,7 @@
 """Service/adaptor decorators, impl registration and the wiring-scope
 ``context``."""
 import inspect
+import itertools
 import typing
 
 import _hgraph
@@ -22,6 +23,7 @@ from ._node import _PyNode, _warn_deprecated
 
 
 _TS_ANNOTATIONS = (_TsExpr, _GenericTsExpr)
+_SERVICE_ADAPTOR_CLIENT_TOKENS = itertools.count()
 
 
 def _is_ts_annotation(annotation):
@@ -492,21 +494,89 @@ def request_reply_service(fn=None, resolvers=None):
     return _ServiceStub(fn, "request_reply", resolvers=resolvers)
 
 
-class _AdaptorStub:
+class _AdaptorClientStub:
+    def _specialized_stub(self, resolution, specialization):
+        return type(self)(
+            self.fn, resolution=resolution, specialization=specialization,
+            resolvers=self._resolvers)
+
+    def _materialize_client_registration(self, stub):
+        del stub
+
+    def _prepare_client_request(self, args, kwargs):
+        kwargs = dict(kwargs)
+        has_path_parameter = "path" in self._signature.parameters
+        external_path = kwargs.pop("path", "") if not has_path_parameter else None
+        if has_path_parameter and "path" in kwargs and args and not isinstance(args[0], str):
+            external_path = kwargs.pop("path")
+            request_signature = self._signature.replace(parameters=[
+                parameter for parameter in self._signature.parameters.values()
+                if parameter.name != "path"
+            ])
+            bound = request_signature.bind(*args, **kwargs)
+        else:
+            bound = self._signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        path = bound.arguments.get("path", external_path) if has_path_parameter else external_path
+        if path is None:
+            path = ""
+        if not isinstance(path, str):
+            raise TypeError(f"{self.flavour.replace('_', ' ')} '{self.__name__}' path must be a string")
+
+        from ._node import _lift_time_series_argument
+        requests = [
+            value if isinstance(value, WiringPort)
+            else wire("nothing", output_type=parameter.annotation)
+            if value is None
+            else _lift_time_series_argument(value, parameter.annotation)
+            for parameter in self._request_params
+            for value in (bound.arguments[parameter.name],)
+        ]
+        stub = self
+        if self.descriptor is None:
+            resolution = _hgraph.ResolutionScope()
+            for parameter, request in zip(self._request_params, requests):
+                if not resolution.match(
+                        _pattern_of(parameter.annotation), _unwrap(request).ts_type):
+                    raise TypeError(
+                        f"generic {self.flavour.replace('_', ' ')} '{self.__name__}' "
+                        "request does not match its type pattern")
+            _apply_service_defaults(self._signature, resolution)
+            _apply_service_resolvers(resolution, self._resolvers)
+            specialization = _specialization_label(resolution)
+            stub = self._specialized_stub(resolution, specialization)
+        self._materialize_client_registration(stub)
+        request = (
+            None if not requests else requests[0]
+            if len(requests) == 1 else WiringPort(_hgraph.tsb_port(
+                stub._request_type,
+                {parameter.name: _unwrap(value)
+                 for parameter, value in zip(stub._request_params, requests)})))
+        return stub, stub._resolved_path(path), request
+
+
+class _AdaptorStub(_AdaptorClientStub):
     """@adaptor: an adaptor interface stub - the first TS parameter is the
     graph-side input (optional), the return annotation the graph-side output
     (optional). Calling the stub wires a CLIENT."""
 
     def __init__(self, fn, *, resolution=None, specialization="",
-                 resolvers=None):
+                 resolvers=None, pending_registrations=None,
+                 registered_resolutions=None):
         self.fn = fn
         self.__name__ = fn.__name__
         self.flavour = "adaptor"
         self._specialization = specialization
+        self._resolution = resolution
         self._resolvers = dict(resolvers) if resolvers else None
+        self._pending_registrations = (
+            pending_registrations if pending_registrations is not None else [])
+        self._registered_resolutions = (
+            registered_resolutions if registered_resolutions is not None else [])
         sig = inspect.signature(fn)
         params = [p for p in sig.parameters.values() if _is_ts_annotation(p.annotation)]
-        self._request_annotation = params[0].annotation if params else None
+        self._signature = sig
+        self._request_params = tuple(params)
         out = sig.return_annotation
         path_param = sig.parameters.get("path")
         default_path = (
@@ -524,7 +594,17 @@ class _AdaptorStub:
             "specialization": specialization,
         }
         if params:
-            kwargs["request"] = _resolve_annotation(params[0].annotation, resolution)
+            request_fields = [
+                (parameter.name, _resolve_annotation(parameter.annotation, resolution))
+                for parameter in params
+            ]
+            kwargs["request"] = (
+                request_fields[0][1]
+                if len(request_fields) == 1
+                else _hgraph.un_named_tsb_type(request_fields)
+                if all(field_type is not None for _, field_type in request_fields)
+                else None)
+        self._request_type = kwargs.get("request")
         if _is_ts_annotation(out):
             kwargs["output"] = _resolve_annotation(out, resolution)
         unresolved = [
@@ -540,7 +620,9 @@ class _AdaptorStub:
             item, f"adaptor '{self.__name__}'", self._resolvers)
         result = _AdaptorStub(
             self.fn, resolution=resolution, specialization=specialization,
-            resolvers=self._resolvers)
+            resolvers=self._resolvers,
+            pending_registrations=self._pending_registrations,
+            registered_resolutions=self._registered_resolutions)
         if result.descriptor is None:
             raise TypeError(
                 f"adaptor '{self.__name__}' specialization leaves an unresolved time-series type")
@@ -557,21 +639,26 @@ class _AdaptorStub:
         suffix = f"[{self._specialization}]"
         return path if path.endswith(suffix) else f"{path}{suffix}"
 
-    def __call__(self, ts=None, *, path=""):
-        stub = self
-        if self.descriptor is None:
-            if ts is not None and self._request_annotation is not None:
-                resolution, specialization = _inferred_specialization(
-                    self.fn, self._request_annotation, ts, self._resolvers)
-            else:
-                resolution = _apply_service_resolvers(
-                    _hgraph.ResolutionScope(), self._resolvers)
-                specialization = _specialization_label(resolution)
-            stub = _AdaptorStub(
-                self.fn, resolution=resolution, specialization=specialization,
-                resolvers=self._resolvers)
-        port = _hgraph.adaptor_client(_current_wiring(), stub._require_descriptor(), stub._resolved_path(path),
-                                      None if ts is None else _unwrap(ts))
+    @property
+    def implementation_arity(self):
+        return len(self._request_params)
+
+    def _specialized_stub(self, resolution, specialization):
+        return _AdaptorStub(
+            self.fn, resolution=resolution, specialization=specialization,
+            resolvers=self._resolvers,
+            pending_registrations=self._pending_registrations,
+            registered_resolutions=self._registered_resolutions)
+
+    def _materialize_client_registration(self, stub):
+        _materialize_pending_registrations(
+            self, stub._resolution, _current_wiring())
+
+    def __call__(self, *args, **kwargs):
+        stub, path, request = self._prepare_client_request(args, kwargs)
+        port = _hgraph.adaptor_client(
+            _current_wiring(), stub._require_descriptor(), path,
+            None if request is None else _unwrap(request))
         return None if port is None else WiringPort(port)
 
 
@@ -581,28 +668,36 @@ def adaptor(fn=None, resolvers=None):
     return _AdaptorStub(fn, resolvers=resolvers)
 
 
-class _ServiceAdaptorStub:
-    """@service_adaptor: one request time-series per client, multiplexed as
-    ``TSD[int, request]`` for the implementation and demultiplexed from its
-    ``TSD[int, response]`` result by the native runtime."""
+class _ServiceAdaptorStub(_AdaptorClientStub):
+    """A C++ service-adaptor contract with Python structural bundling.
+
+    Multiple Python request parameters become one unnamed ``TSB`` request,
+    matching a C++ interface whose ``input_schema`` is a ``TSB<...>``.
+    """
 
     def __init__(self, fn, *, resolution=None, specialization="",
-                 resolvers=None):
+                 resolvers=None, pending_registrations=None,
+                 registered_resolutions=None):
         self.fn = fn
         self.__name__ = fn.__name__
         self.flavour = "service_adaptor"
         self._specialization = specialization
+        self._resolution = resolution
         self._resolvers = dict(resolvers) if resolvers else None
+        self._pending_registrations = (
+            pending_registrations if pending_registrations is not None else [])
+        self._registered_resolutions = (
+            registered_resolutions if registered_resolutions is not None else [])
         sig = inspect.signature(fn)
         params = [p for p in sig.parameters.values() if _is_ts_annotation(p.annotation)]
-        if len(params) != 1:
+        if not params:
             raise TypeError(
-                f"@service_adaptor '{self.__name__}' requires exactly one time-series request parameter"
+                f"@service_adaptor '{self.__name__}' requires at least one time-series request parameter"
             )
         if not _is_ts_annotation(sig.return_annotation):
             raise TypeError(f"@service_adaptor '{self.__name__}' requires a time-series return annotation")
-        self._request_name = params[0].name
-        self._request_annotation = params[0].annotation
+        self._signature = sig
+        self._request_params = tuple(params)
         path_param = sig.parameters.get("path")
         default_path = (
             path_param.default
@@ -612,8 +707,19 @@ class _ServiceAdaptorStub:
         if specialization:
             default_path = f"{default_path}[{specialization}]"
         self._default_path = default_path
-        request = _resolve_annotation(params[0].annotation, resolution)
+        request_fields = [
+            (parameter.name, _resolve_annotation(parameter.annotation, resolution))
+            for parameter in params
+        ]
+        request = (
+            request_fields[0][1]
+            if len(request_fields) == 1
+            else _hgraph.un_named_tsb_type(request_fields)
+            if all(field_type is not None for _, field_type in request_fields)
+            else None
+        )
         output = _resolve_annotation(sig.return_annotation, resolution)
+        self._request_type = request
         self.descriptor = None if request is None or output is None else _hgraph.service_descriptor(
             name=fn.__name__, flavour="service_adaptor",
             request=request, output=output,
@@ -622,11 +728,25 @@ class _ServiceAdaptorStub:
     def __getitem__(self, item):
         if self.descriptor is not None and not self._specialization:
             raise TypeError(f"service adaptor '{self.__name__}' is not generic")
+        items = item if isinstance(item, tuple) else (item,)
+        if not all(isinstance(binding, slice) for binding in items):
+            variables = [
+                variable for variable in _service_type_variables(self._signature)
+                if self._resolution is None
+                or _type_var_name(variable) not in self._resolution.bindings
+            ]
+            if len(variables) != 1 or len(items) != 1:
+                raise TypeError(
+                    f"service adaptor '{self.__name__}' cannot infer which type variable "
+                    f"to bind; use TYPEVAR: concrete")
+            item = slice(variables[0], items[0])
         resolution, specialization = _specialization(
             item, f"service adaptor '{self.__name__}'", self._resolvers)
         result = _ServiceAdaptorStub(
             self.fn, resolution=resolution, specialization=specialization,
-            resolvers=self._resolvers)
+            resolvers=self._resolvers,
+            pending_registrations=self._pending_registrations,
+            registered_resolutions=self._registered_resolutions)
         if result.descriptor is None:
             raise TypeError(
                 f"service adaptor '{self.__name__}' specialization leaves an unresolved time-series type")
@@ -644,32 +764,56 @@ class _ServiceAdaptorStub:
         suffix = f"[{self._specialization}]"
         return path if path.endswith(suffix) else f"{path}{suffix}"
 
-    def __call__(self, *args, path="", **kwargs):
-        if args and isinstance(args[0], str):
-            if path:
-                raise TypeError(f"{self.__name__} received path twice")
-            path, args = args[0], args[1:]
-        if len(args) > 1:
-            raise TypeError(f"{self.__name__} accepts one time-series request")
-        if args:
-            if self._request_name in kwargs:
-                raise TypeError(f"{self.__name__} received its request twice")
-            request = args[0]
-        elif self._request_name in kwargs:
-            request = kwargs.pop(self._request_name)
-        else:
-            raise TypeError(f"{self.__name__} requires '{self._request_name}'")
-        if kwargs:
-            raise TypeError(f"{self.__name__} got unexpected arguments {sorted(kwargs)!r}")
+    @property
+    def implementation_arity(self):
+        return len(self._request_params)
+
+    def _specialized_stub(self, resolution, specialization):
+        return _ServiceAdaptorStub(
+            self.fn, resolution=resolution, specialization=specialization,
+            resolvers=self._resolvers,
+            pending_registrations=self._pending_registrations,
+            registered_resolutions=self._registered_resolutions)
+
+    def _materialize_client_registration(self, stub):
+        _materialize_pending_registrations(
+            self, stub._resolution, _current_wiring())
+
+    @staticmethod
+    def _client_request_id(path, request):
+        del path, request
+        return wire("request_id", next(_SERVICE_ADAPTOR_CLIENT_TOKENS))
+
+    def from_graph(self, *args, __request_id__=None, **kwargs):
+        stub, path, request = self._prepare_client_request(args, kwargs)
+        request_id = (
+            self._client_request_id(path, request)
+            if __request_id__ is None else __request_id__)
+        _hgraph.service_adaptor_client_from_graph(
+            _current_wiring(), stub._require_descriptor(), path,
+            _unwrap(request), _unwrap(request_id))
+        return request_id
+
+    def to_graph(self, *, path="", __request_id__, __no_ts_inputs__=False):
+        del __no_ts_inputs__  # compatibility with the old explicit client API
         stub = self
-        if self.descriptor is None:
-            resolution, specialization = _inferred_specialization(
-                self.fn, self._request_annotation, request, self._resolvers)
-            stub = _ServiceAdaptorStub(
-                self.fn, resolution=resolution, specialization=specialization,
-                resolvers=self._resolvers)
-        return WiringPort(_hgraph.service_adaptor_client(
-            _current_wiring(), stub._require_descriptor(), stub._resolved_path(path), _unwrap(request)))
+        if stub.descriptor is None:
+            raise TypeError(
+                f"generic service adaptor '{self.__name__}' must be specialized")
+        path = stub._resolved_path(path)
+        return WiringPort(_hgraph.service_adaptor_client_to_graph(
+            _current_wiring(), stub._require_descriptor(), path,
+            _unwrap(__request_id__)))
+
+    def __call__(self, *args, **kwargs):
+        stub, path, request = self._prepare_client_request(args, kwargs)
+        request_id = self._client_request_id(path, request)
+        _hgraph.service_adaptor_client_from_graph(
+            _current_wiring(), stub._require_descriptor(), path,
+            _unwrap(request), _unwrap(request_id))
+        return WiringPort(_hgraph.service_adaptor_client_to_graph(
+            _current_wiring(), stub._require_descriptor(), path,
+            _unwrap(request_id)))
 
 
 class _AdaptorImplGroup:
@@ -725,36 +869,78 @@ def register_adaptor(path, implementation, resolution_dict=None, **kwargs):
         return
     if not isinstance(implementation, _ServiceImpl):
         raise WiringError("register_adaptor requires an @adaptor_impl-decorated implementation")
+    unresolved = tuple(
+        stub for stub in implementation.interfaces
+        if getattr(stub, "descriptor", None) is None)
+    if unresolved and not resolution_dict:
+        _queue_service_registration(
+            path, implementation, kwargs, unresolved,
+            registrar=_register_resolved_adaptor)
+        return
     implementation = _resolve_registered_implementation(
         implementation, resolution_dict, "register_adaptor")
+    _register_resolved_adaptor(path, implementation, kwargs)
+
+
+def _register_resolved_adaptor(path, implementation, kwargs, wiring=None):
+    wiring = wiring or _current_wiring()
+    default_fallback = path is None
+    implementation_inputs, scalar_kwargs = _adaptor_registration_inputs(
+        implementation, kwargs)
+    if not implementation.interfaces:
+        impl_fn = _bind_registered_impl(implementation, path, scalar_kwargs)
+        _hgraph.register_unbound_adaptor_impl(
+            wiring, _wrap_graph_fn(impl_fn),
+            [_unwrap(port) for port in implementation_inputs])
+        return
     flavours = {stub.flavour for stub in implementation.interfaces}
     if not flavours <= {"adaptor", "service_adaptor"}:
         raise WiringError("register_adaptor requires adaptor interfaces")
     if len(implementation.interfaces) > 1:
-        if flavours != {"service_adaptor"}:
-            raise WiringError(
-                "multi-interface Python registration is supported for service adaptors only")
         resolved_paths = {
             _resolved_service_path(stub, path) for stub in implementation.interfaces
         }
         if len(resolved_paths) != 1:
             raise WiringError("multi-interface adaptors require one shared type specialization")
         resolved_path = resolved_paths.pop()
-        impl_fn = _bind_registered_impl(implementation, path, kwargs)
+        impl_fn = _bind_registered_impl(implementation, path, scalar_kwargs)
         _hgraph.register_multi_service_impl(
-            _current_wiring(), [stub.descriptor for stub in implementation.interfaces], resolved_path,
-            _wrap_graph_fn(impl_fn))
+            wiring, [stub.descriptor for stub in implementation.interfaces], resolved_path,
+            _wrap_graph_fn(impl_fn), [_unwrap(port) for port in implementation_inputs],
+            default_fallback=default_fallback)
         return
     stub = implementation.interfaces[0]
     resolved_path = _resolved_service_path(stub, path)
     user_path = getattr(stub, "_default_path", "") if path is None else path
-    impl_fn = _bind_registered_impl(implementation, user_path, kwargs)
+    impl_fn = _bind_registered_impl(implementation, user_path, scalar_kwargs)
     if stub.flavour == "service_adaptor":
         _hgraph.register_service_adaptor_impl(
-            _current_wiring(), stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
+            wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn),
+            default_fallback=default_fallback)
     else:
         _hgraph.register_adaptor_impl(
-            _current_wiring(), stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
+            wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn),
+            automatic=not implementation.manual_adaptor,
+            inputs=[_unwrap(port) for port in implementation_inputs],
+            default_fallback=default_fallback)
+
+
+def _adaptor_registration_inputs(implementation, config):
+    config = dict(config)
+    if not implementation.manual_adaptor:
+        return (), config
+    inputs = []
+    from ._node import _lift_time_series_argument
+    for parameter in implementation.ts_parameters:
+        if parameter.name not in config:
+            raise WiringError(
+                f"manual adaptor implementation '{implementation.__name__}' requires "
+                f"time-series configuration '{parameter.name}'")
+        value = config.pop(parameter.name)
+        if not isinstance(value, WiringPort):
+            value = _lift_time_series_argument(value, parameter.annotation)
+        inputs.append(value)
+    return tuple(inputs), config
 
 
 def adaptor_impl(fn=None, *, interfaces=None, resolvers=None,
@@ -790,6 +976,42 @@ _FLAVOUR_TS_ARITY = {
 }
 
 
+def _validate_interface_implementation_signature(implementation, stub):
+    actual_by_name = {
+        parameter.name: parameter
+        for parameter in implementation.ts_parameters}
+    expected_names = tuple(parameter.name for parameter in stub._request_params)
+    if tuple(actual_by_name) != expected_names:
+        raise TypeError(
+            f"@service_impl '{implementation.__name__}': automatic adaptor inputs "
+            f"must be {expected_names!r}, found {tuple(actual_by_name)!r}")
+
+    def matches(expected, actual):
+        expected_type = _resolve_annotation(expected, stub._resolution)
+        actual_type = _resolve_annotation(actual, stub._resolution)
+        if expected_type is not None or actual_type is not None:
+            return expected_type == actual_type
+        return repr(_pattern_of(expected)) == repr(_pattern_of(actual))
+
+    for parameter in stub._request_params:
+        if not matches(
+                parameter.annotation,
+                actual_by_name[parameter.name].annotation):
+            raise TypeError(
+                f"@service_impl '{implementation.__name__}': input "
+                f"'{parameter.name}' does not match the adaptor interface")
+
+    expected_output = stub._signature.return_annotation
+    actual_output = implementation.signature.return_annotation
+    expected_has_output = _is_ts_annotation(expected_output)
+    actual_has_output = _is_ts_annotation(actual_output)
+    if expected_has_output != actual_has_output or (
+            expected_has_output and not matches(expected_output, actual_output)):
+        raise TypeError(
+            f"@service_impl '{implementation.__name__}': output does not match "
+            "the adaptor interface")
+
+
 class _ServiceImpl:
     """@service_impl: an implementation declaring WHICH interfaces it
     supports - validated at decoration (signature shape per flavour) and
@@ -804,20 +1026,29 @@ class _ServiceImpl:
         self.deprecated = deprecated
         if interfaces is None:
             raise TypeError(f"@service_impl '{self.__name__}' requires interfaces=")
+        self.manual_adaptor = isinstance(interfaces, (tuple, list))
         if not isinstance(interfaces, (tuple, list)):
             interfaces = (interfaces,)
         self.interfaces = tuple(self._resolve(stub) for stub in interfaces)
-        target = getattr(fn, "fn", fn)   # unwrap @graph/@compute_node wrappers
-        ts_params = [
-            p for p in inspect.signature(target).parameters.values()
+        self.target = getattr(fn, "fn", fn)   # unwrap @graph/@compute_node wrappers
+        self.signature = inspect.signature(self.target)
+        self.ts_parameters = tuple(
+            p for p in self.signature.parameters.values()
             if p.name != "path"
             and (_is_ts_annotation(p.annotation) or p.annotation is inspect.Signature.empty)
-        ]
+        )
+        ts_names = {parameter.name for parameter in self.ts_parameters}
+        self.configuration_parameters = tuple(
+            parameter for parameter in self.signature.parameters.values()
+            if parameter.name != "path"
+            and parameter.name not in ts_names
+            and parameter.annotation not in _INJECTABLE_MARKERS)
+        ts_params = self.ts_parameters
         if len(self.interfaces) > 1:
             # Multi-interface implementations take NO wired inputs: they
             # fetch each interface's input via impl_input and publish via
             # impl_output inside the body.
-            if ts_params:
+            if ts_params and not all(stub.flavour == "adaptor" for stub in self.interfaces):
                 raise TypeError(
                     f"@service_impl '{self.__name__}': a multi-interface implementation takes no "
                     "time-series parameters (use impl_input/impl_output)")
@@ -826,6 +1057,10 @@ class _ServiceImpl:
                 expected = getattr(
                     stub, "implementation_arity", _FLAVOUR_TS_ARITY[stub.flavour]
                 )
+                if stub.flavour == "adaptor" and self.manual_adaptor:
+                    continue
+                if stub.flavour == "adaptor":
+                    _validate_interface_implementation_signature(self, stub)
                 if len(ts_params) != expected:
                     raise TypeError(
                         f"@service_impl '{self.__name__}': a {stub.flavour} implementation takes "
@@ -882,7 +1117,8 @@ class _ServiceInputs:
 
 
 def _split_service_requests(stub, packed):
-    if stub.flavour != "request_reply" or stub.implementation_arity == 1:
+    if stub.flavour not in {"request_reply", "adaptor", "service_adaptor"} \
+            or stub.implementation_arity == 1:
         return [packed]
     return [wire("getattr_", packed, parameter.name) for parameter in stub._request_params]
 
@@ -890,32 +1126,32 @@ def _split_service_requests(stub, packed):
 def _bind_registered_impl(implementation, path, config):
     """Bind path/config while leaving only native service ports in the signature."""
     impl_fn = implementation.fn
-    target = getattr(impl_fn, "fn", impl_fn)
-    signature = inspect.signature(target)
+    from ._core import _published_contexts
+    registration_contexts = tuple(_published_contexts)
+    signature = implementation.signature
     parameters = list(signature.parameters.values())
     stub = implementation.interfaces[0] if len(implementation.interfaces) == 1 else None
     expected_ports = 0 if stub is None else getattr(
         stub, "implementation_arity", _FLAVOUR_TS_ARITY[stub.flavour]
     )
-    native_ports = (
-        0 if stub is None or stub.flavour in {"reference", "adaptor"} else 1
-    )
-    port_parameters = [
-        param for param in parameters
-        if param.name != "path"
-        and (_is_ts_annotation(param.annotation) or param.annotation is inspect.Signature.empty)
-    ]
+    port_parameters = list(implementation.ts_parameters)
+    manual_adaptor = bool(
+        implementation.manual_adaptor
+        and (stub is None or stub.flavour == "adaptor"))
+    if manual_adaptor:
+        expected_ports = len(port_parameters)
+        native_ports = len(port_parameters)
+    else:
+        native_ports = (
+            0 if stub is None or stub.flavour == "reference"
+            or (stub.flavour == "adaptor" and expected_ports == 0) else 1
+        )
     if len(port_parameters) != expected_ports:
         raise WiringError(
             f"implementation '{implementation.__name__}' requires {expected_ports} native service input(s)"
         )
     port_names = {param.name for param in port_parameters}
-    scalar_parameters = [
-        param for param in parameters
-        if param.name != "path"
-        and param.name not in port_names
-        and param.annotation not in _INJECTABLE_MARKERS
-    ]
+    scalar_parameters = list(implementation.configuration_parameters)
     scalar_names = {param.name for param in scalar_parameters}
     unknown = set(config) - scalar_names
     if unknown:
@@ -958,20 +1194,58 @@ def _bind_registered_impl(implementation, path, config):
                 f"implementation '{implementation.__name__}' received {len(ports)} native service inputs"
             )
         user_ports = (
-            _split_service_requests(stub, ports[0]) if native_ports and expected_ports > 1 else list(ports)
+            _split_service_requests(stub, ports[0])
+            if not manual_adaptor and native_ports and expected_ports > 1
+            else list(ports)
         )
         arguments = dict(zip((param.name for param in port_parameters), user_ports))
         if any(param.name == "path" for param in parameters):
-            arguments["path"] = path
+            effective_path = path
+            materialized_path = _current_wiring().service_materialization_path()
+            if materialized_path:
+                _, _, qualified = materialized_path.partition("://")
+                matched_stub = next(
+                    (candidate for candidate in implementation.interfaces
+                     if qualified.endswith(f"/{candidate.__name__}")),
+                    None,
+                )
+                if matched_stub is not None:
+                    suffix = f"/{matched_stub.__name__}"
+                    effective_path = qualified[:-len(suffix)]
+                    specialization = getattr(matched_stub, "_specialization", "")
+                    typed_suffix = f"[{specialization}]" if specialization else ""
+                    if typed_suffix and effective_path.endswith(typed_suffix):
+                        effective_path = effective_path[:-len(typed_suffix)]
+            arguments["path"] = effective_path
         for param in scalar_parameters:
             arguments[param.name] = resolved_config.get(param.name, param.default)
-        return impl_fn(**arguments)
+        from contextlib import ExitStack
+        wiring = _wiring_stack[0] if _wiring_stack else _current_wiring()
+        contexts = _SERVICE_BUILD_CONTEXTS.get(wiring, ())
+        existing_context_count = len(_published_contexts)
+        _published_contexts.extend(registration_contexts)
+        try:
+            if not contexts:
+                return impl_fn(**arguments)
+            with ExitStack() as stack:
+                for context, context_name in contexts:
+                    if isinstance(context, WiringPort):
+                        from types import SimpleNamespace
+                        frame = SimpleNamespace(
+                            f_locals={context_name: context} if context_name else {})
+                        _published_contexts.append(
+                            (context, _unwrap(context).ts_type, frame))
+                    else:
+                        stack.enter_context(context)
+                return impl_fn(**arguments)
+        finally:
+            del _published_contexts[existing_context_count:]
 
     bound.__name__ = implementation.__name__
     bound.__signature__ = inspect.Signature(
         parameters=[
-            inspect.Parameter("requests", inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            for _ in range(native_ports)
+            inspect.Parameter(f"requests_{index}", inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            for index in range(native_ports)
         ],
         return_annotation=signature.return_annotation,
     )
@@ -1015,14 +1289,16 @@ def _resolve_registered_implementation(implementation, resolution_dict, operatio
 
 
 class _PendingServiceRegistration:
-    __slots__ = ("wiring", "path", "implementation", "config", "owners", "completed")
+    __slots__ = (
+        "wiring", "path", "implementation", "config", "owners", "registrar", "completed")
 
-    def __init__(self, wiring, path, implementation, config, owners):
+    def __init__(self, wiring, path, implementation, config, owners, registrar):
         self.wiring = wiring
         self.path = path
         self.implementation = implementation
         self.config = config
         self.owners = owners
+        self.registrar = registrar
         self.completed = False
 
 
@@ -1072,16 +1348,28 @@ def _specialize_registered_implementation(implementation, resolution):
             else:
                 interfaces.append(stub)
             continue
-        if not isinstance(stub, _ServiceStub):
+        if not isinstance(stub, (_ServiceStub, _AdaptorStub, _ServiceAdaptorStub)):
             raise WiringError(
                 f"generic registration is not supported for {stub.flavour} '{stub.__name__}'")
-        concrete = _ServiceStub(
-            stub.fn, stub.flavour, resolution=resolution,
-            specialization=specialization, resolvers=stub._resolvers,
-            deprecated=stub._deprecated,
-            pending_registrations=stub._pending_registrations,
-            registered_resolutions=stub._registered_resolutions,
-        )
+        if isinstance(stub, _AdaptorStub):
+            concrete = _AdaptorStub(
+                stub.fn, resolution=resolution, specialization=specialization,
+                resolvers=stub._resolvers,
+                pending_registrations=stub._pending_registrations,
+                registered_resolutions=stub._registered_resolutions)
+        elif isinstance(stub, _ServiceAdaptorStub):
+            concrete = _ServiceAdaptorStub(
+                stub.fn, resolution=resolution, specialization=specialization,
+                resolvers=stub._resolvers,
+                pending_registrations=stub._pending_registrations,
+                registered_resolutions=stub._registered_resolutions)
+        else:
+            concrete = _ServiceStub(
+                stub.fn, stub.flavour, resolution=resolution,
+                specialization=specialization, resolvers=stub._resolvers,
+                deprecated=stub._deprecated,
+                pending_registrations=stub._pending_registrations,
+                registered_resolutions=stub._registered_resolutions)
         if concrete.descriptor is None:
             raise WiringError(
                 f"service '{stub.__name__}' remains unresolved after request inference")
@@ -1090,7 +1378,8 @@ def _specialize_registered_implementation(implementation, resolution):
     return resolved
 
 
-def _queue_service_registration(path, implementation, config, owners=None):
+def _queue_service_registration(path, implementation, config, owners=None,
+                                registrar=None):
     unresolved = tuple(
         stub for stub in implementation.interfaces
         if getattr(stub, "descriptor", None) is None
@@ -1099,12 +1388,14 @@ def _queue_service_registration(path, implementation, config, owners=None):
     if not triggers:
         raise WiringError("cannot defer a registration without a generic service interface")
     participants = tuple(
-        stub for stub in implementation.interfaces if isinstance(stub, _ServiceStub)
+        stub for stub in implementation.interfaces
+        if isinstance(stub, (_ServiceStub, _AdaptorStub, _ServiceAdaptorStub))
     )
     wiring = _current_wiring()
     root_wiring = _wiring_stack[0] if _wiring_stack else wiring
     pending = _PendingServiceRegistration(
-        root_wiring, path, implementation, dict(config), participants)
+        root_wiring, path, implementation, dict(config), participants,
+        registrar or _register_resolved_service)
     for stub in participants:
         stub._registered_resolutions[:] = [
             registered
@@ -1137,7 +1428,7 @@ def _materialize_pending_registrations(owner, resolution, wiring):
                 stub._registered_resolutions.append(registered)
                 newly_registered.append(stub)
         try:
-            _register_resolved_service(
+            pending.registrar(
                 pending.path, resolved, pending.config, wiring=pending.wiring)
         except Exception:
             pending.completed = False
@@ -1231,6 +1522,9 @@ def set_service_output(path, stub, out):
         out=_unwrap(out))
 
 
+_SERVICE_BUILD_CONTEXTS = {}
+
+
 class WiringGraphContext:
     """Compatibility view of the active native wiring context.
 
@@ -1246,7 +1540,50 @@ class WiringGraphContext:
 
     @staticmethod
     def build_services():
-        _current_wiring()
+        _current_wiring().build_services()
+
+    @staticmethod
+    def add_service_build_context(context, name=None):
+        wiring = _wiring_stack[0] if _wiring_stack else _current_wiring()
+        contexts = _SERVICE_BUILD_CONTEXTS.setdefault(wiring, [])
+        if name is not None and any(existing_name == name for _, existing_name in contexts):
+            raise WiringError(
+                f"service build context with name {name!r} is already registered")
+        contexts.append((context, name))
+
+    @staticmethod
+    def registered_service_clients(service):
+        """Compatibility reflection over concrete native client identities.
+
+        The native linker de-duplicates build demand by concrete base path;
+        expose the old adaptor endpoint shape for catch-all resolvers. Node
+        identity is represented by ``None`` because ranking is retained in the
+        native client ledger rather than Python wiring-node objects.
+        """
+        prefix = {
+            "reference": "ref_svc://",
+            "subscription": "subs_svc://",
+            "request_reply": "reqrepl_svc://",
+            "adaptor": "adaptor://",
+            "service_adaptor": "service_adaptor://",
+        }[service.flavour]
+        suffix = f"/{service.__name__}"
+        clients = []
+        for base, _kind in _current_wiring().service_client_paths():
+            if not base.startswith(prefix) or not base.endswith(suffix):
+                continue
+            if service.flavour in {"adaptor", "service_adaptor"}:
+                if service._request_params:
+                    clients.append((base + "/from_graph", {}, None, False))
+                if _is_ts_annotation(service._signature.return_annotation):
+                    clients.append((base + "/to_graph", {}, None, True))
+            else:
+                clients.append((base, {}, None, True))
+        return tuple(clients)
+
+    @staticmethod
+    def built_services():
+        return dict(_current_wiring().built_service_paths())
 
 
 def impl_input(stub, path=""):
@@ -1267,6 +1604,7 @@ def impl_output(stub, out, path=""):
 
 def _register_resolved_service(path, implementation, kwargs, *, wiring=None):
     wiring = _current_wiring() if wiring is None else wiring
+    default_fallback = path is None
     if len(implementation.interfaces) > 1:
         resolved_paths = {
             _resolved_service_path(stub, path) for stub in implementation.interfaces
@@ -1277,14 +1615,15 @@ def _register_resolved_service(path, implementation, kwargs, *, wiring=None):
         impl_fn = _bind_registered_impl(implementation, path, kwargs)
         _hgraph.register_multi_service_impl(
             wiring, [stub.descriptor for stub in implementation.interfaces], resolved_path,
-            _wrap_graph_fn(impl_fn))
+            _wrap_graph_fn(impl_fn), default_fallback=default_fallback)
         return
     stub = implementation.interfaces[0]
     resolved_path = _resolved_service_path(stub, path)
     user_path = getattr(stub, "_default_path", "") if path is None else path
     impl_fn = _bind_registered_impl(implementation, user_path, kwargs)
     _hgraph.register_service_impl(
-        wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn))
+        wiring, stub.descriptor, resolved_path, _wrap_graph_fn(impl_fn),
+        default_fallback=default_fallback)
 
 
 def register_service(path, implementation, resolution_dict=None, **kwargs):

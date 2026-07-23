@@ -14,7 +14,11 @@ __all__ = (
     "rolling_average", "make_tsd", "make_tsd_scalar", "flatten_tsd",
     "extract_tsd", "keys_where_true", "where_true", "flatten_tsl_values",
     "tsl_to_tsd",
+    "request_id"
 )
+
+
+request_id = operator_function("request_id")
 
 
 @dataclass

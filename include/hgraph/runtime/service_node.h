@@ -8,6 +8,9 @@
 
 namespace hgraph
 {
+    /** Allocate the process-unique identifier used by service clients. */
+    [[nodiscard]] HGRAPH_EXPORT Int next_request_id() noexcept;
+
     /** Build a source that allocates one process-unique request id per runtime node instance. */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder make_request_id_source_node();
 

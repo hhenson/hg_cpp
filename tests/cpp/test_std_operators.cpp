@@ -2184,3 +2184,16 @@ TEST_CASE("std operators: div_ without a policy defaults to Error and raises on 
     stdlib::register_standard_operators();
     REQUIRE_THROWS(eval_node<stdlib::div_>(values<Int>(1), values<Int>(0)));
 }
+
+TEST_CASE("std operators: request_id uses the native service identifier allocator")
+{
+    stdlib::register_standard_operators();
+
+    const auto first = eval_node<stdlib::request_id>(Int{1});
+    const auto second = eval_node<stdlib::request_id>(Int{1});
+    REQUIRE(first.size() == 1);
+    REQUIRE(second.size() == 1);
+    REQUIRE(first[0].has_value());
+    REQUIRE(second[0].has_value());
+    CHECK(first[0]->view().checked_as<Int>() != second[0]->view().checked_as<Int>());
+}

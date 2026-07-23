@@ -1,5 +1,6 @@
 import json
-import threading
+import logging
+from concurrent.futures import Executor, Future
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -7,14 +8,15 @@ import pyarrow as pa
 import pyarrow.json as pa_json
 
 from hgraph import (
-    Frame,
-    REMOVE,
+    AUTO_RESOLVE,
+    DEFAULT,
+    SCHEMA,
+    STATE,
     TS,
     TSB,
     TSD,
-    combine,
-    convert,
-    graph,
+    Frame,
+    map_,
     push_queue,
     service_adaptor,
     service_adaptor_impl,
@@ -24,7 +26,9 @@ from hgraph.adaptors.data_catalogue import DataEnvironment
 from hgraph.adaptors.executor import adaptor_executor
 from hgraph.stream import Data, Stream, StreamStatus
 
-_RAW_STREAM = TSB[Stream[Data[Frame]]]
+logger = logging.getLogger(__name__)
+
+__all__ = ("json_adaptor", "json_adaptor_impl")
 
 
 def _read_json_table(path: Path) -> pa.Table:
@@ -51,140 +55,92 @@ def _read_json_table(path: Path) -> pa.Table:
 
 
 @service_adaptor
-def _json_adaptor(file: TS[str], path: str = "json") -> _RAW_STREAM:
+def json_adaptor(
+    path: str,
+    file: TS[str],
+    _schema: type[SCHEMA] = DEFAULT[SCHEMA],
+) -> TSB[Stream[Data[Frame[SCHEMA]]]]:
     ...
 
 
-class _JsonAdaptor:
-    __name__ = "json_adaptor"
-
-    def __init__(self, schema=None):
-        self.schema = schema
-
-    def __getitem__(self, schema):
-        if isinstance(schema, slice):
-            schema = schema.stop
-        return _JsonAdaptor(schema)
-
-    def __call__(self, path: str, file):
-        raw = _json_adaptor(file, path=path)
-        if self.schema is None:
-            return raw
-        output_type = TSB[Stream[Data[Frame[self.schema]]]]
-        return output_type.from_ts(
-            status=raw.status,
-            status_msg=raw.status_msg,
-            values=convert[TS[Frame[self.schema]]](raw.values),
-            timestamp=raw.timestamp,
-        )
-
-
-json_adaptor = _JsonAdaptor()
-
-
-class _RequestState:
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.generations = {}
-        self.published = set()
-        self.sender = None
-        self.active = True
-
-    def begin(self, request_id):
-        with self.lock:
-            generation = self.generations.get(request_id, 0) + 1
-            self.generations[request_id] = generation
-            return generation
-
-    def cancel(self, request_id):
-        with self.lock:
-            self.generations[request_id] = self.generations.get(request_id, 0) + 1
-            if request_id in self.published:
-                self.published.remove(request_id)
-                return True
-            return False
-
-    def publish(self, request_id, generation, value):
-        with self.lock:
-            if (
-                not self.active
-                or self.generations.get(request_id) != generation
-                or self.sender is None
-            ):
-                return
-            self.published.add(request_id)
-            sender = self.sender
-        sender({request_id: value})
-
-    def close(self):
-        with self.lock:
-            self.active = False
-            self.generations.clear()
-            self.published.clear()
-            self.sender = None
-
-
-@service_adaptor_impl(interfaces=_json_adaptor)
+@service_adaptor_impl(interfaces=json_adaptor)
 def json_adaptor_impl(
-    files: TSD[int, TS[str]],
     path: str,
-) -> TSD[int, _RAW_STREAM]:
+    file: TSD[int, TS[str]],
+    _schema: type[SCHEMA] = AUTO_RESOLVE,
+) -> TSD[int, TSB[Stream[Data[Frame[SCHEMA]]]]]:
     environment = DataEnvironment.current()
     if environment is None:
-        raise RuntimeError(f"no DataEnvironment is active for {path!r}")
+        raise RuntimeError(f"No DataEnvironment set up for {path}")
     directory = Path(environment.get_entry(path).environment_path)
-    state = _RequestState()
+    output_type = TSD[int, TSB[Stream[Data[Frame[_schema]]]]]
+    sender_ref = {}
 
-    @push_queue(TSD[int, _RAW_STREAM])
-    def responses(sender):
-        with state.lock:
-            state.sender = sender
+    @push_queue(output_type)
+    def json_to_graph(sender):
+        sender_ref["sender"] = sender
 
-    def load(request_id, generation, file_name):
+    def load_json(
+        directory: Path,
+        request_id: int,
+        file_name: str,
+        sender,
+        previous: Future | None,
+    ):
+        if previous is not None:
+            previous.result()
+
         file_path = directory / file_name
         try:
+            logger.info("Loading json file %s", file_path)
             table = _read_json_table(file_path)
-            if table.num_rows == 0:
-                result = {
-                    "status": StreamStatus.ERROR,
-                    "status_msg": f"empty JSON file {file_path}",
-                    "values": None,
-                    "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
-                }
-            else:
+            if table.num_rows:
                 result = {
                     "status": StreamStatus.OK,
                     "status_msg": "",
                     "values": table,
                     "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
                 }
+            else:
+                message = f"Empty json file {file_path}"
+                logger.warning(message)
+                result = {
+                    "status": StreamStatus.ERROR,
+                    "status_msg": message,
+                    "values": None,
+                    "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
+                }
         except Exception as error:
+            logger.exception("Error loading json file %s", file_path)
             result = {
                 "status": StreamStatus.ERROR,
                 "status_msg": str(error),
                 "values": None,
                 "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
             }
-        state.publish(request_id, generation, result)
+        sender({request_id: result})
 
     @sink_node
-    def submit_requests(files: TSD[int, TS[str]], executor: TS[object]):
-        for request_id in files.removed_keys():
-            if state.cancel(request_id):
-                with state.lock:
-                    sender = state.sender
-                if sender is not None:
-                    sender({request_id: REMOVE})
-        for request_id, file_name in files.modified_items():
-            generation = state.begin(request_id)
-            executor.value.submit(load, request_id, generation, file_name.value)
+    def handle_request(
+        request_id: TS[int],
+        file: TS[str],
+        executor: TS[Executor],
+        _state: STATE = None,
+    ):
+        previous = getattr(_state, "future", None)
+        _state.future = executor.value.submit(
+            load_json,
+            directory,
+            request_id.value,
+            file.value,
+            sender_ref["sender"],
+            previous,
+        )
 
-    @submit_requests.stop
-    def stop_requests():
-        state.close()
-
-    submit_requests(files, adaptor_executor())
-    return responses()
-
-
-__all__ = ("json_adaptor", "json_adaptor_impl")
+    map_(
+        lambda key, name, executor: handle_request(
+            request_id=key, file=name, executor=executor),
+        name=file,
+        executor=adaptor_executor(),
+    )
+    return json_to_graph()

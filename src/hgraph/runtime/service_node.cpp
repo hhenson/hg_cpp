@@ -24,6 +24,12 @@
 
 namespace hgraph
 {
+    Int next_request_id() noexcept
+    {
+        static std::atomic<Int> next{0};
+        return next.fetch_add(1, std::memory_order_relaxed) + 1;
+    }
+
     namespace
     {
         constexpr std::string_view subscription_key_source_storage_field{"subscription_key_source"};
@@ -695,8 +701,6 @@ namespace hgraph
 
     NodeBuilder make_request_id_source_node()
     {
-        static std::atomic<Int> next_request_id{0};
-
         NodeTypeMetaData schema;
         schema.display_name  = "request_id_source";
         schema.output_schema = TypeRegistry::instance().ts(scalar_descriptor<Int>::value_meta());
@@ -704,7 +708,7 @@ namespace hgraph
 
         NodeCallbacks callbacks;
         callbacks.start = [](const NodeView &view, DateTime evaluation_time) {
-            const Int request_id = next_request_id.fetch_add(1, std::memory_order_relaxed) + 1;
+            const Int request_id = next_request_id();
             auto mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
             if (!mutation.move_value_from(Value{request_id}))
             {
@@ -849,7 +853,15 @@ namespace hgraph
             path, descriptor.storage_plan->component(request_input_capture_storage_field).offset);
 
         descriptor.callbacks.start = [context](const NodeView &view, DateTime evaluation_time) {
-            capture_request_input(*context, view, evaluation_time, true);
+            // A request_id operator publishes during evaluation rather than
+            // node startup. Its input is active, so defer initial capture until
+            // that first tick instead of requiring a startup-valid ID.
+            auto input = view.input(evaluation_time);
+            auto bundle = input.as_bundle();
+            if (bundle.at(2).valid())
+            {
+                capture_request_input(*context, view, evaluation_time, true);
+            }
         };
         descriptor.callbacks.stop            = &request_input_capture_stop;
         descriptor.ops.evaluate_impl         = &request_input_capture_evaluate_impl;

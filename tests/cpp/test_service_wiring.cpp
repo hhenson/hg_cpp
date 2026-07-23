@@ -212,6 +212,34 @@ namespace
         }
     };
 
+    inline int lazy_reference_compositions = 0;
+
+    struct CountingBaseValueImpl
+    {
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            ++lazy_reference_compositions;
+            return wire<TenSourceNode>(w);
+        }
+    };
+
+    struct UnusedReferenceServiceGraph
+    {
+        static void compose(Wiring &w)
+        {
+            service::register_reference_service<BaseValueService, CountingBaseValueImpl>(w);
+        }
+    };
+
+    struct RequestedReferenceServiceGraph
+    {
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            service::register_reference_service<BaseValueService, CountingBaseValueImpl>(w);
+            return wire<BaseValueService>(w);
+        }
+    };
+
     struct TypedReferencePricesPathImplNode
     {
         static constexpr auto name              = "typed_reference_prices_path_impl_node";
@@ -1425,6 +1453,18 @@ TEST_CASE("service wiring: service implementation can depend on a later register
     CHECK_OUTPUT(eval_node<ReferenceServiceDependencyGraph>(), values<Int>(11));
 }
 
+TEST_CASE("service wiring: implementation candidates materialize only on demand")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    lazy_reference_compositions = 0;
+    CHECK_NOTHROW(build_graph<UnusedReferenceServiceGraph>());
+    CHECK(lazy_reference_compositions == 0);
+
+    CHECK_OUTPUT(eval_node<RequestedReferenceServiceGraph>(), values<Int>(10));
+    CHECK(lazy_reference_compositions == 1);
+}
+
 TEST_CASE("service wiring: scalar-qualified paths keep implementations separate")
 {
     hgraph::stdlib::register_standard_operators();
@@ -1679,13 +1719,13 @@ TEST_CASE("service wiring: multi-interface service adaptors wire explicit stubs"
     CHECK_OUTPUT(eval_node<MultiServiceAdaptorClientGraph>(values<Int>(1)), values<Int>(none, 52));
 }
 
-TEST_CASE("service wiring: service adaptors validate missing implementations and stubs")
+TEST_CASE("service wiring: service adaptors validate requested implementations and ignore unused candidates")
 {
     hgraph::stdlib::register_standard_operators();
 
     CHECK_THROWS_AS((void)eval_node<MissingServiceAdaptorImplementationGraph>(values<Int>(1)), std::invalid_argument);
     CHECK_THROWS_AS(build_graph<IllegalServiceAdaptorStubGraph>(), std::invalid_argument);
-    CHECK_THROWS_AS(build_graph<MissingServiceAdaptorStubGraph>(), std::invalid_argument);
+    CHECK_NOTHROW(build_graph<MissingServiceAdaptorStubGraph>());
 }
 
 TEST_CASE("service wiring: templated service descriptors bind as concrete interfaces")

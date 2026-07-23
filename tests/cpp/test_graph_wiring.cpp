@@ -1857,3 +1857,157 @@ TEST_CASE("graph wiring: flattened sub-graph wiring accepts keyword arguments")
     REQUIRE(graph.node_count() == 2);   // source + shift (ShiftBy flattened away)
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{46});
 }
+
+TEST_CASE("graph wiring: catch-all service resolvers compose once")
+{
+    using namespace hgraph;
+
+    Wiring wiring;
+    int invocations = 0;
+    wiring.register_catch_all_service_implementation_candidate(
+        "test catch-all", [&](Wiring &target) {
+            ++invocations;
+            const auto built = target.built_service_paths();
+            for (const auto &[path, kind] : target.service_client_paths())
+            {
+                if (std::ranges::none_of(built, [&](const auto &entry) {
+                        return entry.first == path;
+                    }))
+                {
+                    target.register_built_service_path(path, kind);
+                }
+            }
+        });
+
+    wiring.register_service_client_path("service://first", "test service");
+    wiring.build_services();
+    CHECK(invocations == 1);
+
+    wiring.register_service_client_path("service://second", "test service");
+    wiring.build_services();
+    CHECK(invocations == 1);
+    CHECK(wiring.built_service_paths().size() == 1);
+}
+
+TEST_CASE("graph wiring: isolated sub-graphs reject implementation registration")
+{
+    using namespace hgraph;
+
+    Wiring wiring{WiringKind::SubGraph};
+    const auto message = Catch::Matchers::ContainsSubstring(
+        "cannot be registered inside an isolated sub-graph");
+
+    CHECK_THROWS_WITH(
+        wiring.register_service_implementation_candidate(
+            {"service://exact"}, "exact", [](Wiring &) {}),
+        message);
+    CHECK_THROWS_WITH(
+        wiring.register_default_service_implementation_candidate(
+            "service://", "/default", "default",
+            [](Wiring &, std::string_view) {}),
+        message);
+    CHECK_THROWS_WITH(
+        wiring.register_catch_all_service_implementation_candidate(
+            "catch-all", [](Wiring &) {}),
+        message);
+}
+
+TEST_CASE("graph wiring: top-level wiring accepts implementation registration")
+{
+    using namespace hgraph;
+
+    Wiring wiring;
+    CHECK_NOTHROW(wiring.register_service_implementation_candidate(
+        {"service://exact"}, "exact", [](Wiring &) {}));
+}
+
+TEST_CASE("graph wiring: default service candidates serve concrete paths lazily")
+{
+    using namespace hgraph;
+
+    Wiring wiring;
+    std::vector<std::string> materialized;
+    wiring.register_default_service_implementation_candidate(
+        "service://", "/quote", "default quote",
+        [&](Wiring &target, std::string_view requested_path) {
+            materialized.emplace_back(requested_path);
+            target.register_built_service_path(std::string{requested_path}, "quote");
+        });
+
+    wiring.build_services();
+    CHECK(materialized.empty());
+
+    wiring.register_service_client_path("service://custom/quote", "quote");
+    wiring.build_services();
+    CHECK(materialized == std::vector<std::string>{"service://custom/quote"});
+
+    wiring.build_services();
+    CHECK(materialized.size() == 1);
+}
+
+TEST_CASE("graph wiring: exact service candidates take precedence over defaults")
+{
+    using namespace hgraph;
+
+    Wiring wiring;
+    int default_materializations = 0;
+    int exact_materializations = 0;
+    wiring.register_default_service_implementation_candidate(
+        "service://", "/quote", "default quote",
+        [&](Wiring &, std::string_view) { ++default_materializations; });
+    wiring.register_service_implementation_candidate(
+        {"service://custom/quote"}, "custom quote", [&](Wiring &target) {
+            ++exact_materializations;
+            target.register_built_service_path("service://custom/quote", "quote");
+        });
+
+    wiring.register_service_client_path("service://custom/quote", "quote");
+    wiring.build_services();
+
+    CHECK(exact_materializations == 1);
+    CHECK(default_materializations == 0);
+}
+
+TEST_CASE("graph wiring: default multi-interface candidates materialize atomically")
+{
+    using namespace hgraph;
+
+    Wiring wiring;
+    int materializations = 0;
+    wiring.register_default_service_implementation_candidate(
+        {{"ref_svc://", "/prices"}, {"reqrepl_svc://", "/orders"}},
+        "default backend", [&](Wiring &target, std::string_view) {
+            ++materializations;
+            target.register_built_service_path("ref_svc://prod/prices", "prices");
+            target.register_built_service_path("reqrepl_svc://prod/orders", "orders");
+        });
+
+    wiring.register_service_client_path("reqrepl_svc://prod/orders", "orders");
+    wiring.build_services();
+    CHECK(materializations == 1);
+
+    wiring.register_service_client_path("ref_svc://prod/prices", "prices");
+    wiring.build_services();
+    CHECK(materializations == 1);
+}
+
+TEST_CASE("graph wiring: default multi-interface candidates reject exact overlap")
+{
+    using namespace hgraph;
+
+    Wiring wiring;
+    wiring.register_default_service_implementation_candidate(
+        {{"ref_svc://", "/prices"}, {"reqrepl_svc://", "/orders"}},
+        "default backend", [](Wiring &, std::string_view) {});
+    wiring.register_service_implementation_candidate(
+        {"ref_svc://prod/prices"}, "production prices", [](Wiring &target) {
+            target.register_built_service_path("ref_svc://prod/prices", "prices");
+        });
+    wiring.register_service_client_path("reqrepl_svc://prod/orders", "orders");
+
+    CHECK_THROWS_WITH(
+        wiring.build_services(),
+        Catch::Matchers::ContainsSubstring("default backend") &&
+            Catch::Matchers::ContainsSubstring("production prices") &&
+            Catch::Matchers::ContainsSubstring("ref_svc://prod/prices"));
+}

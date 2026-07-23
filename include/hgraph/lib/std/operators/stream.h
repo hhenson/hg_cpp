@@ -41,6 +41,11 @@ namespace hgraph::stdlib
     {
     };
 
+    /** ``request_id`` — a process-unique identifier allocated at node start. */
+    struct request_id : Operator<"request_id", Scalar<"hash", Int>, Out<TS<Int>>>
+    {
+    };
+
     /** ``resample`` — re-tick ``ts`` at ``period``, even when the input does not tick. */
     struct resample : Operator<"resample", In<"ts", TsVar<"S">>, Scalar<"period", TimeDelta>, Out<TsVar<"S">>>
     {

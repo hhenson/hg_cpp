@@ -187,10 +187,15 @@ class _PyNode:
                         "when the node does not declare one"
                     )
                 continue
-            if isinstance(param.annotation, (_TsExpr, _ContextExpr)) or param.name == "_output":
+            if ((isinstance(param.annotation, (_TsExpr, _ContextExpr))
+                 and phase != "stop") or param.name == "_output"):
                 raise TypeError(
                     f"@{self.__name__}.{phase} supports wiring-time scalars and injectables only"
                 )
+            if (_is_time_series_annotation(param.annotation)
+                    and param.name not in self._ts_names):
+                raise TypeError(
+                    f"@{self.__name__}.stop has no node input named '{param.name}'")
         setattr(self, f"_{phase}_fn", fn)
         return fn
 
@@ -689,6 +694,12 @@ class _PyNode:
             # else the keyword-only tail).
             config += "|" + ",".join(kw_names)
         node_kwargs = {"fn": ref, "config": config, "scalars": _hgraph.any_list(scalars)}
+        input_index_by_name = {}
+        input_index = 0
+        for marker, name in zip(layout, layout_names):
+            if marker in "tuaCTUAP":
+                input_index_by_name[name] = input_index
+                input_index += 1
         recordable_state_type = None
         if self._recordable_state is not None:
             recordable_state_type = self._resolve_recordable_state(
@@ -699,6 +710,11 @@ class _PyNode:
             lifecycle_layout, lifecycle_scalars = [], []
             if lifecycle_fn is not None:
                 for param in inspect.signature(lifecycle_fn).parameters.values():
+                    if (_is_time_series_annotation(param.annotation)
+                            and phase == "stop"):
+                        lifecycle_layout.append("i")
+                        lifecycle_scalars.append(input_index_by_name[param.name])
+                        continue
                     if isinstance(param.annotation, _RecordableStateExpr):
                         lifecycle_layout.append("R")
                         continue
@@ -881,6 +897,26 @@ class _Generator:
         self._requires = requires
         self._label = label
         self._deprecated = deprecated
+        self._stop_fn = None
+
+    def stop(self, fn):
+        for parameter in inspect.signature(fn).parameters.values():
+            injectable = (
+                parameter.annotation in _INJECTABLE_MARKERS
+                or isinstance(parameter.annotation, _StateExpr)
+            )
+            if injectable:
+                if parameter.default is not None:
+                    raise TypeError(
+                        f"injectable parameter '{parameter.name}' of "
+                        f"'{fn.__name__}' must default to None")
+                continue
+            if _is_time_series_annotation(parameter.annotation):
+                raise TypeError(
+                    f"@{self.__name__}.stop supports wiring-time scalars "
+                    "and injectables only")
+        self._stop_fn = fn
+        return fn
 
     @property
     def signature(self):
@@ -941,11 +977,37 @@ class _Generator:
         config = "".join(layout)
         if keyword_names:
             config += "|" + ",".join(keyword_names)
+        stop_layout = []
+        stop_scalars = []
+        if self._stop_fn is not None:
+            for parameter in inspect.signature(self._stop_fn).parameters.values():
+                if isinstance(parameter.annotation, _StateExpr):
+                    stop_layout.append("Q")
+                    stop_scalars.append(parameter.annotation.factory)
+                    continue
+                marker = _INJECTABLE_MARKERS.get(parameter.annotation)
+                if marker is not None:
+                    stop_layout.append(marker)
+                    continue
+                if parameter.name in bound_call.arguments:
+                    value = bound_call.arguments[parameter.name]
+                elif parameter.default is not inspect.Parameter.empty:
+                    value = parameter.default
+                else:
+                    raise TypeError(
+                        f"{self.__name__}.stop: scalar '{parameter.name}' "
+                        "is not supplied by the generator call")
+                stop_layout.append("s")
+                stop_scalars.append(value)
         return wire(
             "__py_generator",
             fn=_hgraph.node_ref(self.fn),
             config=config,
             scalars=_hgraph.any_list(scalars),
+            stop_fn=_hgraph.node_ref(self._stop_fn or self.fn),
+            stop_enabled=self._stop_fn is not None,
+            stop_config="".join(stop_layout),
+            stop_scalars=_hgraph.any_list(stop_scalars),
             output_type=out_tp,
         )
 

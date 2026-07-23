@@ -474,7 +474,12 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     else()
         set(_hgraph_python_components Interpreter Development.Module)
     endif()
-    if(HGRAPH_ENABLE_PYTHON_USER_NODES AND NOT _hgraph_use_python_stable_abi)
+    # Python user nodes execute in standalone native graphs as well as in the
+    # extension.  Native executables therefore need the full embedding library
+    # even when the optional extension itself uses the stable ABI.  Wheel
+    # builds (SKBUILD) run inside a host interpreter and must not require or
+    # link libpython — manylinux images do not ship it at all.
+    if(HGRAPH_ENABLE_PYTHON_USER_NODES AND NOT SKBUILD)
         list(APPEND _hgraph_python_components Development.Embed)
     endif()
 
@@ -515,7 +520,7 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
             set(_hgraph_nanobind_library nanobind-static)
         endif()
     endif()
-    if(HGRAPH_ENABLE_PYTHON_USER_NODES AND NOT _hgraph_use_python_stable_abi AND TARGET Python::Python)
+    if(HGRAPH_ENABLE_PYTHON_USER_NODES AND TARGET Python::Python)
         target_link_libraries(hgraph_options INTERFACE Python::Python)
     endif()
     if(COMMAND nanobind_build_library)

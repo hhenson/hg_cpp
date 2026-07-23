@@ -850,6 +850,46 @@ namespace hgraph
         void register_service_client_rank(std::string path, std::string_view kind,
                                           const WiringInstance *node, bool receive);
 
+        /** Record a service/adaptor implementation candidate without composing
+            it. The materializer is invoked once, at build_services(), when at
+            least one of its concrete interface paths has been requested. */
+        void register_service_implementation_candidate(
+            std::vector<std::string> paths,
+            std::string description,
+            std::function<void(Wiring &)> materialize);
+
+        /** Record the interface-default implementation used as a fallback for
+            any concrete user path of the same service/adaptor identity. */
+        void register_default_service_implementation_candidate(
+            std::string path_prefix,
+            std::string path_suffix,
+            std::string description,
+            std::function<void(Wiring &, std::string_view)> materialize);
+
+        /** Record an atomic multi-interface default implementation. Demand
+            through any selector materializes the whole group at that user
+            path; an overlapping exact implementation is ambiguous. */
+        void register_default_service_implementation_candidate(
+            std::vector<std::pair<std::string, std::string>> path_selectors,
+            std::string description,
+            std::function<void(Wiring &, std::string_view)> materialize);
+
+        /** Record an implementation resolver which inspects current client
+            demand itself. Catch-all resolvers compose once during the
+            fixed-point build phase, never at registration time. */
+        void register_catch_all_service_implementation_candidate(
+            std::string description,
+            std::function<void(Wiring &)> materialize);
+
+        /** Materialize requested implementation candidates to a fixed point.
+            Safe to call explicitly; finish() calls it again for later demand. */
+        void build_services();
+        [[nodiscard]] std::vector<std::pair<std::string, std::string>>
+        service_client_paths() const;
+        [[nodiscard]] std::vector<std::pair<std::string, std::string>>
+        built_service_paths() const;
+        [[nodiscard]] std::string_view service_materialization_path() const noexcept;
+
         /**
          * RAII wrapper for implementation-owned service/adaptor stub scopes.
          *

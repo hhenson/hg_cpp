@@ -9,6 +9,7 @@ from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, combine, comp
 # (qualified names, generic specialisation identity), which has no public
 # introspection surface — the module under test is imported directly.
 from hgraph._types import _value_type
+from hgraph.reflection import fields
 from hgraph.test import eval_node
 
 
@@ -282,6 +283,37 @@ def test_polymorphic_bundle_field_uses_the_graph_realization():
     ) == [True]
 
 
+def test_covariant_field_annotation_reuses_inherited_native_schema():
+    @dataclass
+    class Base(CompoundScalar, namespace="tests.covariant_field", abstract=True):
+        value: int
+
+    @dataclass
+    class Derived(Base):
+        label: str
+
+    @dataclass
+    class Container(CompoundScalar, namespace="tests.covariant_field"):
+        item: Base
+
+    @dataclass
+    class NarrowContainer(Container):
+        item: Derived
+
+    native_fields = dict(_value_type(NarrowContainer).fields)
+    assert native_fields["item"] == _value_type(Base)
+    assert fields(NarrowContainer)["item"] is Derived
+
+    @compute_node
+    def is_derived(value: TS[NarrowContainer]) -> TS[bool]:
+        return isinstance(value.value.item, Derived)
+
+    assert eval_node(
+        is_derived,
+        [NarrowContainer(item=Derived(value=1, label="one"))],
+    ) == [True]
+
+
 def test_tsb_output_field_uses_the_graph_realization():
     @dataclass
     class Result(CompoundScalar, namespace="tests.tsb_output", abstract=True):
@@ -334,7 +366,7 @@ def test_tsb_output_keyed_field_uses_the_graph_realization():
     }]
 
 
-def test_compact_container_elements_use_the_graph_realization():
+def test_compact_container_preserves_mixed_derived_elements_across_node_input():
     @dataclass
     class Base(CompoundScalar, namespace="tests.container", abstract=True):
         value: int
@@ -344,16 +376,26 @@ def test_compact_container_elements_use_the_graph_realization():
         label: str
 
     @dataclass
+    class OtherDerived(Base):
+        quantity: int
+
+    @dataclass
     class Batch(CompoundScalar, namespace="tests.container"):
         items: tuple[Base, ...]
 
     @compute_node
-    def contains_derived(value: TS[Batch]) -> TS[bool]:
-        return isinstance(value.value.items[0], Derived)
+    def preserves_derived_types(value: TS[Batch]) -> TS[bool]:
+        return (
+            isinstance(value.value.items[0], Derived)
+            and isinstance(value.value.items[1], OtherDerived)
+        )
 
     assert eval_node(
-        contains_derived,
-        [Batch(items=(Derived(value=1, label="one"),))],
+        preserves_derived_types,
+        [Batch(items=(
+            Derived(value=1, label="one"),
+            OtherDerived(value=2, quantity=10),
+        ))],
     ) == [True]
 
 

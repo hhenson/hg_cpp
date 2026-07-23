@@ -1,12 +1,21 @@
 from dataclasses import dataclass
+from typing import Generic
 
 import pytest
 from frozendict import frozendict
 
-from hgraph import (AUTO_RESOLVE, COMPOUND_SCALAR, CompoundScalar, compute_node,
+from hgraph import (AUTO_RESOLVE, COMPOUND_SCALAR, COMPOUND_SCALAR_1, CompoundScalar, compute_node,
                     sink_node, TS, TIME_SERIES_TYPE, graph, SCALAR, TSL,
                     Size, TSS, TSD, operator)
 from hgraph.test import eval_node
+
+
+def test_compound_scalar_type_vars_support_generic_schemas():
+    class Pair(CompoundScalar, Generic[COMPOUND_SCALAR, COMPOUND_SCALAR_1]):
+        left: COMPOUND_SCALAR
+        right: COMPOUND_SCALAR_1
+
+    assert Pair.__parameters__ == (COMPOUND_SCALAR, COMPOUND_SCALAR_1)
 
 
 @pytest.mark.parametrize(

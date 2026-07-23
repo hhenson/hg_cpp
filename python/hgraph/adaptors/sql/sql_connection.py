@@ -1,12 +1,14 @@
 import os
 import re
-import sqlite3
-from contextlib import contextmanager
-from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from datetime import timedelta
+from urllib.parse import quote
 
-from hgraph.adaptors.data_catalogue import DataEnvironment
-from hgraph.adaptors.data_frame import DataConnectionStore
+import adbc_driver_snowflake.dbapi
+import polars as pl
+import pyarrow as pa
+from sqlalchemy import QueuePool, create_engine, event
+
+from hgraph import STATE, TS, generator
 
 __all__ = (
     "SqlAdaptorConnection",
@@ -14,161 +16,164 @@ __all__ = (
     "SqlAdaptorConnectionSnowflake",
     "start_sql_adaptor",
     "get_secret",
-    "connection_for",
-    "connection_target",
-    "parse_connection_params",
 )
 
 
 class SqlAdaptorConnection:
-    """A lightweight DB-API connection factory."""
-
-    def __init__(self, factory):
-        self.factory = factory
-
-    def connect(self):
-        return self.factory()
+    ...
 
 
 class SqlAdaptorConnectionSQLServer(SqlAdaptorConnection):
-    def __init__(self, path, connection_params=None):
-        try:
-            from sqlalchemy import create_engine
-        except ModuleNotFoundError as error:
-            raise RuntimeError("SQLAlchemy connections require the 'sql' extra") from error
+    def __init__(self, path, connection_params: dict[str, object]):
         self.path = path
-        self.connection = create_engine(path, **(connection_params or {}))
-        super().__init__(self.connection.raw_connection)
+        self.connection = create_engine(path, **connection_params)
 
-    def read_database(self, query):
-        with connection_for(self) as connection:
-            return _result_table(connection.execute(query))
+        if os.name != "nt" and "mssql" in path:
+            @event.listens_for(self.connection, "reset")
+            def _rollback_mssql(connection, connection_record, reset_state):
+                if not reset_state.terminate_only:
+                    connection.execute("{call sys.sp_reset_connection}")
+                connection.rollback()
+
+    def read_database(self, query: str) -> pa.Table:
+        return pl.read_database_uri(query=query, uri=self.path).to_arrow()
 
 
 class SqlAdaptorConnectionSnowflake(SqlAdaptorConnection):
-    def __init__(self, connection_params):
-        try:
-            import adbc_driver_snowflake.dbapi as snowflake
-        except ModuleNotFoundError as error:
-            raise RuntimeError("Snowflake connections require the 'snowflake' extra") from error
-        self.connection = snowflake.connect(db_kwargs=dict(connection_params))
-        super().__init__(lambda: self.connection)
+    def __init__(self, connection_params: dict[str, object]):
+        self.lowercase_columns = (
+            connection_params.pop(
+                "hgraph.sql_adaptor.lowercase_columns", "false"
+            ).lower() == "true"
+        )
+        self.connection = adbc_driver_snowflake.dbapi.connect(
+            db_kwargs=connection_params)
 
-    def read_database(self, query):
-        return _result_table(self.connection.execute(query))
+    def read_database(self, query: str) -> pa.Table:
+        frame = pl.read_database(connection=self.connection, query=query)
+        if self.lowercase_columns:
+            frame = frame.rename({column: column.lower() for column in frame.columns})
+        return frame.to_arrow()
 
 
 get_secret = None
 
 
-def _substitution(match):
-    value = match.group(1)
+def process_substitution(value: str) -> str:
     if value.startswith("secret:"):
+        split = value[7:].split("/", 1)
         if get_secret is None:
-            raise ValueError("get_secret is not configured")
-        name, _, key = value[7:].partition("/")
-        secret = get_secret(name)
-        return quote(str(secret[key] if key else secret), safe="")
+            raise ValueError(
+                f"get_secret is not defined, cannot get '{value[7:]}'")
+        secret = get_secret(split[0])
+        if len(split) == 2:
+            secret = secret.get(split[1])
+        if secret is None:
+            raise ValueError(f"Secret {value[7:]} not set")
+        return secret
+
     if value.startswith("$"):
-        try:
-            return quote(os.environ[value[1:]], safe="")
-        except KeyError as error:
-            raise ValueError(f"environment variable {value[1:]!r} is not set") from error
-    return quote(value, safe="")
+        result = os.environ.get(value[1:])
+        if result is None:
+            raise ValueError(
+                f"Environment variable {value[1:]} not set for connection parameter")
+        return result
+
+    return value
 
 
 def parse_connection_params(path: str):
-    path = re.sub(r"(?<!\{)\{([^{}]*)\}(?!\})", _substitution, path)
-    parsed = urlparse(path)
-    base = parsed._replace(query="").geturl()
-    if parsed.netloc == "" and parsed.scheme:
-        base = base.replace(":/", ":///", 1)
-    return parsed.scheme, base, {
-        key: values[-1]
-        for key, values in parse_qs(parsed.query).items()
+    from urllib.parse import parse_qs, urlparse
+
+    path = re.sub(
+        r"(?<!\{)\{([^{}]*)\}(?!\})",
+        lambda match: quote(process_substitution(match.group(1)), safe=""),
+        path,
+    )
+    url = urlparse(path)
+    query_params = parse_qs(url.query)
+    url_base = url._replace(query="").geturl()
+    if url.netloc == "" and url.scheme != "":
+        url_base = url_base.replace(":/", ":///")
+    return url.scheme, url_base, {
+        key: value[0] for key, value in query_params.items()
     }
 
 
-def start_sql_adaptor(path: str):
-    """Create a dependency-neutral connection wrapper for explicit seeding."""
-    scheme, base, params = parse_connection_params(path)
-    if scheme == "snowflake":
-        return SqlAdaptorConnectionSnowflake(params)
-    return SqlAdaptorConnectionSQLServer(base, params)
+@generator
+def start_sql_adaptor(path: str, _state: STATE = None) -> TS[SqlAdaptorConnection]:
+    scheme, path, connection_params = parse_connection_params(path)
+
+    match scheme:
+        case "snowflake":
+            connection = create_snowflake_connection(
+                path, connection_params=dict(connection_params))
+        case "mssql" | "sqlite" | "postgresql":
+            connection = create_sql_db_connection(
+                path, connection_params=dict(connection_params), _state=_state)
+
+    yield timedelta(), connection
 
 
-def _sqlite_path(uri: str):
-    parsed = urlparse(uri)
-    if parsed.path in ("/:memory:", ":memory:"):
-        return ":memory:"
-    if parsed.netloc:
-        return unquote(f"//{parsed.netloc}{parsed.path}")
-    path = unquote(parsed.path)
-    if uri.startswith("sqlite:////"):
-        return path
-    return path.lstrip("/") if not Path(path).is_absolute() else path
+@start_sql_adaptor.stop
+def stop_sql_server_adaptor(_state: STATE = None):
+    if (connection := getattr(_state, "connection", None)) is not None:
+        connection.connection.dispose()
 
 
-def connection_target(path: str):
-    environment = DataEnvironment.current()
-    if environment is not None and environment.has_entry(path):
-        return environment.get_entry(path).environment_path
-    connections = DataConnectionStore.instance()
-    if connections.has_connection(path):
-        return connections.get_connection(path)
-    return path
+def create_sql_db_connection(
+    path: str, connection_params: dict[str, object], _state: STATE,
+) -> SqlAdaptorConnection:
+    default_params = {
+        "poolclass": QueuePool,
+        "pool_size": 5,
+        "max_overflow": 50,
+        "pool_timeout": 600,
+        "pool_recycle": 90,
+        "execution_options": {"isolation_level": "AUTOCOMMIT"},
+        "echo": True,
+    }
+    default_params.update({
+        key: value for key, value in connection_params.items()
+        if key in default_params
+    })
+    uri_params = {
+        key: value for key, value in connection_params.items()
+        if key not in default_params
+    }
+    keyword_params = {
+        key: value for key, value in connection_params.items()
+        if key not in uri_params
+    }
+    path += "?" + "&".join(
+        f"{key}={quote(str(value))}" for key, value in uri_params.items())
+
+    if "mssql" in path:
+        keyword_params["use_setinputsizes"] = False
+
+    _state.connection = SqlAdaptorConnectionSQLServer(path, keyword_params)
+    return _state.connection
 
 
-@contextmanager
-def connection_for(path: str):
-    """Yield a DB-API connection and close it only when this function owns it."""
-    target = connection_target(path)
-    owned = False
-    if isinstance(target, SqlAdaptorConnection):
-        connection = target.connect()
-        owned = True
-    elif callable(target) and not isinstance(target, str):
-        connection = target()
-        owned = True
-    elif not isinstance(target, str):
-        connection = target
-    elif target.startswith("sqlite:"):
-        connection = sqlite3.connect(_sqlite_path(target), check_same_thread=False)
-        owned = True
-    elif target.startswith("duckdb:"):
-        try:
-            import duckdb
-        except ModuleNotFoundError as error:
-            raise RuntimeError("duckdb SQL paths require the 'duckdb' package") from error
-        parsed = urlparse(target)
-        connection = duckdb.connect(unquote(parsed.path).lstrip("/") or ":memory:")
-        owned = True
-    else:
-        try:
-            from sqlalchemy import create_engine
-        except ModuleNotFoundError as error:
-            raise RuntimeError(
-                f"SQL path {target!r} requires a registered DB-API connection or the 'sql' extra"
-            ) from error
-        engine = create_engine(target)
-        connection = engine.raw_connection()
-        owned = True
+def create_snowflake_connection(
+    path: str, connection_params: dict[str, object],
+) -> SqlAdaptorConnection:
+    if not connection_params:
+        raise ValueError("Snowflake adaptor requires connection parameters")
 
-    try:
-        yield connection
-    finally:
-        if owned:
-            connection.close()
-            if "engine" in locals():
-                engine.dispose()
+    from urllib.parse import unquote, urlparse
 
-
-def _result_table(result):
-    fetch_arrow_table = getattr(result, "fetch_arrow_table", None)
-    if fetch_arrow_table is not None:
-        return fetch_arrow_table()
-    rows = result.fetchall()
-    names = [column[0] for column in result.description or ()]
-    import pyarrow as pa
-
-    return pa.Table.from_pylist([dict(zip(names, row)) for row in rows])
+    url = urlparse(path)
+    db_schema = url.path.lstrip("/").split("/") if url.path else None
+    connection_details = {
+        "adbc.snowflake.sql.account": url.hostname,
+        "username": unquote(url.username),
+        "password": unquote(url.password),
+        "database": db_schema[0] if db_schema else None,
+        "schema": db_schema[1] if db_schema and len(db_schema) > 1 else None,
+        **connection_params,
+    }
+    return SqlAdaptorConnectionSnowflake({
+        key: value for key, value in connection_details.items()
+        if value is not None
+    })

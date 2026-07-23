@@ -27,7 +27,7 @@ from ._wiring import collect
 from ._wiring import emit
 from ._wiring import cast_, downcast_ref
 from ._wiring import ParseError, IncorrectTypeBinding, RequirementsNotMetWiringError
-from ._wiring import evaluate_graph, EvaluationLifeCycleObserver, GraphConfiguration, TSB_OUT, operator, dispatch, dispatch_
+from ._wiring import evaluate_graph, EvaluationLifeCycleObserver, GraphConfiguration, TSB_OUT, TSD_OUT, TSS_OUT, operator, dispatch, dispatch_
 from ._wiring import RecordReplayContext, set_record_replay_model, RECORDABLE_STATE, TS_OUT
 from .nodes import pass_through_node
 from ._wiring import pass_through, no_key
@@ -111,7 +111,7 @@ __all__ = [
     "WiringNodeType", "WiringNodeSignature", "extract_signature", "extract_kwargs",
     "WiringGraphContext",
     "WiringNodeClass", "PythonWiringNodeClass", "GraphWiringNodeClass", "PythonGeneratorWiringNodeClass",
-    "evaluate_graph", "EvaluationLifeCycleObserver", "GraphConfiguration", "Graph", "TSB_OUT", "operator",
+    "evaluate_graph", "EvaluationLifeCycleObserver", "GraphConfiguration", "Graph", "TSB_OUT", "TSD_OUT", "TSS_OUT", "operator",
     "pass_through_node", "pass_through", "no_key", "downcast_ref",
     "reference_service", "subscription_service", "request_reply_service", "service_impl", "register_service",
     "adaptor", "adaptor_impl", "service_adaptor", "service_adaptor_impl", "register_adaptor",

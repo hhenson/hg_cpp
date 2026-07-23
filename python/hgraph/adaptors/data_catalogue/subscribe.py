@@ -1,12 +1,13 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+import inspect
 
-import pyarrow as pa
 from frozendict import frozendict
 
 from hgraph import (
     CompoundScalar,
+    AUTO_RESOLVE,
     Frame,
+    SCHEMA,
     TS,
     TSB,
     TSD,
@@ -15,16 +16,22 @@ from hgraph import (
     compute_node,
     const,
     convert,
-    push_queue,
+    delayed_binding,
+    dispatch,
+    downcast_ref,
+    graph,
+    map_,
+    nothing,
+    null_sink,
+    operator,
     service_adaptor,
     service_adaptor_impl,
-    sink_node,
+    switch_,
 )
-from hgraph.adaptors._async import KeyedAsyncState
-from hgraph.adaptors.executor import adaptor_executor
 from hgraph.stream import Data, Stream, StreamStatus
+from hgraph.reflection import scalar_type
 
-from .catalogue import DataCatalogue, DataCatalogueEntry, DataEnvironment, DataSource
+from .catalogue import DataCatalogue, DataCatalogueEntry, DataSource
 
 __all__ = (
     "FindDCEResult",
@@ -60,77 +67,97 @@ def find_data_catalogue_entry(
 class _SubscribeRequest(CompoundScalar):
     entry: DataCatalogueEntry[DataSource]
     options: frozendict[str, object]
-    environment_path: str
 
 
 @compute_node
 def _make_request(selection: TS[FindDCEResult]) -> TS[_SubscribeRequest]:
-    entry = selection.value.dce
-    environment = DataEnvironment.current()
-    source_path = entry.store.source_path
-    environment_path = (
-        environment.get_entry(source_path).environment_path
-        if environment is not None and environment.has_entry(source_path)
-        else source_path
-    )
-    return _SubscribeRequest(entry, selection.value.options, environment_path)
+    return _SubscribeRequest(selection.value.dce, selection.value.options)
 
 
 @service_adaptor
-def subscribe_adaptor(request: TS[_SubscribeRequest], path: str = "data-catalogue") -> _RAW_STREAM:
+def subscribe_adaptor(
+    request: TS[_SubscribeRequest],
+    path: str = "data-catalogue",
+    _schema: type[SCHEMA] = AUTO_RESOLVE,
+) -> TSB[Stream[Data[Frame[SCHEMA]]]]:
     ...
 
 
 @service_adaptor_impl(interfaces=subscribe_adaptor)
 def subscribe_adaptor_impl(
-    requests: TSD[int, TS[_SubscribeRequest]], path: str
-) -> TSD[int, _RAW_STREAM]:
-    state = KeyedAsyncState()
+    requests: TSD[int, TS[_SubscribeRequest]],
+    path: str,
+    _schema: type[SCHEMA] = AUTO_RESOLVE,
+) -> TSD[int, TSB[Stream[Data[Frame[SCHEMA]]]]]:
+    replies = delayed_binding(TSD[int, TSB[Stream[Data[Frame[_schema]]]]])
 
-    @push_queue(TSD[int, _RAW_STREAM])
-    def responses(sender):
-        state.attach(sender)
+    @graph
+    def route_from(
+        key: TS[int], request: TS[_SubscribeRequest],
+        response: TSB[Stream[Data[Frame[_schema]]]],
+    ) -> TS[bool]:
+        cases = {}
+        for entry in DataCatalogue.instance().get_entries_for_store_type(_schema, DataSource):
+            source_type = type(entry.store)
 
-    def read(key, generation, request):
-        try:
-            handler = DataCatalogue.handler_for(request.entry.store)
-            value = handler(request.entry, request.options, request.environment_path)
-            if not isinstance(value, dict):
-                value = {
-                    "status": StreamStatus.OK,
-                    "status_msg": "",
-                    "values": _as_arrow(value),
-                    "timestamp": _now(),
-                }
-            state.publish(key, generation, value)
-        except Exception as error:
-            state.publish(
-                key,
-                generation,
-                {
-                    "status": StreamStatus.ERROR,
-                    "status_msg": str(error),
-                    "values": None,
-                    "timestamp": _now(),
-                },
-            )
+            def make_case(source_type):
+                @graph
+                def call(request: TS[_SubscribeRequest],
+                         response: TSB[Stream[Data[Frame[_schema]]]],
+                         rid: TS[int]) -> TS[bool]:
+                    d = request.entry
+                    subscribe_source_from_graph[SCHEMA:_schema](
+                        rid, d.dataset, downcast_ref(source_type, d.store),
+                        request.options, response)
+                    return const(True, tp=TS[bool])
+                return call
+            cases[entry.dataset] = make_case(source_type)
+        return switch_(request.entry.dataset, cases, request, response, key)
 
-    executor = adaptor_executor()
+    null_sink(map_(route_from, request=requests, response=replies()))
 
-    @sink_node
-    def submit(requests: TSD[int, TS[_SubscribeRequest]], executor: TS[object]):
-        for key in requests.removed_keys():
-            state.cancel(key)
-        for key, request in requests.modified_items():
-            generation = state.begin(key)
-            executor.value.submit(read, key, generation, request.value)
+    @graph
+    def route_to(
+        key: TS[int], request: TS[_SubscribeRequest],
+    ) -> TSB[Stream[Data[Frame[_schema]]]]:
+        cases = {}
+        for entry in DataCatalogue.instance().get_entries_for_store_type(_schema, DataSource):
+            source_type = type(entry.store)
 
-    @submit.stop
-    def stop():
-        state.close()
+            def make_case(source_type):
+                @graph
+                def call(request: TS[_SubscribeRequest], rid: TS[int]) \
+                        -> TSB[Stream[Data[Frame[_schema]]]]:
+                    d = request.entry
+                    return subscribe_source_to_graph[SCHEMA:_schema](
+                        rid, d.dataset, downcast_ref(source_type, d.store),
+                        request.options)
+                return call
+            cases[entry.dataset] = make_case(source_type)
+        return switch_(request.entry.dataset, cases, request, key)
 
-    submit(requests, executor)
-    return responses()
+    result = map_(route_to, request=requests)
+    replies(result)
+    return result
+
+
+@dispatch
+@operator
+def subscribe_source_from_graph(
+    request_id: TS[int], dataset: TS[str], ds: TS[DataSource],
+    options: TS[dict[str, object]],
+    feedback: TSB[Stream[Data[Frame[SCHEMA]]]],
+    _schema: type[SCHEMA] = AUTO_RESOLVE,
+): ...
+
+
+@dispatch
+@operator
+def subscribe_source_to_graph(
+    request_id: TS[int], dataset: TS[str], ds: TS[DataSource],
+    options: TS[dict[str, object]],
+    _schema: type[SCHEMA] = AUTO_RESOLVE,
+) -> TSB[Stream[Data[Frame[SCHEMA]]]]: ...
 
 
 class _Subscribe:
@@ -147,10 +174,9 @@ class _Subscribe:
             raise TypeError("subscribe requires a schema, for example subscribe[Row](...)")
         options_port = _options_port(__options__, options)
         dataset_port = dataset if isinstance(dataset, WiringPort) else const(dataset, tp=TS[str])
-        raw = subscribe_adaptor(
-            _make_request(find_data_catalogue_entry(dataset_port, options_port, self.schema)),
-            path="data-catalogue",
-        )
+        selection = find_data_catalogue_entry(dataset_port, options_port, self.schema)
+        raw = subscribe_adaptor[SCHEMA:self.schema](
+            _make_request(selection), path="data-catalogue")
         output_type = TSB[Stream[Data[Frame[self.schema]]]]
         return output_type.from_ts(
             status=raw.status,
@@ -163,20 +189,88 @@ class _Subscribe:
 subscribe = _Subscribe()
 
 
-def subscriber_impl_from_graph(source_type=None):
-    """Register a resource callback for a DataSource subclass.
+def _subscriber_function(fn):
+    fn = fn if hasattr(fn, "signature") else graph(fn)
+    signature = inspect.signature(fn)
+    for name in ("dce", "ds", "options", "request_id"):
+        if name not in signature.parameters:
+            raise TypeError(f"{fn.__name__} requires a '{name}' parameter")
+    try:
+        source_type = scalar_type(signature.parameters["ds"].annotation)
+    except TypeError as error:
+        raise TypeError(f"{fn.__name__}.ds must be TS[DataSource subclass]") from error
+    if not isinstance(source_type, type) or not issubclass(source_type, DataSource):
+        raise TypeError(f"{fn.__name__}.ds must be TS[DataSource subclass]")
+    return fn, signature, source_type
 
-    The callback receives ``(entry, resolved_options, environment_path)`` and
-    returns an Arrow-compatible table. Graph-shaped catalogue implementations
-    are intentionally not reproduced; the keyed adaptor already owns the
-    graph boundary and lifecycle.
-    """
-    if isinstance(source_type, type):
-        return DataCatalogue.source_handler(source_type)
-    raise TypeError("subscriber_impl_from_graph requires a DataSource subclass")
+
+def subscriber_impl_from_graph(fn=None):
+    if fn is None:
+        return subscriber_impl_from_graph
+    fn, signature, source_type = _subscriber_function(fn)
+    feedback_parameter = signature.parameters.get("feedback")
+    feedback_type = None if feedback_parameter is None else feedback_parameter.annotation
+    status_only = feedback_type == TS[StreamStatus]
+
+    @graph(overloads=subscribe_source_from_graph)
+    def wrapper(
+        request_id: TS[int], dataset: TS[str], ds: TS[source_type],
+        options: TS[dict[str, object]],
+        feedback: TSB[Stream[Data[Frame[SCHEMA]]]],
+        _schema: type[SCHEMA] = AUTO_RESOLVE,
+    ) -> TS[bool]:
+        entries = DataCatalogue.instance().get_entries_for_store_type(
+            _schema, source_type)
+        cases = {}
+        for entry in entries:
+            def make_case(entry):
+                @graph
+                def call(
+                    ds: TS[source_type], opts: TS[dict[str, object]],
+                    rid: TS[int], response: TSB[Stream[Data[Frame[_schema]]]],
+                ) -> TS[bool]:
+                    kwargs = dict(dce=entry, ds=ds, options=opts, request_id=rid)
+                    if feedback_type is not None:
+                        kwargs["feedback"] = response.status if status_only else response
+                    fn[SCHEMA:_schema](**kwargs)
+                    return const(True, tp=TS[bool])
+                return call
+            cases[entry.dataset] = make_case(entry)
+        if not cases:
+            null_sink(request_id)
+            return const(True, tp=TS[bool])
+        return switch_(dataset, cases, ds, options, request_id, feedback)
+    return fn
 
 
-subscriber_impl_to_graph = subscriber_impl_from_graph
+def subscriber_impl_to_graph(fn=None):
+    if fn is None:
+        return subscriber_impl_to_graph
+    fn, signature, source_type = _subscriber_function(fn)
+
+    @graph(overloads=subscribe_source_to_graph)
+    def wrapper(
+        request_id: TS[int], dataset: TS[str], ds: TS[source_type],
+        options: TS[dict[str, object]],
+        _schema: type[SCHEMA] = AUTO_RESOLVE,
+    ) -> TSB[Stream[Data[Frame[SCHEMA]]]]:
+        entries = DataCatalogue.instance().get_entries_for_store_type(
+            _schema, source_type)
+        cases = {}
+        for entry in entries:
+            def make_case(entry):
+                @graph
+                def call(
+                    ds: TS[source_type], opts: TS[dict[str, object]], rid: TS[int],
+                ) -> TSB[Stream[Data[Frame[_schema]]]]:
+                    return fn[SCHEMA:_schema](
+                        dce=entry, ds=ds, options=opts, request_id=rid)
+                return call
+            cases[entry.dataset] = make_case(entry)
+        if not cases:
+            return nothing[TSB[Stream[Data[Frame[_schema]]]]]()
+        return switch_(dataset, cases, ds, options, request_id)
+    return fn
 
 
 def _options_port(explicit, options):
@@ -189,18 +283,3 @@ def _options_port(explicit, options):
     if any(isinstance(value, WiringPort) for value in options.values()):
         return convert[TS[dict[str, object]]](combine(**options))
     return const(frozendict(options), tp=TS[object])
-
-
-def _as_arrow(value):
-    if isinstance(value, pa.Table):
-        return value
-    if isinstance(value, pa.RecordBatch):
-        return pa.Table.from_batches([value])
-    to_arrow = getattr(value, "to_arrow", None)
-    if to_arrow is not None:
-        return _as_arrow(to_arrow())
-    raise TypeError(f"catalogue source returned unsupported value {type(value)!r}")
-
-
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)

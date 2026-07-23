@@ -112,6 +112,26 @@ def test_python_node_type_records_identify_bridge_implementations():
           "common Runtime role")
 
 
+def test_python_generator_stop_hook_receives_state_and_scalars():
+    stopped = []
+
+    @hg.generator
+    def source(label: str, state: hg.STATE = None) -> TS[int]:
+        state.value = 7
+        yield hg.MIN_ST, state.value
+
+    @source.stop
+    def stop(label: str, state: hg.STATE = None):
+        stopped.append((label, state.value))
+
+    @graph
+    def app() -> TS[int]:
+        return source("generator")
+
+    check(eval_node(app) == [7], "generator output")
+    check(stopped == [("generator", 7)], f"generator stop hook: {stopped}")
+
+
 def test_python_compute_consumes_and_produces_dynamic_tsl():
     # Size[0] is the current native spelling for the unbounded TSL shape.
     @hg.compute_node
@@ -736,7 +756,7 @@ def test_adaptor_path_and_scalar_configuration():
     @hg.adaptor
     def loopback(value: TS[int]) -> TS[int]: ...
 
-    @hg.adaptor_impl(interfaces=loopback)
+    @hg.adaptor_impl(interfaces=(loopback,))
     def loopback_impl(path: str, factor: int):
         incoming = hg.from_graph(loopback, path=path)
         hg.to_graph(loopback, incoming * factor, path=path)

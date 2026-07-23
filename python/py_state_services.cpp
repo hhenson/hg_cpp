@@ -15,6 +15,20 @@ using namespace hgraph::python_bridge;
 
 namespace hgraph::python_bridge
 {
+    namespace
+    {
+        std::vector<WiringPortRef> wiring_ports(nb::list inputs)
+        {
+            std::vector<WiringPortRef> result;
+            result.reserve(nb::len(inputs));
+            for (nb::handle input : inputs)
+            {
+                result.push_back(nb::cast<PyPort &>(input).ref);
+            }
+            return result;
+        }
+    }
+
     void bind_state_and_services(nb::module_ &m)
     {
     nb::class_<GlobalState>(m, "_GlobalState")
@@ -242,23 +256,27 @@ namespace hgraph::python_bridge
         throw std::logic_error("unreachable");
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("ts") = nb::none());
     m.def("register_service_impl", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
-                                      const PyWiredFn &impl) {
+                                      const PyWiredFn &impl, bool default_fallback) {
         switch (desc.descriptor->flavour)
         {
             case ServiceFlavour::Reference:
-                register_reference_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+                register_reference_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn,
+                                                default_fallback);
                 return;
             case ServiceFlavour::Subscription:
-                register_subscription_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+                register_subscription_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn,
+                                                   default_fallback);
                 return;
             case ServiceFlavour::RequestReply:
-                register_request_reply_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+                register_request_reply_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn,
+                                                    default_fallback);
                 return;
             case ServiceFlavour::Adaptor:
             case ServiceFlavour::ServiceAdaptor:
                 throw std::logic_error("register_service_impl does not accept adaptor descriptors");
         }
-    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"),
+       nb::arg("default_fallback") = false);
 
     m.def("mesh_scope_exists", [](const std::string &name) {
         return OperatorRegistry::instance().resolve_mesh_scope(name) != nullptr;
@@ -324,15 +342,18 @@ namespace hgraph::python_bridge
         service_impl_output(w.wiring_ref(), *desc.descriptor, path, out.ref);
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("out"));
     m.def("register_multi_service_impl", [](PyWiring &w, nb::list descs, const std::string &path,
-                                            const PyWiredFn &impl) {
+                                            const PyWiredFn &impl, nb::list inputs,
+                                            bool default_fallback) {
         std::vector<const RuntimeServiceDescriptor *> descriptors;
         descriptors.reserve(nb::len(descs));
         for (nb::handle desc : descs) { descriptors.push_back(nb::cast<PyServiceDesc &>(desc).descriptor); }
+        auto implementation_inputs = wiring_ports(inputs);
         register_multi_service_impl(w.wiring_ref(),
                                     std::span<const RuntimeServiceDescriptor *const>{descriptors.data(),
                                                                                      descriptors.size()},
-                                    path, impl.fn);
-    }, nb::arg("w"), nb::arg("descs"), nb::arg("path") = std::string{}, nb::arg("impl"));
+                                    path, impl.fn, implementation_inputs, default_fallback);
+    }, nb::arg("w"), nb::arg("descs"), nb::arg("path") = std::string{}, nb::arg("impl"),
+       nb::arg("inputs") = nb::list(), nb::arg("default_fallback") = false);
 
     m.def("adaptor_client", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
                                std::optional<PyPort> in) -> nb::object {
@@ -348,14 +369,44 @@ namespace hgraph::python_bridge
                                  const PyPort &out) {
         adaptor_to_graph(w.wiring_ref(), *desc.descriptor, path, out.ref);
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("out"));
-    m.def("register_adaptor_impl", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
-                                      const PyWiredFn &impl) {
-        register_adaptor_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
-    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
+    m.def("register_adaptor_impl",
+          [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+             const PyWiredFn &impl, bool automatic, nb::list inputs, bool default_fallback) {
+              auto implementation_inputs = wiring_ports(inputs);
+              register_adaptor_impl(
+                  w.wiring_ref(), *desc.descriptor, path, impl.fn,
+                  automatic ? AdaptorImplMode::Automatic : AdaptorImplMode::Manual,
+                  implementation_inputs, default_fallback);
+          },
+          nb::arg("w"), nb::arg("desc"),
+          nb::arg("path") = std::string{}, nb::arg("impl"),
+          nb::arg("automatic") = false, nb::arg("inputs") = nb::list(),
+          nb::arg("default_fallback") = false);
+    m.def("register_unbound_adaptor_impl",
+          [](PyWiring &w, const PyWiredFn &impl, nb::list inputs) {
+              auto implementation_inputs = wiring_ports(inputs);
+              register_unbound_adaptor_impl(
+                  w.wiring_ref(), impl.fn, implementation_inputs);
+          },
+          nb::arg("w"), nb::arg("impl"), nb::arg("inputs") = nb::list());
     m.def("service_adaptor_client", [](PyWiring &w, const PyServiceDesc &desc,
                                         const std::string &path, const PyPort &in) {
         return PyPort{service_adaptor_client(w.wiring_ref(), *desc.descriptor, path, in.ref)};
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("in"));
+    m.def("service_adaptor_client_from_graph", [](PyWiring &w, const PyServiceDesc &desc,
+                                                    const std::string &path, const PyPort &in,
+                                                    const PyPort &request_id) {
+        service_adaptor_client_from_graph(
+            w.wiring_ref(), *desc.descriptor, path, in.ref, request_id.ref);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{},
+       nb::arg("in"), nb::arg("request_id"));
+    m.def("service_adaptor_client_to_graph", [](PyWiring &w, const PyServiceDesc &desc,
+                                                  const std::string &path,
+                                                  const PyPort &request_id) {
+        return PyPort{service_adaptor_client_to_graph(
+            w.wiring_ref(), *desc.descriptor, path, request_id.ref)};
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{},
+       nb::arg("request_id"));
     m.def("service_adaptor_from_graph", [](PyWiring &w, const PyServiceDesc &desc,
                                             const std::string &path) {
         return PyPort{service_adaptor_from_graph(w.wiring_ref(), *desc.descriptor, path)};
@@ -365,9 +416,12 @@ namespace hgraph::python_bridge
         service_adaptor_to_graph(w.wiring_ref(), *desc.descriptor, path, out.ref);
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("out"));
     m.def("register_service_adaptor_impl", [](PyWiring &w, const PyServiceDesc &desc,
-                                               const std::string &path, const PyWiredFn &impl) {
-        register_service_adaptor_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
-    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
+                                               const std::string &path, const PyWiredFn &impl,
+                                               bool default_fallback) {
+        register_service_adaptor_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn,
+                                      default_fallback);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"),
+       nb::arg("default_fallback") = false);
 
     m.def("push_context", [](PyWiring &w, const std::string &name, const PyPort &port) {
         if (name.empty()) { throw nb::value_error("context requires a non-empty name"); }
