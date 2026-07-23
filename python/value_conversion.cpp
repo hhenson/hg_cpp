@@ -658,7 +658,7 @@ namespace hgraph::python_bridge
         result.view().assign_from_python(object);
         if (frame_target)
         {
-            const auto &frame = result.view().checked_as<Frame>();
+            const auto frame = result.view().checked_as<Frame>();
             const bool carries_metadata = frame.has_metadata();
             if (meta->key_type == nullptr && carries_metadata)
             {

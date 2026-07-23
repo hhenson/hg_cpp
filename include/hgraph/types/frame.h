@@ -47,7 +47,7 @@ namespace hgraph
 
         [[nodiscard]] bool has_value() const noexcept { return table != nullptr; }
         /** True when the Arrow schema carries any reserved hgraph frame metadata. */
-        [[nodiscard]] bool has_metadata() const noexcept;
+        [[nodiscard]] HGRAPH_EXPORT bool has_metadata() const noexcept;
 
         friend bool operator==(const Frame &lhs, const Frame &rhs) noexcept
         {
