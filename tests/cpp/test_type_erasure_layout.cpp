@@ -75,7 +75,9 @@ TEST_CASE("current type-erasure records retain their baseline layouts")
     static_assert(sizeof(TSDataTracking) == sizeof(void *) * 5);
     static_assert(sizeof(TimeSeriesReference) == sizeof(void *) * 5);
 #if defined(__APPLE__) && defined(__aarch64__)
-    static_assert(sizeof(KeySlotStore) <= 272);
+    // 272 -> 280: heterogeneous realized keys store the value binding
+    // (m_value_binding) so keys hash/compare through the bound ValueOps.
+    static_assert(sizeof(KeySlotStore) <= 280);
     static_assert(sizeof(KeyMirroredValueSlotStore) <= 208);
     static_assert(sizeof(TSDProxySlotSync) <= 24);
     static_assert(sizeof(TSDProxy) <= 400);

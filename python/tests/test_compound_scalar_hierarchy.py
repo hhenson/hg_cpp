@@ -4,7 +4,7 @@ from typing import Callable, Generic, Optional, TypeVar
 
 import _hgraph
 import pytest
-from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, combine, compute_node, const, from_json_builder, graph, operator, to_json_builder
+from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, combine, compute_node, const, default, from_json_builder, graph, mesh_, operator, to_json_builder
 # White-box: these tests assert on the interned C++ value-type metadata
 # (qualified names, generic specialisation identity), which has no public
 # introspection surface — the module under test is imported directly.
@@ -258,6 +258,78 @@ def test_eval_node_finalizes_subclasses_before_const_lifting():
         return const(Derived(value=1, label="one"), TS[Base])
 
     assert eval_node(app) == [Derived(value=1, label="one")]
+
+
+def test_default_forwards_derived_fallback_through_non_abstract_base():
+    @dataclass(frozen=True)
+    class Base(CompoundScalar, namespace="tests.default_covariance"):
+        value: int
+
+    @dataclass(frozen=True)
+    class Derived(Base):
+        label: str
+
+    fallback = Derived(value=1, label="one")
+
+    @graph
+    def app(value: TS[Base]) -> TS[Base]:
+        return default(value, fallback)
+
+    assert eval_node(app, [None]) == [fallback]
+
+
+def test_polymorphic_union_accepts_canonical_derived_with_polymorphic_field():
+    @dataclass(frozen=True)
+    class Model(CompoundScalar, namespace="tests.nested_union_source", abstract=True):
+        name: str
+
+    @dataclass(frozen=True)
+    class ConcreteModel(Model):
+        parameter: int
+
+    @dataclass(frozen=True)
+    class Base(CompoundScalar, namespace="tests.nested_union_source", abstract=True):
+        value: int
+
+    @dataclass(frozen=True)
+    class Derived(Base):
+        model: Model
+
+    fallback = Derived(value=1, model=ConcreteModel(name="m", parameter=2))
+
+    @graph
+    def app(value: TS[Base]) -> TS[Base]:
+        return default(value, fallback)
+
+    assert eval_node(app, [None]) == [fallback]
+
+
+def test_mesh_normalizes_realized_composite_dependency_keys():
+    @dataclass(frozen=True)
+    class Option(CompoundScalar, namespace="tests.mesh_realized_key"):
+        value: int
+
+    @dataclass(frozen=True)
+    class SpecialOption(Option):
+        label: str
+
+    @dataclass(frozen=True)
+    class Request(CompoundScalar, namespace="tests.mesh_realized_key"):
+        name: str
+        option: Option
+
+    @graph
+    def dependency(key: TS[Request], link: TS[Request]) -> TS[int]:
+        return default(mesh_(dependency)[link], 0) + 1
+
+    @graph
+    def app(links: TSD[Request, TS[Request]]) -> TSD[Request, TS[int]]:
+        return mesh_(dependency, links)
+
+    option = Option(0)
+    root = Request("root", option)
+    leaf = Request("leaf", option)
+    assert eval_node(app, [{root: leaf}]) == [{root: 2, leaf: 1}]
 
 
 def test_polymorphic_bundle_field_uses_the_graph_realization():
@@ -658,3 +730,15 @@ def test_compound_scalar_tsb_ignores_dataclass_kw_only_marker():
     assert [name for name, _ in _value_type(Quoted[int]).fields] == ["value"]
     assert [name for name, _ in _hgraph.ts_field_types(TSB[Quoted[int]].handle)] == ["value"]
     assert TSB[Quoted].pattern.ts_kind == _hgraph.TS_KIND_TSB
+
+
+def test_combine_compound_scalar_resolves_string_field_annotations():
+    @dataclass(frozen=True)
+    class Deferred(CompoundScalar, namespace="tests.deferred_annotation"):
+        value: "int"
+
+    @graph
+    def make() -> TS[Deferred]:
+        return combine[TS[Deferred]](value=1)
+
+    assert eval_node(make) == [Deferred(1)]

@@ -635,6 +635,36 @@ TEST_CASE("key slot store mixes type-erased identity hashes", "[v2 slot utils][h
     REQUIRE(equality_probes < static_cast<std::size_t>(key_count * 4));
 }
 
+TEST_CASE("key slot store rolls back a new key when indexing throws", "[v2 slot utils][hash]")
+{
+    bool throw_hash = true;
+    const KeySlotStoreOps ops{
+        .hash = [](const void *key, const void *context) -> std::size_t {
+            if (*static_cast<const bool *>(context)) { throw std::runtime_error("hash failed"); }
+            return std::hash<std::int64_t>{}(*MemoryUtils::cast<const std::int64_t>(key));
+        },
+        .equal = [](const void *lhs, const void *rhs, const void *) -> bool {
+            return *MemoryUtils::cast<const std::int64_t>(lhs) ==
+                   *MemoryUtils::cast<const std::int64_t>(rhs);
+        },
+        .context = &throw_hash,
+    };
+    KeySlotStore store(MemoryUtils::plan_for<std::int64_t>(), ops);
+    const std::int64_t key = 42;
+
+    REQUIRE_THROWS_AS(store.insert(key), std::runtime_error);
+    REQUIRE(store.size() == 0);
+    for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot) {
+        REQUIRE_FALSE(store.slot_constructed(slot));
+    }
+
+    throw_hash = false;
+    const auto inserted = store.insert(key);
+    REQUIRE(inserted.inserted);
+    REQUIRE(inserted.slot == 0);
+    REQUIRE(store.contains(key));
+}
+
 TEST_CASE("key slot store resurrects removed keys before erase and reuses slots after explicit erase", "[v2 slot utils]") {
     KeySlotStore store(MemoryUtils::plan_for<std::int32_t>(), key_slot_store_ops_for<std::int32_t>());
 

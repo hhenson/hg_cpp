@@ -1921,6 +1921,81 @@ TEST_CASE("graph wiring: top-level wiring accepts implementation registration")
         {"service://exact"}, "exact", [](Wiring &) {}));
 }
 
+TEST_CASE("graph wiring: structured service client reflection retains interface identity")
+{
+    using namespace hgraph;
+
+    Wiring wiring;
+    wiring.register_service_client_path(
+        "adaptor://prices[VALUE=int]/quote", "adaptor", "quote", "VALUE=int");
+
+    const auto records = wiring.service_client_records();
+    REQUIRE(records.size() == 1);
+    CHECK(records[0].base_path == "adaptor://prices[VALUE=int]/quote");
+    CHECK(records[0].endpoint_path == records[0].base_path);
+    CHECK(records[0].kind == "adaptor");
+    CHECK(records[0].interface_name == "quote");
+    CHECK(records[0].specialization == "VALUE=int");
+    CHECK(records[0].receive);
+}
+
+TEST_CASE("graph wiring: conflicting structured service client identity is rejected")
+{
+    using namespace hgraph;
+
+    Wiring wiring;
+    wiring.register_service_client_path(
+        "adaptor://prices[VALUE=int]/quote", "adaptor", "quote", "VALUE=int");
+
+    CHECK_THROWS_WITH(
+        wiring.register_service_client_path(
+            "adaptor://prices[VALUE=int]/quote", "adaptor", "trade", "VALUE=int"),
+        Catch::Matchers::ContainsSubstring("conflicting service/adaptor client identity"));
+}
+
+TEST_CASE("graph wiring: partial implementation scope reports only used endpoints")
+{
+    using namespace hgraph;
+
+    Wiring wiring;
+    auto scope = wiring.service_implementation_scope(
+        "partial", std::vector<WiringServiceImplementationEndpoint>{
+            {"adaptor://first/quote/from_graph", {}},
+            {"adaptor://second/quote/from_graph", {}},
+        }, false);
+    wiring.register_service_implementation_stub(
+        "adaptor://first/quote/from_graph", "adaptor");
+
+    CHECK(wiring.service_implementation_used_endpoints() ==
+          std::vector<std::string>{"adaptor://first/quote/from_graph"});
+    CHECK_NOTHROW(scope.complete());
+}
+
+TEST_CASE("graph wiring: exact and selective catch-all implementations coexist")
+{
+    using namespace hgraph;
+
+    Wiring wiring;
+    wiring.register_service_client_path("adaptor://exact/quote", "adaptor");
+    wiring.register_service_client_path("adaptor://fallback/quote", "adaptor");
+    wiring.register_service_implementation_candidate(
+        {"adaptor://exact/quote"}, "exact",
+        [](Wiring &target) {
+            target.register_built_service_path("adaptor://exact/quote", "adaptor");
+        });
+    wiring.register_catch_all_service_implementation_candidate(
+        "selective catch-all", [](Wiring &target) {
+            target.register_built_service_path("adaptor://fallback/quote", "adaptor");
+        });
+
+    CHECK_NOTHROW(wiring.build_services());
+    CHECK(wiring.built_service_paths() ==
+          std::vector<std::pair<std::string, std::string>>{
+              {"adaptor://exact/quote", "adaptor"},
+              {"adaptor://fallback/quote", "adaptor"},
+          });
+}
+
 TEST_CASE("graph wiring: default service candidates serve concrete paths lazily")
 {
     using namespace hgraph;

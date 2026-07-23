@@ -36,10 +36,6 @@ thread_local const TypeRealizationSnapshot *active_snapshot = nullptr;
   return (value + alignment - 1U) & ~(alignment - 1U);
 }
 
-[[nodiscard]] std::size_t combine_hash(std::size_t seed,
-                                       std::size_t value) noexcept {
-  return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U));
-}
 } // namespace
 
 struct TypeRealizationSnapshot::Impl {
@@ -48,6 +44,8 @@ struct TypeRealizationSnapshot::Impl {
     std::vector<ValueTypeRef> alternatives{};
     std::unordered_map<const TypeRecord *, ValueTypeRef>
         alternatives_by_record{};
+    std::unordered_map<const ValueTypeMetaData *, ValueTypeRef>
+        alternatives_by_schema{};
     ValueTypeRef default_type{};
     std::size_t payload_offset{0};
     MemoryUtils::StoragePlan plan{};
@@ -60,12 +58,14 @@ struct TypeRealizationSnapshot::Impl {
       std::size_t payload_size = 0;
       std::size_t payload_alignment = 1;
       alternatives_by_record.reserve(alternatives.size());
+      alternatives_by_schema.reserve(alternatives.size());
       for (const auto alternative : alternatives) {
         if (!alternative) {
           throw std::logic_error(
               "closed Bundle alternative has no value binding");
         }
         alternatives_by_record.emplace(alternative.record(), alternative);
+        alternatives_by_schema.emplace(alternative.schema(), alternative);
         payload_size =
             std::max(payload_size, alternative.checked_plan().layout.size);
         payload_alignment = std::max(
@@ -166,6 +166,45 @@ struct TypeRealizationSnapshot::Impl {
       }
       const auto found = alternatives_by_record.find(source.record());
       return found != alternatives_by_record.end() && found->second == source;
+    }
+
+    [[nodiscard]] ValueTypeRef alternative_for_schema(
+        const ValueTypeMetaData *schema) const noexcept {
+      const auto found = alternatives_by_schema.find(schema);
+      return found != alternatives_by_schema.end() ? found->second
+                                                   : ValueTypeRef{};
+    }
+
+    void replace_copy_from(void *dst, ValueTypeRef target_type,
+                           ValueTypeRef source_type,
+                           const void *source_memory) const {
+      const auto current = active_type(dst);
+      if (current != target_type) {
+        if (current) {
+          current.destroy_at(payload(*this, dst));
+        }
+        set_active_record(dst, nullptr);
+        target_type.default_construct_at(payload(*this, dst));
+        set_active_record(dst, target_type.record());
+      }
+      target_type.ops_ref().copy_assign_from(
+          target_type, payload(*this, dst), source_type, source_memory);
+    }
+
+    void replace_move_from(void *dst, ValueTypeRef target_type,
+                           ValueTypeRef source_type,
+                           void *source_memory) const {
+      const auto current = active_type(dst);
+      if (current != target_type) {
+        if (current) {
+          current.destroy_at(payload(*this, dst));
+        }
+        set_active_record(dst, nullptr);
+        target_type.default_construct_at(payload(*this, dst));
+        set_active_record(dst, target_type.record());
+      }
+      target_type.ops_ref().move_assign_from(
+          target_type, payload(*this, dst), source_type, source_memory);
     }
 
     static void default_construct(void *memory, const void *context) {
@@ -277,6 +316,7 @@ struct TypeRealizationSnapshot::Impl {
       const auto &self = entry(context);
       return binding == self.binding && source &&
              (source == self.binding || self.contains(source) ||
+              self.alternative_for_schema(source.schema()) ||
               source.schema() == self.declared);
     }
 
@@ -290,7 +330,8 @@ struct TypeRealizationSnapshot::Impl {
       if (!self.contains(source) && source.schema() == self.declared) {
         const auto source_type = source.ops_ref().concrete_type(source, src);
         const auto *source_memory = source.ops_ref().concrete_memory(src);
-        if (!self.contains(source_type)) {
+        const auto target_type = self.alternative_for_schema(source_type.schema());
+        if (!target_type) {
           throw std::invalid_argument(
               "closed Bundle source alternative '" +
               std::string{source_type.schema() != nullptr
@@ -298,7 +339,12 @@ struct TypeRealizationSnapshot::Impl {
                               : "<invalid>"} +
               "' is outside this graph snapshot");
         }
-        self.replace_copy(dst, source_type, source_memory);
+        self.replace_copy_from(dst, target_type, source_type, source_memory);
+        return;
+      }
+      if (const auto alternative = self.alternative_for_schema(source.schema());
+          alternative && alternative != source) {
+        self.replace_copy_from(dst, alternative, source, src);
         return;
       }
       self.replace_copy(dst, source, src);
@@ -314,7 +360,8 @@ struct TypeRealizationSnapshot::Impl {
       if (!self.contains(source) && source.schema() == self.declared) {
         const auto source_type = source.ops_ref().concrete_type(source, src);
         auto *source_memory = source.ops_ref().mutable_concrete_memory(src);
-        if (!self.contains(source_type) || source_memory == nullptr) {
+        const auto target_type = self.alternative_for_schema(source_type.schema());
+        if (!target_type || source_memory == nullptr) {
           throw std::invalid_argument(
               "closed Bundle source alternative '" +
               std::string{source_type.schema() != nullptr
@@ -322,7 +369,12 @@ struct TypeRealizationSnapshot::Impl {
                               : "<invalid>"} +
               "' is outside this graph snapshot");
         }
-        self.replace_move(dst, source_type, source_memory);
+        self.replace_move_from(dst, target_type, source_type, source_memory);
+        return;
+      }
+      if (const auto alternative = self.alternative_for_schema(source.schema());
+          alternative && alternative != source) {
+        self.replace_move_from(dst, alternative, source, src);
         return;
       }
       self.replace_move(dst, source, src);
@@ -370,8 +422,11 @@ struct TypeRealizationSnapshot::Impl {
       if (!active) {
         throw std::logic_error("closed Bundle has an invalid active type");
       }
-      return combine_hash(std::hash<const TypeRecord *>{}(active.record()),
-                          active.ops_ref().hash(payload(self, memory)));
+      // A closed-union value and its canonical concrete value are logically
+      // equal even though their TypeRecords and physical layouts differ.
+      // Hash only the concrete payload: concrete-type differences may collide,
+      // but equal values must never hash differently because of realization.
+      return active.ops_ref().hash(payload(self, memory));
     }
 
     static bool equals(const void *context, const void *lhs,

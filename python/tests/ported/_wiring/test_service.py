@@ -5,6 +5,7 @@ import pytest
 
 import hgraph as hg
 from hgraph import NUMBER, NUMBER_2, TS, TSB, TSD, TimeSeriesSchema, graph
+from hgraph.reflection import resolved_type
 from hgraph.test import eval_node
 
 
@@ -55,6 +56,37 @@ def test_specialized_numeric_reference_services_share_one_interface_name():
     assert eval_node(float_client, [2.0]) == [2.5]
     with pytest.raises(TypeError, match="NUMBER must be one of int, float"):
         numeric_reference[NUMBER:str]
+
+
+def test_service_client_reflection_retains_generic_bindings():
+    reflected = []
+
+    @hg.reference_service
+    def numeric_reference(path: str) -> TS[NUMBER]: ...
+
+    integer_reference = numeric_reference[NUMBER:int]
+
+    @hg.service_impl(interfaces=integer_reference)
+    def integer_reference_impl() -> TS[int]:
+        return hg.const(1)
+
+    @graph
+    def client() -> TS[int]:
+        hg.register_service("numbers", integer_reference_impl)
+        value = integer_reference(path="numbers")
+        reflected.extend(
+            hg.WiringGraphContext.instance().registered_service_clients(
+                numeric_reference))
+        return value
+
+    assert eval_node(client) == [1]
+    assert len(reflected) == 1
+    path, type_map, node, receive = reflected[0]
+    assert path.startswith("ref_svc://numbers[")
+    assert NUMBER in type_map, type_map
+    assert resolved_type(type_map[NUMBER]) is int
+    assert node is None
+    assert receive is True
 
 
 def test_specialized_service_impl_receives_user_path_without_type_suffix():

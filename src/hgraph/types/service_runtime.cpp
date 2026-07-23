@@ -5,6 +5,8 @@
 #include <hgraph/types/adaptor_wiring.h>
 #include <hgraph/types/service_wiring.h>
 
+#include <unordered_set>
+
 #include <array>
 #include <algorithm>
 #include <functional>
@@ -254,7 +256,8 @@ namespace hgraph
     {
         require_flavour(descriptor, ServiceFlavour::Reference, "reference");
         const std::string base = reference_base(descriptor, path);
-        w.register_service_client_path(base, "reference service");
+        w.register_service_client_path(
+            base, "reference service", descriptor.name, descriptor.specialization);
         WiringPortRef source = shared_output_source_node(
             w, std::type_index(typeid(service::detail::reference_output_source_marker)),
             descriptor.output_schema, base);
@@ -314,7 +317,8 @@ namespace hgraph
         const std::string base       = subscription_base(descriptor, path);
         const std::string subs_path  = base + "/subs";
         const std::string out_path   = base + "/out";
-        w.register_service_client_path(base, "subscription service");
+        w.register_service_client_path(
+            base, "subscription service", descriptor.name, descriptor.specialization);
 
         const auto *subs_meta = TypeRegistry::instance().tss(descriptor.key_type);
         WiringNodeSchema subs_schema;
@@ -479,7 +483,8 @@ namespace hgraph
         const std::string base         = request_reply_base(descriptor, path);
         const std::string request_path = base + "/request";
         const std::string replies_path = base + "/replies";
-        w.register_service_client_path(base, "request/reply service");
+        w.register_service_client_path(
+            base, "request/reply service", descriptor.name, descriptor.specialization);
 
         WiringPortRef request_id = request_id_source_node(w);
         WiringPortRef requests = request_input_source_node(w, descriptor, request_path);
@@ -904,7 +909,8 @@ namespace hgraph
     {
         require_flavour(descriptor, ServiceFlavour::Adaptor, "adaptor");
         const std::string base = adaptor_base(descriptor, path);
-        w.register_service_client_path(base, "adaptor");
+        w.register_service_client_path(
+            base, "adaptor", descriptor.name, descriptor.specialization);
         if (descriptor.input_schema != nullptr)
         {
             if (in == nullptr)
@@ -1040,7 +1046,39 @@ namespace hgraph
                 {
                     throw std::invalid_argument("unbound adaptor implementation is not wirable");
                 }
+                const auto clients = target.service_client_records();
+                std::vector<WiringServiceImplementationEndpoint> endpoints;
+                for (const auto &client : clients)
+                {
+                    if (std::ranges::none_of(endpoints, [&](const auto &endpoint) {
+                            return endpoint.endpoint == client.endpoint_path;
+                        }))
+                    {
+                        endpoints.push_back(WiringServiceImplementationEndpoint{
+                            client.endpoint_path, {}});
+                    }
+                }
+                auto scope = target.service_implementation_scope(
+                    "unbound adaptor implementation", std::move(endpoints), false);
                 static_cast<void>(impl.wire(target, stored_inputs));
+                const auto used_endpoints = target.service_implementation_used_endpoints();
+                scope.complete();
+                std::unordered_set<std::string> claimed;
+                for (const auto &client : clients)
+                {
+                    const bool used = std::ranges::any_of(
+                        used_endpoints, [&](const std::string &endpoint) {
+                            return endpoint == client.base_path ||
+                                   (endpoint.starts_with(client.base_path) &&
+                                    endpoint.size() > client.base_path.size() &&
+                                    endpoint[client.base_path.size()] == '/');
+                        });
+                    if (used && claimed.insert(client.base_path).second)
+                    {
+                        target.register_built_service_path(
+                            client.base_path, client.kind);
+                    }
+                }
             });
     }
 
@@ -1101,7 +1139,8 @@ namespace hgraph
         }
         const std::string base          = service_adaptor_base(descriptor, path);
         const std::string request_path  = base + "/from_graph";
-        w.register_service_client_path(base, "service adaptor");
+        w.register_service_client_path(
+            base, "service adaptor", descriptor.name, descriptor.specialization);
 
         WiringPortRef requests = keyed_request_input_source_node(
             w, descriptor.input_schema, request_path,
@@ -1141,7 +1180,8 @@ namespace hgraph
         }
         const std::string base         = service_adaptor_base(descriptor, path);
         const std::string replies_path = base + "/to_graph";
-        w.register_service_client_path(base, "service adaptor");
+        w.register_service_client_path(
+            base, "service adaptor", descriptor.name, descriptor.specialization);
         WiringPortRef replies = keyed_reply_output_source_node(
             w, descriptor.output_schema, replies_path,
             std::type_index(typeid(service_adaptor::detail::output_source_marker)));

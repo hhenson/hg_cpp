@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import threading
+import weakref
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
@@ -24,6 +25,8 @@ from hgraph import (
     from_graph,
     graph,
     map_,
+    merge,
+    partition,
     push_queue,
     register_adaptor,
     sink_node,
@@ -99,6 +102,35 @@ class WebSocketAdaptorManager:
     def start(self, path: str) -> None:
         self.register(path)
         self._web.start()
+
+    def start_routes(self, paths, connect_sender, message_sender) -> None:
+        for path in paths:
+            self.register(path)
+            self.set_queues(path, connect_sender, message_sender)
+        self._web.start()
+
+    def stop_routes(self, paths) -> None:
+        paths = set(paths)
+        completed = threading.Event()
+
+        def cleanup():
+            try:
+                for path in paths:
+                    self._queues.pop(path, None)
+                    self._pending_connect.pop(path, None)
+                for request_id, pending in tuple(self._requests.items()):
+                    request_path, future, _ = pending
+                    if request_path in paths:
+                        if not future.done():
+                            future.cancel()
+                        self._requests.pop(request_id, None)
+            finally:
+                completed.set()
+
+        TornadoWeb.get_loop().add_callback(cleanup)
+        if not completed.wait(timeout=5.0):
+            raise RuntimeError("WebSocket routes did not stop")
+        self._web.stop()
 
     def register(self, path: str) -> None:
         if path not in self._registered_paths:
@@ -243,87 +275,6 @@ def websocket_server_adaptor(
     """Expose a typed graph request/response stream as a WebSocket route."""
 
 
-_SERVER_IMPLEMENTATIONS = {}
-
-
-def _server_implementation(message_type: type):
-    implementation = _SERVER_IMPLEMENTATIONS.get(message_type)
-    if implementation is not None:
-        return implementation
-
-    interface = websocket_server_adaptor[STR_OR_BYTES:message_type]
-    request_bundle = TSB[WebSocketServerRequest[message_type]]
-    response_bundle = TSB[WebSocketResponse[message_type]]
-    requests_type = TSD[int, request_bundle]
-    responses_type = TSD[int, response_bundle]
-    message_ts = TS[tuple[message_type, ...]]
-
-    @adaptor_impl(interfaces=(interface,))
-    def websocket_server_adaptor_impl(path: str, port: int, url: str) -> None:
-        connect_key = f"websocket_server_adaptor://{port}/{path}/connect_queue"
-        message_key = f"websocket_server_adaptor://{port}/{path}/message_queue"
-        manager = WebSocketAdaptorManager.instance(port, message_type)
-        # Route discovery is a wiring concern. Register every route before
-        # graph start so one adaptor cannot expose the shared port while a
-        # sibling route still returns a transient 404.
-        manager.register(url)
-
-        @push_queue(TSD[int, TS[WebSocketConnectRequest]])
-        def connections_from_web(sender) -> None:
-            GlobalState.instance()[connect_key] = sender
-
-        @push_queue(TSD[int, message_ts])
-        def messages_from_web(sender) -> None:
-            GlobalState.instance()[message_key] = sender
-
-        @graph
-        def make_request(
-            connect_request: TS[WebSocketConnectRequest],
-            messages: message_ts,
-        ) -> request_bundle:
-            return combine[request_bundle](
-                connect_request=connect_request,
-                messages=messages,
-            )
-
-        @sink_node
-        def to_web(responses: responses_type) -> None:
-            loop = TornadoWeb.get_loop()
-            for request_id, response in responses.modified_items():
-                loop.add_callback(
-                    manager.complete_request,
-                    request_id,
-                    response.delta_value,
-                )
-
-        @to_web.start
-        def to_web_start(_global_state: GlobalState = None) -> None:
-            manager.set_queues(
-                url,
-                _global_state[connect_key],
-                _global_state[message_key],
-            )
-            manager.start(url)
-
-        @to_web.stop
-        def to_web_stop(_global_state: GlobalState = None) -> None:
-            try:
-                manager.stop(url)
-            finally:
-                for key in (connect_key, message_key):
-                    if key in _global_state:
-                        del _global_state[key]
-
-        connections = connections_from_web()
-        messages = messages_from_web()
-        requests = map_(make_request, connections, messages)
-        to_web(from_graph(interface, path=path))
-        to_graph(interface, requests, path=path)
-
-    _SERVER_IMPLEMENTATIONS[message_type] = websocket_server_adaptor_impl
-    return websocket_server_adaptor_impl
-
-
 class _WebSocketServerHandler:
     def __init__(self, fn, url: str):
         self._fn = fn
@@ -371,7 +322,7 @@ class _WebSocketServerHandler:
             parameter.default is not inspect.Parameter.empty
             for parameter in parameters
         )
-        self._wired = {}
+        self._wired = weakref.WeakKeyDictionary()
 
     def __call__(self, *args, **kwargs):
         wiring = _current_wiring()
@@ -396,24 +347,110 @@ class _WebSocketServerHandler:
 
 
 _WEBSOCKET_SERVER_HANDLERS = {}
-_WEBSOCKET_SERVER_REGISTRATIONS = {}
+_WEBSOCKET_SERVER_REGISTRATIONS = weakref.WeakKeyDictionary()
 
 
 def _ensure_websocket_route_registered(wiring, path, message_type):
-    registration = _WEBSOCKET_SERVER_REGISTRATIONS.get(wiring)
-    if registration is None:
-        return
-    port, paths = registration
-    key = (path, message_type)
-    if key not in paths:
-        register_adaptor(
-            path,
-            _server_implementation(message_type),
-            port=port,
-            url=path,
-        )
-        paths.add(key)
+    del wiring, path, message_type
 
+
+def _wire_websocket_message_type(port, message_type, entries):
+    interface = websocket_server_adaptor[STR_OR_BYTES:message_type]
+    request_bundle = TSB[WebSocketServerRequest[message_type]]
+    response_bundle = TSB[WebSocketResponse[message_type]]
+    responses_type = TSD[int, response_bundle]
+    message_ts = TS[tuple[message_type, ...]]
+    routes = {
+        base: interface.path_from_full_path(base)
+        for base in entries
+    }
+    manager = WebSocketAdaptorManager.instance(port, message_type)
+    type_label = message_type.__name__
+    connect_key = f"websocket_server_adaptor://{port}/{type_label}/connect_queue"
+    message_key = f"websocket_server_adaptor://{port}/{type_label}/message_queue"
+
+    @push_queue(TSD[int, TS[WebSocketConnectRequest]])
+    def connections_from_web(sender) -> None:
+        GlobalState.instance()[connect_key] = sender
+
+    @push_queue(TSD[int, message_ts])
+    def messages_from_web(sender) -> None:
+        GlobalState.instance()[message_key] = sender
+
+    @graph
+    def make_request(
+        connect_request: TS[WebSocketConnectRequest],
+        messages: message_ts,
+    ) -> request_bundle:
+        return combine[request_bundle](
+            connect_request=connect_request,
+            messages=messages,
+        )
+
+    @graph
+    def connection_url(request: TS[WebSocketConnectRequest]) -> TS[str]:
+        return request.url
+
+    @sink_node
+    def to_web(responses: responses_type) -> None:
+        loop = TornadoWeb.get_loop()
+        for request_id, response in responses.modified_items():
+            loop.add_callback(
+                manager.complete_request, request_id, response.delta_value)
+
+    @to_web.start
+    def to_web_start(_global_state: GlobalState = None) -> None:
+        manager.start_routes(
+            tuple(routes.values()),
+            _global_state[connect_key], _global_state[message_key])
+
+    @to_web.stop
+    def to_web_stop(_global_state: GlobalState = None) -> None:
+        try:
+            manager.stop_routes(tuple(routes.values()))
+        finally:
+            for key in (connect_key, message_key):
+                if key in _global_state:
+                    del _global_state[key]
+
+    connections = connections_from_web()
+    messages = messages_from_web()
+    urls = map_(connection_url, connections)
+    connections_by_url = partition(connections, urls)
+    messages_by_url = partition(messages, urls)
+    responses = []
+    for base, route in routes.items():
+        responses.append(from_graph(interface, path=base))
+        to_graph(
+            interface,
+            map_(
+                make_request,
+                connections_by_url[route], messages_by_url[route]),
+            path=base)
+    if responses:
+        to_web(merge(*responses, disjoint=True))
+
+
+@adaptor_impl(interfaces=())
+def _websocket_server_catch_all(path: str, port: int = 80) -> None:
+    from hgraph import WiringGraphContext
+    from hgraph.reflection import resolved_type
+
+    clients = WiringGraphContext.instance().registered_service_clients(
+        websocket_server_adaptor)
+    endpoints = set()
+    grouped = {str: set(), bytes: set()}
+    for endpoint, type_map, _node, receive in clients:
+        if (endpoint, receive) in endpoints:
+            raise ValueError(
+                f"duplicate WebSocket adaptor client for {endpoint!r} and direction {receive}")
+        endpoints.add((endpoint, receive))
+        message_type = resolved_type(type_map[STR_OR_BYTES])
+        base = endpoint.removesuffix("/from_graph").removesuffix("/to_graph")
+        grouped[message_type].add(base)
+    for message_type, entries in grouped.items():
+        if entries:
+            _wire_websocket_message_type(port, message_type, entries)
 
 def websocket_server_handler(fn=None, *, url: str):
     """Declare a typed WebSocket route handled by a graph or Python node."""
@@ -427,21 +464,12 @@ def websocket_server_handler(fn=None, *, url: str):
 def register_websocket_server_adaptor(port: int) -> None:
     """Register all declared WebSocket routes on ``port``."""
     wiring = _current_wiring()
-    registration = _WEBSOCKET_SERVER_REGISTRATIONS.setdefault(
-        wiring, (port, set()))
-    if registration[0] != port:
+    registration = _WEBSOCKET_SERVER_REGISTRATIONS.setdefault(wiring, port)
+    if registration != port:
         raise ValueError("one wiring graph cannot register the WebSocket server on two ports")
-    registered_paths = registration[1]
-    for url, handler in tuple(_WEBSOCKET_SERVER_HANDLERS.items()):
-        key = (url, handler.message_type)
-        if key not in registered_paths:
-            register_adaptor(
-                url,
-                _server_implementation(handler.message_type),
-                port=port,
-                url=url,
-            )
-            registered_paths.add(key)
+    register_adaptor(
+        "websocket_server_adaptor", _websocket_server_catch_all, port=port)
+    for _url, handler in tuple(_WEBSOCKET_SERVER_HANDLERS.items()):
         if handler.auto_wire:
             handler()
 

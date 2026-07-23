@@ -24,8 +24,6 @@ from ._node import _PyNode, _warn_deprecated
 
 _TS_ANNOTATIONS = (_TsExpr, _GenericTsExpr)
 _SERVICE_ADAPTOR_CLIENT_TOKENS = itertools.count()
-
-
 def _is_ts_annotation(annotation):
     return (
         isinstance(annotation, _TS_ANNOTATIONS)
@@ -39,6 +37,8 @@ def _is_ts_annotation(annotation):
 def _resolved_service_path(stub, path):
     if path is None:
         path = getattr(stub, "_default_path", "")
+    if hasattr(stub, "is_full_path") and stub.is_full_path(path):
+        return path
     resolver = getattr(stub, "_resolved_path", None)
     return resolver(path) if resolver is not None else path
 
@@ -69,6 +69,7 @@ def _specialization_label(resolution):
 def _specialization(item, owner, resolvers=None):
     items = item if isinstance(item, tuple) else (item,)
     resolution = _hgraph.ResolutionScope()
+    variables = {}
     for binding in items:
         if not isinstance(binding, slice) or binding.step is not None:
             raise TypeError(
@@ -77,6 +78,7 @@ def _specialization(item, owner, resolvers=None):
         if not isinstance(variable, (_TypeVarSentinel, typing.TypeVar)):
             raise TypeError(f"{owner} specialization key is not a type variable")
         name = _type_var_name(variable)
+        variables[name] = variable
         if _type_var_is_scalar(variable):
             meta = _value_type(concrete)
             constraints = tuple(getattr(variable, "__constraints__", ()))
@@ -93,7 +95,7 @@ def _specialization(item, owner, resolvers=None):
                 meta = concrete
             resolution.bind_ts(name, meta)
     _apply_service_resolvers(resolution, resolvers)
-    return resolution, _specialization_label(resolution)
+    return resolution, _specialization_label(resolution), variables
 
 
 def _service_type_variables(signature):
@@ -244,17 +246,37 @@ class _GetContext:
 get_context = _GetContext()
 
 
+_SERVICE_RESOLUTIONS = {}
+
+
+def _remember_service_resolution(stub):
+    if stub.descriptor is None:
+        return
+    resolution = getattr(stub, "_resolution", None)
+    variables = dict(getattr(stub, "_resolution_variables", {}))
+    variables.update({
+        _type_var_name(variable): variable
+        for variable in _service_type_variables(stub._signature)
+    })
+    _SERVICE_RESOLUTIONS[(stub.flavour, stub.__name__, stub._specialization)] = (
+        {variables.get(name, name): value
+         for name, value in resolution.bindings.items()}
+        if resolution is not None else {}
+    )
+
+
 class _ServiceStub:
     """A service interface stub (hgraph's service decorators): calling it
     wires a CLIENT; register_service registers an implementation."""
 
     def __init__(self, fn, flavour, *, resolution=None, specialization="",
                  resolvers=None, deprecated=False, pending_registrations=None,
-                 registered_resolutions=None):
+                 registered_resolutions=None, resolution_variables=None):
         self.fn = fn
         self.__name__ = fn.__name__
         self.flavour = flavour
         self._specialization = specialization
+        self._resolution_variables = resolution_variables or {}
         self._resolvers = dict(resolvers) if resolvers else None
         self._deprecated = deprecated
         self._pending_registrations = (
@@ -327,6 +349,7 @@ class _ServiceStub:
                       and value is None]
         self._request_type = kwargs.get("request")
         self.descriptor = None if unresolved else _hgraph.service_descriptor(**kwargs)
+        _remember_service_resolution(self)
 
     def __getitem__(self, item):
         if self.descriptor is not None and not self._specialization:
@@ -345,14 +368,15 @@ class _ServiceStub:
                     f"to bind; use TYPEVAR: concrete")
             item = slice(variables[0], items[0])
 
-        resolution, specialization = _specialization(
+        resolution, specialization, variables = _specialization(
             item, f"service '{self.__name__}'", self._resolvers)
         result = _ServiceStub(
             self.fn, self.flavour, resolution=resolution,
             specialization=specialization, resolvers=self._resolvers,
             deprecated=self._deprecated,
             pending_registrations=self._pending_registrations,
-            registered_resolutions=self._registered_resolutions)
+            registered_resolutions=self._registered_resolutions,
+            resolution_variables=variables)
         if result.descriptor is None:
             raise TypeError(
                 f"service '{self.__name__}' specialization leaves an unresolved time-series type")
@@ -562,11 +586,12 @@ class _AdaptorStub(_AdaptorClientStub):
 
     def __init__(self, fn, *, resolution=None, specialization="",
                  resolvers=None, pending_registrations=None,
-                 registered_resolutions=None):
+                 registered_resolutions=None, resolution_variables=None):
         self.fn = fn
         self.__name__ = fn.__name__
         self.flavour = "adaptor"
         self._specialization = specialization
+        self._resolution_variables = resolution_variables or {}
         self._resolution = resolution
         self._resolvers = dict(resolvers) if resolvers else None
         self._pending_registrations = (
@@ -612,17 +637,19 @@ class _AdaptorStub(_AdaptorClientStub):
             if name in kwargs and kwargs[name] is None
         ]
         self.descriptor = None if unresolved else _hgraph.service_descriptor(**kwargs)
+        _remember_service_resolution(self)
 
     def __getitem__(self, item):
         if self.descriptor is not None and not self._specialization:
             raise TypeError(f"adaptor '{self.__name__}' is not generic")
-        resolution, specialization = _specialization(
+        resolution, specialization, variables = _specialization(
             item, f"adaptor '{self.__name__}'", self._resolvers)
         result = _AdaptorStub(
             self.fn, resolution=resolution, specialization=specialization,
             resolvers=self._resolvers,
             pending_registrations=self._pending_registrations,
-            registered_resolutions=self._registered_resolutions)
+            registered_resolutions=self._registered_resolutions,
+            resolution_variables=variables)
         if result.descriptor is None:
             raise TypeError(
                 f"adaptor '{self.__name__}' specialization leaves an unresolved time-series type")
@@ -638,6 +665,21 @@ class _AdaptorStub(_AdaptorClientStub):
             return path
         suffix = f"[{self._specialization}]"
         return path if path.endswith(suffix) else f"{path}{suffix}"
+
+    def is_full_path(self, path):
+        return isinstance(path, str) and path.startswith("adaptor://")
+
+    def path_from_full_path(self, path):
+        if not self.is_full_path(path):
+            return path
+        suffix = f"/{self.__name__}"
+        if not path.endswith(suffix):
+            raise ValueError(f"invalid adaptor identity {path!r}")
+        user_path = path[len("adaptor://"):-len(suffix)]
+        specialization = f"[{self._specialization}]" if self._specialization else ""
+        if specialization and user_path.endswith(specialization):
+            user_path = user_path[:-len(specialization)]
+        return user_path
 
     @property
     def implementation_arity(self):
@@ -677,11 +719,12 @@ class _ServiceAdaptorStub(_AdaptorClientStub):
 
     def __init__(self, fn, *, resolution=None, specialization="",
                  resolvers=None, pending_registrations=None,
-                 registered_resolutions=None):
+                 registered_resolutions=None, resolution_variables=None):
         self.fn = fn
         self.__name__ = fn.__name__
         self.flavour = "service_adaptor"
         self._specialization = specialization
+        self._resolution_variables = resolution_variables or {}
         self._resolution = resolution
         self._resolvers = dict(resolvers) if resolvers else None
         self._pending_registrations = (
@@ -724,6 +767,7 @@ class _ServiceAdaptorStub(_AdaptorClientStub):
             name=fn.__name__, flavour="service_adaptor",
             request=request, output=output,
             default_path=default_path, specialization=specialization)
+        _remember_service_resolution(self)
 
     def __getitem__(self, item):
         if self.descriptor is not None and not self._specialization:
@@ -740,13 +784,14 @@ class _ServiceAdaptorStub(_AdaptorClientStub):
                     f"service adaptor '{self.__name__}' cannot infer which type variable "
                     f"to bind; use TYPEVAR: concrete")
             item = slice(variables[0], items[0])
-        resolution, specialization = _specialization(
+        resolution, specialization, variables = _specialization(
             item, f"service adaptor '{self.__name__}'", self._resolvers)
         result = _ServiceAdaptorStub(
             self.fn, resolution=resolution, specialization=specialization,
             resolvers=self._resolvers,
             pending_registrations=self._pending_registrations,
-            registered_resolutions=self._registered_resolutions)
+            registered_resolutions=self._registered_resolutions,
+            resolution_variables=variables)
         if result.descriptor is None:
             raise TypeError(
                 f"service adaptor '{self.__name__}' specialization leaves an unresolved time-series type")
@@ -1560,25 +1605,21 @@ class WiringGraphContext:
         identity is represented by ``None`` because ranking is retained in the
         native client ledger rather than Python wiring-node objects.
         """
-        prefix = {
-            "reference": "ref_svc://",
-            "subscription": "subs_svc://",
-            "request_reply": "reqrepl_svc://",
-            "adaptor": "adaptor://",
-            "service_adaptor": "service_adaptor://",
+        native_kind = {
+            "reference": "reference service",
+            "subscription": "subscription service",
+            "request_reply": "request/reply service",
+            "adaptor": "adaptor",
+            "service_adaptor": "service adaptor",
         }[service.flavour]
-        suffix = f"/{service.__name__}"
         clients = []
-        for base, _kind in _current_wiring().service_client_paths():
-            if not base.startswith(prefix) or not base.endswith(suffix):
+        for base, endpoint, kind, interface_name, specialization, receive in \
+                _current_wiring().service_client_records():
+            if kind != native_kind or interface_name != service.__name__:
                 continue
-            if service.flavour in {"adaptor", "service_adaptor"}:
-                if service._request_params:
-                    clients.append((base + "/from_graph", {}, None, False))
-                if _is_ts_annotation(service._signature.return_annotation):
-                    clients.append((base + "/to_graph", {}, None, True))
-            else:
-                clients.append((base, {}, None, True))
+            type_map = _SERVICE_RESOLUTIONS.get(
+                (service.flavour, interface_name, specialization), {})
+            clients.append((endpoint, type_map, None, receive))
         return tuple(clients)
 
     @staticmethod

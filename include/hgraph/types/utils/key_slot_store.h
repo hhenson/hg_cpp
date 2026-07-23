@@ -5,6 +5,7 @@
 #include <hgraph/types/utils/slot_observer.h>
 #include <hgraph/types/utils/slot_bitmap.h>
 #include <hgraph/types/utils/stable_slot_storage.h>
+#include <hgraph/types/value/value_view.h>
 
 #include <ankerl/unordered_dense.h>
 #include <algorithm>
@@ -170,6 +171,22 @@ namespace hgraph
             rebuild_index();
         }
 
+        explicit KeySlotStore(ValueTypeRef binding,
+                              const MemoryUtils::AllocatorOps &allocator = MemoryUtils::allocator())
+            : KeySlotStore(
+                  binding.checked_plan(),
+                  KeySlotStoreOps{
+                      .hash = [](const void *key, const void *context) {
+                          return static_cast<const ValueOps *>(context)->hash(key);
+                      },
+                      .equal = [](const void *lhs, const void *rhs, const void *context) {
+                          return static_cast<const ValueOps *>(context)->equals(lhs, rhs);
+                      },
+                      .context = &binding.ops_ref(),
+                  }, allocator) {
+            m_value_binding = binding;
+        }
+
         KeySlotStore(const KeySlotStore &)            = delete;
         KeySlotStore &operator=(const KeySlotStore &) = delete;
 
@@ -185,6 +202,7 @@ namespace hgraph
               observers(std::move(other.observers)), m_size(std::exchange(other.m_size, 0)),
               m_pending_erase_count(std::exchange(other.m_pending_erase_count, 0)),
               m_key_plan(std::exchange(other.m_key_plan, nullptr)), m_ops(other.m_ops),
+              m_value_binding(std::exchange(other.m_value_binding, {})),
               m_free_slots(std::move(other.m_free_slots)),
               m_pending_erase_slots(std::move(other.m_pending_erase_slots)),
               m_index_owner(std::move(other.m_index_owner)),
@@ -207,6 +225,7 @@ namespace hgraph
                 m_pending_erase_count = std::exchange(other.m_pending_erase_count, 0);
                 m_key_plan            = std::exchange(other.m_key_plan, nullptr);
                 m_ops                 = other.m_ops;
+                m_value_binding       = std::exchange(other.m_value_binding, {});
                 m_free_slots          = std::move(other.m_free_slots);
                 m_pending_erase_slots = std::move(other.m_pending_erase_slots);
                 m_index_owner         = std::move(other.m_index_owner);
@@ -306,6 +325,13 @@ namespace hgraph
             return it == m_index->end() ? npos : *it;
         }
 
+        [[nodiscard]] size_t find_stored_slot(const ValueView &key) const {
+            require_value_binding();
+            if (!key.has_value() || m_index == nullptr) { return npos; }
+            const auto it = m_index->find(key);
+            return it == m_index->end() ? npos : *it;
+        }
+
         /**
          * Find the slot only if the key is currently live.
          *
@@ -318,8 +344,14 @@ namespace hgraph
             return slot != npos && slot_live(slot) ? slot : npos;
         }
 
+        [[nodiscard]] size_t find_slot(const ValueView &key) const {
+            const size_t slot = find_stored_slot(key);
+            return slot != npos && slot_live(slot) ? slot : npos;
+        }
+
         /** True when ``key`` is currently a live member of the set. */
         [[nodiscard]] bool contains(const void *key) const { return find_slot(key) != npos; }
+        [[nodiscard]] bool contains(const ValueView &key) const { return find_slot(key) != npos; }
 
         /** Typed pointer to the key in ``slot`` if constructed; null otherwise. Asserts the bound plan matches ``T``. */
         template <typename T> [[nodiscard]] T *try_key(size_t slot) {
@@ -359,6 +391,17 @@ namespace hgraph
             reserve_to(capacity);
         }
 
+      private:
+        [[nodiscard]] auto rollback_new_slot(size_t slot) {
+            return ::hgraph::make_scope_exit([this, slot]() noexcept {
+                m_key_plan->destroy(key_storage.slot_data(slot));
+                constructed.reset(slot);
+                m_free_slots.push_back(slot);
+            });
+        }
+
+      public:
+
         /** Typed overload of ``find_stored_slot`` that asserts the bound plan matches ``T``. */
         template <typename T> [[nodiscard]] size_t find_stored_slot(const T &key) const {
             require_type<T>();
@@ -387,29 +430,46 @@ namespace hgraph
             if (key == nullptr) { throw std::invalid_argument("KeySlotStore insert requires a non-null key"); }
 
             if (const size_t existing = find_stored_slot(static_cast<const void *>(key)); existing != npos) {
-                if (slot_live(existing)) { return {.slot = existing, .inserted = false, .constructed = false}; }
-
-                live.set(existing);
-                --m_pending_erase_count;
-                if (m_pending_erase_count == 0) { m_pending_erase_slots.clear(); }
-                ++m_size;
-                observers.notify_insert(existing);
-                return {.slot = existing, .inserted = true, .constructed = false};
+                return reuse_existing_slot(existing);
             }
 
-            if (m_free_slots.empty()) { reserve_to(std::max<size_t>(m_size + 1, std::max<size_t>(8, slot_capacity() * 2))); }
-
-            const size_t slot = m_free_slots.back();
-            m_free_slots.pop_back();
-
-            auto rollback_slot = ::hgraph::make_scope_exit([&]() noexcept { m_free_slots.push_back(slot); });
+            const size_t slot = acquire_free_slot();
+            auto rollback_free = ::hgraph::make_scope_exit([&]() noexcept { m_free_slots.push_back(slot); });
             m_key_plan->copy_construct(key_storage.slot_data(slot), key);
-            rollback_slot.release();
-
             constructed.set(slot);
+            auto rollback = rollback_new_slot(slot);
+            rollback_free.release();
+            m_index->insert(slot);
             live.set(slot);
             ++m_size;
+            rollback.release();
+            observers.notify_insert(slot);
+            return {.slot = slot, .inserted = true, .constructed = true};
+        }
+
+        [[nodiscard]] InsertResult insert(const ValueView &key) {
+            require_value_binding();
+            if (!key.has_value()) { throw std::invalid_argument("KeySlotStore insert requires a live key"); }
+            if (const size_t existing = find_stored_slot(key); existing != npos) {
+                return reuse_existing_slot(existing);
+            }
+
+            const size_t slot = acquire_free_slot();
+            void *destination = key_storage.slot_data(slot);
+            auto rollback_free = ::hgraph::make_scope_exit([&]() noexcept { m_free_slots.push_back(slot); });
+            m_value_binding.default_construct_at(destination);
+            auto rollback_value = ::hgraph::make_scope_exit([&]() noexcept { m_value_binding.destroy_at(destination); });
+            m_value_binding.ops_ref().copy_assign_from(
+                m_value_binding, destination, key.binding(), key.data());
+
+            constructed.set(slot);
+            auto rollback = rollback_new_slot(slot);
+            rollback_value.release();
+            rollback_free.release();
             m_index->insert(slot);
+            live.set(slot);
+            ++m_size;
+            rollback.release();
             observers.notify_insert(slot);
             return {.slot = slot, .inserted = true, .constructed = true};
         }
@@ -425,32 +485,22 @@ namespace hgraph
             if (key == nullptr) { throw std::invalid_argument("KeySlotStore move insert requires a non-null key"); }
 
             if (const size_t existing = find_stored_slot(static_cast<const void *>(key)); existing != npos) {
-                if (slot_live(existing)) { return {.slot = existing, .inserted = false, .constructed = false}; }
-
-                live.set(existing);
-                --m_pending_erase_count;
-                if (m_pending_erase_count == 0) { m_pending_erase_slots.clear(); }
-                ++m_size;
-                observers.notify_insert(existing);
-                return {.slot = existing, .inserted = true, .constructed = false};
+                return reuse_existing_slot(existing);
             }
 
             if (!m_key_plan->can_move_construct()) {
                 throw std::logic_error("KeySlotStore move insert requires move-constructible keys");
             }
-            if (m_free_slots.empty()) { reserve_to(std::max<size_t>(m_size + 1, std::max<size_t>(8, slot_capacity() * 2))); }
-
-            const size_t slot = m_free_slots.back();
-            m_free_slots.pop_back();
-
-            auto rollback_slot = ::hgraph::make_scope_exit([&]() noexcept { m_free_slots.push_back(slot); });
+            const size_t slot = acquire_free_slot();
+            auto rollback_free = ::hgraph::make_scope_exit([&]() noexcept { m_free_slots.push_back(slot); });
             m_key_plan->move_construct(key_storage.slot_data(slot), key);
-            rollback_slot.release();
-
             constructed.set(slot);
+            auto rollback = rollback_new_slot(slot);
+            rollback_free.release();
+            m_index->insert(slot);
             live.set(slot);
             ++m_size;
-            m_index->insert(slot);
+            rollback.release();
             observers.notify_insert(slot);
             return {.slot = slot, .inserted = true, .constructed = true};
         }
@@ -562,6 +612,8 @@ namespace hgraph
                 const KeySlotStore *s = store();
                 return s != nullptr ? mix(s->m_ops.hash_key(key)) : 0U;
             }
+
+            [[nodiscard]] size_t operator()(const ValueView &key) const { return mix(key.hash()); }
         };
 
         struct IndexEqual
@@ -584,6 +636,13 @@ namespace hgraph
             }
 
             [[nodiscard]] bool operator()(const void *key, size_t slot) const { return (*this)(slot, key); }
+
+            [[nodiscard]] bool operator()(size_t slot, const ValueView &key) const {
+                const KeySlotStore *s = store();
+                return s != nullptr && ValueView{s->m_value_binding, s->key_memory(slot)}.equals(key);
+            }
+
+            [[nodiscard]] bool operator()(const ValueView &key, size_t slot) const { return (*this)(slot, key); }
         };
 
         using IndexSet = ankerl::unordered_dense::set<size_t, IndexHash, IndexEqual>;
@@ -617,6 +676,31 @@ namespace hgraph
             if (m_ops.hash == nullptr || m_ops.equal == nullptr) {
                 throw std::logic_error("KeySlotStore requires hash and equality hooks");
             }
+        }
+
+        void require_value_binding() const {
+            if (!m_value_binding) {
+                throw std::logic_error("KeySlotStore ValueView API requires a value binding");
+            }
+        }
+
+        [[nodiscard]] InsertResult reuse_existing_slot(size_t slot) {
+            if (slot_live(slot)) { return {.slot = slot, .inserted = false, .constructed = false}; }
+            live.set(slot);
+            --m_pending_erase_count;
+            if (m_pending_erase_count == 0) { m_pending_erase_slots.clear(); }
+            ++m_size;
+            observers.notify_insert(slot);
+            return {.slot = slot, .inserted = true, .constructed = false};
+        }
+
+        [[nodiscard]] size_t acquire_free_slot() {
+            if (m_free_slots.empty()) {
+                reserve_to(std::max<size_t>(m_size + 1, std::max<size_t>(8, slot_capacity() * 2)));
+            }
+            const size_t slot = m_free_slots.back();
+            m_free_slots.pop_back();
+            return slot;
         }
 
         [[nodiscard]] std::unique_ptr<IndexSet> make_index() const {
@@ -655,6 +739,7 @@ namespace hgraph
         size_t                          m_pending_erase_count{0};
         const MemoryUtils::StoragePlan *m_key_plan{nullptr};
         KeySlotStoreOps                 m_ops{};
+        ValueTypeRef                    m_value_binding{};
         std::vector<size_t>             m_free_slots{};
         std::vector<size_t>             m_pending_erase_slots{};
         std::unique_ptr<IndexBackPtr>   m_index_owner{};

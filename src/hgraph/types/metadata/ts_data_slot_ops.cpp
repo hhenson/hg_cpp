@@ -112,36 +112,12 @@ namespace hgraph::ts_data_plan_factory_detail
             };
         }
 
-        [[nodiscard]] std::size_t value_key_hash(const void *key, const void *context)
-        {
-            const auto *ops = static_cast<const ValueOps *>(context);
-            if (ops == nullptr) { throw std::logic_error("slot TSData key hash requires key ops"); }
-            return ops->hash(key);
-        }
-
-        [[nodiscard]] bool value_key_equal(const void *lhs, const void *rhs, const void *context)
-        {
-            const auto *ops = static_cast<const ValueOps *>(context);
-            if (ops == nullptr) { throw std::logic_error("slot TSData key equality requires key ops"); }
-            return ops->equals(lhs, rhs);
-        }
-
-        [[nodiscard]] KeySlotStoreOps key_store_ops(const ValueTypeRef &key_binding) noexcept
-        {
-            return KeySlotStoreOps{
-                .hash    = &value_key_hash,
-                .equal   = &value_key_equal,
-                .context = &key_binding.ops_ref(),
-            };
-        }
-
         class TSSSlotStorage
         {
           public:
             explicit TSSSlotStorage(const ValueTypeRef &key_binding)
                 : key_binding_(key_binding),
-                  normalized_key_(key_binding),
-                  keys_(key_binding.checked_plan(), key_store_ops(key_binding))
+                  keys_(key_binding)
             {}
 
             // Slot-backed TSData is published by address through TSDataView
@@ -182,12 +158,12 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] const void *key_at_slot(std::size_t slot) const { return keys_[slot]; }
             [[nodiscard]] std::size_t find_slot(const ValueView &key) const
             {
-                const auto slot = keys_.find_slot(normalized_key_memory(key));
+                const auto slot = keys_.find_slot(key);
                 return slot == KeySlotStore::npos ? TS_DATA_NO_CHILD_ID : slot;
             }
             [[nodiscard]] bool contains(const ValueView &key) const
             {
-                return keys_.contains(normalized_key_memory(key));
+                return keys_.contains(key);
             }
 
             void reserve(std::size_t capacity)
@@ -206,10 +182,9 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] SlotTSDataMutationResult insert_key(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_time(modified_time);
-                const void *key_memory = normalized_key_memory(key);
                 prepare_delta(modified_time);
 
-                const auto result = keys_.insert(key_memory);
+                const auto result = keys_.insert(key);
                 ensure_delta_capacity();
                 if (!result.inserted) { return {.slot = result.slot, .changed = false}; }
 
@@ -221,12 +196,14 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] SlotTSDataMutationResult insert_key_move(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_time(modified_time);
-                const void *key_memory = normalized_key_memory(key);
                 prepare_delta(modified_time);
 
+                // The enclosing TSData move owns the source. Compact container
+                // iteration still exposes read-only element views, so the
+                // ownership fact is applied explicitly at this boundary.
                 const auto result = key.binding() == key_binding_
-                                        ? keys_.insert_move(const_cast<void *>(key_memory))
-                                        : keys_.insert(key_memory);
+                                        ? keys_.insert_move(const_cast<void *>(key.data()))
+                                        : keys_.insert(key);
                 ensure_delta_capacity();
                 if (!result.inserted) { return {.slot = result.slot, .changed = false}; }
 
@@ -238,10 +215,9 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_time(modified_time);
-                const void *key_memory = normalized_key_memory(key);
                 prepare_delta(modified_time);
 
-                const auto slot = keys_.find_slot(key_memory);
+                const auto slot = keys_.find_slot(key);
                 if (slot == KeySlotStore::npos) { return {.slot = TS_DATA_NO_CHILD_ID, .changed = false}; }
                 if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
 
@@ -295,24 +271,6 @@ namespace hgraph::ts_data_plan_factory_detail
                 return slot == sul::dynamic_bitset<>::npos ? TS_DATA_NO_CHILD_ID : slot;
             }
 
-            [[nodiscard]] const void *normalized_key_memory(const ValueView &key) const
-            {
-                if (!key.has_value()) { throw std::invalid_argument("slot TSData requires a live key"); }
-                if (key.binding() == key_binding_) { return key.data(); }
-                const auto &ops = key_binding_.ops_ref();
-                annotate_on_exception<std::invalid_argument>(
-                    [&] {
-                        ops.copy_assign_from(
-                            key_binding_, const_cast<void *>(normalized_key_.view().data()),
-                            key.binding(), key.data());
-                    },
-                    [&](const std::invalid_argument &error) {
-                        throw std::invalid_argument(
-                            "TSS key normalization failed: " + std::string{error.what()});
-                    });
-                return normalized_key_.view().data();
-            }
-
             void validate_mutation_time(DateTime modified_time) const
             {
                 if (modified_time == MIN_DT)
@@ -350,7 +308,6 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             ValueTypeRef key_binding_{nullptr};
-            mutable Value           normalized_key_{};
             TSDataTracking         tracking_{};
             KeySlotStore           keys_;
             sul::dynamic_bitset<>  added_{};
@@ -364,8 +321,7 @@ namespace hgraph::ts_data_plan_factory_detail
             TSDSlotStorage(const ValueTypeRef &key_binding, TSRoleTypeRef element_type)
                 : key_binding_(key_binding),
                   element_type_(element_type),
-                  normalized_key_(key_binding),
-                  keys_(key_binding.checked_plan(), key_store_ops(key_binding)),
+                  keys_(key_binding),
                   values_(keys_, element_type.checked_plan())
             {}
 
@@ -427,12 +383,12 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] const void *key_at_slot(std::size_t slot) const { return keys_[slot]; }
             [[nodiscard]] std::size_t find_slot(const ValueView &key) const
             {
-                const auto slot = keys_.find_slot(normalized_key_memory(key));
+                const auto slot = keys_.find_slot(key);
                 return slot == KeySlotStore::npos ? TS_DATA_NO_CHILD_ID : slot;
             }
             [[nodiscard]] bool contains(const ValueView &key) const
             {
-                return keys_.contains(normalized_key_memory(key));
+                return keys_.contains(key);
             }
             [[nodiscard]] const void *child_at_slot(std::size_t slot) const
             {
@@ -468,10 +424,9 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] SlotTSDataMutationResult insert_key(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_time(modified_time);
-                const void *key_memory = normalized_key_memory(key);
                 prepare_delta(modified_time);
 
-                const auto result = keys_.insert(key_memory);
+                const auto result = keys_.insert(key);
                 ensure_delta_capacity();
                 if (!result.inserted) { return {.slot = result.slot, .changed = false}; }
 
@@ -492,12 +447,13 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] SlotTSDataMutationResult insert_key_move(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_time(modified_time);
-                const void *key_memory = normalized_key_memory(key);
                 prepare_delta(modified_time);
 
+                // See TSSSlotStorage::insert_key_move: the enclosing TSData
+                // move, rather than the element view, owns the source.
                 const auto result = key.binding() == key_binding_
-                                        ? keys_.insert_move(const_cast<void *>(key_memory))
-                                        : keys_.insert(key_memory);
+                                        ? keys_.insert_move(const_cast<void *>(key.data()))
+                                        : keys_.insert(key);
                 ensure_delta_capacity();
                 if (!result.inserted) { return {.slot = result.slot, .changed = false}; }
 
@@ -518,10 +474,9 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_time(modified_time);
-                const void *key_memory = normalized_key_memory(key);
                 prepare_delta(modified_time);
 
-                const auto slot = keys_.find_slot(key_memory);
+                const auto slot = keys_.find_slot(key);
                 if (slot == KeySlotStore::npos) { return {.slot = TS_DATA_NO_CHILD_ID, .changed = false}; }
                 detail::stop_owned_ts_data_tree(TSDataView{element_type_, values_.value_memory(slot)});
                 if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
@@ -619,24 +574,6 @@ namespace hgraph::ts_data_plan_factory_detail
                 return slot == sul::dynamic_bitset<>::npos ? TS_DATA_NO_CHILD_ID : slot;
             }
 
-            [[nodiscard]] const void *normalized_key_memory(const ValueView &key) const
-            {
-                if (!key.has_value()) { throw std::invalid_argument("TSD TSData requires a live key"); }
-                if (key.binding() == key_binding_) { return key.data(); }
-                const auto &ops = key_binding_.ops_ref();
-                annotate_on_exception<std::invalid_argument>(
-                    [&] {
-                        ops.copy_assign_from(
-                            key_binding_, const_cast<void *>(normalized_key_.view().data()),
-                            key.binding(), key.data());
-                    },
-                    [&](const std::invalid_argument &error) {
-                        throw std::invalid_argument(
-                            "TSD key normalization failed: " + std::string{error.what()});
-                    });
-                return normalized_key_.view().data();
-            }
-
             void validate_mutation_time(DateTime modified_time) const
             {
                 if (modified_time == MIN_DT)
@@ -683,7 +620,6 @@ namespace hgraph::ts_data_plan_factory_detail
 
             ValueTypeRef key_binding_{nullptr};
             TSRoleTypeRef             element_type_{};
-            mutable Value               normalized_key_{};
             TSDataTracking              tracking_{};
             TSDataTracking          key_set_tracking_{};
             KeySlotStore                keys_;

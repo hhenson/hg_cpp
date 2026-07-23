@@ -998,6 +998,7 @@ struct Wiring::Impl {
     std::unordered_set<std::string> required_endpoints{};
     std::unordered_map<std::string, ResolutionMap> endpoint_resolutions{};
     std::unordered_set<std::string> used_endpoints{};
+    bool require_all{true};
   };
 
   struct ServiceClientRank {
@@ -1005,6 +1006,12 @@ struct Wiring::Impl {
     std::string kind{};
     const WiringInstance *node{nullptr};
     bool receive{true};
+  };
+
+  struct ServiceClientIdentity {
+    std::string kind{};
+    std::string interface_name{};
+    std::string specialization{};
   };
 
   struct ServiceImplementationCandidate {
@@ -1028,7 +1035,7 @@ struct Wiring::Impl {
   std::deque<WiringInstance> instances{};
   std::unordered_map<InstanceKey, WiringInstance *, InstanceKeyHash> interned{};
   std::unordered_map<std::string, std::string> built_service_paths{};
-  std::unordered_map<std::string, std::string> client_service_paths{};
+  std::unordered_map<std::string, ServiceClientIdentity> client_service_paths{};
   std::unordered_map<std::string, const WiringInstance *>
       service_rank_anchors{};
   std::vector<ServiceClientRank> service_client_ranks{};
@@ -1560,12 +1567,35 @@ void Wiring::register_built_service_path(std::string path,
 }
 
 void Wiring::register_service_client_path(std::string path,
-                                          std::string_view kind) {
+                                          std::string_view kind,
+                                          std::string_view interface_name,
+                                          std::string_view specialization) {
   if (path.empty()) {
     throw std::invalid_argument(
         "service/adaptor client path must not be empty");
   }
-  impl_->client_service_paths.try_emplace(std::move(path), std::string{kind});
+  auto [it, inserted] = impl_->client_service_paths.try_emplace(
+      std::move(path), Impl::ServiceClientIdentity{
+          .kind = std::string{kind},
+          .interface_name = std::string{interface_name},
+          .specialization = std::string{specialization},
+      });
+  if (!inserted) {
+    if ((!kind.empty() && it->second.kind != kind) ||
+        (!interface_name.empty() && !it->second.interface_name.empty() &&
+         it->second.interface_name != interface_name) ||
+        (!specialization.empty() && !it->second.specialization.empty() &&
+         it->second.specialization != specialization)) {
+      throw std::invalid_argument(
+          "conflicting service/adaptor client identity for '" + it->first + "'");
+    }
+    if (!interface_name.empty() && it->second.interface_name.empty()) {
+      it->second.interface_name = interface_name;
+    }
+    if (!specialization.empty() && it->second.specialization.empty()) {
+      it->second.specialization = specialization;
+    }
+  }
 }
 
 void Wiring::register_service_rank_anchor(std::string path,
@@ -1828,10 +1858,47 @@ std::vector<std::pair<std::string, std::string>>
 Wiring::service_client_paths() const {
   std::vector<std::pair<std::string, std::string>> result;
   result.reserve(impl_->client_service_paths.size());
-  for (const auto &[path, kind] : impl_->client_service_paths) {
-    result.emplace_back(path, kind);
+  for (const auto &[path, identity] : impl_->client_service_paths) {
+    result.emplace_back(path, identity.kind);
   }
   std::ranges::sort(result);
+  return result;
+}
+
+std::vector<WiringServiceClientRecord> Wiring::service_client_records() const {
+  std::vector<WiringServiceClientRecord> result;
+  for (const auto &[base_path, identity] : impl_->client_service_paths) {
+    bool has_rank = false;
+    for (const auto &rank : impl_->service_client_ranks) {
+      if (rank.path != base_path &&
+          !(rank.path.size() > base_path.size() && rank.path.starts_with(base_path) &&
+            rank.path[base_path.size()] == '/')) {
+        continue;
+      }
+      has_rank = true;
+      result.push_back(WiringServiceClientRecord{
+          .base_path = base_path,
+          .endpoint_path = rank.path,
+          .kind = identity.kind,
+          .interface_name = identity.interface_name,
+          .specialization = identity.specialization,
+          .receive = rank.receive,
+      });
+    }
+    if (!has_rank) {
+      result.push_back(WiringServiceClientRecord{
+          .base_path = base_path,
+          .endpoint_path = base_path,
+          .kind = identity.kind,
+          .interface_name = identity.interface_name,
+          .specialization = identity.specialization,
+          .receive = true,
+      });
+    }
+  }
+  std::ranges::sort(result, {}, [](const auto &record) {
+    return std::tuple{record.base_path, record.endpoint_path, record.receive};
+  });
   return result;
 }
 
@@ -1852,10 +1919,11 @@ std::string_view Wiring::service_materialization_path() const noexcept {
 
 Wiring::ServiceImplementationScope::ServiceImplementationScope(
     Wiring &wiring, std::string description,
-    std::vector<WiringServiceImplementationEndpoint> required_endpoints)
+    std::vector<WiringServiceImplementationEndpoint> required_endpoints,
+    bool require_all)
     : wiring_{&wiring} {
   wiring_->begin_service_implementation(std::move(description),
-                                        std::move(required_endpoints));
+                                        std::move(required_endpoints), require_all);
   active_ = true;
 }
 
@@ -1908,9 +1976,10 @@ void Wiring::ServiceImplementationScope::cancel_if_active() noexcept {
 
 Wiring::ServiceImplementationScope Wiring::service_implementation_scope(
     std::string description,
-    std::vector<WiringServiceImplementationEndpoint> required_endpoints) {
+    std::vector<WiringServiceImplementationEndpoint> required_endpoints,
+    bool require_all) {
   return ServiceImplementationScope{*this, std::move(description),
-                                    std::move(required_endpoints)};
+                                    std::move(required_endpoints), require_all};
 }
 
 Wiring::ServiceImplementationScope Wiring::service_implementation_scope(
@@ -1927,14 +1996,16 @@ void Wiring::begin_service_implementation(
     endpoints.push_back(WiringServiceImplementationEndpoint{std::move(endpoint),
                                                             ResolutionMap{}});
   }
-  begin_service_implementation(std::move(description), std::move(endpoints));
+  begin_service_implementation(std::move(description), std::move(endpoints), true);
 }
 
 void Wiring::begin_service_implementation(
     std::string description,
-    std::vector<WiringServiceImplementationEndpoint> required_endpoints) {
+    std::vector<WiringServiceImplementationEndpoint> required_endpoints,
+    bool require_all) {
   Impl::ServiceImplementationScopeState scope;
   scope.description = std::move(description);
+  scope.require_all = require_all;
   scope.required_endpoints.reserve(required_endpoints.size());
   for (auto &endpoint : required_endpoints) {
     if (endpoint.endpoint.empty()) {
@@ -1946,6 +2017,12 @@ void Wiring::begin_service_implementation(
                                        std::move(endpoint.resolution));
   }
   impl_->implementation_scopes.push_back(std::move(scope));
+}
+
+std::vector<std::string> Wiring::service_implementation_used_endpoints() const {
+  if (impl_->implementation_scopes.empty()) { return {}; }
+  const auto &used = impl_->implementation_scopes.back().used_endpoints;
+  return {used.begin(), used.end()};
 }
 
 void Wiring::register_service_implementation_stub(std::string endpoint,
@@ -1987,6 +2064,7 @@ void Wiring::end_service_implementation() {
 
   std::vector<std::string> missing;
   for (const auto &endpoint : scope.required_endpoints) {
+    if (!scope.require_all) { break; }
     if (!scope.used_endpoints.contains(endpoint)) {
       missing.push_back(endpoint);
     }
@@ -2164,9 +2242,9 @@ GraphBuilder Wiring::finish_top_level(bool consume_state) {
                            "service/adaptor implementation scope");
   }
   build_services();
-  for (const auto &[path, kind] : impl_->client_service_paths) {
+  for (const auto &[path, identity] : impl_->client_service_paths) {
     if (!impl_->built_service_paths.contains(path)) {
-      throw std::invalid_argument("missing implementation for " + kind + " '" +
+      throw std::invalid_argument("missing implementation for " + identity.kind + " '" +
                                   path + "'");
     }
   }
@@ -2241,7 +2319,7 @@ CompiledSubGraph Wiring::finish_subgraph(
   };
 
   std::vector<const WiringInstance *> external_instances;
-  for (const auto &[service_path, service_kind] : impl_->client_service_paths) {
+  for (const auto &[service_path, service_identity] : impl_->client_service_paths) {
     if (impl_->built_service_paths.contains(service_path)) {
       continue;
     }
@@ -2283,7 +2361,9 @@ CompiledSubGraph Wiring::finish_subgraph(
       }
       compiled.external_service_inputs.push_back(NestedServiceInput{
           .service_path = service_path,
-          .service_kind = service_kind,
+          .service_kind = service_identity.kind,
+          .interface_name = service_identity.interface_name,
+          .specialization = service_identity.specialization,
           .definition = instance.definition,
           .builder = instance.builder,
           .source_schema = source_schema,
@@ -2294,7 +2374,7 @@ CompiledSubGraph Wiring::finish_subgraph(
     }
     if (!found_endpoint) {
       throw std::invalid_argument(
-          "nested graph cannot externalize " + service_kind + " '" +
+          "nested graph cannot externalize " + service_identity.kind + " '" +
           service_path +
           "': no supported service transport endpoint was wired");
     }

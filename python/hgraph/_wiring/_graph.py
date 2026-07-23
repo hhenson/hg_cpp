@@ -294,7 +294,7 @@ class _Component:
         self.recordable_id = recordable_id or fn.__name__
         self._graph = _GraphFn(
             self.fn, resolvers=resolvers, label=label, deprecated=deprecated)
-        self._signature = inspect.signature(self.fn)
+        self._signature = inspect.signature(self.fn, eval_str=True)
         self._params = list(self._signature.parameters.values())
         # eval_node/introspection must see the USER signature, not __call__'s.
         self.__signature__ = self._signature
@@ -345,7 +345,8 @@ class _GraphFn:
     def __init__(self, fn, *, resolvers=None, requires=None, label=None,
                  deprecated=False):
         self.fn = fn
-        self._signature = inspect.signature(fn)
+        self._signature = inspect.signature(fn, eval_str=True)
+        self._wiring_signature = self._signature
         self.__name__ = fn.__name__
         self.__doc__ = fn.__doc__
         self.__signature__ = self._signature

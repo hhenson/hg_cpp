@@ -12,6 +12,7 @@ from hgraph.stream import (
     reduce_statuses,
     register_status_message_pattern,
 )
+from hgraph.reflection import fields
 
 
 def test_stream_data_schema_flattens_payload_fields():
@@ -31,6 +32,32 @@ def test_stream_data_schema_flattens_payload_fields():
         "status_msg": "",
         "values": 42,
         "timestamp": datetime(2026, 1, 1),
+    }]
+
+
+def test_stream_time_series_schema_preserves_nested_fields():
+    class Cascade(hg.TimeSeriesSchema):
+        weights: hg.TSD[str, hg.TS[float]]
+
+    stream_type = hg.TSB[Stream[Cascade]]
+    assert fields(stream_type) == {
+        "status": hg.TS[StreamStatus],
+        "status_msg": hg.TS[str],
+        "weights": hg.TSD[str, hg.TS[float]],
+    }
+
+    @graph
+    def make_stream(weights: hg.TSD[str, hg.TS[float]]) -> stream_type:
+        return combine[stream_type](
+            status=StreamStatus.OK,
+            status_msg="",
+            weights=weights,
+        )
+
+    assert eval_node(make_stream, [{"front": 0.6, "back": 0.4}]) == [{
+        "status": StreamStatus.OK,
+        "status_msg": "",
+        "weights": {"front": 0.6, "back": 0.4},
     }]
 
 
