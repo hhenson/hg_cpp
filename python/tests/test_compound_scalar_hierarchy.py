@@ -4,7 +4,7 @@ from typing import Callable, Generic, Optional, TypeVar
 
 import _hgraph
 import pytest
-from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, combine, compute_node, const, default, from_json_builder, graph, operator, to_json_builder
+from hgraph import CompoundScalar, TS, TSB, TSD, TimeSeriesSchema, combine, compute_node, const, default, from_json_builder, graph, mesh_, operator, to_json_builder
 # White-box: these tests assert on the interned C++ value-type metadata
 # (qualified names, generic specialisation identity), which has no public
 # introspection surface — the module under test is imported directly.
@@ -302,6 +302,34 @@ def test_polymorphic_union_accepts_canonical_derived_with_polymorphic_field():
         return default(value, fallback)
 
     assert eval_node(app, [None]) == [fallback]
+
+
+def test_mesh_normalizes_realized_composite_dependency_keys():
+    @dataclass(frozen=True)
+    class Option(CompoundScalar, namespace="tests.mesh_realized_key"):
+        value: int
+
+    @dataclass(frozen=True)
+    class SpecialOption(Option):
+        label: str
+
+    @dataclass(frozen=True)
+    class Request(CompoundScalar, namespace="tests.mesh_realized_key"):
+        name: str
+        option: Option
+
+    @graph
+    def dependency(key: TS[Request], link: TS[Request]) -> TS[int]:
+        return default(mesh_(dependency)[link], 0) + 1
+
+    @graph
+    def app(links: TSD[Request, TS[Request]]) -> TSD[Request, TS[int]]:
+        return mesh_(dependency, links)
+
+    option = Option(0)
+    root = Request("root", option)
+    leaf = Request("leaf", option)
+    assert eval_node(app, [{root: leaf}]) == [{root: 2, leaf: 1}]
 
 
 def test_polymorphic_bundle_field_uses_the_graph_realization():

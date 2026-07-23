@@ -163,7 +163,9 @@ def test_predicates_bundle_and_compound():
     assert is_bundle(TSB[MyB])
     assert not is_bundle(TS[int])
     assert is_compound_scalar(TS[MyCS])
+    assert is_compound_scalar(MyCS)
     assert not is_compound_scalar(TS[int])
+    assert not is_compound_scalar(int)
 
 
 def test_wrong_kind_raises():

@@ -34,10 +34,6 @@ thread_local const TypeRealizationSnapshot *active_snapshot = nullptr;
   return (value + alignment - 1U) & ~(alignment - 1U);
 }
 
-[[nodiscard]] std::size_t combine_hash(std::size_t seed,
-                                       std::size_t value) noexcept {
-  return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U));
-}
 } // namespace
 
 struct TypeRealizationSnapshot::Impl {
@@ -329,15 +325,11 @@ struct TypeRealizationSnapshot::Impl {
         copy_assign(dst, src, context);
         return;
       }
-      if (const auto alternative = self.alternative_for_schema(source.schema());
-          alternative && alternative != source) {
-        self.replace_copy_from(dst, alternative, source, src);
-        return;
-      }
       if (!self.contains(source) && source.schema() == self.declared) {
         const auto source_type = source.ops_ref().concrete_type(source, src);
         const auto *source_memory = source.ops_ref().concrete_memory(src);
-        if (!self.contains(source_type)) {
+        const auto target_type = self.alternative_for_schema(source_type.schema());
+        if (!target_type) {
           throw std::invalid_argument(
               "closed Bundle source alternative '" +
               std::string{source_type.schema() != nullptr
@@ -345,7 +337,12 @@ struct TypeRealizationSnapshot::Impl {
                               : "<invalid>"} +
               "' is outside this graph snapshot");
         }
-        self.replace_copy(dst, source_type, source_memory);
+        self.replace_copy_from(dst, target_type, source_type, source_memory);
+        return;
+      }
+      if (const auto alternative = self.alternative_for_schema(source.schema());
+          alternative && alternative != source) {
+        self.replace_copy_from(dst, alternative, source, src);
         return;
       }
       self.replace_copy(dst, source, src);
@@ -358,15 +355,11 @@ struct TypeRealizationSnapshot::Impl {
         move_assign(dst, src, context);
         return;
       }
-      if (const auto alternative = self.alternative_for_schema(source.schema());
-          alternative && alternative != source) {
-        self.replace_move_from(dst, alternative, source, src);
-        return;
-      }
       if (!self.contains(source) && source.schema() == self.declared) {
         const auto source_type = source.ops_ref().concrete_type(source, src);
         auto *source_memory = source.ops_ref().mutable_concrete_memory(src);
-        if (!self.contains(source_type) || source_memory == nullptr) {
+        const auto target_type = self.alternative_for_schema(source_type.schema());
+        if (!target_type || source_memory == nullptr) {
           throw std::invalid_argument(
               "closed Bundle source alternative '" +
               std::string{source_type.schema() != nullptr
@@ -374,7 +367,12 @@ struct TypeRealizationSnapshot::Impl {
                               : "<invalid>"} +
               "' is outside this graph snapshot");
         }
-        self.replace_move(dst, source_type, source_memory);
+        self.replace_move_from(dst, target_type, source_type, source_memory);
+        return;
+      }
+      if (const auto alternative = self.alternative_for_schema(source.schema());
+          alternative && alternative != source) {
+        self.replace_move_from(dst, alternative, source, src);
         return;
       }
       self.replace_move(dst, source, src);
@@ -422,8 +420,11 @@ struct TypeRealizationSnapshot::Impl {
       if (!active) {
         throw std::logic_error("closed Bundle has an invalid active type");
       }
-      return combine_hash(std::hash<const TypeRecord *>{}(active.record()),
-                          active.ops_ref().hash(payload(self, memory)));
+      // A closed-union value and its canonical concrete value are logically
+      // equal even though their TypeRecords and physical layouts differ.
+      // Hash only the concrete payload: concrete-type differences may collide,
+      // but equal values must never hash differently because of realization.
+      return active.ops_ref().hash(payload(self, memory));
     }
 
     static bool equals(const void *context, const void *lhs,

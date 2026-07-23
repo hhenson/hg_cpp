@@ -43,6 +43,7 @@ from ._types import (
     _compound_python_field_types,
     _value_type,
 )
+from ._compat import CompoundScalar
 
 __all__ = (
     "scalar_type",
@@ -280,7 +281,9 @@ def is_bundle(t):
 
 
 def is_compound_scalar(t):
-    """``True`` if ``t`` is a ``TS`` over a compound scalar."""
+    """``True`` for a compound-scalar class or a ``TS`` over one."""
+    if isinstance(t, type):
+        return dataclasses.is_dataclass(t) and issubclass(t, CompoundScalar)
     return _handle(t).is_ts and getattr(t, "_cs_class", None) is not None
 
 
