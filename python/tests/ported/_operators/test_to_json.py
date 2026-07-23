@@ -54,9 +54,9 @@ class MyNullableMappingCS(CompoundScalar):
         [TS[int], 1, "1"],
         [TS[float], 1.0, "1.0"],
         [TS[date], date(2024, 6, 13), '"2024-06-13"'],
-        [TS[datetime], datetime(2024, 6, 13, 10, 15, 30, 42), '"2024-06-13 10:15:30.000042"'],
+        [TS[datetime], datetime(2024, 6, 13, 10, 15, 30, 42), '"2024-06-13T10:15:30.000042Z"'],
         [TS[time], time(10, 15, 30, 42), '"10:15:30.000042"'],
-        [TS[timedelta], timedelta(10, 15, microseconds=42), '"10:0:0:15.000042"'],
+        [TS[timedelta], timedelta(10, 15, microseconds=42), '"864015000042us"'],
         [TS[ExpEnum], ExpEnum.E1, '"E1"'],
         [TS[MyCS], MyCS(p1="a", p2=date(2024, 6, 13)), '{"p1": "a", "p2": "2024-06-13"}'],
         [
