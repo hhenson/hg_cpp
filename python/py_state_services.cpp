@@ -130,6 +130,9 @@ namespace hgraph::python_bridge
                                         : std::optional<DateTime>{nb::cast<DateTime>(value)};
         record_replay::set_config(state.view(), std::move(config));
     }, nb::arg("state"), nb::arg("value").none());
+    m.def("_set_time_zone_provider", [](GlobalState &state) {
+        set_time_zone_provider(state.view(), make_time_zone_provider());
+    });
     m.def("_set_table_schema_date_key", [](GlobalState &state, const std::string &key) {
         auto config = record_replay::config(state.view());
         config.date_key = key;

@@ -1,3 +1,5 @@
+from datetime import timezone
+
 import pyarrow as pa
 import pytest
 
@@ -33,7 +35,11 @@ def test_lower_replays_arrow_frames_through_native_graph():
     )
 
     assert result.to_pydict() == {
-        "date": [MIN_ST, MIN_ST + MIN_TD, MIN_ST + MIN_TD * 2],
+        "date": [
+            MIN_ST.replace(tzinfo=timezone.utc),
+            (MIN_ST + MIN_TD).replace(tzinfo=timezone.utc),
+            (MIN_ST + MIN_TD * 2).replace(tzinfo=timezone.utc),
+        ],
         "value": [4, 5, 6],
     }
 
@@ -93,4 +99,6 @@ def test_lower_preserves_polars_boundary_compatibility():
     result = lower(add_one)(frame)
 
     assert isinstance(result, pl.DataFrame)
-    assert result.equals(pl.DataFrame({"date": [MIN_ST], "value": [2]}))
+    assert result.equals(
+        pl.DataFrame({"date": [MIN_ST.replace(tzinfo=timezone.utc)], "value": [2]})
+    )
