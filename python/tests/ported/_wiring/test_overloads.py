@@ -63,6 +63,32 @@ def test_overloads():
     assert eval_node(t_add[TIME_SERIES_TYPE : TSL[TS[int], Size[2]]], lhs=[(1, 1)], rhs=[(2, 2)]) == [{0: 3, 1: 3}]
 
 
+def test_compute_overload_resolves_postponed_annotations():
+    @operator
+    def deferred(ts: TS[int]) -> TS[int]: ...
+
+    def deferred_impl(ts):
+        return ts.value + 1
+
+    deferred_impl.__annotations__ = {"ts": "TS[int]", "return": "TS[int]"}
+    compute_node(overloads=deferred)(deferred_impl)
+
+    assert eval_node(deferred, [1, 2]) == [2, 3]
+
+
+def test_graph_overload_resolves_postponed_annotations():
+    @operator
+    def deferred(ts: TS[int]) -> TS[int]: ...
+
+    def deferred_impl(ts):
+        return ts + 1
+
+    deferred_impl.__annotations__ = {"ts": "TS[int]", "return": "TS[int]"}
+    graph(overloads=deferred)(deferred_impl)
+
+    assert eval_node(deferred, [1, 2]) == [2, 3]
+
+
 def test_scalar_overloads():
 
     @operator

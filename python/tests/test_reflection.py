@@ -11,6 +11,7 @@ import pytest
 from hgraph import (REF, TS, TSB, TSD, TSL, TSS, TS_SCHEMA, CompoundScalar,
                     TimeSeriesSchema, compute_node, graph, operator)
 from hgraph.reflection import (
+    bundle_schema_type,
     dereference,
     element_type,
     fields,
@@ -82,6 +83,17 @@ def test_fields_tsb():
     f = fields(TSB[MyB])
     assert f == {"a": TS[int], "b": TS[str]}
     assert list(f) == ["a", "b"]  # ordered
+
+
+def test_bundle_schema_type_preserves_nominal_schema():
+    class MyB(TimeSeriesSchema):
+        a: TS[int]
+
+    assert bundle_schema_type(TSB[MyB]) is MyB
+    assert bundle_schema_type(TSB[MyB].handle) is MyB
+
+    with pytest.raises(TypeError):
+        bundle_schema_type(TS[int])
 
 
 def test_fields_accepts_variadic_wiring_values():

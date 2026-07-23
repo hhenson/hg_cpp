@@ -62,7 +62,7 @@ class _PyNode:
 
     def __init__(self, fn, has_output, active=None, valid=None, all_valid=None,
                  resolvers=None, node_type=None, label=None, deprecated=False):
-        self._wiring_signature = inspect.signature(fn)
+        self._wiring_signature = inspect.signature(fn, eval_str=True)
         var_params = [p for p in self._wiring_signature.parameters.values()
                       if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
         if var_params:

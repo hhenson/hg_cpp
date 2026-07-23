@@ -558,6 +558,46 @@ TEST_CASE("realized Base lists preserve mixed derived element types") {
   REQUIRE(values.at(1).concrete().schema() == sized);
 }
 
+TEST_CASE("closed Bundle accepts a canonical alternative with realized fields") {
+  using namespace hgraph;
+  auto &registry = TypeRegistry::instance();
+  const auto *integer = registry.value_type("int");
+  REQUIRE(integer != nullptr);
+
+  const auto *model = registry.bundle(
+      "tests.realization.canonical_source", "Model", {{"id", integer}});
+  const auto *concrete_model = registry.bundle(
+      "tests.realization.canonical_source", "ConcreteModel",
+      {{"id", integer}, {"parameter", integer}}, {model});
+  REQUIRE(concrete_model != nullptr);
+  const auto *base = registry.bundle(
+      "tests.realization.canonical_source", "Base", {{"id", integer}}, {},
+      true);
+  const auto *derived = registry.bundle(
+      "tests.realization.canonical_source", "Derived",
+      {{"id", integer}, {"model", model}}, {base});
+
+  const auto snapshot = TypeRealizationSnapshot::capture(registry);
+  const auto realized_base = snapshot->type_for(base);
+  const auto realized_derived = snapshot->exact_type_for(derived);
+  const auto canonical_derived = ValuePlanFactory::instance().type_for(derived);
+  REQUIRE(realized_derived != canonical_derived);
+
+  Value source{canonical_derived};
+  auto source_fields = source.as_bundle().begin_mutation();
+  source_fields["id"].set(Int{1});
+
+  Value target{realized_base};
+  auto mutable_target = target.begin_mutation();
+  realized_base.ops_ref().copy_assign_from(
+      realized_base, mutable_target.mutable_data(), canonical_derived,
+      source.view().data());
+
+  const auto concrete = target.view().concrete();
+  REQUIRE(concrete.schema() == derived);
+  REQUIRE(concrete.as_bundle()["id"].checked_as<Int>() == 1);
+}
+
 TEST_CASE(
     "closed Bundle realization owns only an indirect recursive union edge") {
   using namespace hgraph;

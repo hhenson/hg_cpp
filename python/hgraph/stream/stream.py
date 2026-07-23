@@ -7,7 +7,7 @@ from enum import Enum
 from itertools import chain
 from typing import Generic
 
-from hgraph import COMPOUND_SCALAR, CompoundScalar, K, SCALAR, SIZE, TS, TSD, TSL, TimeSeriesSchema, compute_node
+from hgraph import COMPOUND_SCALAR, CompoundScalar, K, SCALAR, SIZE, TS, TSB, TSD, TSL, TimeSeriesSchema, compute_node
 from hgraph._types import _substitute_typevars
 from hgraph._wiring import _unwrap
 
@@ -57,7 +57,7 @@ def _schema_token(value):
 
 
 class Stream:
-    """Build the flattened stream bundle for a ``CompoundScalar`` payload."""
+    """Build a status-prefixed bundle around a scalar or TS schema payload."""
 
     def __class_getitem__(cls, payload):
         cached = _STREAM_SCHEMAS.get(payload)
@@ -66,10 +66,16 @@ class Stream:
 
         origin = typing.get_origin(payload) or payload
         is_open_compound = payload is COMPOUND_SCALAR
-        if not is_open_compound and (
-                not isinstance(origin, type) or not issubclass(origin, CompoundScalar)):
+        is_compound = (
+            isinstance(origin, type) and issubclass(origin, CompoundScalar)
+        )
+        is_ts_schema = (
+            isinstance(origin, type) and issubclass(origin, TimeSeriesSchema)
+        )
+        if not is_open_compound and not is_compound and not is_ts_schema:
             raise TypeError(
-                f"Stream[...] requires a CompoundScalar payload, got {payload!r}"
+                "Stream[...] requires a CompoundScalar or TimeSeriesSchema "
+                f"payload, got {payload!r}"
             )
         parameters = tuple(getattr(origin, "__parameters__", ())) if not is_open_compound else ()
         arguments = tuple(typing.get_args(payload))
@@ -83,13 +89,17 @@ class Stream:
             "status": TS[StreamStatus],
             "status_msg": TS[str],
         }
-        if not is_open_compound:
+        if is_compound:
             resolved_annotations = typing.get_type_hints(origin)
             for item in fields(origin):
                 annotations[item.name] = TS[
                     _substitute_typevars(
                         resolved_annotations.get(item.name, item.type), substitutions)
                 ]
+        elif is_ts_schema:
+            from hgraph.reflection import fields as reflected_fields
+
+            annotations.update(reflected_fields(TSB[payload]))
 
         token = _schema_token(payload)
         name = f"Stream[{token}]"

@@ -46,6 +46,8 @@ struct TypeRealizationSnapshot::Impl {
     std::vector<ValueTypeRef> alternatives{};
     std::unordered_map<const TypeRecord *, ValueTypeRef>
         alternatives_by_record{};
+    std::unordered_map<const ValueTypeMetaData *, ValueTypeRef>
+        alternatives_by_schema{};
     ValueTypeRef default_type{};
     std::size_t payload_offset{0};
     MemoryUtils::StoragePlan plan{};
@@ -58,12 +60,14 @@ struct TypeRealizationSnapshot::Impl {
       std::size_t payload_size = 0;
       std::size_t payload_alignment = 1;
       alternatives_by_record.reserve(alternatives.size());
+      alternatives_by_schema.reserve(alternatives.size());
       for (const auto alternative : alternatives) {
         if (!alternative) {
           throw std::logic_error(
               "closed Bundle alternative has no value binding");
         }
         alternatives_by_record.emplace(alternative.record(), alternative);
+        alternatives_by_schema.emplace(alternative.schema(), alternative);
         payload_size =
             std::max(payload_size, alternative.checked_plan().layout.size);
         payload_alignment = std::max(
@@ -164,6 +168,45 @@ struct TypeRealizationSnapshot::Impl {
       }
       const auto found = alternatives_by_record.find(source.record());
       return found != alternatives_by_record.end() && found->second == source;
+    }
+
+    [[nodiscard]] ValueTypeRef alternative_for_schema(
+        const ValueTypeMetaData *schema) const noexcept {
+      const auto found = alternatives_by_schema.find(schema);
+      return found != alternatives_by_schema.end() ? found->second
+                                                   : ValueTypeRef{};
+    }
+
+    void replace_copy_from(void *dst, ValueTypeRef target_type,
+                           ValueTypeRef source_type,
+                           const void *source_memory) const {
+      const auto current = active_type(dst);
+      if (current != target_type) {
+        if (current) {
+          current.destroy_at(payload(*this, dst));
+        }
+        set_active_record(dst, nullptr);
+        target_type.default_construct_at(payload(*this, dst));
+        set_active_record(dst, target_type.record());
+      }
+      target_type.ops_ref().copy_assign_from(
+          target_type, payload(*this, dst), source_type, source_memory);
+    }
+
+    void replace_move_from(void *dst, ValueTypeRef target_type,
+                           ValueTypeRef source_type,
+                           void *source_memory) const {
+      const auto current = active_type(dst);
+      if (current != target_type) {
+        if (current) {
+          current.destroy_at(payload(*this, dst));
+        }
+        set_active_record(dst, nullptr);
+        target_type.default_construct_at(payload(*this, dst));
+        set_active_record(dst, target_type.record());
+      }
+      target_type.ops_ref().move_assign_from(
+          target_type, payload(*this, dst), source_type, source_memory);
     }
 
     static void default_construct(void *memory, const void *context) {
@@ -275,6 +318,7 @@ struct TypeRealizationSnapshot::Impl {
       const auto &self = entry(context);
       return binding == self.binding && source &&
              (source == self.binding || self.contains(source) ||
+              self.alternative_for_schema(source.schema()) ||
               source.schema() == self.declared);
     }
 
@@ -283,6 +327,11 @@ struct TypeRealizationSnapshot::Impl {
       const auto &self = entry(context);
       if (source == self.binding) {
         copy_assign(dst, src, context);
+        return;
+      }
+      if (const auto alternative = self.alternative_for_schema(source.schema());
+          alternative && alternative != source) {
+        self.replace_copy_from(dst, alternative, source, src);
         return;
       }
       if (!self.contains(source) && source.schema() == self.declared) {
@@ -307,6 +356,11 @@ struct TypeRealizationSnapshot::Impl {
       const auto &self = entry(context);
       if (source == self.binding) {
         move_assign(dst, src, context);
+        return;
+      }
+      if (const auto alternative = self.alternative_for_schema(source.schema());
+          alternative && alternative != source) {
+        self.replace_move_from(dst, alternative, source, src);
         return;
       }
       if (!self.contains(source) && source.schema() == self.declared) {

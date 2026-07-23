@@ -37,7 +37,12 @@ from datetime import date, datetime, time, timedelta
 
 import _hgraph as _m
 
-from ._types import _TsExpr, _compound_python_field_types, _value_type
+from ._types import (
+    _TSB_SCHEMA_CLASSES,
+    _TsExpr,
+    _compound_python_field_types,
+    _value_type,
+)
 
 __all__ = (
     "scalar_type",
@@ -47,6 +52,7 @@ __all__ = (
     "element_type",
     "size",
     "fields",
+    "bundle_schema_type",
     "dereference",
     "is_reference",
     "is_ts",
@@ -81,6 +87,8 @@ def _handle(t):
     output_type = getattr(t, "output_type", None)
     if output_type is not None:
         t = output_type
+    if isinstance(t, _m.TsType):
+        return t
     h = getattr(t, "handle", None)
     if h is None:
         raise TypeError(f"{t!r} is not a time-series type expression")
@@ -212,6 +220,22 @@ def fields(t):
     if cs is not None:
         return dict(_compound_python_field_types(cs))
     raise TypeError(f"fields expects a TSB or compound-scalar type, got {t!r}")
+
+
+def bundle_schema_type(t):
+    """Return the concrete Python schema class associated with a ``TSB``.
+
+    This preserves nominal schema identity when reflecting a bundle; callers
+    that need its scalar representation can use
+    ``bundle_schema_type(t).to_scalar_schema()``.
+    """
+    h = _handle(t)
+    if not h.is_tsb:
+        raise TypeError(f"bundle_schema_type expects a TSB type, got {t!r}")
+    schema = _TSB_SCHEMA_CLASSES.get(h)
+    if schema is None:
+        raise TypeError(f"TSB type {t!r} has no registered Python schema class")
+    return schema
 
 
 def dereference(t):

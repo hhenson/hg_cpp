@@ -937,8 +937,8 @@ class _TsExpr:
                 # defaults (supplied-but-invalid stays None in non-strict).
                 import dataclasses
 
+                field_types.update(_compound_python_field_types(cs_class))
                 for field in dataclasses.fields(cs_class):
-                    field_types[field.name] = field.type
                     if (field.name not in call and field.default is not dataclasses.MISSING
                             and field.default is not None):
                         call[field.name] = field.default
