@@ -1,19 +1,26 @@
+#include <hgraph/runtime/diagnostic_path.h>
 #include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/lifecycle_observer.h>
 #include <hgraph/runtime/logger.h>
 #include <hgraph/types/metadata/type_record_registry.h>
 #include <hgraph/util/scope.h>
 
+#include <fmt/chrono.h>
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <exception>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace hgraph
 {
@@ -40,6 +47,7 @@ namespace hgraph
                   cleanup_on_error(builder.cleanup_on_error()),
                   run_logging_enabled(builder.logger() != nullptr)
             {
+                immediate_cycle_limit = builder.max_consecutive_immediate_cycles();
                 for (LifecycleObserver *observer : builder.lifecycle_observers()) { lifecycle_observers.add(observer); }
             }
 
@@ -56,6 +64,8 @@ namespace hgraph
             DateTime         end_time{MAX_ET};
             DateTime         evaluation_time{MIN_ST};
             DateTime         cycle_wall_start{current_wall_time()};
+            std::uint32_t    immediate_cycle_limit{0};
+            std::uint32_t    consecutive_immediate_cycles{0};
             ErrorCaptureOptions error_capture_options{};
             std::atomic_bool stop_requested{false};
             bool             cleanup_on_error{true};
@@ -77,6 +87,7 @@ namespace hgraph
                   cleanup_on_error(builder.cleanup_on_error()),
                   run_logging_enabled(builder.logger() != nullptr)
             {
+                immediate_cycle_limit = builder.max_consecutive_immediate_cycles();
                 for (LifecycleObserver *observer : builder.lifecycle_observers()) { lifecycle_observers.add(observer); }
             }
 
@@ -92,7 +103,8 @@ namespace hgraph
             DateTime                     end_time{MAX_ET};
             DateTime                     evaluation_time{MIN_ST};
             DateTime                     last_time_allowed_push{MIN_DT};
-            std::uint32_t                immediate_drain_cycles{0};
+            std::uint32_t                immediate_cycle_limit{0};
+            std::uint32_t                consecutive_immediate_cycles{0};
             ErrorCaptureOptions          error_capture_options{};
             bool                         cleanup_on_error{true};
 
@@ -313,23 +325,18 @@ namespace hgraph
 
             wall_now = current_wall_time();
             const DateTime next = std::min(target, std::max(next_cycle, wall_now));
-            if (wall_now >= state.end_time && next <= next_cycle)
+            if (wall_now >= state.end_time && next <= next_cycle &&
+                state.consecutive_immediate_cycles >= max_immediate_drain_cycles)
             {
                 // Past wall-clock end_time the executor only drains: a lagging
                 // graph still evaluates its scheduled work at the scheduled
                 // times, but a graph advancing exactly MIN_TD per cycle is
                 // making no material logical progress (the shape of a failing
                 // retry loop) and would starve the end_time bound indefinitely
-                // (see execution_layer.rst, end-of-run enforcement).
-                if (++state.immediate_drain_cycles > max_immediate_drain_cycles)
-                {
-                    state.set_evaluation_time(state.end_time);
-                    return state.end_time;
-                }
-            }
-            else
-            {
-                state.immediate_drain_cycles = 0;
+                // (see execution_layer.rst, end-of-run enforcement). The
+                // counter is maintained by the run loop.
+                state.set_evaluation_time(state.end_time);
+                return state.end_time;
             }
             state.set_evaluation_time(next);
             return next;
@@ -353,6 +360,49 @@ namespace hgraph
             return graph.schema()->push_source_nodes_end > 0;
         }
 
+        /**
+         * Records the diagnostic path of every node evaluated during one
+         * cycle for the opt-in recursion guard (execution_layer.rst).
+         */
+        struct ImmediateCycleRecorder final : LifecycleObserver
+        {
+            static constexpr std::size_t max_recorded_nodes = 256;
+
+            std::vector<std::string> paths{};
+            std::size_t              dropped{0};
+
+            void on_before_node_evaluation(const NodeView &node) override
+            {
+                if (paths.size() < max_recorded_nodes) { paths.push_back(diagnostic::node_path(node)); }
+                else { ++dropped; }
+            }
+
+            void reset()
+            {
+                paths.clear();
+                dropped = 0;
+            }
+        };
+
+        [[noreturn]] void throw_recursive_evaluation_error(spdlog::logger &logger,
+                                                           std::uint32_t consecutive_cycles,
+                                                           DateTime evaluation_time,
+                                                           const ImmediateCycleRecorder &recorder)
+        {
+            std::string message = fmt::format(
+                "potential recursive evaluation loop: {} consecutive MIN_TD evaluation cycles at {:%Y-%m-%d %H:%M:%S}; "
+                "nodes evaluated in the last cycle:",
+                consecutive_cycles, evaluation_time);
+            for (const std::string &path : recorder.paths)
+            {
+                message += "\n  ";
+                message += path;
+            }
+            if (recorder.dropped > 0) { message += fmt::format("\n  ... and {} further node evaluations", recorder.dropped); }
+            logger.error(message);
+            throw RecursiveEvaluationError(message);
+        }
+
         template <typename Storage, typename Advance>
         void run_storage(Storage &state, Advance advance)
         {
@@ -369,6 +419,9 @@ namespace hgraph
                 }
             });
 
+            ImmediateCycleRecorder recorder;
+            bool                   recorded_cycle = false;
+
             while (!state.stop_requested.load(std::memory_order_acquire))
             {
                 DateTime next = graph.next_scheduled_time();
@@ -378,6 +431,7 @@ namespace hgraph
                     next = state.end_time;
                 }
 
+                const DateTime previous_evaluation_time = state.evaluation_time;
                 const DateTime evaluation_time = advance(state, next);
                 if (state.stop_requested.load(std::memory_order_acquire) ||
                     evaluation_time == MAX_DT ||
@@ -385,7 +439,34 @@ namespace hgraph
                 {
                     break;
                 }
-                if (!graph.evaluate(evaluation_time))
+
+                if (evaluation_time == previous_evaluation_time + MIN_TD) { ++state.consecutive_immediate_cycles; }
+                else { state.consecutive_immediate_cycles = 0; }
+
+                const bool guard_tripped = state.immediate_cycle_limit > 0 &&
+                    state.consecutive_immediate_cycles >= state.immediate_cycle_limit;
+                if (guard_tripped && recorded_cycle)
+                {
+                    throw_recursive_evaluation_error(*state.logger,
+                                                     state.consecutive_immediate_cycles,
+                                                     evaluation_time,
+                                                     recorder);
+                }
+                if (!guard_tripped && recorded_cycle)
+                {
+                    // The loop settled during the recording cycle; disarm.
+                    recorder.reset();
+                    recorded_cycle = false;
+                }
+                const bool recording_this_cycle = guard_tripped && !recorded_cycle;
+                if (recording_this_cycle) { state.lifecycle_observers.add(&recorder); }
+                auto remove_recorder = UnwindCleanupGuard([&] {
+                    if (recording_this_cycle) { state.lifecycle_observers.remove(&recorder); }
+                });
+                const bool completed = graph.evaluate(evaluation_time);
+                remove_recorder.complete();
+                if (recording_this_cycle) { recorded_cycle = true; }
+                if (!completed)
                 {
                     // The root graph has no enclosing mesh to resolve a pause; a false here
                     // means a pausing node (e.g. a mesh_subscribe) escaped its mesh scope.
@@ -1044,6 +1125,12 @@ namespace hgraph
         return *this;
     }
 
+    GraphExecutorBuilder &GraphExecutorBuilder::max_consecutive_immediate_cycles(std::uint32_t limit) noexcept
+    {
+        max_consecutive_immediate_cycles_ = limit;
+        return *this;
+    }
+
     GraphExecutorBuilder &GraphExecutorBuilder::add_lifecycle_observer(LifecycleObserver *observer)
     {
         if (observer != nullptr) { lifecycle_observers_.push_back(observer); }
@@ -1088,6 +1175,11 @@ namespace hgraph
     bool GraphExecutorBuilder::cleanup_on_error() const noexcept
     {
         return cleanup_on_error_;
+    }
+
+    std::uint32_t GraphExecutorBuilder::max_consecutive_immediate_cycles() const noexcept
+    {
+        return max_consecutive_immediate_cycles_;
     }
 
     const std::vector<LifecycleObserver *> &GraphExecutorBuilder::lifecycle_observers() const noexcept
