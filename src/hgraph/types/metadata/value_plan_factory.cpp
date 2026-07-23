@@ -1838,6 +1838,38 @@ void ValuePlanFactory::register_type(ValueTypeRef type) {
     return;
   }
   const auto *schema = type.schema();
+  if (schema != nullptr && schema->try_value_kind() == ValueTypeKind::Bundle) {
+    const auto *indexed = try_value_ops<IndexedValueOps>(type);
+    if (indexed == nullptr || indexed->size == nullptr ||
+        indexed->element_at == nullptr || indexed->element_binding == nullptr ||
+        indexed->make_range == nullptr) {
+      throw std::invalid_argument(
+          "ValuePlanFactory: Bundle binding must expose complete read-only "
+          "IndexedValueOps");
+    }
+    if (indexed->size(indexed->context, nullptr) != schema->field_count) {
+      throw std::invalid_argument(
+          "ValuePlanFactory: Bundle binding field count does not match its "
+          "schema");
+    }
+    for (std::size_t index = 0; index < schema->field_count; ++index) {
+      const auto field =
+          indexed->element_binding(indexed->context, nullptr, index);
+      if (!field || field.schema() != schema->fields[index].type) {
+        throw std::invalid_argument(
+            "ValuePlanFactory: Bundle binding field schema does not match "
+            "its declared schema");
+      }
+    }
+    if (!type.checked_plan().is_composite() &&
+        (type.ops_ref().accepts_source_impl == nullptr ||
+         (type.ops_ref().copy_assign_from_impl == nullptr &&
+          type.ops_ref().move_assign_from_impl == nullptr))) {
+      throw std::invalid_argument(
+          "ValuePlanFactory: non-composite Bundle binding must support "
+          "erased assignment");
+    }
+  }
 
   std::lock_guard<std::mutex> lock(mutex_);
   if (const auto it = type_cache_.find(schema); it != type_cache_.end()) {

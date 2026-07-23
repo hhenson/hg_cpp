@@ -355,7 +355,9 @@ def _register_overload(target, impl, requires=None):
 # ---------------------------------------------------------------------------
 
 def _dispatch_specificity(cls):
-    return len(cls.__mro__)
+    import typing
+
+    return len((typing.get_origin(cls) or cls).__mro__)
 
 
 def _dispatch_key_node():
@@ -422,10 +424,10 @@ def _declared_dispatch_class(annotation):
     expression carries the class AND the value schema decides the kind;
     atomic scalars like TS[int] are not dispatch subjects)."""
     cls = getattr(annotation, "_py_class", None)
+    if getattr(annotation, "_cs_class", None) is not None:
+        return getattr(annotation, "_structured_schema", None) or cls
     if cls is None:
         return None
-    if getattr(annotation, "_cs_class", None) is not None:
-        return cls
     handle = getattr(annotation, "handle", None)
     if handle is not None and handle.is_ts and _is_object_vt(_hgraph.ts_value_vt(handle)):
         return cls
@@ -491,7 +493,10 @@ def _dispatch_branch(op, impl, root_signature, branch_signature, scalar_argument
         )
         return callable_(*bound.args, **bound.kwargs)
 
-    suffix = "_".join(cls.__name__ for cls in dispatch_types.values())
+    suffix = "_".join(
+        getattr(cls, "__name__", repr(cls)).replace(".", "_")
+        for cls in dispatch_types.values()
+    )
     invoke.__name__ = f"__dispatch_{op.__name__}_{suffix}"
     invoke.__signature__ = branch_signature
     return _GraphFn(invoke)
@@ -565,10 +570,13 @@ def dispatch_(overloaded, *args, __on__=None, __output_type=None, **kwargs):
                     f"{impl.__name__}: dispatch parameter '{name}' must be a "
                     "TS[class] or a union of TS[class] annotations"
                 )
-            if not all(issubclass(cls, dispatch_params[name]) for cls in classes):
+            import typing
+            base = typing.get_origin(dispatch_params[name]) or dispatch_params[name]
+            if not all(issubclass(typing.get_origin(cls) or cls, base)
+                       for cls in classes):
                 raise WiringError(
                     f"{impl.__name__}: dispatch parameter '{name}' is outside "
-                    f"{dispatch_params[name].__name__}"
+                    f"{getattr(dispatch_params[name], '__name__', dispatch_params[name])}"
                 )
             class_options.append(classes)
         from itertools import product

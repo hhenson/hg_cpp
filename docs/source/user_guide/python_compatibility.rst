@@ -132,6 +132,74 @@ hgraph representation retain their concrete type record, so native conversion
 and ``type_`` dispatch remain available. An arbitrary Python object is retained
 as an opaque bridge value only when no native representation exists.
 
+Python-owned structured scalars
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A standard-library dataclass may be used directly as a nominal scalar schema:
+
+.. code-block:: python
+
+   from dataclasses import dataclass
+   from hgraph import TS, combine, graph
+
+   @dataclass(frozen=True)
+   class Quote:
+       instrument: str
+       bid: float
+       ask: float = 0.0
+
+   @graph
+   def spread(quote: TS[Quote]) -> TS[float]:
+       return quote.ask - quote.bid
+
+   @graph
+   def make_quote(bid: TS[float]) -> TS[Quote]:
+       return combine[TS[Quote]](instrument="ABC", bid=bid)
+
+The value held by ``TS[Quote]`` is the exact Python object that was emitted.
+Its ordered annotations provide a nominal Bundle schema for wiring,
+reflection, field access, generic resolution, and dispatch. Attribute
+projection is lazy: assigning the whole object does not recursively validate
+its fields, while reading a declared field converts that attribute to the
+declared output type and reports an error if it is incompatible.
+
+``TSB[Quote]`` is the field-expanded time-series form. ``as_scalar_ts()``
+constructs ``Quote`` using keyword arguments and honours dataclass defaults,
+default factories, keyword-only fields, ``init=False``, and ``__post_init__``.
+Generic dataclasses such as ``Box[int]`` retain their concrete specialisation
+through storage, Bundle conversion, and runtime dispatch.
+
+An annotated non-dataclass class must opt in:
+
+.. code-block:: python
+
+   from hgraph import register_python_object_type
+
+   @register_python_object_type
+   class LegacyQuote:
+       instrument: str
+       price: float
+
+       def __init__(self, price: float, instrument: str = "ABC"):
+           self.instrument = instrument
+           self.price = price
+
+``register_python_object_type`` also accepts an ordered ``fields`` mapping.
+Constructor parameters used to reconstruct a value must be keyword-capable;
+required constructor parameters not represented in the schema are rejected.
+
+Use native ``CompoundScalar`` for records that need native field layout,
+Python-free execution, or repeated low-cost field access in C++. Use a plain
+dataclass or registered class when preserving Python constructors,
+descriptors, identity, permissive values, or custom equality is the priority.
+Both forms are Bundles and therefore share the storage-independent
+``BundleView`` and graph-operator contract.
+
+Python-owned values have snapshot-by-emission semantics. Mutating an object in
+place does not create a tick; emit a new object to publish a change. Equality
+and hashing follow the class's Python methods. An unhashable class can be a
+``TS`` value but is rejected as a ``TSS`` or ``TSD`` key.
+
 Native ``DateTime`` is a timezone-naive UTC value. Python timezone-aware
 ``datetime`` values are normalized to UTC and then made naive on ingress;
 naive values are already interpreted as UTC. Timezone-aware standalone

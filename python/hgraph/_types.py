@@ -18,6 +18,9 @@ _SCALAR_NAMES = {
 }
 
 _COMPOUND_TYPE_CACHE = {}
+_PYTHON_OBJECT_TYPE_CACHE = {}
+_PYTHON_OBJECT_REGISTRATIONS = {}
+_PYTHON_OBJECT_CLASSES = []
 _TSB_SCHEMA_CLASSES = {}
 
 
@@ -37,8 +40,72 @@ def register_native_scalar_type(python_type, native_value_type):
     _hgraph.register_native_scalar_type(python_type, native_value_type)
 
 
-def _register_bundle_class(meta, scalar):
+def register_python_object_type(cls=None, *, fields=None):
+    """Register a Python class for Python-owned structured scalar semantics.
+
+    Standard-library dataclasses are recognised automatically. This function
+    opts other application classes into the same nominal Bundle contract. An
+    ordered ``fields`` mapping may be supplied when annotations do not fully
+    describe the public schema. The class is returned so the function can be
+    used as a decorator.
+    """
+    from collections.abc import Mapping
+
+    def register(target):
+        from ._compat import CompoundScalar
+
+        if not isinstance(target, type):
+            raise TypeError("register_python_object_type expects a Python class")
+        if issubclass(target, CompoundScalar):
+            raise TypeError(
+                "CompoundScalar classes already use native Bundle storage")
+        if fields is not None and not isinstance(fields, Mapping):
+            raise TypeError("fields must be an ordered mapping of field names to types")
+        normalized = None if fields is None else tuple(fields.items())
+        if normalized is not None:
+            if any(not isinstance(name, str) or not name for name, _ in normalized):
+                raise TypeError("registered field names must be non-empty strings")
+            if len({name for name, _ in normalized}) != len(normalized):
+                raise TypeError("registered field names must be unique")
+        previous = _PYTHON_OBJECT_REGISTRATIONS.get(target, ...)
+        if previous is not ... and previous != normalized:
+            raise TypeError(
+                f"{target.__module__}.{target.__qualname__} is already registered "
+                "with a different field schema")
+        _PYTHON_OBJECT_REGISTRATIONS[target] = normalized
+        if target not in _PYTHON_OBJECT_CLASSES:
+            _PYTHON_OBJECT_CLASSES.append(target)
+        return target
+
+    return register if cls is None else register(cls)
+
+
+def _is_python_object_class(cls):
+    """Whether ``cls`` has Python-owned structured scalar semantics."""
+    import dataclasses
+
+    from ._compat import CompoundScalar
+
+    time_series_schema = globals().get("TimeSeriesSchema")
+    return (
+        isinstance(cls, type)
+        and not issubclass(cls, CompoundScalar)
+        and not (
+            isinstance(time_series_schema, type)
+            and issubclass(cls, time_series_schema)
+        )
+        and (
+            dataclasses.is_dataclass(cls)
+            or cls in _PYTHON_OBJECT_REGISTRATIONS
+        )
+    )
+
+
+def _register_bundle_class(
+    meta, scalar, *, python_owned=False, specialization=None
+):
     """Register reconstruction policy without exposing it as runtime semantics."""
+    import dataclasses
     import inspect
     import types
 
@@ -49,18 +116,77 @@ def _register_bundle_class(meta, scalar):
             (types.MemberDescriptorType, types.GetSetDescriptorType),
         )
     )
+    try:
+        defaulted_constructor_fields = {
+            field.name
+            for field in dataclasses.fields(scalar)
+            if field.init and (
+                field.default is not dataclasses.MISSING
+                or field.default_factory is not dataclasses.MISSING
+            )
+        }
+    except TypeError:
+        defaulted_constructor_fields = set()
 
     try:
         signature = inspect.signature(scalar)
     except (TypeError, ValueError):
         signature = None
     if signature is None:
-        _hgraph.register_bundle_class(meta, scalar, (), True, raw_descriptor_fields,
-                                      scalar.__new__ is not object.__new__)
+        _hgraph.register_bundle_class(
+            meta,
+            scalar,
+            specialization,
+            (),
+            True,
+            raw_descriptor_fields,
+            tuple(defaulted_constructor_fields),
+            scalar.__new__ is not object.__new__,
+        )
+        if python_owned:
+            _hgraph.register_python_bundle_binding(meta)
         return
+    schema_fields = {name for name, _ in meta.fields}
+    if python_owned:
+        positional_only = tuple(
+            name
+            for name, parameter in signature.parameters.items()
+            if parameter.kind is inspect.Parameter.POSITIONAL_ONLY
+            and name in schema_fields
+        )
+        if positional_only:
+            raise TypeError(
+                f"{scalar.__module__}.{scalar.__qualname__} cannot be "
+                "reconstructed from Bundle fields because constructor "
+                f"parameter(s) {positional_only!r} are positional-only")
+        required_non_fields = tuple(
+            name
+            for name, parameter in signature.parameters.items()
+            if parameter.default is inspect.Parameter.empty
+            and parameter.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+            and name not in schema_fields
+        )
+        if required_non_fields:
+            raise TypeError(
+                f"{scalar.__module__}.{scalar.__qualname__} cannot be "
+                "reconstructed from its Bundle schema because required "
+                f"constructor parameter(s) {required_non_fields!r} are not fields")
     accepts_kwargs = any(
         parameter.kind is inspect.Parameter.VAR_KEYWORD
         for parameter in signature.parameters.values()
+    )
+    defaulted_constructor_fields.update(
+        name
+        for name, parameter in signature.parameters.items()
+        if parameter.default is not inspect.Parameter.empty
+        and parameter.kind not in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        )
     )
     constructor_fields = () if accepts_kwargs else tuple(
         name for name, parameter in signature.parameters.items()
@@ -70,22 +196,68 @@ def _register_bundle_class(meta, scalar):
             inspect.Parameter.KEYWORD_ONLY,
         )
     )
+    if (
+        python_owned
+        and not dataclasses.is_dataclass(scalar)
+        and not accepts_kwargs
+        and not any(name in schema_fields for name in constructor_fields)
+        and schema_fields
+    ):
+        # A default object constructor cannot consume field-wise data. Mark
+        # each declared field as an attempted keyword so reconstruction fails
+        # explicitly instead of returning an object with missing attributes.
+        # Whole-object storage remains available.
+        constructor_fields = tuple(name for name, _ in meta.fields)
     _hgraph.register_bundle_class(
         meta,
         scalar,
+        specialization,
         constructor_fields,
         accepts_kwargs,
         raw_descriptor_fields,
+        tuple(defaulted_constructor_fields),
         scalar.__new__ is not object.__new__,
     )
+    if python_owned:
+        _hgraph.register_python_bundle_binding(meta)
+
+
+def _python_object_required_constructor_fields(scalar):
+    """Schema fields that must be supplied to reconstruct ``scalar``."""
+    import inspect
+
+    try:
+        signature = inspect.signature(scalar)
+    except (TypeError, ValueError):
+        return ()
+    ordered_schema_fields = tuple(_python_object_python_field_types(scalar))
+    schema_fields = set(ordered_schema_fields)
+    required = tuple(
+        name
+        for name, parameter in signature.parameters.items()
+        if name in schema_fields
+        and parameter.default is inspect.Parameter.empty
+        and parameter.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+    )
+    if (
+        scalar in _PYTHON_OBJECT_REGISTRATIONS
+        and not required
+        and not any(name in schema_fields for name in signature.parameters)
+    ):
+        return ordered_schema_fields
+    return required
 
 
 def _finalize_compound_scalar_types():
     """Register every visible concrete descendant of materialized bundles.
 
-    CompoundScalar classes can be imported after a base schema was first used.
-    Wiring closes the hierarchy immediately before the C++ graph snapshot, so
-    the snapshot sees the complete subclass set visible to that wiring run.
+    Structured scalar classes can be imported after a base schema was first
+    used. Wiring closes each hierarchy immediately before the C++ graph
+    snapshot, so the snapshot sees the complete subclass set visible to that
+    wiring run.
     """
     from ._compat import CompoundScalar
 
@@ -112,6 +284,29 @@ def _finalize_compound_scalar_types():
 
     for root in roots:
         visit(root)
+
+    python_roots = {
+        scalar
+        for cached_generation, scalar, arguments in tuple(_PYTHON_OBJECT_TYPE_CACHE)
+        if cached_generation == generation and not arguments
+        and _is_python_object_class(scalar)
+    }
+    python_seen = set()
+
+    def visit_python(parent):
+        if parent in python_seen:
+            return
+        python_seen.add(parent)
+        for child in parent.__subclasses__():
+            if not _is_python_object_class(child):
+                continue
+            if getattr(child, "__parameters__", ()):
+                continue
+            _python_object_value_type(child)
+            visit_python(child)
+
+    for root in python_roots:
+        visit_python(root)
 
 
 def _substitute_typevars(tp, substitutions):
@@ -151,6 +346,15 @@ def _compound_specialization_token(tp):
         args = ",".join(_compound_specialization_token(arg) for arg in typing.get_args(tp))
         return f"{origin.__name__}[{args}]"
     return getattr(tp, "__name__", repr(tp))
+
+
+def _specialization_alias(scalar, type_args):
+    if not type_args:
+        return None
+    try:
+        return scalar[type_args[0] if len(type_args) == 1 else tuple(type_args)]
+    except TypeError:
+        return None
 
 
 def _is_self_recursive_annotation(annotation, scalar, substitutions):
@@ -415,6 +619,419 @@ def _compound_python_field_types(scalar):
     return result
 
 
+def _python_object_python_field_types(scalar):
+    """Ordered Python annotations for a Python-owned structured scalar."""
+    import dataclasses
+    import typing
+
+    explicit = _PYTHON_OBJECT_REGISTRATIONS.get(scalar, ...)
+    if explicit is not ... and explicit is not None:
+        return dict(explicit)
+
+    try:
+        resolved_annotations = typing.get_type_hints(scalar)
+    except (NameError, TypeError):
+        resolved_annotations = {}
+
+    if dataclasses.is_dataclass(scalar):
+        return {
+            field.name: resolved_annotations.get(field.name, field.type)
+            for field in dataclasses.fields(scalar)
+        }
+
+    result = {}
+    for base in reversed(scalar.__mro__):
+        if base is object:
+            continue
+        local = _locally_declared_annotations(base)
+        for name, annotation in local.items():
+            result[name] = resolved_annotations.get(name, annotation)
+    if not result:
+        raise TypeError(
+            f"{scalar.__module__}.{scalar.__qualname__} has no registered fields "
+            "or annotated instance fields")
+    return result
+
+
+def _structured_python_field_types(scalar):
+    """Ordered logical annotations for either structured storage policy."""
+    from ._compat import CompoundScalar
+
+    if isinstance(scalar, type) and issubclass(scalar, CompoundScalar):
+        return _compound_python_field_types(scalar)
+    if _is_python_object_class(scalar):
+        return _python_object_python_field_types(scalar)
+    raise TypeError(f"{scalar!r} is not a structured scalar class")
+
+
+def _structured_specialized_field_types(schema):
+    """Logical annotations with a parameterized class's TypeVars resolved."""
+    import typing
+
+    origin = typing.get_origin(schema) or schema
+    parameters = tuple(getattr(origin, "__parameters__", ()))
+    substitutions = dict(zip(parameters, typing.get_args(schema)))
+    return {
+        name: _substitute_typevars(annotation, substitutions)
+        for name, annotation in _structured_python_field_types(origin).items()
+    }
+
+
+def _python_object_forward_target(annotation, scalar, substitutions):
+    """Resolve a Python structured scalar reference in its defining scope."""
+    import gc
+    import types
+    import typing
+
+    annotation = _substitute_typevars(annotation, substitutions)
+    origin = typing.get_origin(annotation)
+    candidate = origin or annotation
+    if _is_python_object_class(candidate):
+        return candidate
+    if isinstance(annotation, typing.ForwardRef):
+        annotation = annotation.__forward_arg__
+    if origin in (typing.Union, types.UnionType):
+        members = tuple(
+            value for value in typing.get_args(annotation)
+            if value is not type(None)
+        )
+        return (
+            _python_object_forward_target(members[0], scalar, substitutions)
+            if len(members) == 1 else None
+        )
+    if not isinstance(annotation, str):
+        return None
+
+    token = annotation.strip().replace(" ", "").replace("'", "").replace('"', "")
+    for prefix in ("typing.Optional[", "Optional["):
+        if token.startswith(prefix) and token.endswith("]"):
+            token = token[len(prefix):-1]
+    if token.endswith("|None"):
+        token = token[:-5]
+    elif token.startswith("None|"):
+        token = token[5:]
+
+    scope = scalar.__qualname__.rsplit(".", 1)[0]
+    candidates = [
+        candidate for candidate in reversed(_PYTHON_OBJECT_CLASSES)
+        if candidate.__module__ == scalar.__module__
+        and token in (candidate.__name__, candidate.__qualname__)
+    ]
+    if not candidates:
+        module = __import__(scalar.__module__, fromlist=("*",))
+        visible = getattr(module, token, None)
+        if _is_python_object_class(visible):
+            candidates.append(visible)
+    if not candidates:
+        # Function-local dataclasses have no module-global name and no
+        # __init_subclass__ hook. A bounded GC lookup is needed only while
+        # resolving an otherwise-unresolved local forward reference.
+        candidates = [
+            candidate for candidate in gc.get_objects()
+            if isinstance(candidate, type)
+            and candidate.__module__ == scalar.__module__
+            and token in (candidate.__name__, candidate.__qualname__)
+            and _is_python_object_class(candidate)
+        ]
+    selected = next(
+        (
+            candidate for candidate in candidates
+            if candidate.__qualname__.rsplit(".", 1)[0] == scope
+        ),
+        candidates[0] if candidates else None,
+    )
+    if selected is not None and selected not in _PYTHON_OBJECT_CLASSES:
+        _PYTHON_OBJECT_CLASSES.append(selected)
+    return selected
+
+
+def _python_object_field_value_type(annotation, scalar, substitutions):
+    """Resolve a Python-backed Bundle field without validating its value."""
+    import collections.abc as abc
+    import types
+    import typing
+
+    annotation = _substitute_typevars(annotation, substitutions)
+    if (
+        annotation in (typing.Callable, abc.Callable)
+        or typing.get_origin(annotation) is abc.Callable
+    ):
+        return _hgraph.value_type("callable")
+    target = _python_object_forward_target(annotation, scalar, substitutions)
+    if target is not None:
+        if target is scalar:
+            raise TypeError(
+                "self-recursive Python structured scalar containers require "
+                "a recursive value recipe")
+        if issubclass(scalar, target):
+            return _hgraph.owned_vt(_python_object_value_type(target))
+        return _value_type(annotation)
+
+    origin = typing.get_origin(annotation)
+    if origin in (typing.Union, types.UnionType):
+        members = tuple(
+            arg for arg in typing.get_args(annotation) if arg is not type(None)
+        )
+        if len(members) == 1:
+            return _python_object_field_value_type(
+                members[0], scalar, substitutions)
+        return _value_type(annotation)
+    if origin is tuple:
+        args = typing.get_args(annotation)
+        if len(args) == 2 and args[1] is Ellipsis:
+            return _hgraph.tuple_vt(
+                _python_object_field_value_type(args[0], scalar, substitutions))
+        return _hgraph.fixed_tuple_vt([
+            _python_object_field_value_type(arg, scalar, substitutions)
+            for arg in args
+        ])
+    if origin in (frozenset, set):
+        return _hgraph.set_vt(_python_object_field_value_type(
+            typing.get_args(annotation)[0], scalar, substitutions))
+    if origin is dict or getattr(origin, "__name__", "") in (
+        "frozendict", "Mapping", "MutableMapping"
+    ):
+        key, value = typing.get_args(annotation)
+        return _hgraph.map_vt(
+            _python_object_field_value_type(key, scalar, substitutions),
+            _python_object_field_value_type(value, scalar, substitutions),
+        )
+    return _value_type(annotation)
+
+
+def _python_object_namespace(scalar):
+    """Stable nominal namespace, including a local class's defining scope."""
+    qualname = scalar.__qualname__
+    if "<locals>" not in qualname:
+        return scalar.__module__
+    return f"{scalar.__module__}.{qualname.rsplit('.', 1)[0]}"
+
+
+def _python_mutual_recursive_component(scalar):
+    graph = {}
+
+    def visit(current):
+        if current in graph:
+            return
+        edges = {
+            target
+            for annotation in _python_object_python_field_types(current).values()
+            if (target := _python_object_forward_target(
+                annotation, current, {})) is not None
+        }
+        graph[current] = edges
+        for target in edges:
+            visit(target)
+
+    visit(scalar)
+
+    def reaches(start, target, seen=None):
+        if start is target:
+            return True
+        seen = set() if seen is None else seen
+        if start in seen:
+            return False
+        seen.add(start)
+        return any(
+            reaches(child, target, seen) for child in graph.get(start, ()))
+
+    return tuple(
+        candidate for candidate in graph
+        if candidate is not scalar and reaches(candidate, scalar)
+    ) + (scalar,)
+
+
+def _register_python_mutual_recursive_component(component):
+    generation = _hgraph._registry_generation()
+    unique = tuple(dict.fromkeys(component))
+    indices = {scalar: index for index, scalar in enumerate(unique)}
+    definitions = []
+
+    for scalar in unique:
+        parents = [
+            _python_object_value_type(base)
+            for base in scalar.__bases__
+            if _is_python_object_class(base) and base not in indices
+        ]
+        fields = []
+        for name, annotation in _python_object_python_field_types(scalar).items():
+            target = _python_object_forward_target(annotation, scalar, {})
+            if target in indices:
+                fields.append((name, indices[target]))
+            else:
+                fields.append((
+                    name,
+                    _python_object_field_value_type(annotation, scalar, {}),
+                ))
+        definitions.append((
+            _python_object_namespace(scalar),
+            scalar.__name__,
+            fields,
+            parents,
+            False,
+            "__type__",
+            [],
+        ))
+
+    metas = _hgraph.recursive_bundles_vt(definitions)
+    for scalar, meta in zip(unique, metas):
+        if scalar not in _PYTHON_OBJECT_CLASSES:
+            _PYTHON_OBJECT_CLASSES.append(scalar)
+        _register_bundle_class(meta, scalar, python_owned=True)
+        _PYTHON_OBJECT_TYPE_CACHE[(generation, scalar, ())] = meta
+
+
+def _python_object_value_type(scalar, type_args=()):
+    """Return the nominal Bundle schema for a Python-owned object class."""
+    import typing
+
+    cache_key = (_hgraph._registry_generation(), scalar, tuple(type_args))
+    if cache_key in _PYTHON_OBJECT_TYPE_CACHE:
+        return _PYTHON_OBJECT_TYPE_CACHE[cache_key]
+    if not _is_python_object_class(scalar):
+        raise TypeError(f"{scalar!r} is not a registered Python object type")
+    if scalar not in _PYTHON_OBJECT_CLASSES:
+        _PYTHON_OBJECT_CLASSES.append(scalar)
+
+    parameters = tuple(getattr(scalar, "__parameters__", ()))
+    if type_args and len(type_args) != len(parameters):
+        raise TypeError(
+            f"Python structured scalar {scalar.__qualname__} expects "
+            f"{len(parameters)} generic arguments, got {len(type_args)}")
+    substitutions = dict(zip(parameters, type_args))
+
+    if not type_args:
+        component = _python_mutual_recursive_component(scalar)
+        if len(component) > 1:
+            _register_python_mutual_recursive_component(component)
+            return _PYTHON_OBJECT_TYPE_CACHE[cache_key]
+
+    if type_args:
+        argument_patterns = []
+        generic = False
+        for argument in type_args:
+            try:
+                argument_patterns.append(
+                    _hgraph.scalar_pattern_value(_value_type(argument)))
+            except _GenericType as error:
+                if error.pattern is None:
+                    raise TypeError(
+                        f"generic Python object argument {argument!r} "
+                        "has no C++ pattern") from error
+                generic = True
+                argument_patterns.append(error.pattern)
+        if generic:
+            namespace = _python_object_namespace(scalar)
+            qualified_origin = (
+                f"{namespace}::{scalar.__name__}"
+                if namespace else scalar.__name__
+            )
+            raise _GenericType(
+                repr(scalar),
+                _hgraph.scalar_pattern_bundle_generic(
+                    f"__bundle__{qualified_origin}",
+                    qualified_origin,
+                    argument_patterns,
+                ),
+            )
+
+    parent_metas = []
+    inherited_annotations = {}
+    consumed = set()
+    for original_base in scalar.__dict__.get("__orig_bases__", ()):
+        base_origin = typing.get_origin(original_base)
+        if not _is_python_object_class(base_origin):
+            continue
+        base_args = tuple(
+            _substitute_typevars(arg, substitutions)
+            for arg in typing.get_args(original_base)
+        )
+        parent_metas.append(_python_object_value_type(base_origin, base_args))
+        base_substitutions = dict(
+            zip(getattr(base_origin, "__parameters__", ()), base_args))
+        inherited_annotations.update({
+            name: _substitute_typevars(annotation, base_substitutions)
+            for name, annotation
+            in _python_object_python_field_types(base_origin).items()
+        })
+        consumed.add(base_origin)
+    for base in scalar.__bases__:
+        if _is_python_object_class(base) and base not in consumed:
+            parent_metas.append(_python_object_value_type(base))
+            inherited_annotations.update(
+                _python_object_python_field_types(base))
+
+    inherited_fields = {}
+    for parent in parent_metas:
+        for field_name, field_type in parent.fields:
+            previous = inherited_fields.setdefault(field_name, field_type)
+            if previous != field_type:
+                raise TypeError(
+                    f"Python structured scalar {scalar.__qualname__} inherits "
+                    f"incompatible field {field_name!r}")
+
+    annotations = _python_object_python_field_types(scalar)
+    local_annotations = _locally_declared_annotations(scalar)
+    fields = []
+    has_self_recursion = False
+    for field_name, field_type in annotations.items():
+        field_type = _substitute_typevars(field_type, substitutions)
+        if field_name in inherited_fields and field_name not in local_annotations:
+            fields.append((field_name, inherited_fields[field_name]))
+            continue
+        if _is_self_recursive_annotation(field_type, scalar, substitutions):
+            fields.append((field_name, None))
+            has_self_recursion = True
+        else:
+            fields.append((
+                field_name,
+                _python_object_field_value_type(
+                    field_type, scalar, substitutions),
+            ))
+
+    local_name = scalar.__name__
+    if type_args:
+        local_name += "[" + ",".join(
+            _compound_specialization_token(arg) for arg in type_args) + "]"
+    generic_arguments = [_value_type(argument) for argument in type_args]
+    register = (
+        _hgraph.recursive_bundle_vt
+        if has_self_recursion else _hgraph.qualified_bundle_vt
+    )
+    meta = register(
+        _python_object_namespace(scalar),
+        local_name,
+        fields,
+        parent_metas,
+        False,
+        "__type__",
+        generic_arguments,
+    )
+    _register_bundle_class(
+        meta,
+        scalar,
+        python_owned=True,
+        specialization=_specialization_alias(scalar, type_args),
+    )
+    _PYTHON_OBJECT_TYPE_CACHE[cache_key] = meta
+
+    for child in scalar.__subclasses__():
+        if not _is_python_object_class(child):
+            continue
+        if getattr(child, "__parameters__", ()):
+            continue
+        if type_args:
+            matches_specialization = any(
+                typing.get_origin(base) is scalar
+                and tuple(typing.get_args(base)) == tuple(type_args)
+                for base in child.__dict__.get("__orig_bases__", ())
+            )
+            if not matches_specialization:
+                continue
+        _python_object_value_type(child)
+    return meta
+
+
 def _compound_field_value_type(annotation, scalar, substitutions):
     """Resolve a field type, inserting Owned at recursive ancestry edges.
 
@@ -648,7 +1265,11 @@ def _compound_value_type(scalar, type_args=()):
     # Python erases generic arguments on ``instance.__class__``. The runtime
     # schema still carries invariant arguments, while class matching must use
     # the concrete origin class.
-    _register_bundle_class(meta, scalar)
+    _register_bundle_class(
+        meta,
+        scalar,
+        specialization=_specialization_alias(scalar, type_args),
+    )
     _COMPOUND_TYPE_CACHE[cache_key] = meta
 
     # Close the Python-visible subclass set while wiring is still allowed to
@@ -747,6 +1368,8 @@ def _value_type(scalar):
         from ._compat import CompoundScalar
         if isinstance(origin, type) and issubclass(origin, CompoundScalar):
             return _compound_value_type(origin, args)
+        if _is_python_object_class(origin):
+            return _python_object_value_type(origin, args)
         is_mapping_origin = (
             origin is dict
             or getattr(origin, "__name__", "") == "frozendict"
@@ -850,6 +1473,8 @@ def _value_type(scalar):
             # C++-first ruling (2026-07-06): a CompoundScalar IS a C++
             # Bundle value - the schema maps to a named bundle schema.
             return _compound_value_type(scalar)
+        if _is_python_object_class(scalar):
+            return _python_object_value_type(scalar)
     if name is None and isinstance(scalar, type) and issubclass(scalar, _enum.Enum):
         # A python Enum is a FIRST-CLASS enum scalar (nominal identity by
         # class name; the member table interns with the meta and the class
@@ -933,15 +1558,36 @@ class _TsExpr:
             cs_class = getattr(self, "_cs_class", None)
             field_types = {}
             if cs_class is not None:
-                # hgraph parity: UNSUPPLIED fields take their dataclass
+                field_types.update(_structured_specialized_field_types(
+                    getattr(self, "_structured_schema", cs_class)))
+                # hgraph parity: UNSUPPLIED dataclass fields take their
                 # defaults (supplied-but-invalid stays None in non-strict).
                 import dataclasses
 
-                for field in dataclasses.fields(cs_class):
-                    field_types[field.name] = field.type
+                try:
+                    dataclass_fields = dataclasses.fields(cs_class)
+                except TypeError:
+                    dataclass_fields = ()
+                for field in dataclass_fields:
                     if (field.name not in call and field.default is not dataclasses.MISSING
                             and field.default is not None):
                         call[field.name] = field.default
+                if _is_python_object_class(cs_class):
+                    unknown = tuple(name for name in call if name not in field_types)
+                    if unknown:
+                        raise TypeError(
+                            f"combine[{self!r}] received unknown field(s) "
+                            f"{unknown!r}")
+                    missing = tuple(
+                        name
+                        for name in _python_object_required_constructor_fields(
+                            cs_class)
+                        if name not in call
+                    )
+                    if missing:
+                        raise TypeError(
+                            f"combine[{self!r}] requires constructor field(s) "
+                            f"{missing!r}")
             lifted = {}
             for name, value in call.items():
                 unwrapped = _unwrap(value)
@@ -1052,7 +1698,16 @@ class _TsExpr:
 
     """A resolved time-series type: wraps the C++ TsType handle."""
 
-    __slots__ = ("handle", "_label", "is_ref", "_bare_map", "_json", "_cs_class", "_py_class")
+    __slots__ = (
+        "handle",
+        "_label",
+        "is_ref",
+        "_bare_map",
+        "_json",
+        "_cs_class",
+        "_py_class",
+        "_structured_schema",
+    )
 
     def __init__(self, handle, label):
         self.handle = handle
@@ -1165,8 +1820,19 @@ class _TSMeta(type):
             return _GenericTsExpr(f"TS[{scalar!r}]", pattern=_hgraph.type_pattern_ts(e.pattern))
         from ._compat import CompoundScalar as _CS
 
-        if isinstance(scalar, type) and issubclass(scalar, _CS):
-            expr._cs_class = scalar   # combine fills dataclass defaults at wiring
+        structured_origin = typing.get_origin(scalar) or scalar
+        if (
+            isinstance(structured_origin, type)
+            and (
+                issubclass(structured_origin, _CS)
+                or _is_python_object_class(structured_origin)
+            )
+        ):
+            # ``_cs_class`` is the established storage-independent Bundle
+            # marker used by combine/reflection. It deliberately names the
+            # origin because Python aliases are not runtime classes.
+            expr._cs_class = structured_origin
+            expr._structured_schema = scalar
         if isinstance(scalar, type):
             expr._py_class = scalar   # dispatch reads the DECLARED class
         # BARE frozendict (combine[TS[frozendict]](...)): the key/value
@@ -1191,7 +1857,11 @@ class TS(metaclass=_TSMeta):
 class _TSSMeta(type):
     def __getitem__(cls, scalar):
         try:
-            return _TsExpr(_hgraph.tss(_value_type(scalar)), f"TSS[{getattr(scalar, '__name__', scalar)}]")
+            value_type = _value_type(scalar)
+            if not value_type.is_hashable or not value_type.is_equatable:
+                raise TypeError(
+                    f"TSS element type {scalar!r} must be hashable and equatable")
+            return _TsExpr(_hgraph.tss(value_type), f"TSS[{getattr(scalar, '__name__', scalar)}]")
         except _GenericType:
             return _GenericTsExpr(f"TSS[{scalar!r}]", pattern=_hgraph.type_pattern_tss(_scalar_pattern(scalar)))
 
@@ -1219,7 +1889,11 @@ class _TSDMeta(type):
         try:
             if isinstance(value, (_GenericTsExpr, _TypeVarSentinel)):
                 raise _GenericType()
-            return _TsExpr(_hgraph.tsd(_value_type(key), _resolve(value)), f"TSD[{key!r}, {value!r}]")
+            key_type = _value_type(key)
+            if not key_type.is_hashable or not key_type.is_equatable:
+                raise TypeError(
+                    f"TSD key type {key!r} must be hashable and equatable")
+            return _TsExpr(_hgraph.tsd(key_type, _resolve(value)), f"TSD[{key!r}, {value!r}]")
         except _GenericType:
             return _GenericTsExpr(
                 f"TSD[{key!r}, {value!r}]",
@@ -1400,7 +2074,7 @@ class TimeSeriesSchema:
 
     @staticmethod
     def from_scalar_schema(schema):
-        """Lift every logical CompoundScalar field to a ``TS`` field.
+        """Lift every logical structured scalar field to a ``TS`` field.
 
         The generated class is cached on the scalar schema, matching the
         upstream API and preserving nominal identity across repeated calls.
@@ -1409,16 +2083,27 @@ class TimeSeriesSchema:
 
         if schema is CompoundScalar:
             return TimeSeriesSchema
-        if not isinstance(schema, type) or not issubclass(schema, CompoundScalar):
+        if (
+            not isinstance(schema, type)
+            or not (
+                issubclass(schema, CompoundScalar)
+                or _is_python_object_class(schema)
+            )
+        ):
             raise TypeError(
-                f"Can only create bundle schema from CompoundScalar classes, not {schema!r}")
+                "Can only create bundle schema from structured scalar "
+                f"classes, not {schema!r}")
         cached = schema.__dict__.get("__bundle_type__")
         if cached is not None:
             return cached
 
         annotations = {
             name: TS[annotation]
-            for name, annotation in _compound_python_field_types(schema).items()
+            for name, annotation in (
+                _compound_python_field_types(schema)
+                if issubclass(schema, CompoundScalar)
+                else _python_object_python_field_types(schema)
+            ).items()
         }
         bundle = type(
             f"{schema.__name__}Bundle",
@@ -1491,21 +2176,26 @@ class _TSBMeta(type):
         for klass in reversed(origin.__mro__):
             annotations.update(getattr(klass, "__annotations__", {}))
         is_cs = issubclass(origin, _CS)
+        is_python_object = _is_python_object_class(origin)
         compound_meta = None
-        if is_cs:
-            # TSB[CompoundScalar]: scalar annotations LIFT to TS fields; the
-            # bundle keeps the CS NAME (and registers the class) so its
-            # value side IS the CS bundle and reads back as the dataclass.
+        if is_cs or is_python_object:
+            # TSB[structured scalar]: scalar annotations LIFT to TS fields;
+            # the bundle keeps the scalar Bundle name so conversion uses the
+            # registered native or Python-owned construction policy.
             try:
                 compound_meta = _value_type(schema)
             except _GenericType:
-                # Keep an unspecialized CompoundScalar as a C++ type pattern;
-                # its nominal Bundle is created after scalar resolution.
+                # Keep an unspecialized structured scalar as a C++ type
+                # pattern; its nominal Bundle is created after resolution.
                 compound_meta = None
             substitutions = dict(zip(parameters, type_args))
             annotations = {
                 name: TS[_substitute_typevars(tp, substitutions)]
-                for name, tp in _compound_python_field_types(origin).items()
+                for name, tp in (
+                    _compound_python_field_types(origin)
+                    if is_cs
+                    else _python_object_python_field_types(origin)
+                ).items()
             }
 
         field_names = []

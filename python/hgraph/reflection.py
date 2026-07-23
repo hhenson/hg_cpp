@@ -37,7 +37,13 @@ from datetime import date, datetime, time, timedelta
 
 import _hgraph as _m
 
-from ._types import _TsExpr, _compound_python_field_types, _value_type
+from ._types import (
+    _TsExpr,
+    _is_python_object_class,
+    _structured_specialized_field_types,
+    _structured_python_field_types,
+    _value_type,
+)
 
 __all__ = (
     "scalar_type",
@@ -133,6 +139,9 @@ def scalar_type(t):
     if h.is_tss:
         return _vt_to_py(_m.vt_element(_m.ts_value_vt(h)))
     if h.is_ts:
+        structured_schema = getattr(t, "_structured_schema", None)
+        if structured_schema is not None:
+            return structured_schema
         cs = getattr(t, "_cs_class", None)
         if cs is not None:
             return cs
@@ -189,9 +198,16 @@ def fields(t):
     """
     if isinstance(t, Mapping):
         return {name: resolved_type(value) for name, value in t.items()}
-    # A compound-scalar class (dataclass) passed directly: its scalar fields.
-    if isinstance(t, type) and dataclasses.is_dataclass(t):
-        return dict(_compound_python_field_types(t))
+    import typing
+
+    origin = typing.get_origin(t)
+    if _is_python_object_class(origin):
+        return dict(_structured_specialized_field_types(t))
+    # A structured scalar class passed directly: its scalar fields.
+    if isinstance(t, type) and (
+        dataclasses.is_dataclass(t) or _is_python_object_class(t)
+    ):
+        return dict(_structured_python_field_types(t))
     if isinstance(t, _m.ValueType):
         python_type = _m.python_type_for_value(t)
         if python_type is not t and isinstance(python_type, type):
@@ -208,7 +224,8 @@ def fields(t):
         return {name: _wrap(field) for name, field in _m.ts_field_types(h)}
     cs = getattr(t, "_cs_class", None)
     if cs is not None:
-        return dict(_compound_python_field_types(cs))
+        schema = getattr(t, "_structured_schema", cs)
+        return dict(_structured_specialized_field_types(schema))
     raise TypeError(f"fields expects a TSB or compound-scalar type, got {t!r}")
 
 
@@ -254,7 +271,7 @@ def is_bundle(t):
 
 
 def is_compound_scalar(t):
-    """``True`` if ``t`` is a ``TS`` over a compound scalar."""
+    """``True`` if ``t`` is a ``TS`` over either structured scalar policy."""
     return _handle(t).is_ts and getattr(t, "_cs_class", None) is not None
 
 

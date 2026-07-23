@@ -73,13 +73,24 @@ A scalar schema has one of nine kinds, recorded on its
     ``Quote``) keep nominal identity even when their fields happen
     to coincide.
 
-    *Python correspondence.* The Python ``CompoundScalar`` class maps onto
-    the C++ ``Bundle`` kind. A dataclass subclass is a qualified nominal
-    Bundle; its default namespace is the defining module plus enclosing
-    scope. ``class Quote(CompoundScalar, namespace="feed", abstract=True,
+    *Python correspondence.* Both native ``CompoundScalar`` classes and
+    Python-owned structured scalars map onto the C++ ``Bundle`` kind. A
+    dataclass subclass of ``CompoundScalar`` is a qualified nominal Bundle
+    with offset-backed native storage; its default namespace is the defining
+    module plus enclosing scope.
+    ``class Quote(CompoundScalar, namespace="feed", abstract=True,
     discriminator="kind")`` overrides the namespace, construction policy,
     and external type marker. Anonymous compounds produced by
     ``compound_scalar(**kwargs)`` remain structural.
+
+    A plain standard-library dataclass, or an explicitly registered annotated
+    Python class, is also a qualified nominal Bundle but uses a Python-owned
+    binding. That binding retains the exact object and implements complete
+    read-only ``IndexedValueOps`` by lazy attribute projection. Consequently
+    ``ValueView::as_bundle()`` returns the same representation-erased
+    ``BundleView`` for either storage policy. Generic code must select by
+    Bundle/indexed capability and must not assume field offsets merely because
+    the schema kind is ``Bundle``.
 
     Named Bundle metadata records immediate parents and children. Multiple
     inheritance is allowed, but a child must contain every inherited field
@@ -143,10 +154,12 @@ C++ code can request an owner with ``TypeRegistry::owned(target)``. A
 self-recursive nominal schema is declared atomically with
 ``TypeRegistry::recursive_bundle(...)``; a null field-schema entry denotes
 ``Owned<Self>``. Python recognises direct self references, including
-``Optional[Self]``, on a dataclass ``CompoundScalar`` and uses the same path.
-Mutually recursive Python classes are intentionally not inferred yet: they
-need a future batch declaration API so neither class publishes a partial
-schema.
+``Optional[Self]``, on a dataclass ``CompoundScalar`` and uses the same native
+owned path. Python-owned dataclasses may also describe direct or mutual
+recursion because their annotations do not imply recursive inline native
+storage; their bridge registration resolves the class graph before publishing
+the concrete bindings. A recursive native ``CompoundScalar`` still requires
+the ``Owned[T]`` representation described above.
 
 ``List``
     Ordered sequence of one element type. May be ``fixed_size`` or dynamic.

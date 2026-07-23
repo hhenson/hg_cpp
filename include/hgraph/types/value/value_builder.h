@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace hgraph
 {
@@ -724,12 +725,17 @@ namespace hgraph
     class BundleBuilder
     {
       public:
-        explicit BundleBuilder(const ValueTypeRef &bundle_binding) : binding_{bundle_binding}, value_{bundle_binding}
+        explicit BundleBuilder(const ValueTypeRef &bundle_binding)
+            : target_binding_{bundle_binding},
+              binding_{assembly_binding(bundle_binding)},
+              value_{binding_}
         {
-            if (!bundle_binding.checked_plan().is_composite())
-            {
-                throw std::logic_error("BundleBuilder requires a composite (bundle/tuple) binding");
-            }
+        }
+
+        /** Return the composite field-assembly binding for ``target``. */
+        [[nodiscard]] static ValueTypeRef assembly_type(ValueTypeRef target)
+        {
+            return assembly_binding(target);
         }
 
         /** Set field ``index`` to a copy of ``field`` (whole-value copy-assign). */
@@ -797,10 +803,58 @@ namespace hgraph
         {
             ensure_not_built();
             built_ = true;
-            return std::move(value_);
+            if (target_binding_ == binding_) { return std::move(value_); }
+
+            Value result{target_binding_};
+            target_binding_.ops_ref().move_assign_from(
+                target_binding_,
+                const_cast<void *>(result.view().data()),
+                binding_,
+                const_cast<void *>(value_.view().data()));
+            return result;
         }
 
       private:
+        [[nodiscard]] static ValueTypeRef assembly_binding(ValueTypeRef target)
+        {
+            if (!target)
+            {
+                throw std::invalid_argument("BundleBuilder requires a bound target");
+            }
+            if (target.checked_plan().is_composite()) { return target; }
+            const auto *schema = target.schema();
+            if (schema == nullptr || schema->try_value_kind() != ValueTypeKind::Bundle ||
+                schema->wrapped_un_named == nullptr)
+            {
+                throw std::logic_error(
+                    "BundleBuilder requires composite storage or a named Bundle with a structural twin");
+            }
+            const auto *indexed =
+                checked_value_ops<IndexedValueOps>(target, "BundleBuilder target");
+            std::vector<ValueTypeRef> fields;
+            fields.reserve(schema->field_count);
+            for (std::size_t index = 0; index < schema->field_count; ++index)
+            {
+                const auto field =
+                    indexed->element_binding(indexed->context, nullptr, index);
+                if (!field)
+                {
+                    throw std::logic_error(
+                        "BundleBuilder target has an unresolved field binding");
+                }
+                fields.push_back(field);
+            }
+            const auto structural =
+                ValuePlanFactory::instance().realized_composite_type_for(
+                    schema->wrapped_un_named, fields);
+            if (!structural || !structural.checked_plan().is_composite())
+            {
+                throw std::logic_error(
+                    "BundleBuilder structural assembly binding is unavailable");
+            }
+            return structural;
+        }
+
         [[nodiscard]] const MemoryUtils::CompositeState &state() const
         {
             const auto *s =
@@ -854,6 +908,7 @@ namespace hgraph
             if (built_) { throw std::logic_error("BundleBuilder is single-use"); }
         }
 
+        ValueTypeRef target_binding_{nullptr};
         ValueTypeRef binding_{nullptr};
         Value                   value_{};
         bool                    built_{false};

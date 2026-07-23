@@ -10,6 +10,7 @@
 #include <hgraph/types/value/compact_container_ops.h>
 #include <hgraph/types/value/container_ops.h>
 #include <hgraph/types/value/mutable_container_ops.h>
+#include <hgraph/types/value/value.h>
 #include <hgraph/types/value/value_range.h>
 #include <hgraph/util/scope.h>
 
@@ -17,6 +18,7 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -500,13 +502,112 @@ struct TypeRealizationSnapshot::Impl {
 
     [[nodiscard]] ValueTypeRef python_source_type(nb::handle source) const {
       nb::object object = nb::borrow<nb::object>(source);
-      auto &classes = python_bridge::bundle_class_registry();
       const nb::object source_class = nb::getattr(object, "__class__");
+      std::vector<ValueTypeRef> class_matches;
+      std::size_t best_distance = std::numeric_limits<std::size_t>::max();
       for (const auto alternative : alternatives) {
-        nb::int_ key{reinterpret_cast<std::uintptr_t>(alternative.schema())};
-        if (classes.contains(key) && source_class.is(classes[key])) {
-          return alternative;
+        const auto found = python_bridge::bundle_class_info_registry().find(
+            alternative.schema());
+        if (found == python_bridge::bundle_class_info_registry().end() ||
+            !found->second.type.is_valid() ||
+            !nb::isinstance(object, found->second.type)) {
+          continue;
         }
+        const auto mro =
+            nb::cast<nb::tuple>(nb::getattr(source_class, "__mro__"));
+        std::size_t distance = std::numeric_limits<std::size_t>::max();
+        for (std::size_t index = 0; index < mro.size(); ++index) {
+          if (mro[index].is(found->second.type)) {
+            distance = index;
+            break;
+          }
+        }
+        if (distance < best_distance) {
+          best_distance = distance;
+          class_matches.clear();
+        }
+        if (distance == best_distance) {
+          class_matches.push_back(alternative);
+        }
+      }
+      if (class_matches.size() == 1) {
+        return class_matches.front();
+      }
+      if (!class_matches.empty() && nb::hasattr(object, "__orig_class__")) {
+        const auto alias = nb::getattr(object, "__orig_class__");
+        ValueTypeRef matched{};
+        for (const auto candidate : class_matches) {
+          const auto &info = python_bridge::bundle_class_info_registry().at(
+              candidate.schema());
+          if (!info.specialization.is_valid()) {
+            continue;
+          }
+          const int equal = PyObject_RichCompareBool(
+              alias.ptr(), info.specialization.ptr(), Py_EQ);
+          if (equal < 0) {
+            nb::raise_python_error();
+          }
+          if (equal == 0) {
+            continue;
+          }
+          if (matched) {
+            throw std::invalid_argument(
+                "Python structured scalar specialization is ambiguous");
+          }
+          matched = candidate;
+        }
+        if (matched) {
+          return matched;
+        }
+      }
+      if (class_matches.size() > 1) {
+        using InferValueFn = Value (*)(nb::handle);
+        const auto infer = reinterpret_cast<InferValueFn>(
+            python_bridge::py_infer_value_slot());
+        if (infer == nullptr) {
+          throw std::logic_error(
+              "Python Bundle inference hook is not installed");
+        }
+        ValueTypeRef best{};
+        std::size_t best_score = 0;
+        bool ambiguous = false;
+        for (const auto candidate : class_matches) {
+          std::size_t score = 0;
+          for (std::size_t index = 0; index < candidate.schema()->field_count;
+               ++index) {
+            const auto &field = candidate.schema()->fields[index];
+            if (field.name == nullptr || !nb::hasattr(object, field.name)) {
+              continue;
+            }
+            const auto field_value = nb::getattr(object, field.name);
+            if (field_value.is_none() || field_value.ptr() == object.ptr()) {
+              continue;
+            }
+            const Value inferred = infer(field_value);
+            if (inferred.schema() == field.type) {
+              score += 2;
+            } else if (inferred.schema() != nullptr && field.type != nullptr &&
+                       inferred.schema()->value_kind() ==
+                           ValueTypeKind::Bundle &&
+                       field.type->value_kind() == ValueTypeKind::Bundle &&
+                       TypeRegistry::instance().bundle_is_a(inferred.schema(),
+                                                            field.type)) {
+              ++score;
+            }
+          }
+          if (!best || score > best_score) {
+            best = candidate;
+            best_score = score;
+            ambiguous = false;
+          } else if (score == best_score) {
+            ambiguous = true;
+          }
+        }
+        if (!ambiguous) {
+          return best;
+        }
+        throw std::invalid_argument(
+            "Python structured scalar schema inference is ambiguous");
       }
 
       if (nb::isinstance<nb::dict>(object)) {
@@ -538,9 +639,9 @@ struct TypeRealizationSnapshot::Impl {
       const nb::object source_module = nb::getattr(source_class, "__module__");
       const nb::object source_qualname =
           nb::getattr(source_class, "__qualname__");
-      const std::string source_name =
-          nb::cast<std::string>(source_module) + "." +
-          nb::cast<std::string>(source_qualname);
+      const std::string source_name = nb::cast<std::string>(source_module) +
+                                      "." +
+                                      nb::cast<std::string>(source_qualname);
       throw std::invalid_argument("value of Python type '" + source_name +
                                   "' is not an instance of closed Bundle '" +
                                   std::string{declared->name()} + "'");
@@ -729,7 +830,15 @@ struct TypeRealizationSnapshot::Impl {
             changed || child != factory.type_for(schema->fields[index].type);
       }
       if (changed) {
-        result = factory.realized_composite_type_for(schema, fields);
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        if (const auto python =
+                python_bridge::python_bundle_binding_for(schema, fields)) {
+          result = python;
+        } else
+#endif
+        {
+          result = factory.realized_composite_type_for(schema, fields);
+        }
       }
       break;
     }

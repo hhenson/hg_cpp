@@ -268,7 +268,7 @@ namespace hgraph
         return true;
     }
 
-    bool ValueView::equals(const ValueView &other) const noexcept
+    bool ValueView::equals(const ValueView &other) const
     {
         const auto bound       = binding();
         const auto other_bound = other.binding();
@@ -282,18 +282,16 @@ namespace hgraph
             return bound == other_bound || value_schema_equivalent(schema(), other.schema());
         }
 
-        return fallback_on_exception(false, [&] {
-            if (bound == other_bound) { return bound.ops_ref().equals(data(), other.data()); }
+        if (bound == other_bound) { return bound.ops_ref().equals(data(), other.data()); }
 
-            auto lhs_concrete = concrete();
-            auto rhs_concrete = other.concrete();
-            if (lhs_concrete.binding() != bound || rhs_concrete.binding() != other_bound)
-            {
-                return lhs_concrete.equals(rhs_concrete);
-            }
-            if (!value_schema_equivalent(schema(), other.schema())) { return false; }
-            return semantic_equals(*this, other);
-        });
+        auto lhs_concrete = concrete();
+        auto rhs_concrete = other.concrete();
+        if (lhs_concrete.binding() != bound || rhs_concrete.binding() != other_bound)
+        {
+            return lhs_concrete.equals(rhs_concrete);
+        }
+        if (!value_schema_equivalent(schema(), other.schema())) { return false; }
+        return semantic_equals(*this, other);
     }
 
     std::partial_ordering ValueView::compare(const ValueView &other) const noexcept

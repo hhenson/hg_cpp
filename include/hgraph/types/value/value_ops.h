@@ -117,7 +117,7 @@ namespace hgraph
         const void *context{nullptr};
         bool        allows_mutation{false};
         std::size_t (*hash_impl)(const void *context, const void *memory) = nullptr;
-        bool (*equals_impl)(const void *context, const void *lhs, const void *rhs) noexcept = nullptr;
+        bool (*equals_impl)(const void *context, const void *lhs, const void *rhs) = nullptr;
         std::partial_ordering (*compare_impl)(const void *context, const void *lhs,
                                               const void *rhs) noexcept = nullptr;
         std::string (*to_string_impl)(const void *context, const void *memory) = nullptr;
@@ -144,6 +144,9 @@ namespace hgraph
         const void *(*concrete_memory_impl)(const void *context, const void *memory) noexcept = nullptr;
         void *(*mutable_concrete_memory_impl)(const void *context, void *memory) noexcept = nullptr;
         std::string (*format_string_impl)(const void *context, const void *memory) = nullptr;
+        bool (*can_materialize_source_impl)(const void *context,
+                                            ValueTypeRef source,
+                                            const void *memory) = nullptr;
 
         [[nodiscard]] std::size_t hash(const void *memory) const
         {
@@ -157,7 +160,7 @@ namespace hgraph
 
         [[nodiscard]] bool can_begin_mutation() const noexcept { return allows_mutation; }
 
-        [[nodiscard]] bool equals(const void *lhs, const void *rhs) const noexcept
+        [[nodiscard]] bool equals(const void *lhs, const void *rhs) const
         {
             return equals_impl != nullptr ? equals_impl(context, lhs, rhs) : lhs == rhs;
         }
@@ -267,6 +270,24 @@ namespace hgraph
         {
             if (accepts_source_impl != nullptr) { return accepts_source_impl(context, binding, source); }
             return binding && source && binding.plan() == source.plan();
+        }
+
+        /**
+         * Whether an incomplete indexed source contains enough fields to
+         * construct this owning representation. The default is deliberately
+         * false: ordinary composite Bundles retain all-fields-valid
+         * materialisation semantics.
+         */
+        [[nodiscard]] bool can_materialize_source(ValueTypeRef source,
+                                                  const void *memory) const
+        {
+            return can_materialize_source_impl != nullptr &&
+                   can_materialize_source_impl(context, source, memory);
+        }
+
+        [[nodiscard]] bool has_source_materialization_policy() const noexcept
+        {
+            return can_materialize_source_impl != nullptr;
         }
 
         void copy_assign_from(ValueTypeRef binding, void *dst, ValueTypeRef source, const void *src) const
@@ -409,7 +430,7 @@ namespace hgraph
             }
             else
             {
-                return static_cast<bool (*)(const void *, const void *, const void *) noexcept>(nullptr);
+                return static_cast<bool (*)(const void *, const void *, const void *)>(nullptr);
             }
         }
 
