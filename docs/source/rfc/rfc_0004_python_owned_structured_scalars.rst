@@ -1,7 +1,7 @@
 RFC 0004: Python-Owned Structured Scalars
 =========================================
 
-:Status: Proposed
+:Status: Accepted
 :Author: Howard Henson
 :Created: 2026-07-23
 :Target: Next ``hg_cpp`` minor release
@@ -768,10 +768,30 @@ Semantics and robustness
 Implementation status
 ---------------------
 
-No implementation is included with this proposal. The RFC remains
-``Proposed`` until its implementation and conformance tests are accepted for
-merge. The implementation PR must update this section with any contract changes
-and change the status to ``Accepted`` only when the code is accepted.
+The RFC was accepted on 2026-07-23. Its implementation is included in the
+corresponding implementation PR.
+
+The implementation keeps the accepted representation boundary: a Python-owned
+structured scalar is a normal named ``Bundle`` with a non-composite owning
+binding. Its complete read-only ``IndexedValueOps`` surface projects declared
+attributes lazily, so ``BundleView`` and generic Bundle operators do not need
+to know which storage policy owns the value. ``TSB`` continues to hold the
+anonymous structural field representation and constructs the Python object
+only when converted to the scalar form.
+
+One representation-neutral capability was added to erased value operations:
+an owning binding may decide whether a partially valid indexed source contains
+enough fields to construct it. Python-owned bindings use this to distinguish
+required constructor fields from defaults and ``init=False`` fields; ordinary
+composite Bundles retain the existing all-fields-valid rule.
+
+The public Python surface consists of lazy recognition of standard-library
+dataclasses and ``register_python_object_type`` for explicit classes. The
+implementation includes nominal and generic registration, inheritance and
+closed-union dispatch, recursive fields, constructor/default handling,
+``TS``/``TSB`` conversion, reflection, Python equality and hashing, key
+capability validation, focused native and Python conformance tests, and paired
+diagnostic benchmark scenarios for the workloads in `Performance and memory`_.
 
 References
 ----------

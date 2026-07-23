@@ -7,8 +7,14 @@
 
 #include <nanobind/nanobind.h>
 
+#include <span>
 #include <unordered_map>
 #include <vector>
+
+namespace hgraph {
+struct ValueTypeMetaData;
+class ValueTypeRef;
+} // namespace hgraph
 
 /**
  * Shared python-bridge STATE consulted by type-erased conversion impls
@@ -59,18 +65,21 @@ struct HGRAPH_LOCAL PyBundleClassInfo {
   using Allocator = PyObject *(*)(PyTypeObject *, Py_ssize_t);
 
   nb::object type{};
+  nb::object specialization{};
   Allocator allocator{nullptr};
   std::vector<nb::str> field_names{};
   std::vector<nb::object> field_overrides{};
   std::vector<bool> constructor_fields{};
+  std::vector<bool> defaulted_constructor_fields{};
   bool requires_constructor{false};
 };
 
 /** Schema-addressed companion to ``bundle_class_registry`` for hot value
     conversion. It retains interned field-name objects so conversion does
     not recreate and hash every field name on every node evaluation. */
-[[nodiscard]] HGRAPH_EXPORT std::unordered_map<const void *, PyBundleClassInfo> &
-bundle_class_info_registry();
+[[nodiscard]] HGRAPH_EXPORT
+    std::unordered_map<const void *, PyBundleClassInfo> &
+    bundle_class_info_registry();
 
 /** Structural ``TSB[CompoundScalar]`` schema -> its scalar Bundle schema.
  * The TS runtime remains structural; this bridge-only association restores the
@@ -78,6 +87,32 @@ bundle_class_info_registry();
  */
 [[nodiscard]] HGRAPH_EXPORT std::unordered_map<const void *, const void *> &
 tsb_compound_value_registry();
+
+/**
+ * Install a Python-owned canonical binding for a nominal Bundle schema.
+ *
+ * The class reconstruction metadata must already be present in
+ * ``bundle_class_info_registry``. The resulting binding retains the Python
+ * object as-is and projects declared fields lazily through ``BundleView``.
+ */
+HGRAPH_EXPORT void
+register_python_bundle_binding(const ValueTypeMetaData *schema);
+
+/** True when ``schema`` has a Python-owned Bundle storage policy. */
+[[nodiscard]] HGRAPH_EXPORT bool
+is_python_bundle_schema(const ValueTypeMetaData *schema) noexcept;
+
+/**
+ * Return the Python-owned binding for ``schema`` with the supplied realized
+ * field bindings. Used by graph snapshots when a declared field contains a
+ * closed Bundle hierarchy. Returns an unbound reference for non-Python schemas.
+ */
+[[nodiscard]] HGRAPH_EXPORT ValueTypeRef
+python_bundle_binding_for(const ValueTypeMetaData *schema,
+                          std::span<const ValueTypeRef> field_bindings);
+
+/** Test/reset lifecycle hook; retained binding contexts remain immortal. */
+HGRAPH_EXPORT void clear_python_bundle_bindings() noexcept;
 } // namespace hgraph::python_bridge
 
 #endif // HGRAPH_ENABLE_PYTHON_USER_NODES

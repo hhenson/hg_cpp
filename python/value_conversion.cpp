@@ -14,9 +14,11 @@
 
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -207,24 +209,69 @@ namespace hgraph::python_bridge
             return box_any(Value{PyObj{nb::borrow<nb::object>(object)}});
         }
 
-        [[nodiscard]] std::optional<Value> try_python_bundle_value(nb::handle object)
+        [[nodiscard]] std::size_t python_mro_distance(nb::handle source_class,
+                                                      nb::handle registered_class)
+        {
+            nb::tuple mro = nb::cast<nb::tuple>(nb::getattr(source_class, "__mro__"));
+            for (std::size_t index = 0; index < mro.size(); ++index)
+            {
+                if (mro[index].is(registered_class)) { return index; }
+            }
+            return std::numeric_limits<std::size_t>::max();
+        }
+
+        [[nodiscard]] const ValueTypeMetaData *select_python_bundle_schema(
+            nb::handle object, std::span<const ValueTypeMetaData *const> permitted)
         {
             const nb::object source_class = nb::getattr(object, "__class__");
             std::vector<const ValueTypeMetaData *> candidates;
-            for (const auto &[schema, info] : bundle_class_info_registry())
+            std::size_t best_distance = std::numeric_limits<std::size_t>::max();
+            for (const auto *schema : permitted)
             {
-                if (info.type.is_valid() && source_class.is(info.type))
+                const auto found = bundle_class_info_registry().find(schema);
+                if (found == bundle_class_info_registry().end() ||
+                    !found->second.type.is_valid() ||
+                    !nb::isinstance(object, found->second.type))
                 {
-                    candidates.push_back(static_cast<const ValueTypeMetaData *>(schema));
+                    continue;
                 }
+                const auto distance = python_mro_distance(source_class, found->second.type);
+                if (distance < best_distance)
+                {
+                    best_distance = distance;
+                    candidates.clear();
+                }
+                if (distance == best_distance) { candidates.push_back(schema); }
             }
-            if (candidates.empty()) { return std::nullopt; }
-            if (candidates.size() == 1) { return py_to_value_as(object, candidates.front()); }
+            if (candidates.empty()) { return nullptr; }
+            if (candidates.size() == 1) { return candidates.front(); }
 
-            // Frozen dataclass generics cannot retain ``__orig_class__``. Rank
-            // their registered specialisations by exact field-value schemas;
-            // a tie remains opaque so overload resolution cannot depend on
-            // unordered registry iteration.
+            // A non-frozen generic instance normally retains its alias.
+            if (nb::hasattr(object, "__orig_class__"))
+            {
+                nb::object alias = nb::getattr(object, "__orig_class__");
+                const ValueTypeMetaData *matched = nullptr;
+                for (const auto *candidate : candidates)
+                {
+                    const auto &info = bundle_class_info_registry().at(candidate);
+                    if (!info.specialization.is_valid()) { continue; }
+                    const int equal = PyObject_RichCompareBool(
+                        alias.ptr(), info.specialization.ptr(), Py_EQ);
+                    if (equal < 0) { nb::raise_python_error(); }
+                    if (equal == 0) { continue; }
+                    if (matched != nullptr)
+                    {
+                        throw std::invalid_argument(
+                            "Python structured scalar specialization is ambiguous");
+                    }
+                    matched = candidate;
+                }
+                if (matched != nullptr) { return matched; }
+            }
+
+            // Frozen dataclass generics cannot retain ``__orig_class__``.
+            // Infer only at this schema-free boundary by comparing declared
+            // fields with independently inferred value schemas.
             const ValueTypeMetaData *best = nullptr;
             std::size_t best_score = 0;
             bool ambiguous = false;
@@ -261,8 +308,29 @@ namespace hgraph::python_bridge
                     ambiguous = true;
                 }
             }
-            if (ambiguous) { return std::nullopt; }
-            return py_to_value_as(object, best);
+            if (ambiguous)
+            {
+                throw std::invalid_argument(
+                    "Python structured scalar schema inference is ambiguous");
+            }
+            return best;
+        }
+
+        [[nodiscard]] std::optional<Value> try_python_bundle_value(nb::handle object)
+        {
+            std::vector<const ValueTypeMetaData *> registered;
+            registered.reserve(bundle_class_info_registry().size());
+            for (const auto &[schema, info] : bundle_class_info_registry())
+            {
+                if (info.type.is_valid())
+                {
+                    registered.push_back(static_cast<const ValueTypeMetaData *>(schema));
+                }
+            }
+            const auto *selected = select_python_bundle_schema(object, registered);
+            return selected != nullptr
+                       ? std::optional<Value>{py_to_value_as(object, selected)}
+                       : std::nullopt;
         }
 
         [[nodiscard]] Value py_container_to_value(nb::handle object)
@@ -605,12 +673,9 @@ namespace hgraph::python_bridge
             return match;
         }
 
-        const nb::object source_class = nb::getattr(source, "__class__");
-        auto &classes = bundle_class_registry();
-        for (const auto *alternative : alternatives)
+        if (const auto *selected = select_python_bundle_schema(source, alternatives))
         {
-            nb::int_ key{reinterpret_cast<std::uintptr_t>(alternative)};
-            if (classes.contains(key) && source_class.is(classes[key])) { return alternative; }
+            return selected;
         }
         throw std::invalid_argument("value is not an instance of a closed Bundle alternative");
     }

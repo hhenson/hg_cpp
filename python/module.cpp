@@ -166,6 +166,7 @@ NB_MODULE(_hgraph, m)
         python_bridge::bundle_class_registry().clear();
         python_bridge::bundle_class_info_registry().clear();
         python_bridge::tsb_compound_value_registry().clear();
+        python_bridge::clear_python_bundle_bindings();
         python_bridge::clear_native_scalar_types();
         reset_all_registries();
         ++python_registry_generation;

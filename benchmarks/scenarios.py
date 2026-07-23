@@ -119,6 +119,15 @@ class BenchCS(CompoundScalar):
     label: str
 
 
+@dataclass(frozen=True)
+class BenchPythonRecord:
+    """Python-owned counterpart to ``BenchCS`` for storage-policy benches."""
+
+    ident: int
+    price: float
+    label: str
+
+
 class BenchBundle(TimeSeriesSchema):
     fast: TS[int]
     medium: TS[int]
@@ -130,6 +139,40 @@ def _cs_pulse(cycles: int) -> TS[BenchCS]:
     values = [BenchCS(ident=i, price=i * 1.5, label=f"cs-{i:04d}") for i in range(64)]
     for i in range(cycles):
         yield MIN_TD, values[i & 63]
+
+
+@generator
+def _python_record_pulse(cycles: int) -> TS[BenchPythonRecord]:
+    values = [
+        BenchPythonRecord(ident=i, price=i * 1.5, label=f"record-{i:04d}")
+        for i in range(64)
+    ]
+    for i in range(cycles):
+        yield MIN_TD, values[i & 63]
+
+
+@generator
+def _cs_equal_pair_pulse(cycles: int) -> TS[BenchCS]:
+    values = [
+        BenchCS(ident=i // 2, price=(i // 2) * 1.5, label=f"cs-{i // 2:04d}")
+        for i in range(128)
+    ]
+    for i in range(cycles):
+        yield MIN_TD, values[i & 127]
+
+
+@generator
+def _python_record_equal_pair_pulse(cycles: int) -> TS[BenchPythonRecord]:
+    values = [
+        BenchPythonRecord(
+            ident=i // 2,
+            price=(i // 2) * 1.5,
+            label=f"record-{i // 2:04d}",
+        )
+        for i in range(128)
+    ]
+    for i in range(cycles):
+        yield MIN_TD, values[i & 127]
 
 
 @generator
@@ -479,6 +522,124 @@ def type_cs_py(scale: float):
         x = _cs_pulse(cycles)
         x = _cs_work_py(_cs_work_py(x))
         null_sink(x.price)
+
+    return g, cycles
+
+
+def python_owned_pass_through_native(scale: float):
+    """Whole-value storage traffic for a native-layout structured scalar."""
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        null_sink(_cs_pulse(cycles))
+
+    return g, cycles
+
+
+def python_owned_pass_through_python(scale: float):
+    """Whole-value storage traffic for a Python-owned structured scalar."""
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        null_sink(_python_record_pulse(cycles))
+
+    return g, cycles
+
+
+def python_owned_project_one_native(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        null_sink(_cs_pulse(cycles).price)
+
+    return g, cycles
+
+
+def python_owned_project_one_python(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        null_sink(_python_record_pulse(cycles).price)
+
+    return g, cycles
+
+
+def python_owned_project_several_native(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        value = _cs_pulse(cycles)
+        null_sink(value.ident)
+        null_sink(value.price)
+        null_sink(value.label)
+
+    return g, cycles
+
+
+def python_owned_project_several_python(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        value = _python_record_pulse(cycles)
+        null_sink(value.ident)
+        null_sink(value.price)
+        null_sink(value.label)
+
+    return g, cycles
+
+
+def python_owned_construct_native(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        ident = _int_pulse(cycles)
+        null_sink(hg.combine[TS[BenchCS]](
+            ident=ident,
+            price=ident * 1.5,
+            label=hg.convert[TS[str]](ident),
+        ))
+
+    return g, cycles
+
+
+def python_owned_construct_python(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        ident = _int_pulse(cycles)
+        null_sink(hg.combine[TS[BenchPythonRecord]](
+            ident=ident,
+            price=ident * 1.5,
+            label=hg.convert[TS[str]](ident),
+        ))
+
+    return g, cycles
+
+
+def python_owned_dedup_native(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        null_sink(hg.drop_dups(_cs_equal_pair_pulse(cycles)))
+
+    return g, cycles
+
+
+def python_owned_dedup_python(scale: float):
+    cycles = int(20_000 * scale)
+
+    @graph
+    def g():
+        null_sink(hg.drop_dups(_python_record_equal_pair_pulse(cycles)))
 
     return g, cycles
 
@@ -1291,6 +1452,56 @@ SCENARIOS = {
         type_cs_std),
     "type_cs_py": _scenario(
         "Value types", "CompoundScalar crossing Python nodes", type_cs_py),
+    "python_owned_pass_through_native": _scenario(
+        "Python-owned structured scalars",
+        "Whole-object pass-through - native layout",
+        python_owned_pass_through_native,
+        suite="diagnostic", modes=HG_CPP_ONLY),
+    "python_owned_pass_through_python": _scenario(
+        "Python-owned structured scalars",
+        "Whole-object pass-through - Python-owned",
+        python_owned_pass_through_python,
+        suite="diagnostic", modes=HG_CPP_ONLY),
+    "python_owned_project_one_native": _scenario(
+        "Python-owned structured scalars",
+        "One field projection - native layout",
+        python_owned_project_one_native,
+        suite="diagnostic", modes=HG_CPP_ONLY),
+    "python_owned_project_one_python": _scenario(
+        "Python-owned structured scalars",
+        "One field projection - Python-owned",
+        python_owned_project_one_python,
+        suite="diagnostic", modes=HG_CPP_ONLY),
+    "python_owned_project_several_native": _scenario(
+        "Python-owned structured scalars",
+        "Three field projections - native layout",
+        python_owned_project_several_native,
+        suite="diagnostic", modes=HG_CPP_ONLY),
+    "python_owned_project_several_python": _scenario(
+        "Python-owned structured scalars",
+        "Three field projections - Python-owned",
+        python_owned_project_several_python,
+        suite="diagnostic", modes=HG_CPP_ONLY),
+    "python_owned_construct_native": _scenario(
+        "Python-owned structured scalars",
+        "Construction from fields - native layout",
+        python_owned_construct_native,
+        suite="diagnostic", modes=HG_CPP_ONLY),
+    "python_owned_construct_python": _scenario(
+        "Python-owned structured scalars",
+        "Construction from fields - Python-owned",
+        python_owned_construct_python,
+        suite="diagnostic", modes=HG_CPP_ONLY),
+    "python_owned_dedup_native": _scenario(
+        "Python-owned structured scalars",
+        "Equality and deduplication - native layout",
+        python_owned_dedup_native,
+        suite="diagnostic", modes=HG_CPP_ONLY),
+    "python_owned_dedup_python": _scenario(
+        "Python-owned structured scalars",
+        "Equality and deduplication - Python-owned",
+        python_owned_dedup_python,
+        suite="diagnostic", modes=HG_CPP_ONLY),
     "type_tsb_partial_fields_std": _scenario(
         "Value types", "Bundle with partial field updates",
         type_tsb_partial_fields_std, suite="diagnostic"),

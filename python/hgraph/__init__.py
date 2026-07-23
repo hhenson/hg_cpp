@@ -68,7 +68,8 @@ from ._wiring import _Combine as _CombineClass
 combine = _CombineClass()
 
 from ._types import (Frame, TABLE, COMPOUND_SCALAR, COMPOUND_SCALAR_1,
-                     compound_scalar, register_native_scalar_type)
+                     compound_scalar, register_native_scalar_type,
+                     register_python_object_type)
 from ._frame import (frame_metadata, has_frame_metadata, without_frame_metadata,
                      with_frame_metadata)
 from ._table import (ToTableMode, TableSchema, make_table_schema, table_schema,
@@ -107,7 +108,7 @@ __all__ = [
     "utc_now", "get_recorded_value", "get_recorder_api", "get_recording_label", "set_recorder_api", "set_recording_label", "EvaluationClock", "TSW_OUT", "get_context", "equal_lambdas", "is_feature_enabled",
     "GlobalContext", "GlobalState", "set_as_of", "set_table_schema_date_key", "set_table_schema_as_of_key",
     "set_record_replay_config", "frame_store_contains", "frame_store_read", "evaluate_const",
-    "Frame", "with_frame_metadata", "frame_metadata", "has_frame_metadata", "without_frame_metadata", "register_native_scalar_type", "TABLE", "COMPOUND_SCALAR", "COMPOUND_SCALAR_1", "ToTableMode", "TableSchema", "make_table_schema", "table_schema",
+    "Frame", "with_frame_metadata", "frame_metadata", "has_frame_metadata", "without_frame_metadata", "register_native_scalar_type", "register_python_object_type", "TABLE", "COMPOUND_SCALAR", "COMPOUND_SCALAR_1", "ToTableMode", "TableSchema", "make_table_schema", "table_schema",
     "table_shape", "table_shape_from_schema", "shape_of_table_type", "drop_dups",
     "get_table_schema_date_key", "get_table_schema_as_of_key",
     "ParseError", "IncorrectTypeBinding", "RequirementsNotMetWiringError",

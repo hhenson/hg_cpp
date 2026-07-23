@@ -352,11 +352,33 @@ void bind_ports(nb::module_ &m) {
   });
   m.def(
       "register_bundle_class",
-      [](PyValueType type, nb::object cls, nb::tuple constructor_fields,
-         bool constructor_accepts_kwargs, nb::tuple raw_descriptor_fields,
-         bool force_constructor) {
+      [](PyValueType type, nb::object cls, nb::object specialization,
+         nb::tuple constructor_fields, bool constructor_accepts_kwargs,
+         nb::tuple raw_descriptor_fields,
+         nb::tuple defaulted_constructor_fields, bool force_constructor) {
         auto &info = bundle_class_info_registry()[type.meta];
+        if (info.type.is_valid() && !info.type.is(cls)) {
+          throw nb::type_error("Bundle schema is already registered to a "
+                               "different Python class");
+        }
+        const bool has_specialization =
+            specialization.is_valid() && !specialization.is_none();
+        if (info.specialization.is_valid() != has_specialization ||
+            (has_specialization &&
+             PyObject_RichCompareBool(info.specialization.ptr(),
+                                      specialization.ptr(), Py_EQ) != 1)) {
+          if (info.type.is_valid()) {
+            if (PyErr_Occurred() != nullptr) {
+              nb::raise_python_error();
+            }
+            throw nb::type_error(
+                "Bundle schema is already registered with a different "
+                "Python specialization");
+          }
+        }
         info.type = cls;
+        info.specialization =
+            has_specialization ? specialization : nb::object{};
         info.allocator =
             reinterpret_cast<PyBundleClassInfo::Allocator>(PyType_GetSlot(
                 reinterpret_cast<PyTypeObject *>(cls.ptr()), Py_tp_alloc));
@@ -369,6 +391,7 @@ void bind_ports(nb::module_ &m) {
         info.field_overrides.reserve(type.meta->field_count);
         info.constructor_fields.assign(type.meta->field_count,
                                        constructor_accepts_kwargs);
+        info.defaulted_constructor_fields.assign(type.meta->field_count, false);
         info.requires_constructor = force_constructor;
         std::vector<bool> raw_descriptors(type.meta->field_count, false);
         for (nb::handle constructor_field : constructor_fields) {
@@ -387,6 +410,16 @@ void bind_ports(nb::module_ &m) {
             const char *field_name = type.meta->fields[index].name;
             if (field_name != nullptr && name == field_name) {
               raw_descriptors[index] = true;
+              break;
+            }
+          }
+        }
+        for (nb::handle defaulted_field : defaulted_constructor_fields) {
+          const std::string name = nb::cast<std::string>(defaulted_field);
+          for (std::size_t index = 0; index < type.meta->field_count; ++index) {
+            const char *field_name = type.meta->fields[index].name;
+            if (field_name != nullptr && name == field_name) {
+              info.defaulted_constructor_fields[index] = true;
               break;
             }
           }
@@ -441,21 +474,25 @@ void bind_ports(nb::module_ &m) {
         bundle_class_registry()[nb::int_(
             reinterpret_cast<std::uintptr_t>(type.meta))] = std::move(cls);
       },
-      nb::arg("type"), nb::arg("cls"),
+      nb::arg("type"), nb::arg("cls"), nb::arg("specialization") = nb::none(),
       nb::arg("constructor_fields") = nb::tuple(),
       nb::arg("constructor_accepts_kwargs") = false,
       nb::arg("raw_descriptor_fields") = nb::tuple(),
+      nb::arg("defaulted_constructor_fields") = nb::tuple(),
       nb::arg("force_constructor") = false);
-  m.def("register_tsb_compound_class",
-        [](PyTsType tsb, PyValueType value) {
-          if (tsb.meta == nullptr || tsb.meta->kind != TSTypeKind::TSB ||
-              value.meta == nullptr ||
-              value.meta->value_kind() != ValueTypeKind::Bundle) {
-            throw nb::type_error(
-                "register_tsb_compound_class requires TSB and Bundle schemas");
-          }
-          tsb_compound_value_registry()[tsb.meta] = value.meta;
-        });
+  m.def(
+      "register_python_bundle_binding",
+      [](PyValueType type) { register_python_bundle_binding(type.meta); },
+      nb::arg("type"));
+  m.def("register_tsb_compound_class", [](PyTsType tsb, PyValueType value) {
+    if (tsb.meta == nullptr || tsb.meta->kind != TSTypeKind::TSB ||
+        value.meta == nullptr ||
+        value.meta->value_kind() != ValueTypeKind::Bundle) {
+      throw nb::type_error(
+          "register_tsb_compound_class requires TSB and Bundle schemas");
+    }
+    tsb_compound_value_registry()[tsb.meta] = value.meta;
+  });
 
   m.def("tsl_element", [](const PyPort &port, std::size_t index) {
     // Fixed-TSL scalar indexing: the structural element projection

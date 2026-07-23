@@ -339,9 +339,9 @@ namespace hgraph
             if (!valid()) { throw std::logic_error("ValueView::hash requires a non-empty view"); }
             return type().ops_ref().hash(data());
         }
-        [[nodiscard]] bool equals(const ValueView &other) const noexcept;
+        [[nodiscard]] bool equals(const ValueView &other) const;
         [[nodiscard]] std::partial_ordering compare(const ValueView &other) const noexcept;
-        [[nodiscard]] bool operator==(const ValueView &other) const noexcept { return equals(other); }
+        [[nodiscard]] bool operator==(const ValueView &other) const { return equals(other); }
         [[nodiscard]] std::partial_ordering operator<=>(const ValueView &other) const noexcept
         {
             return compare(other);
