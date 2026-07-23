@@ -229,6 +229,59 @@ TEST_CASE("real-time executor stop request wakes a sleeping executor")
     CHECK(hgraph::testing::wall_now() < run_started + TimeDelta{500'000});
 }
 
+TEST_CASE("real-time executor honours end_time on the wall clock under busy rescheduling")
+{
+    using namespace hgraph;
+
+    // A node that re-schedules itself every MIN_TD while each cycle burns
+    // real wall time is the shape of a permanently failing adaptor retry
+    // loop: evaluation time advances one microsecond per cycle, so the
+    // logical end_time bound alone would need hundreds of thousands of
+    // cycles. The wall clock passing end_time must end the run.
+    constexpr TimeDelta run_window{250'000};
+    constexpr auto      cycle_cost = std::chrono::milliseconds{2};
+
+    std::atomic_int eval_count{0};
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<Int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    NodeTypeMetaData schema;
+    schema.display_name      = "busy_rescheduling_source";
+    schema.output_schema     = ts_int;
+    schema.node_kind         = NodeKind::PullSource;
+    schema.schedule_on_start = true;
+
+    NodeCallbacks callbacks;
+    callbacks.evaluate = [&eval_count, cycle_cost](const NodeView &view, DateTime evaluation_time) {
+        ++eval_count;
+        std::this_thread::sleep_for(cycle_cost);
+        testing::set_output_value(view, evaluation_time, Int{eval_count.load()});
+        view.graph_value()->schedule_node(view.node_index(), evaluation_time + MIN_TD);
+    };
+
+    GraphBuilder graph_builder;
+    graph_builder.add_node(NodeBuilder::native(std::move(schema), std::move(callbacks)));
+
+    const DateTime start_time = hgraph::testing::wall_now();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .mode(GraphExecutorMode::RealTime)
+        .start_time(start_time)
+        .end_time(start_time + run_window);
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    executor.view().run();
+
+    const TimeDelta elapsed = hgraph::testing::wall_now() - start_time;
+    CHECK(eval_count.load() > 0);
+    // Generous CI margin: the fixed executor returns at ~run_window; the
+    // starved one needs run_window / MIN_TD cycles at cycle_cost each.
+    CHECK(elapsed < TimeDelta{5'000'000});
+}
+
 TEST_CASE("real-time executor evaluates root push queues after pending update signal")
 {
     using namespace hgraph;
