@@ -29,6 +29,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <string>
 
 #include <utility>
 
@@ -274,4 +275,95 @@ TEST_CASE("simulation: a self-rescheduling source drives multiple cycles over ti
     // output); the downstream add_one was re-evaluated each cycle and tracked it.
     CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<std::int32_t>() == 2);
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 3);
+}
+
+namespace
+{
+    using namespace hgraph;
+
+    hgraph::NodeBuilder immediate_rescheduling_source(const char *display_name,
+                                                      int *eval_count,
+                                                      int burst_length,
+                                                      int total_evaluations)
+    {
+        auto       &registry = TypeRegistry::instance();
+        const auto *int_meta = registry.register_scalar<Int>("int");
+        const auto *ts_int   = registry.ts(int_meta);
+
+        NodeTypeMetaData schema;
+        schema.display_name      = display_name;
+        schema.output_schema     = ts_int;
+        schema.node_kind         = NodeKind::PullSource;
+        schema.schedule_on_start = true;
+
+        NodeCallbacks callbacks;
+        callbacks.evaluate = [eval_count, burst_length, total_evaluations](const NodeView &view,
+                                                                           DateTime evaluation_time) {
+            ++(*eval_count);
+            hgraph::testing::set_output_value(view, evaluation_time, Int{*eval_count});
+            if (*eval_count >= total_evaluations) { return; }
+            const bool burst_boundary = burst_length > 0 && (*eval_count % burst_length) == 0;
+            const TimeDelta delay = burst_boundary ? TimeDelta{1'000} : MIN_TD;
+            view.graph_value()->schedule_node(view.node_index(), evaluation_time + delay);
+        };
+
+        return NodeBuilder::native(std::move(schema), std::move(callbacks));
+    }
+}  // namespace
+
+TEST_CASE("simulation: the opt-in recursion guard trips on a sustained MIN_TD loop")
+{
+    using namespace hgraph;
+
+    int eval_count = 0;
+
+    GraphBuilder graph_builder;
+    // burst_length 0: reschedules +MIN_TD forever (until the guard trips).
+    graph_builder.add_node(immediate_rescheduling_source("busy_loop_source", &eval_count, 0, 1'000'000));
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{3'600'000'000})
+        .max_consecutive_immediate_cycles(50);
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+
+    std::string message;
+    try
+    {
+        executor.view().run();
+        FAIL("expected RecursiveEvaluationError");
+    }
+    catch (const RecursiveEvaluationError &error)
+    {
+        message = error.what();
+    }
+
+    // The guard trips at the limit, records one further cycle, then throws.
+    CHECK(eval_count >= 50);
+    CHECK(eval_count <= 55);
+    CHECK(message.find("potential recursive evaluation loop") != std::string::npos);
+    CHECK(message.find("busy_loop_source") != std::string::npos);
+}
+
+TEST_CASE("simulation: immediate bursts below the guard limit do not trip it")
+{
+    using namespace hgraph;
+
+    int eval_count = 0;
+
+    GraphBuilder graph_builder;
+    // Bursts of 10 immediate cycles separated by 1ms jumps, 60 evaluations total.
+    graph_builder.add_node(immediate_rescheduling_source("bursty_source", &eval_count, 10, 60));
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{3'600'000'000})
+        .max_consecutive_immediate_cycles(50);
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    CHECK_NOTHROW(executor.view().run());
+    CHECK(eval_count == 60);
 }

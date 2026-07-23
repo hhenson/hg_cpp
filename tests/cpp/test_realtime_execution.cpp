@@ -284,6 +284,61 @@ TEST_CASE("real-time executor honours end_time on the wall clock under busy resc
     CHECK(elapsed < TimeDelta{15'000'000});
 }
 
+TEST_CASE("real-time executor recursion guard trips without waiting for end_time")
+{
+    using namespace hgraph;
+
+    // With the opt-in guard armed, a busy MIN_TD loop throws promptly during
+    // the run window instead of spinning until the drain bound cuts it off.
+    std::atomic_int eval_count{0};
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<Int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    NodeTypeMetaData schema;
+    schema.display_name      = "busy_guarded_source";
+    schema.output_schema     = ts_int;
+    schema.node_kind         = NodeKind::PullSource;
+    schema.schedule_on_start = true;
+
+    NodeCallbacks callbacks;
+    callbacks.evaluate = [&eval_count](const NodeView &view, DateTime evaluation_time) {
+        ++eval_count;
+        testing::set_output_value(view, evaluation_time, Int{eval_count.load()});
+        view.graph_value()->schedule_node(view.node_index(), evaluation_time + MIN_TD);
+    };
+
+    GraphBuilder graph_builder;
+    graph_builder.add_node(NodeBuilder::native(std::move(schema), std::move(callbacks)));
+
+    const DateTime start_time = hgraph::testing::wall_now();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .mode(GraphExecutorMode::RealTime)
+        .start_time(start_time)
+        .end_time(start_time + TimeDelta{60'000'000})
+        .max_consecutive_immediate_cycles(50);
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+
+    std::string message;
+    try
+    {
+        executor.view().run();
+        FAIL("expected RecursiveEvaluationError");
+    }
+    catch (const RecursiveEvaluationError &error)
+    {
+        message = error.what();
+    }
+
+    CHECK(message.find("busy_guarded_source") != std::string::npos);
+    // Nowhere near the 60s end_time: the guard tripped after ~51 cycles.
+    CHECK(hgraph::testing::wall_now() - start_time < TimeDelta{10'000'000});
+}
+
 TEST_CASE("real-time executor drains a lagging graph to its logical end_time")
 {
     using namespace hgraph;
