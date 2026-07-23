@@ -21,6 +21,22 @@ _COMPOUND_TYPE_CACHE = {}
 _TSB_SCHEMA_CLASSES = {}
 
 
+def register_native_scalar_type(python_type, native_value_type):
+    """Associate a Python class with a registered native scalar schema.
+
+    ``native_value_type`` may be the schema name or the native ``ValueType``
+    handle returned by the bridge. Downstream native modules normally use the
+    installed C++ helper, which installs the same process-wide association.
+    """
+    if not isinstance(python_type, type):
+        raise TypeError("python_type must be a Python class")
+    if isinstance(native_value_type, str):
+        native_value_type = _hgraph.value_type(native_value_type)
+    if not isinstance(native_value_type, _hgraph.ValueType):
+        raise TypeError("native_value_type must be a native schema name or ValueType")
+    _hgraph.register_native_scalar_type(python_type, native_value_type)
+
+
 def _register_bundle_class(meta, scalar):
     """Register reconstruction policy without exposing it as runtime semantics."""
     import inspect
@@ -659,6 +675,10 @@ def _compound_value_type(scalar, type_args=()):
 def _value_type(scalar):
     if isinstance(scalar, _hgraph.ValueType):
         return scalar
+    if isinstance(scalar, type):
+        native_value_type = _hgraph.native_scalar_value_type(scalar)
+        if native_value_type is not None:
+            return native_value_type
     if isinstance(scalar, _ArrayType):
         dimensions = tuple(0 if dimension == -1 else dimension
                            for dimension in scalar.dimensions) or (0,)
@@ -686,7 +706,9 @@ def _value_type(scalar):
         return _hgraph.value_type("series")   # element-untyped base
     if isinstance(scalar, _FrameType):
         try:
-            return _hgraph.frame_vt(_value_type(scalar.schema))
+            row = _value_type(scalar.schema)
+            return (_hgraph.frame_vt(row) if scalar.metadata is None
+                    else _hgraph.frame_vt(row, _value_type(scalar.metadata)))
         except _GenericType as error:
             raise _GenericType(
                 repr(scalar), _hgraph.scalar_pattern_frame(error.pattern)) from error
@@ -1245,25 +1267,35 @@ class _FrameMeta(type):
         # 'frame' scalar; the typed form carries its column bundle so table
         # operators can resolve columns (an input schema is a MINIMUM
         # requirement, an output schema is exact - the P4 ruling).
+        if isinstance(schema, tuple):
+            if len(schema) != 2:
+                raise TypeError("Frame expects Frame[Row] or Frame[Row, Metadata]")
+            return _FrameType(schema[0], schema[1])
         return _FrameType(schema)
 
 
 class _FrameType:
     """Frame[Schema]: resolves to the typed 'frame' scalar value type."""
 
-    __slots__ = ("schema",)
+    __slots__ = ("schema", "metadata")
 
-    def __init__(self, schema):
+    def __init__(self, schema, metadata=None):
         self.schema = schema
+        self.metadata = metadata
 
     def __repr__(self):
-        return f"Frame[{getattr(self.schema, '__name__', self.schema)!r}]"
+        row = getattr(self.schema, "__name__", self.schema)
+        if self.metadata is None:
+            return f"Frame[{row!r}]"
+        metadata = getattr(self.metadata, "__name__", self.metadata)
+        return f"Frame[{row!r}, {metadata!r}]"
 
     def __eq__(self, other):
-        return isinstance(other, _FrameType) and self.schema is other.schema
+        return (isinstance(other, _FrameType) and self.schema is other.schema
+                and self.metadata is other.metadata)
 
     def __hash__(self):
-        return hash((_FrameType, self.schema))
+        return hash((_FrameType, self.schema, self.metadata))
 
 
 class Frame(metaclass=_FrameMeta):

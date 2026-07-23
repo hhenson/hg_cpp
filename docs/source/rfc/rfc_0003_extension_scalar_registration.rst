@@ -42,6 +42,30 @@ type and Python class, ensure the scalar is registered in the shared
 ``TypeRegistry``, and install the same association without importing private
 Python modules.
 
+Public surface
+--------------
+
+Python extensions may call:
+
+.. code-block:: python
+
+   from hgraph import register_native_scalar_type
+
+   register_native_scalar_type(PythonType, "extension.scalar_name")
+
+The second argument may instead be the native ``ValueType`` handle. Native
+nanobind modules normally use the installed header:
+``hgraph/python/native_scalar_registration.h``. Its templated overload accepts
+the extension-owned C++ scalar type and Python class, registers the scalar
+through the shared ``TypeRegistry``, and installs the same bidirectional
+association.
+
+The shared runtime owns the registry. Python annotation resolution consults it
+before opaque-object fallback, schema reflection consults its reverse mapping,
+and schema-free value inference uses the registered conversion operations.
+The test-only complete-registry reset clears these associations because its
+schema pointers are invalidated at the same time.
+
 Ownership and constraints
 -------------------------
 
@@ -73,6 +97,10 @@ Acceptance criteria
 Implementation status
 ---------------------
 
-No core implementation is included. A downstream test extension that currently
-requires a private type mapping will provide the proving integration for this
-RFC.
+The implementation is complete on its implementation PR. A separately built
+test extension uses only the installed SDK to register a custom native scalar,
+resolve ``TS[ExtensionType]``, reflect its Python class, and round-trip a value
+through a Python-authored graph. It also verifies harmless duplicate
+registration and deterministic conflicts on both sides. This RFC remains
+``Proposed`` until the implementation is accepted for merge, when it changes
+to ``Accepted`` in the same PR.

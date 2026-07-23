@@ -1051,6 +1051,19 @@ TEST_CASE("operators: typed Series and Frame patterns preserve their scalar stru
     CHECK(scalar_type<SeriesOf<Int>>() == registry.series(integer));
     CHECK(scalar_type<FrameOf<Bundle<"tests.pattern::Row", Field<"value", Int>>>>() ==
           registry.frame(registry.bundle("tests.pattern::Row", {{"value", integer}})));
+
+    const auto *metadata = registry.bundle("tests.pattern::Metadata", {{"version", integer}});
+    const ScalarPattern metadata_frame_pattern =
+        to_scalar_pattern<FrameOf<ScalarVar<"ROWS">, ScalarVar<"META">>>();
+    ResolutionMap metadata_frame_map;
+    const auto *typed_frame = registry.frame(row, metadata);
+    REQUIRE(scalar_pattern_match(metadata_frame_pattern, typed_frame, metadata_frame_map));
+    CHECK(metadata_frame_map.find_scalar("ROWS") == row);
+    CHECK(metadata_frame_map.find_scalar("META") == metadata);
+    CHECK(scalar_pattern_resolve(metadata_frame_pattern, metadata_frame_map) == typed_frame);
+    CHECK(scalar_pattern_to_string(metadata_frame_pattern) == "Frame[~ROWS, ~META]");
+    CHECK_FALSE(scalar_pattern_match(frame_pattern, typed_frame, frame_map));
+    CHECK_THROWS_AS(registry.frame(row, integer), std::invalid_argument);
 }
 
 TEST_CASE("operators: shaped Array patterns resolve element and dimension variables")

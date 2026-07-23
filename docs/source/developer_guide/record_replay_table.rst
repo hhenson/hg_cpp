@@ -167,6 +167,17 @@ Arrow directly. Schema semantics (ruling):
 - a schema on an **output** is *exact* — the produced frame must have
   **exactly** that schema.
 
+The typed value also supports ``Frame[Rows, Metadata]``. Frame-level metadata
+is encoded field by field into the Arrow schema metadata, not stored in a
+second native object and not repeated as Arrow columns. A reserved schema key
+records the qualified hgraph Bundle type; supported atomic fields use plain
+strings and structured fields use the native schema-directed JSON codec.
+Direct ``FrameStore`` reads and writes therefore preserve metadata as part of
+the Arrow representation. Serializing a stream whose *row payload* is itself a
+metadata-bearing Frame into the generic bitemporal table layout is not yet
+defined; a backend must preserve or explicitly transform those schema entries
+when that case is added.
+
 ``TableSchema`` maps to an Arrow schema (``value_time``/``as_of`` as
 timestamp columns; partition keys; removed as a bool column). The serializer
 ops write **directly into Arrow array builders** (append per tick), so the

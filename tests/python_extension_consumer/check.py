@@ -54,12 +54,60 @@ import importlib
 import sys
 
 import _hgraph  # Load the wheel's shared runtime first.
+import hgraph
+from hgraph import TS, pass_through, register_native_scalar_type
+from hgraph.reflection import scalar_type
+from hgraph.test import eval_node
 
 sys.path.insert(0, sys.argv[1])
 consumer = importlib.import_module("_hgraph_consumer")
 address = consumer.registry_address()
 if not isinstance(address, int) or address == 0:
     raise RuntimeError("downstream extension returned an invalid registry address")
+
+# The extension registered its Python class and native scalar through public
+# installed C++ headers. Python annotations and reverse reflection use that
+# same process-wide association.
+assert repr(TS[consumer.ConsumerScalar].handle) == (
+    "TS[hgraph.test.consumer_scalar]"
+)
+assert scalar_type(TS[consumer.ConsumerScalar]) is consumer.ConsumerScalar
+
+value = consumer.ConsumerScalar(42)
+result = eval_node(
+    pass_through,
+    [value],
+    resolution_dict={"ts": TS[consumer.ConsumerScalar]},
+)
+assert result == [value]
+
+# Repeating the same pair is harmless. Conflicts on either side fail.
+register_native_scalar_type(
+    consumer.ConsumerScalar, "hgraph.test.consumer_scalar"
+)
+class OtherConsumerScalar:
+    pass
+try:
+    register_native_scalar_type(consumer.ConsumerScalar, "int")
+except ValueError:
+    pass
+else:
+    raise RuntimeError("conflicting Python-class registration was accepted")
+try:
+    register_native_scalar_type(
+        OtherConsumerScalar, "hgraph.test.consumer_scalar"
+    )
+except ValueError:
+    pass
+else:
+    raise RuntimeError("conflicting native-schema registration was accepted")
+try:
+    register_native_scalar_type(OtherConsumerScalar, "int")
+except ValueError:
+    pass
+else:
+    raise RuntimeError("built-in native-schema registration was replaced")
+
 print(f"installed Python extension consumer passed: registry={address:#x}")
 """,
                 str(module_dir),

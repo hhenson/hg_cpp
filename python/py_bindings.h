@@ -12,6 +12,7 @@
 namespace hgraph::python_bridge
 {
     void bind_type_system(nanobind::module_ &m);        // py_type_system.cpp
+    void register_builtin_native_scalar_types();        // py_type_system.cpp
     void bind_ports(nanobind::module_ &m);              // py_ports.cpp
     void bind_wiring(nanobind::module_ &m);             // py_wiring.cpp
     void bind_state_and_services(nanobind::module_ &m); // py_state_services.cpp

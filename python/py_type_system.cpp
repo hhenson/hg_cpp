@@ -7,12 +7,39 @@
 #include "py_wiring.h"
 #include "py_bindings.h"
 
+#include <hgraph/python/native_scalar_registration.h>
+
 namespace nb = nanobind;
 using namespace hgraph;
 using namespace hgraph::python_bridge;
 
 namespace hgraph::python_bridge
 {
+    void register_builtin_native_scalar_types()
+    {
+        const nb::module_ builtins = nb::module_::import_("builtins");
+        const nb::module_ datetime = nb::module_::import_("datetime");
+        const auto register_type = [](nb::handle python_type,
+                                      std::string_view native_name) {
+            const auto *meta = TypeRegistry::instance().value_type(native_name);
+            if (meta == nullptr)
+            {
+                throw std::logic_error(
+                    "built-in native scalar schema is not registered");
+            }
+            python_bridge::register_native_scalar_type(python_type, meta);
+        };
+        register_type(builtins.attr("bool"), "bool");
+        register_type(builtins.attr("int"), "int");
+        register_type(builtins.attr("float"), "float");
+        register_type(builtins.attr("str"), "str");
+        register_type(builtins.attr("bytes"), "bytes");
+        register_type(datetime.attr("datetime"), "datetime");
+        register_type(datetime.attr("date"), "date");
+        register_type(datetime.attr("time"), "time");
+        register_type(datetime.attr("timedelta"), "timedelta");
+    }
+
     void bind_type_system(nb::module_ &m)
     {
     nb::class_<PyTsType>(m, "TsType")
@@ -154,8 +181,21 @@ namespace hgraph::python_bridge
         if (meta == nullptr) { throw nb::value_error(("unknown value type: " + name).c_str()); }
         return PyValueType{meta};
     });
+    m.def("register_native_scalar_type",
+          [](nb::handle python_type, PyValueType native_value_type) {
+              python_bridge::register_native_scalar_type(
+                  python_type, native_value_type.meta);
+          });
+    m.def("native_scalar_value_type", [](nb::handle python_type) -> nb::object {
+        const auto *meta =
+            python_bridge::native_scalar_type_for_python(python_type);
+        return meta != nullptr ? nb::cast(PyValueType{meta}) : nb::none();
+    });
     m.def("python_type_for_value", [](PyValueType value) -> nb::object {
         if (value.meta == nullptr) { return nb::none(); }
+        nb::object native =
+            python_bridge::python_type_for_native_scalar(value.meta);
+        if (!native.is_none()) { return native; }
         const auto bundle = bundle_class_info_registry().find(value.meta);
         if (bundle != bundle_class_info_registry().end() && bundle->second.type.is_valid())
         {
@@ -173,6 +213,7 @@ namespace hgraph::python_bridge
         if (name == "bytes") { return builtins.attr("bytes"); }
         return nb::cast(value);
     });
+    register_builtin_native_scalar_types();
     m.def("ts", [](PyValueType v) { return PyTsType{TypeRegistry::instance().ts(v.meta)}; });
     m.def("ref_ts", [](PyTsType target) { return PyTsType{TypeRegistry::instance().ref(target.meta)}; });
     m.def("ref_target", [](PyTsType ref) { return PyTsType{TypeRegistry::instance().dereference(ref.meta)}; });
@@ -228,6 +269,38 @@ namespace hgraph::python_bridge
     m.def("frame_vt", [](PyValueType schema) {
         // Frame[Schema]: the typed frame meta carrying its column bundle.
         return PyValueType{TypeRegistry::instance().frame(schema.meta)};
+    });
+    m.def("frame_vt", [](PyValueType schema, PyValueType metadata) {
+        // Frame[Schema, Metadata]: metadata is encoded into Arrow schema metadata.
+        return PyValueType{TypeRegistry::instance().frame(schema.meta, metadata.meta)};
+    });
+    m.def("_with_frame_metadata", [](nb::handle table, PyValueType metadata_schema,
+                                      nb::handle metadata) {
+        Value frame_value = python_bridge::py_arrow_to_frame(table);
+        Value metadata_value = python_bridge::py_to_value_as(metadata, metadata_schema.meta);
+        Frame encoded = with_frame_metadata(
+            frame_value.view().checked_as<Frame>(), std::move(metadata_value));
+        return python_bridge::frame_to_py(encoded);
+    });
+    m.def("_frame_metadata", [](nb::handle table, PyValueType metadata_schema) {
+        Value frame_value = python_bridge::py_arrow_to_frame(table);
+        Value decoded = frame_metadata(
+            frame_value.view().checked_as<Frame>(), metadata_schema.meta);
+        return python_bridge::value_to_py(decoded.view());
+    });
+    m.def("_frame_metadata_reflective", [](nb::handle table) {
+        Value frame_value = python_bridge::py_arrow_to_frame(table);
+        Value decoded = frame_metadata(frame_value.view().checked_as<Frame>());
+        return python_bridge::value_to_py(decoded.view());
+    });
+    m.def("_has_frame_metadata", [](nb::handle table) {
+        Value frame_value = python_bridge::py_arrow_to_frame(table);
+        return has_frame_metadata(frame_value.view().checked_as<Frame>());
+    });
+    m.def("_without_frame_metadata", [](nb::handle table) {
+        Value frame_value = python_bridge::py_arrow_to_frame(table);
+        Frame stripped = without_frame_metadata(frame_value.view().checked_as<Frame>());
+        return python_bridge::frame_to_py(stripped);
     });
     m.def("table_schema_info", [](PyTsType ts, const std::string &date_key, const std::string &as_of_key) {
         // TABLE layout introspection (design record step 6): the C++ layout

@@ -273,11 +273,12 @@ namespace hgraph
         using element_type = TElement;
     };
 
-    /** Arrow Frame scalar qualified by its column Bundle schema. Runtime storage is ``Frame``. */
-    template <typename TSchema>
+    /** Arrow Frame scalar qualified by row and optional Arrow-metadata Bundle schemas. */
+    template <typename TSchema, typename TMetadata = void>
     struct FrameOf
     {
         using schema_type = TSchema;
+        using metadata_type = TMetadata;
     };
 
     // -----------------------------------------------------------------
@@ -537,19 +538,28 @@ namespace hgraph
         }
     };
 
-    template <typename TSchema>
-    struct scalar_descriptor<FrameOf<TSchema>>
+    template <typename TSchema, typename TMetadata>
+    struct scalar_descriptor<FrameOf<TSchema, TMetadata>>
     {
         [[nodiscard]] static constexpr bool is_concrete() noexcept
         {
-            return scalar_descriptor<TSchema>::is_concrete();
+            return scalar_descriptor<TSchema>::is_concrete() &&
+                   (std::is_void_v<TMetadata> || scalar_descriptor<TMetadata>::is_concrete());
         }
 
         [[nodiscard]] static const ValueTypeMetaData *value_meta()
         {
             if constexpr (is_concrete())
             {
-                return TypeRegistry::instance().frame(scalar_descriptor<TSchema>::value_meta());
+                if constexpr (std::is_void_v<TMetadata>)
+                {
+                    return TypeRegistry::instance().frame(scalar_descriptor<TSchema>::value_meta());
+                }
+                else
+                {
+                    return TypeRegistry::instance().frame(scalar_descriptor<TSchema>::value_meta(),
+                                                          scalar_descriptor<TMetadata>::value_meta());
+                }
             }
             else { return nullptr; }
         }

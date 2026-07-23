@@ -212,12 +212,14 @@ namespace hgraph
         }
     };
 
-    template <typename TSchema>
-    struct scalar_resolver<FrameOf<TSchema>>
+    template <typename TSchema, typename TMetadata>
+    struct scalar_resolver<FrameOf<TSchema, TMetadata>>
     {
         [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &m)
         {
-            return TypeRegistry::instance().frame(scalar_resolver<TSchema>::resolve(m));
+            const auto *row = scalar_resolver<TSchema>::resolve(m);
+            if constexpr (std::is_void_v<TMetadata>) { return TypeRegistry::instance().frame(row); }
+            else { return TypeRegistry::instance().frame(row, scalar_resolver<TMetadata>::resolve(m)); }
         }
     };
 
@@ -411,8 +413,8 @@ namespace hgraph
         }
     };
 
-    template <typename TSchema>
-    struct scalar_unifier<FrameOf<TSchema>>
+    template <typename TSchema, typename TMetadata>
+    struct scalar_unifier<FrameOf<TSchema, TMetadata>>
     {
         static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m)
         {
@@ -422,6 +424,21 @@ namespace hgraph
                 throw std::logic_error("expected a typed Frame scalar");
             }
             scalar_unifier<TSchema>::unify(concrete->element_type, m);
+            if constexpr (std::is_void_v<TMetadata>)
+            {
+                if (concrete->key_type != nullptr)
+                {
+                    throw std::logic_error("expected a metadata-free Frame scalar");
+                }
+            }
+            else
+            {
+                if (concrete->key_type == nullptr)
+                {
+                    throw std::logic_error("expected a metadata-bearing Frame scalar");
+                }
+                scalar_unifier<TMetadata>::unify(concrete->key_type, m);
+            }
         }
     };
 

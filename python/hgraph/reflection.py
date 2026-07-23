@@ -112,6 +112,10 @@ def _wrap(handle):
 def _vt_to_py(vt):
     py = _VT_TO_PY.get(vt)
     if py is None:
+        reflected = _m.python_type_for_value(vt)
+        if isinstance(reflected, type):
+            py = reflected
+    if py is None:
         raise TypeError(
             f"scalar type is not a plain atomic python type (kind {_m.vt_kind(vt)}); "
             "decompose it further or read it from the schema"

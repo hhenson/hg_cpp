@@ -43,7 +43,7 @@ namespace hgraph::testing
     template <typename T, auto... Dimensions>
     struct harness_element<TS<ArrayOf<T, Dimensions...>>> { using type = Value; };
     template <typename T> struct harness_element<TS<SeriesOf<T>>> { using type = Series; };
-    template <typename T> struct harness_element<TS<FrameOf<T>>> { using type = Frame; };
+    template <typename T, typename M> struct harness_element<TS<FrameOf<T, M>>> { using type = Frame; };
     template <typename T, std::size_t Period, std::size_t MinPeriod>
     struct harness_element<TSW<T, Period, MinPeriod>>
     {

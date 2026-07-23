@@ -259,13 +259,15 @@ namespace hgraph
         const ValueTypeMetaData *series(const ValueTypeMetaData *element_type);
         /** True when ``meta`` is the base Series schema or an interned ``Series[T]`` schema. */
         [[nodiscard]] bool is_series(const ValueTypeMetaData *meta) const;
-        /** A Frame parameterised by its column schema (``Frame[Schema]``, a
-            Bundle meta); shares the base ``frame`` storage plan + ops (the
-            :cpp:func:`series` pattern), distinct meta carrying the schema on
-            ``element_type`` so table operators can resolve columns. A null
-            schema returns the base (untyped) frame scalar. */
-        const ValueTypeMetaData *frame(const ValueTypeMetaData *column_schema);
-        /** True when ``meta`` is the base Frame schema or an interned ``Frame[Schema]`` schema. */
+        /** A Frame parameterised by its row schema and optional frame-level
+            metadata schema (``Frame[Row]`` or ``Frame[Row, Metadata]``).
+            Typed frames share the base ``frame`` storage plan and ops;
+            ``element_type`` carries the row schema and ``key_type`` carries
+            the schema for field-wise Arrow schema metadata. A null row schema
+            returns the base frame and cannot be combined with metadata. */
+        const ValueTypeMetaData *frame(const ValueTypeMetaData *column_schema,
+                                       const ValueTypeMetaData *metadata_schema = nullptr);
+        /** True for the base Frame or an interned row-only/metadata-bearing Frame schema. */
         [[nodiscard]] bool is_frame(const ValueTypeMetaData *meta) const;
         /** Intern a set value-schema for ``element_type``. */
         const ValueTypeMetaData *set(const ValueTypeMetaData *element_type);
@@ -659,7 +661,7 @@ namespace hgraph
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_list_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> nullable_tuple_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> series_cache_;
-        InternTable<const ValueTypeMetaData *, ValueTypeMetaData> frame_cache_;
+        InternTable<MapKey, ValueTypeMetaData, MapKeyHash> frame_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_set_cache_;
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> map_cache_;
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> mutable_map_cache_;

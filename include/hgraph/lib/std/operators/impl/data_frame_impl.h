@@ -569,6 +569,101 @@ namespace hgraph::stdlib
         }
     };
 
+    /** Metadata-bearing overloads preserve the Arrow schema metadata. */
+    struct sorted_metadata_frame_impl
+    {
+        static constexpr auto name = "sorted_metadata_frame";
+        static auto defaults() { return std::tuple{arg<"descending">(Bool{false})}; }
+        static void eval(In<"ts", TS<FrameOf<ScalarVar<"R">, ScalarVar<"M">>>> ts,
+                         Scalar<"by", Str> by, Scalar<"descending", Bool> descending,
+                         Out<TS<FrameOf<ScalarVar<"R">, ScalarVar<"M">>>> out)
+        {
+            out.set(data_frame_detail::sort_frame(ts.value(), by.value(), descending.value()));
+        }
+    };
+
+    struct concat_metadata_frame_impl
+    {
+        static constexpr auto name = "concat_metadata_frame";
+        static void eval(In<"ts1", TS<FrameOf<ScalarVar<"R">, ScalarVar<"M">>>> ts1,
+                         In<"ts2", TS<FrameOf<ScalarVar<"R">, ScalarVar<"M">>>> ts2,
+                         Out<TS<FrameOf<ScalarVar<"R">, ScalarVar<"M">>>> out)
+        {
+            out.set(data_frame_detail::concat_frames(ts1.value(), ts2.value()));
+        }
+    };
+
+    struct filter_metadata_frame_impl
+    {
+        static constexpr auto name = "filter_metadata_frame";
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *predicate = time_series_schema_at(context, 1);
+            const auto *frame = ts_value_schema_at(context, 0);
+            return frame != nullptr && TypeRegistry::instance().is_frame(frame) &&
+                   frame->key_type != nullptr && predicate != nullptr &&
+                   predicate->kind == TSTypeKind::TSB;
+        }
+        static void eval(In<"ts", TS<FrameOf<ScalarVar<"R">, ScalarVar<"M">>>> ts,
+                         In<"predicate", TsVar<"P">> predicate,
+                         Out<TS<FrameOf<ScalarVar<"R">, ScalarVar<"M">>>> out)
+        {
+            auto &erased = const_cast<TSInputView &>(predicate.base());
+            out.set(data_frame_detail::filter_frame_by_bundle(ts.value(), erased));
+        }
+    };
+
+    struct filter_cs_metadata_frame_impl
+    {
+        static constexpr auto name = "filter_cs_metadata_frame";
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *predicate = ts_value_schema_at(context, 1);
+            const auto *frame = ts_value_schema_at(context, 0);
+            return frame != nullptr && TypeRegistry::instance().is_frame(frame) &&
+                   frame->key_type != nullptr && predicate != nullptr &&
+                   predicate->value_kind() == ValueTypeKind::Bundle;
+        }
+        static void eval(In<"ts", TS<FrameOf<ScalarVar<"R">, ScalarVar<"M">>>> ts,
+                         In<"predicate", TS<ScalarVar<"P">>> predicate,
+                         Out<TS<FrameOf<ScalarVar<"R">, ScalarVar<"M">>>> out)
+        {
+            out.set(data_frame_detail::filter_frame_by_value(ts.value(), predicate.base().value()));
+        }
+    };
+
+    struct with_columns_metadata_frame_impl
+    {
+        static constexpr auto name = "with_columns_metadata_frame";
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (resolution.find_scalar("O") != nullptr) { return; }
+            const auto *frame = ts_value_schema_at(context, 0);
+            if (frame != nullptr && TypeRegistry::instance().is_frame(frame) &&
+                frame->element_type != nullptr)
+            {
+                resolution.bind_scalar("O", frame->element_type);
+            }
+        }
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const auto *columns = time_series_schema_at(context, 1);
+            const auto *frame = ts_value_schema_at(context, 0);
+            return frame != nullptr && TypeRegistry::instance().is_frame(frame) &&
+                   frame->key_type != nullptr && columns != nullptr &&
+                   columns->kind == TSTypeKind::TSB;
+        }
+        static void eval(In<"ts", TS<FrameOf<ScalarVar<"R">, ScalarVar<"M">>>> ts,
+                         In<"columns", TsVar<"C">> columns,
+                         Out<TS<FrameOf<ScalarVar<"O">, ScalarVar<"M">>>> out)
+        {
+            auto &erased = const_cast<TSInputView &>(columns.base());
+            out.set(data_frame_detail::replace_frame_columns(
+                ts.value(), erased,
+                static_cast<const TSOutputView &>(out).schema()->value_schema->element_type));
+        }
+    };
+
     namespace data_frame_impl_detail
     {
         [[nodiscard]] inline bool output_is_frame(const ResolutionMap &resolution)

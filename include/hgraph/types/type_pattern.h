@@ -139,11 +139,13 @@ namespace hgraph
             p.children.push_back(std::move(element));
             return p;
         }
-        [[nodiscard]] static ScalarPattern frame(ScalarPattern schema)
+        [[nodiscard]] static ScalarPattern frame(ScalarPattern schema,
+                                                 std::optional<ScalarPattern> metadata = std::nullopt)
         {
             ScalarPattern p;
             p.kind = Kind::Frame;
             p.children.push_back(std::move(schema));
+            if (metadata.has_value()) { p.children.push_back(std::move(*metadata)); }
             return p;
         }
         [[nodiscard]] static ScalarPattern array(ScalarPattern element,
@@ -716,12 +718,20 @@ namespace hgraph
         }
     };
 
-    template <typename TSchema>
-    struct scalar_pattern_lower<FrameOf<TSchema>>
+    template <typename TSchema, typename TMetadata>
+    struct scalar_pattern_lower<FrameOf<TSchema, TMetadata>>
     {
         [[nodiscard]] static ScalarPattern lower()
         {
-            return ScalarPattern::frame(to_scalar_pattern<TSchema>());
+            if constexpr (std::is_void_v<TMetadata>)
+            {
+                return ScalarPattern::frame(to_scalar_pattern<TSchema>());
+            }
+            else
+            {
+                return ScalarPattern::frame(to_scalar_pattern<TSchema>(),
+                                            to_scalar_pattern<TMetadata>());
+            }
         }
     };
 }  // namespace hgraph

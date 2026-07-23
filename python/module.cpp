@@ -43,6 +43,7 @@
 #include <hgraph/types/value/specialized_views.h>
 #include <hgraph/types/value/value_builder.h>
 #include <hgraph/python/chrono.h>
+#include <hgraph/python/native_scalar_registration.h>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/optional.h>
@@ -165,9 +166,11 @@ NB_MODULE(_hgraph, m)
         python_bridge::bundle_class_registry().clear();
         python_bridge::bundle_class_info_registry().clear();
         python_bridge::tsb_compound_value_registry().clear();
+        python_bridge::clear_native_scalar_types();
         reset_all_registries();
         ++python_registry_generation;
         stdlib::register_standard_operators();
+        register_builtin_native_scalar_types();
         register_python_overloads();
     });
 }

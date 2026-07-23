@@ -1326,18 +1326,38 @@ namespace hgraph
         return meta->element_type != nullptr && series_cache_.find(meta->element_type) == meta;
     }
 
-    const ValueTypeMetaData *TypeRegistry::frame(const ValueTypeMetaData *column_schema)
+    const ValueTypeMetaData *TypeRegistry::frame(const ValueTypeMetaData *column_schema,
+                                                 const ValueTypeMetaData *metadata_schema)
     {
         const std::lock_guard lock(mutex_);
         const ValueTypeMetaData *base = value_type("frame");
         if (base == nullptr) { throw std::logic_error("frame scalar is not registered"); }
-        if (column_schema == nullptr) { return base; }
+        if (column_schema == nullptr)
+        {
+            if (metadata_schema != nullptr)
+            {
+                throw std::invalid_argument("frame metadata requires a row schema");
+            }
+            return base;
+        }
+        if (metadata_schema != nullptr && !metadata_schema->is_named_bundle())
+        {
+            throw std::invalid_argument(
+                "frame metadata must use a named Bundle schema");
+        }
 
-        const ValueTypeMetaData &meta = frame_cache_.intern(column_schema, [&]() {
+        const MapKey key{metadata_schema, column_schema};
+        const ValueTypeMetaData &meta = frame_cache_.intern(key, [&]() {
+            const std::string label = metadata_schema == nullptr
+                                          ? unary_label(base->name(), column_schema)
+                                          : std::string{base->name()} + "[" +
+                                                std::string{column_schema->name()} + ", " +
+                                                std::string{metadata_schema->name()} + "]";
             ValueTypeMetaData m(ValueTypeKind::Atomic,
                                 base->flags,
-                                store_name_interned(unary_label(base->name(), column_schema)));
+                                store_name_interned(label));
             m.element_type = column_schema;
+            m.key_type = metadata_schema;
             return m;
         });
         // Share the base frame storage plan + ops (arrow conversion is
@@ -1354,7 +1374,8 @@ namespace hgraph
         if (meta == nullptr) { return false; }
         const auto base = value_name_cache_.find("frame");
         if (base != value_name_cache_.end() && meta == base->second) { return true; }
-        return meta->element_type != nullptr && frame_cache_.find(meta->element_type) == meta;
+        return meta->element_type != nullptr &&
+               frame_cache_.find(MapKey{meta->key_type, meta->element_type}) == meta;
     }
 
     const ValueTypeMetaData *TypeRegistry::nullable_tuple(const ValueTypeMetaData *element_type)

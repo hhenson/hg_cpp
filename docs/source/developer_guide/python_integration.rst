@@ -84,6 +84,32 @@ listener seeds via ``register_standard_types()`` and the Python module (when it
 is built) must seed at import via a ``register_builtin_value_types()`` entry
 point — the two must agree on names and aliases.
 
+Downstream native scalar classes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A downstream nanobind module associates an extension-owned C++ scalar with its
+Python class through the installed
+``hgraph/python/native_scalar_registration.h`` header:
+
+.. code-block:: cpp
+
+   auto cls = nanobind::class_<Price>(module, "Price");
+   hgraph::python_bridge::register_native_scalar_type<Price>(
+       cls, "extension.price");
+
+The helper registers the scalar in the shared ``TypeRegistry`` and installs a
+process-wide, bidirectional class/schema association. The same pair may be
+registered repeatedly; a class or schema already paired with a different
+counterpart is rejected. The registry retains the Python class, so
+``TS[Price]`` resolves to the native schema and schema reflection returns the
+same class.
+
+The equivalent public Python operation is
+``register_native_scalar_type(PythonType, native_value_type)`` from
+``hgraph``. ``native_value_type`` may be a registered schema name or native
+``ValueType`` handle. Extensions should not import or mutate
+``hgraph._types``.
+
 Hosting a Python node
 ---------------------
 

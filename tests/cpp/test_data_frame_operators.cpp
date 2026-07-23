@@ -1,7 +1,9 @@
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/operators/impl/data_frame_impl.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/record_replay.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/value/value_builder.h>
 
@@ -9,6 +11,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -21,6 +24,11 @@ namespace
     using namespace hgraph::testing;
 
     using Row = Bundle<"tests.data_frame::Row", Field<"a", Int>, Field<"b", Int>>;
+    using FrameMetaDetails = Bundle<"tests.data_frame::FrameMetaDetails",
+                                    Field<"desk", Str>>;
+    using FrameMeta = Bundle<"tests.data_frame::FrameMeta",
+                             Field<"revision", Int>, Field<"as_of", DateTime>,
+                             Field<"source", Str>, Field<"details", FrameMetaDetails>>;
     using JoinedRow = Bundle<"tests.data_frame::JoinedRow", Field<"a", Int>,
                              Field<"b", Int>, Field<"b_right", Int>>;
     using PredicateTSB = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Int>>>;
@@ -94,6 +102,30 @@ namespace
         return builder.build();
     }
 
+    [[nodiscard]] Value metadata_value(Int revision)
+    {
+        BundleBuilder details{
+            ValuePlanFactory::instance().type_for(
+                scalar_descriptor<FrameMetaDetails>::value_meta())};
+        details.set(0, Value{Str{"systematic"}});
+        BundleBuilder builder{
+            ValuePlanFactory::instance().type_for(scalar_descriptor<FrameMeta>::value_meta())};
+        builder.set(0, Value{revision});
+        builder.set(1, Value{DateTime{std::chrono::microseconds{123456}}});
+        builder.set(2, Value{Str{"fixture"}});
+        builder.set(3, details.build());
+        return builder.build();
+    }
+
+    [[nodiscard]] Frame metadata_frame(std::vector<std::int64_t> a,
+                                       std::vector<std::int64_t> b, Int revision)
+    {
+        Frame result = frame(std::move(a), std::move(b));
+        result.table = result.table->ReplaceSchemaMetadata(
+            arrow::key_value_metadata({"external.owner"}, {"research"}));
+        return with_frame_metadata(std::move(result), metadata_value(revision));
+    }
+
     [[nodiscard]] Frame keyed_frame(std::vector<std::int64_t> a,
                                     std::vector<std::int64_t> b,
                                     std::vector<std::string> keys)
@@ -135,6 +167,18 @@ namespace
                                               Scalar<"descending", Bool> descending)
         {
             return wire<stdlib::sorted_>(w, ts, by, descending).as<TS<FrameOf<Row>>>();
+        }
+    };
+
+    struct SortMetadataFrameGraph
+    {
+        static constexpr auto name = "sort_metadata_frame_graph";
+        static Port<TS<FrameOf<Row, FrameMeta>>> compose(
+            Wiring &w, Port<TS<FrameOf<Row, FrameMeta>>> ts,
+            Scalar<"by", Str> by, Scalar<"descending", Bool> descending)
+        {
+            return wire<stdlib::sorted_>(w, ts, by, descending)
+                .as<TS<FrameOf<Row, FrameMeta>>>();
         }
     };
 
@@ -277,6 +321,83 @@ TEST_CASE("data frame operators: sorted_ orders rows through the native wiring p
     REQUIRE(result.size() == 1);
     REQUIRE(result[0].has_value());
     CHECK(equals(*result[0], expected));
+}
+
+TEST_CASE("data frame operators: Arrow schema metadata survives row-preserving operations")
+{
+    stdlib::register_standard_operators();
+    const Frame input = metadata_frame({2, 1}, {20, 10}, 7);
+    const auto &arrow_metadata = input.table->schema()->metadata();
+    REQUIRE(arrow_metadata != nullptr);
+    CHECK(*arrow_metadata->Get(frame_metadata_schema_key) ==
+          std::string{scalar_descriptor<FrameMeta>::value_meta()->name()});
+    CHECK(*arrow_metadata->Get(frame_metadata_version_key) == "1");
+    CHECK(*arrow_metadata->Get("hgraph.metadata.field.revision") == "7");
+    CHECK(*arrow_metadata->Get("hgraph.metadata.field.as_of") ==
+          "1970-01-01 00:00:00.123456");
+    CHECK(*arrow_metadata->Get("hgraph.metadata.field.source") == "fixture");
+    CHECK(*arrow_metadata->Get("hgraph.metadata.field.details") ==
+          R"({"desk": "systematic"})");
+    CHECK(frame_metadata(input, scalar_descriptor<FrameMeta>::value_meta()) ==
+          metadata_value(7));
+    CHECK(frame_metadata(input) == metadata_value(7));
+
+    Frame markerless = input;
+    auto markerless_metadata = markerless.table->schema()->metadata()->Copy();
+    for (std::int64_t index = markerless_metadata->size(); index-- > 0;)
+    {
+        if (markerless_metadata->key(index) != frame_metadata_schema_key) { continue; }
+        REQUIRE(markerless_metadata->Delete(index).ok());
+    }
+    markerless.table = markerless.table->ReplaceSchemaMetadata(
+        std::move(markerless_metadata));
+    CHECK(markerless.has_metadata());
+    CHECK(frame_metadata(markerless, scalar_descriptor<FrameMeta>::value_meta()) ==
+          metadata_value(7));
+    CHECK_THROWS_AS(frame_metadata(markerless), std::invalid_argument);
+    CHECK(frame_metadata_equal(markerless, input));
+
+    Frame unknown_field = input;
+    auto unknown_field_metadata =
+        unknown_field.table->schema()->metadata()->Copy();
+    unknown_field_metadata->Append("hgraph.metadata.field.unknown", "value");
+    unknown_field.table = unknown_field.table->ReplaceSchemaMetadata(
+        std::move(unknown_field_metadata));
+    CHECK_THROWS_AS(
+        frame_metadata(unknown_field, scalar_descriptor<FrameMeta>::value_meta()),
+        std::invalid_argument);
+
+    const auto result = eval_node<SortMetadataFrameGraph>(
+        values<Frame>(input), Str{"a"}, Bool{false});
+    REQUIRE(result.size() == 1);
+    REQUIRE(result[0]);
+    REQUIRE(result[0]->has_metadata());
+    CHECK(frame_metadata_equal(*result[0], input));
+    CHECK(result[0]->table->Equals(*frame({1, 2}, {10, 20}).table));
+
+    const Frame same_revision = metadata_frame({3}, {30}, 7);
+    const Frame combined = stdlib::data_frame_detail::concat_frames(input, same_revision);
+    CHECK(frame_metadata_equal(combined, input));
+    CHECK(frame_rows(combined) == 3);
+    const Frame markerless_combined =
+        stdlib::data_frame_detail::concat_frames(markerless, same_revision);
+    CHECK(frame_metadata_equal(markerless_combined, input));
+    CHECK(frame_rows(markerless_combined) == 3);
+
+    record_replay::store_write("tests.data_frame.metadata", markerless);
+    const Frame stored =
+        record_replay::store_read("tests.data_frame.metadata");
+    CHECK(frame_metadata_equal(stored, markerless));
+    CHECK(frame_metadata(stored, scalar_descriptor<FrameMeta>::value_meta()) ==
+          metadata_value(7));
+
+    const Frame other_revision = metadata_frame({3}, {30}, 8);
+    CHECK_THROWS_AS(stdlib::data_frame_detail::concat_frames(input, other_revision),
+                    std::invalid_argument);
+    const Frame stripped = without_frame_metadata(input);
+    CHECK_FALSE(stripped.has_metadata());
+    REQUIRE(stripped.table->schema()->metadata() != nullptr);
+    CHECK(*stripped.table->schema()->metadata()->Get("external.owner") == "research");
 }
 
 TEST_CASE("data frame operators: concat appends rows through the native wiring path")

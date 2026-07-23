@@ -65,3 +65,46 @@ projection execute in C++. Python expression filters remain a Python-owned
 compatibility path because ``pyarrow.compute.Expression`` is itself a Python
 scalar. Series-to-tuple conversion is native and represents Arrow nulls as
 unset tuple elements.
+
+Typed frame metadata
+~~~~~~~~~~~~~~~~~~~~
+
+``Frame[Rows, Metadata]`` stores frame-level identity and provenance in the
+Arrow table's own schema metadata. It is intended for values such as an as-of
+time, source, universe definition, or plan version that apply to the complete
+table and must not be repeated on every row. The C++ spelling is
+``FrameOf<Rows, Metadata>``; the Python value remains an ordinary
+``pyarrow.Table``.
+
+The metadata schema must be a named ``CompoundScalar``/``Bundle``. The codec
+uses these reserved byte-string entries in the Arrow schema metadata:
+
+* ``hgraph.metadata.schema`` optionally identifies the qualified hgraph
+  metadata schema;
+* ``hgraph.metadata.version`` identifies the metadata wire format; and
+* ``hgraph.metadata.field.<name>`` stores each populated field separately.
+
+Supported atomic fields (``str``, ``int``, ``float``, ``bool``, enums, dates,
+datetimes, times, and durations) use their plain string form. Tuple, Bundle,
+list, set, and map fields use the existing schema-directed JSON codec. Binary,
+opaque Python objects, callables, and other values without that codec are
+rejected. Unrelated Arrow schema metadata is retained.
+
+Use ``with_frame_metadata(table, value)`` to return a table with encoded
+metadata and ``frame_metadata(table, MetadataType)`` to decode it. The schema
+argument is authoritative, so a table remains compliant when its field entries
+match that schema but the optional ``hgraph.metadata.schema`` marker is absent.
+When the marker is present, ``frame_metadata(table)`` can resolve the registered
+schema reflectively and an explicitly supplied schema is checked for
+compatibility. Markerless metadata cannot be decoded reflectively and therefore
+requires the schema argument. The ``has_frame_metadata`` predicate detects any
+reserved hgraph entry;
+``without_frame_metadata`` removes only the reserved hgraph entries. The C++
+functions have the same names and operate on ``Frame``/``Value``.
+
+Sorting, filtering, and column replacement preserve the Arrow schema metadata.
+Concatenation requires equal hgraph metadata on both inputs and preserves it. A
+join has no generally correct metadata rule, so metadata-bearing frames do not
+match the row-only join overload: choose and implement the result metadata
+explicitly. The Python bridge rejects missing or incompatible encoded metadata,
+and rejects a metadata-bearing table supplied to ``Frame[Rows]``.
