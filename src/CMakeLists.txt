@@ -184,6 +184,48 @@ if(HGRAPH_BUILD_SHARED)
                 )
             endforeach()
         endif()
+
+        # The compile flag above lets the compiler bind calls locally, but the
+        # linker still routes cross-TU calls to exported functions through the
+        # PLT. Binding the DSO's own non-weak definitions removes that hop;
+        # weak (vague-linkage) symbols — template instantiations, inline
+        # functions, typeinfo — stay interposable so cross-DSO exception
+        # identity and dynamic_cast against SDK extensions keep working.
+        if(HGRAPH_BUILD_SHARED)
+            include(CheckLinkerFlag)
+            check_linker_flag(CXX "-Wl,-Bsymbolic-non-weak-functions"
+                              HGRAPH_HAS_BSYMBOLIC_NON_WEAK_FUNCTIONS)
+            if(HGRAPH_HAS_BSYMBOLIC_NON_WEAK_FUNCTIONS)
+                foreach(_hgraph_target IN ITEMS hgraph_runtime hgraph_wiring hgraph_stdlib)
+                    target_link_options(${_hgraph_target} PRIVATE
+                        $<$<CONFIG:Release>:-Wl,-Bsymbolic-non-weak-functions>
+                        $<$<CONFIG:RelWithDebInfo>:-Wl,-Bsymbolic-non-weak-functions>
+                        $<$<CONFIG:MinSizeRel>:-Wl,-Bsymbolic-non-weak-functions>
+                    )
+                endforeach()
+            endif()
+        endif()
+    endif()
+
+    if(UNIX)
+        # Cross-TU inlining for the ops-table/fn-pointer hot paths: the
+        # interposition flag only helps where the definition is visible in
+        # the same TU; IPO (thin LTO under Clang) extends it library-wide.
+        # Optimized configurations only — debug/sanitizer builds keep fast
+        # incremental links.
+        include(CheckIPOSupported)
+        check_ipo_supported(RESULT HGRAPH_HAS_IPO OUTPUT _hgraph_ipo_reason LANGUAGES CXX)
+        if(HGRAPH_HAS_IPO)
+            foreach(_hgraph_target IN ITEMS hgraph_runtime hgraph_wiring hgraph_stdlib)
+                set_target_properties(${_hgraph_target} PROPERTIES
+                    INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+                    INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE
+                    INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL TRUE
+                )
+            endforeach()
+        else()
+            message(STATUS "hgraph: IPO unavailable (${_hgraph_ipo_reason})")
+        endif()
     endif()
 
     if(HGRAPH_WINDOWS_UNIFIED_SHARED)
