@@ -344,6 +344,16 @@ selection continue to inspect metadata directly. Use visitation only for
 caller-owned algorithms whose behaviour genuinely varies by a live value
 shape.
 
+``visit_atomic`` refines an ``AtomicView`` for algorithms interested in
+selected registered C++ scalar types. ``atomic_case<T>`` compares the bound
+canonical ``ValueOps`` pointer with ``ops_for<T>()`` and supplies ``const T&``
+to the matching handler. The final optional ``AtomicView`` callable handles
+all other registered scalars; without it, an unmatched type throws.
+``try_visit_atomic`` instead returns ``std::optional<R>`` (or ``bool`` for
+``void`` handlers) so an expected miss remains non-throwing. This is a
+compiler-expanded pointer-comparison chain: it performs no registry lookup,
+string comparison, allocation, numeric coercion, or enum unwrapping.
+
 After the kind switch, the visitor constructs specialised views through a
 trusted internal projection that preserves the original access tag and avoids
 repeating semantic-kind validation. The specialised view still resolves and

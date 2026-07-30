@@ -66,8 +66,11 @@ int main()
     const bool visited_extension = visit(
         boxed.view(),
         [](AtomicView selected) {
-            return selected.holds_alternative<ConsumerExtensionScalar>() &&
-                   selected.checked_as<ConsumerExtensionScalar>().value == 17;
+            return visit_atomic(
+                selected,
+                atomic_case<ConsumerExtensionScalar>(
+                    [](const ConsumerExtensionScalar &value) { return value.value == 17; }),
+                [](AtomicView) { return false; });
         },
         [](ValueView) { return false; });
     if (!visited_extension)
