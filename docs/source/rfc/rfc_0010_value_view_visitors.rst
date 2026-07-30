@@ -57,6 +57,15 @@ The installed header ``<hgraph/types/value/visitor.h>`` provides:
    template<class... Handlers>
    decltype(auto) visit(const ValueView &value, Handlers&&... handlers);
 
+   template<class T, class Handler>
+   auto atomic_case(Handler&& handler);
+
+   template<class... Options>
+   decltype(auto) visit_atomic(const AtomicView &value, Options&&... options);
+
+   template<class... Cases>
+   auto try_visit_atomic(const AtomicView &value, Cases&&... cases);
+
 Handlers form one overload set. After transparent ``Any`` unwrapping, dispatch
 selects:
 
@@ -109,6 +118,47 @@ Reference results and lazy ``Range`` / ``KeyValueRange`` results are rejected.
 The selected wrapper is a temporary borrowed cursor, and a lazy range can
 retain storage or projection context associated with it. Callers consume the
 range in the handler or return an owned materialisation.
+
+Atomic type visitation
+----------------------
+
+Algorithms interested in selected atomic C++ types use ``atomic_case<T>``.
+The type and handler travel together, followed by an optional ``AtomicView``
+default:
+
+.. code-block:: cpp
+
+   return visit_atomic(
+       scalar,
+       atomic_case<Int>([](const Int &value) {
+           return render_integer(value);
+       }),
+       atomic_case<ExtensionScalar>([](const ExtensionScalar &value) {
+           return render_extension(value);
+       }),
+       [](AtomicView other) {
+           return render_other_atomic(other);
+       });
+
+Each case is an exact canonical-ops match. It does not use C++ callable
+conversion rules, so an ``Int`` value cannot select a ``Float`` case. Nominal
+enum schemas retain their enum-specific ops and therefore select the default
+rather than an ``Int`` case. Independently registered extension scalars
+require no change to the core type list.
+
+The default handler, when present, is an ordinary callable in the final
+position. Without a default, an unmatched valid atomic value raises
+``std::invalid_argument`` containing its schema name. ``try_visit_atomic``
+accepts typed cases only and treats that expected miss as data:
+
+* value-returning handlers produce ``std::optional<R>``;
+* ``void`` handlers produce ``bool``;
+* handler failures and an invalid input view still propagate.
+
+Every typed case and the optional default returns ``void`` or the same exact
+safe type, using the same result contract as the shape and endpoint visitors.
+A non-void ``try_visit_atomic`` result must additionally be movable so its
+``std::optional`` can own it.
 
 Transparent ``Any`` semantics
 -----------------------------
@@ -191,6 +241,11 @@ the kind has already been checked. Specialised views still resolve and verify
 the operation-table subclass required for their public methods, but they do
 not repeat semantic-kind validation. Public direct constructors remain
 checked.
+
+Atomic type visitation performs one canonical operation-table pointer
+comparison per listed case and directly invokes the first match. It does not
+allocate, query the registry, compare schema strings, unwrap enums, or repeat
+the already-established atomic-kind check.
 
 The endpoint and value visitors share only generic callable composition,
 result selection, and borrowed-result safety traits. Their projection and
@@ -280,9 +335,11 @@ Enumerate known C++ scalar types
    Rejected. Extensions can register scalar types independently, and a closed
    variant would make the core SDK the owner of downstream scalar vocabulary.
 
-Add ``match`` / ``when`` declarative wrappers
-   Deferred. Callable overloads cover the required contract and match the
-   endpoint visitor. A second visitor expression language is not justified.
+Infer atomic types from an ordinary callable overload set
+   Rejected. Numeric conversions can make a handler callable for a type it did
+   not declare, and extracting parameter types is brittle for generic lambdas,
+   overloaded function objects, and function pointers. ``atomic_case<T>``
+   records exact type intent without closing the scalar registry.
 
 Virtual ``accept`` or double dispatch
    Rejected. The runtime intentionally uses schemas, plans, operation tables,
@@ -299,6 +356,10 @@ Acceptance criteria
 * All eight concrete semantic kinds dispatch to the correct specialised view.
 * Registered extension scalar types dispatch through ``AtomicView`` without a
   core type list.
+* ``atomic_case<T>`` selects only the exact registered scalar type; nominal
+  enums and unrelated numeric types fall through.
+* Atomic defaults, strict unmatched errors, value-returning
+  ``try_visit_atomic``, and ``void`` probing are covered.
 * Populated nested ``Any`` boxes dispatch transparently; empty boxes and absent
   payloads fail clearly.
 * Specific handlers take precedence over ``ValueView`` catch-all handlers.
@@ -312,7 +373,7 @@ Acceptance criteria
 * JSON tree and container-length behaviour remain covered through public
   wiring APIs in C++ and Python.
 * A separately built installed-SDK consumer registers and visits an extension
-  scalar through ``Any``.
+  scalar through ``Any`` and ``atomic_case<T>``.
 * Focused performance is equivalent to or better than the corresponding
   caller-written switch, with zero allocations.
 * The complete native and non-WIP Python compatibility suites pass on macOS

@@ -740,6 +740,38 @@ int main()
             if (value != 41) { throw std::runtime_error("visitor atomic value dispatch failed"); }
         });
 
+    const auto manual_atomic_type_dispatch = [&] {
+        const auto *source = g_atomic_value_view_input.load(std::memory_order_relaxed);
+        const auto selected = source->as_atomic();
+        if (selected.type().ops() == &ops_for<Int>())
+        {
+            return static_cast<std::uint64_t>(selected.as<Int>());
+        }
+        return std::uint64_t{0};
+    };
+    const auto typed_atomic_visitor_dispatch = [&] {
+        const auto *source = g_atomic_value_view_input.load(std::memory_order_relaxed);
+        return visit_atomic(
+            source->as_atomic(),
+            atomic_case<Int>(
+                [](const Int &value) { return static_cast<std::uint64_t>(value); }),
+            [](AtomicView) { return std::uint64_t{0}; });
+    };
+    require_no_allocations("value_manual_atomic_type_dispatch", 10'000, manual_atomic_type_dispatch);
+    require_no_allocations("value_typed_atomic_visitor_dispatch", 10'000, typed_atomic_visitor_dispatch);
+    run_benchmark(
+        "value_manual_atomic_type_dispatch", 200'000, samples, warmup,
+        manual_atomic_type_dispatch,
+        [](std::uint64_t value) {
+            if (value != 41) { throw std::runtime_error("manual atomic type dispatch failed"); }
+        });
+    run_benchmark(
+        "value_typed_atomic_visitor_dispatch", 200'000, samples, warmup,
+        typed_atomic_visitor_dispatch,
+        [](std::uint64_t value) {
+            if (value != 41) { throw std::runtime_error("typed atomic visitor dispatch failed"); }
+        });
+
     TSOutput scalar_output{*ts_int};
     {
         auto mutation = scalar_output.begin_mutation(MIN_ST);

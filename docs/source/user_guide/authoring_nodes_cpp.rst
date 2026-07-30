@@ -559,6 +559,47 @@ of C++ types. An extension handler can use
 ``holds_alternative<ExtensionScalar>()`` and
 ``checked_as<ExtensionScalar>()`` on it.
 
+When an algorithm has handlers for selected atomic C++ types, pair each exact
+type with its handler using ``atomic_case<T>``:
+
+.. code-block:: cpp
+
+   std::string render_scalar(const AtomicView &value)
+   {
+       return visit_atomic(
+           value,
+           atomic_case<Int>([](const Int &number) {
+               return std::to_string(number);
+           }),
+           atomic_case<Str>([](const Str &text) {
+               return text;
+           }),
+           [](AtomicView other) {
+               return other.to_string();
+           });
+   }
+
+The optional final callable handles every unlisted atomic type. If it is
+omitted, an unmatched type throws ``std::invalid_argument`` with its schema
+name. Use ``try_visit_atomic`` when a miss is expected:
+
+.. code-block:: cpp
+
+   auto integer = try_visit_atomic(
+       value,
+       atomic_case<Int>([](const Int &number) {
+           return number;
+       }));
+
+   if (integer) {
+       // integer is std::optional<Int>
+   }
+
+Value-returning cases produce ``std::optional<R>``; ``void`` cases produce a
+``bool`` indicating whether a handler ran. Only an unlisted type is converted
+to an empty/false result. Invalid views and exceptions raised by handlers
+still propagate.
+
 A populated ``Any`` box is transparent to the visitor. Passing the
 ``ValueView`` for an ``Any`` containing an ``ExtensionScalar`` invokes the
 ``AtomicView`` handler for that scalar; nested populated boxes are also

@@ -9,6 +9,8 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -249,6 +251,121 @@ TEST_CASE("value visit result contract rejects references and borrowed lazy rang
     static_assert(!detail::visitor_result_safe_v<KeyValueRange<ValueView, ValueView>>);
 }
 
+TEST_CASE("atomic value visit dispatches exact typed cases and an optional default")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    registry.register_scalar<VisitorExtensionScalar>("value_visitor_extension_scalar");
+    registry.register_scalar<std::int32_t>("int32");
+    registry.register_scalar<std::int64_t>("int");
+
+    Value      extension{VisitorExtensionScalar{17}};
+    AtomicView selected{extension.view()};
+
+    const auto result = visit_atomic(
+        selected, atomic_case<std::int32_t>([](const std::int32_t &) { return std::string{"integer"}; }),
+        atomic_case<VisitorExtensionScalar>(
+            [](const VisitorExtensionScalar &value) { return std::string{"extension:"} + std::to_string(value.value); }),
+        [](AtomicView) { return std::string{"other"}; });
+    CHECK(result == "extension:17");
+
+    Value      integer{std::int32_t{23}};
+    AtomicView integer_view{integer.view()};
+    CHECK(visit_atomic(
+              integer_view,
+              atomic_case<std::int32_t>([](const std::int32_t &value) { return value + 1; }),
+              atomic_case<VisitorExtensionScalar>([](const VisitorExtensionScalar &value) { return value.value; }),
+              [](AtomicView) { return std::int32_t{-1}; }) == 24);
+    CHECK(visit_atomic(
+        integer_view, atomic_case<std::int64_t>([](const std::int64_t &) { return false; }),
+        [](AtomicView) { return true; }));
+
+    CHECK(visit_atomic(selected, [](AtomicView fallback)
+                       { return fallback.checked_as<VisitorExtensionScalar>().value; }) == 17);
+}
+
+TEST_CASE("atomic value visit without a default is strict")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    registry.register_scalar<VisitorExtensionScalar>("value_visitor_extension_scalar");
+    registry.register_scalar<std::int32_t>("int32");
+
+    Value      extension{VisitorExtensionScalar{31}};
+    AtomicView selected{extension.view()};
+
+    CHECK(visit_atomic(
+              selected,
+              atomic_case<VisitorExtensionScalar>(
+                  [](const VisitorExtensionScalar &value) { return value.value; })) == 31);
+
+    bool invoked = false;
+    visit_atomic(
+        selected, atomic_case<VisitorExtensionScalar>([&](const VisitorExtensionScalar &) { invoked = true; }));
+    CHECK(invoked);
+
+    REQUIRE_THROWS_WITH(
+        visit_atomic(selected,
+                     atomic_case<std::int32_t>([](const std::int32_t &value) { return value; })),
+        "atomic visitor has no case for value type 'value_visitor_extension_scalar'");
+    REQUIRE_THROWS_WITH(
+        visit_atomic(selected, atomic_case<std::int32_t>([](const std::int32_t &) {})),
+        "atomic visitor has no case for value type 'value_visitor_extension_scalar'");
+}
+
+TEST_CASE("try atomic value visit reports value and void matches without throwing")
+{
+    using namespace hgraph;
+
+    auto &registry = TypeRegistry::instance();
+    registry.register_scalar<VisitorExtensionScalar>("value_visitor_extension_scalar");
+    registry.register_scalar<std::int32_t>("int32");
+
+    Value      extension{VisitorExtensionScalar{41}};
+    AtomicView selected{extension.view()};
+
+    auto found = try_visit_atomic(
+        selected, atomic_case<VisitorExtensionScalar>(
+                      [](const VisitorExtensionScalar &value) { return value.value + 1; }));
+    STATIC_REQUIRE(std::same_as<decltype(found), std::optional<std::int32_t>>);
+    REQUIRE(found.has_value());
+    CHECK(*found == 42);
+
+    auto missing = try_visit_atomic(
+        selected, atomic_case<std::int32_t>([](const std::int32_t &value) { return value; }));
+    STATIC_REQUIRE(std::same_as<decltype(missing), std::optional<std::int32_t>>);
+    CHECK_FALSE(missing.has_value());
+
+    bool invoked = false;
+    const bool handled = try_visit_atomic(
+        selected, atomic_case<VisitorExtensionScalar>([&](const VisitorExtensionScalar &value)
+                                                       { invoked = value.value == 41; }));
+    CHECK(handled);
+    CHECK(invoked);
+
+    invoked = false;
+    const bool ignored = try_visit_atomic(
+        selected, atomic_case<std::int32_t>([&](const std::int32_t &) { invoked = true; }));
+    CHECK_FALSE(ignored);
+    CHECK_FALSE(invoked);
+
+    auto owned = try_visit_atomic(
+        selected, atomic_case<VisitorExtensionScalar>([](const VisitorExtensionScalar &value)
+                                                       { return std::make_unique<std::int32_t>(value.value); }));
+    STATIC_REQUIRE(std::same_as<decltype(owned), std::optional<std::unique_ptr<std::int32_t>>>);
+    REQUIRE(owned.has_value());
+    CHECK(**owned == 41);
+
+    REQUIRE_THROWS_AS(
+        try_visit_atomic(
+            selected,
+            atomic_case<VisitorExtensionScalar>([](const VisitorExtensionScalar &) -> std::int32_t
+                                                 { throw std::runtime_error("handler failed"); })),
+        std::runtime_error);
+}
+
 TEST_CASE("value visit uses declared enum and owned-bundle shapes")
 {
     using namespace hgraph;
@@ -259,6 +376,12 @@ TEST_CASE("value visit uses declared enum and owned-bundle shapes")
 
     Value enum_value{ValuePlanFactory::instance().type_for(enumeration)};
     CHECK(classify(enum_value.view()) == VisitedValueKind::Atomic);
+    AtomicView enum_view{enum_value.view()};
+    CHECK(visit_atomic(
+        enum_view, atomic_case<std::int64_t>([](const std::int64_t &) { return false; }),
+        [](AtomicView) { return true; }));
+    CHECK_FALSE(try_visit_atomic(
+        enum_view, atomic_case<std::int64_t>([](const std::int64_t &) {})));
 
     const auto *recursive =
         registry.recursive_bundle("tests.value_visitor", "RecursiveValue", {{"value", integer}, {"next", nullptr}});
