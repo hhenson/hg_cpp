@@ -10,8 +10,6 @@ multi-interface case escaped notice.
 One known gap is recorded at the end.
 """
 
-import pytest
-
 import hgraph as hg
 from hgraph import TS, TSD, graph
 from hgraph.test import eval_node
@@ -170,15 +168,21 @@ def test_specialized_service_exact_path():
     assert seen[0] == 7
 
 
-@pytest.mark.xfail(
-    reason="KNOWN GAP (pre-existing, both families): a catch-all declares no "
-           "interfaces, so there is no stub to key client configuration by, and "
-           "which endpoints it claims is only known once its body has run. "
-           "Registration-supplied configuration reaches it; client-supplied "
-           "configuration is silently replaced by the implementation default.",
-    strict=True,
-)
-def test_catch_all_receives_client_options():
+def test_catch_all_does_not_receive_client_options():
+    """KNOWN GAP, pre-existing and in BOTH families - pinned, not hidden.
+
+    A catch-all declares no interfaces, so there is no stub to key client
+    configuration by, and which endpoints it claims is only known once its body
+    has run. Client-supplied options are therefore silently replaced by the
+    implementation's own default.
+
+    This asserts the CURRENT behaviour so the gap is visible and any change to
+    it is deliberate. Fixing it needs either deferred binding or an explicit
+    rejection when a client supplies options at a catch-all-served path; if
+    that lands, this test should flip to expect 7.
+
+    The supported channel is registration configuration - see the next test.
+    """
     seen = []
 
     @hg.adaptor
@@ -195,7 +199,9 @@ def test_catch_all_receives_client_options():
         return a(v, path="custom", m=7)
 
     eval_node(app, [2])
-    assert seen[0] == 7, seen
+    assert seen[0] == 1, (
+        f"expected the known gap (implementation default 1), saw {seen} - "
+        "if client options now reach a catch-all, update this test to expect 7")
 
 
 def test_catch_all_receives_registration_options():
