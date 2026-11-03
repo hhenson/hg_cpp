@@ -84,40 +84,53 @@ struct time_series_type_traits<TSB<Schema, Properties...>> {
         return (true && ... && bundle_field_type_traits<direct_bundle_field<Index, Schema>>::supported);
     }
 
-    static constexpr bool generic = [] {
+    static consteval bool is_generic() {
         if constexpr (schema_variable) {
             return true;
         } else {
             return BaseTraits::generic || fields_generic(std::make_index_sequence<direct_bundle_field_count<Schema>>{});
         }
-    }();
-    static constexpr bool supported = [] {
+    }
+    static consteval bool is_supported() {
         if constexpr (schema_variable) {
             return true;
         } else {
             return BaseTraits::supported &&
                    fields_supported(std::make_index_sequence<direct_bundle_field_count<Schema>>{});
         }
-    }();
+    }
 
-    template <typename Scope, std::size_t, TimeSeriesTypeRole Role>
+    static constexpr bool generic = is_generic();
+    static constexpr bool supported = is_supported();
+
+    template <typename Scope, std::size_t Index, TimeSeriesTypeRole Role>
     static const TimeSeriesType &get(GuaranteeParameter guarantee) {
+        using Declaration = time_series_declaration_identity<time_series_type_traits, Scope, Index, Role>;
         if constexpr (schema_variable) {
-            static const auto type = util::static_storage<GenericTimeSeriesBundleType>{
-                schema_variable_instance<Schema>(), guarantee};
-            [[maybe_unused]] static const auto &registration = TypeRegistry::register_static(type.get());
-            return type.get();
+            static const auto &type = TypeRegistry::instance().get_or_create_static<
+                Declaration, GenericTimeSeriesBundleType>([&]() -> const auto & {
+                    static const auto type = util::static_storage<GenericTimeSeriesBundleType>{
+                        schema_variable_instance<Schema>(), guarantee};
+                    return type.get();
+                });
+            return type;
         } else {
             const auto &schema = cpp_bundle_schema<Scope, Role, Schema>(guarantee);
             if constexpr (Role == TimeSeriesTypeRole::input || generic) {
-                static const auto type = util::static_storage<GenericTimeSeriesBundleType>{schema, guarantee};
-                [[maybe_unused]] static const auto &registration = TypeRegistry::register_static(type.get());
-                return type.get();
+                static const auto &type = TypeRegistry::instance().get_or_create_static<
+                    Declaration, GenericTimeSeriesBundleType>([&]() -> const auto & {
+                        static const auto type = util::static_storage<GenericTimeSeriesBundleType>{schema, guarantee};
+                        return type.get();
+                    });
+                return type;
             }
             if (!schema.is_resolved() || !guarantee.is_resolved()) {
-                static const auto type = util::static_storage<GenericTimeSeriesBundleType>{schema, guarantee};
-                [[maybe_unused]] static const auto &registration = TypeRegistry::register_static(type.get());
-                return type.get();
+                static const auto &type = TypeRegistry::instance().get_or_create_static<
+                    Declaration, GenericTimeSeriesBundleType>([&]() -> const auto & {
+                        static const auto type = util::static_storage<GenericTimeSeriesBundleType>{schema, guarantee};
+                        return type.get();
+                    });
+                return type;
             }
             return time_series_bundle_type(schema, *guarantee.value());
         }

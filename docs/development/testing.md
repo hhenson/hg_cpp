@@ -356,6 +356,8 @@ graph compilation or evaluation.
 
 - wiring-context nesting and thread isolation
 - compile-time and runtime wiring-template invocation
+- C++ wiring-point method extensions, operator forwarding, optional receivers,
+  and pointer-sized, trivially copyable generic, TSB, and variadic representations
 - scalar and time series argument resolution
 - optional scalar arguments and scalar ownership
 - omitted wiring arguments with owned defaults, explicit overrides and absence,
@@ -739,13 +741,17 @@ For each reusable node and graph, test:
 
 ### Python integration
 
+- native wiring-point method registration, overlapping receiver constraints,
+  conflicting operators, normal argument forwarding, graph-return discovery,
+  existing-attribute precedence, missing attributes, and saved-callable lifetime
 - native schema export preserving declaration identity for TSB annotations and
   scalar Bundle conversion, including time-series-only schemas
 - homogeneous scalar tuple annotations, nested and generic items, immutable
   Python materialization, expected-type sequence conversion and ownership,
   and rejection of mutable sequence annotations
-- timezone-naive datetime scalar conversion through scalar, time-series, and
-  nested scalar paths, including microsecond and pre-epoch values
+- timezone-naive UTC datetime conversion through scalar, time-series, nested
+  scalar, clock, scheduling, and run-limit paths, including microsecond and
+  pre-epoch values and independence from the machine's timezone
 - conversion between scalar tuple lists and TSL/TSS, scalar dictionaries and
   TSD, named scalar Bundle/TSB schemas, partially valid free combine results,
   and collect reset and emit behavior for supported collection types;
@@ -773,6 +779,14 @@ For each reusable node and graph, test:
 - Python runtime dispatch on Python classes and derived schemas, explicit
   implementation lists, node and graph branches, fallback, type transitions,
   scalar arguments, sinks, and invalid declarations
+- Python reduction through concrete and generic graph definitions and unannotated
+  callables, captured values, sparse TSD updates,
+  invalid roots and items, omitted and explicit defaults, collection and reference
+  items, guarantee weakening, invalid reducer signatures, and wiring exception identity
+- Python feedback through inferred connections and explicit handles, bounded loops,
+  first-tick timing, sparse updates, invalidation and revalidation, collection deltas,
+  independent handles and runs, guarantee compatibility, reference sampling, and
+  duplicate, cross-graph, and expired-handle rejection
 
 ### HTTP extension
 

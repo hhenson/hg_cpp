@@ -137,10 +137,13 @@ class TypedBundleConstruction<TSB<Schema, Properties...>> {
 
   private:
     static const TimeSeriesBundleType &input_type() {
-        static const auto guarantee = util::static_storage<GuaranteeVariable>{util::symbol{"G"}};
-        [[maybe_unused]] static const auto &registration = VariableRegistry::register_static(guarantee.get());
+        static const auto &guarantee = VariableRegistry::instance().get_or_create_static<
+            TypedBundleConstruction, GuaranteeVariable>([&]() -> const auto & {
+                static const auto guarantee = util::static_storage<GuaranteeVariable>{util::symbol{"G"}};
+                return guarantee.get();
+            });
         return static_cast<const TimeSeriesBundleType &>(
-            time_series_type_for<TypedBundleConstruction, 0, TimeSeriesTypeRole::input, TimeSeries>(guarantee.get()));
+            time_series_type_for<TypedBundleConstruction, 0, TimeSeriesTypeRole::input, TimeSeries>(guarantee));
     }
 
     template <std::size_t... Index> wp<TimeSeries> finish(std::index_sequence<Index...>) {
@@ -171,10 +174,16 @@ namespace hg {
 template <template <template <typename, auto...> typename> typename Schema, auto... TimeSeriesProperties,
           auto... WiringProperties>
     requires(details::variadic_mode<WiringProperties...>() == details::VariadicMode::none)
-class wp<TSB<Schema, TimeSeriesProperties...>, WiringProperties...> {
+class wp<TSB<Schema, TimeSeriesProperties...>, WiringProperties...>
+    : public wiring_point_methods<TSB<Schema, TimeSeriesProperties...>,
+                                  wp<TSB<Schema, TimeSeriesProperties...>, WiringProperties...>> {
+    using WiringPointMethods = wiring_point_methods<TSB<Schema, TimeSeriesProperties...>,
+                                                    wp<TSB<Schema, TimeSeriesProperties...>, WiringProperties...>>;
     using TimeSeries = TSB<Schema, TimeSeriesProperties...>;
     using ParsedProperties = details::wiring_point_properties<WiringProperties...>;
     static_assert(ParsedProperties::variadic_mode == details::VariadicMode::none);
+    static_assert(std::is_empty_v<WiringPointMethods> && std::is_trivially_copyable_v<WiringPointMethods>,
+                  "wiring point methods must not add state");
 
   public:
     wp(WiringPoint point) : point_{point.as(TimeSeries::type())} {}
@@ -237,12 +246,17 @@ class wp<TSB<Schema, TimeSeriesProperties...>, WiringProperties...> {
 template <template <template <typename, auto...> typename> typename Schema, auto... TimeSeriesProperties,
           auto... WiringProperties>
     requires(details::variadic_mode<WiringProperties...>() != details::VariadicMode::none)
-class wp<TSB<Schema, TimeSeriesProperties...>, WiringProperties...> {
+class wp<TSB<Schema, TimeSeriesProperties...>, WiringProperties...>
+    : public wiring_point_methods<TSB<Schema, TimeSeriesProperties...>,
+                                  wp<TSB<Schema, TimeSeriesProperties...>, WiringProperties...>> {
     using TimeSeries = TSB<Schema, TimeSeriesProperties...>;
     using ParsedProperties = details::wiring_point_properties<WiringProperties...>;
+    using WiringPointMethods = wiring_point_methods<TimeSeries, wp<TimeSeries, WiringProperties...>>;
     static_assert((std::size_t{} + ... + static_cast<std::size_t>(details::is_variadic_mode<
                       decltype(WiringProperties)>)) == 1,
                   "a variadic TSB wiring point requires exactly one variadic property");
+    static_assert(std::is_empty_v<WiringPointMethods> && std::is_trivially_copyable_v<WiringPointMethods>,
+                  "wiring point methods must not add state");
     static_assert(details::variadic_mode<WiringProperties...>() == details::VariadicMode::positional ||
                       details::variadic_mode<WiringProperties...>() == details::VariadicMode::named,
                   "a variadic TSB wiring point requires var_args or var_kwargs");

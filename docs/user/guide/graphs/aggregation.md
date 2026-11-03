@@ -7,7 +7,7 @@ updates over time. The operations answer different questions.
 | --- | --- |
 | Total, extrema, or mean of current items | `sum_`, `min_`, `max_`, `mean` |
 | All or any current Boolean items | `all_`, `any_` |
-| Application-specific combination of items | `reduce` in C++; collection node in Python |
+| Application-specific combination of items | `reduce` |
 | Count or previous update | `count`, `lag` |
 | Total or mean across updates | `sums`, `means` |
 | Difference between successive values | `diff` |
@@ -25,8 +25,8 @@ A changed item replaces its contribution. A removed item stops contributing.
 :sync: python
 
 ```python
-from hg import REMOVE, TS, TSD, graph, run_graph
-from hg.operators import sum_
+from hgraph import REMOVE, TS, TSD, graph, run_graph
+from hgraph.operators import sum_
 
 @graph
 def total(readings: TSD[int, TS[int]]) -> int:
@@ -110,8 +110,8 @@ For an empty collection, `all_` is true and `any_` is false.
 :sync: python
 
 ```python
-from hg import REMOVE, TS, TSD, graph, run_graph
-from hg.operators import all_
+from hgraph import REMOVE, TS, TSD, graph, run_graph
+from hgraph.operators import all_
 
 @graph
 def enabled(sensors: TSD[int, TS[bool]]) -> bool:
@@ -179,8 +179,8 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 
 ## Custom aggregation
 
-An application-specific operation can combine current values. C++ `reduce` maintains
-a reducer graph. Python uses a collection node for the equivalent product.
+`reduce` maintains a binary reducer graph for an application-specific combination
+of current values.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -190,18 +190,11 @@ a reducer graph. Python uses a collection node for the equivalent product.
 :sync: python
 
 ```python
-from hg import REMOVE, TS, TSD, compute_node, graph, run_graph
-
-@compute_node
-def product(values: TSD[int, TS[int]]) -> TS[int]:
-    result = 1
-    for item in values.valid_values():
-        result *= item.value
-    return result
+from hgraph import REMOVE, TS, TSD, graph, reduce, run_graph
 
 @graph
 def combined(values: TSD[int, TS[int]]) -> int:
-    return product(values)
+    return reduce(lambda left, right: left * right, values, default=1)
 
 print(run_graph(combined, [{1: 2, 2: 3}, {1: 4}, {2: REMOVE}]))
 ```
@@ -270,8 +263,8 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 ::::::
 
 The reducer must be associative and commutative; item order and tree shape are
-unspecified. The product uses `1` when no valid items contribute. Python's collection
-view is explained in [advanced nodes](../advanced-nodes/collections.md).
+unspecified. The product uses `1` when no valid items contribute. See
+[reduction contracts](../../reference/higher-order.md#reduce) for validity and defaults.
 
 ## Counts and previous values
 
@@ -286,8 +279,8 @@ view is explained in [advanced nodes](../advanced-nodes/collections.md).
 :sync: python
 
 ```python
-from hg import graph, run_graph
-from hg.operators import count
+from hgraph import graph, run_graph
+from hgraph.operators import count
 
 
 @graph
@@ -362,8 +355,8 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 :sync: python
 
 ```python
-from hg import graph, run_graph
-from hg.operators import lag
+from hgraph import graph, run_graph
+from hgraph.operators import lag
 
 
 @graph
@@ -447,8 +440,8 @@ publish that final retained value without another input event.
 :sync: python
 
 ```python
-from hg import graph, run_graph
-from hg.operators import sums
+from hgraph import graph, run_graph
+from hgraph.operators import sums
 
 
 @graph
@@ -525,8 +518,8 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 :sync: python
 
 ```python
-from hg import graph, run_graph
-from hg.operators import means
+from hgraph import graph, run_graph
+from hgraph.operators import means
 
 
 @graph
@@ -611,8 +604,8 @@ calculation starts the new history with that value.
 :sync: python
 
 ```python
-from hg import graph, run_graph
-from hg.operators import sums
+from hgraph import graph, run_graph
+from hgraph.operators import sums
 
 @graph
 def session_total(reading: int, reset: bool) -> int:

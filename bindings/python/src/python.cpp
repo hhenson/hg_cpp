@@ -56,9 +56,10 @@
 #include "wiring_argument.hpp"
 
 #include <nanobind/stl/optional.h>
-#include <nanobind/stl/chrono.h>
+#include <hg/python/chrono.hpp>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/string_view.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
@@ -512,7 +513,7 @@ make_signature(std::string_view name, const std::vector<PythonParameter> &parame
         parameter.accepts_absent_scalar = parameter_type.accepts_absent_scalar();
         if (parameter_type.valid_items()) {
             if (type_cast<TimeSeriesDictionaryType>(type) == nullptr) {
-                throw std::invalid_argument{"hg.valid_items requires a TSD input annotation"};
+                throw std::invalid_argument{"hgraph.valid_items requires a TSD input annotation"};
             }
             parameter.valid_items = true;
         }
@@ -801,7 +802,7 @@ void export_schema(nb::handle python_type, const Schema &time_series_schema, con
         throw std::invalid_argument{"a native schema registration requires a Python type"};
     }
 
-    const auto hg_package = nb::module_::import_("hg");
+    const auto hgraph_package = nb::module_::import_("hgraph");
     const auto class_dict = nb::getattr(python_type, "__dict__");
     const auto get_class_attribute = nb::getattr(class_dict, "get");
     const auto time_series_binding = get_class_attribute("_native_time_series_schema", nb::none());
@@ -861,7 +862,7 @@ void export_schema(nb::handle python_type, const Schema &time_series_schema, con
     }
 
     if (effective_scalar_schema != nullptr && PyMapping_HasKeyString(class_dict.ptr(), "__init__") == 0) {
-        const auto schema_constructor = hg_package.attr("_schema_constructor");
+        const auto schema_constructor = hgraph_package.attr("_schema_constructor");
         nb::setattr(python_type, "__init__", schema_constructor(field_name_tuple, optional_fields));
     }
 }
@@ -1014,7 +1015,7 @@ void bind_core(nb::module_ &module) {
     });
     module.def("_with_valid_items", [](const TypeDescriptor &value) {
         if (type_cast<TimeSeriesDictionaryType>(&value.type()) == nullptr) {
-            throw std::invalid_argument{"hg.valid_items requires a TSD input annotation"};
+            throw std::invalid_argument{"hgraph.valid_items requires a TSD input annotation"};
         }
         return TypeDescriptor{value.type(), value.accepts_absent_scalar(), value.minimum_guarantee(), true};
     });
@@ -1475,6 +1476,19 @@ void bind_core(nb::module_ &module) {
         .def("_as_optional", &PythonWiringPoint::as_optional)
         .def("_as_valid_items", &PythonWiringPoint::as_valid_items)
         .def("__getitem__", &details::getitem)
+        .def("__getattr__", [](const PythonWiringPoint &self, std::string_view name) {
+            const auto *operation = details::find_wiring_method(name, self.type());
+            if (operation == nullptr) {
+                const auto message = "'WiringPoint' object has no attribute '" + std::string{name} + "'";
+                throw nb::attribute_error(message.c_str());
+            }
+
+            const auto bound_operator = details::PythonOperator{*operation};
+            const auto receiver = nb::cast(self);
+            return nb::cpp_function([bound_operator, receiver](nb::args positional, nb::kwargs named) {
+                return bound_operator.call_with_receiver(receiver, positional, named);
+            });
+        })
         .def(
             "__add__",
             [add_operator](const PythonWiringPoint &self, nb::handle other) {

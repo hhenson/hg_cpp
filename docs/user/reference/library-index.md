@@ -1,6 +1,6 @@
 # Library alphabetical index
 
-Library operators are available in `hg.operators` in Python and `hg::operators` in C++.
+Library operators are available in `hgraph.operators` in Python and `hg::operators` in C++.
 Graph composition helpers use `hg` in both languages. The linked entries specify
 imports and headers.
 
@@ -38,6 +38,7 @@ imports and headers.
 | `emit` | [Reference](library-collections.md#construction-and-conversion) |
 | `eq` | [Reference](library-numeric.md#arithmetic) |
 | `ewma` | [Reference](library-stateful.md#ewma) |
+| `feedback` | [Reference](sources.md#feedback) |
 | `filter_` | [Reference](library-selection.md#filter_) |
 | `flip` | [Reference](library-collections.md#dictionary-transforms) |
 | `flip_keys` | [Reference](library-collections.md#dictionary-transforms) |

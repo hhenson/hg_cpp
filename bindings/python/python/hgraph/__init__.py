@@ -13,6 +13,7 @@ from weakref import WeakKeyDictionary
 
 from . import operators
 from ._hg import (
+    Feedback,
     EvaluationEngine,
     EvaluationClock,
     Queue,
@@ -38,6 +39,7 @@ from ._hg import (
     _map,
     _mesh,
     _mesh_dependency,
+    _reduce,
     _node_input_type,
     _optional_type,
     _register_key_value_schema,
@@ -51,6 +53,7 @@ from ._hg import (
     _make_service,
     _make_service_catalogue,
     _feedback_service_implementation,
+    feedback,
     _register_multiservice,
     _register_multiservice_impl,
     _register_service_impl,
@@ -99,16 +102,16 @@ class Symbol(str):
         return result
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        raise TypeError("hg.Symbol cannot be subclassed")
+        raise TypeError("hgraph.Symbol cannot be subclassed")
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name == "_is_null":
-            raise AttributeError("hg.Symbol null state is immutable")
+            raise AttributeError("hgraph.Symbol null state is immutable")
         object.__setattr__(self, name, value)
 
     def __delattr__(self, name: str) -> None:
         if name == "_is_null":
-            raise AttributeError("hg.Symbol null state is immutable")
+            raise AttributeError("hgraph.Symbol null state is immutable")
         object.__delattr__(self, name)
 
     def __str__(self) -> str:
@@ -223,7 +226,7 @@ const_ = _TimeSeriesGuarantee.const_
 
 class _ValidItems:
     def __repr__(self) -> str:
-        return "hg.valid_items"
+        return "hgraph.valid_items"
 
     def __call__(self, point: Any) -> Any:
         if not isinstance(point, _WiringPoint):
@@ -292,7 +295,7 @@ def _with_guarantee(annotation: Any, guarantee: Any) -> Any:
     if guarantee is None:
         return annotation
     if not isinstance(guarantee, _TimeSeriesGuarantee):
-        raise TypeError("time-series guarantees must be hg.ordinary, hg.deduplicated, hg.final, or hg.const_")
+        raise TypeError("time-series guarantees must be hgraph.ordinary, hgraph.deduplicated, hgraph.final, or hgraph.const_")
     return Annotated[annotation, guarantee]
 
 
@@ -539,6 +542,24 @@ def map(function: GraphDefinition, *args: Any, **kwargs: Any) -> Any:
     return _map(function._native_definition, positional, named)
 
 
+_REDUCE_OMITTED = object()
+
+
+def reduce(function: Any, values: Any, default: Any = _REDUCE_OMITTED) -> Any:
+    """Reduce the valid values in a time-series dictionary with a graph or callable."""
+    if isinstance(function, GraphDefinition):
+        reducer = function._native_definition
+    elif callable(function):
+        def reducer(left: Any, right: Any) -> Any:
+            return function(left, right)
+
+    else:
+        raise TypeError("reduce expects a decorated @graph definition or callable")
+    if default is None:
+        raise ValueError("reduce default cannot be None; omit it to leave an empty reduction invalid")
+    return _reduce(reducer, values, default is not _REDUCE_OMITTED, default)
+
+
 class _MeshSelector:
     __slots__ = ("name",)
 
@@ -677,7 +698,7 @@ class _Ticks:
 
     def __init__(self, values: IterableABC[Any]):
         if not isinstance(values, IterableABC):
-            raise TypeError("hg.ticks expects an iterable")
+            raise TypeError("hgraph.ticks expects an iterable")
         self.values = tuple(values)
 
 
@@ -927,7 +948,7 @@ def _validate_runner_options(
     run_time: timedelta | None,
 ) -> None:
     if not isinstance(engine, EvaluationEngine):
-        raise TypeError("engine must be a hg.EvaluationEngine")
+        raise TypeError("engine must be a hgraph.EvaluationEngine")
     if start_time is not None and not isinstance(start_time, datetime):
         raise TypeError("start_time must be a datetime or None")
     if start_time is not None and start_time.utcoffset() is not None:
@@ -977,7 +998,7 @@ def _definition_signature(
             injected_parameter = "output"
         elif annotation is Queue:
             if not allow_queue:
-                raise TypeError("hg.Queue can only annotate a hg.queue start parameter")
+                raise TypeError("hgraph.Queue can only annotate a hgraph.queue start parameter")
             injected_parameter = "queue"
         else:
             injected_parameter = None
@@ -1161,16 +1182,16 @@ def _define_node(
     queue_enabled = queue_mode is not None
     if queue_enabled:
         if sum(annotations.get(name) is Queue for name in injected_parameters) != 1:
-            raise TypeError("a hg.queue start callback must declare exactly one Queue parameter")
+            raise TypeError("a hgraph.queue start callback must declare exactly one Queue parameter")
         if any(annotations.get(name) is Output or annotations.get(name) is Scheduler for name in injected_parameters):
-            raise TypeError("hg.queue callbacks cannot use Output or Scheduler")
+            raise TypeError("hgraph.queue callbacks cannot use Output or Scheduler")
         if any(native_type.is_time_series for _, native_type, _ in parameters):
-            raise TypeError("hg.queue start callbacks accept scalar wiring parameters only")
+            raise TypeError("hgraph.queue start callbacks accept scalar wiring parameters only")
         if output is None or not output.is_time_series:
-            raise TypeError("hg.queue requires a TS[...] return annotation")
+            raise TypeError("hgraph.queue requires a TS[...] return annotation")
 
     if output is None and any(annotations.get(name) is Output for name in injected_parameters):
-        raise TypeError("hg.Output requires a Python node with a time-series output")
+        raise TypeError("hgraph.Output requires a Python node with a time-series output")
 
     callbacks: dict[str, Any] = {}
     callback_references: dict[str, Any] = {}
@@ -1294,7 +1315,7 @@ def _native_type(annotation: Any) -> Any:
     if isinstance(annotation, _Type):
         return annotation
     if annotation is TimeSeries:
-        raise TypeError("hg.TimeSeries is only valid as a TypeVar bound")
+        raise TypeError("hgraph.TimeSeries is only valid as a TypeVar bound")
     if isinstance(annotation, TypeVar):
         existing = _type_variables.get(annotation)
         if existing is not None:
@@ -1312,7 +1333,7 @@ def _native_type(annotation: Any) -> Any:
             candidate is TimeSeries or (isinstance(candidate, type) and issubclass(candidate, TimeSeries))
             for candidate in alternatives
         ):
-            raise TypeError(f"TypeVar {annotation.__name__!r} must use bound=hg.TimeSeries")
+            raise TypeError(f"TypeVar {annotation.__name__!r} must use bound=hgraph.TimeSeries")
         try:
             scalar_alternatives = [_native_type(candidate) for candidate in alternatives]
         except TypeError as error:
@@ -1457,7 +1478,7 @@ def source_node(function: Any) -> NodeDefinition:
 def queue(function: Any = None, *, mode: QueueMode = QueueMode.standard) -> Any:
     """Declare a push queue node whose start callback writes its output ticks."""
     if not isinstance(mode, QueueMode):
-        raise TypeError("mode must be a hg.QueueMode")
+        raise TypeError("mode must be a hgraph.QueueMode")
 
     def decorate(callback: Any) -> NodeDefinition:
         if not callable(callback):
@@ -1480,7 +1501,7 @@ def generator(function: Any) -> NodeDefinition:
             if annotation is Scheduler:
                 raise TypeError("Python generators cannot use Scheduler; yield timed output instead")
             if annotation is Output:
-                raise TypeError("Python generators cannot use hg.Output; output views are callback-scoped")
+                raise TypeError("Python generators cannot use hgraph.Output; output views are callback-scoped")
             continue
         input_type = _native_type(annotation)
         if isinstance(input_type, _ScalarAnnotation):
@@ -1550,10 +1571,10 @@ def run_graph(
     if recorder is not None and not isinstance(recorder, _EvaluationProfilerRecorder):
         raise TypeError("recorder must be created by EvaluationProfiler.recorder()")
     if catalogue is not None and not isinstance(catalogue, ServiceCatalogue):
-        raise TypeError("catalogue must be a hg.ServiceCatalogue")
+        raise TypeError("catalogue must be a hgraph.ServiceCatalogue")
     _validate_runner_options(engine, start_time, stop_time, run_time)
     if stop_token is not None and not isinstance(stop_token, StopToken):
-        raise TypeError("stop_token must be a hg.StopToken or None")
+        raise TypeError("stop_token must be a hgraph.StopToken or None")
 
     fixed, positional, named = _bind_definition_arguments(
         definition.signature, definition._fixed_parameters, args, kwargs
@@ -1580,6 +1601,8 @@ def run_graph(
 
 
 operators.map = map
+operators.reduce = reduce
+operators.feedback = feedback
 operators.mesh = mesh
 operators.switch_ = switch_
 operators.dispatch = dispatch
@@ -1589,6 +1612,7 @@ __all__ = [
     "EvaluationEngine",
     "EvaluationClock",
     "EvaluationProfiler",
+    "Feedback",
     "Queue",
     "QueueMode",
     "StopSource",
@@ -1604,6 +1628,7 @@ __all__ = [
     "DispatchDefinition",
     "final",
     "feedback_service_implementation",
+    "feedback",
     "GraphDefinition",
     "GraphRunResult",
     "DEFAULT",
@@ -1641,6 +1666,7 @@ __all__ = [
     "run_graph",
     "schema",
     "reference_service",
+    "reduce",
     "service",
     "subscription_service",
     "service_client_id",

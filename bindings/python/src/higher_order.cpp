@@ -1,10 +1,13 @@
 #include "higher_order.hpp"
 
+#include "operator_binding.hpp"
 #include "python_wiring_error.hpp"
 #include "wiring_argument.hpp"
 
 #include <hg/dispatch.hpp>
+#include <hg/feedback.hpp>
 #include <hg/graph/graph_wiring.hpp>
+#include <hg/graph/wiring_error.hpp>
 #include <hg/graph/wiring_context.hpp>
 #include <hg/map.hpp>
 #include <hg/mesh.hpp>
@@ -12,12 +15,17 @@
 #include <hg/node/runtime_signature_node_template.hpp>
 #include <hg/python/graph_definition.hpp>
 #include <hg/python/wiring_point.hpp>
+#include <hg/reduce.hpp>
 #include <hg/switch.hpp>
+#include <hg/time_series/time_series_type.hpp>
+#include <hg/type/time_series_dict_type.hpp>
+#include <hg/type/time_series_value_type.hpp>
 #include <hg/util/named_argument.hpp>
 
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 
+#include <array>
 #include <memory_resource>
 #include <optional>
 #include <span>
@@ -31,6 +39,48 @@ namespace nb = nanobind;
 
 namespace hg::python::details {
 namespace {
+
+class PythonFeedback {
+  public:
+    PythonFeedback(const TimeSeriesType &output_type, std::string name)
+        : lifetime_{PythonWiringScope::current()}, feedback_{output_type, name} {}
+
+    PythonWiringPoint output() const {
+        lifetime_->check();
+        auto &wiring = WiringContext::current().wiring();
+        lifetime_->check(wiring);
+        return PythonWiringPoint{static_cast<WiringPoint>(feedback_), lifetime_};
+    }
+
+    void bind(const PythonWiringPoint &source) {
+        lifetime_->check();
+        auto &wiring = WiringContext::current().wiring();
+        lifetime_->check(wiring);
+        feedback_ = source.get(wiring);
+    }
+
+  private:
+    std::shared_ptr<PythonWiringLifetime> lifetime_;
+    hg::Feedback<TS_T> feedback_;
+};
+
+PythonFeedback *make_feedback(nb::handle type, std::string name) {
+    const auto native_type = nb::module_::import_("hgraph").attr("_native_type")(type);
+    const auto &type_argument = python_type_argument(native_type);
+    const auto *output_type = type_cast<TimeSeriesType>(&type_argument);
+    if (output_type == nullptr) {
+        throw std::invalid_argument{"Feedback requires a time-series type"};
+    }
+    return new PythonFeedback{*output_type, std::move(name)};
+}
+
+nb::object wire_feedback(const PythonWiringPoint &point, std::string name) {
+    auto &wiring = WiringContext::current().wiring();
+    const auto lifetime = PythonWiringScope::current();
+    lifetime->check(wiring);
+    const auto result = hg::feedback(point.get(wiring), name);
+    return nb::cast(PythonWiringPoint{result, lifetime});
+}
 
 class PythonArguments {
   public:
@@ -117,6 +167,78 @@ nb::object wire_map(const PythonGraphDefinition &function, nb::sequence position
 
     return wiring_result(static_cast<WiringPoint>(
         hg::map(static_cast<const WiringTemplate &>(function), std::span<const MapArgument>{arguments})));
+}
+
+nb::object wire_reduce(nb::handle function, nb::handle values, bool has_default,
+                       nb::handle default_value) {
+    auto &wiring = WiringContext::current().wiring();
+    auto temporary_memory = std::pmr::unsynchronized_pool_resource{};
+    auto memory = allocator{temporary_memory};
+    auto dictionary = wiring_argument(values, memory, wiring);
+
+    try {
+        const auto *dictionary_series = type_cast<TimeSeriesType>(&dictionary.type());
+        const auto *dictionary_type = dictionary_series == nullptr
+                                          ? nullptr
+                                          : type_cast<TimeSeriesDictionaryType>(&dictionary_series->target_type());
+        if (dictionary_type == nullptr) {
+            throw WiringError{"reduce requires a TSD time-series argument"};
+        }
+        const auto &item_type = dictionary_type->value_type().target_type();
+        const auto &reducer_item_type = item_type.dereferenced_type().with_guarantee_limit(
+            TimeSeriesGuarantee::ordinary);
+
+        auto prepared_reducer = std::optional<PythonGraphDefinition>{};
+        const WiringTemplate *reducer{};
+        if (nb::isinstance<PythonGraphDefinition>(function)) {
+            const auto &graph = nb::cast<const PythonGraphDefinition &>(function);
+            reducer = &graph;
+            const auto &signature = graph.default_signature();
+            if (signature.parameter_count() == 2 &&
+                (!signature.parameter(0).type->is_time_series() || !signature.parameter(1).type->is_time_series())) {
+                const auto input_types = std::array<const Type *, 2>{&reducer_item_type, &reducer_item_type};
+                prepared_reducer.emplace(graph.specialize(input_types));
+                reducer = &*prepared_reducer;
+            }
+        } else {
+            if (!PyCallable_Check(function.ptr())) {
+                throw std::invalid_argument{"reduce expects a decorated @graph definition or callable"};
+            }
+            auto parameters = std::vector<Parameter>{
+                {util::symbol{"left"}, &reducer_item_type},
+                {util::symbol{"right"}, &reducer_item_type},
+            };
+            auto wiring_parameter_types = std::vector<const Type *>{&reducer_item_type, &reducer_item_type};
+            auto signature = Signature{util::symbol{"reduce_callable"}, std::move(parameters), reducer_item_type};
+            auto signature_definition =
+                std::make_shared<const PythonNodeDefinition::SignatureDefinition>(std::move(wiring_parameter_types),
+                                                                                  std::move(signature));
+            prepared_reducer.emplace(std::move(signature_definition), function, false);
+            reducer = &*prepared_reducer;
+        }
+
+        if (!has_default) {
+            return wiring_result(static_cast<WiringPoint>(hg::reduce(*reducer, std::move(dictionary))));
+        }
+
+        auto default_argument = [&] {
+            const auto *value_type = type_cast<TimeSeriesValueType>(&item_type);
+            return value_type == nullptr
+                       ? wiring_argument(default_value, memory, wiring)
+                       : wiring_argument(value_type->value_type(), default_value, memory, wiring);
+        }();
+        return wiring_result(static_cast<WiringPoint>(
+            hg::reduce(*reducer, std::move(dictionary), std::move(default_argument))));
+    } catch (const nb::python_error &) {
+        throw;
+    } catch (const WiringError &error) {
+        if (has_python_error(error)) {
+            rethrow_python_error(error);
+        }
+        throw std::invalid_argument{std::string{"cannot wire reduce: "} + error.what()};
+    } catch (const std::exception &error) {
+        throw std::invalid_argument{std::string{"cannot wire reduce: "} + error.what()};
+    }
 }
 
 nb::object wire_mesh(const PythonGraphDefinition &function, nb::sequence positional, nb::sequence named,
@@ -229,7 +351,13 @@ nb::object wire_dispatch(const PythonGraphDefinition &contract, nb::sequence imp
 } // namespace
 
 void bind_higher_order(nb::module_ &module) {
+    nb::class_<PythonFeedback>(module, "Feedback")
+        .def(nb::new_(&make_feedback), nb::arg("output_type"), nb::arg("name") = "")
+        .def_prop_ro("output", &PythonFeedback::output)
+        .def("bind", &PythonFeedback::bind, nb::arg("value"));
+    module.def("feedback", &wire_feedback, nb::arg("value"), nb::arg("name") = "");
     module.def("_map", &wire_map);
+    module.def("_reduce", &wire_reduce);
     module.def("_mesh", &wire_mesh);
     module.def("_mesh_dependency", &wire_mesh_dependency);
     module.def("_switch", &wire_switch);
