@@ -19,9 +19,13 @@ set_target_properties(test_shared_schema_provider PROPERTIES WINDOWS_EXPORT_ALL_
 
 add_library(test_shared_declarations_provider SHARED type/test_shared_declarations_provider.cpp)
 target_link_libraries(test_shared_declarations_provider PRIVATE hg::hg)
-set_target_properties(test_shared_declarations_provider PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON
-                                                                 CXX_VISIBILITY_PRESET hidden
-                                                                 VISIBILITY_INLINES_HIDDEN ON)
+set_target_properties(test_shared_declarations_provider PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+# Hidden visibility gives the provider its own declaration statics, so lookup must find the canonical descriptor.
+# macOS consumers use default visibility, as hg::python requires there.
+if(NOT APPLE)
+    set_target_properties(test_shared_declarations_provider PROPERTIES CXX_VISIBILITY_PRESET hidden
+                                                                     VISIBILITY_INLINES_HIDDEN ON)
+endif()
 
 add_executable(hg_declaration_identity_tests type/declaration_identity_test.cpp)
 target_link_libraries(hg_declaration_identity_tests PRIVATE hg::library Catch2::Catch2WithMain
