@@ -292,7 +292,7 @@ int main() {
     const auto child_graph = compile_graph([&] { time_read_node(); });
     benchmark_flat_evaluation(child_graph);
     auto scalar_output_node = hg::node<ScalarOutputNode>();
-    const auto scalar_output_graph = compile_graph([&] { scalar_output_node(); });
+    const auto scalar_output_graph = compile_graph([&] { (void)scalar_output_node(); });
     benchmark_scalar_output(scalar_output_graph);
     auto nested_node = hg::node<NestedEvaluationNode>();
     const auto parent_graph = compile_graph([&] { nested_node(); });

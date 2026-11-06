@@ -56,9 +56,11 @@ struct buffer_block : allocation_control {
         return std::construct_at(static_cast<buffer_block *>(storage), allocator, capacity, sizeof(buffer_block));
     }
 
-    std::byte *at(std::size_t offset) noexcept { return reinterpret_cast<std::byte *>(this) + offset; }
+    // The payload follows the block in one byte allocation. std::launder returns a pointer into that allocation, so the
+    // offset can address bytes beyond the block object.
+    std::byte *at(std::size_t offset) noexcept { return std::launder(reinterpret_cast<std::byte *>(this)) + offset; }
     const std::byte *at(std::size_t offset) const noexcept {
-        return reinterpret_cast<const std::byte *>(this) + offset;
+        return std::launder(reinterpret_cast<const std::byte *>(this)) + offset;
     }
 
     block_pointer take_next() noexcept;

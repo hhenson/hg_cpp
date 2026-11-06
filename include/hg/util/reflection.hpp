@@ -16,7 +16,7 @@ namespace detail {
 inline constexpr std::size_t maximum_aggregate_members = 32;
 
 struct aggregate_argument {
-    template <typename T> constexpr operator T() const noexcept;
+    template <typename T> operator T() const noexcept;
 };
 
 template <typename T, std::size_t... Index> consteval bool aggregate_initializable(std::index_sequence<Index...>) {

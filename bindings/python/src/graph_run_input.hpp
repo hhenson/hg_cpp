@@ -14,7 +14,7 @@
 
 namespace hg::python::details {
 
-class GraphRunInputs {
+class NB_HIDDEN GraphRunInputs {
   public:
     GraphRunInputs(const Signature &signature, std::span<const Type *const> wiring_parameter_types,
                    nanobind::sequence fixed_values, nanobind::sequence positional_values,

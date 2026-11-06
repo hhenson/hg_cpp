@@ -106,7 +106,13 @@ class buffer {
         }
     }
 
-    details::buffer_block *base_block() const noexcept { return block_pointer().base_block(); }
+    // Callers require a contiguous buffer, and a contiguous buffer always holds a block.
+    details::buffer_block *base_block() const noexcept {
+        if (!control_) {
+            std::unreachable();
+        }
+        return block_pointer().base_block();
+    }
     details::block_pointer block_pointer() const noexcept {
         return control_.visit([](auto *block) -> details::block_pointer { return block; });
     }
@@ -519,6 +525,10 @@ class concurrent_buffer_writer {
         }
         while (true) {
             auto *block = block_.get<details::concurrent_writer_block>();
+            // The constructor and advance_to_next store only concurrent writer blocks.
+            if (block == nullptr) {
+                std::unreachable();
+            }
             if (details::concurrent_writer_block::mark_is_sealed(
                     block->control.reservation_mark.load(std::memory_order_acquire))) {
                 advance_to_next(size, alignment);

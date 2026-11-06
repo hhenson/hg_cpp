@@ -504,7 +504,7 @@ TEST_CASE("a throwing invocation-end callback clears registrations that remain p
     invocation_end_exception.throw_next = true;
 
     const auto throwing_source = node<throwing_invocation_end_source_definition>();
-    CHECK_THROWS_AS(run_graph([&] { throwing_source(); }), std::runtime_error);
+    CHECK_THROWS_AS(run_graph([&] { (void)throwing_source(); }), std::runtime_error);
     CHECK(invocation_end_exception.callback_count == 1);
 
     const auto reuse_source = node<reuse_invocation_end_source_definition>();
