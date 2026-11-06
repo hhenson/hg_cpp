@@ -208,7 +208,8 @@ class PythonObjectScalarRuntimeType final : public ScalarRuntimeType {
     }
 
     bool equals(ScalarDataMode mode, std::uintptr_t data, const details::ScalarData &other) const override {
-        if (typeid(other.runtime_type()) != typeid(PythonObjectScalarRuntimeType)) {
+        const auto &other_runtime_type = other.runtime_type();
+        if (typeid(other_runtime_type) != typeid(PythonObjectScalarRuntimeType)) {
             return false;
         }
 

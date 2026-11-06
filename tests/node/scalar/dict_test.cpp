@@ -112,7 +112,7 @@ TEST_CASE("a scalar dictionary output rejects incompatible items and rolls back 
     auto wiring = GraphWiring{};
     {
         const auto context = WiringContext{wiring};
-        source();
+        (void)source();
     }
     wiring.finalize();
     const auto graph = CompiledGraph{wiring};

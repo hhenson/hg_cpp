@@ -40,7 +40,7 @@ class EvaluationContext {
     EvaluationContext(const EvaluationContext &) = delete;
     EvaluationContext &operator=(const EvaluationContext &) = delete;
     EvaluationContext(EvaluationContext &&) noexcept = default;
-    EvaluationContext &operator=(EvaluationContext &&) noexcept = default;
+    EvaluationContext &operator=(EvaluationContext &&) = delete;
 
     // Engine API. The global context and its referenced services must outlive this invocation context.
     EvaluationContext(GlobalEvaluationContext &global_context, EvaluationTime evaluation_time,

@@ -143,7 +143,7 @@ TEST_CASE("a runtime graph releases collection state storage", "[node][state][sc
     auto wiring = GraphWiring{};
     {
         const auto context = WiringContext{wiring};
-        collection_state();
+        (void)collection_state();
     }
 
     wiring.finalize();
@@ -467,7 +467,7 @@ TEST_CASE("a runtime graph releases composed collection state storage",
     auto wiring = GraphWiring{};
     {
         const auto context = WiringContext{wiring};
-        composed_dict_state(key, value);
+        (void)composed_dict_state(key, value);
     }
 
     wiring.finalize();

@@ -20,8 +20,36 @@
 
 namespace hg {
 
+namespace details {
+
+// Provides the Category behavior that a type variable derives from its alternatives and constraints.
+template <typename Category, typename Derived> class TypeVariableCategory : public Category {};
+
+// A scalar type variable supports an operation when a constraint requires it or every alternative supports it.
+template <typename Derived> class TypeVariableCategory<ScalarType, Derived> : public ScalarType {
+  public:
+    bool supports_equality() const noexcept override {
+        const auto &variable = static_cast<const Derived &>(*this);
+        return std::ranges::contains(variable.constraints(), &supports_scalar_equality) ||
+               (!variable.alternatives().empty() && std::ranges::all_of(variable.alternatives(), [](const auto *type) {
+                    return type->supports_equality();
+                }));
+    }
+
+    bool supports_hash() const noexcept override {
+        const auto &variable = static_cast<const Derived &>(*this);
+        return std::ranges::contains(variable.constraints(), &supports_scalar_hash) ||
+               (!variable.alternatives().empty() &&
+                std::ranges::all_of(variable.alternatives(), [](const auto *type) { return type->supports_hash(); }));
+    }
+};
+
+} // namespace details
+
 // Engine and extension descriptor. Graph authors use ScalarVariable, TimeSeriesVariable, or TypeVariable declarations.
-template <typename Category> class TypeVariableType final : public Category, public Variable {
+template <typename Category>
+class TypeVariableType final : public details::TypeVariableCategory<Category, TypeVariableType<Category>>,
+                               public Variable {
     static_assert(std::derived_from<Category, Type>);
 
   public:
@@ -143,26 +171,6 @@ template <typename Category> class TypeVariableType final : public Category, pub
         }
 
         return **type;
-    }
-
-    bool supports_equality() const noexcept {
-        if constexpr (!std::same_as<Category, ScalarType>) {
-            return false;
-        } else {
-            return std::ranges::contains(constraints_, &supports_scalar_equality) ||
-                   (!alternatives_.empty() &&
-                    std::ranges::all_of(alternatives_, [](const auto *type) { return type->supports_equality(); }));
-        }
-    }
-
-    bool supports_hash() const noexcept {
-        if constexpr (!std::same_as<Category, ScalarType>) {
-            return false;
-        } else {
-            return std::ranges::contains(constraints_, &supports_scalar_hash) ||
-                   (!alternatives_.empty() &&
-                    std::ranges::all_of(alternatives_, [](const auto *type) { return type->supports_hash(); }));
-        }
     }
 
     std::span<const Category *const> alternatives() const noexcept { return alternatives_; }

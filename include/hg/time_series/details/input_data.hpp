@@ -50,7 +50,7 @@ class TimeSeriesInputData {
     static constexpr std::uintptr_t valid_items_flag = 2;
 
     static constexpr std::uint8_t flags(bool modified, bool valid_items) noexcept {
-        return static_cast<std::uint8_t>(modified | (valid_items << 1));
+        return static_cast<std::uint8_t>((modified ? modified_flag : 0) | (valid_items ? valid_items_flag : 0));
     }
 
     util::tagged_ptr<const TimeSeriesRuntimeType, 2, std::uint8_t> runtime_type_{};

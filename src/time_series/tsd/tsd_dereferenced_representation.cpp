@@ -195,7 +195,7 @@ template <bool Recursive> class DereferencedTimeSeriesDictionaryRepresentation f
         memory.delete_object(this);
     }
 
-    TimeSeriesRuntimeType::ConstItem item(item_id_t id) const {
+    TimeSeriesRuntimeType::ConstItem item(item_id_t id) const override {
         if (const auto *sample = samples_.get(id, sample_positions_)) {
             return sample->input();
         }

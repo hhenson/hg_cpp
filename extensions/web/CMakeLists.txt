@@ -158,7 +158,10 @@ if(HG_BUILD_PYTHON)
 endif()
 
 if(BUILD_TESTING)
-    find_package(Catch2 3 REQUIRED)
+    # tests/CMakeLists.txt fetches Catch2 when no installed package exists.
+    if(NOT TARGET Catch2::Catch2WithMain)
+        find_package(Catch2 3 REQUIRED)
+    endif()
     add_executable(hg_web_tests tests/http_client_test.cpp tests/http_server_test.cpp tests/websocket_client_test.cpp)
     target_compile_features(hg_web_tests PRIVATE cxx_std_23)
     target_link_libraries(

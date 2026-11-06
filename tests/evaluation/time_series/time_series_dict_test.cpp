@@ -1105,9 +1105,9 @@ namespace {
 struct dictionary_enumeration_snapshot {
     std::vector<i64> keys;
     std::vector<item_id_t> ids;
-    std::vector<int> values;
-    std::vector<std::pair<i64, int>> key_values;
-    std::vector<std::pair<item_id_t, int>> id_values;
+    std::vector<i64> values;
+    std::vector<std::pair<i64, i64>> key_values;
+    std::vector<std::pair<item_id_t, i64>> id_values;
 };
 
 struct dictionary_enumeration_sink_definition {
@@ -1150,7 +1150,7 @@ TEST_CASE("dictionary enumeration exposes keys, ids, values, and their associati
     std::ranges::sort(first.ids);
 
     auto id_value_ids = std::vector<item_id_t>{};
-    auto id_values = std::vector<int>{};
+    auto id_values = std::vector<i64>{};
     for (const auto &[id, value] : first.id_values) {
         id_value_ids.push_back(id);
         id_values.push_back(value);
@@ -1159,8 +1159,8 @@ TEST_CASE("dictionary enumeration exposes keys, ids, values, and their associati
     std::ranges::sort(id_values);
 
     CHECK(first.keys == std::vector<i64>{1, 2});
-    CHECK(first.values == std::vector{10, 20});
-    CHECK(first.key_values == std::vector<std::pair<i64, int>>{{1, 10}, {2, 20}});
+    CHECK(first.values == std::vector<i64>{10, 20});
+    CHECK(first.key_values == std::vector<std::pair<i64, i64>>{{1, 10}, {2, 20}});
     REQUIRE(first.ids.size() == 2);
     CHECK(first.ids[0] != first.ids[1]);
     CHECK(id_value_ids == first.ids);
@@ -1170,7 +1170,7 @@ TEST_CASE("dictionary enumeration exposes keys, ids, values, and their associati
     std::ranges::sort(last.keys);
     std::ranges::sort(last.values);
     CHECK(last.keys == std::vector<i64>{1});
-    CHECK(last.values == std::vector{11});
+    CHECK(last.values == std::vector<i64>{11});
 }
 
 TEST_CASE("an invalid dictionary input has no entries to enumerate",

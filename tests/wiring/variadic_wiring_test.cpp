@@ -377,7 +377,7 @@ TEST_CASE("forwarded named variadic arguments cannot conflict with a fixed param
         return receiver(leaf_source(), values);
     });
 
-    CHECK_THROWS_WITH(testing::test_wiring([&] { sender("values"_n = bundle_source()); }),
+    CHECK_THROWS_WITH(testing::test_wiring([&] { (void)sender("values"_n = bundle_source()); }),
                       Catch::Matchers::ContainsSubstring("a variadic argument name conflicts with a fixed parameter") &&
                           Catch::Matchers::ContainsSubstring("while callback sender at sender[1]"));
 }

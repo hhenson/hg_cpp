@@ -507,7 +507,7 @@ TEST_CASE("compiled all_valid descriptors omit valid_items dictionary checks",
     auto wiring = GraphWiring{};
     {
         auto context = WiringContext{wiring};
-        sink(source());
+        (void)sink(source());
     }
 
     wiring.finalize();
