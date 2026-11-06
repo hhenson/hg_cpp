@@ -20,16 +20,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CMAKE_GENERATOR: Ninja
+      SCCACHE_GHA_ENABLED: "true"
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Ubuntu 24.04 / GCC 14
             os: ubuntu-24.04
-            parallel: 2
+            parallel: 4
           - name: macOS 26 / AppleClang
             os: macos-26
-            parallel: 1
+            parallel: 3
           - name: Windows / MSVC
             os: windows-latest
             parallel: 4
@@ -37,6 +40,10 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Enable shared compiler cache
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+        with:
+          version: v0.15.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
@@ -65,16 +72,14 @@ jobs:
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
       - name: Install Windows dependencies
         if: runner.os == 'Windows'
+        uses: ./.github/actions/install-vcpkg-packages
+        with:
+          packages: icu curl[openssl] openssl
+      - name: Configure Windows dependency paths
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          if (-not $vcpkgRoot) { $vcpkgRoot = $env:VCPKG_ROOT }
-          if (-not $vcpkgRoot -or -not (Test-Path "$vcpkgRoot/vcpkg.exe")) {
-            throw "Could not locate the runner's vcpkg installation"
-          }
-          & "$vcpkgRoot/vcpkg.exe" install icu "curl[openssl]" openssl --triplet x64-windows
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg failed to install web dependencies ($LASTEXITCODE)" }
-          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $vcpkgRoot = $env:VCPKG_ROOT
           "CMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake" |
             Out-File -FilePath $env:GITHUB_ENV -Append
           "CMAKE_PREFIX_PATH=$vcpkgRoot/installed/x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Append
