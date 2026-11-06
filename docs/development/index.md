@@ -33,10 +33,12 @@ history and are marked `superseded`.
 | Nested graphs | [Boundaries and lifecycle](design/nested-graphs.md), [map](design/map.md), [reduce](design/reduce.md), [mesh](design/mesh.md), [switch](design/switch.md) |
 | Shared state and services | [Global state](design/global-state.md), [services](design/services.md) |
 | Authoring integration | [Python](design/python.md), [library contracts](design/library.md) |
+| Extensions | [Grouped frame aggregation](design/frame-group-by.md) |
 
 ## Contributor guidance
 
 - [Testing](testing.md): test organization, coverage dimensions, and required checks.
+- [Benchmark catalog](benchmarks.md): harnesses, recorded results, reproduction, and historical experiments.
 - [Library implementation](library-implementation.md): operator implementation conventions.
 - [Documentation maintenance](documentation.md): page structure, examples, tooling, and publication.
 
@@ -52,3 +54,15 @@ history and are marked `superseded`.
 - [hgraph pattern recheck, 2026-10-30](reports/hgraph-pattern-recheck-2026-10-30.md): historical `2de7d53f` results and current focused verification after the nested-reference and switch-output corrections.
 - [hgraph pattern sweep, 2026-10-30](reports/hgraph-pattern-sweep-2026-10-30.md): additional collection and graph-composition cases with current classifications.
 - [hgraph reference-consumer sweep, 2026-10-30](reports/hgraph-reference-consumer-sweep-2026-10-30.md): source switching, mapped references, and higher-order consumers.
+- [hgraph reference-consumer sweep, 2026-11-02](reports/hgraph-reference-consumer-sweep-2026-11-02.md): metadata, stateful consumers, free collections, and branch lifetime.
+- [hgraph services and feedback sweep, 2026-11-02](reports/hgraph-service-feedback-sweep-2026-11-02.md): nested service clients, delayed collections, and inferred graph outputs.
+- [hgraph service composition and scalar feedback sweep, 2026-11-03](reports/hgraph-service-composition-sweep-2026-11-03.md): service chains, recursive requests, multiservice ordering, and hierarchical scalar feedback.
+- [hgraph generic services and collection composition sweep, 2026-11-03](reports/hgraph-specialization-collection-sweep-2026-11-03.md): generic service specializations and collection conversion, accumulation, emission, and library reductions.
+- [hgraph reference composition sweep, 2026-11-03](reports/hgraph-reference-composition-sweep-2026-11-03.md): additional reference sources, consumers, and nested graph lifetimes.
+- [hgraph service queue sweep, 2026-11-03](reports/hgraph-service-queue-sweep-2026-11-03.md): service-owned queue sources and client lifecycle.
+- [hgraph reduce composition sweep, 2026-11-03](reports/hgraph-reduce-composition-sweep-2026-11-03.md): higher-order reducer graphs and collection lifecycle.
+- [hgraph mesh settling sweep, 2026-11-03](reports/hgraph-mesh-settling-sweep-2026-11-03.md): dependency expansion, retargeting, and branch lifecycle.
+- [hgraph timed lifecycle sweep, 2026-11-03](reports/hgraph-timed-lifecycle-sweep-2026-11-03.md): pending work across branch removal and recreation.
+- [hgraph dispatch composition sweep, 2026-11-03](reports/hgraph-dispatch-composition-sweep-2026-11-03.md): mapped runtime types, structured outputs, and inherited context.
+- [hgraph structured outputs and mapped timers sweep, 2026-11-04](reports/hgraph-composition-sweep-2026-11-04.md): structured mesh outputs, dispatch collection validity, and mapped periodic sources.
+- [hgraph structured composition sweep, 2026-11-04](reports/hgraph-structured-composition-sweep-2026-11-04.md): scalar Dict mapping, projected collection fields, and structured service replies.

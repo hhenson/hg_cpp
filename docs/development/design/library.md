@@ -34,12 +34,16 @@ types; an integer operand does not convert to double to match an overload.
 | --- | --- |
 | `add` | `i64`, `double`, `timedelta_t`, `string`; timestamp plus duration in either order |
 | `sub` | `i64`, `double`, `timedelta_t`; timestamp minus duration or timestamp |
-| `mul` | `i64`, `double`; string or symbol repeated by an `i64` in either order |
-| `div` | `i64`, `double`; result is `double` |
-| `floordiv` | `i64` to `i64`, `double` to `double` |
+| `mul` | `i64`, `double`; string or symbol repeated by an `i64` in either order; duration scaling |
+| `div` | `i64`, `double`; result is `double`; duration scaling or ratio |
+| `divmod` | `i64`/`i64` and `double`/`double`; fixed two-item TSL of floor quotient and remainder; ordinary root guarantee |
+| `floordiv` | `i64` to `i64`, `double` to `double`, duration ratio to `i64` |
+| `lshift`, `rshift` | `i64` |
+| `ln` | `double`; positive input |
 | `mod` | `i64` to `i64`, `double` to `double` |
 | `pow` | `i64` to `i64`, `double` to `double` |
 | `round` | `double`, with an optional decimal digit count; result is `double` |
+| `sign` | `i64`, `double` |
 | `neg`, `pos`, `abs` | `i64`, `double`, `timedelta_t` |
 | `eq`, `ne` | Compatible values of an equality-comparable scalar type |
 | `lt`, `le`, `gt`, `ge` | `i64`, `double`, `string`, `date_time_t`, `timedelta_t` |
@@ -56,22 +60,11 @@ that same minimum value. Floating-point arithmetic uses normal C++ operations.
 String concatenation, text repetition, string comparison, and substring search process
 UTF-8 bytes, including embedded NUL bytes. Character operations follow the
 [text rules](#text-operations). Temporal operators are native C++ overloads.
-Python `datetime.timedelta` maps to
-`timedelta_t`; Python timestamp scalar conversion is not yet supplied.
+Python `datetime.datetime` and `datetime.timedelta` map to `date_time_t` and
+`timedelta_t`; datetime values use timezone-naive UTC conversion.
 
-Integer division converts both operands to `double` and uses native floating-point
-division. Conversion can round operands outside the consecutive-integer range,
-so large-integer results can differ from Python integer true division. It preserves
-the sign of a zero result. Division, floor division, and modulo reject a zero divisor
-during evaluation.
-Dividing the `i64` minimum by `-1` returns the positive quotient as `double`;
-integer floor division wraps the corresponding quotient, and modulo returns
-zero. Integer power wraps at `i64` width and rejects negative exponents.
-Floating power rejects zero raised to a negative exponent and negative bases
-with fractional exponents. `round` returns `double` and rounds ties to even.
-With a digit count, it scales the value by a power of ten, rounds, and scales
-back. Floating-point scaling can affect the result: `round(2.675, 2)` returns
-`2.68`. It preserves non-finite values and the sign of zero.
+The operator behavior and supported temporal fields are specified in the public
+[numeric reference](../../user/reference/library-numeric.md).
 
 `convert` requires an explicit full result time-series type:
 
@@ -84,9 +77,12 @@ to `i64` truncates toward zero; NaN raises `domain_error`, and infinities or
 values outside the `i64` range raise `overflow_error`. The public operator
 accepts overloads for other source time-series types, including collections;
 each overload's output must be compatible with the requested result type. The
-requested type checks compatibility and does not replace the overload's
-inferred output guarantee. See [collection conversion](#collection-conversion-and-construction)
-for the collection overloads.
+engine declares the operator identity; `hg::library` supplies the conversion
+overloads.
+Usually the requested type only checks compatibility; scalar Dict to TSD
+conversion also uses its requested root and item guarantees. See
+[collection conversion](#collection-conversion-and-construction) for the
+collection overloads.
 
 Required operands gate evaluation. Their invalidation invalidates the result,
 and revalidation permits another calculation. Equal results from ordinary
@@ -134,8 +130,8 @@ The collection overloads support these conversions:
 | `TS<Bundle<SCHEMA>>` | Named TSB with matching scalar-valued fields |
 | Named TSB with scalar-valued fields | `TS<Bundle<SCHEMA>>` |
 
-Python uses `tuple[T, ...]` for scalar List annotations. Scalar Set annotations
-are not yet exposed; `hgraph.TSS[T]` is available. See the
+Python uses `tuple[T, ...]` for scalar List annotations and `frozenset[T]` for
+scalar Set annotations. See the
 [Python type mappings](python.md).
 
 Set items and dictionary keys must support hashing. List-to-TSL conversion
@@ -146,8 +142,11 @@ Bundle-to-TSB conversion resolves field indices during wiring.
 
 Conversions to scalar collections or a scalar Bundle require a valid root and
 valid immediate time series items. Other conversions require a valid source
-value. Each conversion propagates the weakest observed input guarantee. The
-requested result must accept that guarantee. Publication and invalidation use
+value. Conversions propagate the weakest observed input guarantee by default.
+Scalar Dict to TSD conversion can instead request `deduplicated` on the TSD
+root or its items. The scalar Dict input keeps its guarantee; the TSD output
+applies the requested guarantee during normal item mutation. Each requested
+result must accept the resolved output type. Publication and invalidation use
 the destination's normal mutation rules.
 
 `combine[OUT](...)` constructs a free fixed TSL from positional time series
@@ -501,10 +500,11 @@ restarted_total = hgraph.operators.sums(value, reset=reset)
 ## Collection reductions
 
 `sum_(values)`, `min_(values)`, `max_(values)`, and `mean(values)` calculate
-over the current items of a numeric fixed-size TSL, TSD, or TSS. They accept `i64` and
-`double` items. Sums and extrema retain the item scalar type. `mean` returns
-`double` and accumulates in `double`; integer sums use the wrapping policy
-described above.
+over the current items of a numeric fixed-size TSL, TSD, TSS, or scalar list, set,
+or dictionary time series. They accept `i64` and `double` items. Scalar dictionary
+reductions use values and ignore keys. Sums and extrema retain the item
+scalar type. `mean` returns `double` and accumulates in `double`; integer sums use
+the wrapping policy described above.
 
 A required overload needs a valid collection and valid immediate items.
 `opt(values)` selects an optional overload that skips invalid items:
@@ -543,7 +543,9 @@ storage.
 
 ## Boolean collection reductions
 
-`all_(values)` and `any_(values)` reduce a Boolean fixed-size TSL, TSD, or TSS.
+`all_(values)` and `any_(values)` reduce a Boolean fixed-size TSL, TSD, TSS, or scalar
+list, set, or dictionary time series. Scalar dictionary reductions use values and
+ignore keys.
 `all_` tests whether every contributing value is true; `any_` tests whether at
 least one is true. They accept one collection argument. A required overload
 needs a valid root and valid immediate items. `opt(values)` selects an
@@ -569,8 +571,19 @@ removals. Neither operator schedules on start. Ordinary outputs publish equal
 results on separate evaluations. Required overloads propagate the observed
 collection guarantee; optional overloads produce ordinary outputs.
 
-Each calculation retains no state. TSL and TSD evaluation takes O(N) work in
-the worst case; TSS uses one Boolean membership lookup.
+Each calculation retains no state. TSL, TSD, and scalar dictionary evaluation takes
+O(N) work in the worst case; scalar lists take O(N) work with early termination. TSS
+and scalar sets use one Boolean membership lookup.
+
+## Scalar dictionary subtraction
+
+`TS<Dict<K, L>> - TS<Dict<K, R>>` keeps left entries whose keys are absent from the
+right dictionary. Key types must match and be hashable; value types may differ, and
+right values are ignored. `opt()` on either input selects optional handling: an
+invalid left input produces an empty dictionary, and an invalid right input leaves
+the left dictionary unchanged. Required outputs propagate the weakest observed
+input guarantee; optional outputs are ordinary. Ordinary outputs publish equal
+results, while deduplicated outputs suppress them.
 
 ## Collection queries
 
@@ -608,8 +621,7 @@ Ordinary inputs can publish equal query results on successive changes;
 deduplicated outputs suppress equal results.
 
 Use named calls in Python. Its `len()` and `in` syntax cannot return wiring
-points. Annotate an engine scalar list as `tuple[T, ...]`; scalar set
-annotations are not yet supplied.
+points. See the [scalar annotation mappings](../../user/reference/scalars.md#built-in-mappings).
 
 ## Collection selection
 
@@ -781,6 +793,27 @@ to be valid. `join(opt(values), separator)` skips invalid items and treats
 an invalid root as empty. Optional join publishes an ordinary output on
 input changes; it does not schedule an initial evaluation. Empty input
 produces an empty string. Both strings and symbols produce string output.
+
+## Scalar list operators
+
+The [scalar list operator reference](../../user/reference/library-collections.md#scalar-list-operators)
+defines concatenation, append, repetition, and item removal for `TS<List<T>>`.
+The implementations read borrowed scalar views and construct the complete output
+through `Out<TS<List<T>>>::set(range)`. They retain no state. Concatenation,
+append, and removal use lazy indexed ranges; repetition uses a joined range.
+
+Right-hand scalar item, list, and repeat-count arguments are converted to const
+time series during wiring and use the same runtime overloads as time-series
+operands.
+Required overloads propagate the weakest observed guarantee. Optional overloads
+produce ordinary outputs and use the empty-list behavior documented in the
+reference.
+
+## Scalar set operations
+
+The [scalar set operation reference](../../user/reference/library-collections.md#scalar-set-operations)
+defines native `TS<Set<K>>` set operations, including Python `TS[frozenset[K]]`.
+Implementations construct the result through scalar output APIs and retain no state.
 
 ## Time series set operations
 

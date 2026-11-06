@@ -1,7 +1,8 @@
 # Conditionals
 
-A conditional can choose a value, control forwarding, or select which graph instance
-runs. The choice determines branch evaluation and retained state.
+When a calculation needs to make a choice, the operation depends on what should
+change: a selected value, the updates sent downstream, or the graph instance that
+runs. These forms have different effects on branch evaluation and retained state.
 
 | Requirement | Operation | Behavior |
 | --- | --- | --- |
@@ -20,8 +21,9 @@ runs. The choice determines branch evaluation and retained state.
 
 ## Fixed conditions
 
-A scalar setting is available during construction. Native `if` selects the
-connections for the complete run.
+If a fixed setting determines which calculations your graph needs, use ordinary `if`
+while constructing it. The selected connections remain in place for the complete run,
+so this works for configuration such as enabling a calibration step.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -72,7 +74,7 @@ Output:
 
 using namespace hg;
 
-auto calibrated_temperature(wp<TS<i64>> reading, bool apply_offset) {
+auto calibrated_temperature(auto reading, bool apply_offset) {
     auto offset = 0;
     if (apply_offset) {
         offset = 2;
@@ -80,12 +82,12 @@ auto calibrated_temperature(wp<TS<i64>> reading, bool apply_offset) {
     return reading + offset;
 }
 
-auto reported_temperature(wp<TS<i64>> reading) {
-    return calibrated_temperature(reading, true);
-}
-
 int main() {
-    const auto result = run_graph(reported_temperature, {18, 20, 19});
+    const auto result = run_graph(
+        [](auto reading) {
+            return calibrated_temperature(reading, true);
+        },
+        {18, 20, 19});
     std::cout << result << '\n';
 }
 ```
@@ -102,7 +104,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -118,8 +120,9 @@ raises a truth-conversion error; the equivalent C++ expression cannot convert to
 
 ## Value selection
 
-`if_then_else(condition, true_value, false_value)` follows one input according to a
-changing Boolean condition. A condition change exposes the selected current value.
+If the choice needs to change while the graph runs, use
+`if_then_else(condition, true_value, false_value)`. It follows the selected input and
+exposes that input's current value whenever the condition changes.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -166,14 +169,14 @@ Output:
 using namespace hg;
 using namespace hg::operators;
 
-auto capped_temperature(wp<TS<i64>> reading) {
-    const auto calibrated = reading + 2;
-    const auto too_hot = calibrated > 21;
-    return if_then_else(too_hot, const_(21), calibrated);
-}
-
 int main() {
-    const auto result = run_graph(capped_temperature, {18, 20, 19});
+    const auto result = run_graph(
+        [](auto reading) {
+            const auto calibrated = reading + 2;
+            const auto too_hot = calibrated > 21;
+            return if_then_else(too_hot, const_(21), calibrated);
+        },
+        {18, 20, 19});
     std::cout << result << '\n';
 }
 ```
@@ -190,7 +193,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -207,9 +210,10 @@ input makes the observed result invalid.
 
 ## Boolean combinations
 
-Graph Boolean operations combine changing conditions. Python uses `and_`, `or_`, and
-`not_`; native `and`, `or`, and `not` require immediate truth conversion. C++ supports
-the corresponding overloaded operators on connections.
+To make a choice depend on several changing conditions, combine them with graph
+Boolean operations. Python uses `and_`, `or_`, and `not_` because native `and`, `or`,
+and `not` require an immediate Boolean value; C++ supports the corresponding
+overloaded operators on connections.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -254,13 +258,13 @@ Output:
 
 using namespace hg;
 
-auto temperature_in_range(wp<TS<i64>> reading) {
-    const auto calibrated = reading + 2;
-    return (calibrated >= 20) && (calibrated <= 21);
-}
-
 int main() {
-    const auto result = run_graph(temperature_in_range, {17, 18, 19, 20});
+    const auto result = run_graph(
+        [](auto reading) {
+            const auto calibrated = reading + 2;
+            return (calibrated >= 20) && (calibrated <= 21);
+        },
+        {17, 18, 19, 20});
     std::cout << result << '\n';
 }
 ```
@@ -277,7 +281,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -289,7 +293,8 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 
 ## Multiple outcomes
 
-Nested selections express a small set of value outcomes. Each result must have a
+If a result has more than two possible values, nested selections can express a small
+set of outcomes, such as low, normal, and high readings. Each result must have a
 compatible value type.
 
 <!-- runnable-example -->
@@ -340,16 +345,16 @@ Output:
 using namespace hg;
 using namespace hg::operators;
 
-auto temperature_band(wp<TS<i64>> reading) {
-    const auto calibrated = reading + 2;
-    return if_then_else(
-        calibrated < 20,
-        const_(-1),
-        if_then_else(calibrated > 21, const_(1), const_(0)));
-}
-
 int main() {
-    const auto result = run_graph(temperature_band, {17, 18, 20, 17});
+    const auto result = run_graph(
+        [](auto reading) {
+            const auto calibrated = reading + 2;
+            return if_then_else(
+                calibrated < 20,
+                const_(-1),
+                if_then_else(calibrated > 21, const_(1), const_(0)));
+        },
+        {17, 18, 20, 17});
     std::cout << result << '\n';
 }
 ```
@@ -366,7 +371,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -382,9 +387,10 @@ inclusive lower and upper limit directly. For substantial case-specific calculat
 
 ## Conditional forwarding
 
-`filter_(condition, value)` forwards updates while the condition is true. Closing the
-filter retains its current output. Reopening forwards the current source value if
-it has changed since the last forwarding.
+If updates should reach downstream calculations only while a condition holds, use
+`filter_(condition, value)`. Closing the filter keeps its last output available;
+reopening it forwards the current source value if that value has changed since the
+last forwarding.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -435,14 +441,12 @@ using namespace hg;
 using namespace hg::operators;
 using namespace literal;
 
-auto reported_temperature(wp<TS<i64>> reading, wp<TS<bool>> enabled) {
-    const auto calibrated = reading + 2;
-    return filter_(enabled, calibrated);
-}
-
 int main() {
     const auto result = run_graph(
-        reported_temperature,
+        [](auto reading, auto enabled) {
+            const auto calibrated = reading + 2;
+            return filter_(enabled, calibrated);
+        },
         {18, SKIP, 19, 20, SKIP, SKIP, SKIP, 20},
         {false, true, false, SKIP, true, false, true, SKIP});
     std::cout << result << '\n';
@@ -461,7 +465,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -471,13 +475,14 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 :::::
 ::::::
 
-A repeated true condition does not republish an unchanged value. Closing a filter
-preserves the output's current value; it does not stop the upstream calculation.
+A repeated true condition does not republish an unchanged value, and the upstream
+calculation continues to run while the filter is closed.
 
 ## Fallback values
 
-`default_(value, fallback)` produces a fallback while the source has no current value.
-The source remains unavailable; only the derived result receives the fallback.
+If a result should remain available before a source arrives or after it becomes
+invalid, use `default_(value, fallback)` to supply a replacement. The fallback belongs
+to the derived result and does not change the source's availability.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -521,12 +526,12 @@ using namespace hg;
 using namespace hg::operators;
 using namespace literal;
 
-auto configured(wp<TS<i64>> offset) {
-    return default_(offset, 2) + 18;
-}
-
 int main() {
-    const auto result = run_graph(configured, {SKIP, 0, 3});
+    const auto result = run_graph(
+        [](auto offset) {
+            return default_(offset, 2) + 18;
+        },
+        {SKIP, 0, 3});
     std::cout << result << '\n';
 }
 ```
@@ -543,7 +548,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -558,8 +563,9 @@ A zero value is available and must not select the fallback.
 
 ## Alternative publishers
 
-`merge` combines update sources. On each evaluation it publishes the leftmost valid
-input that changed. A retained primary value does not block a secondary update.
+To accept updates from several sources into one result, use `merge`. On each
+evaluation it publishes the leftmost valid input that changed, so a retained primary
+value does not block a new update from a secondary source.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -603,12 +609,12 @@ using namespace hg;
 using namespace hg::operators;
 using namespace literal;
 
-auto readings(wp<TS<i64>> primary, wp<TS<i64>> secondary) {
-    return merge(primary, secondary);
-}
-
 int main() {
-    const auto result = run_graph(readings, {10, SKIP, 12, 13}, {20, 21, SKIP, 23});
+    const auto result = run_graph(
+        [](auto primary, auto secondary) {
+            return merge(primary, secondary);
+        },
+        {10, SKIP, 12, 13}, {20, 21, SKIP, 23});
     std::cout << result << '\n';
 }
 ```
@@ -625,7 +631,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -640,9 +646,9 @@ This differs from a fallback that always prefers an available primary value.
 
 ## Graph selection
 
-`switch_` runs one case graph selected by a changing key. A different case stops the
-current instance and starts a new instance. Returning to a previous case creates
-fresh state.
+If each mode needs its own calculation, state, or resources, use `switch_` to run the
+case graph selected by a changing key. Changing to a different case stops the current
+instance and starts a new one; returning to an earlier case starts it with fresh state.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -698,13 +704,12 @@ using namespace literal;
 auto accumulated(wp<TS<i64>> reading) { return sums(reading).as<TS<i64>>(); }
 auto current(wp<TS<i64>> reading) { return reading; }
 
-auto temperature(wp<TS<i64>> mode, wp<TS<i64>> reading) {
-    return switch_(mode, cases{case_(i64{1}, accumulated), case_(i64{2}, current)}, reading)
-        .as<TS<i64>>();
-}
-
 int main() {
-    const auto result = run_graph(temperature, {1, SKIP, 2, 1}, {18, 19, 20, 21});
+    const auto result = run_graph(
+        [](wp<TS<i64>> mode, wp<TS<i64>> reading) {
+            return switch_(mode, cases{case_(i64{1}, accumulated), case_(i64{2}, current)}, reading);
+        },
+        {1, SKIP, 2, 1}, {18, 19, 20, 21});
     std::cout << result << '\n';
 }
 ```
@@ -721,7 +726,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 

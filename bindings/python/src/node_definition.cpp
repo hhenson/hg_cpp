@@ -1,4 +1,5 @@
 #include <hg/python/node_definition.hpp>
+#include <hg/python/gil.hpp>
 
 #include "delta.hpp"
 #include "python_queue.hpp"
@@ -169,7 +170,10 @@ void apply_time_series_delta(Out<TS_T> output, nanobind::handle delta, allocator
         [&](Out<TSL<TS_T, SIZE>> *value) { apply_list_delta(*value, delta, memory); },
         [&](Out<TSB<SCHEMA>> *value) { apply_bundle_delta(*value, runtime_type, delta, memory); },
         [&](Out<TSD<SCALAR, TS_T>> *value) { apply_dictionary_delta(*value, runtime_type, delta, memory); },
-        [&](Out<REF<TS_T>> *value) { apply_reference_delta(*value, delta); }, ddv::noop);
+        [&](Out<REF<TS_T>> *value) { apply_reference_delta(*value, delta); },
+        [](Out<TS_T> *) {
+            throw std::invalid_argument{"Python node outputs do not support this time-series provider"};
+        });
 }
 
 class CallArguments {
@@ -315,6 +319,9 @@ void PythonNodeDefinition::CompiledData::apply_delta(Invocation invocation, nano
     }
     if (!has_output) {
         throw std::invalid_argument{"a Python sink node must return None"};
+    }
+    if (details::is_invalid(delta)) {
+        throw std::invalid_argument{"Python node returns cannot invalidate outputs"};
     }
 
     auto &memory = invocation.context().runtime_graph().allocation();
@@ -629,9 +636,8 @@ NodeTemplateIdentity PythonNodeDefinition::definition_identity() const {
 
 PythonNodeDefinition::CompiledData PythonNodeDefinition::compile(const ResolvedSignature &signature,
                                                                  allocator &) const {
-    if (!retained_function_ && !retained_start_function_) {
-        throw std::logic_error{"a Python node callback was not retained by its graph wiring"};
-    }
+    auto gil = GilScope{};
+    gil.check_error();
 
     if (uses_queue()) {
         if (signature.output == nullptr) {
@@ -664,10 +670,11 @@ PythonNodeDefinition::CompiledData PythonNodeDefinition::compile(const ResolvedS
     }
 
     auto result = CompiledData{};
-    result.function = retained_function_;
-    result.start_function = retained_start_function_;
-    result.stop_function = retained_stop_function_;
-    result.invalidation_function = retained_invalidation_function_;
+    result.function = retained_function_ ? retained_function_ : retain_callback(weak_function_);
+    result.start_function = retained_start_function_ ? retained_start_function_ : retain_callback(weak_start_function_);
+    result.stop_function = retained_stop_function_ ? retained_stop_function_ : retain_callback(weak_stop_function_);
+    result.invalidation_function = retained_invalidation_function_ ? retained_invalidation_function_
+                                                                   : retain_callback(weak_invalidation_function_);
     result.state_factory = state_factory_;
     result.parameters = std::move(parameter_conversions);
     result.evaluation_arguments = evaluation_arguments_;

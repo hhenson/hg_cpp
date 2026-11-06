@@ -6,10 +6,15 @@
 #include <hg/python/node.hpp>
 #include <hg/python/operator.hpp>
 #include <hg/python/object.hpp>
+#include <hg/python/graph_definition.hpp>
 #include <hg/python/schema.hpp>
 #include <hg/python/scalar_conversion.hpp>
 #include <hg/python/service.hpp>
 #include <hg/python/wiring_point.hpp>
+#include <hg/graph/compiled_graph.hpp>
+#include <hg/graph/graph_wiring.hpp>
+#include <hg/graph/wiring_argument.hpp>
+#include <hg/graph/wiring_context.hpp>
 #include <hg/graph/runtime_graph.hpp>
 #include <hg/library/operators.hpp>
 #include <hg/scalar/builtins.hpp>
@@ -26,6 +31,8 @@
 #include <hg/util/scope_exit.hpp>
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <array>
 #include <atomic>
@@ -33,6 +40,9 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
+#include <vector>
 #include <stdexcept>
 #include <string_view>
 
@@ -78,6 +88,14 @@ const auto alternate_native_python_service =
 
 std::array<std::atomic<int>, 4> native_node_lifecycle{};
 std::array<std::atomic<std::uint64_t>, 2> native_interruption_lifecycle{};
+
+struct custom_labeled_source_definition {
+    hg::Out<hg::TS<hg::i64>> output;
+
+    void evaluate() const { output.set(1); }
+};
+
+const auto custom_labeled_source = hg::node<custom_labeled_source_definition>([] { return "native-custom"; });
 
 struct native_continuous_timer_node {
     static constexpr bool uses_timed_scheduling = true;
@@ -222,7 +240,7 @@ struct native_concrete_type_name_node {
     }
 };
 
-const hg::Operator &native_concrete_type_name_operator() {
+hg::Operator &native_concrete_type_name_operator() {
     static auto operation =
         hg::operator_<auto(hg::TS<hg::SCALAR>) -> hg::string>{"native_concrete_type_name", {"value"}};
     static const auto &implementation = operation.overload(hg::python::node<native_concrete_type_name_node>());
@@ -230,14 +248,14 @@ const hg::Operator &native_concrete_type_name_operator() {
     return operation;
 }
 
-const hg::Operator &native_gil_operator() {
+hg::Operator &native_gil_operator() {
     static auto operation = hg::operator_<auto(hg::TS<hg::i64>) -> hg::TS<hg::i64>>{"native_gil", {"value"}};
     static const auto &implementation = operation.overload(hg::python::node<native_gil_node>());
     (void)implementation;
     return operation;
 }
 
-const hg::Operator &native_callable_gil_operator() {
+hg::Operator &native_callable_gil_operator() {
     static auto operation =
         hg::operator_<auto(hg::TS<hg::i64>) -> hg::TS<hg::i64>>{"native_callable_gil", {"value"}};
     static const auto &implementation = operation.overload(hg::python::node([](hg::In<hg::TS<hg::i64>> input,
@@ -248,7 +266,7 @@ const hg::Operator &native_callable_gil_operator() {
     return operation;
 }
 
-const hg::Operator &native_python_exception_operator() {
+hg::Operator &native_python_exception_operator() {
     static auto operation =
         hg::operator_<auto(hg::TS<hg::i64>) -> hg::TS<hg::i64>>{"native_python_exception", {"value"}};
     static const auto &implementation = operation.overload(hg::python::node<native_python_exception_node>());
@@ -256,14 +274,14 @@ const hg::Operator &native_python_exception_operator() {
     return operation;
 }
 
-const hg::Operator &native_stop_exception_operator() {
+hg::Operator &native_stop_exception_operator() {
     static auto operation = hg::operator_<void(hg::TS<hg::i64>)>{"native_stop_exception", {"value"}};
     static const auto &implementation = operation.overload(hg::python::node<native_stop_exception_node>());
     (void)implementation;
     return operation;
 }
 
-const hg::Operator &native_pair_consumer_operator() {
+hg::Operator &native_pair_consumer_operator() {
     static auto operation = hg::operator_<auto(hg::TSB<NativePairSchema>) -> hg::TS<hg::i64>>{
         "native_pair_consumer", {"value"}};
     static const auto &implementation = operation.overload(hg::node([](hg::In<hg::TSB<NativePairSchema>> input) {
@@ -273,7 +291,7 @@ const hg::Operator &native_pair_consumer_operator() {
     return operation;
 }
 
-const hg::Operator &native_start_only_source_operator() {
+hg::Operator &native_start_only_source_operator() {
     static auto operation = hg::operator_<auto() -> hg::TS<hg::i64>>{"native_start_only_source"};
     static const auto &implementation = operation.overload(
         hg::python::node(native_start_only_source_definition{}));
@@ -281,7 +299,7 @@ const hg::Operator &native_start_only_source_operator() {
     return operation;
 }
 
-const hg::Operator &native_continuous_timer_operator() {
+hg::Operator &native_continuous_timer_operator() {
     static auto operation = hg::operator_<auto(hg::TS<bool>) -> hg::TS<hg::i64>>{"native_continuous_timer",
                                                                                  {"repeat"}};
     static const auto &implementation = operation.overload(hg::node<native_continuous_timer_node>());
@@ -289,7 +307,7 @@ const hg::Operator &native_continuous_timer_operator() {
     return operation;
 }
 
-const hg::Operator &native_python_object_property_operator() {
+hg::Operator &native_python_object_property_operator() {
     static auto operation = hg::operator_<auto(hg::TS_T) -> hg::TS_T>{"native_python_object_property", {"value"}};
     static const auto &implementation = operation.overload(hg::python::node<native_python_object_property_node>());
     (void)implementation;
@@ -307,7 +325,7 @@ struct list_source_definition {
     void evaluate() const {}
 };
 
-const hg::Operator &discard_operator() {
+hg::Operator &discard_operator() {
     static auto operation = hg::operator_<void(hg::TS_T)>{"discard", {"value"}};
     static const auto &implementation = operation.overload(hg::node([](hg::In<hg::TS_T>) {}));
     (void)implementation;
@@ -315,7 +333,7 @@ const hg::Operator &discard_operator() {
     return operation;
 }
 
-const hg::Operator &invalidate_on_zero_operator() {
+hg::Operator &invalidate_on_zero_operator() {
     static auto operation = hg::operator_<auto(hg::TS_T) -> hg::TS_T>{"invalidate_on_zero", {"value"}};
     static const auto &implementation = operation.overload(hg::node([](hg::In<hg::TS<hg::i64>> input,
                                                                        hg::Out<hg::TS<hg::i64>> output) {
@@ -331,7 +349,7 @@ const hg::Operator &invalidate_on_zero_operator() {
     return operation;
 }
 
-const hg::Operator &optional_choice_operator() {
+hg::Operator &optional_choice_operator() {
     static auto operation = hg::operator_<auto(hg::TS_T) -> hg::TS_T>{"optional_choice", {"value"}};
     static const auto &required = operation.overload(hg::node([](hg::In<hg::TS<hg::i64>> input,
                                                                  hg::Out<hg::TS<hg::i64>> output) {
@@ -364,6 +382,26 @@ nanobind::object extension_scalar_to_python(hg::Scalar<>, const hg::python::Pyth
 } // namespace
 
 NB_MODULE(_hg_test_extension, module) {
+    module.def("compiled_wiring_paths", [](const hg::python::PythonGraphDefinition &definition) {
+        auto wiring = hg::GraphWiring{};
+        auto context = hg::WiringContext{wiring};
+        auto scope = hg::python::PythonWiringScope{wiring};
+        (void)static_cast<const hg::WiringTemplate &>(definition)(std::span<const hg::WiringArgument>{});
+        wiring.finalize();
+
+        auto compiled = hg::CompiledGraph{wiring};
+        auto paths = std::vector<std::string>{};
+        paths.reserve(compiled.node_count());
+        for (auto index = std::size_t{}; index < compiled.node_count(); ++index) {
+            paths.push_back(compiled.wiring_path(index).text());
+        }
+        return paths;
+    });
+    module.def("custom_labeled_source", [] {
+        const auto point = custom_labeled_source();
+        return nanobind::cast(hg::python::PythonWiringPoint{
+            point, hg::python::PythonWiringScope::current()});
+    });
     module.def("export_native_pair_schema", [](nanobind::handle python_type) {
         hg::python::export_schema(python_type, native_pair_time_series_schema(), &native_pair_scalar_schema());
     });

@@ -1,10 +1,14 @@
 # Node declarations
 
-A node performs one calculation or side effect when HG evaluates it. A required input
-needs a current value. An active input schedules evaluation when it changes. Inputs are
-active and required unless declared otherwise.
+When a graph needs application logic or an action such as sending a result, declare a
+node. HG calls it during evaluation with its current inputs. Inputs are active and
+required by default: changes schedule evaluation, and each input needs a current value
+before the callback can run.
 
 ## Python declarations
+
+Use `@node` for ordinary value code, `@compute_node` when the calculation needs input
+views, or a source declaration when the node introduces its own events:
 
 | Declaration | Parameters | Result | Initial evaluation |
 | --- | --- | --- | --- |
@@ -23,19 +27,26 @@ its output as `-> int` and may return `None` to leave that output unchanged; an 
 supported.
 
 A callback returning a valid scalar publishes an update even if equal to the previous
-value, unless the output's guarantee suppresses it. Returning `INVALID` removes a
-supported output's current value. Collection results are deltas; see
-[literals](literals.md).
+value, unless the output's guarantee suppresses it. Python callbacks currently cannot
+return `INVALID` to invalidate an output. Collection results are deltas; see
+[output publication](outputs.md#returned-values) and [literals](literals.md).
 
 ### Input activity and validity
 
-`@node` and `@compute_node` accept tuples of input names:
+If a node should run only on selected updates or continue while some inputs are
+unavailable, set its activity and validity options. Both `@node` and `@compute_node`
+accept tuples of input names:
 
 | Option | Selected inputs | Other time series inputs |
 | --- | --- | --- |
 | `active=("request",)` | Schedule evaluation on updates | Passive |
 | `valid=("reading",)` | Require a current value | Optional, unless selected by `all_valid` |
 | `all_valid=("items",)` | Require the root and every immediate item to be valid | Follow `valid` or the default |
+
+The [input validity and activity guide](../guide/advanced-nodes/inputs.md) explains
+when to choose required, optional, or `all_valid`, and how each combines with active
+or passive inputs. Its [request-driven example](../guide/advanced-nodes/inputs.md#active-and-passive-inputs)
+compares required and optional passive readings.
 
 Omitting `active` makes every time series input active. Omitting `valid` keeps
 annotation-derived validity: ordinary views are required, plain optional inputs
@@ -57,38 +68,53 @@ provides the required request-driven read.
 
 ## C++ declarations
 
-`node(callable)` infers a node from a callable. Plain scalar parameters receive fixed
-arguments or current input values. `std::optional<T>` permits absence. A scalar return
-declares `TS<T>`; `std::optional<T>` returns no update when disengaged. A `void` return
-declares no output unless an `Out<>` parameter supplies it.
+To connect an existing C++ calculation, pass its callable to `node(callable)`, which
+infers the node declaration. Plain scalar parameters receive fixed arguments or
+current input values, and `std::optional<T>` permits absence. A scalar return declares
+`TS<T>`; `std::optional<T>` returns no update when disengaged. A `void` return declares
+no output unless an `Out<>` parameter supplies it.
 
-`node<Definition>()` uses an aggregate with input, scalar, state, and output fields. Its
-`evaluate()` method is `const`. It can define `start`, `stop`, and `on_invalidation`
-callbacks. Fields such as `In<TS<i64>>` and `Out<TS<i64>>` provide access during
-callbacks. Aggregate callbacks can receive `EvaluationContext*`; callable node
-parameters do not currently expose it.
+For a node whose inputs, state, output, and lifecycle are clearer as one definition,
+use `node<Definition>()` with an aggregate. Its `evaluate()` method is `const`, and it
+can define `start`, `stop`, and `on_invalidation` callbacks. Fields such as
+`In<TS<i64>>` and `Out<TS<i64>>` provide access during callbacks. Aggregate callbacks
+can receive `EvaluationContext*`; callable node parameters do not currently expose it.
 
-`In<TS_T, ...>` requests a complete input view. Properties include `optional`,
-`all_valid`, `passive`, and a parameter name. `passive` suppresses scheduling by that
-input; it does not relax its validity requirement. `all_valid` requires the root and all
-immediate contained inputs to be valid. `make_active()` and `make_passive()` adjust a
-dynamic input's subscriptions during evaluation where supported by its declaration.
-Python selects these constraints with the decorator options above.
+To set either control on a C++ input view, add its property to `In<TS_T, ...>`:
+
+| Control | Declaration | Contract |
+| --- | --- | --- |
+| Required | `In<TS<i64>, required>` | Require root validity; this is the default |
+| Optional | `In<TS<i64>, optional>` | Permit an invalid input |
+| Complete collection | `In<TSL<TS<i64>, 2>, hg::all_valid>` | Require root and immediate-item validity |
+| Active | `In<TS<i64>, active>` | Input changes schedule evaluation; this is the default |
+| Passive | `In<TS<i64>, passive>` | Input changes do not schedule evaluation |
+
+Combine one validity property and one activity property, for example
+`In<TS<i64>, optional, passive>`. Property order has no meaning. `all_valid` checks
+immediate items rather than every descendant of a nested collection. A parameter
+name is independent of these controls. Python selects the same constraints with the
+decorator options above.
+
+For C++ inputs declared with `dynamic_activity`, `make_active()` and
+`make_passive()` adjust activity during callbacks without changing the validity
+constraint. See [input access](input-views.md).
 
 ## Scheduling and validity
 
-An input update schedules at most one evaluation in the outer cycle. Evaluation reads
-dependency results from that cycle. All required input constraints must hold before the
-callback runs. A node can also be scheduled at start or by a timer. Startup scheduling
-does not bypass required inputs.
+When a calculation combines inputs that change together, HG schedules at most one
+evaluation in the outer cycle and supplies the dependency results from that cycle.
+All required input constraints must hold before the callback runs. A node can also be
+scheduled at start or by a timer; startup scheduling does not bypass required inputs.
 
 C++ `schedule_on_start` selects initial evaluation explicitly. Aggregate sources with no
 inputs need `static constexpr bool schedule_on_start = true` when they rely on initial
 evaluation rather than a start callback or timer.
 
-Required-input invalidation normally invalidates the output without evaluating the
-ordinary callback. C++ `on_invalidation = preserve_output` keeps it; a custom
-invalidation callback can implement another policy. Python registers
+If losing a required input needs a policy such as retaining the last result, use an
+invalidation callback. Required-input invalidation normally invalidates the output
+without evaluating the ordinary callback. C++ `on_invalidation = preserve_output`
+keeps it; a custom invalidation callback can implement another policy. Python registers
 `@definition.on_invalidation`; it runs when required-input invalidation prevents
 ordinary evaluation. Optional inputs permit the ordinary callback to handle absence
 itself. See [output access](outputs.md) and [state](state.md).

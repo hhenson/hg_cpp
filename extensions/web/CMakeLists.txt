@@ -1,4 +1,16 @@
 find_package(CURL 7.85 REQUIRED)
+find_package(OpenSSL REQUIRED)
+
+FetchContent_Declare(
+    certify
+    URL https://github.com/djarek/certify/archive/b74d50d6d91d460f92defb33f32baf302ce82986.tar.gz
+    URL_HASH SHA256=1cfca816c51ffee84b1a66a3698f2a6ef5536914cb5d36829d81c3dd7ffa70de
+    SOURCE_SUBDIR include/boost/certify
+)
+# Consume only the headers. Upstream's CMake project adds unrelated Boost
+# components and installs targets that are private to this implementation.
+FetchContent_MakeAvailable(certify)
+
 find_package(Boost 1.87 CONFIG QUIET COMPONENTS system url)
 if(TARGET Boost::headers AND TARGET Boost::url)
     set(HG_WEB_BOOST_TARGETS Boost::headers Boost::url)
@@ -50,16 +62,38 @@ target_include_directories(
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-target_link_libraries(hg_web PUBLIC hg::hg PRIVATE hg::library CURL::libcurl ICU::uc ${HG_WEB_BOOST_TARGETS} Threads::Threads)
+target_link_libraries(
+    hg_web PUBLIC hg::hg PRIVATE hg::library CURL::libcurl ICU::uc OpenSSL::SSL OpenSSL::Crypto
+                    ${HG_WEB_BOOST_TARGETS} Threads::Threads
+)
+target_include_directories(hg_web SYSTEM PRIVATE ${certify_SOURCE_DIR}/include)
+if(WIN32)
+    target_compile_definitions(hg_web PRIVATE NOMINMAX)
+    target_link_libraries(hg_web PRIVATE Crypt32)
+elseif(APPLE)
+    target_link_libraries(hg_web PRIVATE "-framework CoreFoundation" "-framework Security")
+endif()
 set_target_properties(
     hg_web
     PROPERTIES
         CXX_EXTENSIONS OFF
         WINDOWS_EXPORT_ALL_SYMBOLS ON
         EXPORT_NAME web
+        INSTALL_RPATH "${native_library_install_rpath}"
         VERSION ${PROJECT_VERSION}
         SOVERSION ${PROJECT_VERSION_MAJOR}
 )
+
+if(HG_BUILD_BENCHMARKS)
+    add_executable(hg_web_extension_benchmark ../../benchmarks/web_extension_benchmark.cpp)
+    target_compile_features(hg_web_extension_benchmark PRIVATE cxx_std_23)
+    target_compile_definitions(
+        hg_web_extension_benchmark PRIVATE HG_WEB_BENCHMARK_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+    )
+    target_link_libraries(
+        hg_web_extension_benchmark PRIVATE hg::web hg::library ${HG_WEB_BOOST_TARGETS} OpenSSL::SSL OpenSSL::Crypto
+    )
+endif()
 
 install(
     TARGETS hg_web
@@ -71,7 +105,7 @@ install(
 install(DIRECTORY include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
 if(HG_BUILD_PYTHON)
-    find_package(Python 3.13 COMPONENTS Interpreter Development.Module Development.SABIModule REQUIRED)
+    find_package(Python 3.12 COMPONENTS Interpreter Development.Module Development.SABIModule REQUIRED)
     if(APPLE)
         set(HG_WEB_PYTHON_BUILD_RPATH
             "@loader_path/../..;@loader_path/../../../../bindings/python;@loader_path/../../../..")
@@ -127,7 +161,20 @@ if(BUILD_TESTING)
     find_package(Catch2 3 REQUIRED)
     add_executable(hg_web_tests tests/http_client_test.cpp tests/http_server_test.cpp tests/websocket_client_test.cpp)
     target_compile_features(hg_web_tests PRIVATE cxx_std_23)
-    target_link_libraries(hg_web_tests PRIVATE hg::web hg::library Catch2::Catch2WithMain ${HG_WEB_BOOST_TARGETS})
+    target_link_libraries(
+        hg_web_tests PRIVATE hg::web hg::library Catch2::Catch2WithMain OpenSSL::SSL OpenSSL::Crypto
+                             ${HG_WEB_BOOST_TARGETS}
+    )
+    if(WIN32)
+        set_property(TARGET hg_web_tests APPEND PROPERTY LINK_DEPENDS "$<TARGET_RUNTIME_DLLS:hg_web_tests>")
+        add_custom_command(
+            TARGET hg_web_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_RUNTIME_DLLS:hg_web_tests>
+                    $<TARGET_FILE_DIR:hg_web_tests>
+            COMMAND_EXPAND_LISTS
+        )
+    endif()
     add_test(NAME hg_web_tests COMMAND hg_web_tests)
     set_tests_properties(
         hg_web_tests PROPERTIES TIMEOUT 10 ENVIRONMENT "NO_PROXY=127.0.0.1,localhost;no_proxy=127.0.0.1,localhost"

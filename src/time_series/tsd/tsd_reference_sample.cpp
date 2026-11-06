@@ -29,6 +29,7 @@ class SampledDictionaryRuntimeType final : public TimeSeriesDictionaryRuntimeTyp
                                           resolve_time_series_runtime_type(type.value_type()), 0, 1, false, false,
                                           false} {}
     static const SampledDictionaryRuntimeType &for_type(const TimeSeriesDictionaryType &type);
+    std::optional<ItemLayout> try_item_layout(item_id_t) const override { return std::nullopt; }
 
     RetainedDictionaryKey retain_key(void *, const ScalarData &, allocator &) const override;
     void release_key(void *, item_id_t, allocator &) const noexcept override;
@@ -58,7 +59,6 @@ class SampledDictionaryRuntimeType final : public TimeSeriesDictionaryRuntimeTyp
     bool collection_valid(const void *value) const noexcept override;
     void for_each_modified_item(const TimeSeriesState &, const void *, EvaluationTime, void *,
                                 ModifiedItemFunction) const override;
-    ItemLayout item_layout(item_id_t) const override;
     bool mark_item_modified(void *, item_id_t, EvaluationTime, bool, allocator &) const
         noexcept override;
     void construct_initial_value(void *) const noexcept override;
@@ -273,10 +273,6 @@ SampledDictionary *SampledDictionary::create(const TimeSeriesDictionaryType &typ
                                               ResolvedTimeSeries current, EvaluationTime evaluation_time,
                                               allocator &memory) {
     return memory.new_object<SampledDictionary>(type, previous, current, evaluation_time, memory);
-}
-
-TimeSeriesRuntimeType::ItemLayout SampledDictionaryRuntimeType::item_layout(item_id_t) const {
-    throw std::logic_error{"sampled dictionary items do not have a packed output layout"};
 }
 
 bool SampledDictionaryRuntimeType::mark_item_modified(void *, item_id_t, EvaluationTime, bool,

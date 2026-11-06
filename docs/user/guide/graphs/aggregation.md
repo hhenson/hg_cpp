@@ -1,7 +1,9 @@
 # Aggregation and history
 
-An aggregate combines current items. A running calculation combines successive
-updates over time. The operations answer different questions.
+To calculate portfolio value, combine the current positions; to calculate traded
+volume, accumulate successive trades. HG provides collection reductions for current
+items and running calculations for history across updates, so the choice depends on
+what your total should represent.
 
 | Requirement | Operations |
 | --- | --- |
@@ -13,9 +15,14 @@ updates over time. The operations answer different questions.
 | Difference between successive values | `diff` |
 | Smoothed changing value | `ewma` |
 
+For keyed tables, the C++ frame extension provides
+[grouped aggregation](../../extensions/frame-grouping.md) to maintain one row per group.
+
 ## Current-item reductions
 
-A changed item replaces its contribution. A removed item stops contributing.
+If you need a total, minimum, maximum, or mean across the items currently present,
+use a collection reduction such as `sum_`. Each item contributes its current value,
+so an update replaces its contribution and a removal takes it out of the result.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -82,7 +89,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -99,8 +106,8 @@ items; see [collection contracts](../advanced-graphs/collections.md#aggregation-
 
 ## Boolean reductions
 
-`all_` requires every current item to be true. `any_` requires at least one true item.
-For an empty collection, `all_` is true and `any_` is false.
+To check whether every item meets a condition or whether any item does, use `all_`
+or `any_`. For an empty collection, `all_` is true and `any_` is false.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -167,7 +174,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -179,8 +186,9 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 
 ## Custom aggregation
 
-`reduce` maintains a binary reducer graph for an application-specific combination
-of current values.
+If the built-in totals and extrema do not express how your items should combine,
+use `reduce` with a binary reducer graph. HG maintains the combined result as current
+items change, as this product calculation demonstrates.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -252,7 +260,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -268,8 +276,9 @@ unspecified. The product uses `1` when no valid items contribute. See
 
 ## Counts and previous values
 
-`count` counts valid input updates. Repeated equal values are separate updates.
-`lag` publishes the preceding input event when another event arrives.
+To track how many readings arrived, use `count`; to compare a reading with the
+preceding one, use `lag`. Both follow valid input events, so repeated equal values
+still count as separate updates.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -315,12 +324,12 @@ using namespace hg;
 using namespace hg::operators;
 using namespace literal;
 
-auto reading_count(wp<TS<i64>> reading) {
-    return count(reading);
-}
-
 int main() {
-    const auto result = run_graph(reading_count, {SKIP, 18, 18, SKIP, 24, 22});
+    const auto result = run_graph(
+        [](auto reading) {
+            return count(reading);
+        },
+        {SKIP, 18, 18, SKIP, 24, 22});
     std::cout << result << '\n';
 }
 ```
@@ -337,7 +346,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -392,13 +401,13 @@ using namespace hg;
 using namespace hg::operators;
 using namespace literal;
 
-auto previous_temperature(wp<TS<i64>> reading) {
-    const auto calibrated = reading + 2;
-    return lag(calibrated);
-}
-
 int main() {
-    const auto result = run_graph(previous_temperature, {SKIP, 18, 18, SKIP, 24, 22});
+    const auto result = run_graph(
+        [](auto reading) {
+            const auto calibrated = reading + 2;
+            return lag(calibrated);
+        },
+        {SKIP, 18, 18, SKIP, 24, 22});
     std::cout << result << '\n';
 }
 ```
@@ -415,7 +424,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -430,7 +439,9 @@ publish that final retained value without another input event.
 
 ## Running totals and means
 
-`sums` and `means` accumulate valid input updates over time.
+For an accumulated quantity or an average of successive readings, use `sums` or
+`means`. They retain history across valid input updates rather than combining the
+current items of a collection.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -477,13 +488,13 @@ using namespace hg;
 using namespace hg::operators;
 using namespace literal;
 
-auto temperature_total(wp<TS<i64>> reading) {
-    const auto calibrated = reading + 2;
-    return sums(calibrated);
-}
-
 int main() {
-    const auto result = run_graph(temperature_total, {SKIP, 18, 18, SKIP, 24, 22});
+    const auto result = run_graph(
+        [](auto reading) {
+            const auto calibrated = reading + 2;
+            return sums(calibrated);
+        },
+        {SKIP, 18, 18, SKIP, 24, 22});
     std::cout << result << '\n';
 }
 ```
@@ -500,7 +511,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -555,13 +566,13 @@ using namespace hg;
 using namespace hg::operators;
 using namespace literal;
 
-auto average_temperature(wp<TS<i64>> reading) {
-    const auto calibrated = reading + 2;
-    return means(calibrated);
-}
-
 int main() {
-    const auto result = run_graph(average_temperature, {SKIP, 18, 18, SKIP, 24, 22});
+    const auto result = run_graph(
+        [](auto reading) {
+            const auto calibrated = reading + 2;
+            return means(calibrated);
+        },
+        {SKIP, 18, 18, SKIP, 24, 22});
     std::cout << result << '\n';
 }
 ```
@@ -578,7 +589,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -593,8 +604,9 @@ successive values should contribute.
 
 ## Reset signals
 
-A reset clears the running history. If a value and reset update together, the
-calculation starts the new history with that value.
+If a new session or measurement period should start a fresh calculation, supply a
+reset signal. A reset clears the running history; when a value arrives at the same
+time, it becomes the first value of the new history.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -639,12 +651,12 @@ using namespace hg::literals;
 using namespace hg::operators;
 using namespace literal;
 
-auto session_total(wp<TS<i64>> reading, wp<TS<bool>> reset) {
-    return sums(reading, "reset"_n = reset);
-}
-
 int main() {
-    const auto result = run_graph(session_total, {18, 19, SKIP, 20, 21}, {SKIP, SKIP, false, SKIP, true});
+    const auto result = run_graph(
+        [](auto reading, auto reset) {
+            return sums(reading, "reset"_n = reset);
+        },
+        {18, 19, SKIP, 20, 21}, {SKIP, SKIP, false, SKIP, true});
     std::cout << result << '\n';
 }
 ```
@@ -661,7 +673,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 

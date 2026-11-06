@@ -312,6 +312,8 @@ graph compilation or evaluation.
   from process shutdown callbacks
 - canonical factory cache identity, nested construction, registration failure propagation,
   and concurrent reads of completed descriptors
+- C++ scalar runtime identity and composed time series runtime identity across shared libraries,
+  including recursive descriptors and distinct physical representations
 - formal type-name formatting through `Type`, including nested extension types
 - registration of primitive, generic, extension, and graph types; allocation-free primitive registration;
   independent variable identities and process-lifetime ownership
@@ -409,10 +411,13 @@ graph compilation or evaluation.
   and service contexts; shared request origins; callback exception causes; diagnostic lifetime; offered-form and
   matched-binding costs without additional callback execution
 - map argument selection, graph-function adaptation, overload selection, graph identity, and diagnostics
+- scalar Dict map sources through the selected conversion, including C++ and Python calls, named and mixed arguments,
+  selected key sets, pass-through, sink graphs, and item types without equality
 - mesh argument selection, dependency selection, output inference, overload selection, and diagnostics
 - reducer graph adaptation, input and output compatibility, TSD item type resolution, and diagnostics
 - switch case preparation, argument selection, overload selection, compatibility, and diagnostics
-- dispatch type-tuple selection, branch output adaptation, explicit type mappings, and runtime type transitions
+- dispatch type-tuple selection, branch output adaptation, compatible free and native collection outputs,
+  contained reference outputs, explicit type mappings, and runtime type transitions
 - dispatch cast compatibility, value and reference binding, and nested-graph composition
 - service declarations, signature validation, type mapping, scalar multiplicity, installation arguments,
   implementation selection, multiservice claims and request/reply ports, and path-aware diagnostics
@@ -442,6 +447,9 @@ graph compilation or evaluation.
   plain callable and aggregate parameter inference, explicit generic input types, cycle positions,
   configured start times, realtime input scheduling,
   services, profiling, and existing scalar input compatibility
+- generic C++ callable inputs inferred from scalar literals and typed ranges;
+  independent input types, captures, explicit descriptors, skip and invalidation,
+  empty and sentinel-only inputs, mixed-type rejection, and concrete callable compatibility
 - `run_graph` default and explicit simulation selection, realtime selection, engine-specific default start times,
   explicit start times, realtime stop-token forwarding, and services, global state, and profiling in both modes;
   ordinary scalar arguments, mixed initial values and update sequences, ambiguous empty collections,
@@ -546,16 +554,28 @@ graph compilation or evaluation.
 - global state shared by outer and inner graphs
 - context time series startup sampling, changes, validity, and use across nested graph boundaries
 - mapped TSD unions, selected key sets, per-key inner graph evaluation, scheduling, and lifecycle
+- scalar Dict snapshots mapped to per-key graphs: unchanged values, additions, removals, invalidation,
+  revalidation, and branch re-creation
+- scalar Dict mapping through reference changes, nested graphs, and switches; per-key state
+  across equal snapshots and mixed scalar Dict and TSD sources
+- collection fields projected from mapped bundles: late explicit keys, stable field references,
+  nested removals and invalidation, and aliased fields
 - inner graph input reference guarantees, generic and explicitly typed map
   functions, reference-bound collections, and mapped item replacement while
   another input keeps the inner graph alive
 - mesh dependency creation, key changes, shared dependencies, cycle rejection, evaluation order, and lifecycle
+- structured mesh outputs, partial bundle and list updates, field and item references,
+  dependency forwarding, and branch removal and recreation
 - reduction through compact and nested reducers, odd item counts, defaults, sparse updates, physical item-ID changes,
   and membership changes
 - switch selection, default selection, inner graph evaluation, scheduling, lifecycle, and composition with map and mesh;
   common output inference across contained references and free/native collections, both branch orders,
   downstream value/reference representations, and incompatible type rejection
+- dispatch collection output validity, partial field and item updates, invalidation and revalidation,
+  and held values across concrete runtime type changes
 - service request deduplication, invalidation, nested graph binding propagation, provider ordering, and client removal
+- structured service replies: partial field updates, native and free field references,
+  independent clients, late subscribers, and client removal and recreation
 - service request sinks dispatching work to a background thread and returning queued replies during realtime execution
 
 ### Time series references
@@ -663,6 +683,16 @@ For each reusable node and graph, test:
   selections, and unselected-input updates
 - arithmetic across scalar and time series arguments, exact type matching,
   integer and temporal wraparound, and borrowed string construction
+- `ln` and `sign`, including the logarithm domain, NaN and signed zero; fixed-width
+  shifts and `divmod` across scalar and time series operands, invalidation, and
+  guarantee propagation
+- duration scaling and division, including ties-to-even microsecond rounding,
+  i64 range limits, zero and non-finite divisors; date-time and duration fields,
+  including negative component normalization, i64 timestamp extremes, and
+  wiring errors for unknown fields
+- scalar List concatenation, append, repetition, and removal with scalar and
+  time series operands; test optional invalid inputs, guarantees, nested values,
+  equal-result suppression, and reference retargeting
 - `type_` publication of concrete scalar types, repeated-type deduplication, and validity transitions
 - conversion between scalar time series, full target type matching including
   guarantees and collection results, reference-observed guarantees, and
@@ -710,6 +740,13 @@ For each reusable node and graph, test:
 - Boolean collection reductions, including all-valid and `opt` overloads,
   empty identities, partial validity, valid-item views, item updates and removals,
   references, free collections, output guarantees, and equal results on ordinary ticks
+- scalar list, set, and dictionary numeric and Boolean reductions, including empty
+  results, required and optional inputs, integer wrapping, reference rebinding, and guarantees
+- scalar dictionary subtraction, including distinct value types, key selection,
+  invalid operands, either optional annotation, nested values, and output guarantees
+- scalar set union, intersection, difference, and symmetric difference, including
+  generic item types, invalidation and revalidation, optional empty inputs,
+  ordinary equal-result ticks, and deduplicated output suppression
 - TSS union, intersection, difference, symmetric difference, equality, and
   emptiness, including simultaneous membership changes, empty sets, required
   input gating, `opt` treating invalid inputs as empty, reference rebinding,
@@ -730,6 +767,8 @@ For each reusable node and graph, test:
   periods and event/expiry coincidence, timeout expiry and event resets,
   simultaneous timers and input changes, input update timestamps and elapsed
   intervals, duration bounds, and nested-graph stop cleanup
+- mapped periodic sources and resampling, independent key schedules, branch removal and recreation,
+  and coincident timers and input changes
 - scalar equality through built-in, compound, collection, and extension views;
   ordering and Boolean operations
 - guarantee propagation, equal-result tick selection, reference bindings,
@@ -738,6 +777,17 @@ For each reusable node and graph, test:
   native operator exports, and installed library use
 - Boolean graph operators, required-input gating, evaluation of both C++ operand
   expressions, rejection of native truth conversion, and explicit output-presence checks
+
+### Frame extension
+
+- grouped numeric sums through method and operator calls, declared and wiring-time
+  schemas, inferred result keys, null and composite grouping cells, captured scalar
+  time series, filtered membership, source invalidation, stable group row IDs,
+  recycled source row IDs, integer wraparound, floating-point special values, and
+  wiring-time failures
+- typed aggregation registration with generated adapters, independent operand
+  updates, cached contribution moves, nullable string result ownership across
+  groups and ticks, and expression evaluation without computed operand nodes
 
 ### Python integration
 
@@ -749,6 +799,9 @@ For each reusable node and graph, test:
 - homogeneous scalar tuple annotations, nested and generic items, immutable
   Python materialization, expected-type sequence conversion and ownership,
   and rejection of mutable sequence annotations
+- scalar frozenset annotations, nested and generic items, immutable results,
+  expected-type set conversion and snapshot ownership, invalid item diagnostics,
+  and conversion between scalar sets and TSS without changing TSS deltas
 - timezone-naive UTC datetime conversion through scalar, time-series, nested
   scalar, clock, scheduling, and run-limit paths, including microsecond and
   pre-epoch values and independence from the machine's timezone
@@ -809,7 +862,27 @@ For each reusable node and graph, test:
 - WebSocket server and client schema wiring, binary message exchange, subprotocol negotiation, and reconnect
 - WebSocket rejected handshakes, pending-handshake cancellation, URL validation, and transport failures
 
+Windows TLS tests scope fixture trust to client options through `ca_file`.
+They must not add fixture certificates to Windows certificate stores.
+
+### Installed SDK
+
+`tools/test_installed_sdk.py` without arguments builds and runs consumers against
+the installed Python wheel. To verify a CMake install that includes the web
+extension, pass its prefix and `--web`:
+
+```sh
+python tools/test_installed_sdk.py --prefix /path/to/install --web
+```
+
+This also checks that `hg_web` and `hgraph` import from that prefix. Run the web
+Python tests from outside the source and build directories with only the install
+prefix on `PYTHONPATH`.
+
 ### Performance and portability
+
+The [benchmark catalog](benchmarks.md) lists harnesses and retained results. The
+[published benchmark page](../user/benchmarks.md) summarizes application-facing measurements.
 
 - public and runtime object sizes
 - graph and global-state allocation accounting

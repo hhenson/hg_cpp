@@ -5,7 +5,8 @@ incoming requests and completed client responses through engine queues.
 
 Enable the extension with `HG_BUILD_WEB=ON`. Enable `HG_BUILD_PYTHON=ON` to build
 the Python package. Boost.Asio and Boost.Beast provide the server transport;
-Boost.URL parses request targets. libcurl provides the client transport.
+Boost.URL parses request targets. OpenSSL provides TLS, and libcurl provides the
+HTTP client transport.
 These dependencies are private to the extension.
 
 ## Server
@@ -40,6 +41,10 @@ Runtime failures are logged and terminate the affected request or connection;
 the listener continues serving other entries. A duplicate route registration
 is logged and rejected, leaving the existing route active. Bind and listen
 failures prevent startup and propagate to the graph.
+
+Set `certificate_chain_file` and `private_key_file` together to enable HTTPS.
+Both files use PEM encoding, and the certificate file may contain the full chain.
+The listener requires TLS 1.2 or later.
 
 `http_handler(path, graph)` creates a callable handler. Invoke it wherever the
 route should be wired. The graph's first input receives the request. Remaining
@@ -89,7 +94,8 @@ response writes each time out after 30 seconds.
 
 ## WebSocket server
 
-The WebSocket server API is currently C++ only.
+WebSocket server and client APIs are available in C++ and Python. The public API is
+documented in the [WebSocket guide](../../docs/user/extensions/websocket.md).
 
 `websocket_handler(path, graph)` registers a WebSocket route on the HTTP server's
 listener. HTTP and WebSocket routes can use the same path. A WebSocket handler
@@ -255,13 +261,14 @@ Runtime failures are logged. A libcurl multi-engine failure returns 599 for
 each active request, replaces the engine, and does not replay requests.
 
 `http_client_impl(timeout=timedelta(seconds=30),
-max_response_body_size=8 * 1024 * 1024)` configures each implementation. The
+max_response_body_size=8 * 1024 * 1024, ca_file=None)` configures each implementation. The
 timeout has millisecond resolution and must be at least one millisecond. It
 bounds the transfer. Bounding DNS resolution also requires a libcurl
 build with asynchronous DNS support. The response body limit defaults to
 8 MiB. The client uses libcurl multi for concurrent
 HTTP/1.1 requests, connection reuse, and DNS caching. HTTPS verifies the server
-certificate and hostname. Redirect following is disabled. The adaptor adds no
+certificate and hostname. By default it uses system CA trust. `ca_file` selects
+the only trusted CA file. Redirect following is disabled. The adaptor adds no
 retry policy.
 
 The C++ entry points are declared in `<hg/web/http_client.hpp>`:
@@ -273,7 +280,7 @@ catalogue.register_impl(hg::web::http_client, hg::web::http_client_impl(), {});
 
 The client signature is `TS<Bundle<HttpClientRequest>> ->
 TS<Bundle<HttpResponse>>`. Pass `HttpClientOptions` to `http_client_impl()` to
-configure the timeout and response body limit. One implementation owns one
+configure the timeout, response body limit, and optional `ca_file`. One implementation owns one
 transport thread shared by its service clients, with separate runtime state
 for each graph run.
 
@@ -293,7 +300,7 @@ Windows SSPI support. It uses the current user's credentials; obtaining and
 renewing Kerberos tickets remains the application's responsibility.
 
 `register_client_transports(catalogue, scope)` installs clients with a shared
-authentication scope: HTTP and WebSocket in C++, HTTP in Python. Existing service
+authentication scope: HTTP and WebSocket in C++ and Python. Existing service
 calls keep their signatures. Use this installation instead of installing their
 standalone implementations in that catalogue.
 The C++ registration functions are declared in `<hg/web/client_auth.hpp>`.
@@ -334,7 +341,7 @@ do not reconnect it or pause messages on the established connection.
 
 ## WebSocket client
 
-`websocket_client` connects to a binary `ws://` endpoint. Its request is
+`websocket_client` connects to a binary `ws://` or `wss://` endpoint. Its request is
 `TSB<BinaryWebSocketClientRequest>` with a `connect_request` containing a URL
 and ordered handshake headers, a `message` containing bytes, and a `close`
 request. Each connect tick starts a new connection for that service client.
@@ -363,5 +370,7 @@ catalogue.register_impl(hg::web::websocket_client, hg::web::websocket_client_imp
 ```
 
 `WebSocketClientOptions` configures the timeout for resolve, connect, and
-handshake, plus the maximum received message size. The initial client supports
-only `ws://`, binary messages, and one active connection per service client.
+handshake, the maximum received message size, and an optional `ca_file`. By
+default, WSS uses system CA trust. When set, `ca_file` is the only trusted CA
+file. WSS verifies the server certificate and hostname. The client supports binary messages and one
+active connection per service client.

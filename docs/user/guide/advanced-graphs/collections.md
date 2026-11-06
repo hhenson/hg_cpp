@@ -1,8 +1,8 @@
 # Time series collections
 
-Use independently changing items when sources publish partial updates or consumers
-need dependencies on individual items. A scalar collection instead replaces its
-complete value on each update.
+If a source sends partial updates, or a calculation needs to follow individual
+items, use a time series collection. Its items keep their own values and update
+information, so one item can change without replacing the complete collection.
 
 | Shape | Type | Item identity |
 | --- | --- | --- |
@@ -13,8 +13,9 @@ complete value on each update.
 
 ## Lists
 
-A fixed `TSL` holds a declared number of time series. Each position has its own
-current value and update information.
+For values identified by position, such as a fixed group of sensor channels, use
+a `TSL`. Its fixed-size form declares the number of positions, with a separate
+current value and update information for each one.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -80,7 +81,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -96,8 +97,9 @@ see [list types](../../reference/types.md#declarations).
 
 ## Bundles
 
-A bundle has named items whose time series types can differ. Its schema fixes the
-field names and types.
+If a record's named fields need to update independently, use a time series bundle.
+Its schema fixes the field names and their time series types, which may differ
+from one field to another.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -176,7 +178,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -192,8 +194,9 @@ A scalar `Bundle` stores the fields in one value.
 
 ## Dictionaries
 
-A `TSD` maintains a changing set of keys and a separate time series for each key.
-A supplied mapping is a delta: omitted keys remain unchanged.
+For items identified by keys that can arrive or disappear during a run, use a `TSD`.
+Each key has a separate time series, and updates are deltas: omitted keys keep their
+current state until another update changes or removes them.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -259,7 +262,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -273,10 +276,105 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 and removes its current value. [Iteration](../graphs/iteration.md) uses these keys to
 maintain per-key graph instances.
 
+### Mapping item updates
+
+If a source publishes individual item changes, pass its `TSD` directly to `map`.
+Each input mapping is a delta: omitted keys keep their values, and `REMOVE` deletes
+a key and stops its graph instance. This avoids the full snapshot scan used by
+[scalar dictionary mapping](../graphs/iteration.md#per-key-calculations-with-map).
+
+<!-- runnable-example -->
+::::::{tab-set}
+:sync-group: language
+
+:::::{tab-item} Python
+:sync: python
+
+```python
+from hgraph import REMOVE, TS, TSD, graph, map, run_graph
+
+@graph
+def calibrate(reading: int) -> int:
+    return reading + 2
+
+@graph
+def sensor_one(readings: TSD[int, TS[int]]) -> int:
+    return map(calibrate, readings)[1]
+
+print(run_graph(sensor_one, [{1: 18, 2: 30}, {2: 31}, {1: REMOVE}, {1: 19}]))
+```
+
+Output:
+
+```text
+[20, None, None, 21]
+```
+:::::
+
+:::::{tab-item} C++
+:sync: cpp
+
+::::{tab-set}
+
+:::{tab-item} Code
+
+```cpp
+#include <hg/library.hpp>
+#include <hg/graph.hpp>
+#include <hg/node.hpp>
+#include <hg/run_graph.hpp>
+#include <iostream>
+#include <hg/map.hpp>
+#include <hg/time_series/tsd/tsd_type.hpp>
+
+using namespace hg;
+using namespace hg::operators;
+using namespace literal;
+
+auto calibrate(wp<TS<i64>> reading) { return (reading + 2).as<TS<i64>>(); }
+
+auto sensor_one(wp<TSD<i64, TS<i64>>> readings) {
+    return map(calibrate, readings)[i64{1}].as<TS<i64>>();
+}
+
+int main() {
+    const auto result = run_graph(graph(sensor_one), {{{1, 18}, {2, 30}}, {{2, 31}}, {{1, REMOVE}}, {{1, 19}}});
+    std::cout << result << '\n';
+}
+```
+
+Output:
+
+```text
+[20, None, None, 21]
+```
+:::
+
+:::{tab-item} Build and run
+
+The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
+
+```sh
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
+cmake --build build --config Release
+```
+
+Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windows.
+:::
+::::
+:::::
+::::::
+
+The update to sensor 2 leaves sensor 1 unchanged. Removing sensor 1 withdraws its
+result; re-adding it creates a fresh instance. `map` accepts scalar dictionaries and
+time series dictionaries in the same call. A scalar dictionary supplies snapshots,
+while a time series dictionary supplies item updates.
+
 ## Sets
 
-A `TSS` stores scalar members and exposes membership changes. Python uses `Removed`
-for removal; C++ literals use `REMOVED`.
+If you only need to track membership, use a `TSS` to report which scalar members
+were added or removed. Python uses `Removed` for a removal, while C++ literals use
+`REMOVED`.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -343,7 +441,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -358,8 +456,10 @@ rather than individually valued time series.
 
 ## Aggregation and validity
 
-Collection root validity and item validity are separate. Ordinary reductions require
-valid immediate items. An optional reduction ignores unavailable items.
+When some items are unavailable, decide whether a total should wait for all of them
+or use the available items. Ordinary reductions require valid immediate items;
+optional reductions ignore unavailable ones. The collection root and its items
+have separate validity, so a collection can be present with an invalid item.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -425,7 +525,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 

@@ -1,20 +1,23 @@
 # Input views
 
-Input views provide callback-scoped access to the current value and its change
-information. Use them when a calculation needs more than plain values.
+If a calculation needs validity or change information as well as a current value,
+request an input view. The view provides that access for the duration of the callback.
 
 ## Scalar values
+
+To distinguish a fresh event from a retained reading, inspect the view's modification
+and time queries along with its current value:
 
 | Query | Python | C++ |
 | --- | --- | --- |
 | Current value exists | `input.valid` | `input.valid()` |
-| Valid update in this evaluation | `input.modified` | `input.modified()` |
-| Last valid update time | `input.last_modified_time` | `input.last_updated()` |
+| Changed in this evaluation, including invalidation | `input.modified` | `input.modified()` |
+| Last change time, including invalidation | `input.last_modified_time` | `input.last_updated()` |
 | Current scalar value | `input.value` | `*input` or `input.value()` |
 | Current update | `input.delta_value` | Type-specific change access |
 
-Check validity before reading an optional input. `modified` is not an invalidation
-detector. On an unchanged valid scalar, current value access still returns its retained
+Check validity before reading an optional input, even when `modified` is true.
+On an unchanged valid scalar, current value access still returns its retained
 value; delta access has no new scalar update.
 
 Views, lazy values, and iterators expire when the callback returns. Materialize an
@@ -24,6 +27,7 @@ owning representation or `ScalarValue`.
 
 ## Collection views
 
+To process partial updates or read individual items, use a collection view.
 Collection root validity and item validity are separate. A valid collection can contain
 invalid items. Changes expose the current cycle's delta; cumulative access exposes
 current membership and values.
@@ -39,7 +43,8 @@ Python fixed TSL and TSB expose `modified_*()` and `valid_*()` traversals.
 
 ### Dictionary change selections
 
-TSD provides four change selections:
+If a node should process only changed dictionary items, choose the selection that
+matches its work. TSD separates new keys, changed existing keys, and removals:
 
 | Selection | Items visited |
 | --- | --- |
@@ -59,103 +64,23 @@ Use `modified` to process additions and updates together. Use separate `added` a
 A removed key is separate from an existing key whose child becomes invalid.
 TSD delta mappings use `REMOVE` for removals and `INVALID` for invalid child updates.
 
-An accepting Python dictionary parameter can use `Annotated[TSD[K, V], valid_items]`.
+If unavailable items should be excluded from traversal, request a `valid_items` view.
+An accepting Python dictionary parameter uses `Annotated[TSD[K, V], valid_items]`;
 C++ accepts `valid_items` on the corresponding `In<>` declaration. Calling
-`valid_items(point)` requests that view. It exposes only valid immediate items; validity
-changes appear as key additions/removals. Its physical `key_set` remains the underlying
-membership set.
+`valid_items(point)` requests that view. It exposes only valid immediate items, with
+validity changes appearing as key additions or removals. Its physical `key_set`
+remains the underlying membership set.
 
 ## References
 
-A value input follows a reference target automatically. Explicit `REF` inputs access
-reference values. A target may update or become invalid without the reference itself
-changing targets. Check the validity of the value being read, rather than inferring it
-from the presence of a reference object.
-
+If a node needs the identity of a selected source, request an explicit `REF` input.
+A value input follows the target automatically. The target may update or become
+invalid without the reference changing targets, so check the validity of the value
+being read rather than inferring it from the presence of a reference object.
 
 ## Requiring complete items
 
-`all_valid` prevents evaluation until a collection root and every immediate item are
-valid. This is useful when a partial record cannot produce a correct result.
-A valid root alone permits missing child values.
-
-<!-- runnable-example -->
-::::::{tab-set}
-:sync-group: language
-
-:::::{tab-item} Python
-:sync: python
-
-```python
-from hgraph import INVALID, TS, TSL, compute_node, graph, run_graph
-
-@compute_node(all_valid=("values",))
-def total(values: TSL[TS[int], 2]) -> TS[int]:
-    return sum(item.value for item in values)
-
-@graph
-def complete_total(values: TSL[TS[int], 2]) -> int:
-    return total(values)
-
-print(run_graph(complete_total, [{0: 10}, {1: 20}, {0: INVALID}, {0: 5}]))
-```
-
-Output:
-
-```text
-[None, 30, None, 25]
-```
-:::::
-
-:::::{tab-item} C++
-:sync: cpp
-
-::::{tab-set}
-
-:::{tab-item} Code
-
-```cpp
-#include <hg/library.hpp>
-#include <hg/node.hpp>
-#include <hg/run_graph.hpp>
-#include <iostream>
-
-using namespace hg;
-using namespace hg::operators;
-using namespace literal;
-
-const auto total = node([](In<TSL<TS<i64>, 2>, hg::all_valid> values) {
-    return *values[0] + *values[1];
-});
-
-auto complete_total(wp<TSL<TS<i64>, 2>> values) {
-    return total(values);
-}
-
-int main() {
-    const auto result = run_graph(complete_total, {{{0, 10}}, {{1, 20}}, {{0, INVALID}}, {{0, 5}}});
-    std::cout << result << '\n';
-}
-```
-
-Output:
-
-```text
-[None, 30, None, 25]
-```
-:::
-
-:::{tab-item} Build and run
-
-The [C++ example project](../guide/installation.md#c-example-project) builds this code as `main.cpp`.
-
-```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
-cmake --build build --config Release
-```
-
-Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windows.
-:::
-::::
-:::::
-::::::
+If a partial record cannot produce a correct result, use `all_valid` to require
+the root and every immediate item to be valid. This constraint does not recursively
+check every descendant. The [complete-item guide](../guide/advanced-nodes/inputs.md#requiring-complete-items)
+provides a Python and C++ example with partial updates, invalidation, and recovery.

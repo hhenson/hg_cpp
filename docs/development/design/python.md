@@ -161,10 +161,22 @@ The annotation adds no runtime node and leaves the original wiring point
 unchanged. Its [input-view behavior](time-series-validity.md#collections)
 matches C++, including immediate-item validity and physical `key_set` access.
 
+`CONTEXT[TS[T]] = None` declares a named context input on a Python node or graph. The
+parameter name is the context name. `with point as name:` binds a wiring point under
+the assigned local name for the duration of the block. Python wiring activates the
+native `ContextScope` before resolving each wiring operation; the nearest scope wins,
+and an explicit named argument overrides it. Context parameters are keyword-only at
+Python wiring call sites. The binding captures the caller frame at `__enter__` and
+compares local names and values before and after the `as` assignment to identify the
+name. Ambiguous changed aliases fail during graph construction.
+
 Node and graph functions accept positional and named arguments according to
 their Python signatures, including positional-only, keyword-only, `*args`, and
 `**kwargs` parameters. A graph function expands into the active graph while it
 is being wired; it does not create a runtime nested-graph boundary.
+Python graph wiring uses the local variable name of an assigned wiring point as
+its node label. A node without an assigned local name keeps the generated label.
+An explicit template label takes precedence.
 
 For `@graph` and `@node`, a plain scalar annotation such as `int` accepts an
 `int` scalar or a `TS[int]` wiring point. A graph function receives the scalar
@@ -739,6 +751,16 @@ list do not change the stored value.
 mutable sequences. Bare `list` and `tuple` annotations are unsupported. Fixed
 tuple conversion requires the declared number of items and converts each
 position using its declared scalar type.
+
+`frozenset[T]` and `typing.FrozenSet[T]` declare `hg::Set<T>`. The item annotation
+can contain scalar type variables or nested scalar collections and must resolve
+to a hashable scalar type. Optional items, bare `frozenset`, and mutable `set[T]`
+annotations are unsupported. When the expected type is known, conversion accepts
+Python sets and frozensets, converts each item through its scalar conversion,
+and owns the engine storage. Node arguments and graph results materialize as
+immutable frozensets. Later mutations of the source Python set do not change
+the stored value. `TS[frozenset[T]]` holds a complete scalar set; `TSS[T]` uses
+the collection delta contract described above.
 
 Other Python classes can be used as scalar annotations and values. The first
 use registers one semantic scalar type for that exact class. Python inheritance

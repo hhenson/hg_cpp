@@ -1,9 +1,14 @@
 # Scalar values and schemas
 
-A scalar is one current value, including a compound object or scalar collection. Use
-scalar types inside `TS` when the complete value should update together.
+When a complete record or collection should update together, use a scalar type
+inside `TS`. HG treats it as one current value, even when it contains multiple fields
+or items.
 
 ## Built-in mappings
+
+For numbers, text, timestamps, and complete collections, use the following scalar
+annotations. Their mappings also determine which values can connect across Python
+and C++ nodes:
 
 | Python | C++ | Behavior |
 | --- | --- | --- |
@@ -17,11 +22,17 @@ scalar types inside `TS` when the complete value should update together.
 | `tuple[T, ...]` | `List<T>` | Homogeneous immutable scalar sequence |
 | `tuple[A, B]` | `Tuple<A, B>` | Fixed heterogeneous scalar sequence |
 | `dict[K, V]` | `Dict<K, V>` | Scalar key/value dictionary |
+| `frozenset[T]` | `Set<T>` | Immutable scalar set |
 
 Python mutable `list[T]` annotations are unsupported. Use `tuple[T, ...]`; conversion
 accepts tuples and lists when the expected type is known, owns the stored value, and
-returns immutable tuples. Optional tuple items are unsupported. Python scalar set
-annotations are unsupported. C++ supports scalar sets and timestamp arithmetic.
+returns immutable tuples. Optional tuple items are unsupported.
+
+`frozenset[T]` and `typing.FrozenSet[T]` declare native scalar sets. Conversion
+accepts Python sets and frozensets when the expected type is known, owns a snapshot,
+and returns an immutable frozenset. Items must be hashable scalar types; optional
+items and mutable `set[T]` annotations are unsupported. `TS[frozenset[T]]` publishes
+a complete scalar set per tick; `TSS[T]` publishes [set changes](input-views.md#collection-views).
 
 Timestamp conversion interprets a timezone-naive `datetime` as UTC:
 `datetime(1970, 1, 1)` maps to the Unix epoch. Values before and after the epoch
@@ -34,11 +45,11 @@ owning values beyond a callback or allocation scope.
 
 ## Schemas
 
-Python `@schema` declares named fields. `Bundle[Schema]` is a scalar compound value;
-`TSB[Schema]` projects fields to separate time series. Explicit time series fields pass
-through to the TSB projection. Scalar `Optional[T]` fields preserve absence in the
-scalar bundle; that optional presence is not projected to TSB fields, which use ordinary
-time series validity.
+To give record fields names and checked types, declare them with Python `@schema`. `Bundle[Schema]`
+is a scalar compound value; `TSB[Schema]` projects fields to separate time series. Explicit time
+series fields pass through to the TSB projection. Scalar `Optional[T]` fields preserve absence in
+the scalar bundle; that optional presence is not projected to TSB fields, which use ordinary time
+series validity.
 
 C++ schema templates declare `Field<T>` members. `Bundle<Schema>` supplies the scalar
 projection and `TSB<Schema>` the time series projection. Schema identity, field types,
@@ -48,7 +59,8 @@ mutually recursive declarations and recursive collections are unsupported.
 
 ## Python object scalars
 
-Other Python classes can be scalar annotations. Inheritance determines scalar
+To pass an application object through a graph, use its Python class as a scalar
+annotation. Inheritance determines scalar
 compatibility; the graph retains the actual Python object by reference. Objects used
 this way must be immutable, including state affecting hashing or equality. `None`
 remains a no-update sentinel and cannot be stored as an object scalar.

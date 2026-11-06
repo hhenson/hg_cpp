@@ -52,7 +52,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libicu-dev
+          sudo apt-get install --yes libicu-dev libcurl4-openssl-dev libssl-dev
           python -m pip install --upgrade --only-binary=:all: \
             "build==1.5.0" "scikit-build-core==1.0.3" "nanobind==3.1.0" \
             "cmake>=3.31" "ninja==1.13.0" "packaging==26.3" "abi3audit==0.0.26"
@@ -61,6 +61,9 @@ jobs:
       - name: Audit source distribution
         run: python tools/audit_distribution.py dist
       - name: Build a wheel from the source distribution
+        env:
+          CMAKE_GENERATOR: Ninja
+          CMAKE_BUILD_PARALLEL_LEVEL: "2"
         run: python -m pip wheel --no-deps --no-build-isolation --wheel-dir sdist-wheel dist/*.tar.gz
       - name: Audit the wheel built from the source distribution
         run: |
@@ -85,7 +88,26 @@ jobs:
         with:
           persist-credentials: false
       - name: Install native build dependencies
-        run: dnf install --assumeyes libicu-devel
+        run: dnf install --assumeyes libicu-devel krb5-devel openssl3-devel
+      - name: Build pinned libcurl with GSSAPI
+        shell: bash
+        run: |
+          archive=/tmp/curl-8.23.0.tar.xz
+          curl --fail --location --retry 3 --output "$archive" \
+            https://curl.se/download/curl-8.23.0.tar.xz
+          echo "8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5  $archive" | sha256sum --check
+          tar -C /tmp -xf "$archive"
+          cd /tmp/curl-8.23.0
+          CPPFLAGS="-I/usr/include/openssl3" LDFLAGS="-L/usr/lib64/openssl3" \
+            ./configure --prefix=/opt/curl --with-openssl --with-gssapi \
+            --with-ca-path=/etc/ssl/certs --without-ca-bundle --without-libpsl \
+            --enable-shared --disable-static
+          make --jobs=2
+          make install
+          /opt/curl/bin/curl-config --features | grep --fixed-strings GSS-API
+          echo "CMAKE_PREFIX_PATH=/opt/curl${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=/opt/curl/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/opt/curl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
       - name: Verify Linux compiler
         shell: bash
         run: |
@@ -106,7 +128,11 @@ jobs:
           CMAKE_GENERATOR: Ninja
           CMAKE_BUILD_TYPE: Release
           CMAKE_BUILD_PARALLEL_LEVEL: "2"
-        run: /opt/python/cp312-cp312/bin/python -m build --wheel --no-isolation --outdir raw-wheel
+        run: |
+          /opt/python/cp312-cp312/bin/python -m build --wheel --no-isolation --outdir raw-wheel \
+            --config-setting cmake.define.OPENSSL_INCLUDE_DIR=/usr/include/openssl3 \
+            --config-setting cmake.define.OPENSSL_SSL_LIBRARY=/usr/lib64/openssl3/libssl.so \
+            --config-setting cmake.define.OPENSSL_CRYPTO_LIBRARY=/usr/lib64/openssl3/libcrypto.so
       - name: Repair for manylinux 2.28
         run: |
           auditwheel repair \
@@ -114,6 +140,7 @@ jobs:
             --exclude libhg.so.0 \
             --exclude libhg_library.so.0 \
             --exclude libhg_python.so.0 \
+            --exclude libhg_web.so.0 \
             --exclude libfmt.so.12 \
             --wheel-dir dist \
             raw-wheel/*.whl
@@ -145,6 +172,57 @@ jobs:
       os: windows-latest
       platform: win_amd64
       parallel: "4"
+
+  test-windows-cpp:
+    name: Build and test Windows C++
+    needs: validate-release
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Configure MSVC toolchain
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+      - name: Install Windows native dependencies and build tools
+        run: |
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkgRoot) { $vcpkgRoot = $env:VCPKG_ROOT }
+          if (-not $vcpkgRoot -or -not (Test-Path "$vcpkgRoot/vcpkg.exe")) {
+            throw "Could not locate the runner's vcpkg installation"
+          }
+          & "$vcpkgRoot/vcpkg.exe" install icu --triplet x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg failed to install ICU (exit $LASTEXITCODE)" }
+          if (-not (Test-Path "$vcpkgRoot/installed/x64-windows/include/unicode/utypes.h")) {
+            throw "vcpkg did not install ICU headers for x64-windows"
+          }
+          python -m pip install --upgrade --only-binary=:all: "cmake>=3.31" "ninja==1.13.0"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to install build tools (exit $LASTEXITCODE)" }
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "$vcpkgRoot/installed/x64-windows/bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Configure native tests
+        run: |
+          cmake -S . -B build/windows-cpp -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DBUILD_TESTING=ON -DHG_BUILD_BENCHMARKS=OFF -DHG_BUILD_PYTHON=OFF -DHG_BUNDLE_FMT=ON `
+            "-DCMAKE_EXE_LINKER_FLAGS_RELEASE=/INCREMENTAL:NO /OPT:REF /OPT:ICF"
+          if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed (exit $LASTEXITCODE)" }
+      - name: Build native tests
+        run: |
+          cmake --build build/windows-cpp --parallel 2 --target `
+            hg_tests hg_library_tests hg_declaration_identity_tests hg_logging_initialization_tests
+          if ($LASTEXITCODE -ne 0) { throw "Native test build failed (exit $LASTEXITCODE)" }
+      - name: Run native tests
+        run: |
+          ctest --test-dir build/windows-cpp --build-config Release --parallel 2 --output-on-failure --no-tests=error
+          if ($LASTEXITCODE -ne 0) { throw "Native tests failed (exit $LASTEXITCODE)" }
 
   test-linux-wheel:
     needs: build-linux-wheel

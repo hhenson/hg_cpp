@@ -1,12 +1,15 @@
 # Iteration
 
-Iteration applies a calculation to several items. A fixed loop constructs a fixed
-set of connections. `map` maintains separate graph instances for current keys.
+If you need to apply the same transformation or computation to every item in a
+collection, use `map`. It maintains a separate graph instance for each key, so items
+can update independently and keep their own state. For a fixed set of calculations
+known during construction, an ordinary loop is enough.
 
 ## Fixed repetition
 
-Native loops run during graph construction when the items are fixed scalar values.
-Each iteration can add calculations to the graph.
+When the items are fixed configuration, use a native loop to connect a calculation
+for each one. The loop runs during graph construction, so the number of calculations
+stays fixed even if their inputs change later.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -79,7 +82,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -89,14 +92,13 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 :::::
 ::::::
 
-The loop executes once during construction. Its iteration count does not change
-when graph inputs update.
-
 ## Per-key calculations with map
 
-`map(graph, values)` applies a graph independently to each key. Updating one item
-updates that key's calculation. Adding a key starts an instance; removing it stops
-that instance.
+If readings arrive as complete dictionary snapshots, `map(graph, values)` applies
+one calculation per key. Each snapshot supplies all current items. HG compares it
+with the preceding snapshot, starts calculations for new keys, and stops them for
+keys that disappeared. An unchanged item does not recalculate when its type supports
+equality. The mapped calculation can be a graph function or a node template.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -106,17 +108,22 @@ that instance.
 :sync: python
 
 ```python
-from hgraph import REMOVE, TS, TSD, graph, map, run_graph
+from hgraph import graph, map, run_graph
 
 @graph
 def calibrate(reading: int) -> int:
     return reading + 2
 
 @graph
-def sensor_one(readings: TSD[int, TS[int]]) -> int:
+def sensor_one(readings: dict[int, int]) -> int:
     return map(calibrate, readings)[1]
 
-print(run_graph(sensor_one, [{1: 18, 2: 30}, {2: 31}, {1: REMOVE}, {1: 19}]))
+print(run_graph(sensor_one, [
+    {1: 18, 2: 30},
+    {1: 18, 2: 31},
+    {2: 31},
+    {1: 19, 2: 31},
+]))
 ```
 
 Output:
@@ -135,26 +142,24 @@ Output:
 
 ```cpp
 #include <hg/library.hpp>
-#include <hg/graph.hpp>
+#include <hg/map.hpp>
 #include <hg/node.hpp>
 #include <hg/run_graph.hpp>
 #include <iostream>
-#include <hg/map.hpp>
-#include <hg/time_series/tsd/tsd_type.hpp>
 
 using namespace hg;
 using namespace hg::operators;
-using namespace literal;
-
-auto calibrate(wp<TS<i64>> reading) { return (reading + 2).as<TS<i64>>(); }
-
-auto sensor_one(wp<TSD<i64, TS<i64>>> readings) {
-    return map(calibrate, readings)[i64{1}].as<TS<i64>>();
-}
 
 int main() {
-    const auto result = run_graph(graph(sensor_one), {{{1, 18}, {2, 30}}, {{2, 31}}, {{1, REMOVE}}, {{1, 19}}});
-    std::cout << result << '\n';
+    const auto calibrate = node([](i64 reading) { return reading + 2; });
+    std::cout << run_graph([&](auto readings) {
+        return map(calibrate, readings)[1];
+    }, input<TS<Dict<i64, i64>>>({
+        {{1, 18}, {2, 30}},
+        {{1, 18}, {2, 31}},
+        {{2, 31}},
+        {{1, 19}, {2, 31}},
+    })) << '\n';
 }
 ```
 
@@ -170,7 +175,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -180,22 +185,26 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 :::::
 ::::::
 
-`TSD[int, TS[int]]` in Python and `TSD<i64, TS<i64>>` in C++ describe keyed inputs
-whose integer items update independently. Here, each input mapping supplies item
-updates. The [collection chapter](../advanced-graphs/collections.md#dictionaries)
-defines the type and update format in detail.
+The result selects sensor 1 from the mapped calculations. Changing only sensor 2
+leaves sensor 1 unchanged. Omitting sensor 1 from a later snapshot removes its
+calculation; adding it back creates a fresh instance.
 
-The example selects sensor 1 from the mapped results. An update to sensor 2 does not
-recalculate sensor 1. Re-adding sensor 1 creates a fresh instance.
+Python's `dict[int, int]` declares a complete scalar dictionary. C++ uses
+`input<TS<Dict<i64, i64>>>` to distinguish whole-dictionary snapshots from item
+updates; the graph callback can keep `auto` parameters. The input declaration selects
+the collection shape, as in [scalar dictionaries](scalars.md#dictionaries).
+
+When a source publishes only changed items, use a
+[time series dictionary](../advanced-graphs/collections.md#mapping-item-updates)
+to map those updates directly.
 
 ## Shared and mapped arguments
 
-A scalar argument is fixed for all instances. `pass_through(value)` supplies one
-complete changing input to every instance. An unwrapped dictionary argument is
-mapped by key.
+If every item needs the same changing configuration, wrap that argument in
+`pass_through(value)` to send its current value to every instance. Scalar arguments
+already supply a fixed value to all instances, while an unwrapped dictionary supplies
+each instance with its matching item:
 
-
-<!-- runnable-example -->
 ::::::{tab-set}
 :sync-group: language
 
@@ -203,17 +212,17 @@ mapped by key.
 :sync: python
 
 ```python
-from hgraph import TS, TSD, graph, map, pass_through, run_graph
+from hgraph import graph, map, pass_through, run_graph
 
 @graph
 def calibrate(reading: int, offset: int) -> int:
     return reading + offset
 
 @graph
-def first(readings: TSD[int, TS[int]], offset: int) -> int:
+def first(readings: dict[int, int], offset: int) -> int:
     return map(calibrate, readings, pass_through(offset))[1]
 
-print(run_graph(first, [{1: 10, 2: 20}, {2: 21}, None], [2, None, 3]))
+print(run_graph(first, [{1: 10, 2: 20}, {1: 10, 2: 21}, None], [2, None, 3]))
 ```
 
 Output:
@@ -232,6 +241,7 @@ Output:
 
 ```cpp
 #include <hg/library.hpp>
+#include <hg/map.hpp>
 #include <hg/node.hpp>
 #include <hg/run_graph.hpp>
 #include <iostream>
@@ -240,17 +250,15 @@ using namespace hg;
 using namespace hg::operators;
 using namespace literal;
 
-auto calibrate(wp<TS<i64>> reading, wp<TS<i64>> offset) {
-    return (reading + offset).as<TS<i64>>();
-}
-
-auto first(wp<TSD<i64, TS<i64>>> readings, wp<TS<i64>> offset) {
-    return map(calibrate, readings, pass_through(offset))[i64{1}].as<TS<i64>>();
-}
-
 int main() {
-    const auto result = run_graph(first, {{{1, 10}, {2, 20}}, {{2, 21}}, SKIP}, {2, SKIP, 3});
-    std::cout << result << '\n';
+    const auto calibrate = node([](i64 reading, i64 offset) { return reading + offset; });
+    std::cout << run_graph([&](auto readings, auto offset) {
+        return map(calibrate, readings, pass_through(offset))[1];
+    }, input<TS<Dict<i64, i64>>>({
+        {{1, 10}, {2, 20}},
+        {{1, 10}, {2, 21}},
+        SKIP,
+    }), ticks({2, SKIP, 3})) << '\n';
 }
 ```
 
@@ -266,7 +274,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -277,17 +285,17 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 ::::::
 
 An offset update reaches every instance. A sensor 2 update leaves sensor 1 unchanged.
-
-With several mapped dictionaries, the default key set is their union. Missing items
-can leave an instance's required inputs unavailable. `__key_set_arg__` selects one
-argument's keys; `__key_arg__` passes the current key into the inner graph.
-The [map reference](../../reference/higher-order.md#map) specifies these options.
+C++ `ticks({...})` marks the offset argument as a sequence of updates alongside the
+typed dictionary input.
+The [map reference](../../reference/higher-order.md#map) describes mapping several
+dictionaries and choosing the branch keys.
 
 ## Independent state
 
-Each key owns its calculation state. Removing a key discards that state; re-adding it
-starts from initialization. [Per-sensor totals](../../how-to/per-sensor-totals.md)
-shows the effect with running sums.
+To keep a separate running total or other history for each item, put the stateful
+calculation inside the mapped graph. Each key owns that state for its lifetime;
+removing and re-adding the key starts it again from initialization.
+[Per-sensor totals](../../how-to/per-sensor-totals.md) shows this with running sums.
 
 Use [aggregation](aggregation.md) to combine items. Use
 [`mesh`](../advanced-graphs/dependencies.md#dependencies-between-keys) when one key

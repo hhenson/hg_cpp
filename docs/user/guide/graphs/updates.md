@@ -1,12 +1,14 @@
 # Changing inputs
 
-`run_graph` can supply successive updates to graph inputs and capture output events.
-Each input retains its current value between updates.
+When readings or prices arrive over time, the graph can maintain the result without
+your application calling each dependent calculation. To check this behavior without
+a live source, give `run_graph` a finite sequence of updates for each input.
 
 ## Input sequences
 
-Each sequence position represents an evaluation time, one microsecond after the
-previous position. `None` in Python and `SKIP` in C++ supply no input update.
+To describe both updates and gaps between them, use one sequence position per
+evaluation time. Positions are one microsecond apart by default; `None` in Python
+and `SKIP` in C++ mean that no new input arrives at that time.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -55,20 +57,20 @@ Output:
 
 using namespace hg;
 
-auto calibrated_temperature(wp<TS<i64>> reading, int offset) {
+auto calibrated_temperature(auto reading, int offset) {
     return reading + offset;
 }
 
-auto display_temperature(wp<TS<i64>> reading) {
-    const auto calibrated = calibrated_temperature(reading, 2);
-    return calibrated * 10;
-}
-
 int main() {
-using namespace literal;
+    using namespace literal;
 
-const auto result = run_graph(display_temperature, {18, SKIP, 18, 19});
-std::cout << result << '\n';
+    const auto result = run_graph(
+        [](auto reading) {
+            const auto calibrated = calibrated_temperature(reading, 2);
+            return calibrated * 10;
+        },
+        {18, SKIP, 18, 19});
+    std::cout << result << '\n';
 }
 ```
 
@@ -84,7 +86,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -107,8 +109,9 @@ output at every position.
 
 ## Multiple inputs
 
-One sequence per input describes independent updates. HG evaluates a calculation
-when its required inputs have values and an active dependency updates.
+If a calculation combines sources that update independently, supply a separate
+sequence for each input. HG retains their current values and evaluates the calculation
+when its required inputs are available and an active dependency updates.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -162,18 +165,16 @@ Output:
 using namespace hg;
 using namespace literal;
 
-auto calibrated_temperature(wp<TS<i64>> reading, wp<TS<i64>> offset) {
+auto calibrated_temperature(auto reading, auto offset) {
     return reading + offset;
-}
-
-auto display_temperature(wp<TS<i64>> reading, wp<TS<i64>> offset) {
-    const auto calibrated = calibrated_temperature(reading, offset);
-    return calibrated * 10;
 }
 
 int main() {
     const auto result = run_graph(
-        display_temperature,
+        [](auto reading, auto offset) {
+            const auto calibrated = calibrated_temperature(reading, offset);
+            return calibrated * 10;
+        },
         {18, SKIP, 19, SKIP},
         {SKIP, 2, SKIP, 3});
     std::cout << result << '\n';
@@ -192,7 +193,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -208,8 +209,9 @@ calculations evaluate; they do not produce intermediate partial results.
 
 ## Repeated values
 
-`dedup` suppresses an update whose value equals the current value. Placement controls
-which downstream calculations observe repeated input values.
+If repeated equal readings should not cause more work, use `dedup` to suppress updates
+whose values equal the current value. Its position in the graph determines which
+calculations receive those repeated updates.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -256,13 +258,13 @@ using namespace hg;
 using namespace hg::operators;
 using namespace literal;
 
-auto reported_temperature(wp<TS<i64>> reading) {
-    const auto calibrated = reading + 2;
-    return dedup(calibrated);
-}
-
 int main() {
-    const auto result = run_graph(reported_temperature, {18, 18, SKIP, 19, 18, 18});
+    const auto result = run_graph(
+        [](auto reading) {
+            const auto calibrated = reading + 2;
+            return dedup(calibrated);
+        },
+        {18, 18, SKIP, 19, 18, 18});
     std::cout << result << '\n';
 }
 ```
@@ -279,7 +281,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -294,8 +296,9 @@ Apply it after a calculation when only equal results should be suppressed.
 
 ## Signal-driven publication
 
-`sample(signal, value)` publishes the current value when the signal updates.
-Changes to `value` alone do not publish a sampled result.
+If a dashboard should refresh on request while its underlying values keep changing,
+use `sample(signal, value)`. It publishes the current value when the signal updates,
+so changes to the value alone do not refresh the dashboard.
 
 <!-- runnable-example -->
 ::::::{tab-set}
@@ -346,14 +349,12 @@ using namespace hg;
 using namespace hg::operators;
 using namespace literal;
 
-auto sampled_temperature(wp<TS<i64>> reading, wp<TS<bool>> signal) {
-    const auto calibrated = reading + 2;
-    return sample(signal, calibrated);
-}
-
 int main() {
     const auto result = run_graph(
-        sampled_temperature,
+        [](auto reading, auto signal) {
+            const auto calibrated = reading + 2;
+            return sample(signal, calibrated);
+        },
         {18, 19, SKIP, 20, 21, SKIP},
         {SKIP, true, true, SKIP, true, false});
     std::cout << result << '\n';
@@ -372,7 +373,7 @@ Output:
 The [C++ example project](../installation.md#c-example-project) builds this code as `main.cpp`.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/hg/install
+cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/site-packages"
 cmake --build build --config Release
 ```
 
@@ -383,20 +384,21 @@ Run `./build/example` on Linux or macOS, or `build/Release/example.exe` on Windo
 ::::::
 
 Repeated signals sample again even when the value is equal. A sample requires a
-valid current value. [Input activity](../advanced-nodes/inputs.md#activity) explains
+valid current value. [Input activity](../advanced-nodes/inputs.md#active-and-passive-inputs) explains
 how custom nodes express similar trigger rules.
 
 ## Selecting updates by count
 
-`take` forwards an initial number of valid ticks. `drop` skips an initial number.
-`step` selects ticks at a fixed count interval. Counts advance on valid input
-updates, including equal values, rather than on elapsed time. The
+To keep only the first few updates, skip a warm-up period, or process every nth update,
+use `take`, `drop`, or `step`. Their counts advance on valid input updates, including
+equal values, rather than elapsed time. The
 [tick-selection reference](../../reference/library-selection.md#take-drop-step)
 gives a complete example and invalidation rules.
 
 ## Captured results
 
-Both languages return `GraphRunResult` and retain sparse output events. Printing
-a small result displays its updates as a list, with `None` at skipped positions.
+To inspect which updates a graph actually published, use the `GraphRunResult` returned
+by `run_graph` in either language. It stores sparse output events, but prints a small
+result as a list with `None` at skipped positions.
 See [result capture](../../reference/testing.md) for comparisons, timestamps,
 large time gaps, indexing, and invalidation.

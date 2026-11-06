@@ -24,6 +24,8 @@ class TimeSeriesDictionaryRepresentationRuntimeType final : public TimeSeriesDic
                                                   const TimeSeriesRuntimeType &item)
         : TimeSeriesDictionaryRuntimeType{type, key, item, 0, 1, false, false, false} {}
 
+    std::optional<ItemLayout> try_item_layout(item_id_t) const override { return std::nullopt; }
+
     RetainedDictionaryKey retain_key(void *value, const ScalarData &key, allocator &memory) const override {
         const auto &view = representation(value);
         const auto base = view.base_time_series();
@@ -115,11 +117,6 @@ class TimeSeriesDictionaryRepresentationRuntimeType final : public TimeSeriesDic
 
     bool item_modified(const TimeSeriesState &last_updated, const void *value, item_id_t id) const override {
         return representation(value).is_modified_item(last_updated, id);
-    }
-
-    ItemLayout item_layout(item_id_t id) const override {
-        (void)id;
-        throw std::logic_error{"a TSD reference representation has no packed output layout"};
     }
 
     std::size_t item_count(const void *value) const override {

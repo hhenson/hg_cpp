@@ -141,6 +141,8 @@ class GraphWiring {
     void register_nested_service_consumers(const GraphWiring &nested, NodeCallIdentity consumer);
 
     [[nodiscard]] const NodeTemplate &own_node_template(std::unique_ptr<NodeTemplate> node_template);
+    // Engine operation: retain an owner while deferred node calls may reference it.
+    void retain_wiring_owner(std::shared_ptr<const void> owner);
 
     [[nodiscard]] std::optional<WiringPoint> invoke(const WiringTemplate &wiring_template,
                                                     std::span<const WiringArgument> arguments,
@@ -158,6 +160,7 @@ class GraphWiring {
                                               const TimeSeriesRuntimeType *output_runtime_type);
     [[nodiscard]] std::size_t node_index(NodeCallIdentity identity) const;
     [[nodiscard]] std::optional<NodeCallIdentity> node_call_identity(WiringPoint point) const noexcept;
+    void set_default_node_label(NodeCallIdentity identity, const WiringPath *parent, util::symbol label);
     bool pending_node_call_ready(std::size_t identity) const noexcept;
     [[nodiscard]] WiringPoint resolve_pending_node_call(std::size_t identity);
     [[nodiscard]] std::size_t register_node(WiredNode node);
@@ -196,6 +199,7 @@ class GraphWiring {
     [[nodiscard]] WiringPoint expand_materialisation(WiringPoint point, const TimeSeriesType &target_type);
     [[nodiscard]] WiringPoint materialize(WiringPoint point, const TimeSeriesType &type);
     [[nodiscard]] WiringPoint output_item(WiringPoint parent, item_id_t item, const TimeSeriesType &type);
+    const TimeSeriesRuntimeType &output_runtime_type(WiringPoint point) const;
     [[nodiscard]] std::size_t output_index(WiringPoint point) const;
     [[nodiscard]] std::size_t output_node_index(WiringPoint point) const;
     [[nodiscard]] std::optional<WiringPoint> find_output_item(std::size_t parent, item_id_t item) const;
@@ -245,6 +249,7 @@ class GraphWiring {
     std::optional<std::pmr::unsynchronized_pool_resource> variable_memory_;
     allocator variable_allocator_;
     std::vector<std::unique_ptr<NodeTemplate>> node_templates_;
+    std::vector<std::shared_ptr<const void>> wiring_owners_;
     struct PendingNodeCall;
     std::vector<std::unique_ptr<PendingNodeCall>> pending_node_calls_;
     std::vector<std::size_t> active_pending_node_calls_;
