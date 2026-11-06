@@ -179,6 +179,12 @@ TEST_CASE("imported operators consume explicit type arguments", "[feature:type-s
     const auto nothing = operators::nothing[type<TS<i64>>]();
     CHECK(&nothing.type() == &TS<i64, TimeSeriesGuarantee::final>::type());
 
+    // hg_library declares combine. Referencing it keeps hg_library loaded on Linux and Windows, where an unreferenced
+    // shared library is dropped at link time; hg_library registers the convert overload used below.
+    const auto value = node([](Out<TS<i64>>) {});
+    const auto combined = operators::combine[type<TSL<TS<i64>, 2>>](value(), value());
+    CHECK(&combined.type() == &TSL<TS<i64>, 2>::type());
+
     const auto source = node([](Out<TS<List<i64>>>) {});
     const auto converted = operators::convert[type<TSL<TS<i64>, 2>>](source());
     CHECK(&converted.type() == &TSL<TS<i64>, 2>::type());

@@ -62,6 +62,11 @@ in `util::static_storage<T>`. The storage retains the object without running
 its destructor at process shutdown. `VariableRegistry` provides the same
 operation for non-type variables.
 
+On macOS, a library that uses engine types must use default symbol
+visibility. macOS gives a hidden-visibility type a distinct `std::type_info`
+in each library, so registry lookup and runtime type checks do not match it.
+`hg::python` sets default visibility for its consumers.
+
 The first shared library that creates a static descriptor owns its storage
 and its embedded registry entry. That library must remain loaded for the life
 of the process, including when later lookups come from other libraries.

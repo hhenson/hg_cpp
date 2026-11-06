@@ -1,6 +1,5 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
-import socket
 import sys
 from threading import Event, Thread
 from datetime import timedelta
@@ -178,6 +177,9 @@ def test_http_client_returns_599_for_invalid_requests_and_transport_failures():
             if self.path == "/slow":
                 release_slow_request.wait(2)
                 return
+            if self.path == "/empty":
+                self.close_connection = True
+                return
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"response body exceeds three bytes")
@@ -189,10 +191,6 @@ def test_http_client_returns_599_for_invalid_requests_and_transport_failures():
     server_thread = Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 
-    probe = socket.socket()
-    probe.bind(("127.0.0.1", 0))
-    refused_port = probe.getsockname()[1]
-
     request_values = [
         HttpClientRequest("file:///not-an-http-url"),
         HttpClientRequest("http://user:password@127.0.0.1/"),
@@ -200,7 +198,7 @@ def test_http_client_returns_599_for_invalid_requests_and_transport_failures():
         HttpClientRequest(f"http://127.0.0.1:{server.server_port}/", headers=[("bad header", "value")]),
         HttpClientRequest(f"http://127.0.0.1:{server.server_port}/", headers=[("Host", "example.test")]),
         HttpClientRequest(f"http://127.0.0.1:{server.server_port}/", headers=[("X-Test", "safe\r\nInjected: yes")]),
-        HttpClientRequest(f"http://127.0.0.1:{refused_port}/"),
+        HttpClientRequest(f"http://127.0.0.1:{server.server_port}/empty"),
         HttpClientRequest(f"http://127.0.0.1:{server.server_port}/large"),
         HttpClientRequest(f"http://127.0.0.1:{server.server_port}/slow"),
     ]
@@ -238,7 +236,6 @@ def test_http_client_returns_599_for_invalid_requests_and_transport_failures():
         )
     finally:
         release_slow_request.set()
-        probe.close()
         server.shutdown()
         server.server_close()
         server_thread.join(2)
