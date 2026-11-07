@@ -24,6 +24,9 @@ class OutputState {
         owner_.reset(&evaluation_time);
     }
 
+    // The state keeps the address of the evaluation time, so the time must outlive the binding.
+    void bind(TimeSeriesState &last_updated, void *data, const EvaluationTime &&evaluation_time) = delete;
+
     void bind(TimeSeriesState &last_updated, void *data, EvaluationContext &context) noexcept {
         last_updated_ = &last_updated;
         data_ = data;

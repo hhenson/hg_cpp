@@ -889,7 +889,8 @@ TEST_CASE("a string tick keeps its text after the source value is released",
     auto output_state = TimeSeriesState{};
     auto *output_value = static_cast<hg::details::StringStorage *>(nullptr);
     auto output_data = OutputState{runtime_type};
-    output_data.bind(output_state, &output_value, time + std::chrono::microseconds{1});
+    const auto evaluation_time = time + std::chrono::microseconds{1};
+    output_data.bind(output_state, &output_value, evaluation_time);
     auto output = Out<TS<hg::string>>{TimeSeriesOutputBinding{output_data}};
     auto reader = TimeSeriesTickReader{buffer, TS<hg::string>::type()};
 
