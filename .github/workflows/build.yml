@@ -78,11 +78,21 @@ jobs:
           mkdir -p build/sdist-source
           tar -xzf dist/*.tar.gz -C build/sdist-source --strip-components=1
           python -m pip wheel --no-deps --no-build-isolation --wheel-dir sdist-wheel \
-            --config-settings=build-dir=build/wheel build/sdist-source
+            --config-settings=build-dir="$PWD/build/sdist-wheel" build/sdist-source
       - name: Audit the wheel built from the source distribution
         run: |
           python tools/audit_distribution.py sdist-wheel
           abi3audit --strict sdist-wheel/*.whl
+      # This build links the runner's system libraries, so its install tree serves the Linux installed SDK tests.
+      - name: Package the CMake install tree
+        run: |
+          cmake --install build/sdist-wheel --prefix "$RUNNER_TEMP/hg-install"
+          tar -C "$RUNNER_TEMP/hg-install" -cf install-tree.tar .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: install-tree-ubuntu-24.04
+          path: install-tree.tar
+          if-no-files-found: error
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: distribution-sdist
@@ -274,6 +284,27 @@ jobs:
     with:
       os: windows-latest
       artifact: distribution-wheel-windows-latest
+
+  test-linux-install:
+    needs: build-sdist
+    uses: ./.github/workflows/test-install-tree.yml
+    with:
+      os: ubuntu-24.04
+      artifact: install-tree-ubuntu-24.04
+
+  test-macos-install:
+    needs: build-macos-wheel
+    uses: ./.github/workflows/test-install-tree.yml
+    with:
+      os: macos-26
+      artifact: install-tree-macos-26
+
+  test-windows-install:
+    needs: build-windows-wheel
+    uses: ./.github/workflows/test-install-tree.yml
+    with:
+      os: windows-latest
+      artifact: install-tree-windows-latest
 
   # A release tag publishes the distributions that the main build of the same commit built and tested.
   find-tested-build:
