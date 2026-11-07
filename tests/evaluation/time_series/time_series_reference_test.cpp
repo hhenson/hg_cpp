@@ -1193,6 +1193,73 @@ TEST_CASE("reference provider access preserves lazy allocation",
     runtime.stop();
 }
 
+namespace {
+
+// Alternates between adding outer keys that were never used before and removing every live outer key.
+struct ReplacedNestedKeys {
+    Out<TSD<i64, TSD<i64, TS<i64>>>> output;
+
+    static constexpr auto key_count = i64{16};
+    inline static i64 cycle{};
+
+    void evaluate() const {
+        const auto base = cycle / 2 * key_count;
+        for (auto key = base; key < base + key_count; ++key) {
+            if (cycle % 2 == 0) {
+                output[key][0].set(key);
+            } else {
+                output.erase(key);
+            }
+        }
+    }
+};
+
+const auto replaced_nested_keys = node<ReplacedNestedKeys>();
+
+} // namespace
+
+TEST_CASE("reference provider memory does not grow while each cycle replaces every per-item representation",
+          "[evaluation][reference][feature:reference][feature:lifecycle][series:tsd][shape:nested]"
+          "[binding:value-to-reference][transition:addition][transition:removal]") {
+    // Each outer item is read as TSD<i64, REF<TS<i64>>>, so every new key creates one item representation.
+    const auto count_items = node([](In<TSD<i64, TSD<i64, REF<TS<i64>>>>> input) {
+        return static_cast<i64>(input.size());
+    });
+
+    auto wiring = GraphWiring{};
+    {
+        const auto context = WiringContext{wiring};
+        (void)count_items(replaced_nested_keys());
+    }
+
+    wiring.finalize();
+    const auto compiled = CompiledGraph{wiring};
+    auto memory = counting_memory_resource{};
+    {
+        auto runtime_global_state = GlobalState{allocator{memory}};
+        auto runtime = RuntimeGraph{compiled, allocator{memory}, runtime_global_state};
+        runtime.start(MIN_DT + std::chrono::microseconds{1});
+
+        const auto run_cycles = [&](i64 count) {
+            for (auto end = ReplacedNestedKeys::cycle + count; ReplacedNestedKeys::cycle < end;
+                 ++ReplacedNestedKeys::cycle) {
+                runtime.schedule(0);
+                runtime.evaluate(MIN_DT + std::chrono::microseconds{ReplacedNestedKeys::cycle + 2});
+            }
+        };
+
+        ReplacedNestedKeys::cycle = 0;
+        run_cycles(8);
+        const auto warmed_bytes = memory.allocated_bytes();
+        run_cycles(64);
+
+        CHECK(memory.allocated_bytes() == warmed_bytes);
+        runtime.stop();
+    }
+
+    CHECK(memory.allocations() == 0);
+}
+
 TEST_CASE("a dynamic input callback crosses a graph boundary immediately",
           "[evaluation][reference][feature:reference][shape:multiple][transition:update]") {
     auto wiring = GraphWiring{};

@@ -11,11 +11,11 @@
 #include <hg/time_series/time_series_runtime_type.hpp>
 #include <hg/util/scope_exit.hpp>
 
+#include <algorithm>
 #include <cassert>
 #include <concepts>
 #include <limits>
 #include <memory>
-#include <ranges>
 #include <stdexcept>
 
 namespace hg::details {
@@ -94,32 +94,30 @@ ReferenceProvider &ReferenceProvider::require(Reference reference) {
 ReferenceProvider::ReferenceProvider(allocator memory, RootReference &root, DynamicSubscribers *root_subscribers)
     : memory_{memory}, root_{&root}, representations_{&memory.memory_resource()},
       subscriber_groups_{&memory.memory_resource()} {
+    // Group zero holds the root subscribers for the provider's lifetime.
     subscriber_groups_.push_back(root_subscribers);
+    (void)assigned_subscriber_groups_.acquire(memory_);
 }
 
 ReferenceProvider::~ReferenceProvider() {
     for (auto *component = components_; component != nullptr; component = component->next_component) {
         component->detach();
     }
-    for (auto *representation : representations_ | std::views::reverse) {
-        if (representation != nullptr) {
-            representation->detach();
-        }
+    for (auto *representation = newest_representation_; representation != nullptr;
+         representation = representation->next_representation) {
+        representation->detach();
     }
-    for (auto *representation : representations_ | std::views::reverse) {
-        if (representation == nullptr) {
-            continue;
-        }
+    for (auto *representation = newest_representation_; representation != nullptr;
+         representation = representation->next_representation) {
         remove_observer(representation->base_reference(), owner(), representation);
     }
-    for (auto *&representation : representations_ | std::views::reverse) {
-        if (representation == nullptr) {
-            continue;
-        }
-        auto *retired = representation;
-        representation = nullptr;
+    while (newest_representation_ != nullptr) {
+        auto *retired = newest_representation_;
+        newest_representation_ = retired->next_representation;
+        representations_[retired->reference().get<RepresentationReference>()->representation_index()] = nullptr;
         retired->destroy(memory_);
     }
+    assigned_representations_.release(memory_);
     while (components_ != nullptr) {
         auto *component = components_;
         components_ = component->next_component;
@@ -128,6 +126,7 @@ ReferenceProvider::~ReferenceProvider() {
     for (auto *subscribers : subscriber_groups_) {
         DynamicSubscribers::release(subscribers);
     }
+    assigned_subscriber_groups_.release(memory_);
     memory_.delete_object(item_notifications_);
 }
 
@@ -169,28 +168,32 @@ void ReferenceProvider::notify_root(OutputChangeContext &context, OutputChange c
     }
 }
 
+DynamicSubscribers &ReferenceProvider::require_subscribers(ReferenceSubscriptionDetail &subscriptions) {
+    if (!subscriptions.has_subscriber_group()) {
+        const auto group = assigned_subscriber_groups_.acquire(memory_);
+        auto release_group = util::scope_exit{[&]() noexcept { assigned_subscriber_groups_.reset(group); }};
+        if (group == subscriber_groups_.size()) {
+            subscriber_groups_.push_back(nullptr);
+        }
+        release_group.release();
+        subscriptions.set_subscriber_group(group);
+    }
+
+    return DynamicSubscribers::ensure(subscriber_groups_[subscriptions.subscriber_group_index()], memory_);
+}
+
 void ReferenceProvider::add_subscriber(ReferenceSubscriptionDetail &subscriptions, RuntimeGraph &graph,
                                        std::uint32_t input_offset, std::size_t notification_data,
                                        std::uint32_t node_index, bool active, bool required,
                                        InputNotificationFunction notification, bool controlled_activity) {
-    if (!subscriptions.has_subscriber_group()) {
-        subscriber_groups_.push_back(nullptr);
-        subscriptions.set_subscriber_group(static_cast<std::uint32_t>(subscriber_groups_.size() - 1));
-    }
-
-    auto &subscribers = DynamicSubscribers::ensure(subscriber_groups_[subscriptions.subscriber_group_index()], memory_);
+    auto &subscribers = require_subscribers(subscriptions);
     subscribers.add(graph, input_offset, notification_data, node_index, active, required, notification,
                     controlled_activity);
 }
 
 void ReferenceProvider::add_observer(ReferenceSubscriptionDetail &subscriptions, RuntimeGraph &graph, void *receiver,
                                      RuntimeObserverFunction function) {
-    if (!subscriptions.has_subscriber_group()) {
-        subscriber_groups_.push_back(nullptr);
-        subscriptions.set_subscriber_group(static_cast<std::uint32_t>(subscriber_groups_.size() - 1));
-    }
-
-    auto &subscribers = DynamicSubscribers::ensure(subscriber_groups_[subscriptions.subscriber_group_index()], memory_);
+    auto &subscribers = require_subscribers(subscriptions);
     subscribers.add_observer(graph, receiver, function);
 }
 
@@ -305,6 +308,7 @@ bool ReferenceProvider::release_item_reference(ItemReference &reference) noexcep
 
         DynamicSubscribers::release(subscribers);
         subscribers = nullptr;
+        assigned_subscriber_groups_.reset(subscriptions.subscriber_group_index());
         subscriptions.clear_subscriber_group();
         return true;
     };
@@ -362,8 +366,8 @@ bool ReferenceProvider::release_item_reference(ItemReference &reference) noexcep
         has_external_item_notifications(reference.subscriptions())) {
         return false;
     }
-    for (auto index = representations_.size(); index != 0; --index) {
-        auto *representation = representations_[index - 1];
+    for (auto *representation = newest_representation_; representation != nullptr;
+         representation = representation->next_representation) {
         if (!depends_on_retired_item(representation)) {
             continue;
         }
@@ -373,19 +377,24 @@ bool ReferenceProvider::release_item_reference(ItemReference &reference) noexcep
             return false;
         }
     }
-    for (auto *representation : representations_ | std::views::reverse) {
+    for (auto *representation = newest_representation_; representation != nullptr;
+         representation = representation->next_representation) {
         if (depends_on_retired_item(representation)) {
             representation->detach();
         }
     }
-    for (auto *representation : representations_ | std::views::reverse) {
+    for (auto *representation = newest_representation_; representation != nullptr;
+         representation = representation->next_representation) {
         if (depends_on_retired_item(representation)) {
             remove_observer(representation->base_reference(), owner(), representation);
         }
     }
-    for (auto index = representations_.size(); index != 0; --index) {
-        auto *&representation = representations_[index - 1];
-        if (representation == nullptr || !depends_on_retired_reference(representation->base_reference())) {
+    // Destroying a representation can release the item references it owns, which unlinks their dependents. Those
+    // dependents also depend on the retired reference, so the representation that holds link stays linked.
+    for (auto **link = &newest_representation_; *link != nullptr;) {
+        auto *representation = *link;
+        if (!depends_on_retired_item(representation)) {
+            link = &representation->next_representation;
             continue;
         }
 
@@ -393,9 +402,10 @@ bool ReferenceProvider::release_item_reference(ItemReference &reference) noexcep
         if (!release_subscribers(representation_reference.subscriptions())) {
             return false;
         }
-        auto *retired_representation = representation;
-        representation = nullptr;
-        retired_representation->destroy(memory_);
+        *link = representation->next_representation;
+        representations_[representation_reference.representation_index()] = nullptr;
+        assigned_representations_.reset(representation_reference.representation_index());
+        representation->destroy(memory_);
     }
 
     return release_subscribers(reference.subscriptions());
@@ -437,14 +447,25 @@ Reference ReferenceProvider::make_representation(Reference base_reference,
         result->detach();
         result->destroy(memory_);
     }};
-    result->initialize_reference(static_cast<std::uint32_t>(representations_.size()));
-    representations_.push_back(result);
-    auto remove_entry = util::scope_exit{[&]() noexcept { representations_.pop_back(); }};
+    const auto index = assigned_representations_.acquire(memory_);
+    auto release_index = util::scope_exit{[&]() noexcept { assigned_representations_.reset(index); }};
+    if (index == representations_.size()) {
+        representations_.push_back(nullptr);
+    }
+    result->initialize_reference(index);
+    representations_[index] = result;
+    result->next_representation = newest_representation_;
+    newest_representation_ = result;
+    auto remove_entry = util::scope_exit{[&]() noexcept {
+        newest_representation_ = result->next_representation;
+        representations_[index] = nullptr;
+    }};
     add_observer(base_reference, owner(), result,
                  [](OutputChangeContext &context, void *receiver, OutputChange change) {
                      static_cast<ReferenceRepresentation *>(receiver)->notify(context, change);
                  });
     remove_entry.release();
+    release_index.release();
     release.release();
     return result->reference();
 }

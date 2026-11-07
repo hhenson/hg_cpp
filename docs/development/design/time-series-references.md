@@ -59,7 +59,12 @@ target graph has been compiled.
 An exact-type request returns the target time series. A repeated request returns
 the existing representation for that target and requested type. A new compatible
 request allocates its representation through the runtime graph that owns the
-target. Runtime storage is proportional to the representations that are used.
+target. Runtime storage is proportional to the peak number of live
+representations: a new representation reuses the index of a removed one.
+
+The provider removes representations from the newest to the oldest. This is
+required because a representation's base reference can point into storage that
+an older representation owns.
 
 TSD representation runtime types have stable lifetime independent of individual
 representations. A resolved TSD representation uses the representation object as

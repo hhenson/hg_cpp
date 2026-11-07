@@ -4,6 +4,7 @@
 #include <hg/graph/output_notification.hpp>
 #include <hg/time_series/item_id.hpp>
 #include <hg/time_series/ref/ref_storage.hpp>
+#include <hg/util/occupancy_index.hpp>
 
 #include <cstdint>
 #include <type_traits>
@@ -59,6 +60,9 @@ class ReferenceRepresentation {
     virtual void notify(OutputChangeContext &context, OutputChange change) = 0;
     // Releases representation-owned storage after detach.
     virtual void destroy(allocator &memory) noexcept = 0;
+
+    // Links the provider's live representations from the newest to the oldest.
+    ReferenceRepresentation *next_representation{};
 
   private:
     Reference base_reference_;
@@ -196,6 +200,8 @@ class ReferenceProvider {
     void remove_root_subscriber(RuntimeGraph &graph, std::size_t input_offset) noexcept;
     void remove_root_observer(RuntimeGraph &graph, const void *receiver) noexcept;
     void notify_root(OutputChangeContext &context, OutputChange change);
+    // Assigns a subscriber group to subscriptions, reusing the lowest released group slot.
+    DynamicSubscribers &require_subscribers(ReferenceSubscriptionDetail &subscriptions);
     void add_subscriber(ReferenceSubscriptionDetail &subscriptions, RuntimeGraph &graph, std::uint32_t input_offset,
                         std::size_t notification_data, std::uint32_t node_index, bool active, bool required,
                         InputNotificationFunction notification, bool controlled_activity);
@@ -217,8 +223,14 @@ class ReferenceProvider {
 
     allocator memory_;
     RootReference *root_;
+    // Indexed by RepresentationReference::representation_index. A released slot holds nullptr until it is reused.
     std::pmr::vector<ReferenceRepresentation *> representations_;
+    util::occupancy_index assigned_representations_;
+    // Live representations from the newest to the oldest. Teardown follows this order because a representation's
+    // base reference can point into storage that an older representation owns.
+    ReferenceRepresentation *newest_representation_{};
     std::pmr::vector<DynamicSubscribers *> subscriber_groups_;
+    util::occupancy_index assigned_subscriber_groups_;
     ReferenceProviderComponent *components_{};
     ItemNotifications *item_notifications_{};
 };
