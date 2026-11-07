@@ -1645,7 +1645,8 @@ TEST_CASE("extension sentinels reach scalar literal providers through time-serie
     auto last_updated = TimeSeriesState{};
     auto output_storage = test_scalar_provider::storage{};
     auto output_state = OutputState{runtime_type};
-    output_state.bind(last_updated, &output_storage, MIN_DT + std::chrono::microseconds{1});
+    const auto evaluation_time = MIN_DT + std::chrono::microseconds{1};
+    output_state.bind(last_updated, &output_storage, evaluation_time);
     auto output = Out<TS<Value>>{TimeSeriesOutputBinding{output_state}};
     provider::expected_scalar_literal = &extension_literal;
     provider::scalar_literal_address_matches = false;
@@ -1679,7 +1680,8 @@ TEST_CASE("extension time-series handlers consume shared sentinel instructions",
     auto last_updated = TimeSeriesState{};
     auto value = provider::SeriesViewStorage{};
     auto state = OutputState{runtime_type};
-    state.bind(last_updated, &value, MIN_DT + std::chrono::microseconds{1});
+    const auto evaluation_time = MIN_DT + std::chrono::microseconds{1};
+    state.bind(last_updated, &value, evaluation_time);
     auto output = Out<TS_T>{TimeSeriesOutputBinding{state}};
 
     provider::time_series_literal_runtime_calls = 0;
@@ -2035,7 +2037,8 @@ TEST_CASE("provider scalar buffer actions can use different exact type registrat
     auto output_time = TimeSeriesState{};
     auto output_storage = test_scalar_provider::storage{};
     auto output_state = OutputState{cpp_time_series_runtime_type<TS<Value>>()};
-    output_state.bind(output_time, &output_storage, time + std::chrono::microseconds{1});
+    const auto evaluation_time = time + std::chrono::microseconds{1};
+    output_state.bind(output_time, &output_storage, evaluation_time);
     const auto output = Out<TS<Value>>{TimeSeriesOutputBinding{output_state}};
     auto reader = TimeSeriesTickReader{buffer, TS<Value>::type()};
 
@@ -2868,7 +2871,8 @@ TEST_CASE("a failed scalar write preserves the earlier record", "[coverage-exemp
     auto output_time = TimeSeriesState{};
     auto output_storage = test_scalar_provider::storage{};
     auto output_state = OutputState{cpp_time_series_runtime_type<TS<Value>>()};
-    output_state.bind(output_time, &output_storage, second_time + std::chrono::microseconds{1});
+    const auto evaluation_time = second_time + std::chrono::microseconds{1};
+    output_state.bind(output_time, &output_storage, evaluation_time);
     const auto output = Out<TS<Value>>{TimeSeriesOutputBinding{output_state}};
     auto reader = TimeSeriesTickReader{buffer, TS<Value>::type()};
 
@@ -2897,7 +2901,8 @@ TEST_CASE("runtime-specific provider write replays through its semantic handler"
     auto output_time = TimeSeriesState{};
     auto output_value = i64{};
     auto output_state = OutputState{provider::series_runtime_type(Series::type())};
-    output_state.bind(output_time, &output_value, time + std::chrono::microseconds{1});
+    const auto evaluation_time = time + std::chrono::microseconds{1};
+    output_state.bind(output_time, &output_value, evaluation_time);
     auto output = Out<Series>{TimeSeriesOutputBinding{output_state}};
     auto reader = TimeSeriesTickReader{buffer, Series::type()};
 
@@ -2942,7 +2947,8 @@ TEST_CASE("failed provider write rolls back all payloads in its record",
         auto output_time = TimeSeriesState{};
         auto output_value = i64{};
         auto output_state = OutputState{provider::series_runtime_type(Series::type())};
-        output_state.bind(output_time, &output_value, time + std::chrono::microseconds{2});
+        const auto evaluation_time = time + std::chrono::microseconds{2};
+        output_state.bind(output_time, &output_value, evaluation_time);
         const auto output = Out<Series>{TimeSeriesOutputBinding{output_state}};
         auto reader = TimeSeriesTickReader{buffer, Series::type()};
         CHECK(reader.replay(output));
@@ -3061,7 +3067,8 @@ TEST_CASE("a throwing provider replay discards its record only once",
         auto output_time = TimeSeriesState{};
         auto output_value = i64{};
         auto output_state = OutputState{provider::series_runtime_type(Series::type())};
-        output_state.bind(output_time, &output_value, time + std::chrono::microseconds{1});
+        const auto evaluation_time = time + std::chrono::microseconds{1};
+        output_state.bind(output_time, &output_value, evaluation_time);
         auto output = Out<Series>{TimeSeriesOutputBinding{output_state}};
 
         {
@@ -3166,7 +3173,8 @@ TEST_CASE("provider replay prefers exact runtime handlers over semantic handlers
     auto view_state_time = TimeSeriesState{};
     auto view_value = provider::SeriesViewStorage{};
     auto view_state = OutputState{provider::series_view_runtime_type(Series::type())};
-    view_state.bind(view_state_time, &view_value, time + std::chrono::microseconds{1});
+    const auto evaluation_time = time + std::chrono::microseconds{1};
+    view_state.bind(view_state_time, &view_value, evaluation_time);
     const auto view_output = Out<TS_T>{TimeSeriesOutputBinding{view_state}};
     auto reader = TimeSeriesTickReader{buffer, Series::type()};
 
@@ -3204,7 +3212,8 @@ TEST_CASE("runtime replay registration does not hide semantic write registration
     auto output_time = TimeSeriesState{};
     auto output_value = i64{};
     auto output_state = OutputState{provider::series_runtime_type(Series::type())};
-    output_state.bind(output_time, &output_value, time + std::chrono::microseconds{1});
+    const auto evaluation_time = time + std::chrono::microseconds{1};
+    output_state.bind(output_time, &output_value, evaluation_time);
     const auto output = Out<TS_T>{TimeSeriesOutputBinding{output_state}};
 
     CHECK(reader.replay(output));
@@ -3285,7 +3294,8 @@ TEST_CASE("tick replay dispatch reaches provider-declared outputs",
     auto default_output_time = TimeSeriesState{};
     auto default_output_value = i64{};
     auto default_output_state = OutputState{provider::series_runtime_type(Series::type())};
-    default_output_state.bind(default_output_time, &default_output_value, time + std::chrono::microseconds{1});
+    const auto evaluation_time = time + std::chrono::microseconds{1};
+    default_output_state.bind(default_output_time, &default_output_value, evaluation_time);
     auto default_output = Out<Series>{TimeSeriesOutputBinding{default_output_state}};
 
     CHECK(reader.replay(default_output));
@@ -3518,7 +3528,8 @@ TEST_CASE("configured output conversion rejects an incompatible semantic time se
     auto time = TimeSeriesState{};
     auto value = provider::SeriesViewStorage{};
     auto state = OutputState{provider::series_view_runtime_type(Series::type())};
-    state.bind(time, &value, MIN_DT + std::chrono::microseconds{1});
+    const auto evaluation_time = MIN_DT + std::chrono::microseconds{1};
+    state.bind(time, &value, evaluation_time);
     const auto erased = Out<TS_T>{TimeSeriesOutputBinding{state}};
 
     CHECK_THROWS_AS((erased.as_output<Out<provider::Series<string>, provider::view>>()), std::bad_cast);
@@ -3550,7 +3561,8 @@ TEST_CASE("tick replay rejects an incompatible configured output declaration",
     auto output_time = TimeSeriesState{};
     auto output_value = provider::SeriesViewStorage{};
     auto output_state = OutputState{provider::series_view_runtime_type(Series::type())};
-    output_state.bind(output_time, &output_value, time + std::chrono::microseconds{1});
+    const auto evaluation_time = time + std::chrono::microseconds{1};
+    output_state.bind(output_time, &output_value, evaluation_time);
     const auto output = Out<TS_T>{TimeSeriesOutputBinding{output_state}};
     auto reader = TimeSeriesTickReader{buffer, Series::type()};
 
