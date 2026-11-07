@@ -592,7 +592,7 @@ graph compilation or evaluation.
   and releasing subscriptions during stop and failure without enlarging ordinary inputs
 - references across inner graph boundaries
 - dynamic collection items and outer-cycle removal lifetime
-- representation creation and reuse
+- representation creation and reuse, and bounded provider storage while every cycle replaces per-item representations
 - fixed TSL and TSB item-reference adaptation, target-only updates, sampling on
   retargeting, reference and target validity, stable value-item references, and
   nested graph cleanup
