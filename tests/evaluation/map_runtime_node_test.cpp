@@ -15,8 +15,10 @@
 
 #include "../utils/counting_memory_resource.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -729,4 +731,72 @@ TEST_CASE("a map consumes and produces TSD references across two nested graph bo
         hg::run_graph(outer, std::array{1, 2, 3, 4, 5}, std::array{true, true, false, true, true});
 
     CHECK(actual.equals<i64>({2, 3, std::nullopt, 5, 6}));
+}
+
+namespace {
+
+// Alternates between removing every live key and adding the same number of keys that were never used before.
+struct ClearRepopulateKeys {
+    Out<TSD<i64, TS<i64>>> output;
+
+    static constexpr auto key_count = i64{64};
+    inline static i64 cycle{};
+
+    void evaluate() const {
+        const auto base = cycle / 2 * key_count;
+        for (auto key = base; key < base + key_count; ++key) {
+            if (cycle % 2 == 0) {
+                output[key].set(key);
+            } else {
+                output.erase(key);
+            }
+        }
+    }
+};
+
+const auto clear_repopulate_keys = node<ClearRepopulateKeys>();
+
+} // namespace
+
+TEST_CASE("map memory does not grow while each cycle replaces every key with a new key",
+          "[feature:map][feature:nested-graph][feature:lifecycle][series:tsd][shape:nested]"
+          "[transition:addition][transition:removal]") {
+    const auto increment = node([](i64 value) { return value + 1; });
+    const auto mapped = graph("name"_n = "increment_replaced", [&](wp<TS<i64>> value) { return increment(value); });
+
+    auto wiring = GraphWiring{};
+    {
+        const auto context = WiringContext{wiring};
+        (void)map(mapped, clear_repopulate_keys());
+    }
+
+    wiring.finalize();
+    const auto compiled = CompiledGraph{wiring};
+    auto memory = counting_memory_resource{};
+    {
+        auto runtime_global_state = GlobalState{allocator{memory}};
+        auto runtime = RuntimeGraph{compiled, allocator{memory}, runtime_global_state};
+        runtime.start(time(1));
+
+        // Returns the peak allocated byte count after the evaluated cycles.
+        const auto run_cycles = [&](i64 count) {
+            auto peak_bytes = std::size_t{};
+            for (auto end = ClearRepopulateKeys::cycle + count; ClearRepopulateKeys::cycle < end;
+                 ++ClearRepopulateKeys::cycle) {
+                runtime.schedule(0);
+                runtime.evaluate(time(ClearRepopulateKeys::cycle + 2));
+                peak_bytes = std::max(peak_bytes, memory.allocated_bytes());
+            }
+            return peak_bytes;
+        };
+
+        ClearRepopulateKeys::cycle = 0;
+        run_cycles(8);
+        // Allocation sizes depend on the key values with some standard libraries, so equal windows compare peaks.
+        const auto warmed_peak_bytes = run_cycles(32);
+
+        CHECK(run_cycles(32) <= warmed_peak_bytes);
+    }
+
+    CHECK(memory.allocations() == 0);
 }

@@ -554,6 +554,7 @@ graph compilation or evaluation.
 - global state shared by outer and inner graphs
 - context time series startup sampling, changes, validity, and use across nested graph boundaries
 - mapped TSD unions, selected key sets, per-key inner graph evaluation, scheduling, and lifecycle
+- bounded map storage while every cycle replaces all keys with keys that were never used before
 - scalar Dict snapshots mapped to per-key graphs: unchanged values, additions, removals, invalidation,
   revalidation, and branch re-creation
 - scalar Dict mapping through reference changes, nested graphs, and switches; per-key state
