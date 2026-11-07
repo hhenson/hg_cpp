@@ -864,6 +864,8 @@ template <bool Recursive> class DereferencedTimeSeriesDictionaryRepresentation f
             sample_switch(id, referenced_item, context.evaluation_time(), previous);
         }
         modified_.set(id, provider_->allocation());
+        // The representation publishes once per cycle, so item selections receive each later item change here.
+        ReferenceProvider::notify_item_bindings(this->reference(), id, context);
     }
 
     void publish_item_changes(OutputChangeContext &context) {

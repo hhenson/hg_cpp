@@ -1383,6 +1383,7 @@ void RuntimeGraph::add_cycle_callback(void *receiver, void (*function)(void *, E
         return;
     }
     outer_graph().require_cycle_callbacks().add(*this, receiver, function, call_on_stop);
+    adds_cycle_callbacks_ = true;
 }
 
 void RuntimeGraph::remove_cycle_callback(const void *receiver) noexcept {
@@ -1401,7 +1402,8 @@ void RuntimeGraph::run_cycle_callbacks(EvaluationContext &context) noexcept {
 void RuntimeGraph::clear_cycle_callbacks(EvaluationContext &context) noexcept {
     auto &outer = outer_graph();
     if (&outer != this) {
-        if (outer.compiled_graph_->has_cycle_callbacks() && outer.cycle_callbacks() != nullptr) {
+        if (adds_cycle_callbacks_ && outer.compiled_graph_->has_cycle_callbacks() &&
+            outer.cycle_callbacks() != nullptr) {
             outer.cycle_callbacks()->remove(*this, context);
         }
         return;

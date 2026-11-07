@@ -106,13 +106,19 @@ void validate_signature(const Signature &signature, std::uint32_t dictionary_par
 NestedReduceNodeDefinition::NestedReduceNodeDefinition(ReduceNestedGraphWiring wiring,
                                                        const ResolvedSignature &signature,
                                                        std::uint32_t dictionary_parameter,
+                                                       std::uint32_t items_parameter,
                                                        std::optional<std::uint32_t> default_parameter)
     : wiring_{std::move(wiring)}, signature_{make_signature(signature)},
-      dictionary_parameter_{dictionary_parameter}, default_parameter_{default_parameter} {
+      dictionary_parameter_{dictionary_parameter}, items_parameter_{items_parameter},
+      default_parameter_{default_parameter} {
     if (wiring_.wiring == nullptr || wiring_.output_node >= wiring_.wiring->nodes().size()) {
         throw std::invalid_argument{"a reduce node requires a wired binary graph"};
     }
     validate_signature(*signature_, dictionary_parameter_, default_parameter_);
+    if (items_parameter_ >= signature_->parameter_count() ||
+        type_cast<TimeSeriesDictionaryType>(signature_->parameter(items_parameter_).type) == nullptr) {
+        throw std::invalid_argument{"a nested reduce node requires a TSD item reference input"};
+    }
 }
 
 NodeTemplateIdentity NestedReduceNodeDefinition::definition_identity() const {
@@ -142,6 +148,7 @@ NestedReduceNodeDefinition::compile(const ResolvedSignature &, allocator &memory
 
     return {.nested = std::move(nested),
             .dictionary_parameter = dictionary_parameter_,
+            .items_parameter = items_parameter_,
             .default_parameter = default_parameter_,
             .reference_output = type_cast<TimeSeriesReferenceType>(signature_->output()) != nullptr};
 }

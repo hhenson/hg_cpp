@@ -35,20 +35,28 @@ runtime-type pointers and its output runtime-type pointer exactly match the
 source TSD item's runtime-type pointer. Compact evaluation is available only
 for scalar-valued items. Final-guarantee items therefore use nested evaluation
 with the ordinary-guarantee reducer graph. A reference-wrapped TSD also uses
-nested evaluation when sampled items can have different runtime types. Compact
-evaluation stores valid items in a compressed binary Patricia tree keyed by
-their physical TSD item IDs. Item changes update affected paths; membership
-changes and physical-ID remapping update the tree structure.
+nested evaluation when sampled items can have different runtime types.
+
+Both paths store valid items in a compressed binary Patricia tree keyed by
+their physical TSD item IDs. Each branch owns one reducer instance that combines
+its two children. Item changes mark the path from the item to the root;
+membership changes and physical-ID remapping update the tree structure. Only
+branches on a marked path are evaluated.
 
 Each reducer instance passes two `RuntimeGraphInput` records to its graph
 evaluation. Its pair state retains input validity and timestamps, but no input
 value pointers. The source values remain owned by the TSD or another reducer
 instance for the duration of that evaluation.
 
-Other reducer graphs use nested runtime graphs arranged in adjacent pairs by
-TSD iteration order. A membership change rebuilds that graph set. Stopped
-nested graphs remain allocated until the next outer cycle so reference removal
-completes before their storage is released.
+Nested evaluation uses one nested runtime graph for each branch. A leaf passes
+the item reference from a TSD of references over the source TSD. This is
+required to keep each item reference valid for as long as a reducer graph
+subscribes to it; see [time series references](time-series-references.md). A
+branch passes the output reference of its child graph. A branch graph starts
+when the branch is first evaluated. When a reducer graph is scheduled, the
+reduce node evaluates the path from its branch to the root.
+Stopped nested graphs remain allocated until the next outer cycle so reference
+removal completes before their storage is released.
 
 The compact-storage check may call the reducer graph function a second time
 during wiring, using an independent graph wiring. If that call produces a

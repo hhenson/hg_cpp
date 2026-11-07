@@ -25,6 +25,7 @@ struct CompiledCompactReduceGraph {
 struct CompiledNestedReduceGraph {
     CompiledNestedGraph nested;
     std::uint32_t dictionary_parameter{};
+    std::uint32_t items_parameter{};
     std::optional<std::uint32_t> default_parameter;
     bool reference_output{};
 };
@@ -34,7 +35,7 @@ class NestedReduceNodeDefinition {
     using compiled_data_type = CompiledNestedReduceGraph;
 
     NestedReduceNodeDefinition(ReduceNestedGraphWiring wiring, const ResolvedSignature &signature,
-                               std::uint32_t dictionary_parameter,
+                               std::uint32_t dictionary_parameter, std::uint32_t items_parameter,
                                std::optional<std::uint32_t> default_parameter);
 
     const Signature &signature() const noexcept { return *signature_; }
@@ -45,6 +46,7 @@ class NestedReduceNodeDefinition {
     ReduceNestedGraphWiring wiring_;
     std::unique_ptr<Signature> signature_;
     std::uint32_t dictionary_parameter_;
+    std::uint32_t items_parameter_;
     std::optional<std::uint32_t> default_parameter_;
 };
 

@@ -56,9 +56,23 @@ GraphArgument build_reduce_graph_argument(const WiringTemplate &function, const 
     const auto &value_dictionary_type = time_series_dictionary_type(
         dictionary_type_value->key_type(), item_type, *dictionary_type_value->guarantee().value());
     parameters.push_back({util::symbol{"dictionary"}, &value_dictionary_type, active, optional});
-
     outer_arguments.push_back(dictionary);
     outer_arguments.back().clear_name();
+
+    // Nested reducer graphs receive item references from a TSD of references, which owns their lifetime.
+    auto items_parameter = std::optional<std::uint32_t>{};
+    if (!built.graph.compact_graph) {
+        const auto &item_reference_type =
+            type_cast<TimeSeriesReferenceType>(&dictionary_type_value->value_type()) != nullptr
+                ? dictionary_type_value->value_type()
+                : time_series_reference_type(dictionary_type_value->value_type(), TimeSeriesGuarantee::ordinary);
+        const auto &items_type = time_series_dictionary_type(
+            dictionary_type_value->key_type(), item_reference_type, *dictionary_type_value->guarantee().value());
+        items_parameter = static_cast<std::uint32_t>(parameters.size());
+        parameters.push_back({util::symbol{"items"}, &items_type, passive, optional});
+        outer_arguments.push_back(dictionary);
+        outer_arguments.back().clear_name();
+    }
 
     auto default_parameter = std::optional<std::uint32_t>{};
     if (default_value) {
@@ -107,6 +121,7 @@ GraphArgument build_reduce_graph_argument(const WiringTemplate &function, const 
         .outer_signature = std::move(outer_signature),
         .outer_arguments = std::move(outer_arguments),
         .dictionary_parameter = dictionary_parameter,
+        .items_parameter = items_parameter,
         .default_parameter = default_parameter,
     });
     return GraphArgument{std::move(structure), std::move(payload)};
@@ -125,13 +140,13 @@ std::optional<WiringPoint> DefaultReduceWiring::wire() const {
                              ? make_compact_reduce_node(*graph.compact_graph, outer_signature, dictionary_parameter,
                                                         default_parameter)
                              : make_nested_reduce_node(graph.nested, outer_signature, dictionary_parameter,
-                                                       default_parameter);
+                                                       *items_parameter, default_parameter);
     auto &outer = WiringContext::current().wiring();
     auto arguments = std::vector<WiringArgument>{};
     arguments.reserve(outer_arguments.size());
     for (auto index = std::size_t{}; index < outer_arguments.size(); ++index) {
         const auto &argument = outer_arguments[index];
-        if (index != dictionary_parameter) {
+        if (index != dictionary_parameter && index != items_parameter) {
             arguments.push_back(argument);
             continue;
         }

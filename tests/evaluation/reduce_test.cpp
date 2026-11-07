@@ -656,6 +656,45 @@ TEST_CASE("reduce consumes dictionary references returned by a map",
     CHECK(actual.equals<i64>({3, 3, 12, 5}));
 }
 
+TEST_CASE("reduce combines same-cycle updates in different subtrees of mapped items",
+          "[feature:reduce][feature:map][feature:reference][series:tsd][shape:nested][transition:update]") {
+    const auto identity = graph("name"_n = "identity_value_for_subtree_reduce",
+                                [](wp<TS<i64>> value) { return add_values(value, value); });
+
+    const auto tested = [&](wp<TSD<i64, TS<i64>>> values) {
+        return reduce(add_graph, map(identity, values), "default"_n = i64{0});
+    };
+
+    const auto actual = hg::run_graph(
+        tested,
+        {{{0, 0}, {1, 0}, {2, 0}, {3, 0}, {4, 0}},
+         {{0, 1}, {2, 1}},
+         {{1, 5}, {3, 5}, {4, 7}},
+         {{0, 2}, {1, 2}, {2, 2}, {3, 2}, {4, 2}}});
+
+    CHECK(actual.equals<i64>({0, 4, 38, 20}));
+}
+
+TEST_CASE("reduce combines same-cycle updates in different subtrees of a reference-wrapped TSD",
+          "[feature:reduce][feature:reference][series:tsd][binding:reference-to-value][shape:nested]"
+          "[transition:update]") {
+    const auto forward_dictionary = node(
+        [](In<REF<TSD<i64, TS<i64>>>> values, Out<REF<TSD<i64, TS<i64>>>> output) { output.copy(values); });
+
+    const auto tested = [=](wp<TSD<i64, TS<i64>>> values) {
+        return reduce(add_graph, forward_dictionary(values), "default"_n = i64{0});
+    };
+
+    const auto actual = hg::run_graph(
+        tested,
+        {{{0, 0}, {1, 0}, {2, 0}, {3, 0}, {4, 0}},
+         {{0, 1}, {2, 1}},
+         {{1, 5}, {3, 5}, {4, 7}},
+         {{0, 2}, {1, 2}, {2, 2}, {3, 2}, {4, 2}}});
+
+    CHECK(actual.equals<i64>({0, 2, 19, 10}));
+}
+
 TEST_CASE("reduce maps and combines nested dictionaries",
           "[feature:reduce][feature:map][series:tsd][shape:doubly-nested]") {
     const auto add = graph("name"_n = "add_defaulted_values",

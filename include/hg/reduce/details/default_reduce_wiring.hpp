@@ -20,6 +20,7 @@ struct DefaultReduceWiring {
     ResolvedSignature outer_signature;
     std::vector<WiringArgument> outer_arguments;
     std::uint32_t dictionary_parameter{};
+    std::optional<std::uint32_t> items_parameter;
     std::optional<std::uint32_t> default_parameter;
 
     static const DefaultReduceWiring &from(const GraphArgument &argument);
