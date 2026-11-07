@@ -1,0 +1,47 @@
+name: Install vcpkg packages
+description: >-
+  Install x64-windows packages with the runner's vcpkg. Built packages are kept in a binary cache that GitHub Actions
+  restores, so vcpkg builds a package from source only when its ABI changes. Sets VCPKG_ROOT.
+
+inputs:
+  packages:
+    description: Space-separated vcpkg package specifications.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Locate vcpkg and its binary cache
+      id: vcpkg
+      shell: pwsh
+      run: |
+        $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+        if (-not $vcpkgRoot) { $vcpkgRoot = $env:VCPKG_ROOT }
+        if (-not $vcpkgRoot -or -not (Test-Path "$vcpkgRoot/vcpkg.exe")) {
+          throw "Could not locate the runner's vcpkg installation"
+        }
+        $cache = Join-Path $env:RUNNER_TEMP "vcpkg-binary-cache"
+        New-Item -ItemType Directory -Force -Path $cache | Out-Null
+        "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+        "VCPKG_DEFAULT_BINARY_CACHE=$cache" | Out-File -FilePath $env:GITHUB_ENV -Append
+        "cache=$cache" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        "image=$env:ImageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        "commit=$(git -C $vcpkgRoot rev-parse HEAD)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+    # The ABI hash of each archive selects compatible packages, so any earlier cache is a valid starting point.
+    - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      with:
+        path: ${{ steps.vcpkg.outputs.cache }}
+        key: >-
+          vcpkg-x64-windows-${{ steps.vcpkg.outputs.image }}-${{ steps.vcpkg.outputs.commit }}-${{ inputs.packages }}
+        restore-keys: vcpkg-x64-windows-
+    - name: Install vcpkg packages
+      shell: pwsh
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        $packages = $env:PACKAGES -split '\s+'
+        & "$env:VCPKG_ROOT/vcpkg.exe" install @packages --triplet x64-windows
+        if ($LASTEXITCODE -ne 0) { throw "vcpkg failed to install $env:PACKAGES ($LASTEXITCODE)" }
+        if (-not (Test-Path "$env:VCPKG_ROOT/installed/x64-windows/include/unicode/utypes.h")) {
+          throw "vcpkg did not install ICU headers for x64-windows"
+        }

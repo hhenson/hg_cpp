@@ -21,10 +21,18 @@ jobs:
   build:
     name: Build ${{ inputs.os }} wheel
     runs-on: ${{ inputs.os }}
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Enable shared compiler cache
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+        with:
+          version: v0.15.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
@@ -53,25 +61,15 @@ jobs:
       - name: Configure MSVC toolchain and install Windows dependencies
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
-      - name: Locate vcpkg
+      - name: Install Windows native dependencies
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/install-vcpkg-packages
+        with:
+          packages: icu curl[openssl] openssl
+      - name: Install Windows wheel tools
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          if (-not $vcpkgRoot) { $vcpkgRoot = $env:VCPKG_ROOT }
-          if (-not $vcpkgRoot -or -not (Test-Path "$vcpkgRoot/vcpkg.exe")) {
-            throw "Could not locate the runner's vcpkg installation"
-          }
-          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - name: Install Windows native dependencies and wheel tools
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          & "$env:VCPKG_ROOT/vcpkg.exe" install icu "curl[openssl]" openssl --triplet x64-windows
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg failed to install web dependencies ($LASTEXITCODE)" }
-          if (-not (Test-Path "$env:VCPKG_ROOT/installed/x64-windows/include/unicode/utypes.h")) {
-            throw "vcpkg did not install ICU headers for x64-windows"
-          }
           python -m pip install --upgrade --only-binary=:all: `
             "build==1.5.0" "scikit-build-core==1.0.3" "nanobind==3.1.0" `
             "cmake>=3.31" "ninja==1.13.0" "abi3audit==0.0.26" `
@@ -107,7 +105,8 @@ jobs:
         env:
           CMAKE_BUILD_TYPE: Release
           CMAKE_BUILD_PARALLEL_LEVEL: ${{ inputs.parallel }}
-        run: python -m build --wheel --no-isolation --outdir raw-wheel
+        # A fixed build directory lets the compiler cache match results from earlier runs.
+        run: python -m build --wheel --no-isolation --outdir raw-wheel --config-setting build-dir=build/wheel
       - name: Repair macOS wheel dependencies
         if: runner.os == 'macOS'
         run: delocate-wheel --require-archs arm64 -w dist raw-wheel/*.whl
